@@ -31,26 +31,33 @@
 //! let mut circuit = TickCircuit::new();
 //!
 //! // Each tick() returns a handle - regular gates chain on the handle
-//! circuit.tick().pz(0);               // Tick 0: Prepare q0 (breaks chain)
-//! circuit.tick().pz(1);               // Tick 1: Prepare q1 (breaks chain)
-//! circuit.tick().h(0).x(1);           // Tick 2: H on q0, X on q1 (chains!)
-//! circuit.tick().cx(0, 1);            // Tick 3: CNOT
-//! circuit.tick().mz(0);               // Tick 4: Measure q0 (breaks chain)
-//! circuit.tick().mz(1);               // Tick 5: Measure q1 (breaks chain)
+//! circuit.tick().pz(&[0]);              // Tick 0: Prepare q0 (breaks chain)
+//! circuit.tick().pz(&[1]);              // Tick 1: Prepare q1 (breaks chain)
+//! circuit.tick().h(&[0]).x(&[1]);       // Tick 2: H on q0, X on q1 (chains!)
+//! circuit.tick().cx(&[(0, 1)]);         // Tick 3: CNOT
+//! circuit.tick().mz(&[0]);              // Tick 4: Measure q0 (breaks chain)
+//! circuit.tick().mz(&[1]);              // Tick 5: Measure q1 (breaks chain)
 //!
 //! assert_eq!(circuit.num_ticks(), 6);
 //!
 //! // Preps and measurements break the chain but allow .meta():
-//! circuit.tick().pz(0).meta("reason", pecos_quantum::Attribute::String("init".into()));
-//! circuit.tick().mz(0).meta("basis", pecos_quantum::Attribute::String("Z".into()));
+//! circuit.tick().pz(&[0]).meta("reason", pecos_quantum::Attribute::String("init".into()));
+//! circuit.tick().mz(&[0]).meta("basis", pecos_quantum::Attribute::String("Z".into()));
 //!
 //! // Tick-level metadata: call meta() before adding gates
 //! use pecos_quantum::Attribute;
 //! let mut circuit2 = TickCircuit::new();
 //! circuit2.tick()
 //!     .meta("round", Attribute::Int(0))    // Tick metadata (no gates added yet)
-//!     .h(0)
+//!     .h(&[0])
 //!     .meta("duration", Attribute::Float(50.0)); // Gate metadata (after a gate)
+//!
+//! // Bulk operations - apply gates to multiple qubits at once:
+//! let mut circuit3 = TickCircuit::new();
+//! circuit3.tick().pz(&[0, 1, 2, 3]);      // Prep 4 qubits at once
+//! circuit3.tick().h(&[0, 1, 2, 3]);       // H on 4 qubits at once
+//! circuit3.tick().cx(&[(0, 1), (2, 3)]);  // 2 CX gates in parallel
+//! circuit3.tick().mz(&[0, 1, 2, 3]);      // Measure all 4 qubits
 //! ```
 
 use pecos_core::gate_type::GateType;
@@ -249,14 +256,20 @@ impl Tick {
 ///
 /// // Each tick() returns a TickHandle for adding gates
 /// // Regular gates chain, but preps/measurements break the chain
-/// circuit.tick().pz(0);                  // Tick 0: Prepare q0 (breaks chain)
-/// circuit.tick().pz(1);                  // Tick 1: Prepare q1 (breaks chain)
-/// circuit.tick().h(0).x(1);              // Tick 2: H and X (chains!)
-/// circuit.tick().cx(0, 1);               // Tick 3: CNOT
-/// circuit.tick().mz(0);                  // Tick 4: Measure q0 (breaks chain)
-/// circuit.tick().mz(1);                  // Tick 5: Measure q1 (breaks chain)
+/// circuit.tick().pz(&[0]);                   // Tick 0: Prepare q0 (breaks chain)
+/// circuit.tick().pz(&[1]);                   // Tick 1: Prepare q1 (breaks chain)
+/// circuit.tick().h(&[0]).x(&[1]);            // Tick 2: H and X (chains!)
+/// circuit.tick().cx(&[(0, 1)]);              // Tick 3: CNOT
+/// circuit.tick().mz(&[0]);                   // Tick 4: Measure q0 (breaks chain)
+/// circuit.tick().mz(&[1]);                   // Tick 5: Measure q1 (breaks chain)
 ///
 /// assert_eq!(circuit.num_ticks(), 6);
+///
+/// // Bulk operations - all methods accept slices:
+/// circuit.tick().pz(&[0, 1, 2, 3]);          // Prep multiple qubits
+/// circuit.tick().h(&[0, 1, 2, 3]);           // H on multiple qubits
+/// circuit.tick().cx(&[(0, 1), (2, 3)]);      // Multiple CX gates
+/// circuit.tick().mz(&[0, 1, 2, 3]);          // Measure multiple qubits
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct TickCircuit {
@@ -427,6 +440,313 @@ impl TickCircuit {
     pub fn circuit_attrs(&self) -> impl Iterator<Item = (&String, &Attribute)> {
         self.circuit_attrs.iter()
     }
+
+    // =========================================================================
+    // Circuit manipulation
+    // =========================================================================
+
+    /// Clear the circuit and start fresh.
+    ///
+    /// This completely replaces the circuit with a new empty instance,
+    /// releasing any allocated memory. Use this when memory usage is a concern
+    /// or when you want absolute certainty of a fresh state.
+    ///
+    /// For performance-critical code or when creating many circuits in sequence,
+    /// consider using [`reset()`](Self::reset) instead, which preserves memory allocation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0]);
+    /// assert_eq!(circuit.num_ticks(), 1);
+    ///
+    /// circuit.clear();
+    /// assert_eq!(circuit.num_ticks(), 0);
+    /// ```
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Reset the circuit state while preserving allocated memory.
+    ///
+    /// Unlike [`clear()`](Self::clear), this method preserves the allocated memory
+    /// for better performance when reusing the same circuit multiple times.
+    /// This is the recommended method for performance-critical code,
+    /// especially when creating many circuits in sequence.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    ///
+    /// // Build first circuit
+    /// circuit.tick().h(&[0]);
+    /// circuit.tick().cx(&[(0, 1)]);
+    /// assert_eq!(circuit.num_ticks(), 2);
+    ///
+    /// // Reset and build another circuit (memory preserved)
+    /// circuit.reset();
+    /// assert_eq!(circuit.num_ticks(), 0);
+    ///
+    /// circuit.tick().x(&[0]);
+    /// assert_eq!(circuit.num_ticks(), 1);
+    /// ```
+    pub fn reset(&mut self) {
+        self.ticks.clear();
+        self.next_tick = 0;
+        self.circuit_attrs.clear();
+    }
+
+    /// Reserve empty ticks in advance.
+    ///
+    /// This preallocates `n` empty ticks, which can be useful when you know
+    /// the circuit structure ahead of time.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.reserve_ticks(4);
+    ///
+    /// // Ticks 0-3 are now available (though empty)
+    /// assert_eq!(circuit.ticks().len(), 4);
+    ///
+    /// // tick() will start from tick 4
+    /// circuit.tick().h(&[0]);
+    /// assert_eq!(circuit.num_ticks(), 5);
+    /// ```
+    pub fn reserve_ticks(&mut self, n: usize) {
+        let target_len = self.ticks.len() + n;
+        self.ticks.reserve(n);
+        while self.ticks.len() < target_len {
+            self.ticks.push(Tick::new());
+        }
+        self.next_tick = self.ticks.len();
+    }
+
+    /// Insert an empty tick at a specific position.
+    ///
+    /// All ticks at or after `idx` are shifted to the right.
+    /// Returns a [`TickHandle`] to the newly inserted tick.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx > self.ticks().len()`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0]);      // Tick 0
+    /// circuit.tick().cx(&[(0, 1)]); // Tick 1
+    ///
+    /// // Insert a new tick between them
+    /// circuit.insert_tick(1).x(&[1]);
+    ///
+    /// // Now: H at tick 0, X at tick 1, CX at tick 2
+    /// assert_eq!(circuit.num_ticks(), 3);
+    /// ```
+    pub fn insert_tick(&mut self, idx: usize) -> TickHandle<'_> {
+        assert!(
+            idx <= self.ticks.len(),
+            "insert_tick index {} out of bounds for circuit with {} ticks",
+            idx,
+            self.ticks.len()
+        );
+
+        self.ticks.insert(idx, Tick::new());
+        self.next_tick = self.ticks.len();
+
+        TickHandle {
+            circuit: self,
+            tick_idx: idx,
+            last_gate_idx: None,
+        }
+    }
+
+    /// Get a handle to an existing tick for adding more gates.
+    ///
+    /// This allows adding gates to a tick that was previously created,
+    /// which is useful when building circuits non-sequentially.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx >= self.ticks().len()`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.reserve_ticks(3);
+    ///
+    /// // Add gates to specific ticks
+    /// circuit.tick_at(0).h(&[0]);
+    /// circuit.tick_at(2).cx(&[(0, 1)]);
+    /// circuit.tick_at(1).x(&[1]);  // Fill in the middle later
+    ///
+    /// assert_eq!(circuit.num_ticks(), 3);
+    /// ```
+    pub fn tick_at(&mut self, idx: usize) -> TickHandle<'_> {
+        assert!(
+            idx < self.ticks.len(),
+            "tick_at index {} out of bounds for circuit with {} ticks",
+            idx,
+            self.ticks.len()
+        );
+
+        TickHandle {
+            circuit: self,
+            tick_idx: idx,
+            last_gate_idx: None,
+        }
+    }
+
+    // =========================================================================
+    // Iteration helpers
+    // =========================================================================
+
+    /// Iterate over all gates in the circuit, across all ticks.
+    ///
+    /// Gates are yielded in tick order, then in order within each tick.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0, 1]);
+    /// circuit.tick().cx(&[(0, 1)]);
+    ///
+    /// for gate in circuit.iter_gates() {
+    ///     println!("{:?} on {:?}", gate.gate_type, gate.qubits);
+    /// }
+    /// ```
+    pub fn iter_gates(&self) -> impl Iterator<Item = &Gate> {
+        self.ticks.iter().flat_map(|tick| tick.gates())
+    }
+
+    /// Iterate over all gates with their tick index.
+    ///
+    /// Yields `(tick_index, gate)` pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0]);
+    /// circuit.tick().x(&[0]);
+    ///
+    /// for (tick_idx, gate) in circuit.iter_gates_with_tick() {
+    ///     println!("Tick {}: {:?}", tick_idx, gate.gate_type);
+    /// }
+    /// ```
+    pub fn iter_gates_with_tick(&self) -> impl Iterator<Item = (usize, &Gate)> {
+        self.ticks
+            .iter()
+            .enumerate()
+            .flat_map(|(tick_idx, tick)| tick.gates().iter().map(move |gate| (tick_idx, gate)))
+    }
+
+    /// Iterate over ticks with their index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0, 1, 2]);
+    /// circuit.tick().cx(&[(0, 1), (1, 2)]);
+    ///
+    /// for (tick_idx, tick) in circuit.iter_ticks() {
+    ///     println!("Tick {} has {} gates", tick_idx, tick.len());
+    /// }
+    /// ```
+    pub fn iter_ticks(&self) -> impl Iterator<Item = (usize, &Tick)> {
+        self.ticks.iter().enumerate()
+    }
+
+    /// Iterate over gates filtered by gate type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    /// use pecos_core::gate_type::GateType;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0, 1, 2]);
+    /// circuit.tick().x(&[0]).cx(&[(1, 2)]);
+    ///
+    /// // Get all H gates
+    /// let h_gates: Vec<_> = circuit.iter_gates_by_type(GateType::H).collect();
+    /// assert_eq!(h_gates.len(), 1);  // One Gate object with 3 qubits
+    /// ```
+    pub fn iter_gates_by_type(&self, gate_type: GateType) -> impl Iterator<Item = &Gate> {
+        self.iter_gates().filter(move |g| g.gate_type == gate_type)
+    }
+
+    /// Get all qubits used in the circuit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0, 1, 2]);
+    /// circuit.tick().cx(&[(0, 1)]);
+    ///
+    /// let qubits = circuit.all_qubits();
+    /// assert_eq!(qubits.len(), 3);
+    /// ```
+    #[must_use]
+    pub fn all_qubits(&self) -> BTreeSet<QubitId> {
+        self.iter_gates()
+            .flat_map(|gate| gate.qubits.iter().copied())
+            .collect()
+    }
+
+    /// Count gates by type across the entire circuit.
+    ///
+    /// Returns a map from `GateType` to count.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    /// use pecos_core::gate_type::GateType;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0, 1, 2]);
+    /// circuit.tick().cx(&[(0, 1), (1, 2)]);
+    ///
+    /// let counts = circuit.gate_counts_by_type();
+    /// assert_eq!(counts.get(&GateType::H), Some(&1));  // 1 H gate object (with 3 qubits)
+    /// assert_eq!(counts.get(&GateType::CX), Some(&1)); // 1 CX gate object (with 2 pairs)
+    /// ```
+    #[must_use]
+    pub fn gate_counts_by_type(&self) -> BTreeMap<GateType, usize> {
+        let mut counts = BTreeMap::new();
+        for gate in self.iter_gates() {
+            *counts.entry(gate.gate_type).or_insert(0) += 1;
+        }
+        counts
+    }
 }
 
 // ============================================================================
@@ -525,100 +845,180 @@ impl<'a> TickHandle<'a> {
     // Single-qubit gates
     // =========================================================================
 
-    /// Apply a Hadamard gate.
-    pub fn h(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::h(&[q.into()]))
+    /// Apply Hadamard gate(s) to one or more qubits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// // Single qubit
+    /// circuit.tick().h(&[0]);
+    /// // Multiple qubits in one call
+    /// circuit.tick().h(&[1, 2, 3]);
+    /// ```
+    pub fn h(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::h(qubits))
     }
 
-    /// Apply a Pauli-X gate.
-    pub fn x(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::x(&[q.into()]))
+    /// Apply Pauli-X gate(s) to one or more qubits.
+    pub fn x(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::x(qubits))
     }
 
-    /// Apply a Pauli-Y gate.
-    pub fn y(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::y(&[q.into()]))
+    /// Apply Pauli-Y gate(s) to one or more qubits.
+    pub fn y(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::y(qubits))
     }
 
-    /// Apply a Pauli-Z gate.
-    pub fn z(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::z(&[q.into()]))
+    /// Apply Pauli-Z gate(s) to one or more qubits.
+    pub fn z(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::z(qubits))
     }
 
-    /// Apply an S gate (sqrt-Z).
-    pub fn sz(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::simple(GateType::SZ, vec![q.into()]))
+    /// Apply S gate(s) (sqrt-Z) to one or more qubits.
+    pub fn sz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::simple(
+            GateType::SZ,
+            qubits.iter().map(|&q| q.into()).collect(),
+        ))
     }
 
-    /// Apply an S-dagger gate.
-    pub fn szdg(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::simple(GateType::SZdg, vec![q.into()]))
+    /// Apply S-dagger gate(s) to one or more qubits.
+    pub fn szdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::simple(
+            GateType::SZdg,
+            qubits.iter().map(|&q| q.into()).collect(),
+        ))
     }
 
-    /// Apply a T gate.
-    pub fn t(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::simple(GateType::T, vec![q.into()]))
+    /// Apply T gate(s) to one or more qubits.
+    pub fn t(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::simple(
+            GateType::T,
+            qubits.iter().map(|&q| q.into()).collect(),
+        ))
     }
 
-    /// Apply a T-dagger gate.
-    pub fn tdg(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::simple(GateType::Tdg, vec![q.into()]))
+    /// Apply T-dagger gate(s) to one or more qubits.
+    pub fn tdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::simple(
+            GateType::Tdg,
+            qubits.iter().map(|&q| q.into()).collect(),
+        ))
     }
 
-    /// Apply an RX rotation.
-    pub fn rx(&mut self, theta: impl Into<Angle64>, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::rx(theta.into(), &[q.into()]))
+    /// Apply RX rotation(s) to one or more qubits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    /// use std::f64::consts::PI;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// // Single qubit
+    /// circuit.tick().rx(PI / 2.0, &[0]);
+    /// // Multiple qubits with same angle
+    /// circuit.tick().rx(PI / 4.0, &[1, 2, 3]);
+    /// ```
+    pub fn rx(&mut self, theta: impl Into<Angle64>, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::rx(theta.into(), qubits))
     }
 
-    /// Apply an RY rotation.
-    pub fn ry(&mut self, theta: impl Into<Angle64>, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::ry(theta.into(), &[q.into()]))
+    /// Apply RY rotation(s) to one or more qubits.
+    pub fn ry(&mut self, theta: impl Into<Angle64>, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::ry(theta.into(), qubits))
     }
 
-    /// Apply an RZ rotation.
-    pub fn rz(&mut self, theta: impl Into<Angle64>, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::rz(theta.into(), &[q.into()]))
+    /// Apply RZ rotation(s) to one or more qubits.
+    pub fn rz(&mut self, theta: impl Into<Angle64>, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::rz(theta.into(), qubits))
     }
 
     // =========================================================================
     // Two-qubit gates
     // =========================================================================
 
-    /// Apply a CNOT (CX) gate.
-    pub fn cx(&mut self, ctrl: impl Into<QubitId>, tgt: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::cx(&[(ctrl.into(), tgt.into())]))
+    /// Apply CNOT (CX) gate(s) to one or more qubit pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// // Single pair
+    /// circuit.tick().cx(&[(0, 1)]);
+    /// // Multiple pairs in one call
+    /// circuit.tick().cx(&[(2, 3), (4, 5), (6, 7)]);
+    /// ```
+    pub fn cx(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::cx(pairs))
     }
 
-    /// Apply an SZZ gate (sqrt-ZZ).
-    pub fn szz(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::szz(&[(q1.into(), q2.into())]))
+    /// Apply SZZ gate(s) (sqrt-ZZ) to one or more qubit pairs.
+    pub fn szz(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::szz(pairs))
     }
 
-    /// Apply an SZZ-dagger gate.
-    pub fn szzdg(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::szzdg(&[(q1.into(), q2.into())]))
+    /// Apply SZZ-dagger gate(s) to one or more qubit pairs.
+    pub fn szzdg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::szzdg(pairs))
     }
 
-    /// Apply an RZZ rotation.
+    /// Apply RZZ rotation(s) to one or more qubit pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    /// use std::f64::consts::PI;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// // Single pair
+    /// circuit.tick().rzz(PI / 4.0, &[(0, 1)]);
+    /// // Multiple pairs with same angle
+    /// circuit.tick().rzz(PI / 2.0, &[(2, 3), (4, 5)]);
+    /// ```
     pub fn rzz(
         &mut self,
         theta: impl Into<Angle64>,
-        q1: impl Into<QubitId>,
-        q2: impl Into<QubitId>,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
-        self.add_gate(Gate::rzz(theta.into(), &[(q1.into(), q2.into())]))
+        self.add_gate(Gate::rzz(theta.into(), pairs))
     }
 
     // =========================================================================
     // State preparation and measurement
     // =========================================================================
 
-    /// Prepare a qubit in the |0⟩ state.
+    /// Prepare qubit(s) in the |0⟩ state.
     ///
     /// Returns a [`TickPrepHandle`] that allows attaching metadata via `.meta()`.
     /// This breaks the chain - only `.meta()` can be called on the result.
-    pub fn pz(mut self, q: impl Into<QubitId>) -> TickPrepHandle<'a> {
-        let gate_idx = self.add_gate_get_idx(Gate::prep(&[q.into()]));
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().pz(&[0]);           // Single qubit
+    /// circuit.tick().pz(&[1, 2, 3]);     // Multiple qubits
+    /// ```
+    pub fn pz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickPrepHandle<'a> {
+        let gate_idx = self.add_gate_get_idx(Gate::prep(qubits));
         TickPrepHandle {
             circuit: self.circuit,
             tick_idx: self.tick_idx,
@@ -626,19 +1026,29 @@ impl<'a> TickHandle<'a> {
         }
     }
 
-    /// Prepare a qubit (alias for pz).
+    /// Prepare qubit(s) (alias for pz).
     ///
     /// Returns a [`TickPrepHandle`] that allows attaching metadata via `.meta()`.
-    pub fn prep(self, q: impl Into<QubitId>) -> TickPrepHandle<'a> {
-        self.pz(q)
+    pub fn prep(self, qubits: &[impl Into<QubitId> + Copy]) -> TickPrepHandle<'a> {
+        self.pz(qubits)
     }
 
-    /// Measure a qubit in the Z basis.
+    /// Measure qubit(s) in the Z basis.
     ///
     /// Returns a [`TickMeasureHandle`] that allows attaching metadata via `.meta()`.
     /// This breaks the chain - only `.meta()` can be called on the result.
-    pub fn mz(mut self, q: impl Into<QubitId>) -> TickMeasureHandle<'a> {
-        let gate_idx = self.add_gate_get_idx(Gate::measure(&[q.into()]));
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().mz(&[0]);           // Single qubit
+    /// circuit.tick().mz(&[1, 2, 3]);     // Multiple qubits
+    /// ```
+    pub fn mz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickMeasureHandle<'a> {
+        let gate_idx = self.add_gate_get_idx(Gate::measure(qubits));
         TickMeasureHandle {
             circuit: self.circuit,
             tick_idx: self.tick_idx,
@@ -646,11 +1056,20 @@ impl<'a> TickHandle<'a> {
         }
     }
 
-    /// Measure and free a qubit (destructive measurement).
+    /// Measure and free qubit(s) (destructive measurement).
     ///
     /// Returns a [`TickMeasureHandle`] that allows attaching metadata via `.meta()`.
-    pub fn measure_free(mut self, q: impl Into<QubitId>) -> TickMeasureHandle<'a> {
-        let gate_idx = self.add_gate_get_idx(Gate::simple(GateType::MeasureFree, vec![q.into()]));
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().measure_free(&[0, 1]);
+    /// ```
+    pub fn measure_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickMeasureHandle<'a> {
+        let gate_idx = self.add_gate_get_idx(Gate::measure_free(qubits));
         TickMeasureHandle {
             circuit: self.circuit,
             tick_idx: self.tick_idx,
@@ -662,24 +1081,50 @@ impl<'a> TickHandle<'a> {
     // Resource management
     // =========================================================================
 
-    /// Allocate a qubit.
-    pub fn qalloc(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::qalloc(&[q.into()]))
+    /// Allocate one or more qubits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().qalloc(&[0, 1, 2, 3]);
+    /// ```
+    pub fn qalloc(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::qalloc(qubits))
     }
 
-    /// Free a qubit.
-    pub fn qfree(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate(Gate::qfree(&[q.into()]))
+    /// Free one or more qubits.
+    pub fn qfree(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::qfree(qubits))
     }
 
     // =========================================================================
     // Timing
     // =========================================================================
 
-    /// Insert an idle (wait) operation.
-    pub fn idle(&mut self, duration: impl Into<Nanoseconds>, q: impl Into<QubitId>) -> &mut Self {
+    /// Insert an idle (wait) operation for one or more qubits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// // Idle for 100 nanoseconds
+    /// circuit.tick().idle(100, &[0, 1, 2]);
+    /// ```
+    pub fn idle(
+        &mut self,
+        duration: impl Into<Nanoseconds>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
         let ns: Nanoseconds = duration.into();
-        self.add_gate(Gate::idle(ns.as_f64(), vec![q.into()]))
+        self.add_gate(Gate::idle(
+            ns.as_f64(),
+            qubits.iter().map(|&q| q.into()).collect(),
+        ))
     }
 }
 
@@ -775,8 +1220,8 @@ impl From<&TickCircuit> for DagCircuit {
     /// use pecos_quantum::{DagCircuit, TickCircuit};
     ///
     /// let mut tc = TickCircuit::new();
-    /// tc.tick().h(0);
-    /// tc.tick().cx(0, 1);
+    /// tc.tick().h(&[0]);
+    /// tc.tick().cx(&[(0, 1)]);
     ///
     /// let dag = DagCircuit::from(&tc);
     /// assert_eq!(dag.gate_count(), 2);
@@ -839,14 +1284,14 @@ mod tests {
 
         // Preps and measurements break the chain (return handles with only .meta())
         // For multiple preps in the same tick, add gates directly to the tick
-        tc.tick().pz(0); // tick 0: first prep
+        tc.tick().pz(&[0]); // tick 0: first prep
         // If we want both preps in tick 0, we'd use the Tick API directly.
         // Here we use separate ticks for clarity:
-        tc.tick().pz(1); // tick 1: second prep
-        tc.tick().h(0); // tick 2
-        tc.tick().cx(0, 1); // tick 3
-        tc.tick().mz(0); // tick 4
-        tc.tick().mz(1); // tick 5
+        tc.tick().pz(&[1]); // tick 1: second prep
+        tc.tick().h(&[0]); // tick 2
+        tc.tick().cx(&[(0, 1)]); // tick 3
+        tc.tick().mz(&[0]); // tick 4
+        tc.tick().mz(&[1]); // tick 5
 
         assert_eq!(tc.num_ticks(), 6);
         assert_eq!(tc.gate_count(), 6);
@@ -856,37 +1301,23 @@ mod tests {
     fn test_multiple_preps_same_tick() {
         let mut tc = TickCircuit::new();
 
-        // To add multiple preps to the same tick, allocate the tick first
-        // then add gates directly
-        let tick_idx = tc.tick().index();
-        // tick() consumed the handle by calling index(), so get the tick
-        tc.get_tick_mut(tick_idx)
-            .unwrap()
-            .add_gate(Gate::prep(&[0]));
-        tc.get_tick_mut(tick_idx)
-            .unwrap()
-            .add_gate(Gate::prep(&[1]));
+        // To add multiple preps to the same tick, use bulk prep
+        tc.tick().pz(&[0, 1]);  // Both preps in tick 0
 
-        tc.tick().h(0);
-        tc.tick().cx(0, 1);
+        tc.tick().h(&[0]);
+        tc.tick().cx(&[(0, 1)]);
 
-        // Multiple measurements in same tick
-        let meas_tick = tc.tick().index();
-        tc.get_tick_mut(meas_tick)
-            .unwrap()
-            .add_gate(Gate::measure(&[0]));
-        tc.get_tick_mut(meas_tick)
-            .unwrap()
-            .add_gate(Gate::measure(&[1]));
+        // Multiple measurements in same tick using bulk measurement
+        tc.tick().mz(&[0, 1]);
 
         assert_eq!(tc.num_ticks(), 4);
-        assert_eq!(tc.gate_count(), 6);
+        assert_eq!(tc.gate_count(), 4);  // 1 bulk prep, 1 H, 1 CX, 1 bulk measure
 
         // Check tick contents
-        assert_eq!(tc.get_tick(0).unwrap().len(), 2); // Two preps
+        assert_eq!(tc.get_tick(0).unwrap().len(), 1); // One bulk prep gate
         assert_eq!(tc.get_tick(1).unwrap().len(), 1); // One H
         assert_eq!(tc.get_tick(2).unwrap().len(), 1); // One CX
-        assert_eq!(tc.get_tick(3).unwrap().len(), 2); // Two measurements
+        assert_eq!(tc.get_tick(3).unwrap().len(), 1); // One bulk measurement
     }
 
     #[test]
@@ -894,10 +1325,10 @@ mod tests {
         let mut tc = TickCircuit::new();
 
         tc.tick()
-            .h(0)
+            .h(&[0])
             .meta("duration", Attribute::Float(50.0))
             .meta("error_rate", Attribute::Float(0.001))
-            .x(1)
+            .x(&[1])
             .meta("duration", Attribute::Float(50.0));
 
         let tick = tc.get_tick(0).unwrap();
@@ -920,8 +1351,8 @@ mod tests {
         let mut tc = TickCircuit::new();
 
         // meta() before any gates = tick-level metadata
-        tc.tick().meta("round", Attribute::Int(0)).h(0);
-        tc.tick().meta("round", Attribute::Int(1)).cx(0, 1);
+        tc.tick().meta("round", Attribute::Int(0)).h(&[0]);
+        tc.tick().meta("round", Attribute::Int(1)).cx(&[(0, 1)]);
 
         assert_eq!(
             tc.get_tick(0).unwrap().get_attr("round"),
@@ -951,12 +1382,12 @@ mod tests {
         let mut tc = TickCircuit::new();
 
         // Regular gates chain within a tick
-        tc.tick().h(0).x(1).y(2).z(3);
-        tc.tick().cx(0, 1).szz(2, 3);
+        tc.tick().h(&[0]).x(&[1]).y(&[2]).z(&[3]);
+        tc.tick().cx(&[(0, 1)]).szz(&[(2, 3)]);
 
         // But preps and measurements break the chain
-        tc.tick().pz(0); // breaks chain
-        tc.tick().mz(0); // breaks chain
+        tc.tick().pz(&[0]); // breaks chain
+        tc.tick().mz(&[0]); // breaks chain
 
         assert_eq!(tc.num_ticks(), 4);
         assert_eq!(tc.gate_count(), 8);
@@ -968,10 +1399,10 @@ mod tests {
 
         // Preps and measurements allow .meta() before breaking
         tc.tick()
-            .pz(0)
+            .pz(&[0])
             .meta("reason", Attribute::String("init".into()));
-        tc.tick().h(0);
-        tc.tick().mz(0).meta("basis", Attribute::String("Z".into()));
+        tc.tick().h(&[0]);
+        tc.tick().mz(&[0]).meta("basis", Attribute::String("Z".into()));
 
         assert_eq!(tc.num_ticks(), 3);
 
@@ -990,7 +1421,7 @@ mod tests {
     fn test_circuit_meta() {
         let mut tc = TickCircuit::new();
         tc.set_meta("name", Attribute::String("bell_state".to_string()));
-        tc.tick().h(0);
+        tc.tick().h(&[0]);
 
         assert_eq!(
             tc.get_meta("name"),
@@ -1004,9 +1435,9 @@ mod tests {
         tc.set_meta("circuit_name", Attribute::String("test".to_string()));
 
         // Build a small circuit
-        tc.tick().h(0).x(1); // Tick 0: parallel H and X
-        tc.tick().cx(0, 1); // Tick 1: CX
-        tc.tick().h(0); // Tick 2: H
+        tc.tick().h(&[0]).x(&[1]); // Tick 0: parallel H and X
+        tc.tick().cx(&[(0, 1)]); // Tick 1: CX
+        tc.tick().h(&[0]); // Tick 2: H
 
         let dag = DagCircuit::from(&tc);
 
@@ -1058,9 +1489,9 @@ mod tests {
     #[test]
     fn test_round_trip_tick_to_dag_to_tick() {
         let mut tc1 = TickCircuit::new();
-        tc1.tick().h(0);
-        tc1.tick().cx(0, 1);
-        tc1.tick().h(1);
+        tc1.tick().h(&[0]);
+        tc1.tick().cx(&[(0, 1)]);
+        tc1.tick().h(&[1]);
 
         // Convert to DAG and back
         let dag = DagCircuit::from(&tc1);
@@ -1085,8 +1516,8 @@ mod tests {
         tc1.tick()
             .meta("round", Attribute::Int(0))
             .meta("syndrome_type", Attribute::String("X".to_string()))
-            .h(0);
-        tc1.tick().meta("round", Attribute::Int(1)).cx(0, 1);
+            .h(&[0]);
+        tc1.tick().meta("round", Attribute::Int(1)).cx(&[(0, 1)]);
 
         // Convert to DAG
         let dag = DagCircuit::from(&tc1);
@@ -1130,7 +1561,7 @@ mod tests {
     #[test]
     fn test_active_qubits() {
         let mut tc = TickCircuit::new();
-        tc.tick().h(0).x(1).cx(2, 3);
+        tc.tick().h(&[0]).x(&[1]).cx(&[(2, 3)]);
 
         let tick = tc.get_tick(0).unwrap();
         let active = tick.active_qubits();
@@ -1146,7 +1577,7 @@ mod tests {
     #[test]
     fn test_uses_qubit() {
         let mut tc = TickCircuit::new();
-        tc.tick().h(0).cx(1, 2);
+        tc.tick().h(&[0]).cx(&[(1, 2)]);
 
         let tick = tc.get_tick(0).unwrap();
 
@@ -1159,7 +1590,7 @@ mod tests {
     #[test]
     fn test_find_conflicts() {
         let mut tc = TickCircuit::new();
-        tc.tick().h(0).cx(1, 2);
+        tc.tick().h(&[0]).cx(&[(1, 2)]);
 
         let tick = tc.get_tick(0).unwrap();
 
@@ -1194,7 +1625,7 @@ mod tests {
     fn test_try_add_gate_conflict() {
         let mut tc = TickCircuit::new();
         let mut handle = tc.tick();
-        handle.h(0);
+        handle.h(&[0]);
 
         // Try to add another gate on the same qubit - should fail
         let result = handle.try_add_gate(Gate::x(&[0]));
@@ -1213,21 +1644,21 @@ mod tests {
     fn test_qubit_conflict_panics() {
         let mut tc = TickCircuit::new();
         // This should panic because qubit 0 is used twice in the same tick
-        tc.tick().h(0).x(0);
+        tc.tick().h(&[0]).x(&[0]);
     }
 
     #[test]
     fn test_two_qubit_gate_conflict() {
         let mut tc = TickCircuit::new();
         let mut handle = tc.tick();
-        handle.cx(0, 1);
+        handle.cx(&[(0, 1)]);
 
         // Both qubits of CX should be marked as in use
         let result = handle.try_add_gate(Gate::h(&[0]));
         assert!(result.is_err());
 
         let mut handle2 = tc.tick();
-        handle2.cx(2, 3);
+        handle2.cx(&[(2, 3)]);
         let result = handle2.try_add_gate(Gate::h(&[3]));
         assert!(result.is_err());
     }
@@ -1241,7 +1672,7 @@ mod tests {
             ("error_rate".to_string(), Attribute::Float(0.001)),
         ]);
 
-        tc.tick().h(0).metas(attrs).x(1);
+        tc.tick().h(&[0]).metas(attrs).x(&[1]);
 
         let tick = tc.get_tick(0).unwrap();
         assert_eq!(
@@ -1264,7 +1695,7 @@ mod tests {
         ]);
 
         // metas() before any gates = tick-level metadata
-        tc.tick().metas(attrs).h(0);
+        tc.tick().metas(attrs).h(&[0]);
 
         let tick = tc.get_tick(0).unwrap();
         assert_eq!(tick.get_attr("round"), Some(&Attribute::Int(0)));
@@ -1284,12 +1715,230 @@ mod tests {
         ]);
 
         tc.set_metas(attrs);
-        tc.tick().h(0);
+        tc.tick().h(&[0]);
 
         assert_eq!(
             tc.get_meta("name"),
             Some(&Attribute::String("bell".to_string()))
         );
         assert_eq!(tc.get_meta("version"), Some(&Attribute::Int(1)));
+    }
+
+    #[test]
+    fn test_bulk_operations() {
+        let mut tc = TickCircuit::new();
+
+        // Test bulk single-qubit gates
+        tc.tick().h(&[0, 1, 2, 3]);
+        assert_eq!(tc.get_tick(0).unwrap().len(), 1); // One gate with 4 qubits
+
+        // Test bulk two-qubit gates
+        tc.tick().cx(&[(0, 1), (2, 3)]);
+        assert_eq!(tc.get_tick(1).unwrap().len(), 1); // One gate with 2 pairs
+
+        // Test bulk prep and measure
+        tc.tick().pz(&[0, 1, 2, 3]);
+        tc.tick().mz(&[0, 1, 2, 3]);
+        assert_eq!(tc.get_tick(2).unwrap().len(), 1);
+        assert_eq!(tc.get_tick(3).unwrap().len(), 1);
+
+        // Test bulk qalloc/qfree
+        tc.tick().qalloc(&[4, 5, 6]);
+        tc.tick().qfree(&[4, 5, 6]);
+        assert_eq!(tc.get_tick(4).unwrap().len(), 1);
+        assert_eq!(tc.get_tick(5).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_iteration_helpers() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0, 1]);
+        tc.tick().cx(&[(0, 1)]);
+        tc.tick().mz(&[0, 1]);
+
+        // Test iter_gates
+        let gates: Vec<_> = tc.iter_gates().collect();
+        assert_eq!(gates.len(), 3);
+
+        // Test iter_gates_with_tick
+        let gates_with_tick: Vec<_> = tc.iter_gates_with_tick().collect();
+        assert_eq!(gates_with_tick.len(), 3);
+        assert_eq!(gates_with_tick[0].0, 0); // First gate is in tick 0
+        assert_eq!(gates_with_tick[1].0, 1); // Second gate is in tick 1
+
+        // Test iter_ticks
+        let ticks: Vec<_> = tc.iter_ticks().collect();
+        assert_eq!(ticks.len(), 3);
+
+        // Test iter_gates_by_type
+        let h_gates: Vec<_> = tc.iter_gates_by_type(GateType::H).collect();
+        assert_eq!(h_gates.len(), 1);
+
+        // Test all_qubits
+        let qubits = tc.all_qubits();
+        assert_eq!(qubits.len(), 2);
+        assert!(qubits.contains(&QubitId::from(0)));
+        assert!(qubits.contains(&QubitId::from(1)));
+
+        // Test gate_counts_by_type
+        let counts = tc.gate_counts_by_type();
+        assert_eq!(counts.get(&GateType::H), Some(&1));
+        assert_eq!(counts.get(&GateType::CX), Some(&1));
+        assert_eq!(counts.get(&GateType::Measure), Some(&1));
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut tc = TickCircuit::new();
+        tc.set_meta("name", Attribute::String("test".to_string()));
+        tc.tick().h(&[0]);
+        tc.tick().cx(&[(0, 1)]);
+
+        assert_eq!(tc.num_ticks(), 2);
+        assert!(tc.get_meta("name").is_some());
+
+        tc.clear();
+
+        assert_eq!(tc.num_ticks(), 0);
+        assert_eq!(tc.gate_count(), 0);
+        assert!(tc.get_meta("name").is_none());
+        assert_eq!(tc.next_tick_index(), 0);
+    }
+
+    #[test]
+    fn test_reset() {
+        let mut tc = TickCircuit::new();
+        tc.set_meta("name", Attribute::String("test".to_string()));
+        tc.tick().h(&[0]);
+        tc.tick().cx(&[(0, 1)]);
+
+        assert_eq!(tc.num_ticks(), 2);
+
+        tc.reset();
+
+        assert_eq!(tc.num_ticks(), 0);
+        assert_eq!(tc.gate_count(), 0);
+        assert!(tc.get_meta("name").is_none());
+        assert_eq!(tc.next_tick_index(), 0);
+
+        // Can reuse the circuit
+        tc.tick().x(&[0]);
+        assert_eq!(tc.num_ticks(), 1);
+    }
+
+    #[test]
+    fn test_reserve_ticks() {
+        let mut tc = TickCircuit::new();
+        tc.reserve_ticks(4);
+
+        assert_eq!(tc.ticks().len(), 4);
+        assert_eq!(tc.next_tick_index(), 4);
+
+        // All ticks are empty
+        for tick in tc.ticks() {
+            assert!(tick.is_empty());
+        }
+
+        // New tick() starts after reserved ticks
+        tc.tick().h(&[0]);
+        assert_eq!(tc.ticks().len(), 5);
+        assert_eq!(tc.next_tick_index(), 5);
+    }
+
+    #[test]
+    fn test_insert_tick() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]); // Tick 0
+        tc.tick().cx(&[(0, 1)]); // Tick 1
+
+        // Insert between them
+        tc.insert_tick(1).x(&[1]);
+
+        assert_eq!(tc.num_ticks(), 3);
+
+        // Check order: H at 0, X at 1, CX at 2
+        let tick0 = tc.get_tick(0).unwrap();
+        assert_eq!(tick0.gates()[0].gate_type, GateType::H);
+
+        let tick1 = tc.get_tick(1).unwrap();
+        assert_eq!(tick1.gates()[0].gate_type, GateType::X);
+
+        let tick2 = tc.get_tick(2).unwrap();
+        assert_eq!(tick2.gates()[0].gate_type, GateType::CX);
+    }
+
+    #[test]
+    fn test_insert_tick_at_beginning() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+        tc.tick().x(&[1]);
+
+        tc.insert_tick(0).z(&[2]);
+
+        assert_eq!(tc.num_ticks(), 3);
+
+        // Z should now be at tick 0
+        let tick0 = tc.get_tick(0).unwrap();
+        assert_eq!(tick0.gates()[0].gate_type, GateType::Z);
+    }
+
+    #[test]
+    fn test_insert_tick_at_end() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+
+        // Insert at the end (same as tick())
+        tc.insert_tick(1).x(&[1]);
+
+        assert_eq!(tc.num_ticks(), 2);
+
+        let tick1 = tc.get_tick(1).unwrap();
+        assert_eq!(tick1.gates()[0].gate_type, GateType::X);
+    }
+
+    #[test]
+    fn test_tick_at() {
+        let mut tc = TickCircuit::new();
+        tc.reserve_ticks(3);
+
+        // Add gates to ticks out of order
+        tc.tick_at(2).cx(&[(0, 1)]);
+        tc.tick_at(0).h(&[0]);
+        tc.tick_at(1).x(&[1]);
+
+        assert_eq!(tc.num_ticks(), 3);
+
+        // Check each tick has the right gate
+        assert_eq!(tc.get_tick(0).unwrap().gates()[0].gate_type, GateType::H);
+        assert_eq!(tc.get_tick(1).unwrap().gates()[0].gate_type, GateType::X);
+        assert_eq!(tc.get_tick(2).unwrap().gates()[0].gate_type, GateType::CX);
+    }
+
+    #[test]
+    fn test_tick_at_add_more_gates() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]); // Tick 0 with H
+
+        // Add more gates to tick 0
+        tc.tick_at(0).x(&[1]);
+
+        assert_eq!(tc.num_ticks(), 1);
+        assert_eq!(tc.get_tick(0).unwrap().len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "tick_at index 5 out of bounds")]
+    fn test_tick_at_out_of_bounds() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+        tc.tick_at(5); // Should panic
+    }
+
+    #[test]
+    #[should_panic(expected = "insert_tick index 5 out of bounds")]
+    fn test_insert_tick_out_of_bounds() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+        tc.insert_tick(5); // Should panic
     }
 }

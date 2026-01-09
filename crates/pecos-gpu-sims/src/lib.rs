@@ -11,17 +11,18 @@
 //! # Example
 //!
 //! ```no_run
-//! use pecos_gpu_sims::WgpuStateVec;
+//! use pecos_gpu_sims::GpuStateVec;
 //!
-//! let mut sim = WgpuStateVec::new(4).unwrap(); // 4 qubits
+//! let mut sim = GpuStateVec::new(4).unwrap(); // 4 qubits
 //! sim.h(0);           // Hadamard on qubit 0
 //! sim.cx(0, 1);       // CNOT with control=0, target=1
 //! let result = sim.measure(0);  // Measure qubit 0
 //! ```
 
 mod gpu;
+pub mod prelude;
 
-pub use gpu::WgpuStateVec;
+pub use gpu::{GpuError, GpuStateVec};
 
 use std::f64::consts::FRAC_1_SQRT_2;
 
@@ -62,28 +63,23 @@ pub mod gates {
     /// S-dagger gate
     pub const SDG: [f32; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0];
 
-    /// T gate (sqrt(S))
+    // T gate = RZ(π/4) to match PECOS convention
+    // RZ(θ) = [[e^(-iθ/2), 0], [0, e^(iθ/2)]]
+    // RZ(π/4) = [[e^(-iπ/8), 0], [0, e^(iπ/8)]]
+    // cos(π/8) ≈ 0.9238795, sin(π/8) ≈ 0.3826834
+    const COS_PI_8: f32 = 0.923_879_5;
+    const SIN_PI_8: f32 = 0.382_683_43;
+
+    /// T gate (π/4 rotation around Z-axis, equivalent to `RZ(π/4)`)
     pub const T: [f32; 8] = [
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        FRAC_1_SQRT_2 as f32,
-        FRAC_1_SQRT_2 as f32,
+        COS_PI_8, -SIN_PI_8, // e^(-iπ/8)
+        0.0, 0.0, 0.0, 0.0, COS_PI_8, SIN_PI_8, // e^(iπ/8)
     ];
 
-    /// T-dagger gate
+    /// T-dagger gate (-π/4 rotation around Z-axis, equivalent to `RZ(-π/4)`)
     pub const TDG: [f32; 8] = [
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        FRAC_1_SQRT_2 as f32,
-        -(FRAC_1_SQRT_2 as f32),
+        COS_PI_8, SIN_PI_8, // e^(iπ/8)
+        0.0, 0.0, 0.0, 0.0, COS_PI_8, -SIN_PI_8, // e^(-iπ/8)
     ];
 
     /// SX gate (sqrt(X))

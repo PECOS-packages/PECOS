@@ -60,7 +60,7 @@ struct MeasureParams {
 }
 
 /// Cross-platform GPU state vector quantum simulator
-pub struct WgpuStateVec {
+pub struct GpuStateVec {
     device: wgpu::Device,
     queue: wgpu::Queue,
 
@@ -91,7 +91,7 @@ pub struct WgpuStateVec {
     rng: rand::rngs::ThreadRng,
 }
 
-impl WgpuStateVec {
+impl GpuStateVec {
     /// Compute the number of workgroups needed for a given number of elements.
     /// Uses 256 threads per workgroup (standard for GPU compute).
     fn compute_workgroups(num_elements: u64) -> u32 {
@@ -162,7 +162,9 @@ impl WgpuStateVec {
         let state_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("State vector"),
             size: state_buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -189,7 +191,7 @@ impl WgpuStateVec {
 
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Staging buffer"),
-            size: num_amplitudes * 4, // For reading probabilities
+            size: num_amplitudes * 8, // For reading state vector (2 * f32 per amplitude)
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -847,6 +849,60 @@ impl WgpuStateVec {
     pub fn adapter_info(&self) -> String {
         "wgpu device".to_string()
     }
+
+    /// Read the state vector from GPU memory.
+    ///
+    /// Returns amplitudes as `Vec<[f32; 2]>` where each element is `[real, imag]`.
+    /// The index corresponds to the computational basis state in little-endian order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the GPU device poll fails (indicates a driver or hardware failure).
+    #[must_use]
+    pub fn state(&self) -> Vec<[f32; 2]> {
+        // Copy state buffer to staging buffer
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("State readback encoder"),
+            });
+
+        encoder.copy_buffer_to_buffer(
+            &self.state_buffer,
+            0,
+            &self.staging_buffer,
+            0,
+            self.num_amplitudes * 8,
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map and read the staging buffer
+        let buffer_slice = self.staging_buffer.slice(..);
+        buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+
+        let state: Vec<[f32; 2]> = {
+            let data = buffer_slice.get_mapped_range();
+            bytemuck::cast_slice(&data).to_vec()
+        };
+        self.staging_buffer.unmap();
+
+        state
+    }
+
+    /// Get the probability of measuring a specific basis state.
+    ///
+    /// # Arguments
+    /// * `basis_state` - The computational basis state index (little-endian)
+    #[must_use]
+    pub fn probability(&self, basis_state: usize) -> f32 {
+        let state = self.state();
+        let [re, im] = state[basis_state];
+        re * re + im * im
+    }
 }
 
 // Trait implementations for PECOS integration
@@ -855,7 +911,7 @@ use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
 
-impl QuantumSimulator for WgpuStateVec {
+impl QuantumSimulator for GpuStateVec {
     fn reset(&mut self) -> &mut Self {
         // Create initial state: |0...0> = [1+0i, 0+0i, 0+0i, ...]
         // Safe: with max 30 qubits, num_amplitudes fits in usize on 64-bit systems
@@ -872,7 +928,7 @@ impl QuantumSimulator for WgpuStateVec {
 // Trait uses usize for qubit indices; internal API uses u32.
 // Safe: max 30 qubits, so indices always fit in u32.
 #[allow(clippy::cast_possible_truncation)]
-impl CliffordGateable<usize> for WgpuStateVec {
+impl CliffordGateable<usize> for GpuStateVec {
     fn sz(&mut self, q: usize) -> &mut Self {
         self.apply_single_gate(q as u32, gates::S);
         self
@@ -946,7 +1002,7 @@ impl CliffordGateable<usize> for WgpuStateVec {
 // Trait uses usize for qubit indices and f64 for angles.
 // Safe: max 30 qubits (indices fit in u32), GPU uses f32 (precision loss acceptable).
 #[allow(clippy::cast_possible_truncation)]
-impl ArbitraryRotationGateable<usize> for WgpuStateVec {
+impl ArbitraryRotationGateable<usize> for GpuStateVec {
     fn rx(&mut self, theta: f64, q: usize) -> &mut Self {
         self.apply_single_gate(q as u32, gates::rx(theta));
         self
@@ -1017,13 +1073,13 @@ mod tests {
     #[test]
     fn test_initial_state() {
         // Just test that we can create a simulator
-        let sim = WgpuStateVec::new(2);
+        let sim = GpuStateVec::new(2);
         assert!(sim.is_ok());
     }
 
     #[test]
     fn test_hadamard_creates_superposition() {
-        let mut sim = WgpuStateVec::new(1).unwrap();
+        let mut sim = GpuStateVec::new(1).unwrap();
         sim.h(0);
 
         // Measure many times - should get roughly 50/50
@@ -1046,7 +1102,7 @@ mod tests {
 
     #[test]
     fn test_bell_state() {
-        let mut sim = WgpuStateVec::new(2).unwrap();
+        let mut sim = GpuStateVec::new(2).unwrap();
 
         // Create Bell state: H(0), CX(0,1)
         // Should always measure same value on both qubits
@@ -1064,7 +1120,7 @@ mod tests {
     #[test]
     fn test_derived_clifford_gates() {
         // Test that we get derived gates from the CliffordGateable trait
-        let mut sim = WgpuStateVec::new(2).unwrap();
+        let mut sim = GpuStateVec::new(2).unwrap();
 
         // Test X gate (derived from H and Z, which is derived from SZ)
         sim.x(0); // Should flip qubit 0 to |1>
@@ -1104,7 +1160,7 @@ mod tests {
     #[test]
     fn test_derived_rotation_gates() {
         // Test that we get derived gates from the ArbitraryRotationGateable trait
-        let mut sim = WgpuStateVec::new(2).unwrap();
+        let mut sim = GpuStateVec::new(2).unwrap();
 
         // Test RY gate (derived from RX and SZ)
         // RY(pi) should flip |0> to |1>
@@ -1117,5 +1173,346 @@ mod tests {
         sim.t(0); // T gate is just a phase, shouldn't change measurement
         let m = sim.mz(0);
         assert!(!m.outcome, "T gate on |0> should still measure 0");
+    }
+
+    // =========================================================================
+    // Comparison tests against StateVec (CPU reference implementation)
+    // =========================================================================
+
+    use pecos_qsim::StateVec;
+
+    /// Compare GPU and CPU state vectors with tolerance for f32 vs f64 precision.
+    /// Returns the maximum absolute difference found.
+    fn compare_states(gpu: &GpuStateVec, cpu: &StateVec) -> f64 {
+        let gpu_state = gpu.state();
+        let cpu_state = cpu.state();
+
+        assert_eq!(
+            gpu_state.len(),
+            cpu_state.len(),
+            "State vector lengths must match"
+        );
+
+        let mut max_diff = 0.0f64;
+        for (i, (gpu_amp, cpu_amp)) in gpu_state.iter().zip(cpu_state.iter()).enumerate() {
+            let diff_re = (f64::from(gpu_amp[0]) - cpu_amp.re).abs();
+            let diff_im = (f64::from(gpu_amp[1]) - cpu_amp.im).abs();
+            let diff = diff_re.max(diff_im);
+            if diff > max_diff {
+                max_diff = diff;
+            }
+            // Fail fast with detailed info if way off
+            assert!(
+                diff < 1e-4,
+                "State mismatch at index {i}: GPU=[{}, {}], CPU=[{}, {}]",
+                gpu_amp[0],
+                gpu_amp[1],
+                cpu_amp.re,
+                cpu_amp.im
+            );
+        }
+        max_diff
+    }
+
+    /// Tolerance for comparing f32 GPU results to f64 CPU results
+    const TOLERANCE: f64 = 1e-5;
+
+    #[test]
+    fn test_compare_initial_state() {
+        let gpu = GpuStateVec::new(3).unwrap();
+        let cpu = StateVec::new(3);
+
+        let max_diff = compare_states(&gpu, &cpu);
+        assert!(
+            max_diff < TOLERANCE,
+            "Initial state mismatch: max_diff = {max_diff}"
+        );
+    }
+
+    #[test]
+    fn test_compare_hadamard() {
+        let mut gpu = GpuStateVec::new(2).unwrap();
+        let mut cpu = StateVec::new(2);
+
+        // H on qubit 0
+        gpu.h(0);
+        cpu.h(0);
+        let max_diff = compare_states(&gpu, &cpu);
+        assert!(max_diff < TOLERANCE, "H(0) mismatch: max_diff = {max_diff}");
+
+        // H on qubit 1
+        gpu.h(1);
+        cpu.h(1);
+        let max_diff = compare_states(&gpu, &cpu);
+        assert!(
+            max_diff < TOLERANCE,
+            "H(0)H(1) mismatch: max_diff = {max_diff}"
+        );
+    }
+
+    #[test]
+    fn test_compare_pauli_gates() {
+        // Test X gate
+        {
+            let mut gpu = GpuStateVec::new(2).unwrap();
+            let mut cpu = StateVec::new(2);
+            gpu.x(0);
+            cpu.x(0);
+            let max_diff = compare_states(&gpu, &cpu);
+            assert!(max_diff < TOLERANCE, "X(0) mismatch: max_diff = {max_diff}");
+        }
+
+        // Test Y gate
+        {
+            let mut gpu = GpuStateVec::new(2).unwrap();
+            let mut cpu = StateVec::new(2);
+            gpu.y(1);
+            cpu.y(1);
+            let max_diff = compare_states(&gpu, &cpu);
+            assert!(max_diff < TOLERANCE, "Y(1) mismatch: max_diff = {max_diff}");
+        }
+
+        // Test Z gate
+        {
+            let mut gpu = GpuStateVec::new(2).unwrap();
+            let mut cpu = StateVec::new(2);
+            gpu.h(0); // Put in superposition first so Z has an effect
+            cpu.h(0);
+            gpu.z(0);
+            cpu.z(0);
+            let max_diff = compare_states(&gpu, &cpu);
+            assert!(
+                max_diff < TOLERANCE,
+                "H(0)Z(0) mismatch: max_diff = {max_diff}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_compare_phase_gates() {
+        // Test S gate
+        {
+            let mut gpu = GpuStateVec::new(1).unwrap();
+            let mut cpu = StateVec::new(1);
+            gpu.h(0);
+            cpu.h(0);
+            gpu.s(0);
+            cpu.sz(0);
+            let max_diff = compare_states(&gpu, &cpu);
+            assert!(
+                max_diff < TOLERANCE,
+                "H(0)S(0) mismatch: max_diff = {max_diff}"
+            );
+        }
+
+        // Test T gate
+        {
+            let mut gpu = GpuStateVec::new(1).unwrap();
+            let mut cpu = StateVec::new(1);
+            gpu.h(0);
+            cpu.h(0);
+            gpu.t(0);
+            cpu.t(0);
+            let max_diff = compare_states(&gpu, &cpu);
+            assert!(
+                max_diff < TOLERANCE,
+                "H(0)T(0) mismatch: max_diff = {max_diff}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_compare_rotation_gates() {
+        let angles = [0.0, 0.1, 0.5, 1.0, std::f64::consts::PI, 2.5];
+
+        for &theta in &angles {
+            // Test RX
+            {
+                let mut gpu = GpuStateVec::new(1).unwrap();
+                let mut cpu = StateVec::new(1);
+                gpu.rx(theta, 0);
+                cpu.rx(theta, 0);
+                let max_diff = compare_states(&gpu, &cpu);
+                assert!(
+                    max_diff < TOLERANCE,
+                    "RX({theta}) mismatch: max_diff = {max_diff}"
+                );
+            }
+
+            // Test RY
+            {
+                let mut gpu = GpuStateVec::new(1).unwrap();
+                let mut cpu = StateVec::new(1);
+                gpu.ry(theta, 0);
+                cpu.ry(theta, 0);
+                let max_diff = compare_states(&gpu, &cpu);
+                assert!(
+                    max_diff < TOLERANCE,
+                    "RY({theta}) mismatch: max_diff = {max_diff}"
+                );
+            }
+
+            // Test RZ
+            {
+                let mut gpu = GpuStateVec::new(1).unwrap();
+                let mut cpu = StateVec::new(1);
+                gpu.h(0); // Put in superposition so RZ has visible effect
+                cpu.h(0);
+                gpu.rz(theta, 0);
+                cpu.rz(theta, 0);
+                let max_diff = compare_states(&gpu, &cpu);
+                assert!(
+                    max_diff < TOLERANCE,
+                    "H RZ({theta}) mismatch: max_diff = {max_diff}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_compare_cx_gate() {
+        // Test CX in various configurations
+        for control in 0usize..3 {
+            for target in 0usize..3 {
+                if control == target {
+                    continue;
+                }
+
+                let mut gpu = GpuStateVec::new(3).unwrap();
+                let mut cpu = StateVec::new(3);
+
+                // Create superposition on control
+                #[allow(clippy::cast_possible_truncation)]
+                gpu.h(control as u32);
+                cpu.h(control);
+
+                // Apply CX
+                #[allow(clippy::cast_possible_truncation)]
+                gpu.cx(control as u32, target as u32);
+                cpu.cx(control, target);
+
+                let max_diff = compare_states(&gpu, &cpu);
+                assert!(
+                    max_diff < TOLERANCE,
+                    "CX({control},{target}) mismatch: max_diff = {max_diff}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_compare_cz_gate() {
+        let mut gpu = GpuStateVec::new(2).unwrap();
+        let mut cpu = StateVec::new(2);
+
+        // Create |++> state
+        gpu.h(0);
+        gpu.h(1);
+        cpu.h(0);
+        cpu.h(1);
+
+        // Apply CZ
+        gpu.cz(0, 1);
+        cpu.cz(0, 1);
+
+        let max_diff = compare_states(&gpu, &cpu);
+        assert!(
+            max_diff < TOLERANCE,
+            "H(0)H(1)CZ(0,1) mismatch: max_diff = {max_diff}"
+        );
+    }
+
+    #[test]
+    fn test_compare_rzz_gate() {
+        let angles = [0.1, 0.5, 1.0, std::f64::consts::PI];
+
+        for &theta in &angles {
+            let mut gpu = GpuStateVec::new(2).unwrap();
+            let mut cpu = StateVec::new(2);
+
+            // Create superposition
+            gpu.h(0);
+            gpu.h(1);
+            cpu.h(0);
+            cpu.h(1);
+
+            // Apply RZZ
+            gpu.rzz(theta, 0, 1);
+            cpu.rzz(theta, 0, 1);
+
+            let max_diff = compare_states(&gpu, &cpu);
+            assert!(
+                max_diff < TOLERANCE,
+                "RZZ({theta}) mismatch: max_diff = {max_diff}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_compare_complex_circuit() {
+        // Test a more complex circuit with multiple gates
+        let mut gpu = GpuStateVec::new(4).unwrap();
+        let mut cpu = StateVec::new(4);
+
+        // Layer 1: Hadamards
+        for q in 0usize..4 {
+            #[allow(clippy::cast_possible_truncation)]
+            gpu.h(q as u32);
+            cpu.h(q);
+        }
+
+        // Layer 2: Rotations
+        gpu.rz(0.3, 0);
+        cpu.rz(0.3, 0);
+        gpu.rx(0.5, 1);
+        cpu.rx(0.5, 1);
+        gpu.ry(0.7, 2);
+        cpu.ry(0.7, 2);
+        gpu.rz(1.1, 3);
+        cpu.rz(1.1, 3);
+
+        // Layer 3: Entangling gates
+        gpu.cx(0, 1);
+        cpu.cx(0, 1);
+        gpu.cx(2, 3);
+        cpu.cx(2, 3);
+
+        // Layer 4: More rotations
+        gpu.rz(0.2, 0);
+        cpu.rz(0.2, 0);
+        gpu.rz(0.4, 1);
+        cpu.rz(0.4, 1);
+
+        // Layer 5: Cross entanglement
+        gpu.cx(1, 2);
+        cpu.cx(1, 2);
+
+        let max_diff = compare_states(&gpu, &cpu);
+        assert!(
+            max_diff < TOLERANCE,
+            "Complex circuit mismatch: max_diff = {max_diff}"
+        );
+    }
+
+    #[test]
+    fn test_compare_reset() {
+        let mut gpu = GpuStateVec::new(2).unwrap();
+        let mut cpu = StateVec::new(2);
+
+        // Apply some gates
+        gpu.h(0);
+        gpu.cx(0, 1);
+        cpu.h(0);
+        cpu.cx(0, 1);
+
+        // Reset both
+        gpu.reset();
+        cpu.reset();
+
+        let max_diff = compare_states(&gpu, &cpu);
+        assert!(
+            max_diff < TOLERANCE,
+            "Reset state mismatch: max_diff = {max_diff}"
+        );
     }
 }

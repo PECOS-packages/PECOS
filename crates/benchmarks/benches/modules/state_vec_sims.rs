@@ -13,14 +13,14 @@
 //! State vector simulator benchmarks comparing GPU and CPU implementations.
 //!
 //! Compares performance of:
-//! - `WgpuStateVec` (GPU via wgpu/Vulkan/Metal/DX12)
+//! - `GpuStateVec` (GPU via wgpu/Vulkan/Metal/DX12)
 //! - `QuestStateVec` (`QuEST` - CPU or CUDA)
 //! - `QulacsStateVec` (Qulacs - CPU)
 //! - `StateVec` (pecos-qsim pure Rust CPU)
 //!
 //! Run with specific features:
 //! ```
-//! cargo bench -p benchmarks --features gpu-sims        # WgpuStateVec only
+//! cargo bench -p benchmarks --features gpu-sims        # GpuStateVec only
 //! cargo bench -p benchmarks --features quest-cuda      # QuEST with CUDA
 //! cargo bench -p benchmarks --features all-sims        # All simulators
 //! ```
@@ -30,7 +30,7 @@ use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, 
 use std::hint::black_box;
 
 #[cfg(feature = "gpu-sims")]
-use pecos_gpu_sims::WgpuStateVec;
+use pecos_gpu_sims::GpuStateVec;
 
 #[cfg(all(feature = "quest", not(feature = "quest-cuda")))]
 use pecos_quest::QuestStateVec;
@@ -96,14 +96,14 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
             },
         );
 
-        // Benchmark WgpuStateVec (GPU)
+        // Benchmark GpuStateVec (GPU)
         #[cfg(feature = "gpu-sims")]
         {
             // Safe: num_qubits comes from configs array with small values (10-22)
             #[allow(clippy::cast_possible_truncation)]
-            if let Ok(mut sim) = WgpuStateVec::new(num_qubits as u32) {
+            if let Ok(mut sim) = GpuStateVec::new(num_qubits as u32) {
                 group.bench_with_input(
-                    BenchmarkId::new("WgpuStateVec_GPU", &label),
+                    BenchmarkId::new("GpuStateVec_GPU", &label),
                     &(num_qubits, num_layers),
                     |b, &(nq, nl)| {
                         b.iter(|| {

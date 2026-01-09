@@ -10,9 +10,9 @@ use pecos_engines::{
     Engine, IntoQuantumEngineBuilder, QuantumEngine, QuantumEngineBuilder,
     byte_message::{ByteMessage, GateType},
 };
-use pecos_qsim::{
-    ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
-};
+#[cfg(feature = "cuda")]
+use pecos_qsim::MeasurementResult;
+use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use std::any::Any;
 use std::fmt::Debug;
 

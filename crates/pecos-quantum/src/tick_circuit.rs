@@ -721,7 +721,11 @@ impl TickCircuit {
     /// assert_eq!(removed, Some(2));  // H on q0 and CX on q2,q3 removed
     /// assert_eq!(circuit.get_tick(0).unwrap().len(), 1);  // Only X remains
     /// ```
-    pub fn discard(&mut self, qubits: &[impl Into<QubitId> + Copy], tick_idx: usize) -> Option<usize> {
+    pub fn discard(
+        &mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+        tick_idx: usize,
+    ) -> Option<usize> {
         let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| q.into()).collect();
         self.get_tick_mut(tick_idx)
             .map(|tick| tick.discard(&qubit_ids))
@@ -749,7 +753,7 @@ impl TickCircuit {
     /// }
     /// ```
     pub fn iter_gates(&self) -> impl Iterator<Item = &Gate> {
-        self.ticks.iter().flat_map(|tick| tick.gates())
+        self.ticks.iter().flat_map(Tick::gates)
     }
 
     /// Iterate over all gates with their tick index.
@@ -992,36 +996,59 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::z(qubits))
     }
 
-    /// Apply S gate(s) (sqrt-Z) to one or more qubits.
-    pub fn sz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
-        self.add_gate(Gate::simple(
-            GateType::SZ,
-            qubits.iter().map(|&q| q.into()).collect(),
-        ))
+    /// Apply Identity gate(s) to one or more qubits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().i(&[0]);           // Single qubit
+    /// circuit.tick().i(&[1, 2, 3]);     // Multiple qubits
+    /// ```
+    pub fn i(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::i(qubits))
     }
 
-    /// Apply S-dagger gate(s) to one or more qubits.
+    /// Apply SX gate(s) (sqrt-X) to one or more qubits.
+    pub fn sx(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::sx(qubits))
+    }
+
+    /// Apply SX-dagger gate(s) to one or more qubits.
+    pub fn sxdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::sxdg(qubits))
+    }
+
+    /// Apply SY gate(s) (sqrt-Y) to one or more qubits.
+    pub fn sy(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::sy(qubits))
+    }
+
+    /// Apply SY-dagger gate(s) to one or more qubits.
+    pub fn sydg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::sydg(qubits))
+    }
+
+    /// Apply SZ gate(s) (sqrt-Z) to one or more qubits.
+    pub fn sz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::sz(qubits))
+    }
+
+    /// Apply SZ-dagger gate(s) to one or more qubits.
     pub fn szdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
-        self.add_gate(Gate::simple(
-            GateType::SZdg,
-            qubits.iter().map(|&q| q.into()).collect(),
-        ))
+        self.add_gate(Gate::szdg(qubits))
     }
 
     /// Apply T gate(s) to one or more qubits.
     pub fn t(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
-        self.add_gate(Gate::simple(
-            GateType::T,
-            qubits.iter().map(|&q| q.into()).collect(),
-        ))
+        self.add_gate(Gate::t(qubits))
     }
 
     /// Apply T-dagger gate(s) to one or more qubits.
     pub fn tdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
-        self.add_gate(Gate::simple(
-            GateType::Tdg,
-            qubits.iter().map(|&q| q.into()).collect(),
-        ))
+        self.add_gate(Gate::tdg(qubits))
     }
 
     /// Apply RX rotation(s) to one or more qubits.
@@ -1038,18 +1065,75 @@ impl<'a> TickHandle<'a> {
     /// // Multiple qubits with same angle
     /// circuit.tick().rx(PI / 4.0, &[1, 2, 3]);
     /// ```
-    pub fn rx(&mut self, theta: impl Into<Angle64>, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+    pub fn rx(
+        &mut self,
+        theta: impl Into<Angle64>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
         self.add_gate(Gate::rx(theta.into(), qubits))
     }
 
     /// Apply RY rotation(s) to one or more qubits.
-    pub fn ry(&mut self, theta: impl Into<Angle64>, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+    pub fn ry(
+        &mut self,
+        theta: impl Into<Angle64>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
         self.add_gate(Gate::ry(theta.into(), qubits))
     }
 
     /// Apply RZ rotation(s) to one or more qubits.
-    pub fn rz(&mut self, theta: impl Into<Angle64>, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+    pub fn rz(
+        &mut self,
+        theta: impl Into<Angle64>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
         self.add_gate(Gate::rz(theta.into(), qubits))
+    }
+
+    /// Apply R1XY rotation(s) to one or more qubits.
+    ///
+    /// This is a single-qubit rotation parameterized by two angles (theta, phi).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    /// use std::f64::consts::PI;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().r1xy(PI / 2.0, PI / 4.0, &[0]);
+    /// ```
+    pub fn r1xy(
+        &mut self,
+        theta: impl Into<Angle64>,
+        phi: impl Into<Angle64>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
+        self.add_gate(Gate::r1xy(theta.into(), phi.into(), qubits))
+    }
+
+    /// Apply U gate(s) (general single-qubit unitary) to one or more qubits.
+    ///
+    /// The U gate is parameterized by three angles (theta, phi, lambda).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    /// use std::f64::consts::PI;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().u(PI / 2.0, 0.0, PI, &[0]);
+    /// ```
+    pub fn u(
+        &mut self,
+        theta: impl Into<Angle64>,
+        phi: impl Into<Angle64>,
+        lambda: impl Into<Angle64>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
+        self.add_gate(Gate::u(theta.into(), phi.into(), lambda.into(), qubits))
     }
 
     // =========================================================================
@@ -1076,6 +1160,42 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::cx(pairs))
     }
 
+    /// Apply CY gate(s) to one or more qubit pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().cy(&[(0, 1)]);
+    /// circuit.tick().cy(&[(2, 3), (4, 5)]);
+    /// ```
+    pub fn cy(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::cy(pairs))
+    }
+
+    /// Apply CZ gate(s) to one or more qubit pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().cz(&[(0, 1)]);
+    /// circuit.tick().cz(&[(2, 3), (4, 5)]);
+    /// ```
+    pub fn cz(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::cz(pairs))
+    }
+
     /// Apply SZZ gate(s) (sqrt-ZZ) to one or more qubit pairs.
     pub fn szz(
         &mut self,
@@ -1090,6 +1210,44 @@ impl<'a> TickHandle<'a> {
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
         self.add_gate(Gate::szzdg(pairs))
+    }
+
+    /// Apply RXX rotation(s) to one or more qubit pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    /// use std::f64::consts::PI;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().rxx(PI / 4.0, &[(0, 1)]);
+    /// ```
+    pub fn rxx(
+        &mut self,
+        theta: impl Into<Angle64>,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::rxx(theta.into(), pairs))
+    }
+
+    /// Apply RYY rotation(s) to one or more qubit pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    /// use std::f64::consts::PI;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().ryy(PI / 4.0, &[(0, 1)]);
+    /// ```
+    pub fn ryy(
+        &mut self,
+        theta: impl Into<Angle64>,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::ryy(theta.into(), pairs))
     }
 
     /// Apply RZZ rotation(s) to one or more qubit pairs.
@@ -1417,7 +1575,7 @@ mod tests {
         let mut tc = TickCircuit::new();
 
         // To add multiple preps to the same tick, use bulk prep
-        tc.tick().pz(&[0, 1]);  // Both preps in tick 0
+        tc.tick().pz(&[0, 1]); // Both preps in tick 0
 
         tc.tick().h(&[0]);
         tc.tick().cx(&[(0, 1)]);
@@ -1426,7 +1584,7 @@ mod tests {
         tc.tick().mz(&[0, 1]);
 
         assert_eq!(tc.num_ticks(), 4);
-        assert_eq!(tc.gate_count(), 4);  // 1 bulk prep, 1 H, 1 CX, 1 bulk measure
+        assert_eq!(tc.gate_count(), 4); // 1 bulk prep, 1 H, 1 CX, 1 bulk measure
 
         // Check tick contents
         assert_eq!(tc.get_tick(0).unwrap().len(), 1); // One bulk prep gate
@@ -1517,7 +1675,9 @@ mod tests {
             .pz(&[0])
             .meta("reason", Attribute::String("init".into()));
         tc.tick().h(&[0]);
-        tc.tick().mz(&[0]).meta("basis", Attribute::String("Z".into()));
+        tc.tick()
+            .mz(&[0])
+            .meta("basis", Attribute::String("Z".into()));
 
         assert_eq!(tc.num_ticks(), 3);
 

@@ -45,22 +45,23 @@ impl PyQulacs {
                 self.inner.g(q1, q2);
             }
             "SXX" => {
-                self.inner.rxx(std::f64::consts::FRAC_PI_2, q1, q2);
+                // Use trait decomposition for consistency with StateVec
+                self.inner.sxx(q1, q2);
             }
             "SXXdg" => {
-                self.inner.rxx(-std::f64::consts::FRAC_PI_2, q1, q2);
+                self.inner.sxxdg(q1, q2);
             }
             "SYY" => {
-                self.inner.ryy(std::f64::consts::FRAC_PI_2, q1, q2);
+                self.inner.syy(q1, q2);
             }
             "SYYdg" => {
-                self.inner.ryy(-std::f64::consts::FRAC_PI_2, q1, q2);
+                self.inner.syydg(q1, q2);
             }
             "SZZ" | "SqrtZZ" => {
-                self.inner.rzz(std::f64::consts::FRAC_PI_2, q1, q2);
+                self.inner.szz(q1, q2);
             }
             "SZZdg" => {
-                self.inner.rzz(-std::f64::consts::FRAC_PI_2, q1, q2);
+                self.inner.szzdg(q1, q2);
             }
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

@@ -598,6 +598,10 @@ impl QASMEngine {
             | GateType::Y
             | GateType::Z
             | GateType::H
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
             | GateType::SZ
             | GateType::SZdg
             | GateType::T
@@ -610,6 +614,8 @@ impl QASMEngine {
             GateType::RX
             | GateType::RY
             | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
             | GateType::RZZ
             | GateType::R1XY
             | GateType::U => {

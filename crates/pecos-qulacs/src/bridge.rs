@@ -38,10 +38,9 @@ pub mod ffi {
         fn apply_sdag(state: Pin<&mut QulacsState>, qubit: usize);
         fn apply_t(state: Pin<&mut QulacsState>, qubit: usize);
         fn apply_tdag(state: Pin<&mut QulacsState>, qubit: usize);
-        fn apply_sqrt_x(state: Pin<&mut QulacsState>, qubit: usize);
-        fn apply_sqrt_xdag(state: Pin<&mut QulacsState>, qubit: usize);
-        fn apply_sqrt_y(state: Pin<&mut QulacsState>, qubit: usize);
-        fn apply_sqrt_ydag(state: Pin<&mut QulacsState>, qubit: usize);
+
+        // NOTE: sqrt_x, sqrt_xdag, sqrt_y, sqrt_ydag removed - we use trait
+        // decompositions instead for consistency with StateVec.
 
         // Rotation gates
         fn apply_rx(state: Pin<&mut QulacsState>, qubit: usize, angle: f64);

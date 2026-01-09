@@ -17,10 +17,14 @@ pub enum GateType {
     X = 0b01,
     Z = 0b10,
     Y = 0b11,
-    // SX = 4,
-    // SXdg = 5,
-    // SY = 6
-    // SYdg = 7
+    /// sqrt(X) gate
+    SX = 4,
+    /// sqrt(X)-dagger gate
+    SXdg = 5,
+    /// sqrt(Y) gate
+    SY = 6,
+    /// sqrt(Y)-dagger gate
+    SYdg = 7,
     SZ = 8,
     SZdg = 9,
     H = 10,
@@ -58,9 +62,10 @@ pub enum GateType {
     // SWAP = 59
     // iSWAP = 60
     // G = 61
-
-    // RXX = 80
-    // RYY = 81
+    /// RXX rotation gate
+    RXX = 80,
+    /// RYY rotation gate
+    RYY = 81,
     RZZ = 82,
     // RXXYYZZ
 
@@ -99,6 +104,10 @@ impl From<u8> for GateType {
             1 => GateType::X,
             2 => GateType::Z,
             3 => GateType::Y,
+            4 => GateType::SX,
+            5 => GateType::SXdg,
+            6 => GateType::SY,
+            7 => GateType::SYdg,
             8 => GateType::SZ,
             9 => GateType::SZdg,
             10 => GateType::H,
@@ -114,6 +123,8 @@ impl From<u8> for GateType {
             52 => GateType::CZ,
             57 => GateType::SZZ,
             58 => GateType::SZZdg,
+            80 => GateType::RXX,
+            81 => GateType::RYY,
             82 => GateType::RZZ,
             104 => GateType::Measure,
             105 => GateType::MeasureLeaked,
@@ -143,6 +154,10 @@ impl GateType {
             | GateType::X
             | GateType::Y
             | GateType::Z
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
             | GateType::SZ
             | GateType::SZdg
             | GateType::H
@@ -163,7 +178,13 @@ impl GateType {
             | GateType::QFree => 0,
 
             // Gates with one parameter
-            GateType::RX | GateType::RY | GateType::RZ | GateType::RZZ | GateType::Idle => 1,
+            GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::Idle => 1,
 
             // Gates with two parameters
             GateType::R1XY => 2,
@@ -187,6 +208,10 @@ impl GateType {
             | GateType::X
             | GateType::Y
             | GateType::Z
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
             | GateType::SZ
             | GateType::SZdg
             | GateType::H
@@ -213,6 +238,8 @@ impl GateType {
             | GateType::CZ
             | GateType::SZZ
             | GateType::SZZdg
+            | GateType::RXX
+            | GateType::RYY
             | GateType::RZZ => 2,
         }
     }
@@ -225,7 +252,12 @@ impl GateType {
     pub const fn angle_arity(self) -> usize {
         match self {
             // Rotation gates with angle parameters
-            GateType::RX | GateType::RY | GateType::RZ | GateType::RZZ => 1,
+            GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ => 1,
             GateType::R1XY => 2,
             GateType::U => 3,
             // All other gates have no angle parameters
@@ -268,6 +300,10 @@ impl fmt::Display for GateType {
             GateType::X => write!(f, "X"),
             GateType::Y => write!(f, "Y"),
             GateType::Z => write!(f, "Z"),
+            GateType::SX => write!(f, "SX"),
+            GateType::SXdg => write!(f, "SXdg"),
+            GateType::SY => write!(f, "SY"),
+            GateType::SYdg => write!(f, "SYdg"),
             GateType::SZ => write!(f, "SZ"),
             GateType::SZdg => write!(f, "SZdg"),
             GateType::H => write!(f, "H"),
@@ -283,6 +319,8 @@ impl fmt::Display for GateType {
             GateType::CZ => write!(f, "CZ"),
             GateType::SZZ => write!(f, "SZZ"),
             GateType::SZZdg => write!(f, "SZZdg"),
+            GateType::RXX => write!(f, "RXX"),
+            GateType::RYY => write!(f, "RYY"),
             GateType::RZZ => write!(f, "RZZ"),
             GateType::Measure => write!(f, "Measure"),
             GateType::MeasureLeaked => write!(f, "MeasureLeaked"),

@@ -1678,6 +1678,7 @@ entry:
         // Always register the execution context on the current thread
         // This is necessary because TLS registration is per-thread, so the worker thread
         // needs to register the same context that was created on the main thread
+        let current_thread_id = std::thread::current().id();
         if let Some(ExecutionContextPtr(ctx)) = self.execution_context {
             let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
                 pecos_qis_lib
@@ -1688,8 +1689,13 @@ entry:
                         ))
                     })?
             };
+            debug!("execute_program: registering context {ctx:?} on thread {current_thread_id:?}");
             unsafe { register_fn(ctx) };
-            debug!("Registered execution context on current thread: {ctx:?}");
+            debug!("execute_program: context {ctx:?} registered on thread {current_thread_id:?}");
+        } else {
+            debug!(
+                "execute_program: NO execution context to register on thread {current_thread_id:?}"
+            );
         }
 
         // Step 2: Reset the QIS interface via the cdylib
@@ -1845,7 +1851,8 @@ impl QisInterface for QisHeliosInterface {
     }
 
     fn enable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
-        debug!("Enabling dynamic execution mode");
+        let main_thread_id = std::thread::current().id();
+        debug!("Enabling dynamic execution mode on main thread {main_thread_id:?}");
 
         // Get the process-wide QIS FFI library singleton
         // IMPORTANT: We use a process-wide singleton to ensure all code uses the same
@@ -1860,7 +1867,9 @@ impl QisInterface for QisHeliosInterface {
         // is no longer using the old context (it was kept alive during disable_dynamic_mode
         // to avoid a use-after-free race condition).
         if let Some(ExecutionContextPtr(old_ctx)) = self.execution_context.take() {
-            debug!("Destroying previous execution context: {old_ctx:?}");
+            debug!(
+                "enable_dynamic_mode: destroying previous execution context {old_ctx:?} on thread {main_thread_id:?}"
+            );
             let destroy_fn: Symbol<DestroyExecutionContextFn> = unsafe {
                 lib.get(b"pecos_destroy_execution_context\0").map_err(|e| {
                     InterfaceError::ExecutionError(format!(
@@ -1880,7 +1889,9 @@ impl QisInterface for QisHeliosInterface {
             })?
         };
         let ctx = unsafe { create_fn() };
-        debug!("Created execution context: {ctx:?}");
+        debug!(
+            "enable_dynamic_mode: created execution context {ctx:?} on main thread {main_thread_id:?}"
+        );
         self.execution_context = Some(ExecutionContextPtr(ctx));
 
         // Register the execution context on this (main) thread
@@ -1892,8 +1903,11 @@ impl QisInterface for QisHeliosInterface {
                     ))
                 })?
         };
+        debug!(
+            "enable_dynamic_mode: registering context {ctx:?} on main thread {main_thread_id:?}"
+        );
         unsafe { register_fn(ctx) };
-        debug!("Registered execution context: {ctx:?}");
+        debug!("enable_dynamic_mode: context {ctx:?} registered on main thread {main_thread_id:?}");
 
         // Now enable dynamic mode
         let enable_fn: Symbol<EnableDynamicModeFn> = unsafe {
@@ -1904,13 +1918,16 @@ impl QisInterface for QisHeliosInterface {
             })?
         };
         unsafe { enable_fn() };
-        debug!("Dynamic mode enabled via FFI");
+        debug!(
+            "enable_dynamic_mode: dynamic mode enabled via FFI on main thread {main_thread_id:?}"
+        );
 
         Ok(())
     }
 
     fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
-        debug!("Disabling dynamic execution mode");
+        let worker_thread_id = std::thread::current().id();
+        debug!("Disabling dynamic execution mode on worker thread {worker_thread_id:?}");
 
         // Get the process-wide QIS FFI library singleton
         let lib = Self::get_qis_ffi_lib_singleton()?;
@@ -1924,7 +1941,9 @@ impl QisInterface for QisHeliosInterface {
             })?
         };
         unsafe { disable_fn() };
-        debug!("Dynamic mode disabled via FFI");
+        debug!(
+            "disable_dynamic_mode: dynamic mode disabled via FFI on worker thread {worker_thread_id:?}"
+        );
 
         // Unregister the execution context from this (worker) thread's TLS
         let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
@@ -1935,8 +1954,13 @@ impl QisInterface for QisHeliosInterface {
                     ))
                 })?
         };
+        debug!(
+            "disable_dynamic_mode: unregistering context from worker thread {worker_thread_id:?}"
+        );
         unsafe { register_fn(std::ptr::null_mut()) };
-        debug!("Unregistered execution context from worker thread");
+        debug!(
+            "disable_dynamic_mode: context unregistered from worker thread {worker_thread_id:?}"
+        );
 
         // IMPORTANT: Do NOT destroy the execution context here!
         // The main thread may still be inside pecos_wait_for_need_result using the context.

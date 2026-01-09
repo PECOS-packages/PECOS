@@ -821,6 +821,7 @@ pub unsafe extern "C" fn __quantum__qis__mz__body(qubit: i64) -> i32 {
 /// string struct with at least `label_len + 1` bytes. Invalid pointers will cause undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value: bool) {
+    let thread_id = std::thread::current().id();
     let Ok(label_len_usize) = usize::try_from(label_len) else {
         log::error!("print_bool: invalid label length {label_len}");
         return;
@@ -836,9 +837,6 @@ pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value:
         return;
     };
 
-    // Log the measurement for debugging
-    log::debug!("print_bool called: {label} = {value}");
-
     // Strip the USER:BOOL: or USER:BOOLARR: prefix if present
     let name = if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
         stripped
@@ -848,11 +846,20 @@ pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value:
         label
     };
 
-    // Store in the execution context's named results
-    if let Some(ctx) = crate::get_execution_context() {
+    // Get execution context and store the result
+    let ctx_ptr = crate::get_execution_context();
+    log::debug!(
+        "print_bool: thread {thread_id:?}, name='{name}', value={value}, context={ctx_ptr:?}"
+    );
+
+    if let Some(ctx) = ctx_ptr {
         // SAFETY: Context is valid for duration of execution
         let ctx = unsafe { &*ctx };
         ctx.store_named_bool(name, value);
+    } else {
+        log::warn!(
+            "print_bool: NO EXECUTION CONTEXT on thread {thread_id:?} for '{name}' = {value}"
+        );
     }
 }
 
@@ -972,6 +979,7 @@ pub unsafe extern "C" fn print_bool_arr(
 /// string data of at least `label_len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_bool_selene(label_ptr: *const u8, label_len: i64, value: bool) {
+    let thread_id = std::thread::current().id();
     let Ok(label_len_usize) = usize::try_from(label_len) else {
         log::error!("print_bool_selene: invalid label length {label_len}");
         return;
@@ -994,10 +1002,19 @@ pub unsafe extern "C" fn print_bool_selene(label_ptr: *const u8, label_len: i64,
         label
     };
 
-    // Store in the execution context's named results
-    if let Some(ctx) = crate::get_execution_context() {
+    // Get execution context and store the result
+    let ctx_ptr = crate::get_execution_context();
+    log::debug!(
+        "print_bool_selene: thread {thread_id:?}, name='{name}', value={value}, context={ctx_ptr:?}"
+    );
+
+    if let Some(ctx) = ctx_ptr {
         let ctx = unsafe { &*ctx };
         ctx.store_named_bool(name, value);
+    } else {
+        log::warn!(
+            "print_bool_selene: NO EXECUTION CONTEXT on thread {thread_id:?} for '{name}' = {value}"
+        );
     }
 }
 

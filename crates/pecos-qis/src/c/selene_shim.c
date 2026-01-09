@@ -230,12 +230,15 @@ EXPORT_API selene_void_result_t selene_refcount_decrement(SeleneInstance *instan
 // Print operations (for debug/output)
 // =============================================================================
 
+// Selene-compatible FFI functions that expect direct string data (not tket2 format)
+IMPORT_API extern void print_bool_selene(const uint8_t *label_ptr, int64_t label_len, bool value);
+IMPORT_API extern void print_bool_arr_selene(const uint8_t *label_ptr, int64_t label_len,
+                                             const bool *arr_ptr, uint64_t arr_len);
+
 EXPORT_API selene_void_result_t selene_print_bool(SeleneInstance *instance, selene_string_t tag, bool value) {
     (void)instance;
-    // Use the print_bool FFI function if available
-    // Signature: pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value: bool)
-    IMPORT_API extern void print_bool(const uint8_t *label_ptr, int64_t label_len, bool value);
-    print_bool((const uint8_t*)tag.data, (int64_t)tag.length, value);
+    // Use the Selene-compatible FFI function (direct string data format)
+    print_bool_selene((const uint8_t*)tag.data, (int64_t)tag.length, value);
     return SUCCESS(selene_void_result_t);
 }
 
@@ -260,11 +263,8 @@ EXPORT_API selene_void_result_t selene_print_f64(SeleneInstance *instance, selen
 EXPORT_API selene_void_result_t selene_print_bool_array(SeleneInstance *instance, selene_string_t tag,
                                              const bool *ptr, uint64_t length) {
     (void)instance;
-    printf("%.*s: [", (int)tag.length, tag.data);
-    for (uint64_t i = 0; i < length; i++) {
-        printf("%s%s", ptr[i] ? "true" : "false", (i < length - 1) ? ", " : "");
-    }
-    printf("]\n");
+    // Use the Selene-compatible FFI function (direct string/array data format)
+    print_bool_arr_selene((const uint8_t*)tag.data, (int64_t)tag.length, ptr, length);
     return SUCCESS(selene_void_result_t);
 }
 

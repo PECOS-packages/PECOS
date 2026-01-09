@@ -19,6 +19,7 @@ to ensure they run correctly. It supports both Python and Rust code examples.
 
 from __future__ import annotations
 
+import argparse
 import re
 import shutil
 import subprocess
@@ -35,41 +36,88 @@ def find_markdown_files() -> list[Path]:
     return list(DOCS_DIR.rglob("*.md"))
 
 
-def extract_code_blocks(file_path: str | Path, language: str = "python") -> list[str]:
-    """Extract code blocks of a specific language from a Markdown file."""
+def _dedent_code(code: str) -> str:
+    """Remove common leading indentation from code."""
+    lines = code.strip("\n").split("\n")
+    min_indent = float("inf")
+    for line in lines:
+        if line.strip():
+            indent = len(line) - len(line.lstrip())
+            min_indent = min(min_indent, indent)
+
+    if min_indent != float("inf"):
+        dedented_lines = []
+        for line in lines:
+            if line.strip():
+                dedented_lines.append(line[min_indent:])
+            else:
+                dedented_lines.append(line)
+        return "\n".join(dedented_lines)
+    return code.strip()
+
+
+def extract_code_blocks(
+    file_path: str | Path,
+    language: str = "python",
+) -> list[tuple[str, bool]]:
+    """Extract code blocks of a specific language from a Markdown file.
+
+    Returns:
+        List of tuples (code_block, should_skip) where should_skip is True if
+        the block has a skip marker.
+
+    Skip markers supported:
+        - <!--skip--> or <!--skip: reason--> before the code fence
+        - <!--pytest.mark.skip--> before the code fence
+        - ```python,skip or ```rust,ignore suffix on the fence
+
+    Hidden blocks (```hidden-python```) are accumulated as preamble and
+    prepended to subsequent visible blocks for testing. Use <!--preamble-reset-->
+    to clear accumulated preamble.
+    """
     with Path(file_path).open(encoding="utf-8") as f:
         content = f.read()
 
-    # Find all code blocks with the specified language
-    pattern = rf"```(?:{language}|exec-{language}|hidden-{language})(.*?)```"
-    blocks = re.findall(pattern, content, re.DOTALL)
+    # Pattern to find code blocks with optional skip/reset marker before them
+    # Captures: (marker_comment, block_type, lang_suffix, code)
+    marker_pattern = r"(<!--\s*(?:skip[^>]*|pytest\.mark\.skip(?:if)?[^>]*|preamble-reset)\s*-->\s*)?"
+    fence_pattern = rf"```(hidden-)?{language}(,(?:skip|ignore|no_run))?(.*?)```"
+    full_pattern = marker_pattern + fence_pattern
 
-    # Clean up the blocks and normalize indentation
-    cleaned_blocks = []
-    for block in blocks:
-        # Remove leading/trailing empty lines
-        lines = block.strip("\n").split("\n")
+    matches = re.findall(full_pattern, content, re.DOTALL)
 
-        # Find minimum indentation (ignoring empty lines)
-        min_indent = float("inf")
-        for line in lines:
-            if line.strip():  # Skip empty lines
-                indent = len(line) - len(line.lstrip())
-                min_indent = min(min_indent, indent)
+    blocks = []
+    preamble = []
 
-        # Remove minimum indentation from all lines
-        if min_indent != float("inf"):
-            dedented_lines = []
-            for line in lines:
-                if line.strip():  # Non-empty line
-                    dedented_lines.append(line[min_indent:])
-                else:  # Empty line
-                    dedented_lines.append(line)
-            cleaned_blocks.append("\n".join(dedented_lines))
+    for marker_comment, is_hidden, lang_suffix, code in matches:
+        # Check for preamble reset
+        if marker_comment and "preamble-reset" in marker_comment:
+            preamble = []
+            continue
+
+        should_skip = bool(
+            marker_comment and "skip" in marker_comment.lower(),
+        ) or lang_suffix in (
+            ",skip",
+            ",ignore",
+            ",no_run",
+        )
+
+        cleaned_code = _dedent_code(code)
+
+        if is_hidden:
+            # Hidden blocks accumulate as preamble (not tested individually)
+            preamble.append(cleaned_code)
         else:
-            cleaned_blocks.append(block.strip())
+            # Visible blocks get preamble prepended
+            full_code = (
+                "\n\n".join(preamble) + "\n\n" + cleaned_code
+                if preamble
+                else cleaned_code
+            )
+            blocks.append((full_code, should_skip))
 
-    return cleaned_blocks
+    return blocks
 
 
 def test_python_block(
@@ -196,27 +244,68 @@ def test_rust_block(
 
 def main() -> None:
     """Main function to test all code examples in documentation."""
+    parser = argparse.ArgumentParser(description="Test code examples in documentation")
+    parser.add_argument(
+        "--skip-rust",
+        action="store_true",
+        default=True,  # Skip Rust by default - needs crate context for compilation
+        help="Skip Rust code blocks (default: True, Rust snippets need crate context)",
+    )
+    parser.add_argument(
+        "--test-rust",
+        action="store_true",
+        help="Test Rust code blocks (overrides --skip-rust)",
+    )
+    parser.add_argument(
+        "--python-only",
+        action="store_true",
+        help="Only test Python code blocks",
+    )
+    args = parser.parse_args()
+
+    skip_rust = args.skip_rust and not args.test_rust
+
     print("Testing PECOS documentation code examples...")
+    print(
+        "Skip markers: <!--skip-->, <!--pytest.mark.skip-->, ```python,skip, ```rust,ignore",
+    )
+    print(
+        "Hidden preamble: ```hidden-python``` blocks are prepended to subsequent blocks",
+    )
+    if skip_rust:
+        print("Note: Rust blocks skipped by default (use --test-rust to enable)")
 
     markdown_files = find_markdown_files()
     print(f"Found {len(markdown_files)} Markdown files to test")
 
     python_results = []
     rust_results = []
+    python_skipped = 0
+    rust_skipped = 0
 
     # Test Python code blocks
     for file_path in markdown_files:
         python_blocks = extract_code_blocks(file_path, "python")
-        for i, block in enumerate(python_blocks, 1):
+        for i, (block, should_skip) in enumerate(python_blocks, 1):
+            if should_skip:
+                print(f"SKIP: Python block #{i} from {file_path}")
+                python_skipped += 1
+                continue
             result = test_python_block(block, i, file_path)
             python_results.append((file_path, i, result))
 
     # Test Rust code blocks
-    for file_path in markdown_files:
-        rust_blocks = extract_code_blocks(file_path, "rust")
-        for i, block in enumerate(rust_blocks, 1):
-            result = test_rust_block(block, i, file_path)
-            rust_results.append((file_path, i, result))
+    if not args.python_only:
+        for file_path in markdown_files:
+            rust_blocks = extract_code_blocks(file_path, "rust")
+            for i, (block, should_skip) in enumerate(rust_blocks, 1):
+                if should_skip or skip_rust:
+                    rust_skipped += 1
+                    if not skip_rust:  # Only print if individually skipped
+                        print(f"SKIP: Rust block #{i} from {file_path}")
+                    continue
+                result = test_rust_block(block, i, file_path)
+                rust_results.append((file_path, i, result))
 
     # Print summary
     python_passed = sum(1 for _, _, result in python_results if result)
@@ -229,13 +318,15 @@ def main() -> None:
         f"{python_passed / python_total * 100:.1f}%" if python_total > 0 else "N/A"
     )
     print(
-        f"Python: {python_passed}/{python_total} blocks passed ({python_success_rate} success rate)",
+        f"Python: {python_passed}/{python_total} blocks passed, "
+        f"{python_skipped} skipped ({python_success_rate} success rate)",
     )
     rust_success_rate = (
         f"{rust_passed / rust_total * 100:.1f}%" if rust_total > 0 else "N/A"
     )
     print(
-        f"Rust: {rust_passed}/{rust_total} blocks passed ({rust_success_rate} success rate)",
+        f"Rust: {rust_passed}/{rust_total} blocks passed, "
+        f"{rust_skipped} skipped ({rust_success_rate} success rate)",
     )
 
     # Print failed tests

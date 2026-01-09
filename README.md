@@ -28,32 +28,32 @@ For Julia or optional features (LLVM, CUDA), see the [Getting Started Guide](doc
 
 ## Quick Example
 
-Create and simulate a Bell state—an entangled pair of qubits:
+Create and simulate a Bell state—an entangled pair of qubits using [Guppy](https://github.com/CQCL/guppylang), a pythonic quantum programming language:
 
 ```python
-from pecos import sim, Qasm
+from pecos import sim, state_vector
+from guppylang import guppy
+from guppylang.std.quantum import qubit, h, cx, measure
 
-# Define a Bell state circuit
-circuit = Qasm(
-    """
-OPENQASM 2.0;
-include "qelib1.inc";
-qreg q[2];
-creg c[2];
-h q[0];
-cx q[0], q[1];
-measure q -> c;
-"""
-)
+
+@guppy
+def bell_state() -> tuple[bool, bool]:
+    q0 = qubit()
+    q1 = qubit()
+    h(q0)
+    cx(q0, q1)
+    return measure(q0), measure(q1)
+
 
 # Run 10 shots
-results = sim(circuit).seed(42).run(10)
-print(results.to_binary_dict())  # {"c": ["00", "11", "00", ...]} - qubits always match!
+results = sim(bell_state).qubits(2).quantum(state_vector()).seed(42).run(10)
+print(results.to_dict())
+# {'measurement_0': [1, 1, 0, 0, ...], 'measurement_1': [1, 1, 0, 0, ...]}
 ```
 
-The results show `"00"` (both qubits measured `|0⟩`) and `"11"` (both measured `|1⟩`)—never `"01"` or `"10"`. That's quantum entanglement in action.
+The measurements always match (`measurement_0` equals `measurement_1`)—that's quantum entanglement in action.
 
-For a Rust example, see [For Rust Users](#for-rust-users) below.
+For OpenQASM, PHIR, or other formats, see the [documentation](#documentation). For a Rust example, see [For Rust Users](#for-rust-users) below.
 
 ## What Can You Do With PECOS?
 

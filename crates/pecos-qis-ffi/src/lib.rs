@@ -66,6 +66,8 @@ pub struct ExecutionContext {
     pub pending_ops: Mutex<Vec<Operation>>,
     /// Storage for measurement results (shared between threads)
     pub measurement_results: Mutex<BTreeMap<u64, bool>>,
+    /// Storage for named results from `print_bool`/`print_bool_arr` (e.g., "synx", "final")
+    pub named_results: Mutex<BTreeMap<String, Vec<bool>>>,
 }
 
 impl ExecutionContext {
@@ -79,6 +81,7 @@ impl ExecutionContext {
             sync_condvar: Condvar::new(),
             pending_ops: Mutex::new(Vec::new()),
             measurement_results: Mutex::new(BTreeMap::new()),
+            named_results: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -97,6 +100,47 @@ impl ExecutionContext {
         if let Ok(mut ops) = self.pending_ops.lock() {
             ops.clear();
         }
+        if let Ok(mut named) = self.named_results.lock() {
+            named.clear();
+        }
+    }
+
+    /// Store a named result (single bool value)
+    pub fn store_named_bool(&self, name: &str, value: bool) {
+        let thread_id = std::thread::current().id();
+        if let Ok(mut named) = self.named_results.lock() {
+            let entry = named.entry(name.to_string()).or_default();
+            entry.push(value);
+            log::debug!(
+                "ExecutionContext::store_named_bool: thread {:?} stored '{}' = {} (now {} values: {:?})",
+                thread_id,
+                name,
+                value,
+                entry.len(),
+                entry
+            );
+        } else {
+            log::error!(
+                "ExecutionContext::store_named_bool: thread {thread_id:?} failed to acquire lock for '{name}'"
+            );
+        }
+    }
+
+    /// Store a named result array (multiple bool values)
+    pub fn store_named_array(&self, name: &str, values: &[bool]) {
+        if let Ok(mut named) = self.named_results.lock() {
+            let entry = named.entry(name.to_string()).or_default();
+            entry.extend_from_slice(values);
+        }
+    }
+
+    /// Get all named results (returns a clone)
+    #[must_use]
+    pub fn get_named_results(&self) -> BTreeMap<String, Vec<bool>> {
+        self.named_results
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -610,6 +654,88 @@ pub unsafe extern "C" fn pecos_free_operations(ptr: *mut OperationCollector) {
     if !ptr.is_null() {
         // SAFETY: ptr was allocated by Box::into_raw in pecos_get_pending_operations
         drop(unsafe { Box::from_raw(ptr) });
+    }
+}
+
+/// Get named results from execution context as JSON
+///
+/// Returns a pointer to a heap-allocated null-terminated JSON string containing
+/// the named results. Format: `{"name1": [true, false, ...], "name2": [...], ...}`
+///
+/// The caller must free the returned string using `pecos_free_named_results_json`.
+/// Returns null if no context is registered or results are empty.
+///
+/// # Safety
+/// This function is safe to call from any thread. The returned pointer must be freed.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_get_named_results_json() -> *mut std::ffi::c_char {
+    let thread_id = std::thread::current().id();
+    log::debug!("pecos_get_named_results_json: called from thread {thread_id:?}");
+
+    let Some(ctx) = get_execution_context() else {
+        log::warn!(
+            "pecos_get_named_results_json: no execution context registered on thread {thread_id:?}"
+        );
+        return std::ptr::null_mut();
+    };
+
+    log::debug!("pecos_get_named_results_json: found context {ctx:?} on thread {thread_id:?}");
+
+    // SAFETY: Context is valid for duration of execution
+    let ctx = unsafe { &*ctx };
+    let named_results = ctx.get_named_results();
+
+    if named_results.is_empty() {
+        log::debug!(
+            "pecos_get_named_results_json: no named results in context on thread {thread_id:?}"
+        );
+        return std::ptr::null_mut();
+    }
+
+    // Log details about what we're returning
+    log::debug!(
+        "pecos_get_named_results_json: thread {:?} returning {} keys: {:?}",
+        thread_id,
+        named_results.len(),
+        named_results.keys().collect::<Vec<_>>()
+    );
+    for (key, values) in &named_results {
+        log::debug!("  {} -> {} values: {:?}", key, values.len(), values);
+    }
+
+    // Serialize to JSON
+    let json = match serde_json::to_string(&named_results) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("pecos_get_named_results_json: serialization error: {e}");
+            return std::ptr::null_mut();
+        }
+    };
+
+    log::debug!(
+        "pecos_get_named_results_json: returning {} bytes",
+        json.len()
+    );
+
+    // Convert to C string
+    match std::ffi::CString::new(json) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(e) => {
+            log::error!("pecos_get_named_results_json: CString error: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Free a JSON string allocated by `pecos_get_named_results_json`
+///
+/// # Safety
+/// The pointer must have been allocated by `pecos_get_named_results_json`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_free_named_results_json(ptr: *mut std::ffi::c_char) {
+    if !ptr.is_null() {
+        // SAFETY: ptr was allocated by CString::into_raw in pecos_get_named_results_json
+        drop(unsafe { std::ffi::CString::from_raw(ptr) });
     }
 }
 

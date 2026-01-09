@@ -11,6 +11,7 @@ pub mod cuda_cmd;
 pub mod docs_cmd;
 pub mod features_cmd;
 pub mod go_cmd;
+pub mod gpu_cmd;
 pub mod info;
 pub mod julia_cmd;
 pub mod list;
@@ -156,6 +157,20 @@ pub enum CudaCommands {
     Validate {
         /// Path to CUDA installation (uses detected path if not specified)
         path: Option<String>,
+    },
+}
+
+// ============================================================================
+// GPU Commands (wgpu-based GPU detection)
+// ============================================================================
+
+#[derive(Subcommand, Clone)]
+pub enum GpuCommands {
+    /// Check if a GPU (wgpu adapter) is available
+    Check {
+        /// Suppress output (exit code only)
+        #[arg(short, long)]
+        quiet: bool,
     },
 }
 
@@ -402,6 +417,11 @@ pub fn run_python(command: &PythonCommands) -> pecos_build::Result<()> {
 /// Run a CUDA subcommand
 pub fn run_cuda(command: CudaCommands) -> pecos_build::Result<()> {
     cuda_cmd::run(command)
+}
+
+/// Run a GPU subcommand
+pub fn run_gpu(command: &GpuCommands) -> pecos_build::Result<()> {
+    gpu_cmd::run(command)
 }
 
 /// Run a Julia subcommand

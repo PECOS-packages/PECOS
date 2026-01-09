@@ -3,8 +3,8 @@ use env_logger::Env;
 
 mod cli;
 use cli::{
-    CudaCommands, DepsCommands, FeaturesCommands, GoCommands, JuliaCommands, LlvmCommands,
-    PythonCommands, RustCommands, SeleneCommands,
+    CudaCommands, DepsCommands, FeaturesCommands, GoCommands, GpuCommands, JuliaCommands,
+    LlvmCommands, PythonCommands, RustCommands, SeleneCommands,
 };
 
 // Runtime-only imports
@@ -82,6 +82,11 @@ enum Commands {
     Cuda {
         #[command(subcommand)]
         command: CudaCommands,
+    },
+    /// GPU (wgpu) availability check
+    Gpu {
+        #[command(subcommand)]
+        command: GpuCommands,
     },
     /// Julia build and test commands
     #[command(visible_alias = "jl")]
@@ -594,6 +599,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Rust { command } => cli::run_rust(command)?,
         Commands::Python { command } => cli::run_python(command)?,
         Commands::Cuda { command } => cli::run_cuda(command.clone())?,
+        Commands::Gpu { command } => cli::run_gpu(command)?,
         Commands::Julia { command } => cli::run_julia(command)?,
         Commands::Go { command } => cli::run_go(command)?,
         Commands::Llvm { command } => cli::run_llvm(command.clone())?,

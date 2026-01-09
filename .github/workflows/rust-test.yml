@@ -290,7 +290,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           # With CUDA Toolkit installed, we can compile with CUDA features
-          cargo test --no-run --workspace --exclude pecos-decoders --features llvm,cuda
+          # Exclude pecos-gpu-sims: Ubuntu CI runners have no GPU (Vulkan/Metal/DX12)
+          cargo test --no-run --workspace --exclude pecos-decoders --exclude pecos-gpu-sims --features llvm,cuda
           cargo test --no-run -p pecos-decoders --all-features
 
       - name: Compile tests (Windows)
@@ -321,8 +322,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           # With CUDA Toolkit installed, we can test with CUDA features
-          # Note: GPU tests will detect no actual GPU at runtime and skip GPU-specific tests
-          cargo test --workspace --exclude pecos-decoders --features llvm,cuda
+          # Exclude pecos-gpu-sims: Ubuntu CI runners have no GPU (Vulkan/Metal/DX12)
+          cargo test --workspace --exclude pecos-decoders --exclude pecos-gpu-sims --features llvm,cuda
           cargo test -p pecos-decoders --all-features
 
       - name: Run tests (Windows)

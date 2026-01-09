@@ -11,6 +11,10 @@ categories.workspace = true
 description = "Cross-platform GPU quantum simulators (wgpu-based)"
 readme = "README.md"
 
+[[bin]]
+name = "gpu-check"
+path = "src/bin/gpu_check.rs"
+
 [dependencies]
 wgpu.workspace = true
 pollster.workspace = true

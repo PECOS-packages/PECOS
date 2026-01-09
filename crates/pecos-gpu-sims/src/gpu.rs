@@ -22,7 +22,11 @@ pub enum GpuError {
 impl std::fmt::Display for GpuError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GpuError::NoAdapter => write!(f, "No suitable GPU adapter found"),
+            GpuError::NoAdapter => write!(
+                f,
+                "No GPU adapter found. GpuStateVec requires a GPU with Vulkan, Metal, or DX12 support. \
+                 Check GPU availability with `gpu-check` or use a CPU-based simulator instead (e.g., StateVec)."
+            ),
             GpuError::DeviceCreation(e) => write!(f, "Failed to create GPU device: {e}"),
             GpuError::BufferMap(e) => write!(f, "Buffer mapping failed: {e}"),
             GpuError::TooManyQubits { requested, max } => {

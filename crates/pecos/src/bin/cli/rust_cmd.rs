@@ -27,6 +27,29 @@ fn is_cuda_available() -> bool {
     pecos_build::cuda::is_cuda_available()
 }
 
+/// Check if a GPU (wgpu adapter) is available
+///
+/// Runs the gpu-check binary from pecos-gpu-sims to detect GPU availability.
+/// Returns false if the binary fails to run or no GPU is found.
+fn is_gpu_available() -> bool {
+    // Try to run the gpu-check binary quietly
+    Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "pecos-gpu-sims",
+            "--bin",
+            "gpu-check",
+            "-q",
+            "--",
+            "-q",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// Check if a tool is available
 fn is_tool_available(tool: &str) -> bool {
     Command::new(tool)
@@ -70,35 +93,40 @@ fn run_cargo_command(args: &[&str]) -> bool {
     matches!(status, Ok(s) if s.success())
 }
 
-/// Run cargo check with CUDA-aware feature handling
+/// Run cargo check with CUDA-aware and GPU-aware feature handling
 #[allow(clippy::too_many_lines)]
 fn run_check(include_ffi: bool) -> Result<()> {
     let cuda_available = is_cuda_available();
+    let gpu_available = is_gpu_available();
+
+    if !gpu_available {
+        println!("GPU not detected - excluding pecos-gpu-sims");
+    }
 
     if cuda_available {
         println!("CUDA detected - checking with all features");
 
         let mut args: Vec<&str> = vec!["check", "--workspace", "--all-targets", "--all-features"];
 
-        let exclude_flags: Vec<String>;
+        let mut exclude_flags: Vec<String> = Vec::new();
         if !include_ffi {
-            exclude_flags = FFI_CRATES
-                .iter()
-                .map(|c| format!("--exclude={c}"))
-                .collect();
-            for flag in &exclude_flags {
-                args.push(flag);
-            }
+            exclude_flags.extend(FFI_CRATES.iter().map(|c| format!("--exclude={c}")));
+        }
+        if !gpu_available {
+            exclude_flags.push("--exclude=pecos-gpu-sims".to_string());
+        }
+        for flag in &exclude_flags {
+            args.push(flag);
         }
 
         if !run_cargo_command(&args) {
             return Err(Error::Config("cargo check failed".to_string()));
         }
     } else {
-        println!("CUDA not detected - checking all features except GPU");
+        println!("CUDA not detected - checking all features except CUDA");
 
         println!(
-            "Checking workspace packages (excluding FFI crates and those with GPU features)..."
+            "Checking workspace packages (excluding FFI crates and those with CUDA features)..."
         );
         let mut args: Vec<&str> = vec![
             "check",
@@ -113,10 +141,13 @@ fn run_check(include_ffi: bool) -> Result<()> {
             "--exclude=benchmarks",
         ];
 
-        let exclude_flags: Vec<String> = FFI_CRATES
+        let mut exclude_flags: Vec<String> = FFI_CRATES
             .iter()
             .map(|c| format!("--exclude={c}"))
             .collect();
+        if !gpu_available {
+            exclude_flags.push("--exclude=pecos-gpu-sims".to_string());
+        }
         for flag in &exclude_flags {
             args.push(flag);
         }
@@ -218,10 +249,15 @@ fn run_check(include_ffi: bool) -> Result<()> {
     Ok(())
 }
 
-/// Run cargo clippy with CUDA-aware feature handling
+/// Run cargo clippy with CUDA-aware and GPU-aware feature handling
 #[allow(clippy::too_many_lines)]
 fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
     let cuda_available = is_cuda_available();
+    let gpu_available = is_gpu_available();
+
+    if !gpu_available {
+        println!("GPU not detected - excluding pecos-gpu-sims");
+    }
 
     let fix_args: Vec<&str> = if fix {
         vec!["--fix", "--allow-staged", "--allow-dirty"]
@@ -235,15 +271,15 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
         let mut args: Vec<&str> = vec!["clippy", "--workspace", "--all-targets", "--all-features"];
         args.extend(&fix_args);
 
-        let exclude_flags: Vec<String>;
+        let mut exclude_flags: Vec<String> = Vec::new();
         if !include_ffi {
-            exclude_flags = FFI_CRATES
-                .iter()
-                .map(|c| format!("--exclude={c}"))
-                .collect();
-            for flag in &exclude_flags {
-                args.push(flag);
-            }
+            exclude_flags.extend(FFI_CRATES.iter().map(|c| format!("--exclude={c}")));
+        }
+        if !gpu_available {
+            exclude_flags.push("--exclude=pecos-gpu-sims".to_string());
+        }
+        for flag in &exclude_flags {
+            args.push(flag);
         }
 
         args.extend(&["--", "-D", "warnings"]);
@@ -271,10 +307,13 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
         ];
         args.extend(&fix_args);
 
-        let exclude_flags: Vec<String> = FFI_CRATES
+        let mut exclude_flags: Vec<String> = FFI_CRATES
             .iter()
             .map(|c| format!("--exclude={c}"))
             .collect();
+        if !gpu_available {
+            exclude_flags.push("--exclude=pecos-gpu-sims".to_string());
+        }
         for flag in &exclude_flags {
             args.push(flag);
         }
@@ -395,10 +434,15 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
     Ok(())
 }
 
-/// Run cargo test with CUDA-aware feature handling
+/// Run cargo test with CUDA-aware and GPU-aware feature handling
 fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     let cuda_available = is_cuda_available();
+    let gpu_available = is_gpu_available();
     let release_flag = if release { "--release" } else { "" };
+
+    if !gpu_available {
+        println!("GPU not detected - excluding pecos-gpu-sims");
+    }
 
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
@@ -410,7 +454,14 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
         args.push(crate_name);
     }
 
-    args.extend(&["--exclude", "pecos-quest", "--exclude", "pecos-decoders"]);
+    args.extend(&[
+        "--exclude",
+        "pecos-quest",
+        "--exclude",
+        "pecos-decoders",
+        "--exclude",
+        "pecos-gpu-sims", // Always exclude from workspace test, test separately if GPU available
+    ]);
 
     if !release_flag.is_empty() {
         args.push(release_flag);
@@ -437,6 +488,20 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
         }
         if !run_cargo_command(&args) {
             return Err(Error::Config("cargo test (pecos-quest) failed".to_string()));
+        }
+    }
+
+    // Test GPU simulator if GPU is available
+    if gpu_available {
+        println!("GPU detected - testing pecos-gpu-sims");
+        let mut args = vec!["test", "-p", "pecos-gpu-sims"];
+        if !release_flag.is_empty() {
+            args.push(release_flag);
+        }
+        if !run_cargo_command(&args) {
+            return Err(Error::Config(
+                "cargo test (pecos-gpu-sims) failed".to_string(),
+            ));
         }
     }
 

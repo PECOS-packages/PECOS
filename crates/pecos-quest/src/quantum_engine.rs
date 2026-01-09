@@ -1117,6 +1117,106 @@ impl Engine for QuestCudaStateVecEngine {
                         }
                     }
                 }
+                GateType::SWAP => {
+                    // SWAP = CX(0,1) CX(1,0) CX(0,1)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (q0, q1) =
+                            (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, q0, q1);
+                            (self.backend.apply_cnot)(self.qureg_handle, q1, q0);
+                            (self.backend.apply_cnot)(self.qureg_handle, q0, q1);
+                        }
+                    }
+                }
+                GateType::CRZ => {
+                    // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
+                    if !cmd.params.is_empty() {
+                        let angle = cmd.params[0];
+                        let half_angle = angle / 2.0;
+                        for qubits in cmd.qubits.chunks_exact(2) {
+                            let (control, target) =
+                                (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                            unsafe {
+                                (self.backend.apply_rotation_z)(
+                                    self.qureg_handle,
+                                    target,
+                                    half_angle,
+                                );
+                                (self.backend.apply_cnot)(self.qureg_handle, control, target);
+                                (self.backend.apply_rotation_z)(
+                                    self.qureg_handle,
+                                    target,
+                                    -half_angle,
+                                );
+                                (self.backend.apply_cnot)(self.qureg_handle, control, target);
+                            }
+                        }
+                    }
+                }
+                GateType::CCX => {
+                    // Toffoli decomposition into Clifford+T gates
+                    for qubits in cmd.qubits.chunks_exact(3) {
+                        let c0 = usize::from(qubits[0]) as i32;
+                        let c1 = usize::from(qubits[1]) as i32;
+                        let target = usize::from(qubits[2]) as i32;
+                        unsafe {
+                            (self.backend.apply_hadamard)(self.qureg_handle, target);
+                            (self.backend.apply_cnot)(self.qureg_handle, c1, target);
+                            (self.backend.apply_phase_shift)(
+                                self.qureg_handle,
+                                target,
+                                -std::f64::consts::FRAC_PI_4,
+                            ); // Tdg
+                            (self.backend.apply_cnot)(self.qureg_handle, c0, target);
+                            (self.backend.apply_t_gate)(self.qureg_handle, target);
+                            (self.backend.apply_cnot)(self.qureg_handle, c1, target);
+                            (self.backend.apply_phase_shift)(
+                                self.qureg_handle,
+                                target,
+                                -std::f64::consts::FRAC_PI_4,
+                            ); // Tdg
+                            (self.backend.apply_cnot)(self.qureg_handle, c0, target);
+                            (self.backend.apply_t_gate)(self.qureg_handle, c1);
+                            (self.backend.apply_t_gate)(self.qureg_handle, target);
+                            (self.backend.apply_cnot)(self.qureg_handle, c0, c1);
+                            (self.backend.apply_hadamard)(self.qureg_handle, target);
+                            (self.backend.apply_t_gate)(self.qureg_handle, c0);
+                            (self.backend.apply_phase_shift)(
+                                self.qureg_handle,
+                                c1,
+                                -std::f64::consts::FRAC_PI_4,
+                            ); // Tdg
+                            (self.backend.apply_cnot)(self.qureg_handle, c0, c1);
+                        }
+                    }
+                }
+                GateType::SX => {
+                    // SX = RX(pi/2)
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_rotation_x)(
+                                self.qureg_handle,
+                                qubit,
+                                std::f64::consts::FRAC_PI_2,
+                            );
+                        }
+                    }
+                }
+                GateType::SXdg => {
+                    // SXdg = RX(-pi/2)
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_rotation_x)(
+                                self.qureg_handle,
+                                qubit,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                        }
+                    }
+                }
                 GateType::I
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload

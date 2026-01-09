@@ -161,6 +161,8 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::Z
                 | GateType::SZ
                 | GateType::SZdg
+                | GateType::SX
+                | GateType::SXdg
                 | GateType::H
                 | GateType::T
                 | GateType::Tdg
@@ -178,9 +180,17 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::CZ
                 | GateType::RZZ
                 | GateType::SZZ
-                | GateType::SZZdg => {
+                | GateType::SZZdg
+                | GateType::SWAP
+                | GateType::CRZ => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying two-qubit gate with possible fault");
+                    self.apply_tq_faults(&mut builder, gate);
+                }
+                GateType::CCX => {
+                    NoiseUtils::add_gate_to_builder(&mut builder, gate);
+                    trace!("Applying three-qubit gate with possible fault");
+                    // Apply fault to each qubit pair (treat as three two-qubit interactions)
                     self.apply_tq_faults(&mut builder, gate);
                 }
                 GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {

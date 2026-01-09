@@ -58,7 +58,6 @@ pub enum GateType {
     SWAP = 59,
     // iSWAP = 60
     // G = 61
-
     /// Controlled-RZ gate (2 qubits, 1 angle parameter)
     CRZ = 70,
 
@@ -66,7 +65,6 @@ pub enum GateType {
     // RYY = 81
     RZZ = 82,
     // RXXYYZZ
-
     /// Toffoli gate (CCX, 3 qubits)
     CCX = 90,
 
@@ -183,7 +181,12 @@ impl GateType {
             | GateType::QFree => 0,
 
             // Gates with one parameter
-            GateType::RX | GateType::RY | GateType::RZ | GateType::RZZ | GateType::CRZ | GateType::Idle => 1,
+            GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RZZ
+            | GateType::CRZ
+            | GateType::Idle => 1,
 
             // Gates with two parameters
             GateType::R1XY => 2,

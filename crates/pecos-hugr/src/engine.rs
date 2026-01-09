@@ -354,7 +354,7 @@ enum FutureState {
         measurement_node: Node,
         /// The qubit that was measured.
         qubit: QubitId,
-        /// Index in measurement_mappings for result retrieval.
+        /// Index in `measurement_mappings` for result retrieval.
         measurement_index: usize,
     },
     /// The measurement result is available.
@@ -486,16 +486,16 @@ pub struct HugrEngine {
     pending_func_calls: BTreeMap<Node, Vec<Node>>,
 
     // === TailLoop Support ===
-    /// TailLoop nodes extracted from the HUGR.
+    /// `TailLoop` nodes extracted from the HUGR.
     tailloops: BTreeMap<Node, TailLoopInfo>,
 
-    /// Nodes inside TailLoop bodies (should not be processed until loop is active).
+    /// Nodes inside `TailLoop` bodies (should not be processed until loop is active).
     nodes_inside_tailloops: BTreeSet<Node>,
 
-    /// Active TailLoops being processed.
+    /// Active `TailLoops` being processed.
     active_tailloops: BTreeMap<Node, ActiveTailLoopInfo>,
 
-    /// Pending TailLoops waiting for Sum value (measurement result) to determine continue/break.
+    /// Pending `TailLoops` waiting for Sum value (measurement result) to determine continue/break.
     pending_tailloop_control: BTreeSet<Node>,
 
     // === Result Capture ===
@@ -656,9 +656,9 @@ struct ActiveCallInfo {
 struct TailLoopInfo {
     /// The `TailLoop` node in the HUGR.
     node: Node,
-    /// Input node inside the TailLoop body.
+    /// Input node inside the `TailLoop` body.
     input_node: Node,
-    /// Output node inside the TailLoop body.
+    /// Output node inside the `TailLoop` body.
     output_node: Node,
     /// Number of "just inputs" (only input, not iterated).
     just_inputs_count: usize,
@@ -666,20 +666,20 @@ struct TailLoopInfo {
     just_outputs_count: usize,
     /// Number of "rest" values (both input and output, iterated).
     rest_count: usize,
-    /// All quantum operation nodes inside this TailLoop body.
+    /// All quantum operation nodes inside this `TailLoop` body.
     quantum_ops: BTreeSet<Node>,
-    /// All Call nodes inside this TailLoop body.
+    /// All Call nodes inside this `TailLoop` body.
     call_nodes: BTreeSet<Node>,
-    /// Total number of TailLoop input ports.
+    /// Total number of `TailLoop` input ports.
     num_inputs: usize,
-    /// Total number of TailLoop output ports.
+    /// Total number of `TailLoop` output ports.
     num_outputs: usize,
 }
 
-/// Information about an active TailLoop being executed.
+/// Information about an active `TailLoop` being executed.
 #[derive(Debug, Clone)]
 struct ActiveTailLoopInfo {
-    /// The TailLoop node.
+    /// The `TailLoop` node.
     #[allow(dead_code)]
     tailloop_node: Node,
     /// Current iteration number (for debugging/limits).
@@ -816,8 +816,7 @@ impl HugrEngine {
         debug!("Extracted {} TailLoop nodes", self.tailloops.len());
 
         // Track nodes inside TailLoop bodies (should not be processed until loop is active)
-        self.nodes_inside_tailloops =
-            Self::find_nodes_inside_tailloops(&hugr, &self.tailloops);
+        self.nodes_inside_tailloops = Self::find_nodes_inside_tailloops(&hugr, &self.tailloops);
         debug!(
             "Found {} nodes inside TailLoop bodies",
             self.nodes_inside_tailloops.len()
@@ -829,7 +828,10 @@ impl HugrEngine {
 
         // Extract classical operations (arithmetic, logic, etc.)
         self.classical_ops = Self::extract_classical_ops(&hugr);
-        debug!("Extracted {} classical operations", self.classical_ops.len());
+        debug!(
+            "Extracted {} classical operations",
+            self.classical_ops.len()
+        );
 
         self.hugr = Some(hugr);
         self.reset_state();
@@ -1086,7 +1088,7 @@ impl HugrEngine {
         inside_blocks
     }
 
-    /// Extract all TailLoop nodes from the HUGR.
+    /// Extract all `TailLoop` nodes from the HUGR.
     fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
         let mut tailloops = BTreeMap::new();
 
@@ -1100,11 +1102,11 @@ impl HugrEngine {
                     .map_or((None, None), |[i, o]| (Some(i), Some(o)));
 
                 let Some(input_node) = input_node else {
-                    debug!("TailLoop {:?} has no Input node", node);
+                    debug!("TailLoop {node:?} has no Input node");
                     continue;
                 };
                 let Some(output_node) = output_node else {
-                    debug!("TailLoop {:?} has no Output node", node);
+                    debug!("TailLoop {node:?} has no Output node");
                     continue;
                 };
 
@@ -1122,7 +1124,11 @@ impl HugrEngine {
 
                 debug!(
                     "Found TailLoop node {:?} with {} inputs, {} outputs, {} quantum ops, {} calls",
-                    node, num_inputs, num_outputs, quantum_ops.len(), call_nodes.len()
+                    node,
+                    num_inputs,
+                    num_outputs,
+                    quantum_ops.len(),
+                    call_nodes.len()
                 );
 
                 tailloops.insert(
@@ -1146,7 +1152,7 @@ impl HugrEngine {
         tailloops
     }
 
-    /// Find all nodes inside TailLoop bodies (should be deferred until loop is active).
+    /// Find all nodes inside `TailLoop` bodies (should be deferred until loop is active).
     fn find_nodes_inside_tailloops(
         hugr: &Hugr,
         tailloops: &BTreeMap<Node, TailLoopInfo>,
@@ -1258,6 +1264,7 @@ impl HugrEngine {
     }
 
     /// Reset the engine's internal state for a new shot.
+    #[allow(clippy::too_many_lines)]
     fn reset_state(&mut self) {
         debug!("HugrEngine::reset_state()");
 
@@ -1314,8 +1321,7 @@ impl HugrEngine {
             self.nodes_inside_cfg_blocks = Self::find_nodes_inside_cfg_blocks(hugr, &self.cfgs);
             self.nodes_inside_func_defns =
                 Self::find_nodes_inside_func_defns(hugr, &self.func_defns, &self.call_targets);
-            self.nodes_inside_tailloops =
-                Self::find_nodes_inside_tailloops(hugr, &self.tailloops);
+            self.nodes_inside_tailloops = Self::find_nodes_inside_tailloops(hugr, &self.tailloops);
         }
 
         // Initialize work queue with source nodes (QAlloc and nodes with no quantum predecessors)
@@ -1724,11 +1730,11 @@ impl HugrEngine {
             let wire_key = (src_node, src_port.index());
 
             // Check if we have a classical value for this wire
-            if let Some(value) = self.classical_values.get(&wire_key) {
-                if let Some(v) = value.to_u32() {
-                    debug!("Conditional {cond_node:?} control value resolved to {v}");
-                    return Some(v as usize);
-                }
+            if let Some(value) = self.classical_values.get(&wire_key)
+                && let Some(v) = value.to_u32()
+            {
+                debug!("Conditional {cond_node:?} control value resolved to {v}");
+                return Some(v as usize);
             }
 
             // Check if the source is a Tag node (creates Sum type from a bool)
@@ -1790,14 +1796,14 @@ impl HugrEngine {
             );
 
             // Check if we have a classical value for this wire
-            if let Some(value) = self.classical_values.get(&wire_key) {
-                if let Some(v) = value.to_u32() {
-                    debug!("[TRACE] Found classical value {v} for wire {wire_key:?}");
-                    debug!(
-                        "CFG block {block_node:?} branch value resolved to {v} from wire {wire_key:?}"
-                    );
-                    return Some(v as usize);
-                }
+            if let Some(value) = self.classical_values.get(&wire_key)
+                && let Some(v) = value.to_u32()
+            {
+                debug!("[TRACE] Found classical value {v} for wire {wire_key:?}");
+                debug!(
+                    "CFG block {block_node:?} branch value resolved to {v} from wire {wire_key:?}"
+                );
+                return Some(v as usize);
             }
 
             // Check if the source is a Tag node (creates Sum type from a bool)
@@ -1811,15 +1817,15 @@ impl HugrEngine {
                     hugr.single_linked_output(src_node, tag_input_port)
                 {
                     let tag_src_wire = (tag_src_node, tag_src_port.index());
-                    if let Some(input_value) = self.classical_values.get(&tag_src_wire) {
-                        if let Some(v) = input_value.to_u32() {
-                            debug!(
-                                "CFG block {block_node:?} resolved via Tag: tag={tag_value}, input={v}"
-                            );
-                            // For booleans converted to Sum: input_value determines the branch
-                            // The Tag wraps the value - we use the input value as the branch
-                            return Some(v as usize);
-                        }
+                    if let Some(input_value) = self.classical_values.get(&tag_src_wire)
+                        && let Some(v) = input_value.to_u32()
+                    {
+                        debug!(
+                            "CFG block {block_node:?} resolved via Tag: tag={tag_value}, input={v}"
+                        );
+                        // For booleans converted to Sum: input_value determines the branch
+                        // The Tag wraps the value - we use the input value as the branch
+                        return Some(v as usize);
                     }
                 }
 
@@ -1841,13 +1847,13 @@ impl HugrEngine {
                         hugr.single_linked_output(src_node, bool_input_port)
                     {
                         let bool_wire = (bool_src_node, bool_src_port.index());
-                        if let Some(bool_value) = self.classical_values.get(&bool_wire) {
-                            if let Some(v) = bool_value.to_u32() {
-                                debug!(
-                                    "CFG block {block_node:?} resolved via tket.bool.read: value={v}"
-                                );
-                                return Some(v as usize);
-                            }
+                        if let Some(bool_value) = self.classical_values.get(&bool_wire)
+                            && let Some(v) = bool_value.to_u32()
+                        {
+                            debug!(
+                                "CFG block {block_node:?} resolved via tket.bool.read: value={v}"
+                            );
+                            return Some(v as usize);
                         }
 
                         // Try to trace through LoadConstant to Const
@@ -1890,18 +1896,18 @@ impl HugrEngine {
                                 );
 
                                 // First check if we have a classical value for this wire
-                                if let Some(bool_value) = self.classical_values.get(&bool_wire) {
-                                    if let Some(v) = bool_value.to_u32() {
-                                        debug!(
-                                            "[TRACE] Found classical value {v} for Conditional control"
-                                        );
-                                        // The bool value (0 or 1) determines which Case
-                                        // Case 0 = false, Case 1 = true
-                                        // Each Case outputs a Tag that determines the successor
-                                        // For while loop: false -> Case 0 -> Tag 0 -> continue
-                                        //                 true -> Case 1 -> Tag 1 -> exit
-                                        return Some(v as usize);
-                                    }
+                                if let Some(bool_value) = self.classical_values.get(&bool_wire)
+                                    && let Some(v) = bool_value.to_u32()
+                                {
+                                    debug!(
+                                        "[TRACE] Found classical value {v} for Conditional control"
+                                    );
+                                    // The bool value (0 or 1) determines which Case
+                                    // Case 0 = false, Case 1 = true
+                                    // Each Case outputs a Tag that determines the successor
+                                    // For while loop: false -> Case 0 -> Tag 0 -> continue
+                                    //                 true -> Case 1 -> Tag 1 -> exit
+                                    return Some(v as usize);
                                 }
 
                                 // Try to resolve constant bool
@@ -1923,13 +1929,13 @@ impl HugrEngine {
 
                     // Check classical_values for the control wire
                     let ctrl_wire = (ctrl_src_node, ctrl_src_port.index());
-                    if let Some(ctrl_value) = self.classical_values.get(&ctrl_wire) {
-                        if let Some(v) = ctrl_value.to_u32() {
-                            debug!(
-                                "CFG block {block_node:?} Conditional control from classical value: {v}"
-                            );
-                            return Some(v as usize);
-                        }
+                    if let Some(ctrl_value) = self.classical_values.get(&ctrl_wire)
+                        && let Some(v) = ctrl_value.to_u32()
+                    {
+                        debug!(
+                            "CFG block {block_node:?} Conditional control from classical value: {v}"
+                        );
+                        return Some(v as usize);
                     }
                 }
             }
@@ -1938,8 +1944,8 @@ impl HugrEngine {
         None
     }
 
-    /// Try to resolve the control value for a TailLoop's current iteration.
-    /// Returns `Some(0)` for CONTINUE_TAG (continue looping) or `Some(1)` for BREAK_TAG (exit loop).
+    /// Try to resolve the control value for a `TailLoop`'s current iteration.
+    /// Returns `Some(0)` for `CONTINUE_TAG` (continue looping) or `Some(1)` for `BREAK_TAG` (exit loop).
     fn try_resolve_tailloop_control(&self, hugr: &Hugr, tailloop_node: Node) -> Option<usize> {
         let tailloop_info = self.tailloops.get(&tailloop_node)?;
 
@@ -1951,11 +1957,11 @@ impl HugrEngine {
             let wire_key = (src_node, src_port.index());
 
             // Check if we have a classical value for this wire
-            if let Some(value) = self.classical_values.get(&wire_key) {
-                if let Some(v) = value.to_u32() {
-                    debug!("TailLoop {tailloop_node:?} control value resolved to {v}");
-                    return Some(v as usize);
-                }
+            if let Some(value) = self.classical_values.get(&wire_key)
+                && let Some(v) = value.to_u32()
+            {
+                debug!("TailLoop {tailloop_node:?} control value resolved to {v}");
+                return Some(v as usize);
             }
 
             // Check if the source is a Tag node
@@ -1995,13 +2001,13 @@ impl HugrEngine {
                         hugr.single_linked_output(src_node, bool_input_port)
                     {
                         let bool_wire = (bool_src_node, bool_src_port.index());
-                        if let Some(bool_value) = self.classical_values.get(&bool_wire) {
-                            if let Some(v) = bool_value.to_u32() {
-                                debug!(
-                                    "TailLoop {tailloop_node:?} resolved via tket.bool.read: value={v}"
-                                );
-                                return Some(v as usize);
-                            }
+                        if let Some(bool_value) = self.classical_values.get(&bool_wire)
+                            && let Some(v) = bool_value.to_u32()
+                        {
+                            debug!(
+                                "TailLoop {tailloop_node:?} resolved via tket.bool.read: value={v}"
+                            );
+                            return Some(v as usize);
                         }
                     }
                 }
@@ -2011,7 +2017,7 @@ impl HugrEngine {
         None
     }
 
-    /// Expand a TailLoop by activating its body for the first iteration.
+    /// Expand a `TailLoop` by activating its body for the first iteration.
     /// Returns the entry nodes that should be added to the work queue.
     fn expand_tailloop(&mut self, hugr: &Hugr, tailloop_node: Node) -> Vec<Node> {
         let Some(tailloop_info) = self.tailloops.get(&tailloop_node).cloned() else {
@@ -2074,7 +2080,7 @@ impl HugrEngine {
         entry_nodes
     }
 
-    /// Propagate wire mappings from TailLoop inputs to body Input node.
+    /// Propagate wire mappings from `TailLoop` inputs to body Input node.
     fn propagate_tailloop_inputs(
         &mut self,
         hugr: &Hugr,
@@ -2108,7 +2114,7 @@ impl HugrEngine {
         // For subsequent iterations, propagate_continue_values handles this
     }
 
-    /// Continue a TailLoop with a new iteration after receiving CONTINUE_TAG.
+    /// Continue a `TailLoop` with a new iteration after receiving `CONTINUE_TAG`.
     fn continue_tailloop_iteration(&mut self, hugr: &Hugr, tailloop_node: Node) {
         let Some(tailloop_info) = self.tailloops.get(&tailloop_node).cloned() else {
             return;
@@ -2196,13 +2202,15 @@ impl HugrEngine {
                 let src_wire = (src_node, src_port.index());
 
                 if let Some(&qubit_id) = self.wire_to_qubit.get(&src_wire) {
-                    self.wire_to_qubit.insert((input_node, input_port_idx), qubit_id);
+                    self.wire_to_qubit
+                        .insert((input_node, input_port_idx), qubit_id);
                     debug!(
                         "TailLoop continue: propagated rest qubit {qubit_id:?} from Output:{output_port_idx} to Input:{input_port_idx}"
                     );
                 }
                 if let Some(value) = self.classical_values.get(&src_wire).cloned() {
-                    self.classical_values.insert((input_node, input_port_idx), value);
+                    self.classical_values
+                        .insert((input_node, input_port_idx), value);
                 }
             }
         }
@@ -2210,33 +2218,31 @@ impl HugrEngine {
         // The just_inputs values come from unpacking the Sum (CONTINUE variant)
         // Trace through the Tag node that created the Sum
         let control_port = IncomingPort::from(0);
-        if let Some((tag_node, _)) = hugr.single_linked_output(output_node, control_port) {
-            if let OpType::Tag(tag_op) = hugr.get_optype(tag_node) {
-                if tag_op.tag == 0 {
-                    // CONTINUE tag - its inputs become just_inputs for next iteration
-                    for port_idx in 0..just_inputs_count {
-                        let tag_in_port = IncomingPort::from(port_idx);
-                        if let Some((src_node, src_port)) =
-                            hugr.single_linked_output(tag_node, tag_in_port)
-                        {
-                            let src_wire = (src_node, src_port.index());
-                            if let Some(&qubit_id) = self.wire_to_qubit.get(&src_wire) {
-                                self.wire_to_qubit.insert((input_node, port_idx), qubit_id);
-                                debug!(
-                                    "TailLoop continue: propagated just_input qubit {qubit_id:?} to Input:{port_idx}"
-                                );
-                            }
-                            if let Some(value) = self.classical_values.get(&src_wire).cloned() {
-                                self.classical_values.insert((input_node, port_idx), value);
-                            }
-                        }
+        if let Some((tag_node, _)) = hugr.single_linked_output(output_node, control_port)
+            && let OpType::Tag(tag_op) = hugr.get_optype(tag_node)
+            && tag_op.tag == 0
+        {
+            // CONTINUE tag - its inputs become just_inputs for next iteration
+            for port_idx in 0..just_inputs_count {
+                let tag_in_port = IncomingPort::from(port_idx);
+                if let Some((src_node, src_port)) = hugr.single_linked_output(tag_node, tag_in_port)
+                {
+                    let src_wire = (src_node, src_port.index());
+                    if let Some(&qubit_id) = self.wire_to_qubit.get(&src_wire) {
+                        self.wire_to_qubit.insert((input_node, port_idx), qubit_id);
+                        debug!(
+                            "TailLoop continue: propagated just_input qubit {qubit_id:?} to Input:{port_idx}"
+                        );
+                    }
+                    if let Some(value) = self.classical_values.get(&src_wire).cloned() {
+                        self.classical_values.insert((input_node, port_idx), value);
                     }
                 }
             }
         }
     }
 
-    /// Complete a TailLoop after receiving BREAK_TAG.
+    /// Complete a `TailLoop` after receiving `BREAK_TAG`.
     fn complete_tailloop(&mut self, hugr: &Hugr, tailloop_node: Node) {
         let Some(tailloop_info) = self.tailloops.get(&tailloop_node).cloned() else {
             return;
@@ -2274,7 +2280,7 @@ impl HugrEngine {
         }
     }
 
-    /// Propagate outputs from TailLoop body to TailLoop node outputs.
+    /// Propagate outputs from `TailLoop` body to `TailLoop` node outputs.
     fn propagate_tailloop_outputs(
         &mut self,
         hugr: &Hugr,
@@ -2309,30 +2315,29 @@ impl HugrEngine {
 
         // Extract just_outputs from BREAK Sum variant (tag 1)
         let control_port = IncomingPort::from(0);
-        if let Some((tag_node, _)) = hugr.single_linked_output(output_node, control_port) {
-            if let OpType::Tag(tag_op) = hugr.get_optype(tag_node) {
-                if tag_op.tag == 1 {
-                    // BREAK tag - its inputs are just_outputs
-                    for port_idx in 0..just_outputs_count {
-                        let tag_in_port = IncomingPort::from(port_idx);
-                        if let Some((src_node, src_port)) =
-                            hugr.single_linked_output(tag_node, tag_in_port)
-                        {
-                            let src_wire = (src_node, src_port.index());
-                            if let Some(&qubit_id) = self.wire_to_qubit.get(&src_wire) {
-                                self.wire_to_qubit.insert((tailloop_node, port_idx), qubit_id);
-                                debug!(
-                                    "TailLoop {tailloop_node:?} output {port_idx}: mapped just_output qubit {qubit_id:?}"
-                                );
-                            }
-                        }
+        if let Some((tag_node, _)) = hugr.single_linked_output(output_node, control_port)
+            && let OpType::Tag(tag_op) = hugr.get_optype(tag_node)
+            && tag_op.tag == 1
+        {
+            // BREAK tag - its inputs are just_outputs
+            for port_idx in 0..just_outputs_count {
+                let tag_in_port = IncomingPort::from(port_idx);
+                if let Some((src_node, src_port)) = hugr.single_linked_output(tag_node, tag_in_port)
+                {
+                    let src_wire = (src_node, src_port.index());
+                    if let Some(&qubit_id) = self.wire_to_qubit.get(&src_wire) {
+                        self.wire_to_qubit
+                            .insert((tailloop_node, port_idx), qubit_id);
+                        debug!(
+                            "TailLoop {tailloop_node:?} output {port_idx}: mapped just_output qubit {qubit_id:?}"
+                        );
                     }
                 }
             }
         }
     }
 
-    /// Check if a TailLoop body is complete after processing an operation.
+    /// Check if a `TailLoop` body is complete after processing an operation.
     fn check_tailloop_body_completion(&mut self, hugr: &Hugr, processed_node: Node) {
         let mut completions = Vec::new();
 
@@ -2521,7 +2526,7 @@ impl HugrEngine {
         }
     }
 
-    /// Try to resolve pending TailLoop control values after measurement results are available.
+    /// Try to resolve pending `TailLoop` control values after measurement results are available.
     fn try_resolve_pending_tailloops(&mut self) {
         let hugr = match &self.hugr {
             Some(h) => h.clone(),
@@ -3126,8 +3131,7 @@ impl HugrEngine {
         // Get number of CFG inputs
         let num_cfg_inputs = hugr.num_inputs(cfg_node);
         debug!(
-            "Propagating {} CFG inputs from {cfg_node:?} to entry block {entry_block:?} Input {input_node:?}",
-            num_cfg_inputs
+            "Propagating {num_cfg_inputs} CFG inputs from {cfg_node:?} to entry block {entry_block:?} Input {input_node:?}"
         );
 
         // Map each CFG input to the corresponding entry block Input node output
@@ -3620,7 +3624,10 @@ impl HugrEngine {
 
             // Check if this is a classical operation (arithmetic, logic, etc.)
             if let Some(classical_op) = self.classical_ops.get(&current_node).cloned() {
-                debug!("Processing classical op {current_node:?}: {:?}", classical_op.op_type);
+                debug!(
+                    "Processing classical op {current_node:?}: {:?}",
+                    classical_op.op_type
+                );
 
                 // Execute the classical operation
                 let outputs = self.handle_classical_op(&hugr, current_node, &classical_op);
@@ -4004,7 +4011,14 @@ impl HugrEngine {
     }
 
     /// Execute a classical operation and return output values.
-    /// Returns a vector of (output_port, value) pairs.
+    /// Returns a vector of (`output_port`, value) pairs.
+    #[allow(
+        clippy::too_many_lines,
+        clippy::float_cmp, // Exact float comparison is intentional for feq/fne operations
+        clippy::cast_precision_loss, // int->float conversion precision loss is expected
+        clippy::cast_possible_truncation, // float->int truncation is intentional
+        clippy::cast_sign_loss // shift amounts are clamped to 0-63 before cast to u32
+    )]
     fn handle_classical_op(
         &self,
         hugr: &Hugr,
@@ -4035,50 +4049,77 @@ impl HugrEngine {
         let result = match op.op_type {
             // Logic operations
             ClassicalOpType::And => {
-                let a = inputs.get(0).and_then(|v| v.as_bool()).unwrap_or(false);
-                let b = inputs.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
                 ClassicalValue::Bool(a && b)
             }
             ClassicalOpType::Or => {
-                let a = inputs.get(0).and_then(|v| v.as_bool()).unwrap_or(false);
-                let b = inputs.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
                 ClassicalValue::Bool(a || b)
             }
             ClassicalOpType::Not => {
-                let a = inputs.get(0).and_then(|v| v.as_bool()).unwrap_or(false);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
                 ClassicalValue::Bool(!a)
             }
             ClassicalOpType::Xor => {
-                let a = inputs.get(0).and_then(|v| v.as_bool()).unwrap_or(false);
-                let b = inputs.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
                 ClassicalValue::Bool(a ^ b)
             }
             ClassicalOpType::Eq => {
                 // Eq can work on bools
-                let a = inputs.get(0).and_then(|v| v.as_bool()).unwrap_or(false);
-                let b = inputs.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_bool)
+                    .unwrap_or(false);
                 ClassicalValue::Bool(a == b)
             }
 
             // Integer arithmetic
             ClassicalOpType::Iadd => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(a.wrapping_add(b))
             }
             ClassicalOpType::Isub => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(a.wrapping_sub(b))
             }
             ClassicalOpType::Imul => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(a.wrapping_mul(b))
             }
             ClassicalOpType::Idiv => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(1);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(1);
                 if b == 0 {
                     ClassicalValue::Int(0) // Avoid division by zero
                 } else {
@@ -4086,8 +4127,8 @@ impl HugrEngine {
                 }
             }
             ClassicalOpType::Imod => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(1);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(1);
                 if b == 0 {
                     ClassicalValue::Int(0)
                 } else {
@@ -4095,159 +4136,241 @@ impl HugrEngine {
                 }
             }
             ClassicalOpType::Ineg => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(a.wrapping_neg())
             }
             ClassicalOpType::Iabs => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(a.wrapping_abs())
             }
 
             // Integer comparisons
             ClassicalOpType::Ieq => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Bool(a == b)
             }
             ClassicalOpType::Ine => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Bool(a != b)
             }
             ClassicalOpType::Ilt => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Bool(a < b)
             }
             ClassicalOpType::Ile => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Bool(a <= b)
             }
             ClassicalOpType::Igt => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Bool(a > b)
             }
             ClassicalOpType::Ige => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Bool(a >= b)
             }
 
             // Integer bitwise operations
             ClassicalOpType::Iand => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(a & b)
             }
             ClassicalOpType::Ior => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(a | b)
             }
             ClassicalOpType::Ixor => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(a ^ b)
             }
             ClassicalOpType::Inot => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Int(!a)
             }
             ClassicalOpType::Ishl => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
-                ClassicalValue::Int(a.wrapping_shl(b as u32))
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
+                // Clamp shift amount to valid range (0-63 for i64)
+                let shift = b.clamp(0, 63) as u32;
+                ClassicalValue::Int(a.wrapping_shl(shift))
             }
             ClassicalOpType::Ishr => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
-                let b = inputs.get(1).and_then(|v| v.as_int()).unwrap_or(0);
-                ClassicalValue::Int(a.wrapping_shr(b as u32))
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
+                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
+                // Clamp shift amount to valid range (0-63 for i64)
+                let shift = b.clamp(0, 63) as u32;
+                ClassicalValue::Int(a.wrapping_shr(shift))
             }
 
             // Float arithmetic
             ClassicalOpType::Fadd => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Float(a + b)
             }
             ClassicalOpType::Fsub => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Float(a - b)
             }
             ClassicalOpType::Fmul => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Float(a * b)
             }
             ClassicalOpType::Fdiv => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(1.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(1.0);
                 ClassicalValue::Float(a / b)
             }
             ClassicalOpType::Fneg => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Float(-a)
             }
             ClassicalOpType::Fabs => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Float(a.abs())
             }
             ClassicalOpType::Ffloor => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Float(a.floor())
             }
             ClassicalOpType::Fceil => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Float(a.ceil())
             }
 
             // Float comparisons
             ClassicalOpType::Feq => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Bool(a == b)
             }
             ClassicalOpType::Fne => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Bool(a != b)
             }
             ClassicalOpType::Flt => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Bool(a < b)
             }
             ClassicalOpType::Fle => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Bool(a <= b)
             }
             ClassicalOpType::Fgt => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Bool(a > b)
             }
             ClassicalOpType::Fge => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                let b = inputs.get(1).and_then(|v| v.as_float()).unwrap_or(0.0);
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                let b = inputs
+                    .get(1)
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
                 ClassicalValue::Bool(a >= b)
             }
 
             // Conversions
             ClassicalOpType::ConvertIntToFloat => {
-                let a = inputs.get(0).and_then(|v| v.as_int()).unwrap_or(0);
+                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
                 ClassicalValue::Float(a as f64)
             }
             ClassicalOpType::ConvertFloatToInt => {
-                let a = inputs.get(0).and_then(|v| v.as_float()).unwrap_or(0.0);
-                ClassicalValue::Int(a as i64)
+                let a = inputs
+                    .first()
+                    .and_then(ClassicalValue::as_float)
+                    .unwrap_or(0.0);
+                // Truncate toward zero, matching standard float-to-int semantics
+                ClassicalValue::Int(a.trunc() as i64)
             }
 
             // Constants (shouldn't be processed as operations, but handle anyway)
-            ClassicalOpType::ConstInt | ClassicalOpType::ConstFloat | ClassicalOpType::ConstBool => {
+            ClassicalOpType::ConstInt
+            | ClassicalOpType::ConstFloat
+            | ClassicalOpType::ConstBool => {
                 if let Some(value) = &op.const_value {
                     value.clone()
                 } else {
@@ -4266,11 +4389,7 @@ impl HugrEngine {
                 let tuple_value = inputs.into_iter().next();
                 if let Some(ClassicalValue::Tuple(elements)) = tuple_value {
                     // Return each element on its respective output port
-                    return elements
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, v)| (i, v))
-                        .collect();
+                    return elements.into_iter().enumerate().collect();
                 } else if let Some(value) = tuple_value {
                     // If it's a single non-tuple value, just pass it through on port 0
                     return vec![(0, value)];
@@ -4319,6 +4438,7 @@ impl HugrEngine {
     }
 
     /// Handle tket.result operations for capturing output values.
+    #[allow(clippy::too_many_lines)]
     fn handle_result_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.result operation: {op_name} at {node:?}");
 
@@ -4328,99 +4448,99 @@ impl HugrEngine {
 
         match op_name {
             "result_bool" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let Some(b) = value.as_bool() {
-                        self.captured_results.push(CapturedResult {
-                            label,
-                            value: ResultValue::Bool(b),
-                        });
-                        debug!("Captured result_bool: {b}");
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let Some(b) = value.as_bool()
+                {
+                    self.captured_results.push(CapturedResult {
+                        label,
+                        value: ResultValue::Bool(b),
+                    });
+                    debug!("Captured result_bool: {b}");
                 }
                 true
             }
             "result_int" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let Some(i) = value.as_int() {
-                        self.captured_results.push(CapturedResult {
-                            label,
-                            value: ResultValue::Int(i),
-                        });
-                        debug!("Captured result_int: {i}");
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let Some(i) = value.as_int()
+                {
+                    self.captured_results.push(CapturedResult {
+                        label,
+                        value: ResultValue::Int(i),
+                    });
+                    debug!("Captured result_int: {i}");
                 }
                 true
             }
             "result_uint" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let Some(u) = value.as_uint() {
-                        self.captured_results.push(CapturedResult {
-                            label,
-                            value: ResultValue::UInt(u),
-                        });
-                        debug!("Captured result_uint: {u}");
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let Some(u) = value.as_uint()
+                {
+                    self.captured_results.push(CapturedResult {
+                        label,
+                        value: ResultValue::UInt(u),
+                    });
+                    debug!("Captured result_uint: {u}");
                 }
                 true
             }
             "result_f64" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let Some(f) = value.as_float() {
-                        self.captured_results.push(CapturedResult {
-                            label,
-                            value: ResultValue::Float(f),
-                        });
-                        debug!("Captured result_f64: {f}");
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let Some(f) = value.as_float()
+                {
+                    self.captured_results.push(CapturedResult {
+                        label,
+                        value: ResultValue::Float(f),
+                    });
+                    debug!("Captured result_f64: {f}");
                 }
                 true
             }
             "result_array_bool" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let Some(arr) = value.as_array() {
-                        let bools: Vec<bool> =
-                            arr.iter().filter_map(|v| v.as_bool()).collect();
-                        self.captured_results.push(CapturedResult {
-                            label,
-                            value: ResultValue::ArrayBool(bools),
-                        });
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let Some(arr) = value.as_array()
+                {
+                    let bools: Vec<bool> = arr.iter().filter_map(ClassicalValue::as_bool).collect();
+                    self.captured_results.push(CapturedResult {
+                        label,
+                        value: ResultValue::ArrayBool(bools),
+                    });
                 }
                 true
             }
             "result_array_int" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let Some(arr) = value.as_array() {
-                        let ints: Vec<i64> = arr.iter().filter_map(|v| v.as_int()).collect();
-                        self.captured_results.push(CapturedResult {
-                            label,
-                            value: ResultValue::ArrayInt(ints),
-                        });
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let Some(arr) = value.as_array()
+                {
+                    let ints: Vec<i64> = arr.iter().filter_map(ClassicalValue::as_int).collect();
+                    self.captured_results.push(CapturedResult {
+                        label,
+                        value: ResultValue::ArrayInt(ints),
+                    });
                 }
                 true
             }
             "result_array_uint" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let Some(arr) = value.as_array() {
-                        let uints: Vec<u64> = arr.iter().filter_map(|v| v.as_uint()).collect();
-                        self.captured_results.push(CapturedResult {
-                            label,
-                            value: ResultValue::ArrayUInt(uints),
-                        });
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let Some(arr) = value.as_array()
+                {
+                    let uints: Vec<u64> = arr.iter().filter_map(ClassicalValue::as_uint).collect();
+                    self.captured_results.push(CapturedResult {
+                        label,
+                        value: ResultValue::ArrayUInt(uints),
+                    });
                 }
                 true
             }
             "result_array_f64" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let Some(arr) = value.as_array() {
-                        let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_float()).collect();
-                        self.captured_results.push(CapturedResult {
-                            label,
-                            value: ResultValue::ArrayFloat(floats),
-                        });
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let Some(arr) = value.as_array()
+                {
+                    let floats: Vec<f64> =
+                        arr.iter().filter_map(ClassicalValue::as_float).collect();
+                    self.captured_results.push(CapturedResult {
+                        label,
+                        value: ResultValue::ArrayFloat(floats),
+                    });
                 }
                 true
             }
@@ -4586,36 +4706,33 @@ impl HugrEngine {
             "Read" => {
                 // Read: Future<T> -> T
                 // Resolve the Future to its value
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let ClassicalValue::Future(future_id) = value {
-                        if let Some(state) = self.futures.get(&future_id) {
-                            match state {
-                                FutureState::Resolved(outcome) => {
-                                    // Future is resolved, output the value
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let ClassicalValue::Future(future_id) = value
+                    && let Some(state) = self.futures.get(&future_id)
+                {
+                    match state {
+                        FutureState::Resolved(outcome) => {
+                            // Future is resolved, output the value
+                            self.classical_values
+                                .insert((node, 0), ClassicalValue::Bool(*outcome != 0));
+                            debug!("Read future {future_id} -> {outcome}");
+                        }
+                        FutureState::Pending {
+                            measurement_index, ..
+                        } => {
+                            // Check if measurement result is available
+                            if let Some((_, qubit)) =
+                                self.measurement_mappings.get(*measurement_index)
+                            {
+                                if let Some(&result) = self.measurement_results.get(qubit) {
                                     self.classical_values
-                                        .insert((node, 0), ClassicalValue::Bool(*outcome != 0));
-                                    debug!("Read future {future_id} -> {outcome}");
-                                }
-                                FutureState::Pending { measurement_index, .. } => {
-                                    // Check if measurement result is available
-                                    if let Some((_, qubit)) =
-                                        self.measurement_mappings.get(*measurement_index)
-                                    {
-                                        if let Some(&result) = self.measurement_results.get(qubit) {
-                                            self.classical_values.insert(
-                                                (node, 0),
-                                                ClassicalValue::Bool(result != 0),
-                                            );
-                                            debug!(
-                                                "Read future {future_id} from measurement -> {result}"
-                                            );
-                                        } else {
-                                            // Result not yet available - use default
-                                            self.classical_values
-                                                .insert((node, 0), ClassicalValue::Bool(false));
-                                            debug!("Read future {future_id} pending, using default");
-                                        }
-                                    }
+                                        .insert((node, 0), ClassicalValue::Bool(result != 0));
+                                    debug!("Read future {future_id} from measurement -> {result}");
+                                } else {
+                                    // Result not yet available - use default
+                                    self.classical_values
+                                        .insert((node, 0), ClassicalValue::Bool(false));
+                                    debug!("Read future {future_id} pending, using default");
                                 }
                             }
                         }
@@ -4626,39 +4743,39 @@ impl HugrEngine {
             "Dup" => {
                 // Dup: Future<T> -> (Future<T>, Future<T>)
                 // Create two new Futures pointing to the same result
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let ClassicalValue::Future(original_id) = value {
-                        // Create two new Future IDs that share the same state
-                        let new_id1 = self.next_future_id;
-                        self.next_future_id += 1;
-                        let new_id2 = self.next_future_id;
-                        self.next_future_id += 1;
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let ClassicalValue::Future(original_id) = value
+                {
+                    // Create two new Future IDs that share the same state
+                    let new_id1 = self.next_future_id;
+                    self.next_future_id += 1;
+                    let new_id2 = self.next_future_id;
+                    self.next_future_id += 1;
 
-                        // Copy the state to both new Futures
-                        if let Some(state) = self.futures.get(&original_id).cloned() {
-                            self.futures.insert(new_id1, state.clone());
-                            self.futures.insert(new_id2, state);
-                        }
-
-                        // Output both Futures
-                        self.classical_values
-                            .insert((node, 0), ClassicalValue::Future(new_id1));
-                        self.classical_values
-                            .insert((node, 1), ClassicalValue::Future(new_id2));
-
-                        debug!("Dup future {original_id} -> {new_id1}, {new_id2}");
+                    // Copy the state to both new Futures
+                    if let Some(state) = self.futures.get(&original_id).cloned() {
+                        self.futures.insert(new_id1, state.clone());
+                        self.futures.insert(new_id2, state);
                     }
+
+                    // Output both Futures
+                    self.classical_values
+                        .insert((node, 0), ClassicalValue::Future(new_id1));
+                    self.classical_values
+                        .insert((node, 1), ClassicalValue::Future(new_id2));
+
+                    debug!("Dup future {original_id} -> {new_id1}, {new_id2}");
                 }
                 true
             }
             "Free" => {
                 // Free: Future<T> -> ()
                 // Discard the Future without reading
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let ClassicalValue::Future(future_id) = value {
-                        self.futures.remove(&future_id);
-                        debug!("Free future {future_id}");
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let ClassicalValue::Future(future_id) = value
+                {
+                    self.futures.remove(&future_id);
+                    debug!("Free future {future_id}");
                 }
                 true
             }
@@ -4673,22 +4790,20 @@ impl HugrEngine {
     fn handle_debug_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.debug operation: {op_name} at {node:?}");
 
-        match op_name {
-            "StateResult" => {
-                // StateResult: array<N, Qubit> -> array<N, Qubit>
-                // Pass-through for simulation; optionally log state info
-                self.propagate_qubit_array(hugr, node);
-                debug!("StateResult at {node:?} (no-op for simulation)");
-                true
-            }
-            _ => {
-                debug!("Unknown tket.debug operation: {op_name}");
-                false
-            }
+        if op_name == "StateResult" {
+            // StateResult: array<N, Qubit> -> array<N, Qubit>
+            // Pass-through for simulation; optionally log state info
+            self.propagate_qubit_array(hugr, node);
+            debug!("StateResult at {node:?} (no-op for simulation)");
+            true
+        } else {
+            debug!("Unknown tket.debug operation: {op_name}");
+            false
         }
     }
 
     /// Handle `tket.qsystem.random` operations for random number generation.
+    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
     fn handle_random_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.qsystem.random operation: {op_name} at {node:?}");
 
@@ -4705,7 +4820,11 @@ impl HugrEngine {
                 self.next_rng_context_id += 1;
 
                 // Initialize xorshift64 state with seed (avoid 0)
-                let state = if seed == 0 { 0x1234_5678_9ABC_DEF0 } else { seed };
+                let state = if seed == 0 {
+                    0x1234_5678_9ABC_DEF0
+                } else {
+                    seed
+                };
                 self.rng_contexts
                     .insert(ctx_id, RngContextState { seed, state });
 
@@ -4718,47 +4837,47 @@ impl HugrEngine {
             "DeleteRNGContext" => {
                 // DeleteRNGContext: RNGContext -> ()
                 // Clean up an RNG context
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let ClassicalValue::RngContext(ctx_id) = value {
-                        self.rng_contexts.remove(&ctx_id);
-                        debug!("DeleteRNGContext: removed context {ctx_id}");
-                    }
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let ClassicalValue::RngContext(ctx_id) = value
+                {
+                    self.rng_contexts.remove(&ctx_id);
+                    debug!("DeleteRNGContext: removed context {ctx_id}");
                 }
                 true
             }
             "RandomFloat" => {
                 // RandomFloat: RNGContext -> (RNGContext, float64)
                 // Generate a random float in [0, 1)
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let ClassicalValue::RngContext(ctx_id) = value {
-                        let random_float = self.generate_random_float(ctx_id);
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let ClassicalValue::RngContext(ctx_id) = value
+                {
+                    let random_float = self.generate_random_float(ctx_id);
 
-                        // Output port 0: RNGContext (pass through)
-                        self.classical_values
-                            .insert((node, 0), ClassicalValue::RngContext(ctx_id));
-                        // Output port 1: random float
-                        self.classical_values
-                            .insert((node, 1), ClassicalValue::Float(random_float));
+                    // Output port 0: RNGContext (pass through)
+                    self.classical_values
+                        .insert((node, 0), ClassicalValue::RngContext(ctx_id));
+                    // Output port 1: random float
+                    self.classical_values
+                        .insert((node, 1), ClassicalValue::Float(random_float));
 
-                        debug!("RandomFloat: generated {random_float}");
-                    }
+                    debug!("RandomFloat: generated {random_float}");
                 }
                 true
             }
             "RandomInt" => {
                 // RandomInt: RNGContext -> (RNGContext, int<32>)
                 // Generate a random 32-bit integer
-                if let Some(value) = self.get_input_value(hugr, node, 0) {
-                    if let ClassicalValue::RngContext(ctx_id) = value {
-                        let random_int = self.generate_random_u64(ctx_id) as i64;
+                if let Some(value) = self.get_input_value(hugr, node, 0)
+                    && let ClassicalValue::RngContext(ctx_id) = value
+                {
+                    let random_int = self.generate_random_u64(ctx_id) as i64;
 
-                        self.classical_values
-                            .insert((node, 0), ClassicalValue::RngContext(ctx_id));
-                        self.classical_values
-                            .insert((node, 1), ClassicalValue::Int(random_int));
+                    self.classical_values
+                        .insert((node, 0), ClassicalValue::RngContext(ctx_id));
+                    self.classical_values
+                        .insert((node, 1), ClassicalValue::Int(random_int));
 
-                        debug!("RandomInt: generated {random_int}");
-                    }
+                    debug!("RandomInt: generated {random_int}");
                 }
                 true
             }
@@ -4817,9 +4936,13 @@ impl HugrEngine {
     }
 
     /// Generate a random float in [0, 1) using xorshift64.
+    ///
+    /// Uses the standard technique of taking 53 bits and dividing by 2^53
+    /// to produce a uniform float in [0, 1).
+    #[allow(clippy::cast_precision_loss)] // Standard PRNG technique, precision loss is expected
     fn generate_random_float(&mut self, ctx_id: RngContextId) -> f64 {
         let random_u64 = self.generate_random_u64(ctx_id);
-        // Convert to float in [0, 1)
+        // Convert to float in [0, 1) using 53-bit mantissa
         (random_u64 >> 11) as f64 / (1u64 << 53) as f64
     }
 
@@ -4842,20 +4965,17 @@ impl HugrEngine {
     fn handle_utils_op(&mut self, _hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.qsystem.utils operation: {op_name} at {node:?}");
 
-        match op_name {
-            "GetCurrentShot" => {
-                // GetCurrentShot: () -> int<64>
-                // Return the current shot number
-                self.classical_values
-                    .insert((node, 0), ClassicalValue::UInt(self.current_shot));
+        if op_name == "GetCurrentShot" {
+            // GetCurrentShot: () -> int<64>
+            // Return the current shot number
+            self.classical_values
+                .insert((node, 0), ClassicalValue::UInt(self.current_shot));
 
-                debug!("GetCurrentShot: {}", self.current_shot);
-                true
-            }
-            _ => {
-                debug!("Unknown tket.qsystem.utils operation: {op_name}");
-                false
-            }
+            debug!("GetCurrentShot: {}", self.current_shot);
+            true
+        } else {
+            debug!("Unknown tket.qsystem.utils operation: {op_name}");
+            false
         }
     }
 
@@ -5128,21 +5248,19 @@ impl HugrEngine {
     }
 
     /// Handle `tket.guppy` operations.
+    #[allow(clippy::unused_self)] // Consistent with other handler methods; may use self in future
     fn handle_guppy_op(&mut self, _hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.guppy operation: {op_name} at {node:?}");
 
-        match op_name {
-            "drop" => {
-                // drop: T -> ()
-                // Drop an affine type value (opposite of move semantics)
-                // No-op for simulation - just consumes the value
-                debug!("tket.guppy.drop at {node:?} (value consumed)");
-                true
-            }
-            _ => {
-                debug!("Unknown tket.guppy operation: {op_name}");
-                false
-            }
+        if op_name == "drop" {
+            // drop: T -> ()
+            // Drop an affine type value (opposite of move semantics)
+            // No-op for simulation - just consumes the value
+            debug!("tket.guppy.drop at {node:?} (value consumed)");
+            true
+        } else {
+            debug!("Unknown tket.guppy operation: {op_name}");
+            false
         }
     }
 
@@ -5150,28 +5268,25 @@ impl HugrEngine {
     fn handle_global_phase_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.global_phase operation: {op_name} at {node:?}");
 
-        match op_name {
-            "global_phase" => {
-                // global_phase: Rotation -> ()
-                // Add global phase to the circuit
-                let phase = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_rotation())
-                    .unwrap_or(0.0);
+        if op_name == "global_phase" {
+            // global_phase: Rotation -> ()
+            // Add global phase to the circuit
+            let phase = self
+                .get_input_value(hugr, node, 0)
+                .and_then(|v| v.as_rotation())
+                .unwrap_or(0.0);
 
-                // Accumulate global phase (normalized to [0, 2))
-                self.global_phase = (self.global_phase + phase).rem_euclid(2.0);
+            // Accumulate global phase (normalized to [0, 2))
+            self.global_phase = (self.global_phase + phase).rem_euclid(2.0);
 
-                debug!(
-                    "tket.global_phase: added {phase}, total = {}",
-                    self.global_phase
-                );
-                true
-            }
-            _ => {
-                debug!("Unknown tket.global_phase operation: {op_name}");
-                false
-            }
+            debug!(
+                "tket.global_phase: added {phase}, total = {}",
+                self.global_phase
+            );
+            true
+        } else {
+            debug!("Unknown tket.global_phase operation: {op_name}");
+            false
         }
     }
 
@@ -5203,6 +5318,10 @@ impl HugrEngine {
     }
 
     /// Handle `collections.array` operations.
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_possible_truncation // Array indices in simulation context won't exceed usize
+    )]
     fn handle_array_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing collections.array operation: {op_name} at {node:?}");
 
@@ -5284,13 +5403,13 @@ impl HugrEngine {
                 // Remove and return the last element
                 let array = self.get_input_value(hugr, node, 0);
 
-                if let Some(ClassicalValue::Array(mut elements)) = array {
-                    if let Some(last) = elements.pop() {
-                        self.classical_values
-                            .insert((node, 0), ClassicalValue::Array(elements));
-                        self.classical_values.insert((node, 1), last);
-                        debug!("array.pop: removed last element");
-                    }
+                if let Some(ClassicalValue::Array(mut elements)) = array
+                    && let Some(last) = elements.pop()
+                {
+                    self.classical_values
+                        .insert((node, 0), ClassicalValue::Array(elements));
+                    self.classical_values.insert((node, 1), last);
+                    debug!("array.pop: removed last element");
                 }
                 true
             }
@@ -5414,10 +5533,11 @@ impl HugrEngine {
             // Power and special functions
             "fpow" | "pow" => a.zip(b).map(|(x, y)| x.powf(y)),
             "fpowi" | "powi" => {
-                let exp = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_int());
-                a.zip(exp).map(|(x, n)| x.powi(n as i32))
+                let exp = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int());
+                // Clamp exponent to i32 range for powi
+                #[allow(clippy::cast_possible_truncation)]
+                a.zip(exp)
+                    .map(|(x, n)| x.powi(n.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32))
             }
             "fhypot" | "hypot" => a.zip(b).map(|(x, y)| x.hypot(y)),
 
@@ -5434,9 +5554,11 @@ impl HugrEngine {
                 a.zip(b).zip(c).map(|((x, y), z)| x.mul_add(y, z))
             }
 
-            // Float comparisons
+            // Float comparisons - exact comparison is intentional per HUGR semantics
+            #[allow(clippy::float_cmp)]
             "feq" => a.zip(b).map(|(x, y)| if x == y { 1.0 } else { 0.0 }),
-            "fne" => a.zip(b).map(|(x, y)| if x != y { 1.0 } else { 0.0 }),
+            #[allow(clippy::float_cmp)]
+            "fne" => a.zip(b).map(|(x, y)| if x == y { 0.0 } else { 1.0 }),
             "flt" => a.zip(b).map(|(x, y)| if x < y { 1.0 } else { 0.0 }),
             "fle" => a.zip(b).map(|(x, y)| if x <= y { 1.0 } else { 0.0 }),
             "fgt" => a.zip(b).map(|(x, y)| if x > y { 1.0 } else { 0.0 }),
@@ -5463,16 +5585,17 @@ impl HugrEngine {
     }
 
     /// Handle `arithmetic.int` operations (extended integer operations).
+    #[allow(
+        clippy::too_many_lines, // Large dispatch function with many integer operations
+        clippy::cast_sign_loss, // shift amounts are clamped to 0-63 before cast to u32
+        clippy::cast_possible_truncation // shift amounts are clamped before cast
+    )]
     fn handle_int_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing arithmetic.int operation: {op_name} at {node:?}");
 
         // Get input values
-        let a = self
-            .get_input_value(hugr, node, 0)
-            .and_then(|v| v.as_int());
-        let b = self
-            .get_input_value(hugr, node, 1)
-            .and_then(|v| v.as_int());
+        let a = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int());
+        let b = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int());
 
         let result: Option<i64> = match op_name {
             // Basic arithmetic (may also be handled elsewhere)
@@ -5480,6 +5603,8 @@ impl HugrEngine {
             "isub" => a.zip(b).map(|(x, y)| x.wrapping_sub(y)),
             "imul" => a.zip(b).map(|(x, y)| x.wrapping_mul(y)),
             "idiv_s" | "idiv" => a.zip(b).map(|(x, y)| if y != 0 { x / y } else { 0 }),
+            // Cast u64 result to i64 for unified storage - wrap is acceptable for large values
+            #[allow(clippy::cast_possible_wrap)]
             "idiv_u" => {
                 let au = self
                     .get_input_value(hugr, node, 0)
@@ -5491,6 +5616,7 @@ impl HugrEngine {
                     .map(|(x, y)| if y != 0 { (x / y) as i64 } else { 0 })
             }
             "imod_s" | "imod" => a.zip(b).map(|(x, y)| if y != 0 { x % y } else { 0 }),
+            #[allow(clippy::cast_possible_wrap)]
             "imod_u" => {
                 let au = self
                     .get_input_value(hugr, node, 0)
@@ -5501,8 +5627,8 @@ impl HugrEngine {
                 au.zip(bu)
                     .map(|(x, y)| if y != 0 { (x % y) as i64 } else { 0 })
             }
-            "ineg" => a.map(|x| x.wrapping_neg()),
-            "iabs" => a.map(|x| x.abs()),
+            "ineg" => a.map(i64::wrapping_neg),
+            "iabs" => a.map(i64::abs),
 
             // Bitwise operations
             "iand" => a.zip(b).map(|(x, y)| x & y),
@@ -5510,26 +5636,28 @@ impl HugrEngine {
             "ixor" => a.zip(b).map(|(x, y)| x ^ y),
             "inot" => a.map(|x| !x),
 
-            // Shift operations
-            "ishl" => a.zip(b).map(|(x, y)| x.wrapping_shl(y as u32)),
-            "ishr_s" | "ishr" => a.zip(b).map(|(x, y)| x.wrapping_shr(y as u32)),
+            // Shift operations - clamp shift amount to valid range (0-63 for i64)
+            "ishl" => a.zip(b).map(|(x, y)| x.wrapping_shl(y.clamp(0, 63) as u32)),
+            "ishr_s" | "ishr" => a.zip(b).map(|(x, y)| x.wrapping_shr(y.clamp(0, 63) as u32)),
+            #[allow(clippy::cast_possible_wrap)]
             "ishr_u" => {
                 let au = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_uint());
-                au.zip(b).map(|(x, y)| (x >> (y as u32)) as i64)
+                au.zip(b).map(|(x, y)| (x >> y.clamp(0, 63) as u32) as i64)
             }
-            "irotl" | "rotl" => a.zip(b).map(|(x, y)| x.rotate_left(y as u32)),
-            "irotr" | "rotr" => a.zip(b).map(|(x, y)| x.rotate_right(y as u32)),
+            "irotl" | "rotl" => a.zip(b).map(|(x, y)| x.rotate_left(y.clamp(0, 63) as u32)),
+            "irotr" | "rotr" => a.zip(b).map(|(x, y)| x.rotate_right(y.clamp(0, 63) as u32)),
 
             // Bit counting
-            "ipopcnt" | "popcnt" | "popcount" => a.map(|x| x.count_ones() as i64),
-            "iclz" | "clz" => a.map(|x| x.leading_zeros() as i64),
-            "ictz" | "ctz" => a.map(|x| x.trailing_zeros() as i64),
+            "ipopcnt" | "popcnt" | "popcount" => a.map(|x| i64::from(x.count_ones())),
+            "iclz" | "clz" => a.map(|x| i64::from(x.leading_zeros())),
+            "ictz" | "ctz" => a.map(|x| i64::from(x.trailing_zeros())),
 
             // Min/max
             "imin_s" | "imin" => a.zip(b).map(|(x, y)| x.min(y)),
             "imax_s" | "imax" => a.zip(b).map(|(x, y)| x.max(y)),
+            #[allow(clippy::cast_possible_wrap)]
             "imin_u" => {
                 let au = self
                     .get_input_value(hugr, node, 0)
@@ -5539,6 +5667,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_uint());
                 au.zip(bu).map(|(x, y)| x.min(y) as i64)
             }
+            #[allow(clippy::cast_possible_wrap)]
             "imax_u" => {
                 let au = self
                     .get_input_value(hugr, node, 0)
@@ -5549,23 +5678,26 @@ impl HugrEngine {
                 au.zip(bu).map(|(x, y)| x.max(y) as i64)
             }
 
-            // Sign extension / truncation
+            // Sign extension / truncation - all no-ops for i64 unified storage
+            #[allow(clippy::match_same_arms)] // Intentionally separate for clarity
             "iwiden_s" | "widen_s" => a, // Sign-extend (no-op for i64)
-            "iwiden_u" | "widen_u" => {
-                self.get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint())
-                    .map(|x| x as i64)
-            }
+            #[allow(clippy::cast_possible_wrap)]
+            "iwiden_u" | "widen_u" => self
+                .get_input_value(hugr, node, 0)
+                .and_then(|v| v.as_uint())
+                .map(|x| x as i64),
+            #[allow(clippy::match_same_arms)]
             "inarrow_s" | "narrow_s" => a, // Truncate (no-op for now)
+            #[allow(clippy::match_same_arms)]
             "inarrow_u" | "narrow_u" => a, // Truncate (no-op for now)
 
             // Comparisons (return 0 or 1)
-            "ieq" => a.zip(b).map(|(x, y)| if x == y { 1 } else { 0 }),
-            "ine" => a.zip(b).map(|(x, y)| if x != y { 1 } else { 0 }),
-            "ilt_s" | "ilt" => a.zip(b).map(|(x, y)| if x < y { 1 } else { 0 }),
-            "ile_s" | "ile" => a.zip(b).map(|(x, y)| if x <= y { 1 } else { 0 }),
-            "igt_s" | "igt" => a.zip(b).map(|(x, y)| if x > y { 1 } else { 0 }),
-            "ige_s" | "ige" => a.zip(b).map(|(x, y)| if x >= y { 1 } else { 0 }),
+            "ieq" => a.zip(b).map(|(x, y)| i64::from(x == y)),
+            "ine" => a.zip(b).map(|(x, y)| i64::from(x != y)),
+            "ilt_s" | "ilt" => a.zip(b).map(|(x, y)| i64::from(x < y)),
+            "ile_s" | "ile" => a.zip(b).map(|(x, y)| i64::from(x <= y)),
+            "igt_s" | "igt" => a.zip(b).map(|(x, y)| i64::from(x > y)),
+            "ige_s" | "ige" => a.zip(b).map(|(x, y)| i64::from(x >= y)),
             "ilt_u" => {
                 let au = self
                     .get_input_value(hugr, node, 0)
@@ -5573,7 +5705,7 @@ impl HugrEngine {
                 let bu = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| if x < y { 1 } else { 0 })
+                au.zip(bu).map(|(x, y)| i64::from(x < y))
             }
             "ile_u" => {
                 let au = self
@@ -5582,7 +5714,7 @@ impl HugrEngine {
                 let bu = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| if x <= y { 1 } else { 0 })
+                au.zip(bu).map(|(x, y)| i64::from(x <= y))
             }
             "igt_u" => {
                 let au = self
@@ -5591,7 +5723,7 @@ impl HugrEngine {
                 let bu = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| if x > y { 1 } else { 0 })
+                au.zip(bu).map(|(x, y)| i64::from(x > y))
             }
             "ige_u" => {
                 let au = self
@@ -5600,7 +5732,7 @@ impl HugrEngine {
                 let bu = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| if x >= y { 1 } else { 0 })
+                au.zip(bu).map(|(x, y)| i64::from(x >= y))
             }
 
             _ => {
@@ -5619,6 +5751,17 @@ impl HugrEngine {
     }
 
     /// Handle `arithmetic.conversions` operations (int/float conversions).
+    ///
+    /// Type conversion casts are intentional and match HUGR/Guppy semantics:
+    /// - `cast_precision_loss`: i64/u64 to f64 conversion may lose precision for large integers
+    /// - `cast_possible_truncation`: f64 to integer conversion truncates fractional part
+    /// - `cast_sign_loss`: f64 to u64 is safe because we clamp to non-negative first
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     fn handle_conversions_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing arithmetic.conversions operation: {op_name} at {node:?}");
 
@@ -5626,10 +5769,7 @@ impl HugrEngine {
             // Integer to float conversions
             "convert_s" | "itof_s" => {
                 // Signed integer to float
-                if let Some(value) = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_int())
-                {
+                if let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int()) {
                     let result = value as f64;
                     self.classical_values
                         .insert((node, 0), ClassicalValue::Float(result));
@@ -5759,11 +5899,11 @@ impl HugrEngine {
         true
     }
 
-    /// Handle `tket.quantum` non-gate operations (e.g., symbolic_angle).
+    /// Handle `tket.quantum` non-gate operations (e.g., `symbolic_angle`).
     ///
     /// Note: Quantum gate operations from tket.quantum are handled via the
     /// quantum ops extraction path. This handler is for non-gate operations
-    /// like symbolic_angle that create classical values (rotations).
+    /// like `symbolic_angle` that create classical values (rotations).
     fn handle_quantum_extension_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.quantum non-gate operation: {op_name} at {node:?}");
 
@@ -5822,31 +5962,30 @@ impl HugrEngine {
             }
 
             // Handle pi/n expressions
-            if let Some(rest) = expr.strip_prefix("pi/") {
-                if let Ok(divisor) = rest.parse::<f64>() {
-                    return 1.0 / divisor;
-                }
+            if let Some(rest) = expr.strip_prefix("pi/")
+                && let Ok(divisor) = rest.parse::<f64>()
+            {
+                return 1.0 / divisor;
             }
-            if let Some(rest) = expr.strip_prefix("-pi/") {
-                if let Ok(divisor) = rest.parse::<f64>() {
-                    return -1.0 / divisor;
-                }
+            if let Some(rest) = expr.strip_prefix("-pi/")
+                && let Ok(divisor) = rest.parse::<f64>()
+            {
+                return -1.0 / divisor;
             }
 
             // Handle n*pi expressions
-            if let Some(rest) = expr.strip_suffix("*pi") {
-                if let Ok(multiplier) = rest.parse::<f64>() {
-                    return multiplier;
-                }
+            if let Some(rest) = expr.strip_suffix("*pi")
+                && let Ok(multiplier) = rest.parse::<f64>()
+            {
+                return multiplier;
             }
 
             // Handle simple fractions like 1/2, 1/4
-            if let Some((num_str, denom_str)) = expr.split_once('/') {
-                if let (Ok(num), Ok(denom)) = (num_str.parse::<f64>(), denom_str.parse::<f64>()) {
-                    if denom != 0.0 {
-                        return num / denom;
-                    }
-                }
+            if let Some((num_str, denom_str)) = expr.split_once('/')
+                && let (Ok(num), Ok(denom)) = (num_str.parse::<f64>(), denom_str.parse::<f64>())
+                && denom != 0.0
+            {
+                return num / denom;
             }
 
             debug!("Could not parse symbolic angle expression: '{expr}', defaulting to 0");
@@ -5871,6 +6010,7 @@ impl HugrEngine {
     }
 
     /// Extract result label from operation parameters.
+    #[allow(clippy::unused_self)] // Consistent with other handler methods; may use self in future
     fn extract_result_label(&self, hugr: &Hugr, node: Node, op_name: &str) -> String {
         // Try to extract label from the ExtensionOp's debug representation
         // The debug format typically includes the label as a string parameter
@@ -5879,10 +6019,11 @@ impl HugrEngine {
             let debug_str = format!("{ext_op:?}");
             // Look for quoted string patterns that might be labels
             // Common patterns: "label", label="value", or ("label", ...)
-            if let Some(label) = Self::extract_string_from_debug(&debug_str) {
-                if !label.is_empty() && label != op_name {
-                    return label;
-                }
+            if let Some(label) = Self::extract_string_from_debug(&debug_str)
+                && !label.is_empty()
+                && label != op_name
+            {
+                return label;
             }
         }
         // Fallback: use node ID as label

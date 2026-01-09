@@ -12,6 +12,21 @@ publish = false
 description = "Performance benchmarks for PECOS (internal)"
 readme = "README.md"
 
+[features]
+default = []
+gpu-sims = ["dep:pecos-gpu-sims"]
+quest = ["dep:pecos-quest"]
+quest-cuda = ["quest", "pecos-quest/cuda"]
+qulacs = ["dep:pecos-qulacs"]
+all-sims = ["gpu-sims", "quest", "qulacs"]
+
+[dependencies]
+# Optional simulator dependencies for benchmarking
+pecos-gpu-sims = { path = "../pecos-gpu-sims", optional = true }
+pecos-quest = { path = "../pecos-quest", optional = true }
+pecos-qulacs = { path = "../pecos-qulacs", optional = true }
+pecos-qsim.workspace = true
+
 [dev-dependencies]
 criterion.workspace = true
 pecos = { workspace = true, features = ["runtime"] }

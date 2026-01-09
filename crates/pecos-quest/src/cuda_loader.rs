@@ -101,6 +101,59 @@ pub struct CudaEnvInfo {
 /// Global CUDA backend instance (lazily initialized)
 static CUDA_BACKEND: OnceLock<Result<CudaBackend, CudaLoadError>> = OnceLock::new();
 
+/// Wrapper for the CUDA environment handle that can be shared across threads
+///
+/// # Safety
+/// The CUDA environment handle is thread-safe through `QuEST`'s internal synchronization.
+/// All operations on the environment go through the CUDA backend functions which handle
+/// synchronization appropriately.
+struct SharedEnvHandle(*mut u8);
+
+// SAFETY: The CUDA environment handle is thread-safe through QuEST's internal synchronization
+// and is only accessed through the loaded CUDA backend functions which are also thread-safe.
+unsafe impl Send for SharedEnvHandle {}
+unsafe impl Sync for SharedEnvHandle {}
+
+/// Shared CUDA environment handle (lazily initialized, never destroyed)
+///
+/// `QuEST`'s CUDA environment has issues with destruction and recreation - once destroyed,
+/// subsequent attempts to create a new environment often fail. This static environment
+/// is shared across all `QuestCudaStateVecEngine` instances and persists for the lifetime
+/// of the process. Only the quantum registers (quregs) are created/destroyed per engine.
+static SHARED_CUDA_ENV: OnceLock<SharedEnvHandle> = OnceLock::new();
+
+/// Get or create the shared CUDA environment
+///
+/// This function returns the shared CUDA environment handle, creating it if necessary.
+/// The environment is never destroyed, avoiding `QuEST` CUDA recreation issues.
+///
+/// # Errors
+/// Returns `CudaLoadError` if:
+/// - The CUDA backend cannot be loaded
+/// - The environment cannot be created
+pub fn get_shared_cuda_env() -> Result<(*mut u8, &'static CudaBackend), CudaLoadError> {
+    let backend = try_load_cuda().map_err(std::clone::Clone::clone)?;
+
+    let env = SHARED_CUDA_ENV.get_or_init(|| {
+        let env_handle = unsafe { (backend.create_env)() };
+        if env_handle.is_null() {
+            log::error!("Failed to create shared CUDA QuEST environment");
+            SharedEnvHandle(std::ptr::null_mut())
+        } else {
+            log::info!("Created shared CUDA QuEST environment");
+            SharedEnvHandle(env_handle)
+        }
+    });
+
+    if env.0.is_null() {
+        return Err(CudaLoadError::CudaUnavailable(
+            "Failed to create shared CUDA environment".to_string(),
+        ));
+    }
+
+    Ok((env.0, backend))
+}
+
 /// Library name varies by platform
 #[cfg(target_os = "linux")]
 const CUDA_LIB_NAME: &str = "libpecos_quest_cuda.so";

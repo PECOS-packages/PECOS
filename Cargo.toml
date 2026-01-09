@@ -101,6 +101,13 @@ rapidhash = { version = "4", features = ["rng"] }
 # Concurrency
 crossbeam-channel = "0.5"
 
+# GPU
+wgpu = "28"
+pollster = "0.4"
+
+# Testing
+approx = "0.5"
+
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
 # MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c
 # The legacy feature compiles old zstd formats (v0.1-v0.7) that PECOS doesn't need
@@ -129,6 +136,7 @@ pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
 pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
+pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
 
 # Decoder crates
 pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }

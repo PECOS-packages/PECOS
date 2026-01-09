@@ -30,6 +30,9 @@ pub use quantum_engine::{
     QuestStateVectorEngineBuilder, quest_density_matrix, quest_state_vec,
 };
 
+#[cfg(feature = "cuda")]
+pub use quantum_engine::QuestCudaStateVecEngine;
+
 pub use pecos_core::rng::RngManageable;
 pub use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,

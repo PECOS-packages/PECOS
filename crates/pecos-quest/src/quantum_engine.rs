@@ -10,7 +10,9 @@ use pecos_engines::{
     Engine, IntoQuantumEngineBuilder, QuantumEngine, QuantumEngineBuilder,
     byte_message::{ByteMessage, GateType},
 };
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use pecos_qsim::{
+    ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
+};
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -741,11 +743,13 @@ pub fn quest_density_matrix() -> QuestDensityMatrixEngineBuilder {
 /// This engine uses the dynamically-loaded `QuEST` CUDA backend for GPU-accelerated
 /// quantum simulation. The CUDA backend is loaded at runtime via dlopen, allowing
 /// the same binary to work on systems with and without CUDA installed.
+///
+/// The engine uses a shared CUDA environment that persists for the lifetime of the
+/// process, avoiding `QuEST` CUDA recreation issues. Only the quantum register (qureg)
+/// is created/destroyed per engine instance.
 #[cfg(feature = "cuda")]
 pub struct QuestCudaStateVecEngine {
-    /// Opaque handle to the `QuEST` environment (owned by CUDA backend)
-    env_handle: *mut u8,
-    /// Opaque handle to the quantum register (owned by CUDA backend)
+    /// Opaque handle to the quantum register (owned by this instance)
     qureg_handle: *mut u8,
     /// Reference to the CUDA backend (static lifetime, lazily loaded)
     backend: &'static crate::cuda_loader::CudaBackend,
@@ -760,34 +764,24 @@ impl QuestCudaStateVecEngine {
     /// # Errors
     /// Returns `PecosError::Processing` if:
     /// - The CUDA backend library cannot be loaded
-    /// - The CUDA environment cannot be created
+    /// - The shared CUDA environment cannot be created
     /// - The quantum register cannot be allocated
     ///
     /// # Panics
     /// Panics if `num_qubits` exceeds `i32::MAX` (extremely unlikely in practice).
     pub fn new(num_qubits: usize) -> Result<Self, PecosError> {
-        let backend = crate::cuda_loader::try_load_cuda().map_err(|e| {
+        // Get the shared CUDA environment (created once, reused across all engines)
+        let (env_handle, backend) = crate::cuda_loader::get_shared_cuda_env().map_err(|e| {
             PecosError::Processing(format!(
-                "Failed to load CUDA backend: {e}\n\n{}",
+                "Failed to get shared CUDA environment: {e}\n\n{}",
                 crate::cuda_loader::cuda_unavailable_error_message()
             ))
         })?;
 
-        // Create environment
-        let env_handle = unsafe { (backend.create_env)() };
-        if env_handle.is_null() {
-            return Err(PecosError::Processing(
-                "Failed to create CUDA QuEST environment".to_string(),
-            ));
-        }
-
-        // Create quantum register
+        // Create quantum register using the shared environment
         let qureg_handle =
             unsafe { (backend.create_qureg)(env_handle, i32::try_from(num_qubits).unwrap()) };
         if qureg_handle.is_null() {
-            unsafe {
-                (backend.destroy_env)(env_handle);
-            }
             return Err(PecosError::Processing(format!(
                 "Failed to create CUDA quantum register with {num_qubits} qubits"
             )));
@@ -801,7 +795,6 @@ impl QuestCudaStateVecEngine {
         log::info!("Created CUDA-backed QuEST state vector engine with {num_qubits} qubits");
 
         Ok(Self {
-            env_handle,
             qureg_handle,
             backend,
             num_qubits,
@@ -812,12 +805,12 @@ impl QuestCudaStateVecEngine {
 #[cfg(feature = "cuda")]
 impl Drop for QuestCudaStateVecEngine {
     fn drop(&mut self) {
+        // Destroy the qureg to free GPU memory.
+        // NOTE: QuEST's CUDA backend only supports one qureg at a time,
+        // so this must be called before creating a new engine.
         unsafe {
             if !self.qureg_handle.is_null() {
                 (self.backend.destroy_qureg)(self.qureg_handle);
-            }
-            if !self.env_handle.is_null() {
-                (self.backend.destroy_env)(self.env_handle);
             }
         }
     }
@@ -1256,6 +1249,87 @@ impl QuantumEngine for QuestCudaStateVecEngine {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+// ============================================================================
+// CliffordGateable and ArbitraryRotationGateable implementations for CUDA engine
+// ============================================================================
+
+#[cfg(feature = "cuda")]
+impl QuantumSimulator for QuestCudaStateVecEngine {
+    fn reset(&mut self) -> &mut Self {
+        unsafe {
+            (self.backend.init_zero_state)(self.qureg_handle);
+        }
+        self
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl CliffordGateable<usize> for QuestCudaStateVecEngine {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn sz(&mut self, q: usize) -> &mut Self {
+        unsafe {
+            (self.backend.apply_s_gate)(self.qureg_handle, q as i32);
+        }
+        self
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn h(&mut self, q: usize) -> &mut Self {
+        unsafe {
+            (self.backend.apply_hadamard)(self.qureg_handle, q as i32);
+        }
+        self
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn cx(&mut self, q1: usize, q2: usize) -> &mut Self {
+        unsafe {
+            (self.backend.apply_cnot)(self.qureg_handle, q1 as i32, q2 as i32);
+        }
+        self
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn mz(&mut self, q: usize) -> MeasurementResult {
+        let outcome = unsafe { (self.backend.measure)(self.qureg_handle, q as i32) };
+        MeasurementResult {
+            outcome: outcome != 0,
+            is_deterministic: false, // CUDA backend doesn't report determinism
+        }
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl ArbitraryRotationGateable<usize> for QuestCudaStateVecEngine {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn rx(&mut self, theta: f64, q: usize) -> &mut Self {
+        unsafe {
+            (self.backend.apply_rotation_x)(self.qureg_handle, q as i32, theta);
+        }
+        self
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn rz(&mut self, theta: f64, q: usize) -> &mut Self {
+        unsafe {
+            (self.backend.apply_rotation_z)(self.qureg_handle, q as i32, theta);
+        }
+        self
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn rzz(&mut self, theta: f64, q1: usize, q2: usize) -> &mut Self {
+        // RZZ(theta) = exp(-i * theta/2 * Z⊗Z)
+        // Decomposition: CNOT(q1,q2) . RZ(theta, q2) . CNOT(q1,q2)
+        unsafe {
+            (self.backend.apply_cnot)(self.qureg_handle, q1 as i32, q2 as i32);
+            (self.backend.apply_rotation_z)(self.qureg_handle, q2 as i32, theta);
+            (self.backend.apply_cnot)(self.qureg_handle, q1 as i32, q2 as i32);
+        }
         self
     }
 }

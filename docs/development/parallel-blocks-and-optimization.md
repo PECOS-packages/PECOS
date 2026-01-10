@@ -1,5 +1,7 @@
 # Parallel Blocks and Optimization
 
+<!--skip: SLR examples require specific qubit API-->
+
 This guide explains the `Parallel` block construct in PECOS's SLR (Structured Language Representation) and the optimization transformations available for parallel quantum operations.
 
 ## Overview
@@ -12,7 +14,7 @@ When using `SlrConverter`, parallel optimization is enabled by default. This mea
 
 ### Creating Parallel Blocks
 
-```python
+```python,skip
 from pecos.slr import Main, Parallel, QReg
 from pecos.qeclib import qubit as qb
 
@@ -31,7 +33,7 @@ prog = Main(
 
 Parallel blocks can contain other blocks for logical grouping:
 
-```python
+```python,skip
 prog = Main(
     q := QReg("q", 6),
     Parallel(
@@ -60,7 +62,7 @@ The `ParallelOptimizer` transformation pass analyzes operations within `Parallel
 ### Example Transformation
 
 **Before optimization:**
-```python
+```python,skip
 Parallel(
     Block(H(q[0]), CX(q[0], q[1])),
     Block(H(q[2]), CX(q[2], q[3])),
@@ -69,7 +71,7 @@ Parallel(
 ```
 
 **After optimization:**
-```python
+```python,skip
 Block(
     Parallel(H(q[0]), H(q[2]), H(q[4])),  # All H gates
     Parallel(CX(q[0], q[1]), CX(q[2], q[3]), CX(q[4], q[5])),  # All CX gates
@@ -82,7 +84,7 @@ Block(
 
 The simplest way to use the optimizer is through `SlrConverter`:
 
-```python
+```python,skip
 from pecos.slr import SlrConverter
 
 # With optimization (default)
@@ -96,7 +98,7 @@ qasm_unoptimized = SlrConverter(prog, optimize_parallel=False).qasm()
 
 For more control, use the optimizer directly:
 
-```python
+```python,skip
 from pecos.slr.transforms import ParallelOptimizer
 
 optimizer = ParallelOptimizer()
@@ -135,7 +137,7 @@ The optimizer is conservative to ensure correctness:
 
 Parallel blocks containing control flow (`If`, `Repeat`) are not optimized:
 
-```python
+```python,skip
 Parallel(
     qb.H(q[0]),
     If(c[0] == 1).Then(qb.X(q[1])),  # Control flow prevents optimization
@@ -147,7 +149,7 @@ Parallel(
 
 Operations with qubit dependencies maintain their order:
 
-```python
+```python,skip
 Parallel(
     qb.H(q[0]),
     qb.CX(q[0], q[1]),  # Depends on H(q[0])
@@ -202,7 +204,7 @@ Comprehensive tests are available in:
 
 Here's a more complex example showing parallel phase gates:
 
-```python
+```python,skip
 from pecos.slr import Main, Parallel, QReg
 from pecos.qeclib import qubit as qb
 

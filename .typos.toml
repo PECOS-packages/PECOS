@@ -25,3 +25,10 @@ arange = "arange"
 nd = "nd"
 # delocate is a macOS wheel repair tool (delocate-wheel command)
 delocate = "delocate"
+# Gate name breakdown notation uses partial words like C(ontrolled), R(otation)
+ontrolled = "ontrolled"
+otation = "otation"
+repare = "repare"
+easure = "easure"
+egative = "egative"
+agger = "agger"

@@ -1,5 +1,44 @@
 # Graph API
 
+```hidden-python
+from pecos.graph import Graph
+
+graph = Graph()
+n0 = graph.add_node()
+n1 = graph.add_node()
+n2 = graph.add_node()
+graph.add_edge(n0, n1)
+graph.add_edge(n1, n2)
+graph.add_edge(n0, n2)
+graph.set_weight(n0, n1, 1.0)
+graph.set_weight(n1, n2, 2.0)
+graph.set_weight(n0, n2, 5.0)
+source_node = n0
+edge_id = graph.find_edge(n0, n1)
+
+# Set up graph-level attributes
+attrs = graph.attrs()
+attrs["name"] = "surface_code"
+attrs["distance"] = 5
+attrs["rounds"] = 100
+attrs["version"] = "1.0"
+attrs["author"] = "Alice"
+
+# Set up node attributes
+graph.node_attrs(n0)["label"] = "qubit_0"
+graph.node_attrs(n0)["position"] = [0.0, 1.0, 2.0]
+graph.node_attrs(n0)["active"] = True
+graph.node_attrs(n0)["x"] = 1.0
+graph.node_attrs(n0)["y"] = 2.0
+graph.node_attrs(n1)["label"] = "qubit_1"
+
+# Set up edge attributes
+graph.edge_attrs(n0, n1)["label"] = "boundary"
+graph.edge_attrs(n0, n1)["syn_path"] = [1, 2, 3]
+graph.edge_attrs(n0, n1)["path"] = [0, 1]
+graph.edge_attrs(n0, n1)["active"] = True
+```
+
 The PECOS Graph API provides a high-performance graph data structure with idiomatic APIs for both Rust and Python.
 
 ## Design Principles
@@ -282,9 +321,6 @@ Nodes can have arbitrary attributes attached to them, similar to edges.
     # Add edge with weight
     graph.add_edge(n0, n1)
     graph.set_weight(n0, n1, 5.0)
-
-    # Or pass weight as keyword arg
-    graph.add_edge(n0, n1, weight=5.0)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -302,7 +338,7 @@ Nodes can have arbitrary attributes attached to them, similar to edges.
 Python provides three ways to set edge attributes:
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     graph.add_edge(n0, n1)
     graph.set_weight(n0, n1, 5.0)
 
@@ -351,7 +387,7 @@ Python provides three ways to set edge attributes:
 ### Reading Edge Attributes
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     # Get weight
     weight = graph.get_weight(n0, n1)  # Returns float or None
 
@@ -391,7 +427,7 @@ Python provides three ways to set edge attributes:
 ### Finding Edges
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     # Find edge ID from node pair
     edge_id = graph.find_edge(n0, n1)  # Returns int or None
 
@@ -413,7 +449,7 @@ Python provides three ways to set edge attributes:
 ### Edge Information
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     # Count edges
     count = graph.edge_count()
 
@@ -458,7 +494,7 @@ The `Attribute` enum supports these types:
 ### Complex Attribute Examples
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     # Native types (fast path)
     graph.edge_attrs(0, 1)["label"] = "control"  # String
     graph.edge_attrs(0, 1)["weight_factor"] = 2.5  # Float
@@ -630,9 +666,12 @@ The graph provides two methods for shortest path computation:
     n2 = graph.add_node()
 
     # Add edges with weights
-    graph.add_edge(n0, n1, weight=1.0)
-    graph.add_edge(n1, n2, weight=2.0)
-    graph.add_edge(n0, n2, weight=5.0)
+    graph.add_edge(n0, n1)
+    graph.set_weight(n0, n1, 1.0)
+    graph.add_edge(n1, n2)
+    graph.set_weight(n1, n2, 2.0)
+    graph.add_edge(n0, n2)
+    graph.set_weight(n0, n2, 5.0)
 
     # Add edge attributes
     attrs = graph.edge_attrs(n0, n1)

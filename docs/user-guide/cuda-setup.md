@@ -1,5 +1,7 @@
 # CUDA Setup Guide for GPU Simulators
 
+<!--skip: CUDA examples require cupy and NVIDIA GPU-->
+
 This guide provides detailed instructions for setting up NVIDIA CUDA support to use GPU-accelerated quantum simulators in PECOS, specifically **CuStateVec** and **MPS** (Matrix Product State).
 
 ## Overview
@@ -143,7 +145,7 @@ uv pip install -e "./python/quantum-pecos[all,cuda]"
 
 ### Test CUDA Installation
 
-```python
+```python,skip
 # Test CuPy
 import cupy as cp
 
@@ -158,7 +160,7 @@ print(f"cuStateVec available: {custatevec is not None}")
 
 ### Test PECOS Simulators
 
-```python
+```python,skip
 from pecos.simulators import CuStateVec, MPS
 
 # Test CuStateVec
@@ -243,7 +245,7 @@ uv pip install cupy-cuda12x cuquantum-python-cu12
 
 **Solution**: GPU memory is limited. Use smaller circuits or the MPS simulator for larger systems.
 
-```python
+```python,skip
 # MPS can handle larger systems with less memory
 from pecos.simulators import MPS
 
@@ -348,7 +350,7 @@ To use GPU simulators in PECOS:
    just build-cuda
    ```
 5. **Verify GPU simulators**:
-   ```python
+   ```python,skip
    from pecos.simulators import CuStateVec, MPS
 
    sim = CuStateVec(2)  # Should work!

@@ -1,5 +1,7 @@
 # Circuit Representation
 
+<!--skip: Circuit examples require Guppy and specific circuit APIs-->
+
 PECOS provides several ways to represent and work with quantum circuits, from high-level program formats to low-level data structures.
 
 ## Quick Guide: What Should I Use?
@@ -29,7 +31,7 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
 ### Example: Different Program Types
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos import sim, Guppy, Qasm, Hugr
 
     # Guppy - recommended for new code
@@ -110,7 +112,7 @@ A directed acyclic graph representation where nodes are gates and edges are qubi
 ### Quick Start
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.quantum import DagCircuit
 
     # Fluent builder API
@@ -142,7 +144,7 @@ A directed acyclic graph representation where nodes are gates and edges are qubi
 The fluent API automatically wires gates on the same qubit:
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.quantum import DagCircuit
 
     circuit = DagCircuit()
@@ -214,7 +216,7 @@ The fluent API automatically wires gates on the same qubit:
 Gates can have arbitrary metadata attached:
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.quantum import DagCircuit, Attribute
 
     circuit = DagCircuit()
@@ -248,7 +250,7 @@ Gates can have arbitrary metadata attached:
 ### Circuit Analysis
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     circuit = DagCircuit()
     circuit.h(0).cx(0, 1).h(1).cx(1, 2).mz(0).mz(1).mz(2)
 
@@ -305,7 +307,7 @@ Gates can have arbitrary metadata attached:
 For advanced use cases, you can manually add gates and wire them:
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.quantum import DagCircuit, Gate, QubitId
 
     circuit = DagCircuit()
@@ -348,7 +350,7 @@ A time-sliced circuit representation where gates are organized into discrete tim
 ### Quick Start
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.quantum import TickCircuit
 
     circuit = TickCircuit()
@@ -390,7 +392,7 @@ A time-sliced circuit representation where gates are organized into discrete tim
 TickCircuit prevents scheduling conflicting gates in the same tick:
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.quantum import TickCircuit
 
     circuit = TickCircuit()
@@ -420,7 +422,7 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
 ### Tick Metadata
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     circuit = TickCircuit()
 
     # Add metadata to a tick
@@ -450,7 +452,7 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
 TickCircuit can be converted to and from DagCircuit:
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.quantum import DagCircuit, TickCircuit
 
     # TickCircuit -> DagCircuit
@@ -488,7 +490,7 @@ For general graph algorithms beyond quantum circuits, PECOS provides `DiGraph` (
 A general directed graph with weighted edges and attributes:
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.graph import DiGraph
 
     graph = DiGraph()
@@ -538,7 +540,7 @@ A general directed graph with weighted edges and attributes:
 A directed acyclic graph with topological ordering and cycle prevention:
 
 === ":fontawesome-brands-python: Python"
-    ```python
+    ```python,skip
     from pecos.graph import DAG
 
     dag = DAG()

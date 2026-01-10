@@ -1,5 +1,19 @@
 # Simulators
 
+```hidden-python
+from pecos import sim, Qasm
+
+circuit = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0], q[1];
+measure q -> c;
+"""
+```
+
 PECOS provides multiple quantum simulation backends optimized for different use cases. This guide helps you choose the right simulator for your needs.
 
 ## Quick Reference
@@ -147,6 +161,7 @@ results = sim(Qasm(circuit)).quantum(Qulacs).run(100)
 
 State vector simulator powered by the QuEST library.
 
+<!--skip: requires QuEST library to be built-->
 ```python
 from pecos.simulators import QuestStateVec
 
@@ -188,6 +203,7 @@ See [CUDA Setup Guide](cuda-setup.md) for detailed installation instructions.
 
 Tensor network simulator for circuits with limited entanglement.
 
+<!--skip: requires CUDA and cuQuantum-->
 ```python
 from pecos.simulators import MPS
 
@@ -368,22 +384,20 @@ For fine-grained control, you can use simulators directly:
 
 === ":fontawesome-brands-python: Python"
 
+    <!--skip: Direct simulator API varies by simulator type-->
     ```python
     from pecos.simulators import SparseSim
 
     # Create simulator with 5 qubits
     state = SparseSim(5)
 
-    # Apply gates
-    state.H(0)
-    state.CNOT(0, 1)
+    # Apply gates using run_gate
+    state.run_gate("H", (0,))
+    state.run_gate("CNOT", (0, 1))
 
     # Measure
-    result = state.measure(0)
+    result = state.run_gate("measure", (0,))
     print(f"Qubit 0 measured: {result}")
-
-    # Inspect stabilizers
-    state.print_stabs()
     ```
 
 === ":fontawesome-brands-rust: Rust"

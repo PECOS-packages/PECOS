@@ -1,5 +1,10 @@
 # QEC Geometry
 
+```hidden-python
+from pecos.qec import SurfacePatch, ColorCode488
+from pecos.qec.surface import SurfacePatch, SurfacePatchBuilder
+```
+
 This guide covers PECOS's pure QEC geometry module (`pecos.qec`), which provides data structures and utilities for quantum error correction codes without any simulation dependencies.
 
 ## What You'll Learn

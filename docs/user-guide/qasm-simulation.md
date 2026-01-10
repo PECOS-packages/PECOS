@@ -1,5 +1,20 @@
 # QASM Simulations
 
+```hidden-python
+from pecos import sim, Qasm, depolarizing_noise, biased_depolarizing_noise, GeneralNoiseModelBuilder
+from pecos_rslib import sparse_stabilizer, state_vector
+
+qasm_code = """
+    OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    creg c[2];
+    h q[0];
+    cx q[0], q[1];
+    measure q -> c;
+"""
+```
+
 This guide will walk you through running quantum circuit simulations using PECOS's QASM interface. Whether you're simulating ideal quantum circuits or studying the effects of noise, PECOS provides the tools you need.
 
 ## What You'll Learn
@@ -81,8 +96,7 @@ The `sim()` function returns a builder that provides flexibility through method 
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos import sim, Qasm
-    from pecos_rslib import DepolarizingNoise
+    from pecos import sim, Qasm, depolarizing_noise
 
     qasm_code = """
         OPENQASM 2.0;
@@ -101,7 +115,7 @@ The `sim()` function returns a builder that provides flexibility through method 
     results = (
         sim(Qasm(qasm_code))
         .seed(42)
-        .noise(DepolarizingNoise(p=0.01))
+        .noise(depolarizing_noise().with_uniform_probability(0.01))
         .workers(4)  # Explicitly set number of threads
         # .auto_workers()  # Or use all available CPU cores
         .run(1000)
@@ -145,11 +159,15 @@ lets you build the experiment once and rerun it multiple times:
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos import sim, Qasm
-    from pecos_rslib import DepolarizingNoise
+    from pecos import sim, Qasm, depolarizing_noise
 
     # Build once, run multiple times
-    experiment = sim(Qasm(qasm_code)).seed(42).noise(DepolarizingNoise(p=0.01)).build()
+    experiment = (
+        sim(Qasm(qasm_code))
+        .seed(42)
+        .noise(depolarizing_noise().with_uniform_probability(0.01))
+        .build()
+    )
 
     # Run with different shot counts
     results_100 = experiment.run(100)
@@ -183,29 +201,24 @@ Real quantum computers are noisy. PECOS helps you understand how noise affects y
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos_rslib import (
-        PassThroughNoise,
-        DepolarizingNoise,
-        DepolarizingCustomNoise,
-        BiasedDepolarizingNoise,
-    )
+    from pecos import depolarizing_noise, biased_depolarizing_noise
 
-    # No noise (ideal simulation)
-    PassThroughNoise()
+    # No noise (ideal simulation) - simply don't add a noise model
 
-    # Standard depolarizing
-    DepolarizingNoise(p=0.01)
+    # Standard depolarizing with uniform probability
+    depolarizing_noise().with_uniform_probability(0.01)
 
     # Custom depolarizing per operation type
-    DepolarizingCustomNoise(
-        p_prep=0.001,  # State preparation error
-        p_meas=0.002,  # Measurement error
-        p1=0.003,  # Single-qubit gate error
-        p2=0.004,  # Two-qubit gate error
+    (
+        depolarizing_noise()
+        .with_prep_probability(0.001)  # State preparation error
+        .with_meas_probability(0.002)  # Measurement error
+        .with_p1_probability(0.003)  # Single-qubit gate error
+        .with_p2_probability(0.004)  # Two-qubit gate error
     )
 
     # Biased depolarizing (asymmetric error distribution)
-    BiasedDepolarizingNoise(p=0.01)
+    biased_depolarizing_noise().with_uniform_probability(0.01)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -364,8 +377,7 @@ This example shows how noise affects quantum entanglement:
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos import sim, Qasm
-    from pecos_rslib import DepolarizingNoise
+    from pecos import sim, Qasm, depolarizing_noise
     from collections import Counter
 
     qasm_code = """
@@ -383,7 +395,7 @@ This example shows how noise affects quantum entanglement:
         sim(Qasm(qasm_code))
         .seed(42)
         .workers(4)
-        .noise(DepolarizingNoise(p=0.01))
+        .noise(depolarizing_noise().with_uniform_probability(0.01))
         .build()
     )
 
@@ -437,8 +449,7 @@ Here's how to simulate a GHZ state with realistic noise:
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos import sim, Qasm
-    from pecos_rslib import GeneralNoiseModelBuilder
+    from pecos import sim, Qasm, GeneralNoiseModelBuilder
 
     qasm_code = """
         OPENQASM 2.0;

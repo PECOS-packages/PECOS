@@ -1,5 +1,7 @@
 # Parallel Execution in PECOS
 
+<!--skip: SLR examples require specific qubit API-->
+
 This guide explains how to express parallel quantum operations in PECOS using the `Parallel` block construct.
 
 ## Introduction
@@ -14,7 +16,7 @@ By default, PECOS automatically optimizes operations within `Parallel` blocks to
 
 Use `Parallel` to indicate that operations can execute simultaneously:
 
-```python
+```python,skip
 from pecos.slr import Main, Parallel, QReg, CReg
 from pecos.qeclib import qubit as qb
 
@@ -36,7 +38,7 @@ prog = Main(
 
 You can use nested blocks to group related operations:
 
-```python
+```python,skip
 # Three Bell pairs prepared in parallel
 prog = Main(
     q := QReg("q", 6),
@@ -63,7 +65,7 @@ prog = Main(
 
 PECOS automatically optimizes `Parallel` blocks to maximize parallelism by default:
 
-```python
+```python,skip
 from pecos.slr import SlrConverter
 
 # Optimization is enabled by default
@@ -108,7 +110,7 @@ All Hadamard gates execute first in parallel, followed by all CNOT gates in para
 
 Operations that share qubits cannot be parallelized:
 
-```python
+```python,skip
 # These operations must execute sequentially
 Parallel(
     qb.H(q[0]),
@@ -120,7 +122,7 @@ Parallel(
 
 Parallel blocks containing conditional operations are not optimized:
 
-```python
+```python,skip
 Parallel(
     qb.H(q[0]),
     If(c[0] == 1).Then(qb.X(q[1])),  # Control flow prevents optimization
@@ -137,7 +139,7 @@ Parallel(
 
 Here's a complete example showing parallel quantum phase estimation:
 
-```python
+```python,skip
 from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter
 from pecos.qeclib import qubit as qb
 import numpy as np

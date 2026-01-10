@@ -2,6 +2,7 @@
 //! These tests verify that multiple `QuestStateVec` instances can work in parallel
 //! without interfering with each other, which is essential for Monte Carlo simulations.
 
+use pecos_core::{qid, qid2};
 use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
 use pecos_rng::PecosRng;
@@ -54,7 +55,7 @@ fn test_parallel_independent_instances() {
                         // Result: (|000> + |011>)/sqrt(2) in |q2 q1 q0> notation
                         // In PECOS (qubit 0 = LSB): states 0b000 = 0 and 0b011 = 3
                         state.reset();
-                        state.h(0).cx(0, 1);
+                        state.h(&qid(0)).cx(&qid2(0, 1));
                         let prob_000 = state.probability(0b000);
                         let prob_011 = state.probability(0b011);
                         assert_relative_eq!(prob_000, 0.5, epsilon = 1e-10);
@@ -102,19 +103,19 @@ fn test_parallel_bell_state_measurements() {
                     QuestStateVec::with_seed(2, thread_id as u64 * 1000);
 
                 // Create Bell state
-                state.h(0).cx(0, 1);
+                state.h(&qid(0)).cx(&qid2(0, 1));
 
                 // Perform many measurements to verify correlation
                 let mut correlations = Vec::new();
                 for _measurement in 0..20 {
                     // Reset to Bell state for each measurement
-                    state.reset().h(0).cx(0, 1);
+                    state.reset().h(&qid(0)).cx(&qid2(0, 1));
 
-                    let result0 = state.mz(0);
-                    let result1 = state.mz(1);
+                    let outcome0 = state.mz(&qid(0))[0].outcome;
+                    let outcome1 = state.mz(&qid(1))[0].outcome;
 
                     // In Bell state, measurements should be perfectly correlated
-                    correlations.push(result0.outcome == result1.outcome);
+                    correlations.push(outcome0 == outcome1);
                 }
 
                 // Return correlation statistics
@@ -158,14 +159,14 @@ fn test_parallel_rotation_gates() {
                 match thread_id % 3 {
                     0 => {
                         // Test RX rotation
-                        state.rx(PI, 0); // RX(π)|0> = i|1>
+                        state.rx(PI, &qid(0)); // RX(π)|0> = i|1>
                         let prob_1 = state.probability(1);
                         assert_relative_eq!(prob_1, 1.0, epsilon = 1e-10);
                         prob_1
                     }
                     1 => {
                         // Test RY rotation
-                        state.ry(PI / 2.0, 0); // RY(π/2)|0> = (|0> + |1>)/√2
+                        state.ry(PI / 2.0, &qid(0)); // RY(π/2)|0> = (|0> + |1>)/√2
                         let prob_0 = state.probability(0);
                         let prob_1 = state.probability(1);
                         assert_relative_eq!(prob_0, 0.5, epsilon = 1e-10);
@@ -174,7 +175,7 @@ fn test_parallel_rotation_gates() {
                     }
                     2 => {
                         // Test RZ rotation (doesn't change computational probabilities)
-                        state.rz(PI / 4.0, 0); // RZ only adds phase
+                        state.rz(PI / 4.0, &qid(0)); // RZ only adds phase
                         let prob_0 = state.probability(0);
                         assert_relative_eq!(prob_0, 1.0, epsilon = 1e-10);
                         prob_0
@@ -205,7 +206,7 @@ fn test_parallel_cloning_and_states() {
             thread::spawn(move || {
                 // Create template state
                 let mut template: QuestStateVec<PecosRng> = QuestStateVec::with_seed(2, 12345); // Same seed
-                template.h(0).cx(0, 1); // Bell state
+                template.h(&qid(0)).cx(&qid2(0, 1)); // Bell state
 
                 // Verify template probabilities
                 let template_00 = template.probability(0b00);
@@ -215,10 +216,10 @@ fn test_parallel_cloning_and_states() {
 
                 // Each thread modifies its own copy
                 match thread_id {
-                    0 => template.x(0),    // Should flip to |10> + |01>
-                    1 => template.z(0),    // Should add phase
-                    2 => template.h(1),    // Should create different superposition
-                    3 => template.reset(), // Should go back to |00>
+                    0 => template.x(&qid(0)), // Should flip to |10> + |01>
+                    1 => template.z(&qid(0)), // Should add phase
+                    2 => template.h(&qid(1)), // Should create different superposition
+                    3 => template.reset(),    // Should go back to |00>
                     _ => &mut template,
                 };
 
@@ -276,21 +277,21 @@ fn test_many_parallel_instances() {
                             state.reset();
                         }
                         1 => {
-                            state.x(0);
+                            state.x(&qid(0));
                         }
                         2 => {
-                            state.h(0);
+                            state.h(&qid(0));
                         }
                         3 => {
-                            state.z(0);
+                            state.z(&qid(0));
                         }
                         _ => unreachable!(),
                     }
                 }
 
                 // Final measurement
-                let result = state.mz(0);
-                (thread_id, result.outcome)
+                let outcome = state.mz(&qid(0))[0].outcome;
+                (thread_id, outcome)
             })
         })
         .collect();

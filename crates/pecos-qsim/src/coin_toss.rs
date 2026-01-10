@@ -13,7 +13,7 @@
 use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
-use pecos_core::RngManageable;
+use pecos_core::{QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 
 use core::fmt::Debug;
@@ -254,57 +254,45 @@ where
     }
 }
 
-impl<R> CliffordGateable<usize> for CoinToss<R>
+impl<R> CliffordGateable for CoinToss<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
     // All quantum gates are no-ops in CoinToss - they all return self for chaining
-    fn h(&mut self, _qubit: usize) -> &mut Self {
+    fn h(&mut self, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn sz(&mut self, _qubit: usize) -> &mut Self {
+    fn sz(&mut self, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn sx(&mut self, _qubit: usize) -> &mut Self {
-        self
-    }
-    fn sy(&mut self, _qubit: usize) -> &mut Self {
-        self
-    }
-    fn cx(&mut self, _control: usize, _target: usize) -> &mut Self {
-        self
-    }
-    fn cy(&mut self, _control: usize, _target: usize) -> &mut Self {
-        self
-    }
-    fn cz(&mut self, _control: usize, _target: usize) -> &mut Self {
-        self
-    }
-    fn swap(&mut self, _qubit1: usize, _qubit2: usize) -> &mut Self {
+    fn cx(&mut self, _qubits: &[QubitId]) -> &mut Self {
         self
     }
 
     // Measurement returns random results based on the configured probability
-    fn mz(&mut self, _qubit: usize) -> MeasurementResult {
-        MeasurementResult {
-            outcome: self.rng.random::<f64>() < self.prob,
-            is_deterministic: false,
-        }
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|_| MeasurementResult {
+                outcome: self.rng.random::<f64>() < self.prob,
+                is_deterministic: false,
+            })
+            .collect()
     }
 }
 
-impl<R> ArbitraryRotationGateable<usize> for CoinToss<R>
+impl<R> ArbitraryRotationGateable for CoinToss<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
     // All rotation gates are no-ops in CoinToss - they all return self for chaining
-    fn rx(&mut self, _theta: f64, _q: usize) -> &mut Self {
+    fn rx(&mut self, _theta: f64, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn rz(&mut self, _theta: f64, _q: usize) -> &mut Self {
+    fn rz(&mut self, _theta: f64, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn rzz(&mut self, _theta: f64, _q1: usize, _q2: usize) -> &mut Self {
+    fn rzz(&mut self, _theta: f64, _qubits: &[QubitId]) -> &mut Self {
         self
     }
 }
@@ -346,9 +334,9 @@ mod tests {
 
         // Should produce identical sequences with same seed
         for _ in 0..10 {
-            let result1 = sim1.mz(0);
-            let result2 = sim2.mz(0);
-            assert_eq!(result1.outcome, result2.outcome);
+            let result1 = sim1.mz(&[QubitId(0)]);
+            let result2 = sim2.mz(&[QubitId(0)]);
+            assert_eq!(result1[0].outcome, result2[0].outcome);
         }
     }
 
@@ -366,7 +354,9 @@ mod tests {
         let mut sim = CoinToss::new(2);
 
         // All gates should succeed and return self for chaining
-        sim.h(0).sz(0).cx(0, 1);
+        sim.h(&[QubitId(0)])
+            .sz(&[QubitId(0)])
+            .cx(&[QubitId(0), QubitId(1)]);
         // If we get here without panic, gates work as expected
     }
 
@@ -374,15 +364,15 @@ mod tests {
     fn test_measurements_distribution() {
         let mut sim = CoinToss::with_prob_and_seed(1, 0.0, Some(42));
 
-        // With prob=0.0, should always measure |0⟩
+        // With prob=0.0, should always measure |0>
         for _ in 0..100 {
-            assert!(!sim.mz(0).outcome);
+            assert!(!sim.mz(&[QubitId(0)])[0].outcome);
         }
 
         sim.set_prob(1.0);
-        // With prob=1.0, should always measure |1⟩
+        // With prob=1.0, should always measure |1>
         for _ in 0..100 {
-            assert!(sim.mz(0).outcome);
+            assert!(sim.mz(&[QubitId(0)])[0].outcome);
         }
     }
 
@@ -399,7 +389,10 @@ mod tests {
         let mut sim = CoinToss::new(2);
 
         // All rotation gates should succeed and return self for chaining
-        sim.rx(1.5, 0).ry(0.5, 1).rz(2.1, 0).rzz(0.8, 0, 1);
+        sim.rx(1.5, &[QubitId(0)])
+            .ry(0.5, &[QubitId(1)])
+            .rz(2.1, &[QubitId(0)])
+            .rzz(0.8, &[QubitId(0), QubitId(1)]);
         // If we get here without panic, rotation gates work as expected
     }
 
@@ -419,9 +412,9 @@ mod tests {
 
         // Should produce identical sequences with same seed
         for _ in 0..10 {
-            let result1 = sim1.mz(0);
-            let result2 = sim2.mz(0);
-            assert_eq!(result1.outcome, result2.outcome);
+            let result1 = sim1.mz(&[QubitId(0)]);
+            let result2 = sim2.mz(&[QubitId(0)]);
+            assert_eq!(result1[0].outcome, result2[0].outcome);
         }
     }
 }

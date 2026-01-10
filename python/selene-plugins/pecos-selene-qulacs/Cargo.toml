@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = { workspace = true }
+pecos-core = { workspace = true }
 pecos-qulacs = { workspace = true }
 pecos-qsim = { workspace = true }
 pecos-rng = { workspace = true }

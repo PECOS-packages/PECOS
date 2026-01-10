@@ -17,7 +17,7 @@ use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 
 #[pyclass(module = "pecos_rslib")]
 pub struct SparseSim {
-    inner: SparseStab<VecSet<usize>, usize>,
+    inner: SparseStab<VecSet<usize>>,
 }
 
 #[pymethods]
@@ -25,7 +25,7 @@ impl SparseSim {
     #[new]
     fn new(num_qubits: usize) -> Self {
         SparseSim {
-            inner: SparseStab::<VecSet<usize>, usize>::new(num_qubits),
+            inner: SparseStab::<VecSet<usize>>::new(num_qubits),
         }
     }
 
@@ -50,121 +50,122 @@ impl SparseSim {
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
+        let q = &[QubitId(location)];
         match symbol {
             "X" => {
-                self.inner.x(location);
+                self.inner.x(q);
                 Ok(None)
             }
             "Y" => {
-                self.inner.y(location);
+                self.inner.y(q);
                 Ok(None)
             }
             "Z" => {
-                self.inner.z(location);
+                self.inner.z(q);
                 Ok(None)
             }
             "H" => {
-                self.inner.h(location);
+                self.inner.h(q);
                 Ok(None)
             }
             "H2" => {
-                self.inner.h2(location);
+                self.inner.h2(q);
                 Ok(None)
             }
             "H3" => {
-                self.inner.h3(location);
+                self.inner.h3(q);
                 Ok(None)
             }
             "H4" => {
-                self.inner.h4(location);
+                self.inner.h4(q);
                 Ok(None)
             }
             "H5" => {
-                self.inner.h5(location);
+                self.inner.h5(q);
                 Ok(None)
             }
             "H6" => {
-                self.inner.h6(location);
+                self.inner.h6(q);
                 Ok(None)
             }
             "F" => {
-                self.inner.f(location);
+                self.inner.f(q);
                 Ok(None)
             }
             "Fdg" => {
-                self.inner.fdg(location);
+                self.inner.fdg(q);
                 Ok(None)
             }
             "F2" => {
-                self.inner.f2(location);
+                self.inner.f2(q);
                 Ok(None)
             }
             "F2dg" => {
-                self.inner.f2dg(location);
+                self.inner.f2dg(q);
                 Ok(None)
             }
             "F3" => {
-                self.inner.f3(location);
+                self.inner.f3(q);
                 Ok(None)
             }
             "F3dg" => {
-                self.inner.f3dg(location);
+                self.inner.f3dg(q);
                 Ok(None)
             }
             "F4" => {
-                self.inner.f4(location);
+                self.inner.f4(q);
                 Ok(None)
             }
             "F4dg" => {
-                self.inner.f4dg(location);
+                self.inner.f4dg(q);
                 Ok(None)
             }
             "SX" => {
-                self.inner.sx(location);
+                self.inner.sx(q);
                 Ok(None)
             }
             "SXdg" => {
-                self.inner.sxdg(location);
+                self.inner.sxdg(q);
                 Ok(None)
             }
             "SY" => {
-                self.inner.sy(location);
+                self.inner.sy(q);
                 Ok(None)
             }
             "SYdg" => {
-                self.inner.sydg(location);
+                self.inner.sydg(q);
                 Ok(None)
             }
             "SZ" => {
-                self.inner.sz(location);
+                self.inner.sz(q);
                 Ok(None)
             }
             "SZdg" => {
-                self.inner.szdg(location);
+                self.inner.szdg(q);
                 Ok(None)
             }
             "PZ" => {
-                self.inner.pz(location);
+                self.inner.pz(q);
                 Ok(None)
             }
             "PX" => {
-                self.inner.px(location);
+                self.inner.px(q);
                 Ok(None)
             }
             "PY" => {
-                self.inner.py(location);
+                self.inner.py(q);
                 Ok(None)
             }
             "PnZ" => {
-                self.inner.pnz(location);
+                self.inner.pnz(q);
                 Ok(None)
             }
             "PnX" => {
-                self.inner.pnx(location);
+                self.inner.pnx(q);
                 Ok(None)
             }
             "PnY" => {
-                self.inner.pny(location);
+                self.inner.pny(q);
                 Ok(None)
             }
             "PZForced" => {
@@ -180,14 +181,15 @@ impl SparseSim {
                     })?
                     .call_method0("__bool__")?
                     .extract::<bool>()?;
+                // pz_forced is an inherent method still using old API
                 self.inner.pz_forced(location, forced_value);
                 Ok(None)
             }
             "MZ" | "MX" | "MY" | "MZForced" => {
                 let result = match symbol {
-                    "MZ" => self.inner.mz(location),
-                    "MX" => self.inner.mx(location),
-                    "MY" => self.inner.my(location),
+                    "MZ" => self.inner.mz(q).into_iter().next().unwrap(),
+                    "MX" => self.inner.mx(q).into_iter().next().unwrap(),
+                    "MY" => self.inner.my(q).into_iter().next().unwrap(),
                     "MZForced" => {
                         let forced_value = params
                             .ok_or_else(|| {
@@ -203,6 +205,7 @@ impl SparseSim {
                             })?
                             .call_method0("__bool__")?
                             .extract::<bool>()?;
+                        // mz_forced is an inherent method still using old API
                         self.inner.mz_forced(location, forced_value)
                     }
                     _ => unreachable!(),
@@ -230,50 +233,51 @@ impl SparseSim {
 
         let q1: usize = location.get_item(0)?.extract()?;
         let q2: usize = location.get_item(1)?.extract()?;
+        let pair = &[QubitId(q1), QubitId(q2)];
 
         match symbol {
             "CX" => {
-                self.inner.cx(q1, q2);
+                self.inner.cx(pair);
                 Ok(None)
             }
             "CY" => {
-                self.inner.cy(q1, q2);
+                self.inner.cy(pair);
                 Ok(None)
             }
             "CZ" => {
-                self.inner.cz(q1, q2);
+                self.inner.cz(pair);
                 Ok(None)
             }
             "SXX" => {
-                self.inner.sxx(q1, q2);
+                self.inner.sxx(pair);
                 Ok(None)
             }
             "SXXdg" => {
-                self.inner.sxxdg(q1, q2);
+                self.inner.sxxdg(pair);
                 Ok(None)
             }
             "SYY" => {
-                self.inner.syy(q1, q2);
+                self.inner.syy(pair);
                 Ok(None)
             }
             "SYYdg" => {
-                self.inner.syydg(q1, q2);
+                self.inner.syydg(pair);
                 Ok(None)
             }
             "SZZ" => {
-                self.inner.szz(q1, q2);
+                self.inner.szz(pair);
                 Ok(None)
             }
             "SZZdg" => {
-                self.inner.szzdg(q1, q2);
+                self.inner.szzdg(pair);
                 Ok(None)
             }
             "SWAP" => {
-                self.inner.swap(q1, q2);
+                self.inner.swap(pair);
                 Ok(None)
             }
             "G2" => {
-                self.inner.g(q1, q2);
+                self.inner.g(pair);
                 Ok(None)
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

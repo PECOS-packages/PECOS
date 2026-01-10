@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::{IndexableElement, Pauli, PauliOperator, Phase, QuarterPhase, Set};
+use crate::{Pauli, PauliOperator, Phase, QuarterPhase, Set};
 use std::ops::{BitAnd, BitOr, BitXor};
 
 /// Represents a Pauli operator with positions for X and Z components.
@@ -23,7 +23,7 @@ use std::ops::{BitAnd, BitOr, BitXor};
 /// - Positions in both are affected by the Y operator.
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, PartialEq)]
-pub struct PauliSparse<T: for<'a> Set<'a>> {
+pub struct PauliSparse<T: for<'a> Set<'a, Element = usize>> {
     phase: QuarterPhase,
     x_positions: T,
     z_positions: T,
@@ -31,7 +31,7 @@ pub struct PauliSparse<T: for<'a> Set<'a>> {
 
 impl<T> Default for PauliSparse<T>
 where
-    T: for<'a> Set<'a> + Default,
+    T: for<'a> Set<'a, Element = usize> + Default,
 {
     fn default() -> Self {
         Self {
@@ -42,11 +42,10 @@ where
     }
 }
 
-impl<E, T> PauliSparse<T>
+impl<T> PauliSparse<T>
 where
-    T: for<'a> Set<'a, Element = E> + FromIterator<E>,
+    T: for<'a> Set<'a, Element = usize> + FromIterator<usize>,
     for<'a> &'a T: BitOr<Output = T>,
-    E: IndexableElement,
 {
     /// Initializes a new empty Pauli operator, which is equivalent to the identity.
     #[must_use]
@@ -93,7 +92,12 @@ where
     ///
     /// # Panics
     /// This function does not panic under normal usage.
-    pub fn with_operators(phase: QuarterPhase, x: &[E], y: &[E], z: &[E]) -> Result<Self, String> {
+    pub fn with_operators(
+        phase: QuarterPhase,
+        x: &[usize],
+        y: &[usize],
+        z: &[usize],
+    ) -> Result<Self, String> {
         let mut x_set: T = x.iter().copied().collect();
         let mut z_set: T = z.iter().copied().collect();
 
@@ -116,11 +120,10 @@ where
 
 // TODO: Consider making a clear distinction between mutation in place and not
 
-impl<E, T> PauliOperator for PauliSparse<T>
+impl<T> PauliOperator for PauliSparse<T>
 where
-    T: for<'a> Set<'a, Element = E> + FromIterator<E>,
+    T: for<'a> Set<'a, Element = usize> + FromIterator<usize>,
     for<'a> &'a T: BitAnd<Output = T> + BitXor<Output = T>,
-    E: IndexableElement,
 {
     fn phase(&self) -> QuarterPhase {
         self.phase
@@ -128,18 +131,12 @@ where
 
     /// Returns the X positions as a sorted `Vec<usize>`.
     fn x_positions(&self) -> Vec<usize> {
-        self.x_positions
-            .iter()
-            .map(super::super::element::IndexableElement::to_index)
-            .collect()
+        self.x_positions.iter().copied().collect()
     }
 
     /// Returns the Z positions as a sorted `Vec<usize>`.
     fn z_positions(&self) -> Vec<usize> {
-        self.z_positions
-            .iter()
-            .map(super::super::element::IndexableElement::to_index)
-            .collect()
+        self.z_positions.iter().copied().collect()
     }
 
     /// Multiplies two `SetPauli` operators and returns the result.
@@ -208,11 +205,11 @@ where
         let mut z_positions = T::default();
 
         match pauli {
-            Pauli::X => x_positions.insert(E::from_index(qubit)),
-            Pauli::Z => z_positions.insert(E::from_index(qubit)),
+            Pauli::X => x_positions.insert(qubit),
+            Pauli::Z => z_positions.insert(qubit),
             Pauli::Y => {
-                x_positions.insert(E::from_index(qubit));
-                z_positions.insert(E::from_index(qubit));
+                x_positions.insert(qubit);
+                z_positions.insert(qubit);
             }
             Pauli::I => {} // Identity does not affect any positions
         }

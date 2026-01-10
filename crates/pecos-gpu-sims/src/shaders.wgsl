@@ -24,6 +24,16 @@ struct GateParams {
 @group(0) @binding(1)
 var<uniform> params: GateParams;
 
+// Workgroup size constant (must match @workgroup_size in all compute shaders)
+const WORKGROUP_SIZE: u32 = 256u;
+
+// Compute linear thread index from potentially 2D dispatch
+// linear_idx = global_id.y * (num_workgroups.x * WORKGROUP_SIZE) + global_id.x
+fn get_linear_idx(global_id: vec3<u32>, num_workgroups: vec3<u32>) -> u32 {
+    let threads_per_y_row = num_workgroups.x * WORKGROUP_SIZE;
+    return global_id.y * threads_per_y_row + global_id.x;
+}
+
 // Complex multiplication: (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
 fn cmul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(
@@ -40,8 +50,11 @@ fn cadd(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
 // Apply arbitrary single-qubit gate
 // Each thread handles one pair of amplitudes that differ in the target qubit bit
 @compute @workgroup_size(256)
-fn apply_single_gate(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let pair_idx = global_id.x;
+fn apply_single_gate(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let pair_idx = get_linear_idx(global_id, num_workgroups);
     let num_pairs = 1u << (params.num_qubits - 1u);
 
     if (pair_idx >= num_pairs) {
@@ -79,8 +92,11 @@ fn apply_single_gate(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // Apply CNOT (CX) gate
 // Only flips target when control is |1>
 @compute @workgroup_size(256)
-fn apply_cx(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
+fn apply_cx(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
     let num_amplitudes = 1u << params.num_qubits;
 
     if (idx >= num_amplitudes) {
@@ -110,8 +126,11 @@ fn apply_cx(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // Apply CZ gate
 // Applies phase of -1 when both control and target are |1>
 @compute @workgroup_size(256)
-fn apply_cz(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
+fn apply_cz(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
     let num_amplitudes = 1u << params.num_qubits;
 
     if (idx >= num_amplitudes) {
@@ -135,8 +154,11 @@ fn apply_cz(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // |11⟩ → e^{-iθ/2} |11⟩  (same parity: negative phase)
 // Angle theta is passed in matrix_row0.x
 @compute @workgroup_size(256)
-fn apply_rzz(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
+fn apply_rzz(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
     let num_amplitudes = 1u << params.num_qubits;
 
     if (idx >= num_amplitudes) {
@@ -169,8 +191,11 @@ fn apply_rzz(@builtin(global_invocation_id) global_id: vec3<u32>) {
 var<storage, read_write> probabilities: array<f32>;
 
 @compute @workgroup_size(256)
-fn compute_probabilities(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
+fn compute_probabilities(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
     let num_amplitudes = 1u << params.num_qubits;
 
     if (idx >= num_amplitudes) {
@@ -194,8 +219,11 @@ struct MeasureParams {
 var<uniform> measure_params: MeasureParams;
 
 @compute @workgroup_size(256)
-fn collapse_state(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let idx = global_id.x;
+fn collapse_state(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
     let num_amplitudes = 1u << params.num_qubits;
 
     if (idx >= num_amplitudes) {

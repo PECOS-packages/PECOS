@@ -1,5 +1,6 @@
 //! Basic tests for the `QuEST` wrapper using PECOS-style API
 
+use pecos_core::{qid, qid2};
 use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
 use pecos_rng::PecosRng;
@@ -93,18 +94,18 @@ fn test_pauli_gates() {
 
     // Test Pauli-X: |0> -> |1>
     state.reset();
-    state.x(0);
+    state.x(&qid(0));
     assert_relative_eq!(state.probability(0), 0.0, epsilon = 1e-10);
     assert_relative_eq!(state.probability(1), 1.0, epsilon = 1e-10);
 
     // Test Pauli-Z on |1>: should add phase but not change probabilities
-    state.z(0);
+    state.z(&qid(0));
     assert_relative_eq!(state.probability(0), 0.0, epsilon = 1e-10);
     assert_relative_eq!(state.probability(1), 1.0, epsilon = 1e-10);
 
     // Test Pauli-Y: X*Z = iY, so after X then Z, we should have i|1>
     // Probability should still be 1 for |1>
-    state.reset().x(0).y(0);
+    state.reset().x(&qid(0)).y(&qid(0));
     // Y|1> = -i|0>, so we should be in |0>
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
     assert_relative_eq!(state.probability(1), 0.0, epsilon = 1e-10);
@@ -115,7 +116,7 @@ fn test_hadamard_gate() {
     let mut state = QuestStateVec::new(1);
 
     // H|0> = |+> = (|0> + |1>)/sqrt(2)
-    state.h(0);
+    state.h(&qid(0));
 
     let expected_prob = 0.5;
     assert_relative_eq!(state.probability(0), expected_prob, epsilon = 1e-10);
@@ -127,11 +128,11 @@ fn test_s_gates() {
     let mut state = QuestStateVec::new(1);
 
     // S|0> = |0>, probability unchanged
-    state.sz(0);
+    state.sz(&qid(0));
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 
     // S†S = I, so applying S then S† should be identity
-    state.szdg(0);
+    state.szdg(&qid(0));
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 }
 
@@ -140,7 +141,7 @@ fn test_cnot_gate() {
     let mut state = QuestStateVec::new(2);
 
     // CNOT|00> = |00>
-    state.cx(0, 1);
+    state.cx(&qid2(0, 1));
     assert_relative_eq!(state.probability(0b00), 1.0, epsilon = 1e-10);
 
     // In PECOS convention (qubit 0 = LSB):
@@ -149,12 +150,12 @@ fn test_cnot_gate() {
 
     // Prepare state with control qubit 0 = 1, apply CNOT(0,1) -> target flips
     state.prepare_computational_basis(0b01); // qubit 0 = 1, qubit 1 = 0
-    state.cx(0, 1); // control=0 is set, so target=1 flips: 0->1
+    state.cx(&qid2(0, 1)); // control=0 is set, so target=1 flips: 0->1
     assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10); // qubit 0 = 1, qubit 1 = 1
 
     // Prepare state with control qubit 0 = 0, apply CNOT(0,1) -> no change
     state.prepare_computational_basis(0b10); // qubit 0 = 0, qubit 1 = 1
-    state.cx(0, 1); // control=0 is clear, target doesn't flip
+    state.cx(&qid2(0, 1)); // control=0 is clear, target doesn't flip
     assert_relative_eq!(state.probability(0b10), 1.0, epsilon = 1e-10); // unchanged
 }
 
@@ -163,12 +164,12 @@ fn test_cz_gate() {
     let mut state = QuestStateVec::new(2);
 
     // CZ|00> = |00>
-    state.cz(0, 1);
+    state.cz(&qid2(0, 1));
     assert_relative_eq!(state.probability(0b00), 1.0, epsilon = 1e-10);
 
     // CZ|11> = -|11> (same probability)
     state.prepare_computational_basis(0b11);
-    state.cz(0, 1);
+    state.cz(&qid2(0, 1));
     assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10);
 }
 
@@ -177,7 +178,7 @@ fn test_bell_state_creation() {
     let mut state = QuestStateVec::new(2);
 
     // Create Bell state: H(0) then CNOT(0,1)
-    state.h(0).cx(0, 1);
+    state.h(&qid(0)).cx(&qid2(0, 1));
 
     // Should have equal probability for |00> and |11>
     assert_relative_eq!(state.probability(0b00), 0.5, epsilon = 1e-10);
@@ -191,22 +192,22 @@ fn test_measurement() {
     let mut state = QuestStateVec::new(1);
 
     // Measure |0>
-    let result = state.mz(0);
-    assert!(!result.outcome); // |0> corresponds to false
-    assert!(result.is_deterministic);
+    let result = state.mz(&qid(0));
+    assert!(!result[0].outcome); // |0> corresponds to false
+    assert!(result[0].is_deterministic);
 
     // Measure |1>
     state.prepare_computational_basis(1);
-    let result = state.mz(0);
-    assert!(result.outcome); // |1> corresponds to true
-    assert!(result.is_deterministic);
+    let result = state.mz(&qid(0));
+    assert!(result[0].outcome); // |1> corresponds to true
+    assert!(result[0].is_deterministic);
 
     // Measure superposition state
-    state.reset().h(0);
-    let result = state.mz(0);
+    state.reset().h(&qid(0));
+    let result = state.mz(&qid(0));
     // Should not be deterministic (though this is probabilistic)
     // For a superposition state, measurement is non-deterministic
-    assert!(!result.is_deterministic);
+    assert!(!result[0].is_deterministic);
 }
 
 #[test]
@@ -216,18 +217,18 @@ fn test_rotation_gates() {
     let mut state = QuestStateVec::new(1);
 
     // RX(π) = -iX, so RX(π)|0> should give |1>
-    state.rx(PI, 0);
+    state.rx(PI, &qid(0));
     assert_relative_eq!(state.probability(0), 0.0, epsilon = 1e-10);
     assert_relative_eq!(state.probability(1), 1.0, epsilon = 1e-10);
 
     // RZ doesn't change computational basis probabilities
     state.reset();
-    state.rz(PI / 2.0, 0);
+    state.rz(PI / 2.0, &qid(0));
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 
     // RY(π/2) should create superposition
     state.reset();
-    state.ry(PI / 2.0, 0);
+    state.ry(PI / 2.0, &qid(0));
     assert_relative_eq!(state.probability(0), 0.5, epsilon = 1e-10);
     assert_relative_eq!(state.probability(1), 0.5, epsilon = 1e-10);
 }
@@ -237,11 +238,11 @@ fn test_t_gates() {
     let mut state = QuestStateVec::new(1);
 
     // T|0> = |0>, probability unchanged
-    state.t(0);
+    state.t(&qid(0));
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 
     // T†T = I, so applying T then T† should be identity
-    state.tdg(0);
+    state.tdg(&qid(0));
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 }
 
@@ -252,12 +253,12 @@ fn test_rzz_gate() {
     let mut state = QuestStateVec::new(2);
 
     // RZZ doesn't change computational basis probabilities
-    state.rzz(PI / 2.0, 0, 1);
+    state.rzz(PI / 2.0, &qid2(0, 1));
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 
     // Test on |11> state
     state.prepare_computational_basis(0b11);
-    state.rzz(PI / 2.0, 0, 1);
+    state.rzz(PI / 2.0, &qid2(0, 1));
     assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10);
 }
 
@@ -268,10 +269,10 @@ fn test_method_chaining() {
     // Test that all methods return &mut Self for chaining
     state
         .reset()
-        .h(0)
-        .cx(0, 1)
-        .z(1)
-        .rx(std::f64::consts::PI / 4.0, 0);
+        .h(&qid(0))
+        .cx(&qid2(0, 1))
+        .z(&qid(1))
+        .rx(std::f64::consts::PI / 4.0, &qid(0));
 
     // Just verify it compiles and runs
     assert_eq!(state.num_qubits(), 2);

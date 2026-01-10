@@ -13,7 +13,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
 mod modules {
-    pub mod element_ops;
+    pub mod allocation_overhead;
     // TODO: pub mod hadamard_ops;
     pub mod measurement_sampling;
     pub mod noise_models;
@@ -25,11 +25,12 @@ mod modules {
 }
 
 use modules::{
-    element_ops, measurement_sampling, noise_models, rng, set_ops, state_vec_sims, surface_code,
+    allocation_overhead, measurement_sampling, noise_models, rng, set_ops, state_vec_sims,
+    surface_code,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
-    element_ops::benchmarks(c);
+    allocation_overhead::benchmarks(c);
     measurement_sampling::benchmarks(c);
     noise_models::benchmarks(c);
     rng::benchmarks(c);

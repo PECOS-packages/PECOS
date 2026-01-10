@@ -38,7 +38,7 @@ pub use measurement_sampler::{
     SequentialMeasurementSampler,
 };
 pub use pauli_prop::{PauliProp, StdPauliProp};
-pub use pecos_core::VecSet;
+pub use pecos_core::{VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{SparseStab, StdSparseStab};

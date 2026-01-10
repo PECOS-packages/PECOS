@@ -1,3 +1,4 @@
+use pecos_core::{qid, qid2};
 use pecos_qsim::ArbitraryRotationGateable;
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::DensityMatrix;
@@ -40,8 +41,8 @@ fn test_compare_x_gate() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply X to qubit 0
-    sv.x(0);
-    dm.x(0);
+    sv.x(&qid(0));
+    dm.x(&qid(0));
 
     compare_probabilities(&sv, &dm, num_qubits);
 }
@@ -54,8 +55,8 @@ fn test_compare_hadamard() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply H to qubit 0
-    sv.h(0);
-    dm.h(0);
+    sv.h(&qid(0));
+    dm.h(&qid(0));
 
     compare_probabilities(&sv, &dm, num_qubits);
 }
@@ -68,8 +69,8 @@ fn test_compare_multiple_gates() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply sequence of gates to create a Bell state
-    sv.h(0).cx(0, 1);
-    dm.h(0).cx(0, 1);
+    sv.h(&qid(0)).cx(&qid2(0, 1));
+    dm.h(&qid(0)).cx(&qid2(0, 1));
 
     compare_probabilities(&sv, &dm, num_qubits);
 }
@@ -82,14 +83,14 @@ fn test_compare_rotations() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply various rotations
-    sv.rx(PI / 4.0, 0);
-    dm.rx(PI / 4.0, 0);
+    sv.rx(PI / 4.0, &qid(0));
+    dm.rx(PI / 4.0, &qid(0));
 
     compare_probabilities(&sv, &dm, num_qubits);
 
     // Apply another rotation
-    sv.rz(PI / 3.0, 0);
-    dm.rz(PI / 3.0, 0);
+    sv.rz(PI / 3.0, &qid(0));
+    dm.rz(PI / 3.0, &qid(0));
 
     compare_probabilities(&sv, &dm, num_qubits);
 }
@@ -102,12 +103,12 @@ fn test_compare_two_qubit_rotations() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create superposition first
-    sv.h(0).h(1);
-    dm.h(0).h(1);
+    sv.h(&qid(0)).h(&qid(1));
+    dm.h(&qid(0)).h(&qid(1));
 
     // Apply ZZ rotation
-    sv.rzz(PI / 4.0, 0, 1);
-    dm.rzz(PI / 4.0, 0, 1);
+    sv.rzz(PI / 4.0, &qid2(0, 1));
+    dm.rzz(PI / 4.0, &qid2(0, 1));
 
     compare_probabilities(&sv, &dm, num_qubits);
 }
@@ -120,14 +121,14 @@ fn test_compare_complex_circuit() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create a GHZ state
-    sv.h(0).cx(0, 1).cx(1, 2);
-    dm.h(0).cx(0, 1).cx(1, 2);
+    sv.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
+    dm.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
 
     compare_probabilities(&sv, &dm, num_qubits);
 
     // Apply more gates
-    sv.x(0).h(1).rz(PI / 3.0, 2);
-    dm.x(0).h(1).rz(PI / 3.0, 2);
+    sv.x(&qid(0)).h(&qid(1)).rz(PI / 3.0, &qid(2));
+    dm.x(&qid(0)).h(&qid(1)).rz(PI / 3.0, &qid(2));
 
     compare_probabilities(&sv, &dm, num_qubits);
 }
@@ -145,16 +146,16 @@ fn test_compare_measurements() {
     let mut dm = DensityMatrix::with_seed(num_qubits, seed);
 
     // Put qubits in superposition
-    sv.h(0);
-    dm.h(0);
+    sv.h(&qid(0));
+    dm.h(&qid(0));
 
     // Both should report the same probabilities
     assert_probs_equal(sv.probability(0), dm.probability(0));
     assert_probs_equal(sv.probability(1), dm.probability(1));
 
     // With identical seeds, measurements should give identical results
-    let sv_result = sv.mz(0);
-    let dm_result = dm.mz(0);
+    let sv_result = sv.mz(&qid(0)).into_iter().next().unwrap();
+    let dm_result = dm.mz(&qid(0)).into_iter().next().unwrap();
 
     assert_eq!(
         sv_result.outcome, dm_result.outcome,
@@ -189,8 +190,8 @@ fn test_compare_prepare_states() {
     dm.prepare_computational_basis(0);
 
     for i in 0..num_qubits {
-        sv.h(i);
-        dm.h(i);
+        sv.h(&qid(i));
+        dm.h(&qid(i));
     }
 
     // Compare probabilities - we expect them to be identical since we applied the same operations
@@ -212,7 +213,7 @@ fn test_builtin_prepare_plus_state_difference() {
     let mut sv2 = StateVec::new(num_qubits);
     sv2.prepare_computational_basis(0);
     for i in 0..num_qubits {
-        sv2.h(i);
+        sv2.h(&qid(i));
     }
 
     // Method 3: Using DensityMatrix's prepare_plus_state
@@ -264,8 +265,8 @@ fn test_compare_reset() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply some gates to get to a non-trivial state
-    sv.h(0).cx(0, 1);
-    dm.h(0).cx(0, 1);
+    sv.h(&qid(0)).cx(&qid2(0, 1));
+    dm.h(&qid(0)).cx(&qid2(0, 1));
 
     // Reset both simulators
     sv.reset();
@@ -283,8 +284,12 @@ fn test_compare_pure_rotated_states() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply a sequence of rotation gates
-    sv.rx(PI / 8.0, 0).rz(PI / 6.0, 0).rx(PI / 4.0, 0);
-    dm.rx(PI / 8.0, 0).rz(PI / 6.0, 0).rx(PI / 4.0, 0);
+    sv.rx(PI / 8.0, &qid(0))
+        .rz(PI / 6.0, &qid(0))
+        .rx(PI / 4.0, &qid(0));
+    dm.rx(PI / 8.0, &qid(0))
+        .rz(PI / 6.0, &qid(0))
+        .rx(PI / 4.0, &qid(0));
 
     compare_probabilities(&sv, &dm, num_qubits);
 }
@@ -299,22 +304,22 @@ fn test_compare_entangled_states() {
     // Create different entangled states
 
     // Bell state |Φ⁺⟩ = (|00⟩ + |11⟩)/√2
-    sv.h(0).cx(0, 1);
-    dm.h(0).cx(0, 1);
+    sv.h(&qid(0)).cx(&qid2(0, 1));
+    dm.h(&qid(0)).cx(&qid2(0, 1));
     compare_probabilities(&sv, &dm, num_qubits);
 
     // Reset and create Bell state |Φ⁻⟩ = (|00⟩ - |11⟩)/√2
-    sv.reset().h(0).cx(0, 1).z(1);
-    dm.reset().h(0).cx(0, 1).z(1);
+    sv.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
+    dm.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
     compare_probabilities(&sv, &dm, num_qubits);
 
     // Reset and create Bell state |Ψ⁺⟩ = (|01⟩ + |10⟩)/√2
-    sv.reset().h(0).cx(0, 1).x(1);
-    dm.reset().h(0).cx(0, 1).x(1);
+    sv.reset().h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
+    dm.reset().h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
     compare_probabilities(&sv, &dm, num_qubits);
 
     // Reset and create Bell state |Ψ⁻⟩ = (|01⟩ - |10⟩)/√2
-    sv.reset().h(0).cx(0, 1).z(0).x(1);
-    dm.reset().h(0).cx(0, 1).z(0).x(1);
+    sv.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
+    dm.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
     compare_probabilities(&sv, &dm, num_qubits);
 }

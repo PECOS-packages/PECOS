@@ -26,10 +26,11 @@ use crate::QuantumSimulator;
 ///
 /// # Examples
 /// ```rust
+/// use pecos_core::{qid, qid2};
 /// use pecos_qsim::{StabilizerTableauSimulator, CliffordGateable, StdSparseStab};
 ///
 /// let mut sim = StdSparseStab::new(2);
-/// sim.h(0).cx(0, 1);  // Create Bell state
+/// sim.h(&qid(0)).cx(&qid2(0, 1));  // Create Bell state
 ///
 /// // Print the stabilizer tableau
 /// println!("{}", sim.stab_tableau());

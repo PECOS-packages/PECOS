@@ -62,8 +62,8 @@
 
 use std::fmt;
 
+use pecos_core::Set;
 use pecos_core::gate_type::GateType;
-use pecos_core::{IndexableElement, Set};
 use pecos_qsim::SymbolicSparseStab;
 use pecos_quantum::Circuit;
 
@@ -184,13 +184,12 @@ impl std::error::Error for HugrExecutionError {}
 /// assert_eq!(sim.measurement_history().len(), 1);
 /// ```
 #[allow(clippy::too_many_lines)]
-pub fn execute_hugr<T, E, C>(
-    sim: &mut SymbolicSparseStab<T, E>,
+pub fn execute_hugr<T, C>(
+    sim: &mut SymbolicSparseStab<T>,
     hugr: &C,
 ) -> Result<(), HugrExecutionError>
 where
-    E: IndexableElement,
-    T: for<'a> Set<'a, Element = E>,
+    T: for<'a> Set<'a, Element = usize>,
     C: Circuit,
 {
     let num_qubits = sim.num_qubits();
@@ -224,33 +223,33 @@ where
             // Single-qubit Clifford gates
             GateType::X => {
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = E::from_index(gate.qubits[0].index());
+                let q = gate.qubits[0].index();
                 sim.x(q);
             }
             GateType::Y => {
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = E::from_index(gate.qubits[0].index());
+                let q = gate.qubits[0].index();
                 sim.y(q);
             }
             GateType::Z => {
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = E::from_index(gate.qubits[0].index());
+                let q = gate.qubits[0].index();
                 sim.z(q);
             }
             GateType::H => {
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = E::from_index(gate.qubits[0].index());
+                let q = gate.qubits[0].index();
                 sim.h(q);
             }
             GateType::SZ => {
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = E::from_index(gate.qubits[0].index());
+                let q = gate.qubits[0].index();
                 sim.sz(q);
             }
             GateType::SZdg => {
                 // S† = S^3, so apply S three times
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = E::from_index(gate.qubits[0].index());
+                let q = gate.qubits[0].index();
                 sim.sz(q);
                 sim.sz(q);
                 sim.sz(q);
@@ -259,15 +258,15 @@ where
             // Two-qubit Clifford gates
             GateType::CX => {
                 validate_qubit_count(gate.gate_type, gate_idx, 2, gate.qubits.len())?;
-                let q1 = E::from_index(gate.qubits[0].index());
-                let q2 = E::from_index(gate.qubits[1].index());
+                let q1 = gate.qubits[0].index();
+                let q2 = gate.qubits[1].index();
                 sim.cx(q1, q2);
             }
             GateType::CY => {
                 // CY = (I ⊗ S†) CX (I ⊗ S)
                 validate_qubit_count(gate.gate_type, gate_idx, 2, gate.qubits.len())?;
-                let q1 = E::from_index(gate.qubits[0].index());
-                let q2 = E::from_index(gate.qubits[1].index());
+                let q1 = gate.qubits[0].index();
+                let q2 = gate.qubits[1].index();
                 // S on target
                 sim.sz(q2);
                 // CX
@@ -280,8 +279,8 @@ where
             GateType::CZ => {
                 // CZ = (I ⊗ H) CX (I ⊗ H)
                 validate_qubit_count(gate.gate_type, gate_idx, 2, gate.qubits.len())?;
-                let q1 = E::from_index(gate.qubits[0].index());
-                let q2 = E::from_index(gate.qubits[1].index());
+                let q1 = gate.qubits[0].index();
+                let q2 = gate.qubits[1].index();
                 sim.h(q2);
                 sim.cx(q1, q2);
                 sim.h(q2);
@@ -290,7 +289,7 @@ where
             // Measurements (including leaked measurement, treated as regular)
             GateType::Measure | GateType::MeasureFree | GateType::MeasureLeaked => {
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = E::from_index(gate.qubits[0].index());
+                let q = gate.qubits[0].index();
                 sim.mz(q);
             }
 

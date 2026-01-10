@@ -1,4 +1,4 @@
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, DensityMatrix};
+use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, DensityMatrix, qid, qid2};
 use std::f64::consts::PI;
 
 fn main() {
@@ -11,18 +11,18 @@ fn main() {
     println!("{dm}");
 
     // Create a Bell state
-    dm.h(0).cx(0, 1);
+    dm.h(&qid(0)).cx(&qid2(0, 1));
     println!("\nBell state (|00⟩ + |11⟩)/√2:");
     println!("{dm}");
 
     // Apply some more gates
-    dm.sz(0).h(1);
+    dm.sz(&qid(0)).h(&qid(1));
     println!("\nAfter applying S to qubit 0 and H to qubit 1:");
     println!("{dm}");
 
     // Create a noisy state with depolarizing noise
     let mut noisy_dm = DensityMatrix::new(1);
-    noisy_dm.h(0);
+    noisy_dm.h(&qid(0));
     println!("\nSingle qubit in |+⟩ state:");
     println!("{noisy_dm}");
 
@@ -39,7 +39,7 @@ fn main() {
 
     // Non-Clifford gates (rotations)
     let mut rotated = DensityMatrix::new(1);
-    rotated.rx(PI / 4.0, 0);
+    rotated.rx(PI / 4.0, &qid(0));
     println!("\nState after Rx(π/4):");
     println!("{rotated}");
 
@@ -53,7 +53,7 @@ fn main() {
 
     // Create a simple Bell state for demonstration
     let mut bell = DensityMatrix::new(2);
-    bell.h(0).cx(0, 1);
+    bell.h(&qid(0)).cx(&qid2(0, 1));
 
     // Get the 2D density matrix
     let rho_2d = bell.get_density_matrix();

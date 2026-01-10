@@ -5,6 +5,8 @@ use crate::{QuestDensityMatrix, QuestStateVec};
 #[cfg(test)]
 use num_complex::Complex64;
 #[cfg(test)]
+use pecos_core::{qid, qid2};
+#[cfg(test)]
 use pecos_num::assert_relative_eq;
 #[cfg(test)]
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
@@ -51,7 +53,7 @@ fn test_reset() {
     let mut sim = QuestStateVec::new(2);
 
     // Apply some gates
-    sim.h(0).x(1);
+    sim.h(&qid(0)).x(&qid(1));
 
     // Reset should return to |00⟩
     sim.reset();
@@ -65,7 +67,7 @@ fn test_pauli_x_gate() {
     let mut sim = QuestStateVec::new(1);
 
     // Apply X gate: |0⟩ -> |1⟩
-    sim.x(0);
+    sim.x(&qid(0));
 
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), EPSILON);
     assert_complex_eq(sim.get_amplitude(1), Complex64::new(1.0, 0.0), EPSILON);
@@ -76,7 +78,7 @@ fn test_pauli_y_gate() {
     let mut sim = QuestStateVec::new(1);
 
     // Apply Y gate: |0⟩ -> i|1⟩
-    sim.y(0);
+    sim.y(&qid(0));
 
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), EPSILON);
     assert_complex_eq(sim.get_amplitude(1), Complex64::new(0.0, 1.0), EPSILON);
@@ -87,9 +89,9 @@ fn test_pauli_z_gate() {
     let mut sim = QuestStateVec::new(1);
 
     // Prepare |1⟩ state
-    sim.x(0);
+    sim.x(&qid(0));
     // Apply Z gate: |1⟩ -> -|1⟩
-    sim.z(0);
+    sim.z(&qid(0));
 
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), EPSILON);
     assert_complex_eq(sim.get_amplitude(1), Complex64::new(-1.0, 0.0), EPSILON);
@@ -100,7 +102,7 @@ fn test_hadamard_gate() {
     let mut sim = QuestStateVec::new(1);
 
     // Apply H gate: |0⟩ -> (|0⟩ + |1⟩)/√2
-    sim.h(0);
+    sim.h(&qid(0));
 
     let sqrt2_inv = 1.0 / 2.0_f64.sqrt();
     assert_complex_eq(
@@ -120,9 +122,9 @@ fn test_s_gate() {
     let mut sim = QuestStateVec::new(1);
 
     // Prepare |1⟩ state
-    sim.x(0);
+    sim.x(&qid(0));
     // Apply S gate: |1⟩ -> i|1⟩
-    sim.sz(0);
+    sim.sz(&qid(0));
 
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), EPSILON);
     assert_complex_eq(sim.get_amplitude(1), Complex64::new(0.0, 1.0), EPSILON);
@@ -133,9 +135,9 @@ fn test_t_gate() {
     let mut sim = QuestStateVec::new(1);
 
     // Prepare |1⟩ state
-    sim.x(0);
+    sim.x(&qid(0));
     // Apply T gate: |1⟩ -> e^(iπ/4)|1⟩
-    sim.t(0);
+    sim.t(&qid(0));
 
     let expected = Complex64::from_polar(1.0, FRAC_PI_4);
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), EPSILON);
@@ -148,13 +150,13 @@ fn test_cnot_gate() {
 
     // Test CNOT with control=0, target=1
     // |00⟩ -> |00⟩
-    sim.cx(0, 1);
+    sim.cx(&qid2(0, 1));
     assert_complex_eq(sim.get_amplitude(0b00), Complex64::new(1.0, 0.0), EPSILON);
 
     sim.reset();
 
     // |10⟩ -> |11⟩
-    sim.x(0).cx(0, 1);
+    sim.x(&qid(0)).cx(&qid2(0, 1));
     assert_complex_eq(sim.get_amplitude(0b11), Complex64::new(1.0, 0.0), EPSILON);
 }
 
@@ -163,9 +165,9 @@ fn test_cz_gate() {
     let mut sim = QuestStateVec::new(2);
 
     // Prepare |11⟩ state
-    sim.x(0).x(1);
+    sim.x(&qid(0)).x(&qid(1));
     // Apply CZ: |11⟩ -> -|11⟩
-    sim.cz(0, 1);
+    sim.cz(&qid2(0, 1));
 
     assert_complex_eq(sim.get_amplitude(0b11), Complex64::new(-1.0, 0.0), EPSILON);
 }
@@ -175,7 +177,7 @@ fn test_bell_state_preparation() {
     let mut sim = QuestStateVec::new(2);
 
     // Create Bell state (|00⟩ + |11⟩)/√2
-    sim.h(0).cx(0, 1);
+    sim.h(&qid(0)).cx(&qid2(0, 1));
 
     let sqrt2_inv = 1.0 / 2.0_f64.sqrt();
     assert_complex_eq(
@@ -197,21 +199,21 @@ fn test_rotation_gates() {
     let mut sim = QuestStateVec::new(1);
 
     // Test Rx(π) = X
-    sim.rx(PI, 0);
+    sim.rx(PI, &qid(0));
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), 1e-9);
     assert_complex_eq(sim.get_amplitude(1), Complex64::new(0.0, -1.0), 1e-9); // Note: -i|1⟩ due to phase
 
     sim.reset();
 
     // Test Ry(π) = Y (up to global phase)
-    sim.ry(PI, 0);
+    sim.ry(PI, &qid(0));
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), 1e-9);
     assert_complex_eq(sim.get_amplitude(1), Complex64::new(1.0, 0.0), 1e-9);
 
     sim.reset();
 
     // Test Rz(π) on |+⟩ state
-    sim.h(0).rz(PI, 0);
+    sim.h(&qid(0)).rz(PI, &qid(0));
     // QuEST uses the convention RZ(θ) = diag(e^(-iθ/2), e^(iθ/2))
     // So RZ(π) on |+⟩ gives (e^(-iπ/2)|0⟩ + e^(iπ/2)|1⟩)/√2 = (-i|0⟩ + i|1⟩)/√2
     let sqrt2_inv = 1.0 / 2.0_f64.sqrt();
@@ -226,9 +228,9 @@ fn test_measurement() {
     let mut sim = QuestStateVec::new(1);
 
     // Measure |0⟩ state - should always give 0
-    let result = sim.mz(0);
-    assert!(!result.outcome); // 0 outcome
-    assert!(result.is_deterministic);
+    let result = sim.mz(&qid(0));
+    assert!(!result[0].outcome); // 0 outcome
+    assert!(result[0].is_deterministic);
 
     // After measurement, state should still be |0⟩
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(1.0, 0.0), EPSILON);
@@ -238,12 +240,12 @@ fn test_measurement() {
 #[test]
 fn test_measurement_after_x() {
     let mut sim = QuestStateVec::new(1);
-    sim.x(0);
+    sim.x(&qid(0));
 
     // Measure |1⟩ state - should always give 1
-    let result = sim.mz(0);
-    assert!(result.outcome); // 1 outcome
-    assert!(result.is_deterministic);
+    let result = sim.mz(&qid(0));
+    assert!(result[0].outcome); // 1 outcome
+    assert!(result[0].is_deterministic);
 }
 
 #[test]
@@ -251,7 +253,12 @@ fn test_method_chaining() {
     let mut sim = QuestStateVec::new(3);
 
     // Test that method chaining works
-    sim.h(0).cx(0, 1).cx(1, 2).h(2).z(1).y(0);
+    sim.h(&qid(0))
+        .cx(&qid2(0, 1))
+        .cx(&qid2(1, 2))
+        .h(&qid(2))
+        .z(&qid(1))
+        .y(&qid(0));
 
     // Just check it doesn't crash and returns valid amplitudes
     let _ = sim.get_amplitude(0);
@@ -276,7 +283,7 @@ fn test_density_matrix_operations() {
     let mut sim = QuestDensityMatrix::new(2);
 
     // Apply gates
-    sim.h(0).cx(0, 1);
+    sim.h(&qid(0)).cx(&qid2(0, 1));
 
     // Check probabilities (diagonal elements)
     let p0 = sim.probability(0);
@@ -291,7 +298,7 @@ fn test_density_matrix_operations() {
 fn test_density_matrix_reset() {
     let mut sim = QuestDensityMatrix::new(1);
 
-    sim.x(0);
+    sim.x(&qid(0));
     sim.reset();
 
     // After reset, should be in |0⟩⟨0| state
@@ -315,7 +322,7 @@ fn test_parallel_simulators() {
         .map(|i| {
             thread::spawn(move || {
                 let mut sim: QuestStateVec = QuestStateVec::with_seed(2, i);
-                sim.h(0).cx(0, 1);
+                sim.h(&qid(0)).cx(&qid2(0, 1));
 
                 // Each thread should create a valid Bell state
                 let amp00 = sim.get_amplitude(0);
@@ -340,7 +347,7 @@ fn test_clone_independence() {
     let sim2 = sim1.clone();
 
     // Modify sim1 - X on qubit 0 should flip |00⟩ to |10⟩
-    sim1.x(0);
+    sim1.x(&qid(0));
 
     // sim2 should be unaffected (still in |00⟩)
     assert_complex_eq(sim2.get_amplitude(0), Complex64::new(1.0, 0.0), EPSILON);
@@ -359,7 +366,7 @@ fn test_clone_independence() {
 #[should_panic(expected = "Invalid qubit index")]
 fn test_invalid_qubit_index() {
     let mut sim = QuestStateVec::new(2);
-    sim.x(2); // Should panic - only qubits 0 and 1 exist
+    sim.x(&qid(2)); // Should panic - only qubits 0 and 1 exist
 }
 
 #[test]
@@ -367,9 +374,9 @@ fn test_tdg_gate() {
     let mut sim = QuestStateVec::new(1);
 
     // Prepare |1⟩ state
-    sim.x(0);
+    sim.x(&qid(0));
     // Apply T† gate: |1⟩ -> e^(-iπ/4)|1⟩
-    sim.tdg(0);
+    sim.tdg(&qid(0));
 
     let expected = Complex64::from_polar(1.0, -FRAC_PI_4);
     assert_complex_eq(sim.get_amplitude(1), expected, EPSILON);
@@ -380,10 +387,10 @@ fn test_rzz_gate() {
     let mut sim = QuestStateVec::new(2);
 
     // Prepare |11⟩ state
-    sim.x(0).x(1);
+    sim.x(&qid(0)).x(&qid(1));
 
     // Apply RZZ(π/2)
-    sim.rzz(FRAC_PI_2, 0, 1);
+    sim.rzz(FRAC_PI_2, &qid2(0, 1));
 
     // QuEST's RZZ appears to apply a different scaling
     // RZZ(π/2) on |11⟩ gives phase -π instead of -π/4
@@ -430,9 +437,8 @@ fn test_measurement_determinism_with_seed() {
     let mut results1 = Vec::new();
     for _ in 0..num_measurements {
         sim1.reset();
-        sim1.h(0).cx(0, 1); // Create Bell state
-        let outcome = sim1.mz(0);
-        results1.push(outcome.outcome);
+        sim1.h(&qid(0)).cx(&qid2(0, 1)); // Create Bell state
+        results1.push(sim1.mz(&qid(0))[0].outcome);
     }
 
     // Run second simulation with same seed - repeatedly prepare and measure
@@ -440,9 +446,8 @@ fn test_measurement_determinism_with_seed() {
     let mut results2 = Vec::new();
     for _ in 0..num_measurements {
         sim2.reset();
-        sim2.h(0).cx(0, 1); // Create same Bell state
-        let outcome = sim2.mz(0);
-        results2.push(outcome.outcome);
+        sim2.h(&qid(0)).cx(&qid2(0, 1)); // Create same Bell state
+        results2.push(sim2.mz(&qid(0))[0].outcome);
     }
 
     // Results should be identical
@@ -463,9 +468,8 @@ fn test_measurement_randomness_with_different_seeds() {
     for i in 0_u64..num_trials {
         // Use different seeds for each trial to ensure different random streams
         let mut sim: QuestStateVec = QuestStateVec::with_seed(1, 12345 + i);
-        sim.h(0); // Create superposition
-        let outcome = sim.mz(0);
-        all_results.push(outcome.outcome);
+        sim.h(&qid(0)); // Create superposition
+        all_results.push(sim.mz(&qid(0))[0].outcome);
     }
 
     // With 30 different seeds measuring a superposition, we expect variation
@@ -489,18 +493,16 @@ fn test_different_seeds_produce_different_results() {
     let mut sim1: QuestStateVec = QuestStateVec::with_seed(1, 12345);
     for _ in 0..num_measurements {
         sim1.reset(); // Reset to |0⟩
-        sim1.h(0); // Create superposition
-        let outcome = sim1.mz(0);
-        results_seed1.push(outcome.outcome);
+        sim1.h(&qid(0)); // Create superposition
+        results_seed1.push(sim1.mz(&qid(0))[0].outcome);
     }
 
     // Seed 2 (different) - repeatedly prepare and measure
     let mut sim2: QuestStateVec = QuestStateVec::with_seed(1, 67890);
     for _ in 0..num_measurements {
         sim2.reset(); // Reset to |0⟩
-        sim2.h(0); // Create superposition
-        let outcome = sim2.mz(0);
-        results_seed2.push(outcome.outcome);
+        sim2.h(&qid(0)); // Create superposition
+        results_seed2.push(sim2.mz(&qid(0))[0].outcome);
     }
 
     // Different seeds should produce different sequences
@@ -521,9 +523,8 @@ fn test_density_matrix_measurement_determinism_with_seed() {
     let mut results1 = Vec::new();
     for _ in 0..num_measurements {
         sim1.reset();
-        sim1.h(0).cx(0, 1); // Create Bell state
-        let outcome = sim1.mz(0);
-        results1.push(outcome.outcome);
+        sim1.h(&qid(0)).cx(&qid2(0, 1)); // Create Bell state
+        results1.push(sim1.mz(&qid(0))[0].outcome);
     }
 
     // Run second simulation with same seed - repeatedly prepare and measure
@@ -531,9 +532,8 @@ fn test_density_matrix_measurement_determinism_with_seed() {
     let mut results2 = Vec::new();
     for _ in 0..num_measurements {
         sim2.reset();
-        sim2.h(0).cx(0, 1); // Create same Bell state
-        let outcome = sim2.mz(0);
-        results2.push(outcome.outcome);
+        sim2.h(&qid(0)).cx(&qid2(0, 1)); // Create same Bell state
+        results2.push(sim2.mz(&qid(0))[0].outcome);
     }
 
     // Results should be identical

@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, MeasurementResult, QuantumSimulator};
 
 // Include the cxx-generated bindings
@@ -182,180 +183,246 @@ impl QuantumSimulator for CppSparseStab {
     }
 }
 
-impl CliffordGateable<usize> for CppSparseStab {
-    fn x(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().bitflip(q as u64);
+impl CliffordGateable for CppSparseStab {
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().hadamard(q.index() as u64);
+        }
         self
     }
 
-    fn y(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().Y(q as u64);
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().phaserot(q.index() as u64);
+        }
         self
     }
 
-    fn z(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().phaseflip(q as u64);
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let control = pair[0].index() as u64;
+            let target = pair[1].index() as u64;
+            self.state.as_mut().unwrap().cx(control, target);
+        }
         self
     }
 
-    fn h(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().hadamard(q as u64);
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|&q| self.internal_measure(q.index(), None, true))
+            .collect()
+    }
+
+    // Override with native C++ implementations for better performance
+
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().bitflip(q.index() as u64);
+        }
         self
     }
 
-    fn sz(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().phaserot(q as u64);
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().Y(q.index() as u64);
+        }
         self
     }
 
-    fn szdg(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().SZdg(q as u64);
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().phaseflip(q.index() as u64);
+        }
         self
     }
 
-    fn sy(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().SY(q as u64);
+    fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().SZdg(q.index() as u64);
+        }
         self
     }
 
-    fn sydg(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().SYdg(q as u64);
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().SY(q.index() as u64);
+        }
         self
     }
 
-    fn sx(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().SX(q as u64);
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().SYdg(q.index() as u64);
+        }
         self
     }
 
-    fn sxdg(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().SXdg(q as u64);
+    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().SX(q.index() as u64);
+        }
         self
     }
 
-    fn h2(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().H2(q as u64);
+    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().SXdg(q.index() as u64);
+        }
         self
     }
 
-    fn h3(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().H3(q as u64);
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().H2(q.index() as u64);
+        }
         self
     }
 
-    fn h4(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().H4(q as u64);
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().H3(q.index() as u64);
+        }
         self
     }
 
-    fn h5(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().H5(q as u64);
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().H4(q.index() as u64);
+        }
         self
     }
 
-    fn h6(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().H6(q as u64);
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().H5(q.index() as u64);
+        }
         self
     }
 
-    fn f(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().F(q as u64);
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().H6(q.index() as u64);
+        }
         self
     }
 
-    fn fdg(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().Fdg(q as u64);
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().F(q.index() as u64);
+        }
         self
     }
 
-    fn f2(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().F2(q as u64);
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().Fdg(q.index() as u64);
+        }
         self
     }
 
-    fn f2dg(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().F2dg(q as u64);
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().F2(q.index() as u64);
+        }
         self
     }
 
-    fn f3(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().F3(q as u64);
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().F2dg(q.index() as u64);
+        }
         self
     }
 
-    fn f3dg(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().F3dg(q as u64);
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().F3(q.index() as u64);
+        }
         self
     }
 
-    fn f4(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().F4(q as u64);
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().F3dg(q.index() as u64);
+        }
         self
     }
 
-    fn f4dg(&mut self, q: usize) -> &mut Self {
-        self.state.as_mut().unwrap().F4dg(q as u64);
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().F4(q.index() as u64);
+        }
         self
     }
 
-    fn cx(&mut self, q1: usize, q2: usize) -> &mut Self {
-        // CliffordGateable uses cx(control, target)
-        // C++ also uses cx(control, target) despite confusing parameter names
-        self.state.as_mut().unwrap().cx(q1 as u64, q2 as u64);
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.state.as_mut().unwrap().F4dg(q.index() as u64);
+        }
         self
     }
 
-    fn cy(&mut self, q1: usize, q2: usize) -> &mut Self {
-        self.state.as_mut().unwrap().cy(q1 as u64, q2 as u64);
+    fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CY requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let control = pair[0].index() as u64;
+            let target = pair[1].index() as u64;
+            self.state.as_mut().unwrap().cy(control, target);
+        }
         self
     }
 
-    fn cz(&mut self, q1: usize, q2: usize) -> &mut Self {
-        self.state.as_mut().unwrap().cz(q1 as u64, q2 as u64);
+    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index() as u64;
+            let q2 = pair[1].index() as u64;
+            self.state.as_mut().unwrap().cz(q1, q2);
+        }
         self
     }
 
-    fn swap(&mut self, q1: usize, q2: usize) -> &mut Self {
-        self.state.as_mut().unwrap().swap(q1 as u64, q2 as u64);
+    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SWAP requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index() as u64;
+            let q2 = pair[1].index() as u64;
+            self.state.as_mut().unwrap().swap(q1, q2);
+        }
         self
     }
-
-    fn mz(&mut self, q: usize) -> MeasurementResult {
-        self.internal_measure(q, None, true)
-    }
-
-    fn mx(&mut self, q: usize) -> MeasurementResult {
-        self.h(q);
-        let result = self.mz(q);
-        self.h(q);
-        result
-    }
-
-    // Note: my() and mny() use the trait defaults which correctly implement:
-    // my(): sx → mz → sxdg (measure +Y)
-    // mny(): sxdg → mz → sx (measure -Y)
 }
 
 // Additional convenience methods
 impl CppSparseStab {
-    /// Force a specific measurement outcome
-    pub fn force_measure(&mut self, q: usize, outcome: bool) -> MeasurementResult {
-        self.internal_measure(q, Some(outcome), true)
+    /// Force a specific measurement outcome on multiple qubits
+    pub fn force_measure(&mut self, qubits: &[QubitId], outcome: bool) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|q| self.internal_measure(q.index(), Some(outcome), true))
+            .collect()
     }
 
     /// Measure without collapsing the state
-    pub fn peek_measure(&mut self, q: usize) -> MeasurementResult {
-        self.internal_measure(q, None, false)
-    }
-
-    /// Swap two qubits
-    ///
-    /// # Panics
-    ///
-    /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
-    pub fn swap(&mut self, q1: usize, q2: usize) -> &mut Self {
-        self.state.as_mut().unwrap().swap(q1 as u64, q2 as u64);
-        self
+    pub fn peek_measure(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|q| self.internal_measure(q.index(), None, false))
+            .collect()
     }
 
     /// Apply G2 gate (CZ.H(1).H(2).CZ)
@@ -363,8 +430,16 @@ impl CppSparseStab {
     /// # Panics
     ///
     /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
-    pub fn g2(&mut self, q1: usize, q2: usize) -> &mut Self {
-        self.state.as_mut().unwrap().g2(q1 as u64, q2 as u64);
+    pub fn g2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "G2 requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index() as u64;
+            let q2 = pair[1].index() as u64;
+            self.state.as_mut().unwrap().g2(q1, q2);
+        }
         self
     }
 
@@ -373,8 +448,16 @@ impl CppSparseStab {
     /// # Panics
     ///
     /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
-    pub fn sxx(&mut self, q1: usize, q2: usize) -> &mut Self {
-        self.state.as_mut().unwrap().sxx(q1 as u64, q2 as u64);
+    pub fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXX requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index() as u64;
+            let q2 = pair[1].index() as u64;
+            self.state.as_mut().unwrap().sxx(q1, q2);
+        }
         self
     }
 
@@ -383,8 +466,16 @@ impl CppSparseStab {
     /// # Panics
     ///
     /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
-    pub fn sxxdg(&mut self, q1: usize, q2: usize) -> &mut Self {
-        self.state.as_mut().unwrap().sxxdg(q1 as u64, q2 as u64);
+    pub fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXXdg requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index() as u64;
+            let q2 = pair[1].index() as u64;
+            self.state.as_mut().unwrap().sxxdg(q1, q2);
+        }
         self
     }
 

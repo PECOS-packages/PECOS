@@ -11,14 +11,12 @@
 // the License.
 
 use core::fmt::Debug;
-use core::marker::PhantomData;
-use pecos_core::{IndexableElement, Set};
+use pecos_core::Set;
 
 #[derive(Clone, Debug)]
-pub struct Gens<T, E>
+pub struct Gens<T>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
 {
     num_qubits: usize,
     pub col_x: Vec<T>,
@@ -28,17 +26,15 @@ where
     pub sign: T,
     pub signs_minus: T,
     pub signs_i: T,
-    _marker: PhantomData<E>,
 }
 
-impl<T, E> Gens<T, E>
+impl<T> Gens<T>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
 {
     #[must_use]
     #[inline]
-    pub fn new(num_qubits: usize) -> Gens<T, E> {
+    pub fn new(num_qubits: usize) -> Gens<T> {
         Self {
             num_qubits,
             col_x: vec![T::new(); num_qubits],
@@ -48,7 +44,6 @@ where
             sign: T::new(),
             signs_minus: T::new(),
             signs_i: T::new(),
-            _marker: PhantomData,
         }
     }
 
@@ -73,32 +68,31 @@ where
         self.clear();
         // TODO: Change these to not create a new Vec... instead populate them...
         self.col_x = vec![T::new(); self.get_num_qubits()];
-        self.col_z = new_index_set::<T, E>(self.get_num_qubits());
+        self.col_z = new_index_set::<T>(self.get_num_qubits());
         self.row_x = vec![T::new(); self.get_num_qubits()];
-        self.row_z = new_index_set::<T, E>(self.get_num_qubits());
+        self.row_z = new_index_set::<T>(self.get_num_qubits());
     }
 
     #[inline]
     pub fn init_all_x(&mut self) {
         // TODO: Change these to not create a new Vec... instead populate them...
         self.clear();
-        self.col_x = new_index_set::<T, E>(self.get_num_qubits());
+        self.col_x = new_index_set::<T>(self.get_num_qubits());
         self.col_z = vec![T::new(); self.get_num_qubits()];
-        self.row_x = new_index_set::<T, E>(self.get_num_qubits());
+        self.row_x = new_index_set::<T>(self.get_num_qubits());
         self.row_z = vec![T::new(); self.get_num_qubits()];
     }
 }
 
 #[inline]
-fn new_index_set<T, E>(num_qubits: usize) -> Vec<T>
+fn new_index_set<T>(num_qubits: usize) -> Vec<T>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
 {
     let mut sets = Vec::with_capacity(num_qubits);
     for i in 0..num_qubits {
         let mut set = T::new();
-        set.insert(E::from_index(i));
+        set.insert(i);
         sets.push(set);
     }
     sets

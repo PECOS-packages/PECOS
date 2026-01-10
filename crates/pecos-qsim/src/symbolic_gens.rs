@@ -21,8 +21,7 @@
 
 use crate::sign_algebra::{SignAlgebra, SymbolicSign};
 use core::fmt::Debug;
-use core::marker::PhantomData;
-use pecos_core::{IndexableElement, Set};
+use pecos_core::Set;
 
 /// Generators for symbolic stabilizer simulation.
 ///
@@ -33,10 +32,9 @@ use pecos_core::{IndexableElement, Set};
 /// The final sign is: `{measurement_deps} ^ phase_flip` where `phase_flip` is computed
 /// from `signs_minus` and `signs_i`.
 #[derive(Clone, Debug)]
-pub struct SymbolicGens<T, E>
+pub struct SymbolicGens<T>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
 {
     num_qubits: usize,
     /// Column-wise storage of X operators: `col_x`[qubit] = set of generator indices with X on that qubit
@@ -53,13 +51,11 @@ where
     pub signs_minus: T,
     /// Traditional phase tracking: generators with an imaginary component (from unitaries)
     pub signs_i: T,
-    _marker: PhantomData<E>,
 }
 
-impl<T, E> SymbolicGens<T, E>
+impl<T> SymbolicGens<T>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
 {
     /// Create new symbolic generators for the given number of qubits.
     #[must_use]
@@ -74,7 +70,6 @@ where
             signs: vec![SymbolicSign::empty(); num_qubits],
             signs_minus: T::new(),
             signs_i: T::new(),
-            _marker: PhantomData,
         }
     }
 
@@ -102,9 +97,9 @@ where
     pub fn init_all_z(&mut self) {
         self.clear();
         self.col_x = vec![T::new(); self.num_qubits];
-        self.col_z = new_index_set::<T, E>(self.num_qubits);
+        self.col_z = new_index_set::<T>(self.num_qubits);
         self.row_x = vec![T::new(); self.num_qubits];
-        self.row_z = new_index_set::<T, E>(self.num_qubits);
+        self.row_z = new_index_set::<T>(self.num_qubits);
         self.signs = vec![SymbolicSign::empty(); self.num_qubits];
         // signs_minus and signs_i are already cleared
     }
@@ -113,9 +108,9 @@ where
     #[inline]
     pub fn init_all_x(&mut self) {
         self.clear();
-        self.col_x = new_index_set::<T, E>(self.num_qubits);
+        self.col_x = new_index_set::<T>(self.num_qubits);
         self.col_z = vec![T::new(); self.num_qubits];
-        self.row_x = new_index_set::<T, E>(self.num_qubits);
+        self.row_x = new_index_set::<T>(self.num_qubits);
         self.row_z = vec![T::new(); self.num_qubits];
         self.signs = vec![SymbolicSign::empty(); self.num_qubits];
         // signs_minus and signs_i are already cleared
@@ -152,15 +147,14 @@ where
 
 /// Helper function to create a vector of sets where set[i] contains just element i.
 #[inline]
-fn new_index_set<T, E>(num_qubits: usize) -> Vec<T>
+fn new_index_set<T>(num_qubits: usize) -> Vec<T>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
 {
     let mut sets = Vec::with_capacity(num_qubits);
     for i in 0..num_qubits {
         let mut set = T::new();
-        set.insert(E::from_index(i));
+        set.insert(i);
         sets.push(set);
     }
     sets
@@ -173,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_gens_new() {
-        let gens: SymbolicGens<VecSet<usize>, usize> = SymbolicGens::new(3);
+        let gens: SymbolicGens<VecSet<usize>> = SymbolicGens::new(3);
         assert_eq!(gens.get_num_qubits(), 3);
         assert_eq!(gens.signs.len(), 3);
         for sign in &gens.signs {
@@ -183,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_gens_init_all_z() {
-        let mut gens: SymbolicGens<VecSet<usize>, usize> = SymbolicGens::new(2);
+        let mut gens: SymbolicGens<VecSet<usize>> = SymbolicGens::new(2);
         gens.init_all_z();
 
         // col_z should have generator i in set for qubit i
@@ -202,7 +196,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_gens_multiply_signs() {
-        let mut gens: SymbolicGens<VecSet<usize>, usize> = SymbolicGens::new(3);
+        let mut gens: SymbolicGens<VecSet<usize>> = SymbolicGens::new(3);
 
         // Set some signs
         gens.set_sign(0, SymbolicSign::single(0)); // {0}

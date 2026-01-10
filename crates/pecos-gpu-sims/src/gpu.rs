@@ -1,10 +1,20 @@
 //! wgpu-based state vector simulator implementation
 
 use bytemuck::{Pod, Zeroable};
+use pecos_rng::{PecosRng, SeedableRng};
 use rand::Rng;
 use std::borrow::Cow;
 
 use crate::gates;
+
+/// Alignment for uniform buffer offsets (wgpu minimum is typically 256 bytes)
+const UNIFORM_ALIGNMENT: u64 = 256;
+
+/// Maximum number of gates that can be batched in a single submission
+const MAX_BATCH_SIZE: u64 = 256;
+
+/// Size of `GateParams` struct (padded to alignment)
+const ALIGNED_GATE_PARAMS_SIZE: u64 = UNIFORM_ALIGNMENT;
 
 /// Error type for GPU operations
 #[derive(Debug)]
@@ -86,24 +96,40 @@ pub struct GpuStateVec {
     probability_pipeline: wgpu::ComputePipeline,
     collapse_pipeline: wgpu::ComputePipeline,
 
-    // Bind groups
+    // Bind group layouts (kept for potential future bind group recreation)
+    #[allow(dead_code)]
     gate_bind_group_layout: wgpu::BindGroupLayout,
     probability_bind_group_layout: wgpu::BindGroupLayout,
     collapse_bind_group_layout: wgpu::BindGroupLayout,
 
-    // RNG for measurements
-    rng: rand::rngs::ThreadRng,
+    // Persistent bind group for gate operations (uses dynamic uniform buffer offsets)
+    gate_bind_group: wgpu::BindGroup,
+
+    // RNG for measurements (Send + Sync for parallel Monte Carlo)
+    rng: PecosRng,
 }
+
+/// Maximum workgroups per dimension (wgpu limit is 65535)
+const MAX_WORKGROUPS_PER_DIM: u32 = 65535;
 
 impl GpuStateVec {
     /// Compute the number of workgroups needed for a given number of elements.
     /// Uses 256 threads per workgroup (standard for GPU compute).
-    fn compute_workgroups(num_elements: u64) -> u32 {
+    /// Returns (x, y) dimensions for dispatch, using 2D dispatch when count exceeds limit.
+    fn compute_workgroups(num_elements: u64) -> (u32, u32) {
         // Safe truncation: with max 30 qubits, max elements is 2^30 = ~1B
         // div_ceil(2^30, 256) = ~4M, well within u32 range
         #[allow(clippy::cast_possible_truncation)]
-        {
-            num_elements.div_ceil(256) as u32
+        let total_workgroups = num_elements.div_ceil(256) as u32;
+
+        if total_workgroups <= MAX_WORKGROUPS_PER_DIM {
+            (total_workgroups, 1)
+        } else {
+            // Split into 2D dispatch with balanced dimensions to minimize wasted threads.
+            // Find smallest y such that ceil(total/y) <= MAX_WORKGROUPS_PER_DIM
+            let y = total_workgroups.div_ceil(MAX_WORKGROUPS_PER_DIM);
+            let x = total_workgroups.div_ceil(y);
+            (x, y)
         }
     }
 
@@ -114,6 +140,9 @@ impl GpuStateVec {
     ///
     /// # Errors
     /// Returns an error if no GPU is available or if the requested size exceeds GPU memory
+    ///
+    /// # Panics
+    /// Panics if the operating system fails to provide entropy for RNG initialization.
     // GPU initialization requires setting up multiple interdependent resources (buffers,
     // bind group layouts, pipeline layouts, compute pipelines) in a specific order.
     // Extracting these into separate functions would complicate ownership without
@@ -144,10 +173,19 @@ impl GpuStateVec {
         }))
         .map_err(|_| GpuError::NoAdapter)?;
 
+        // Request the adapter's maximum buffer size limits for large qubit counts
+        // This allows supporting as many qubits as the GPU hardware allows
+        let adapter_limits = adapter.limits();
+        let limits = wgpu::Limits {
+            max_buffer_size: adapter_limits.max_buffer_size,
+            max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
+            ..Default::default()
+        };
+
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("PECOS wgpu simulator"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
+            required_limits: limits,
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
             experimental_features: wgpu::ExperimentalFeatures::default(),
@@ -174,7 +212,7 @@ impl GpuStateVec {
 
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Gate parameters"),
-            size: std::mem::size_of::<GateParams>() as u64,
+            size: ALIGNED_GATE_PARAMS_SIZE * MAX_BATCH_SIZE,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -201,6 +239,7 @@ impl GpuStateVec {
         });
 
         // Create bind group layouts
+        // Gate bind group uses dynamic offset for uniform buffer to avoid per-gate bind group creation
         let gate_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Gate bind group layout"),
@@ -220,8 +259,12 @@ impl GpuStateVec {
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                            has_dynamic_offset: true, // Dynamic offset to select gate params
+                            min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                                GateParams,
+                            >(
+                            )
+                                as u64),
                         },
                         count: None,
                     },
@@ -380,6 +423,26 @@ impl GpuStateVec {
             cache: None,
         });
 
+        // Create persistent bind group for gate operations with dynamic offset
+        let gate_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Gate bind group (persistent)"),
+            layout: &gate_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &params_buffer,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(std::mem::size_of::<GateParams>() as u64),
+                    }),
+                },
+            ],
+        });
+
         let mut sim = Self {
             device,
             queue,
@@ -399,12 +462,29 @@ impl GpuStateVec {
             gate_bind_group_layout,
             probability_bind_group_layout,
             collapse_bind_group_layout,
-            rng: rand::rng(),
+            gate_bind_group,
+            rng: PecosRng::try_from_os_rng().expect("Failed to get entropy from OS"),
         };
 
         // Initialize to |0...0> state
         sim.reset();
 
+        Ok(sim)
+    }
+
+    /// Create a new GPU state vector simulator with a specific RNG seed.
+    ///
+    /// This is useful for reproducible Monte Carlo simulations.
+    ///
+    /// # Arguments
+    /// * `num_qubits` - Number of qubits (state vector will have `2^num_qubits` amplitudes)
+    /// * `seed` - Seed for the random number generator
+    ///
+    /// # Errors
+    /// Returns an error if no GPU is available or if the requested size exceeds GPU memory
+    pub fn with_seed(num_qubits: u32, seed: u64) -> Result<Self, GpuError> {
+        let mut sim = Self::new(num_qubits)?;
+        sim.rng = PecosRng::seed_from_u64(seed);
         Ok(sim)
     }
 
@@ -435,21 +515,6 @@ impl GpuStateVec {
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Gate bind group"),
-            layout: &self.gate_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.state_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -462,223 +527,260 @@ impl GpuStateVec {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.single_gate_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
+            // Use persistent bind group with dynamic offset (offset 0 for single gate)
+            pass.set_bind_group(0, &self.gate_bind_group, &[0]);
 
             // Dispatch: one thread per pair of amplitudes
             let num_pairs = self.num_amplitudes / 2;
-            let workgroups = Self::compute_workgroups(num_pairs);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            let (wg_x, wg_y) = Self::compute_workgroups(num_pairs);
+            pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    /// Apply CNOT (CX) gate
-    pub fn cx(&mut self, control: u32, target: u32) {
-        let params = GateParams {
-            target_qubit: target,
-            control_qubit: control,
-            num_qubits: self.num_qubits,
-            _padding: 0,
-            matrix_row0: [0.0; 4],
-            matrix_row1: [0.0; 4],
-        };
+    /// Apply the same single-qubit gate to multiple qubits in a single GPU submission.
+    ///
+    /// This is more efficient than calling `apply_single_gate` multiple times
+    /// because it batches all operations into a single command buffer submission,
+    /// uses a single buffer write for all parameters, and uses dynamic uniform
+    /// buffer offsets to avoid per-gate bind group creation.
+    #[allow(clippy::cast_possible_truncation)]
+    fn apply_single_gate_batch_qubits(&mut self, qubits: &[QubitId], matrix: [f32; 8]) {
+        if qubits.is_empty() {
+            return;
+        }
 
+        // Build all gate params on CPU first, then write in a single buffer operation.
+        // Each GateParams is 64 bytes but we need UNIFORM_ALIGNMENT (256) bytes per entry.
+        // We'll write each params at its aligned offset.
+        let num_gates = qubits.len();
+        let total_size = num_gates * ALIGNED_GATE_PARAMS_SIZE as usize;
+        let mut params_data = vec![0u8; total_size];
+
+        for (i, &qubit) in qubits.iter().enumerate() {
+            let params = GateParams {
+                target_qubit: qubit.index() as u32,
+                control_qubit: 0,
+                num_qubits: self.num_qubits,
+                _padding: 0,
+                matrix_row0: [matrix[0], matrix[1], matrix[2], matrix[3]],
+                matrix_row1: [matrix[4], matrix[5], matrix[6], matrix[7]],
+            };
+
+            let offset = i * ALIGNED_GATE_PARAMS_SIZE as usize;
+            let params_bytes = bytemuck::bytes_of(&params);
+            params_data[offset..offset + params_bytes.len()].copy_from_slice(params_bytes);
+        }
+
+        // Single buffer write for all gate parameters
         self.queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+            .write_buffer(&self.params_buffer, 0, &params_data);
 
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("CX bind group"),
-            layout: &self.gate_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.state_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
+        // Create a single command encoder for all dispatches
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("CX encoder"),
+                label: Some("Batched single gate encoder"),
             });
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("CX pass"),
+                label: Some("Batched single gate pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.single_gate_pipeline);
+
+            let num_pairs = self.num_amplitudes / 2;
+            let (wg_x, wg_y) = Self::compute_workgroups(num_pairs);
+
+            // Use dynamic offset with persistent bind group for each gate
+            for i in 0..qubits.len() {
+                let offset = (i as u64 * ALIGNED_GATE_PARAMS_SIZE) as u32;
+                pass.set_bind_group(0, &self.gate_bind_group, &[offset]);
+                pass.dispatch_workgroups(wg_x, wg_y, 1);
+            }
+        }
+
+        // Single submission for all gates
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Apply CX gates to multiple qubit pairs in a single GPU submission.
+    ///
+    /// Takes qubits as interleaved pairs: [control0, target0, control1, target1, ...]
+    #[allow(clippy::cast_possible_truncation)]
+    fn cx_batch_qubits(&mut self, qubits: &[QubitId]) {
+        let num_pairs = qubits.len() / 2;
+        if num_pairs == 0 {
+            return;
+        }
+
+        // Build all gate params on CPU first, then write in a single buffer operation
+        let total_size = num_pairs * ALIGNED_GATE_PARAMS_SIZE as usize;
+        let mut params_data = vec![0u8; total_size];
+
+        for (i, pair) in qubits.chunks_exact(2).enumerate() {
+            let params = GateParams {
+                target_qubit: pair[1].index() as u32,
+                control_qubit: pair[0].index() as u32,
+                num_qubits: self.num_qubits,
+                _padding: 0,
+                matrix_row0: [0.0; 4],
+                matrix_row1: [0.0; 4],
+            };
+
+            let offset = i * ALIGNED_GATE_PARAMS_SIZE as usize;
+            let params_bytes = bytemuck::bytes_of(&params);
+            params_data[offset..offset + params_bytes.len()].copy_from_slice(params_bytes);
+        }
+
+        // Single buffer write for all gate parameters
+        self.queue
+            .write_buffer(&self.params_buffer, 0, &params_data);
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Batched CX encoder"),
+            });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Batched CX pass"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.cx_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
 
-            let workgroups = Self::compute_workgroups(self.num_amplitudes);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
+
+            // Use dynamic offset with persistent bind group for each gate pair
+            for i in 0..num_pairs {
+                let offset = (i as u64 * ALIGNED_GATE_PARAMS_SIZE) as u32;
+                pass.set_bind_group(0, &self.gate_bind_group, &[offset]);
+                pass.dispatch_workgroups(wg_x, wg_y, 1);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    /// Apply CZ gate
-    pub fn cz(&mut self, control: u32, target: u32) {
-        let params = GateParams {
-            target_qubit: target,
-            control_qubit: control,
-            num_qubits: self.num_qubits,
-            _padding: 0,
-            matrix_row0: [0.0; 4],
-            matrix_row1: [0.0; 4],
-        };
+    /// Apply CZ gates to multiple qubit pairs in a single GPU submission.
+    ///
+    /// Takes qubits as interleaved pairs: [control0, target0, control1, target1, ...]
+    #[allow(clippy::cast_possible_truncation)]
+    fn cz_batch_qubits(&mut self, qubits: &[QubitId]) {
+        let num_pairs = qubits.len() / 2;
+        if num_pairs == 0 {
+            return;
+        }
 
+        // Build all gate params on CPU first, then write in a single buffer operation
+        let total_size = num_pairs * ALIGNED_GATE_PARAMS_SIZE as usize;
+        let mut params_data = vec![0u8; total_size];
+
+        for (i, pair) in qubits.chunks_exact(2).enumerate() {
+            let params = GateParams {
+                target_qubit: pair[1].index() as u32,
+                control_qubit: pair[0].index() as u32,
+                num_qubits: self.num_qubits,
+                _padding: 0,
+                matrix_row0: [0.0; 4],
+                matrix_row1: [0.0; 4],
+            };
+
+            let offset = i * ALIGNED_GATE_PARAMS_SIZE as usize;
+            let params_bytes = bytemuck::bytes_of(&params);
+            params_data[offset..offset + params_bytes.len()].copy_from_slice(params_bytes);
+        }
+
+        // Single buffer write for all gate parameters
         self.queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("CZ bind group"),
-            layout: &self.gate_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.state_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-            ],
-        });
+            .write_buffer(&self.params_buffer, 0, &params_data);
 
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("CZ encoder"),
+                label: Some("Batched CZ encoder"),
             });
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("CZ pass"),
+                label: Some("Batched CZ pass"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.cz_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
 
-            let workgroups = Self::compute_workgroups(self.num_amplitudes);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
+
+            // Use dynamic offset with persistent bind group for each gate pair
+            for i in 0..num_pairs {
+                let offset = (i as u64 * ALIGNED_GATE_PARAMS_SIZE) as u32;
+                pass.set_bind_group(0, &self.gate_bind_group, &[offset]);
+                pass.dispatch_workgroups(wg_x, wg_y, 1);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    /// Apply RZZ(theta) gate - two-qubit ZZ rotation
-    #[allow(clippy::cast_possible_truncation)] // f64->f32: GPU uses f32, precision loss acceptable
-    pub fn rzz(&mut self, theta: f64, q1: u32, q2: u32) {
-        let params = GateParams {
-            target_qubit: q2,
-            control_qubit: q1,
-            num_qubits: self.num_qubits,
-            _padding: 0,
-            matrix_row0: [theta as f32, 0.0, 0.0, 0.0],
-            matrix_row1: [0.0; 4],
-        };
+    /// Apply RZZ gates to multiple qubit pairs in a single GPU submission.
+    ///
+    /// Takes qubits as interleaved pairs: [q0, q1, q2, q3, ...] for pairs (q0,q1), (q2,q3), ...
+    #[allow(clippy::cast_possible_truncation)]
+    fn rzz_batch_qubits(&mut self, theta: f64, qubits: &[QubitId]) {
+        let num_pairs = qubits.len() / 2;
+        if num_pairs == 0 {
+            return;
+        }
 
+        // Build all gate params on CPU first, then write in a single buffer operation
+        let total_size = num_pairs * ALIGNED_GATE_PARAMS_SIZE as usize;
+        let mut params_data = vec![0u8; total_size];
+
+        for (i, pair) in qubits.chunks_exact(2).enumerate() {
+            let params = GateParams {
+                target_qubit: pair[1].index() as u32,
+                control_qubit: pair[0].index() as u32,
+                num_qubits: self.num_qubits,
+                _padding: 0,
+                matrix_row0: [theta as f32, 0.0, 0.0, 0.0],
+                matrix_row1: [0.0; 4],
+            };
+
+            let offset = i * ALIGNED_GATE_PARAMS_SIZE as usize;
+            let params_bytes = bytemuck::bytes_of(&params);
+            params_data[offset..offset + params_bytes.len()].copy_from_slice(params_bytes);
+        }
+
+        // Single buffer write for all gate parameters
         self.queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("RZZ bind group"),
-            layout: &self.gate_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.state_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-            ],
-        });
+            .write_buffer(&self.params_buffer, 0, &params_data);
 
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("RZZ encoder"),
+                label: Some("Batched RZZ encoder"),
             });
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("RZZ pass"),
+                label: Some("Batched RZZ pass"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.rzz_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
 
-            let workgroups = Self::compute_workgroups(self.num_amplitudes);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
+
+            // Use dynamic offset with persistent bind group for each gate pair
+            for i in 0..num_pairs {
+                let offset = (i as u64 * ALIGNED_GATE_PARAMS_SIZE) as u32;
+                pass.set_bind_group(0, &self.gate_bind_group, &[offset]);
+                pass.dispatch_workgroups(wg_x, wg_y, 1);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    // Convenience methods for common gates
-
-    /// Hadamard gate
-    pub fn h(&mut self, qubit: u32) {
-        self.apply_single_gate(qubit, gates::H);
-    }
-
-    /// Pauli-X gate
-    pub fn x(&mut self, qubit: u32) {
-        self.apply_single_gate(qubit, gates::X);
-    }
-
-    /// Pauli-Y gate
-    pub fn y(&mut self, qubit: u32) {
-        self.apply_single_gate(qubit, gates::Y);
-    }
-
-    /// Pauli-Z gate
-    pub fn z(&mut self, qubit: u32) {
-        self.apply_single_gate(qubit, gates::Z);
-    }
-
-    /// S gate (sqrt(Z))
-    pub fn s(&mut self, qubit: u32) {
-        self.apply_single_gate(qubit, gates::S);
-    }
-
-    /// S-dagger gate
-    pub fn sdg(&mut self, qubit: u32) {
-        self.apply_single_gate(qubit, gates::SDG);
-    }
-
-    /// T gate
-    pub fn t(&mut self, qubit: u32) {
-        self.apply_single_gate(qubit, gates::T);
-    }
-
-    /// T-dagger gate
-    pub fn tdg(&mut self, qubit: u32) {
-        self.apply_single_gate(qubit, gates::TDG);
-    }
-
-    /// RX rotation
-    pub fn rx(&mut self, theta: f64, qubit: u32) {
-        self.apply_single_gate(qubit, gates::rx(theta));
-    }
-
-    /// RY rotation
-    pub fn ry(&mut self, theta: f64, qubit: u32) {
-        self.apply_single_gate(qubit, gates::ry(theta));
-    }
-
-    /// RZ rotation
-    pub fn rz(&mut self, theta: f64, qubit: u32) {
-        self.apply_single_gate(qubit, gates::rz(theta));
     }
 
     /// Measure a qubit, collapsing the state
@@ -739,8 +841,8 @@ impl GpuStateVec {
             pass.set_pipeline(&self.probability_pipeline);
             pass.set_bind_group(0, &prob_bind_group, &[]);
 
-            let workgroups = Self::compute_workgroups(self.num_amplitudes);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
+            pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
 
         // Copy probabilities to staging buffer
@@ -833,8 +935,8 @@ impl GpuStateVec {
             pass.set_pipeline(&self.collapse_pipeline);
             pass.set_bind_group(0, &collapse_bind_group, &[]);
 
-            let workgroups = Self::compute_workgroups(self.num_amplitudes);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
+            pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -911,6 +1013,7 @@ impl GpuStateVec {
 
 // Trait implementations for PECOS integration
 
+use pecos_core::QubitId;
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
@@ -929,142 +1032,83 @@ impl QuantumSimulator for GpuStateVec {
     }
 }
 
-// Trait uses usize for qubit indices; internal API uses u32.
-// Safe: max 30 qubits, so indices always fit in u32.
-#[allow(clippy::cast_possible_truncation)]
-impl CliffordGateable<usize> for GpuStateVec {
-    fn sz(&mut self, q: usize) -> &mut Self {
-        self.apply_single_gate(q as u32, gates::S);
+// Trait implementations use internal batch methods directly to avoid allocations.
+impl CliffordGateable for GpuStateVec {
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_single_gate_batch_qubits(qubits, gates::S);
         self
     }
 
-    fn h(&mut self, q: usize) -> &mut Self {
-        self.apply_single_gate(q as u32, gates::H);
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_single_gate_batch_qubits(qubits, gates::H);
         self
     }
 
-    fn cx(&mut self, q1: usize, q2: usize) -> &mut Self {
-        // Use the existing cx method
-        let params = GateParams {
-            target_qubit: q2 as u32,
-            control_qubit: q1 as u32,
-            num_qubits: self.num_qubits,
-            _padding: 0,
-            matrix_row0: [0.0; 4],
-            matrix_row1: [0.0; 4],
-        };
-
-        self.queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("CX bind group"),
-            layout: &self.gate_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.state_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("CX encoder"),
-            });
-
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("CX pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.cx_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-
-            let workgroups = Self::compute_workgroups(self.num_amplitudes);
-            pass.dispatch_workgroups(workgroups, 1, 1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_single_gate_batch_qubits(qubits, gates::X);
         self
     }
 
-    fn mz(&mut self, q: usize) -> MeasurementResult {
-        let outcome = self.measure(q as u32);
-        MeasurementResult {
-            outcome: outcome == 1,
-            is_deterministic: false, // State vector sim is never deterministic unless in eigenstate
-        }
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_single_gate_batch_qubits(qubits, gates::Y);
+        self
+    }
+
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_single_gate_batch_qubits(qubits, gates::Z);
+        self
+    }
+
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
+        self.cx_batch_qubits(qubits);
+        self
+    }
+
+    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
+        self.cz_batch_qubits(qubits);
+        self
+    }
+
+    #[allow(clippy::cast_possible_truncation)] // Qubit indices from QubitId fit in u32
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|&q| {
+                let outcome = self.measure(q.index() as u32);
+                MeasurementResult {
+                    outcome: outcome == 1,
+                    is_deterministic: false, // State vector sim is never deterministic unless in eigenstate
+                }
+            })
+            .collect()
     }
 }
 
-// Trait uses usize for qubit indices and f64 for angles.
-// Safe: max 30 qubits (indices fit in u32), GPU uses f32 (precision loss acceptable).
-#[allow(clippy::cast_possible_truncation)]
-impl ArbitraryRotationGateable<usize> for GpuStateVec {
-    fn rx(&mut self, theta: f64, q: usize) -> &mut Self {
-        self.apply_single_gate(q as u32, gates::rx(theta));
+impl ArbitraryRotationGateable for GpuStateVec {
+    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        self.apply_single_gate_batch_qubits(qubits, gates::rx(theta));
         self
     }
 
-    fn rz(&mut self, theta: f64, q: usize) -> &mut Self {
-        self.apply_single_gate(q as u32, gates::rz(theta));
+    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        self.apply_single_gate_batch_qubits(qubits, gates::rz(theta));
         self
     }
 
-    fn rzz(&mut self, theta: f64, q1: usize, q2: usize) -> &mut Self {
-        // Use the rzz method we added
-        let params = GateParams {
-            target_qubit: q2 as u32,
-            control_qubit: q1 as u32,
-            num_qubits: self.num_qubits,
-            _padding: 0,
-            matrix_row0: [theta as f32, 0.0, 0.0, 0.0],
-            matrix_row1: [0.0; 4],
-        };
-
-        self.queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("RZZ bind group"),
-            layout: &self.gate_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.state_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("RZZ encoder"),
-            });
-
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("RZZ pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.rzz_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-
-            let workgroups = Self::compute_workgroups(self.num_amplitudes);
-            pass.dispatch_workgroups(workgroups, 1, 1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
+    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RZZ requires pairs of qubits"
+        );
+        self.rzz_batch_qubits(theta, qubits);
         self
     }
 }
@@ -1072,7 +1116,17 @@ impl ArbitraryRotationGateable<usize> for GpuStateVec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_core::{qid, qid2};
     use pecos_qsim::CliffordGateable;
+
+    // Compile-time assertions that GpuStateVec is Send + Sync.
+    // This is required for parallel Monte Carlo simulations.
+    const _: fn() = || {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<GpuStateVec>();
+        assert_sync::<GpuStateVec>();
+    };
 
     #[test]
     fn test_initial_state() {
@@ -1084,14 +1138,14 @@ mod tests {
     #[test]
     fn test_hadamard_creates_superposition() {
         let mut sim = GpuStateVec::new(1).unwrap();
-        sim.h(0);
+        sim.h(&qid(0));
 
         // Measure many times - should get roughly 50/50
         let mut zeros = 0;
         let mut ones = 0;
         for _ in 0..100 {
             sim.reset();
-            sim.h(0);
+            sim.h(&qid(0));
             if sim.measure(0) == 0 {
                 zeros += 1;
             } else {
@@ -1112,8 +1166,8 @@ mod tests {
         // Should always measure same value on both qubits
         for _ in 0..20 {
             sim.reset();
-            sim.h(0);
-            sim.cx(0, 1);
+            sim.h(&qid(0));
+            sim.cx(&qid2(0, 1));
 
             let m0 = sim.measure(0);
             let m1 = sim.measure(1);
@@ -1127,23 +1181,22 @@ mod tests {
         let mut sim = GpuStateVec::new(2).unwrap();
 
         // Test X gate (derived from H and Z, which is derived from SZ)
-        sim.x(0); // Should flip qubit 0 to |1>
-        let m = sim.mz(0);
-        assert!(m.outcome, "X gate should flip |0> to |1>");
+        sim.x(&qid(0)); // Should flip qubit 0 to |1>
+        assert!(sim.mz(&qid(0))[0].outcome, "X gate should flip |0> to |1>");
 
         // Reset and test Y gate
         sim.reset();
-        sim.y(0);
-        let m = sim.mz(0);
-        assert!(m.outcome, "Y gate should flip |0> to |1>");
+        sim.y(&qid(0));
+        assert!(sim.mz(&qid(0))[0].outcome, "Y gate should flip |0> to |1>");
 
         // Test CZ gate (derived from H and CX)
         sim.reset();
-        sim.x(0); // |10>
-        sim.x(1); // |11>
-        sim.cz(0, 1); // Apply CZ - should add phase but not change computational basis
-        let m0 = sim.mz(0);
-        let m1 = sim.mz(1);
+        sim.x(&qid(0)); // |10>
+        sim.x(&qid(1)); // |11>
+        sim.cz(&qid2(0, 1)); // Apply CZ - should add phase but not change computational basis
+        let results = sim.mz(&[QubitId(0), QubitId(1)]);
+        let m0 = &results[0];
+        let m1 = &results[1];
         assert!(
             m0.outcome && m1.outcome,
             "CZ should not change |11> in computational basis"
@@ -1151,10 +1204,11 @@ mod tests {
 
         // Test SWAP gate (derived from CX)
         sim.reset();
-        sim.x(0); // |10>
-        sim.swap(0, 1); // Should give |01>
-        let m0 = sim.mz(0);
-        let m1 = sim.mz(1);
+        sim.x(&qid(0)); // |10>
+        sim.swap(&qid2(0, 1)); // Should give |01>
+        let results = sim.mz(&[QubitId(0), QubitId(1)]);
+        let m0 = &results[0];
+        let m1 = &results[1];
         assert!(
             !m0.outcome && m1.outcome,
             "SWAP should exchange qubit states"
@@ -1168,15 +1222,16 @@ mod tests {
 
         // Test RY gate (derived from RX and SZ)
         // RY(pi) should flip |0> to |1>
-        sim.ry(std::f64::consts::PI, 0);
-        let m = sim.mz(0);
-        assert!(m.outcome, "RY(pi) should flip |0> to |1>");
+        sim.ry(std::f64::consts::PI, &qid(0));
+        assert!(sim.mz(&qid(0))[0].outcome, "RY(pi) should flip |0> to |1>");
 
         // Test T gate (derived from RZ)
         sim.reset();
-        sim.t(0); // T gate is just a phase, shouldn't change measurement
-        let m = sim.mz(0);
-        assert!(!m.outcome, "T gate on |0> should still measure 0");
+        sim.t(&qid(0)); // T gate is just a phase, shouldn't change measurement
+        assert!(
+            !sim.mz(&qid(0))[0].outcome,
+            "T gate on |0> should still measure 0"
+        );
     }
 
     // =========================================================================
@@ -1239,14 +1294,14 @@ mod tests {
         let mut cpu = StateVec::new(2);
 
         // H on qubit 0
-        gpu.h(0);
-        cpu.h(0);
+        gpu.h(&qid(0));
+        cpu.h(&qid(0));
         let max_diff = compare_states(&gpu, &cpu);
         assert!(max_diff < TOLERANCE, "H(0) mismatch: max_diff = {max_diff}");
 
         // H on qubit 1
-        gpu.h(1);
-        cpu.h(1);
+        gpu.h(&qid(1));
+        cpu.h(&qid(1));
         let max_diff = compare_states(&gpu, &cpu);
         assert!(
             max_diff < TOLERANCE,
@@ -1260,8 +1315,8 @@ mod tests {
         {
             let mut gpu = GpuStateVec::new(2).unwrap();
             let mut cpu = StateVec::new(2);
-            gpu.x(0);
-            cpu.x(0);
+            gpu.x(&qid(0));
+            cpu.x(&qid(0));
             let max_diff = compare_states(&gpu, &cpu);
             assert!(max_diff < TOLERANCE, "X(0) mismatch: max_diff = {max_diff}");
         }
@@ -1270,8 +1325,8 @@ mod tests {
         {
             let mut gpu = GpuStateVec::new(2).unwrap();
             let mut cpu = StateVec::new(2);
-            gpu.y(1);
-            cpu.y(1);
+            gpu.y(&qid(1));
+            cpu.y(&qid(1));
             let max_diff = compare_states(&gpu, &cpu);
             assert!(max_diff < TOLERANCE, "Y(1) mismatch: max_diff = {max_diff}");
         }
@@ -1280,10 +1335,10 @@ mod tests {
         {
             let mut gpu = GpuStateVec::new(2).unwrap();
             let mut cpu = StateVec::new(2);
-            gpu.h(0); // Put in superposition first so Z has an effect
-            cpu.h(0);
-            gpu.z(0);
-            cpu.z(0);
+            gpu.h(&qid(0)); // Put in superposition first so Z has an effect
+            cpu.h(&qid(0));
+            gpu.z(&qid(0));
+            cpu.z(&qid(0));
             let max_diff = compare_states(&gpu, &cpu);
             assert!(
                 max_diff < TOLERANCE,
@@ -1298,10 +1353,10 @@ mod tests {
         {
             let mut gpu = GpuStateVec::new(1).unwrap();
             let mut cpu = StateVec::new(1);
-            gpu.h(0);
-            cpu.h(0);
-            gpu.s(0);
-            cpu.sz(0);
+            gpu.h(&qid(0));
+            cpu.h(&qid(0));
+            gpu.sz(&qid(0));
+            cpu.sz(&qid(0));
             let max_diff = compare_states(&gpu, &cpu);
             assert!(
                 max_diff < TOLERANCE,
@@ -1313,10 +1368,10 @@ mod tests {
         {
             let mut gpu = GpuStateVec::new(1).unwrap();
             let mut cpu = StateVec::new(1);
-            gpu.h(0);
-            cpu.h(0);
-            gpu.t(0);
-            cpu.t(0);
+            gpu.h(&qid(0));
+            cpu.h(&qid(0));
+            gpu.t(&qid(0));
+            cpu.t(&qid(0));
             let max_diff = compare_states(&gpu, &cpu);
             assert!(
                 max_diff < TOLERANCE,
@@ -1334,8 +1389,8 @@ mod tests {
             {
                 let mut gpu = GpuStateVec::new(1).unwrap();
                 let mut cpu = StateVec::new(1);
-                gpu.rx(theta, 0);
-                cpu.rx(theta, 0);
+                gpu.rx(theta, &qid(0));
+                cpu.rx(theta, &qid(0));
                 let max_diff = compare_states(&gpu, &cpu);
                 assert!(
                     max_diff < TOLERANCE,
@@ -1347,8 +1402,8 @@ mod tests {
             {
                 let mut gpu = GpuStateVec::new(1).unwrap();
                 let mut cpu = StateVec::new(1);
-                gpu.ry(theta, 0);
-                cpu.ry(theta, 0);
+                gpu.ry(theta, &qid(0));
+                cpu.ry(theta, &qid(0));
                 let max_diff = compare_states(&gpu, &cpu);
                 assert!(
                     max_diff < TOLERANCE,
@@ -1360,10 +1415,10 @@ mod tests {
             {
                 let mut gpu = GpuStateVec::new(1).unwrap();
                 let mut cpu = StateVec::new(1);
-                gpu.h(0); // Put in superposition so RZ has visible effect
-                cpu.h(0);
-                gpu.rz(theta, 0);
-                cpu.rz(theta, 0);
+                gpu.h(&qid(0)); // Put in superposition so RZ has visible effect
+                cpu.h(&qid(0));
+                gpu.rz(theta, &qid(0));
+                cpu.rz(theta, &qid(0));
                 let max_diff = compare_states(&gpu, &cpu);
                 assert!(
                     max_diff < TOLERANCE,
@@ -1386,14 +1441,12 @@ mod tests {
                 let mut cpu = StateVec::new(3);
 
                 // Create superposition on control
-                #[allow(clippy::cast_possible_truncation)]
-                gpu.h(control as u32);
-                cpu.h(control);
+                gpu.h(&qid(control));
+                cpu.h(&qid(control));
 
                 // Apply CX
-                #[allow(clippy::cast_possible_truncation)]
-                gpu.cx(control as u32, target as u32);
-                cpu.cx(control, target);
+                gpu.cx(&qid2(control, target));
+                cpu.cx(&qid2(control, target));
 
                 let max_diff = compare_states(&gpu, &cpu);
                 assert!(
@@ -1410,14 +1463,14 @@ mod tests {
         let mut cpu = StateVec::new(2);
 
         // Create |++> state
-        gpu.h(0);
-        gpu.h(1);
-        cpu.h(0);
-        cpu.h(1);
+        gpu.h(&qid(0));
+        gpu.h(&qid(1));
+        cpu.h(&qid(0));
+        cpu.h(&qid(1));
 
         // Apply CZ
-        gpu.cz(0, 1);
-        cpu.cz(0, 1);
+        gpu.cz(&qid2(0, 1));
+        cpu.cz(&qid2(0, 1));
 
         let max_diff = compare_states(&gpu, &cpu);
         assert!(
@@ -1435,14 +1488,14 @@ mod tests {
             let mut cpu = StateVec::new(2);
 
             // Create superposition
-            gpu.h(0);
-            gpu.h(1);
-            cpu.h(0);
-            cpu.h(1);
+            gpu.h(&qid(0));
+            gpu.h(&qid(1));
+            cpu.h(&qid(0));
+            cpu.h(&qid(1));
 
             // Apply RZZ
-            gpu.rzz(theta, 0, 1);
-            cpu.rzz(theta, 0, 1);
+            gpu.rzz(theta, &qid2(0, 1));
+            cpu.rzz(theta, &qid2(0, 1));
 
             let max_diff = compare_states(&gpu, &cpu);
             assert!(
@@ -1460,36 +1513,35 @@ mod tests {
 
         // Layer 1: Hadamards
         for q in 0usize..4 {
-            #[allow(clippy::cast_possible_truncation)]
-            gpu.h(q as u32);
-            cpu.h(q);
+            gpu.h(&qid(q));
+            cpu.h(&qid(q));
         }
 
         // Layer 2: Rotations
-        gpu.rz(0.3, 0);
-        cpu.rz(0.3, 0);
-        gpu.rx(0.5, 1);
-        cpu.rx(0.5, 1);
-        gpu.ry(0.7, 2);
-        cpu.ry(0.7, 2);
-        gpu.rz(1.1, 3);
-        cpu.rz(1.1, 3);
+        gpu.rz(0.3, &qid(0));
+        cpu.rz(0.3, &qid(0));
+        gpu.rx(0.5, &qid(1));
+        cpu.rx(0.5, &qid(1));
+        gpu.ry(0.7, &qid(2));
+        cpu.ry(0.7, &qid(2));
+        gpu.rz(1.1, &qid(3));
+        cpu.rz(1.1, &qid(3));
 
         // Layer 3: Entangling gates
-        gpu.cx(0, 1);
-        cpu.cx(0, 1);
-        gpu.cx(2, 3);
-        cpu.cx(2, 3);
+        gpu.cx(&qid2(0, 1));
+        cpu.cx(&qid2(0, 1));
+        gpu.cx(&qid2(2, 3));
+        cpu.cx(&qid2(2, 3));
 
         // Layer 4: More rotations
-        gpu.rz(0.2, 0);
-        cpu.rz(0.2, 0);
-        gpu.rz(0.4, 1);
-        cpu.rz(0.4, 1);
+        gpu.rz(0.2, &qid(0));
+        cpu.rz(0.2, &qid(0));
+        gpu.rz(0.4, &qid(1));
+        cpu.rz(0.4, &qid(1));
 
         // Layer 5: Cross entanglement
-        gpu.cx(1, 2);
-        cpu.cx(1, 2);
+        gpu.cx(&qid2(1, 2));
+        cpu.cx(&qid2(1, 2));
 
         let max_diff = compare_states(&gpu, &cpu);
         assert!(
@@ -1504,10 +1556,10 @@ mod tests {
         let mut cpu = StateVec::new(2);
 
         // Apply some gates
-        gpu.h(0);
-        gpu.cx(0, 1);
-        cpu.h(0);
-        cpu.cx(0, 1);
+        gpu.h(&qid(0));
+        gpu.cx(&qid2(0, 1));
+        cpu.h(&qid(0));
+        cpu.cx(&qid2(0, 1));
 
         // Reset both
         gpu.reset();

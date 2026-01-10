@@ -59,86 +59,87 @@ impl PySparseSimCpp {
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
+        let q = QubitId(location);
         match symbol {
             "X" => {
-                self.inner.x(location);
+                self.inner.x(&[q]);
                 Ok(None)
             }
             "Y" => {
-                self.inner.y(location);
+                self.inner.y(&[q]);
                 Ok(None)
             }
             "Z" => {
-                self.inner.z(location);
+                self.inner.z(&[q]);
                 Ok(None)
             }
             "H" => {
-                self.inner.h(location);
+                self.inner.h(&[q]);
                 Ok(None)
             }
             "H2" => {
-                self.inner.h2(location);
+                self.inner.h2(&[q]);
                 Ok(None)
             }
             "H3" => {
-                self.inner.h3(location);
+                self.inner.h3(&[q]);
                 Ok(None)
             }
             "H4" => {
-                self.inner.h4(location);
+                self.inner.h4(&[q]);
                 Ok(None)
             }
             "H5" => {
-                self.inner.h5(location);
+                self.inner.h5(&[q]);
                 Ok(None)
             }
             "H6" => {
-                self.inner.h6(location);
+                self.inner.h6(&[q]);
                 Ok(None)
             }
             "F" | "F1" => {
-                self.inner.f(location);
+                self.inner.f(&[q]);
                 Ok(None)
             }
             "Fdg" | "F1d" => {
-                self.inner.fdg(location);
+                self.inner.fdg(&[q]);
                 Ok(None)
             }
             "F2" => {
-                self.inner.f2(location);
+                self.inner.f2(&[q]);
                 Ok(None)
             }
             "F2dg" | "F2d" => {
-                self.inner.f2dg(location);
+                self.inner.f2dg(&[q]);
                 Ok(None)
             }
             "F3" => {
-                self.inner.f3(location);
+                self.inner.f3(&[q]);
                 Ok(None)
             }
             "F3dg" | "F3d" => {
-                self.inner.f3dg(location);
+                self.inner.f3dg(&[q]);
                 Ok(None)
             }
             "F4" => {
-                self.inner.f4(location);
+                self.inner.f4(&[q]);
                 Ok(None)
             }
             "F4dg" | "F4d" => {
-                self.inner.f4dg(location);
+                self.inner.f4dg(&[q]);
                 Ok(None)
             }
             "MZ" => {
-                let result = self.inner.mz(location);
-                Ok(Some(u8::from(result.outcome)))
+                let results = self.inner.mz(&[q]);
+                Ok(Some(u8::from(results[0].outcome)))
             }
             "MX" | "Measure +X" => {
-                let result = self.inner.mx(location);
-                Ok(Some(u8::from(result.outcome)))
+                let results = self.inner.mx(&[q]);
+                Ok(Some(u8::from(results[0].outcome)))
             }
             "MY" | "Measure +Y" => {
-                let result = self.inner.my(location);
-                Ok(Some(u8::from(result.outcome)))
+                let results = self.inner.my(&[q]);
+                Ok(Some(u8::from(results[0].outcome)))
             }
             "MZForced" => {
                 if let Some(params) = params {
@@ -152,8 +153,8 @@ impl PySparseSimCpp {
                         })?
                         .extract::<i32>()?;
                     let forced_value = forced_int != 0;
-                    let result = self.inner.force_measure(location, forced_value);
-                    Ok(Some(u8::from(result.outcome)))
+                    let result = self.inner.force_measure(&[q], forced_value);
+                    Ok(Some(u8::from(result[0].outcome)))
                 } else {
                     Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "MZForced requires a 'forced_outcome' parameter",
@@ -163,27 +164,27 @@ impl PySparseSimCpp {
             // Gate aliases - alternative names for common gates
             "I" => Ok(None), // Identity gate - no operation
             "Q" | "SX" | "SqrtX" => {
-                self.inner.sx(location);
+                self.inner.sx(&[q]);
                 Ok(None)
             }
             "Qd" | "SXdg" | "SqrtXdg" => {
-                self.inner.sxdg(location);
+                self.inner.sxdg(&[q]);
                 Ok(None)
             }
             "R" | "SY" | "SqrtY" => {
-                self.inner.sy(location);
+                self.inner.sy(&[q]);
                 Ok(None)
             }
             "Rd" | "SYdg" | "SqrtYdg" => {
-                self.inner.sydg(location);
+                self.inner.sydg(&[q]);
                 Ok(None)
             }
             "S" | "SZ" | "SqrtZ" => {
-                self.inner.sz(location);
+                self.inner.sz(&[q]);
                 Ok(None)
             }
             "Sd" | "SZdg" | "SqrtZdg" => {
-                self.inner.szdg(location);
+                self.inner.szdg(&[q]);
                 Ok(None)
             }
             "Measure" | "Measure +Z" | "measure Z" => {
@@ -194,12 +195,12 @@ impl PySparseSimCpp {
                     // Has forced_outcome, use forced measurement
                     let forced_int: i32 = forced_item.extract()?;
                     let forced_value = forced_int != 0;
-                    let result = self.inner.force_measure(location, forced_value);
-                    return Ok(Some(u8::from(result.outcome)));
+                    let results = self.inner.force_measure(&[q], forced_value);
+                    return Ok(Some(u8::from(results[0].outcome)));
                 }
                 // No forced_outcome, use regular measurement
-                let result = self.inner.mz(location);
-                Ok(Some(u8::from(result.outcome)))
+                let results = self.inner.mz(&[q]);
+                Ok(Some(u8::from(results[0].outcome)))
             }
             "Init" | "init |0>" => {
                 // Check if forced_outcome parameter is provided
@@ -211,41 +212,41 @@ impl PySparseSimCpp {
                     if forced_int != -1 {
                         // Use forced measurement approach
                         let forced_value = forced_int != 0;
-                        let result = self.inner.force_measure(location, forced_value);
+                        let results = self.inner.force_measure(&[q], forced_value);
                         // If measured |1>, flip to |0>
-                        if result.outcome {
-                            self.inner.x(location);
+                        if results[0].outcome {
+                            self.inner.x(&[q]);
                         }
                         return Ok(None);
                     }
                 }
                 // No forced_outcome or forced_outcome==-1, use native preparation
-                self.inner.pz(location);
+                self.inner.pz(&[q]);
                 Ok(None)
             }
             "init |1>" => {
                 // Use native preparation gate
-                self.inner.pnz(location);
+                self.inner.pnz(&[q]);
                 Ok(None)
             }
             "init |+>" => {
                 // Use native preparation gate
-                self.inner.px(location);
+                self.inner.px(&[q]);
                 Ok(None)
             }
             "init |->" => {
                 // Use native preparation gate
-                self.inner.pnx(location);
+                self.inner.pnx(&[q]);
                 Ok(None)
             }
             "init |+i>" => {
                 // Use native preparation gate
-                self.inner.py(location);
+                self.inner.py(&[q]);
                 Ok(None)
             }
             "init |-i>" => {
                 // Use native preparation gate
-                self.inner.pny(location);
+                self.inner.pny(&[q]);
                 Ok(None)
             }
             "PZForced" => {
@@ -258,16 +259,16 @@ impl PySparseSimCpp {
                     if forced_int != -1 {
                         // Use forced measurement approach
                         let forced_value = forced_int != 0;
-                        let result = self.inner.force_measure(location, forced_value);
+                        let results = self.inner.force_measure(&[q], forced_value);
                         // If measured |1>, flip to |0>
-                        if result.outcome {
-                            self.inner.x(location);
+                        if results[0].outcome {
+                            self.inner.x(&[q]);
                         }
                         return Ok(None);
                     }
                 }
                 // No forced_outcome or forced_outcome==-1, use native preparation
-                self.inner.pz(location);
+                self.inner.pz(&[q]);
                 Ok(None)
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -288,35 +289,35 @@ impl PySparseSimCpp {
             ));
         }
 
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
+        let q1 = QubitId(location.get_item(0)?.extract::<usize>()?);
+        let q2 = QubitId(location.get_item(1)?.extract::<usize>()?);
         match symbol {
             "CX" | "CNOT" => {
-                self.inner.cx(q1, q2);
+                self.inner.cx(&[q1, q2]);
                 Ok(None)
             }
             "CY" => {
-                self.inner.cy(q1, q2);
+                self.inner.cy(&[q1, q2]);
                 Ok(None)
             }
             "CZ" => {
-                self.inner.cz(q1, q2);
+                self.inner.cz(&[q1, q2]);
                 Ok(None)
             }
             "SWAP" => {
-                self.inner.swap(q1, q2);
+                self.inner.swap(&[q1, q2]);
                 Ok(None)
             }
             "G2" | "G" => {
-                self.inner.g2(q1, q2);
+                self.inner.g2(&[q1, q2]);
                 Ok(None)
             }
             "SXX" | "SqrtXX" => {
-                self.inner.sxx(q1, q2);
+                self.inner.sxx(&[q1, q2]);
                 Ok(None)
             }
             "SXXdg" | "SqrtXXdg" => {
-                self.inner.sxxdg(q1, q2);
+                self.inner.sxxdg(&[q1, q2]);
                 Ok(None)
             }
             // Gate aliases - alternative names for two-qubit gates
@@ -360,35 +361,35 @@ impl PySparseSimCpp {
 
     // Additional methods that mirror SparseSim's API
     fn h(&mut self, qubit: usize) {
-        self.inner.h(qubit);
+        self.inner.h(&[QubitId(qubit)]);
     }
 
     fn x(&mut self, qubit: usize) {
-        self.inner.x(qubit);
+        self.inner.x(&[QubitId(qubit)]);
     }
 
     fn y(&mut self, qubit: usize) {
-        self.inner.y(qubit);
+        self.inner.y(&[QubitId(qubit)]);
     }
 
     fn z(&mut self, qubit: usize) {
-        self.inner.z(qubit);
+        self.inner.z(&[QubitId(qubit)]);
     }
 
     fn cx(&mut self, control: usize, target: usize) {
-        self.inner.cx(control, target);
+        self.inner.cx(&[QubitId(control), QubitId(target)]);
     }
 
     fn mz(&mut self, qubit: usize) -> bool {
-        self.inner.mz(qubit).outcome
+        self.inner.mz(&[QubitId(qubit)])[0].outcome
     }
 
     fn mx(&mut self, qubit: usize) -> bool {
-        self.inner.mx(qubit).outcome
+        self.inner.mx(&[QubitId(qubit)])[0].outcome
     }
 
     fn my(&mut self, qubit: usize) -> bool {
-        self.inner.my(qubit).outcome
+        self.inner.my(&[QubitId(qubit)])[0].outcome
     }
 
     fn stab_tableau(&self) -> String {
@@ -401,11 +402,11 @@ impl PySparseSimCpp {
 
     // Expose preparation gates for testing
     fn py(&mut self, qubit: usize) {
-        self.inner.py(qubit);
+        self.inner.py(&[QubitId(qubit)]);
     }
 
     fn pny(&mut self, qubit: usize) {
-        self.inner.pny(qubit);
+        self.inner.pny(&[QubitId(qubit)]);
     }
 
     /// High-level `run_gate` method that accepts a set of locations

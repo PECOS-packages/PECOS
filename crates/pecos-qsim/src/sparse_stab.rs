@@ -13,12 +13,12 @@
 use crate::{CliffordGateable, Gens, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
-use pecos_core::{IndexableElement, RngManageable, Set, VecSet};
+use pecos_core::{QubitId, RngManageable, Set, VecSet};
 use pecos_rng::rng_ext::RngProbabilityExt;
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 
 #[expect(clippy::module_name_repetitions)]
-pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
+pub type StdSparseStab = SparseStab<VecSet<usize>>;
 
 /// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
 ///
@@ -37,25 +37,24 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// - Signs (± and ±i) for each generator
 ///
 /// # Type Parameters
-/// - T: A set type that implements the Set trait, used for storing operator locations
-/// - E: An indexable element type that can convert between usize indices
+/// - T: A set type that implements the Set trait with usize elements, used for storing operator locations
 /// - R: A random number generator type, defaults to `PecosRng`
 ///
 /// # Examples
 /// ```rust
-/// use pecos_core::VecSet;
+/// use pecos_core::{VecSet, qid, qid2};
 /// use pecos_qsim::{QuantumSimulator, CliffordGateable, SparseStab};
 ///
 /// // Create a new 2-qubit stabilizer state
-/// let mut sim = SparseStab::<VecSet<u32>, u32>::new(2);
+/// let mut sim = SparseStab::<VecSet<usize>>::new(2);
 ///
 /// // Create Bell state |Φ+> = (|00> + |11>)/√2
-/// sim.h(0)
-///    .cx(0, 1);
+/// sim.h(&qid(0))
+///    .cx(&qid2(0, 1));
 ///
 /// // Measure the two qubits in the Z basis
-/// let r0 = sim.mz(0);
-/// let r1 = sim.mz(1);
+/// let r0 = sim.mz(&qid(0)).into_iter().next().unwrap();
+/// let r1 = sim.mz(&qid(1)).into_iter().next().unwrap();
 ///
 /// // Both measurements should equal each other
 /// assert_eq!(r0.outcome, r1.outcome);
@@ -102,22 +101,20 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// 2. Ryan-Anderson, "Quantum Algorithms, Architecture, and Error Correction"
 ///    <https://arxiv.org/abs/1812.04735>
 #[derive(Clone, Debug)]
-pub struct SparseStab<T, E, R = PecosRng>
+pub struct SparseStab<T, R = PecosRng>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     pub(crate) num_qubits: usize,
-    stabs: Gens<T, E>,
-    destabs: Gens<T, E>,
+    stabs: Gens<T>,
+    destabs: Gens<T>,
     rng: R,
 }
-impl<T, E, R> SparseStab<T, E, R>
+impl<T, R> SparseStab<T, R>
 where
-    E: IndexableElement,
     R: RngCore + SeedableRng + Rng + Debug,
-    T: for<'a> Set<'a, Element = E>,
+    T: for<'a> Set<'a, Element = usize>,
 {
     #[inline]
     #[must_use]
@@ -156,7 +153,7 @@ where
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StdSparseStab};
+    /// use pecos_qsim::{QuantumSimulator, StdSparseStab, qid, qid2};
     /// let state = StdSparseStab::new(2);
     /// let num = state.num_qubits();
     /// assert_eq!(num, 2);
@@ -170,8 +167,8 @@ where
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
         let mut stab = Self {
             num_qubits,
-            stabs: Gens::<T, E>::new(num_qubits),
-            destabs: Gens::<T, E>::new(num_qubits),
+            stabs: Gens::<T>::new(num_qubits),
+            destabs: Gens::<T>::new(num_qubits),
             rng,
         };
         stab.reset();
@@ -197,12 +194,12 @@ where
     }
 
     #[inline]
-    fn check_row_eq_col(gens: &Gens<T, E>) {
+    fn check_row_eq_col(gens: &Gens<T>) {
         // TODO: Verify that this is doing what is intended...
         for (i, row) in gens.row_x.iter().enumerate() {
-            for j in row.iter() {
+            for &j in row.iter() {
                 assert!(
-                    gens.col_x[j.to_index()].contains(&E::from_index(i)),
+                    gens.col_x[j].contains(&i),
                     "Column-wise sparse matrix doesn't match row-wise spare matrix"
                 );
             }
@@ -211,24 +208,23 @@ where
 
     /// Utility that creates a string for the Pauli generates of a `Gens`.
     #[inline]
-    fn tableau_string(num_qubits: usize, gens: &Gens<T, E>) -> String {
+    fn tableau_string(num_qubits: usize, gens: &Gens<T>) -> String {
         // TODO: calculate signs so we are really doing Y and not W
         let mut result =
             String::with_capacity(num_qubits * gens.row_x.len() + gens.row_x.len() + 2);
         for i in 0..gens.row_x.len() {
-            if gens.signs_minus.contains(&(E::from_index(i))) {
+            if gens.signs_minus.contains(&i) {
                 result.push('-');
             } else {
                 result.push('+');
             }
-            if gens.signs_i.contains(&(E::from_index(i))) {
+            if gens.signs_i.contains(&i) {
                 result.push('i');
             }
 
             for qubit in 0..num_qubits {
-                let qubit_u = E::from_index(qubit);
-                let in_row_x = gens.row_x[i].contains(&qubit_u);
-                let in_row_z = gens.row_z[i].contains(&qubit_u);
+                let in_row_x = gens.row_x[i].contains(&qubit);
+                let in_row_z = gens.row_z[i].contains(&qubit);
 
                 let char = match (in_row_x, in_row_z) {
                     (false, false) => 'I',
@@ -258,7 +254,7 @@ where
 
     /// Negate the sign of a stabilizer generator.
     #[inline]
-    pub fn neg(&mut self, s: E) {
+    pub fn neg(&mut self, s: usize) {
         self.stabs.signs_minus ^= &s;
     }
 
@@ -267,25 +263,20 @@ where
         &self.stabs.signs_minus
     }
 
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn deterministic_meas(&mut self, q: E) -> MeasurementResult {
-        let qu = q.to_index();
-
-        let mut num_minuses = self.destabs.col_x[qu]
+    fn deterministic_meas(&mut self, q: usize) -> MeasurementResult {
+        let mut num_minuses = self.destabs.col_x[q]
             .intersection(&self.stabs.signs_minus)
             .count();
 
-        let num_is = &self.destabs.col_x[qu]
+        let num_is = &self.destabs.col_x[q]
             .intersection(&self.stabs.signs_i)
             .count();
 
         let mut cumulative_x = T::new();
-        for row in self.destabs.col_x[qu].iter() {
-            let rowu = row.to_index();
-            num_minuses += &self.stabs.row_z[rowu].intersection(&cumulative_x).count();
-            cumulative_x ^= &self.stabs.row_x[rowu];
+        for &row in self.destabs.col_x[q].iter() {
+            num_minuses += &self.stabs.row_z[row].intersection(&cumulative_x).count();
+            cumulative_x ^= &self.stabs.row_x[row];
         }
         if num_is & 3 != 0 {
             // num_is % 4 != 0
@@ -298,26 +289,21 @@ where
         }
     }
 
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[allow(clippy::too_many_lines)]
     #[inline]
-    fn nondeterministic_meas(&mut self, q: E, result: bool) -> MeasurementResult {
-        let qu = q.to_index();
-
-        let mut anticom_stabs_col = self.stabs.col_x[qu].clone();
-        let mut anticom_destabs_col = self.destabs.col_x[qu].clone();
+    fn nondeterministic_meas(&mut self, q: usize, result: bool) -> MeasurementResult {
+        let mut anticom_stabs_col = self.stabs.col_x[q].clone();
+        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
 
         let mut smallest_wt = 2 * self.num_qubits + 2;
-        let mut removed_id: Option<E> = None;
+        let mut removed_id: Option<usize> = None;
 
-        for stab_id in anticom_stabs_col.iter() {
-            let stab_usize = stab_id.to_index();
-            let weight = self.stabs.row_x[stab_usize].len() + self.stabs.row_z[stab_usize].len();
+        for &stab_id in anticom_stabs_col.iter() {
+            let weight = self.stabs.row_x[stab_id].len() + self.stabs.row_z[stab_id].len();
 
             if weight < smallest_wt {
                 smallest_wt = weight;
-                removed_id = Some(*stab_id);
+                removed_id = Some(stab_id);
                 // break // TODO: Should it exit early? // If we do... it avoids smallest weight
                 // TODO: Does the smallest weight matter? Maybe at least break if smallest weight == 1
                 // TODO: Does it always exist? If so, can we avoid Some()?
@@ -327,9 +313,8 @@ where
         let id = removed_id.expect("Critical error: removed_id was None");
 
         anticom_stabs_col.remove(&id);
-        let id_usize = id.to_index(); // Convert `id` to `usize`
-        let removed_row_x = self.stabs.row_x[id_usize].clone();
-        let removed_row_z = self.stabs.row_z[id_usize].clone();
+        let removed_row_x = self.stabs.row_x[id].clone();
+        let removed_row_z = self.stabs.row_z[id].clone();
 
         if self.stabs.signs_minus.contains(&id) {
             self.stabs.signs_minus ^= &anticom_stabs_col;
@@ -359,82 +344,69 @@ where
             }
         }
 
-        for g in anticom_stabs_col.iter() {
-            let gen_usize = g.to_index(); // Convert `gen` to `usize`
-            let num_minuses = removed_row_z
-                .intersection(&self.stabs.row_x[gen_usize])
-                .count();
+        for &g in anticom_stabs_col.iter() {
+            let num_minuses = removed_row_z.intersection(&self.stabs.row_x[g]).count();
 
             if num_minuses & 1 != 0 {
                 // num_minuses % 2 != 0 (is odd)
-                self.stabs.signs_minus ^= g;
+                self.stabs.signs_minus ^= &g;
             }
 
-            self.stabs.row_x[gen_usize] ^= &removed_row_x;
-            self.stabs.row_z[gen_usize] ^= &removed_row_z;
-            // Use `num_minuses` as needed
+            self.stabs.row_x[g] ^= &removed_row_x;
+            self.stabs.row_z[g] ^= &removed_row_z;
         }
 
-        for i in removed_row_x.iter() {
-            let iu = i.to_index();
-            self.stabs.col_x[iu] ^= &anticom_stabs_col;
+        for &i in removed_row_x.iter() {
+            self.stabs.col_x[i] ^= &anticom_stabs_col;
         }
 
-        for i in removed_row_z.iter() {
-            let iu = i.to_index();
-            self.stabs.col_z[iu] ^= &anticom_stabs_col;
+        for &i in removed_row_z.iter() {
+            self.stabs.col_z[i] ^= &anticom_stabs_col;
         }
 
-        for i in self.stabs.row_x[id_usize].iter() {
-            let iu = i.to_index();
-            self.stabs.col_x[iu].remove(&id);
+        for &i in self.stabs.row_x[id].iter() {
+            self.stabs.col_x[i].remove(&id);
         }
 
-        for i in self.stabs.row_z[id_usize].iter() {
-            let iu = i.to_index();
-            self.stabs.col_z[iu].remove(&id);
+        for &i in self.stabs.row_z[id].iter() {
+            self.stabs.col_z[i].remove(&id);
         }
 
         // Remove replaced stabilizer with the measured stabilizer
-        self.stabs.col_z[qu].insert(id);
+        self.stabs.col_z[q].insert(id);
 
         // Row update
-        self.stabs.row_x[id_usize].clear();
-        self.stabs.row_z[id_usize].clear();
-        self.stabs.row_z[id_usize].insert(q);
+        self.stabs.row_x[id].clear();
+        self.stabs.row_z[id].clear();
+        self.stabs.row_z[id].insert(q);
 
-        for i in self.destabs.row_x[id_usize].iter() {
-            let iu = i.to_index();
-            self.destabs.col_x[iu].remove(&id);
+        for &i in self.destabs.row_x[id].iter() {
+            self.destabs.col_x[i].remove(&id);
         }
 
-        for i in self.destabs.row_z[id_usize].iter() {
-            let iu = i.to_index();
-            self.destabs.col_z[iu].remove(&id);
+        for &i in self.destabs.row_z[id].iter() {
+            self.destabs.col_z[i].remove(&id);
         }
 
         anticom_destabs_col.remove(&id);
 
-        for i in removed_row_x.iter() {
-            let iu = i.to_index();
-            self.destabs.col_x[iu].insert(id);
-            self.destabs.col_x[iu] ^= &anticom_destabs_col;
+        for &i in removed_row_x.iter() {
+            self.destabs.col_x[i].insert(id);
+            self.destabs.col_x[i] ^= &anticom_destabs_col;
         }
 
-        for i in removed_row_z.iter() {
-            let iu = i.to_index();
-            self.destabs.col_z[iu].insert(id);
-            self.destabs.col_z[iu] ^= &anticom_destabs_col;
+        for &i in removed_row_z.iter() {
+            self.destabs.col_z[i].insert(id);
+            self.destabs.col_z[i] ^= &anticom_destabs_col;
         }
 
-        for row in anticom_destabs_col.iter() {
-            let ru = row.to_index();
-            self.destabs.row_x[ru] ^= &removed_row_x;
-            self.destabs.row_z[ru] ^= &removed_row_z;
+        for &row in anticom_destabs_col.iter() {
+            self.destabs.row_x[row] ^= &removed_row_x;
+            self.destabs.row_z[row] ^= &removed_row_z;
         }
 
-        self.destabs.row_x[id_usize] = removed_row_x;
-        self.destabs.row_z[id_usize] = removed_row_z;
+        self.destabs.row_x[id] = removed_row_x;
+        self.destabs.row_z[id] = removed_row_z;
 
         let outcome = self.apply_outcome(id, result);
         MeasurementResult {
@@ -444,13 +416,9 @@ where
     }
 
     /// Measurement of the +`Z_q` operator where random outcomes are forced to a particular value.
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    pub fn mz_forced(&mut self, q: E, forced_outcome: bool) -> MeasurementResult {
-        let qu = q.to_index();
-
-        if self.stabs.col_x[qu].is_empty() {
+    pub fn mz_forced(&mut self, q: usize, forced_outcome: bool) -> MeasurementResult {
+        if self.stabs.col_x[q].is_empty() {
             // There are no stabilizers that anti-commute with Z_q
             self.deterministic_meas(q)
         } else {
@@ -459,21 +427,19 @@ where
     }
 
     /// Preparation of the +`Z_q` operator where random outcomes are forced to a particular value.
-    ///
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    pub fn pz_forced(&mut self, q: E, forced_outcome: bool) -> &mut Self {
+    pub fn pz_forced(&mut self, q: usize, forced_outcome: bool) -> &mut Self {
         let result = self.mz_forced(q, forced_outcome);
         if result.outcome {
-            self.x(q);
+            // Inline X gate: X -> X, Z -> -Z
+            self.stabs.signs_minus ^= &self.stabs.col_z[q];
         }
         self
     }
 
     /// Apply measurement outcome
     #[inline]
-    fn apply_outcome(&mut self, id: E, meas_outcome: bool) -> bool {
+    fn apply_outcome(&mut self, id: usize, meas_outcome: bool) -> bool {
         if meas_outcome {
             self.stabs.signs_minus.insert(id);
         } else {
@@ -483,11 +449,10 @@ where
     }
 }
 
-impl<T, E, R> QuantumSimulator for SparseStab<T, E, R>
+impl<T, R> QuantumSimulator for SparseStab<T, R>
 where
-    E: IndexableElement,
     R: RngCore + SeedableRng + Rng + Debug,
-    T: for<'a> Set<'a, Element = E>,
+    T: for<'a> Set<'a, Element = usize>,
 {
     #[inline]
     fn reset(&mut self) -> &mut Self {
@@ -495,46 +460,43 @@ where
     }
 }
 
-impl<T, E, R> CliffordGateable<E> for SparseStab<T, E, R>
+impl<T, R> CliffordGateable for SparseStab<T, R>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
     // TODO: pub fun m(&mut self, pauli: &pauli, q: U) -> bool { todo!() }
 
     /// Pauli X gate. X -> X, Z -> -Z
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn x(&mut self, q: E) -> &mut Self {
-        let qu = q.to_index();
-        self.stabs.signs_minus ^= &self.stabs.col_z[qu];
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus ^= &self.stabs.col_z[qu];
+        }
         self
     }
 
     /// Pauli Y gate. X -> -X, Z -> -Z
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn y(&mut self, q: E) -> &mut Self {
-        // TODO: Add test
-        let qu = q.to_index();
-        // stabs.signs_minus ^= stabs.col_x[qubit] ^ stabs.col_z[qubit]
-        for i in self.stabs.col_x[qu].symmetric_difference(&self.stabs.col_z[qu]) {
-            self.stabs.signs_minus ^= i;
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            // stabs.signs_minus ^= stabs.col_x[qubit] ^ stabs.col_z[qubit]
+            for i in self.stabs.col_x[qu].symmetric_difference(&self.stabs.col_z[qu]) {
+                self.stabs.signs_minus ^= i;
+            }
         }
         self
     }
 
     /// Pauli Z gate. X -> -X, Z -> Z
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn z(&mut self, q: E) -> &mut Self {
-        // TODO: Add test
-        self.stabs.signs_minus ^= &self.stabs.col_x[q.to_index()];
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.stabs.signs_minus ^= &self.stabs.col_x[q.index()];
+        }
         self
     }
 
@@ -543,61 +505,58 @@ where
     ///     Z -> Z
     ///     W -> iX
     ///     Y -> -X
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn sz(&mut self, q: E) -> &mut Self {
-        let qu = q.to_index();
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
 
-        // X -> i
-        // ---------------------
-        // i * i = -1
-        // stabs.signs_minus ^= stabs.signs_i & stabs.col_x[qubit]
-        // For each X add an i unless there is already an i there then delete it.
-        // stabs.signs_i ^= stabs.col_x[qubit]
-        for i in self.stabs.signs_i.intersection(&self.stabs.col_x[qu]) {
-            self.stabs.signs_minus ^= i;
-        }
-        self.stabs.signs_i ^= &self.stabs.col_x[qu];
+            // X -> i
+            // ---------------------
+            // i * i = -1
+            // stabs.signs_minus ^= stabs.signs_i & stabs.col_x[qubit]
+            // For each X add an i unless there is already an i there then delete it.
+            // stabs.signs_i ^= stabs.col_x[qubit]
+            for i in self.stabs.signs_i.intersection(&self.stabs.col_x[qu]) {
+                self.stabs.signs_minus ^= i;
+            }
+            self.stabs.signs_i ^= &self.stabs.col_x[qu];
 
-        for g in [&mut self.stabs, &mut self.destabs] {
-            g.col_z[qu] ^= &g.col_x[qu];
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu] ^= &g.col_x[qu];
 
-            for &i in g.col_x[qu].iter() {
-                let iu = i.to_index();
-                g.row_z[iu] ^= &q;
+                for &i in g.col_x[qu].iter() {
+                    g.row_z[i] ^= &qu;
+                }
             }
         }
         self
     }
 
     /// Hadamard gate. X -> Z, Z -> X
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn h(&mut self, q: E) -> &mut Self {
-        let qu = q.to_index();
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
 
-        // self.stabs.signs_minus.symmetric_difference_update(self.stabs.col_x[qu].intersection())
-        // self.stabs.signs_minus ^= &self.stabs.col_x[qu] & &self.stabs.col_z[qu];
-        for i in self.stabs.col_x[qu].intersection(&self.stabs.col_z[qu]) {
-            self.stabs.signs_minus ^= i;
-        }
-
-        for g in [&mut self.stabs, &mut self.destabs] {
-            for i in g.col_x[qu].difference(&g.col_z[qu]) {
-                let iu = i.to_index();
-                g.row_x[iu].remove(&q);
-                g.row_z[iu].insert(q);
+            // self.stabs.signs_minus.symmetric_difference_update(self.stabs.col_x[qu].intersection())
+            // self.stabs.signs_minus ^= &self.stabs.col_x[qu] & &self.stabs.col_z[qu];
+            for i in self.stabs.col_x[qu].intersection(&self.stabs.col_z[qu]) {
+                self.stabs.signs_minus ^= i;
             }
 
-            for i in g.col_z[qu].difference(&g.col_x[qu]) {
-                let iu = i.to_index();
-                g.row_z[iu].remove(&q);
-                g.row_x[iu].insert(q);
-            }
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].difference(&g.col_z[qu]) {
+                    g.row_x[*i].remove(&qu);
+                    g.row_z[*i].insert(qu);
+                }
 
-            mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+                for i in g.col_z[qu].difference(&g.col_x[qu]) {
+                    g.row_z[*i].remove(&qu);
+                    g.row_x[*i].insert(qu);
+                }
+
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
         }
         self
     }
@@ -605,138 +564,112 @@ where
     /// Applies a CX or CNOT (Controlled-X) gate between two qubits.
     ///
     /// The CX performs the transformation:
-    /// - |0⟩|b⟩ → |0⟩|b⟩
-    /// - |1⟩|b⟩ → |1⟩|b⊕1⟩
+    /// - |0>|b> -> |0>|b>
+    /// - |1>|b> -> |1>|b XOR 1>
     ///
     /// In the Heisenberg picture, it transforms the Pauli operators as:
-    /// - IX → IX
-    /// - XI → XX
-    /// - IZ → ZZ
-    /// - ZI → ZI
-    ///
-    /// # Arguments
-    /// * q1 - Control qubit index
-    /// * q2 - Target qubit index
-    ///
-    /// # Example
-    /// ```rust
-    /// use pecos_core::VecSet;
-    /// use pecos_qsim::{QuantumSimulator, CliffordGateable, SparseStab};
-    /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
-    ///
-    /// // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
-    /// state.h(0);  // Put first qubit in |+⟩
-    /// state.cx(0, 1);  // Entangle qubits
-    /// ```
+    /// - IX -> IX
+    /// - XI -> XX
+    /// - IZ -> ZZ
+    /// - ZI -> ZI
     ///
     /// CX: +IX -> +IX; +IZ -> +ZZ; +XI -> +XX; +ZI -> +ZI
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn cx(&mut self, q1: E, q2: E) -> &mut Self {
-        let qu1 = q1.to_index();
-        let qu2 = q2.to_index();
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
 
-        for g in &mut [&mut self.stabs, &mut self.destabs] {
-            let (qu_min, qu_max) = if qu1 < qu2 { (qu1, qu2) } else { (qu2, qu1) };
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
 
-            // Handle col_x
-            {
-                let (_left, right) = g.col_x.split_at_mut(qu_min);
-                let (mid, right) = right.split_at_mut(qu_max - qu_min);
-                let col_x_min = &mut mid[0];
-                let col_x_max = &mut right[0];
+            for g in &mut [&mut self.stabs, &mut self.destabs] {
+                let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
 
-                let (col_x_qu1, col_x_qu2) = if qu1 < qu2 {
-                    (col_x_min, col_x_max)
-                } else {
-                    (col_x_max, col_x_min)
-                };
+                // Handle col_x
+                {
+                    let (_left, right) = g.col_x.split_at_mut(qu_min);
+                    let (mid, right) = right.split_at_mut(qu_max - qu_min);
+                    let col_x_min = &mut mid[0];
+                    let col_x_max = &mut right[0];
 
-                let mut q2_set = T::new();
-                q2_set.insert(q2);
+                    let (col_x_qu1, col_x_qu2) = if q1 < q2 {
+                        (col_x_min, col_x_max)
+                    } else {
+                        (col_x_max, col_x_min)
+                    };
 
-                for i in col_x_qu1.iter() {
-                    let iu = i.to_index();
-                    g.row_x[iu].symmetric_difference_update(&q2_set);
+                    let mut q2_set = T::new();
+                    q2_set.insert(q2);
+
+                    for &i in col_x_qu1.iter() {
+                        g.row_x[i].symmetric_difference_update(&q2_set);
+                    }
+                    col_x_qu2.symmetric_difference_update(col_x_qu1);
                 }
-                col_x_qu2.symmetric_difference_update(col_x_qu1);
-            }
 
-            // Handle col_z
-            {
-                let (_left, right) = g.col_z.split_at_mut(qu_min);
-                let (mid, right) = right.split_at_mut(qu_max - qu_min);
-                let col_z_min = &mut mid[0];
-                let col_z_max = &mut right[0];
+                // Handle col_z
+                {
+                    let (_left, right) = g.col_z.split_at_mut(qu_min);
+                    let (mid, right) = right.split_at_mut(qu_max - qu_min);
+                    let col_z_min = &mut mid[0];
+                    let col_z_max = &mut right[0];
 
-                let (col_z_qu1, col_z_qu2) = if qu1 < qu2 {
-                    (col_z_min, col_z_max)
-                } else {
-                    (col_z_max, col_z_min)
-                };
+                    let (col_z_qu1, col_z_qu2) = if q1 < q2 {
+                        (col_z_min, col_z_max)
+                    } else {
+                        (col_z_max, col_z_min)
+                    };
 
-                let mut q1_set = T::new();
-                q1_set.insert(q1);
+                    let mut q1_set = T::new();
+                    q1_set.insert(q1);
 
-                for i in col_z_qu2.iter() {
-                    let iu = i.to_index();
-                    g.row_z[iu].symmetric_difference_update(&q1_set);
+                    for &i in col_z_qu2.iter() {
+                        g.row_z[i].symmetric_difference_update(&q1_set);
+                    }
+                    col_z_qu1.symmetric_difference_update(col_z_qu2);
                 }
-                col_z_qu1.symmetric_difference_update(col_z_qu2);
             }
         }
         self
     }
 
-    /// Measures a qubit in the Z basis.
+    /// Measures qubits in the Z basis.
     ///
-    /// Returns a tuple containing:
+    /// Returns a vector containing:
     /// - The measurement outcome (true = |1>, false = |0>)
     /// - Whether the measurement was deterministic
     ///
     /// The measurement can be:
     /// - Deterministic: The outcome is fixed by the current stabilizer state
     /// - Non-deterministic: The outcome is random with 50% probability for each result
-    ///
-    /// # Arguments
-    /// * q - The qubit index to measure
-    ///
-    /// # Returns
-    /// * (bool, bool) - (`measurement_outcome`, `is_deterministic`)
-    ///
-    /// # Example
-    /// ```rust
-    /// use pecos_core::VecSet;
-    /// use pecos_qsim::{QuantumSimulator, CliffordGateable, SparseStab};
-    /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
-    ///
-    /// let outcome = state.mz(0);
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn mz(&mut self, q: E) -> MeasurementResult {
-        let qu = q.to_index();
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let mut results = Vec::with_capacity(qubits.len());
 
-        let deterministic = self.stabs.col_x[qu].is_empty();
+        for &q in qubits {
+            let qu = q.index();
+            let deterministic = self.stabs.col_x[qu].is_empty();
 
-        if deterministic {
-            // There are no stabilizers that anti-commute with Z_q
-            self.deterministic_meas(q)
-        } else {
-            let result = self.rng.coin_flip();
-            self.nondeterministic_meas(q, result)
+            let result = if deterministic {
+                // There are no stabilizers that anti-commute with Z_q
+                self.deterministic_meas(qu)
+            } else {
+                let outcome = self.rng.coin_flip();
+                self.nondeterministic_meas(qu, outcome)
+            };
+            results.push(result);
         }
+
+        results
     }
 }
 
-impl<T, E, R> RngManageable for SparseStab<T, E, R>
+impl<T, R> RngManageable for SparseStab<T, R>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     type Rng = R;
@@ -773,10 +706,9 @@ where
 // Implement StabilizerTableauSimulator trait for SparseStab
 use crate::stabilizer_tableau::StabilizerTableauSimulator;
 
-impl<T, E, R> StabilizerTableauSimulator for SparseStab<T, E, R>
+impl<T, R> StabilizerTableauSimulator for SparseStab<T, R>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     fn stab_tableau(&self) -> String {
@@ -795,13 +727,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::VecSet;
+    use crate::CliffordGateable;
+    use pecos_core::{QubitId, VecSet};
 
-    #[allow(clippy::cast_possible_truncation)]
-    fn check_matrix(m: &[&str], gens: &Gens<VecSet<u32>, u32>) {
+    // Helper to create qubit slice for single qubit
+    fn q(n: usize) -> [QubitId; 1] {
+        [QubitId(n)]
+    }
+
+    // Helper to create qubit slice for two qubits
+    fn q2(a: usize, b: usize) -> [QubitId; 2] {
+        [QubitId(a), QubitId(b)]
+    }
+
+    fn check_matrix(m: &[&str], gens: &Gens<VecSet<usize>>) {
         for (r, v) in m.iter().enumerate() {
-            let ru32 = &(r as u32);
-
             let (_, phase, v) = split_pauli(v);
 
             // TODO: Allow +Y in place of +iW
@@ -809,50 +749,49 @@ mod tests {
 
             match phase {
                 "+" => {
-                    assert!(!gens.signs_minus.contains(ru32));
-                    assert!(!gens.signs_i.contains(ru32));
+                    assert!(!gens.signs_minus.contains(&r));
+                    assert!(!gens.signs_i.contains(&r));
                 }
                 "-" => {
-                    assert!(gens.signs_minus.contains(ru32));
-                    assert!(!gens.signs_i.contains(ru32));
+                    assert!(gens.signs_minus.contains(&r));
+                    assert!(!gens.signs_i.contains(&r));
                 }
                 "+i" => {
-                    assert!(!gens.signs_minus.contains(ru32));
-                    assert!(gens.signs_i.contains(ru32));
+                    assert!(!gens.signs_minus.contains(&r));
+                    assert!(gens.signs_i.contains(&r));
                 }
                 "-i" => {
-                    assert!(gens.signs_minus.contains(ru32));
-                    assert!(gens.signs_i.contains(ru32));
+                    assert!(gens.signs_minus.contains(&r));
+                    assert!(gens.signs_i.contains(&r));
                 }
                 _ => unreachable!(),
             }
 
             for (c, val) in v.chars().enumerate() {
-                let cu32 = &(c as u32);
                 match val {
                     'I' => {
-                        assert!(!gens.col_x[c].contains(ru32));
-                        assert!(!gens.col_z[c].contains(ru32));
-                        assert!(!gens.row_x[r].contains(cu32));
-                        assert!(!gens.row_z[r].contains(cu32));
+                        assert!(!gens.col_x[c].contains(&r));
+                        assert!(!gens.col_z[c].contains(&r));
+                        assert!(!gens.row_x[r].contains(&c));
+                        assert!(!gens.row_z[r].contains(&c));
                     }
                     'X' => {
-                        assert!(gens.col_x[c].contains(ru32));
-                        assert!(!gens.col_z[c].contains(ru32));
-                        assert!(gens.row_x[r].contains(cu32));
-                        assert!(!gens.row_z[r].contains(cu32));
+                        assert!(gens.col_x[c].contains(&r));
+                        assert!(!gens.col_z[c].contains(&r));
+                        assert!(gens.row_x[r].contains(&c));
+                        assert!(!gens.row_z[r].contains(&c));
                     }
                     'Z' => {
-                        assert!(!gens.col_x[c].contains(ru32));
-                        assert!(gens.col_z[c].contains(ru32));
-                        assert!(!gens.row_x[r].contains(cu32));
-                        assert!(gens.row_z[r].contains(cu32));
+                        assert!(!gens.col_x[c].contains(&r));
+                        assert!(gens.col_z[c].contains(&r));
+                        assert!(!gens.row_x[r].contains(&c));
+                        assert!(gens.row_z[r].contains(&c));
                     }
                     'W' => {
-                        assert!(gens.col_x[c].contains(ru32));
-                        assert!(gens.col_z[c].contains(ru32));
-                        assert!(gens.row_x[r].contains(cu32));
-                        assert!(gens.row_z[r].contains(cu32));
+                        assert!(gens.col_x[c].contains(&r));
+                        assert!(gens.col_z[c].contains(&r));
+                        assert!(gens.row_x[r].contains(&c));
+                        assert!(gens.row_z[r].contains(&c));
                     }
                     _ => unreachable!(),
                 }
@@ -861,7 +800,7 @@ mod tests {
     }
 
     #[inline]
-    fn check_state(state: &SparseStab<VecSet<u32>, u32>, stabs: &[&str], destabs: &[&str]) {
+    fn check_state(state: &SparseStab<VecSet<usize>>, stabs: &[&str], destabs: &[&str]) {
         check_matrix(stabs, &state.stabs);
         check_matrix(destabs, &state.destabs);
         // SparseStab::verify_matrix(&state);
@@ -884,8 +823,7 @@ mod tests {
         (n, phase, pauli_str)
     }
 
-    #[allow(clippy::cast_possible_truncation)]
-    fn prep_pauli_gens(pauli_vec: &[&str], gens: &mut Gens<VecSet<u32>, u32>) {
+    fn prep_pauli_gens(pauli_vec: &[&str], gens: &mut Gens<VecSet<usize>>) {
         // TODO: Think about how to automatically determine the destabilizers you need so you can optionally only provide stabilizers...
 
         gens.signs_i.clear();
@@ -911,14 +849,14 @@ mod tests {
             match phase {
                 "+" => {}
                 "-" => {
-                    gens.signs_minus.insert(ru as u32);
+                    gens.signs_minus.insert(ru);
                 }
                 "+i" => {
-                    gens.signs_i.insert(ru as u32);
+                    gens.signs_i.insert(ru);
                 }
                 "-i" => {
-                    gens.signs_minus.insert(ru as u32);
-                    gens.signs_i.insert(ru as u32);
+                    gens.signs_minus.insert(ru);
+                    gens.signs_i.insert(ru);
                 }
                 _ => unreachable!(),
             }
@@ -927,18 +865,18 @@ mod tests {
                 match p {
                     'I' => {}
                     'X' => {
-                        gens.col_x[cu].insert(ru as u32);
-                        gens.row_x[ru].insert(cu as u32);
+                        gens.col_x[cu].insert(ru);
+                        gens.row_x[ru].insert(cu);
                     }
                     'W' => {
-                        gens.col_x[cu].insert(ru as u32);
-                        gens.col_z[cu].insert(ru as u32);
-                        gens.row_x[ru].insert(cu as u32);
-                        gens.row_z[ru].insert(cu as u32);
+                        gens.col_x[cu].insert(ru);
+                        gens.col_z[cu].insert(ru);
+                        gens.row_x[ru].insert(cu);
+                        gens.row_z[ru].insert(cu);
                     }
                     'Z' => {
-                        gens.col_z[cu].insert(ru as u32);
-                        gens.row_z[ru].insert(cu as u32);
+                        gens.col_z[cu].insert(ru);
+                        gens.row_z[ru].insert(cu);
                     }
                     _ => unreachable!(),
                 }
@@ -946,8 +884,8 @@ mod tests {
         }
     }
 
-    fn prep_state(stabs: &[&str], destabs: &[&str]) -> SparseStab<VecSet<u32>, u32> {
-        let mut state = SparseStab::<VecSet<u32>, u32>::new(3);
+    fn prep_state(stabs: &[&str], destabs: &[&str]) -> SparseStab<VecSet<usize>> {
+        let mut state = SparseStab::<VecSet<usize>>::new(3);
         prep_pauli_gens(stabs, &mut state.stabs);
         prep_pauli_gens(destabs, &mut state.destabs);
 
@@ -976,8 +914,8 @@ mod tests {
     fn test_nondeterministic_px() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let r0 = state.mpx(0);
-            let meas = state.mx(0);
+            let r0 = state.mpx(&q(0)).into_iter().next().unwrap();
+            let meas = state.mx(&q(0)).into_iter().next().unwrap();
             let m1 = meas.outcome;
             let d1 = meas.is_deterministic;
             let m1_int = u8::from(m1);
@@ -991,7 +929,7 @@ mod tests {
     #[test]
     fn test_deterministic_px() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let r0 = state.mpx(0);
+        let r0 = state.mpx(&q(0)).into_iter().next().unwrap();
         let m0_int = u8::from(r0.outcome);
 
         assert!(r0.is_deterministic); // Deterministic
@@ -1002,8 +940,8 @@ mod tests {
     fn test_nondeterministic_pnx() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let r0 = state.mpnx(0);
-            let result = state.mx(0);
+            let r0 = state.mpnx(&q(0)).into_iter().next().unwrap();
+            let result = state.mx(&q(0)).into_iter().next().unwrap();
             let m1_int = u8::from(result.outcome);
 
             assert_eq!(m1_int, 1); // |-X>
@@ -1015,7 +953,7 @@ mod tests {
     #[test]
     fn test_deterministic_pnx() {
         let mut state = prep_state(&["-X"], &["Z"]);
-        let r0 = state.mpnx(0);
+        let r0 = state.mpnx(&q(0)).into_iter().next().unwrap();
         let m0_int = u8::from(r0.outcome);
 
         assert!(r0.is_deterministic); // Deterministic
@@ -1026,8 +964,8 @@ mod tests {
     fn test_nondeterministic_py() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let r0 = state.mpy(0);
-            let r1 = state.my(0);
+            let r0 = state.mpy(&q(0)).into_iter().next().unwrap();
+            let r1 = state.my(&q(0)).into_iter().next().unwrap();
             let m1_int = u8::from(r1.outcome);
 
             assert_eq!(m1_int, 0); // |+Y>
@@ -1039,7 +977,7 @@ mod tests {
     #[test]
     fn test_deterministic_py() {
         let mut state = prep_state(&["iW"], &["Z"]);
-        let r0 = state.mpy(0);
+        let r0 = state.mpy(&q(0)).into_iter().next().unwrap();
         let m0_int = u8::from(r0.outcome);
 
         assert!(r0.is_deterministic); // Deterministic
@@ -1050,8 +988,8 @@ mod tests {
     fn test_nondeterministic_pny() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let r0 = state.mpny(0);
-            let r1 = state.my(0);
+            let r0 = state.mpny(&q(0)).into_iter().next().unwrap();
+            let r1 = state.my(&q(0)).into_iter().next().unwrap();
             let m1_int = u8::from(r1.outcome);
 
             assert_eq!(m1_int, 1); // |-Y>
@@ -1063,7 +1001,7 @@ mod tests {
     #[test]
     fn test_deterministic_pny() {
         let mut state = prep_state(&["-iW"], &["Z"]);
-        let r0 = state.mpny(0);
+        let r0 = state.mpny(&q(0)).into_iter().next().unwrap();
         let m0_int = u8::from(r0.outcome);
 
         assert!(r0.is_deterministic); // Deterministic
@@ -1074,8 +1012,8 @@ mod tests {
     fn test_nondeterministic_pz() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["X"], &["Z"]);
-            let r0 = state.mpz(0);
-            let r1 = state.mz(0);
+            let r0 = state.mpz(&q(0)).into_iter().next().unwrap();
+            let r1 = state.mz(&q(0)).into_iter().next().unwrap();
             let m1_int = u8::from(r1.outcome);
 
             assert_eq!(m1_int, 0); // |0>
@@ -1087,7 +1025,7 @@ mod tests {
     #[test]
     fn test_deterministic_pz() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let r0 = state.mpz(0);
+        let r0 = state.mpz(&q(0)).into_iter().next().unwrap();
         let m0_int = u8::from(r0.outcome);
 
         assert!(r0.is_deterministic); // Deterministic
@@ -1098,8 +1036,8 @@ mod tests {
     fn test_nondeterministic_pnz() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["X"], &["Z"]);
-            let r0 = state.mpnz(0);
-            let r1 = state.mz(0);
+            let r0 = state.mpnz(&q(0)).into_iter().next().unwrap();
+            let r1 = state.mz(&q(0)).into_iter().next().unwrap();
             let m1_int = u8::from(r1.outcome);
 
             assert_eq!(m1_int, 1); // |1>
@@ -1111,7 +1049,7 @@ mod tests {
     #[test]
     fn test_deterministic_pnz() {
         let mut state = prep_state(&["-Z"], &["X"]);
-        let r0 = state.mpnz(0);
+        let r0 = state.mpnz(&q(0)).into_iter().next().unwrap();
         let m0_int = u8::from(r0.outcome);
 
         assert!(r0.is_deterministic); // Deterministic
@@ -1121,19 +1059,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mx() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let r = state.mx(0);
+        let r = state.mx(&q(0)).into_iter().next().unwrap();
         assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mx() {
         let mut state0 = prep_state(&["X"], &["Z"]);
-        let r0 = state0.mx(0);
+        let r0 = state0.mx(&q(0)).into_iter().next().unwrap();
         assert!(r0.is_deterministic);
         assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["-X"], &["Z"]);
-        let r1 = state1.mx(0);
+        let r1 = state1.mx(&q(0)).into_iter().next().unwrap();
         assert!(r1.is_deterministic);
         assert!(r1.outcome);
     }
@@ -1141,19 +1079,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mnx() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let r = state.mnx(0);
+        let r = state.mnx(&q(0)).into_iter().next().unwrap();
         assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mnx() {
         let mut state0 = prep_state(&["-X"], &["Z"]);
-        let r0 = state0.mnx(0);
+        let r0 = state0.mnx(&q(0)).into_iter().next().unwrap();
         assert!(r0.is_deterministic);
         assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["X"], &["Z"]);
-        let r1 = state1.mnx(0);
+        let r1 = state1.mnx(&q(0)).into_iter().next().unwrap();
         assert!(r1.is_deterministic);
         assert!(r1.outcome);
     }
@@ -1161,19 +1099,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_my() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let r = state.my(0);
+        let r = state.my(&q(0)).into_iter().next().unwrap();
         assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_my() {
         let mut state0 = prep_state(&["iW"], &["Z"]);
-        let r0 = state0.my(0);
+        let r0 = state0.my(&q(0)).into_iter().next().unwrap();
         assert!(r0.is_deterministic);
         assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["-iW"], &["Z"]);
-        let r1 = state1.my(0);
+        let r1 = state1.my(&q(0)).into_iter().next().unwrap();
         assert!(r1.is_deterministic);
         assert!(r1.outcome);
     }
@@ -1181,19 +1119,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mny() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let r = state.mny(0);
+        let r = state.mny(&q(0)).into_iter().next().unwrap();
         assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mny() {
         let mut state0 = prep_state(&["-iW"], &["Z"]);
-        let r0 = state0.mny(0);
+        let r0 = state0.mny(&q(0)).into_iter().next().unwrap();
         assert!(r0.is_deterministic);
         assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["iW"], &["Z"]);
-        let r1 = state1.mny(0);
+        let r1 = state1.mny(&q(0)).into_iter().next().unwrap();
         assert!(r1.is_deterministic);
         assert!(r1.outcome);
     }
@@ -1201,19 +1139,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mz() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let r = state.mz(0);
+        let r = state.mz(&q(0)).into_iter().next().unwrap();
         assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mz() {
         let mut state0 = prep_state(&["Z"], &["X"]);
-        let r0 = state0.mz(0);
+        let r0 = state0.mz(&q(0)).into_iter().next().unwrap();
         assert!(r0.is_deterministic);
         assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["-Z"], &["X"]);
-        let r1 = state1.mz(0);
+        let r1 = state1.mz(&q(0)).into_iter().next().unwrap();
         assert!(r1.is_deterministic);
         assert!(r1.outcome);
     }
@@ -1221,19 +1159,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mnz() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let r = state.mnz(0);
+        let r = state.mnz(&q(0)).into_iter().next().unwrap();
         assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mnz() {
         let mut state0 = prep_state(&["Z"], &["X"]);
-        let r0 = state0.mnz(0);
+        let r0 = state0.mnz(&q(0)).into_iter().next().unwrap();
         assert!(r0.is_deterministic);
         assert!(r0.outcome);
 
         let mut state1 = prep_state(&["-Z"], &["X"]);
-        let r1 = state1.mnz(0);
+        let r1 = state1.mnz(&q(0)).into_iter().next().unwrap();
         assert!(r1.is_deterministic);
         assert!(!r1.outcome);
     }
@@ -1244,22 +1182,22 @@ mod tests {
 
         // +X -> +X
         let mut state = prep_state(&["X"], &["Z"]);
-        state.identity(0);
+        state.identity(&q(0));
         check_state(&state, &["X"], &["Z"]);
 
         // +Y -> -Y
         let mut state = prep_state(&["iW"], &["X"]);
-        state.identity(0);
+        state.identity(&q(0));
         check_state(&state, &["iW"], &["X"]);
 
         // +Z -> -Z
         let mut state = prep_state(&["Z"], &["X"]);
-        state.identity(0);
+        state.identity(&q(0));
         check_state(&state, &["Z"], &["X"]);
 
         // -IYI -> +IYI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.identity(1);
+        state.identity(&q(1));
         check_state(&state, &["-iIWI"], &["IXI"]);
     }
 
@@ -1270,22 +1208,22 @@ mod tests {
 
         // +X -> +X
         let mut state = prep_state(&["X"], &["Z"]);
-        state.x(0);
+        state.x(&q(0));
         check_state(&state, &["X"], &["Z"]);
 
         // +Y -> -Y
         let mut state = prep_state(&["iW"], &["X"]);
-        state.x(0);
+        state.x(&q(0));
         check_state(&state, &["-iW"], &["X"]);
 
         // +Z -> -Z
         let mut state = prep_state(&["Z"], &["X"]);
-        state.x(0);
+        state.x(&q(0));
         check_state(&state, &["-Z"], &["X"]);
 
         // -IYI -> +IYI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.x(1);
+        state.x(&q(1));
         check_state(&state, &["iIWI"], &["IXI"]);
     }
 
@@ -1296,22 +1234,22 @@ mod tests {
 
         // +X -> -X
         let mut state = prep_state(&["X"], &["Z"]);
-        state.y(0);
+        state.y(&q(0));
         check_state(&state, &["-X"], &["Z"]);
 
         // +Y -> +Y
         let mut state = prep_state(&["iW"], &["X"]);
-        state.y(0);
+        state.y(&q(0));
         check_state(&state, &["iW"], &["X"]);
 
         // +Z -> -Z
         let mut state = prep_state(&["Z"], &["X"]);
-        state.y(0);
+        state.y(&q(0));
         check_state(&state, &["-Z"], &["X"]);
 
         // -IXI -> +IXI
         let mut state = prep_state(&["-IXI"], &["IZI"]);
-        state.y(1);
+        state.y(&q(1));
         check_state(&state, &["IXI"], &["IZI"]);
     }
 
@@ -1322,22 +1260,22 @@ mod tests {
 
         // +X -> -X
         let mut state = prep_state(&["X"], &["Z"]);
-        state.z(0);
+        state.z(&q(0));
         check_state(&state, &["-X"], &["Z"]);
 
         // +Y -> -Y
         let mut state = prep_state(&["iW"], &["X"]);
-        state.z(0);
+        state.z(&q(0));
         check_state(&state, &["-iW"], &["X"]);
 
         // +Z -> +Z
         let mut state = prep_state(&["Z"], &["X"]);
-        state.z(0);
+        state.z(&q(0));
         check_state(&state, &["Z"], &["X"]);
 
         // -IXI -> +IXI
         let mut state = prep_state(&["-IXI"], &["IZI"]);
-        state.z(1);
+        state.z(&q(1));
         check_state(&state, &["IXI"], &["IZI"]);
     }
 
@@ -1348,22 +1286,22 @@ mod tests {
 
         // +X -> +X
         let mut state = prep_state(&["X"], &["Z"]);
-        state.sx(0);
+        state.sx(&q(0));
         check_state(&state, &["X"], &["W"]);
 
         // +Y -> +Z
         let mut state = prep_state(&["iW"], &["X"]);
-        state.sx(0);
+        state.sx(&q(0));
         check_state(&state, &["Z"], &["X"]);
 
         // +Z -> -Y
         let mut state = prep_state(&["Z"], &["X"]);
-        state.sx(0);
+        state.sx(&q(0));
         check_state(&state, &["-iW"], &["X"]);
 
         // -IYI -> -IZI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.sx(1);
+        state.sx(&q(1));
         check_state(&state, &["-IZI"], &["IXI"]);
     }
 
@@ -1374,22 +1312,22 @@ mod tests {
 
         // +X -> +X
         let mut state = prep_state(&["X"], &["Z"]);
-        state.sxdg(0);
+        state.sxdg(&q(0));
         check_state(&state, &["X"], &["W"]);
 
         // +Y -> -Z
         let mut state = prep_state(&["iW"], &["X"]);
-        state.sxdg(0);
+        state.sxdg(&q(0));
         check_state(&state, &["-Z"], &["X"]);
 
         // +Z -> +Y
         let mut state = prep_state(&["Z"], &["X"]);
-        state.sxdg(0);
+        state.sxdg(&q(0));
         check_state(&state, &["iW"], &["X"]);
 
         // -IYI -> +IZI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.sxdg(1);
+        state.sxdg(&q(1));
         check_state(&state, &["IZI"], &["IXI"]);
     }
 
@@ -1400,22 +1338,22 @@ mod tests {
 
         // +X -> -Z
         let mut state = prep_state(&["X"], &["Z"]);
-        state.sy(0);
+        state.sy(&q(0));
         check_state(&state, &["-Z"], &["X"]);
 
         // +Y -> +Y
         let mut state = prep_state(&["iW"], &["X"]);
-        state.sy(0);
+        state.sy(&q(0));
         check_state(&state, &["iW"], &["Z"]);
 
         // +Z -> +X
         let mut state = prep_state(&["Z"], &["X"]);
-        state.sy(0);
+        state.sy(&q(0));
         check_state(&state, &["X"], &["Z"]);
 
         // -IYI -> -IYI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.sy(1);
+        state.sy(&q(1));
         check_state(&state, &["-iIWI"], &["IZI"]);
     }
 
@@ -1426,22 +1364,22 @@ mod tests {
 
         // +X -> +Z
         let mut state = prep_state(&["X"], &["Z"]);
-        state.sydg(0);
+        state.sydg(&q(0));
         check_state(&state, &["Z"], &["X"]);
 
         // +Y -> +Y
         let mut state = prep_state(&["iW"], &["X"]);
-        state.sydg(0);
+        state.sydg(&q(0));
         check_state(&state, &["iW"], &["Z"]);
 
         // +Z -> -X
         let mut state = prep_state(&["Z"], &["X"]);
-        state.sydg(0);
+        state.sydg(&q(0));
         check_state(&state, &["-X"], &["Z"]);
 
         // -IYI -> -IYI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.sydg(1);
+        state.sydg(&q(1));
         check_state(&state, &["-iIWI"], &["IZI"]);
     }
 
@@ -1452,22 +1390,22 @@ mod tests {
 
         // +X -> +Y
         let mut state = prep_state(&["X"], &["Z"]);
-        state.sz(0);
+        state.sz(&q(0));
         check_state(&state, &["iW"], &["Z"]);
 
         // +Y -> -X
         let mut state = prep_state(&["iW"], &["X"]);
-        state.sz(0);
+        state.sz(&q(0));
         check_state(&state, &["-X"], &["W"]);
 
         // +Z -> +Z
         let mut state = prep_state(&["Z"], &["X"]);
-        state.sz(0);
+        state.sz(&q(0));
         check_state(&state, &["Z"], &["W"]);
 
         // -IYI -> +IXI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.sz(1);
+        state.sz(&q(1));
         check_state(&state, &["IXI"], &["IWI"]);
     }
 
@@ -1477,22 +1415,22 @@ mod tests {
 
         // +X -> -Y
         let mut state = prep_state(&["X"], &["Z"]);
-        state.szdg(0);
+        state.szdg(&q(0));
         check_state(&state, &["-iW"], &["Z"]);
 
         // +Y -> +X
         let mut state = prep_state(&["iW"], &["X"]);
-        state.szdg(0);
+        state.szdg(&q(0));
         check_state(&state, &["X"], &["W"]);
 
         // +Z -> +Z
         let mut state = prep_state(&["Z"], &["X"]);
-        state.szdg(0);
+        state.szdg(&q(0));
         check_state(&state, &["Z"], &["W"]);
 
         // -IYI -> -IXI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.szdg(1);
+        state.szdg(&q(1));
         check_state(&state, &["-IXI"], &["IWI"]);
     }
 
@@ -1503,22 +1441,22 @@ mod tests {
 
         // +X -> +Z
         let mut state = prep_state(&["X"], &["Z"]);
-        state.h(0);
+        state.h(&q(0));
         check_state(&state, &["Z"], &["X"]);
 
         // +Y -> -Y
         let mut state = prep_state(&["iW"], &["X"]);
-        state.h(0);
+        state.h(&q(0));
         check_state(&state, &["-iW"], &["Z"]);
 
         // +Z -> +X
         let mut state = prep_state(&["Z"], &["X"]);
-        state.h(0);
+        state.h(&q(0));
         check_state(&state, &["X"], &["Z"]);
 
         // -IYI -> +IYI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.h(1);
+        state.h(&q(1));
         check_state(&state, &["iIWI"], &["IZI"]);
     }
 
@@ -1529,22 +1467,22 @@ mod tests {
 
         // +X -> -Z
         let mut state = prep_state(&["X"], &["Z"]);
-        state.h2(0);
+        state.h2(&q(0));
         check_state(&state, &["-Z"], &["X"]);
 
         // +Y -> -Y
         let mut state = prep_state(&["iW"], &["X"]);
-        state.h2(0);
+        state.h2(&q(0));
         check_state(&state, &["-iW"], &["Z"]);
 
         // +Z -> -X
         let mut state = prep_state(&["Z"], &["X"]);
-        state.h2(0);
+        state.h2(&q(0));
         check_state(&state, &["-X"], &["Z"]);
 
         // -IYI -> +IYI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.h2(1);
+        state.h2(&q(1));
         check_state(&state, &["iIWI"], &["IZI"]);
     }
 
@@ -1555,22 +1493,22 @@ mod tests {
 
         // +X -> Y
         let mut state = prep_state(&["X"], &["Z"]);
-        state.h3(0);
+        state.h3(&q(0));
         check_state(&state, &["iW"], &["Z"]);
 
         // +Y -> +X
         let mut state = prep_state(&["iW"], &["X"]);
-        state.h3(0);
+        state.h3(&q(0));
         check_state(&state, &["X"], &["W"]);
 
         // +Z -> -Z
         let mut state = prep_state(&["Z"], &["X"]);
-        state.h3(0);
+        state.h3(&q(0));
         check_state(&state, &["-Z"], &["W"]);
 
         // -IYI -> -IXI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.h3(1);
+        state.h3(&q(1));
         check_state(&state, &["-IXI"], &["IWI"]);
     }
 
@@ -1581,22 +1519,22 @@ mod tests {
 
         // +X -> -Y
         let mut state = prep_state(&["X"], &["Z"]);
-        state.h4(0);
+        state.h4(&q(0));
         check_state(&state, &["-iW"], &["Z"]);
 
         // +Y -> -X
         let mut state = prep_state(&["iW"], &["X"]);
-        state.h4(0);
+        state.h4(&q(0));
         check_state(&state, &["-X"], &["W"]);
 
         // +Z -> -Z
         let mut state = prep_state(&["Z"], &["X"]);
-        state.h4(0);
+        state.h4(&q(0));
         check_state(&state, &["-Z"], &["W"]);
 
         // -IYI -> IXI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.h4(1);
+        state.h4(&q(1));
         check_state(&state, &["IXI"], &["IWI"]);
     }
 
@@ -1607,22 +1545,22 @@ mod tests {
 
         // +X -> -X
         let mut state = prep_state(&["X"], &["Z"]);
-        state.h5(0);
+        state.h5(&q(0));
         check_state(&state, &["-X"], &["W"]);
 
         // +Y -> +Z
         let mut state = prep_state(&["iW"], &["X"]);
-        state.h5(0);
+        state.h5(&q(0));
         check_state(&state, &["Z"], &["X"]);
 
         // +Z -> +Y
         let mut state = prep_state(&["Z"], &["X"]);
-        state.h5(0);
+        state.h5(&q(0));
         check_state(&state, &["iW"], &["X"]);
 
         // -IYI -> -IZI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.h5(1);
+        state.h5(&q(1));
         check_state(&state, &["-IZI"], &["IXI"]);
     }
 
@@ -1633,22 +1571,22 @@ mod tests {
 
         // +X -> -X
         let mut state = prep_state(&["X"], &["Z"]);
-        state.h6(0);
+        state.h6(&q(0));
         check_state(&state, &["-X"], &["W"]);
 
         // +Y -> -Z
         let mut state = prep_state(&["iW"], &["X"]);
-        state.h6(0);
+        state.h6(&q(0));
         check_state(&state, &["-Z"], &["X"]);
 
         // +Z -> -Y
         let mut state = prep_state(&["Z"], &["X"]);
-        state.h6(0);
+        state.h6(&q(0));
         check_state(&state, &["-iW"], &["X"]);
 
         // -IYI -> IZI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.h6(1);
+        state.h6(&q(1));
         check_state(&state, &["IZI"], &["IXI"]);
     }
 
@@ -1659,22 +1597,22 @@ mod tests {
 
         // +X -> +Y
         let mut state = prep_state(&["X"], &["Z"]);
-        state.f(0);
+        state.f(&q(0));
         check_state(&state, &["iW"], &["X"]);
 
         // +Y -> +Z
         let mut state = prep_state(&["iW"], &["X"]);
-        state.f(0);
+        state.f(&q(0));
         check_state(&state, &["Z"], &["W"]);
 
         // +Z -> +X
         let mut state = prep_state(&["Z"], &["X"]);
-        state.f(0);
+        state.f(&q(0));
         check_state(&state, &["X"], &["W"]);
 
         // -IYI -> -IZI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.f(1);
+        state.f(&q(1));
         check_state(&state, &["-IZI"], &["IWI"]);
     }
 
@@ -1685,22 +1623,22 @@ mod tests {
 
         // +X -> +Z
         let mut state = prep_state(&["X"], &["Z"]);
-        state.fdg(0);
+        state.fdg(&q(0));
         check_state(&state, &["Z"], &["W"]);
 
         // +Y -> +X
         let mut state = prep_state(&["iW"], &["X"]);
-        state.fdg(0);
+        state.fdg(&q(0));
         check_state(&state, &["X"], &["Z"]);
 
         // +Z -> +Y
         let mut state = prep_state(&["Z"], &["X"]);
-        state.fdg(0);
+        state.fdg(&q(0));
         check_state(&state, &["iW"], &["Z"]);
 
         // -IYI -> -IXI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.fdg(1);
+        state.fdg(&q(1));
         check_state(&state, &["-IXI"], &["IZI"]);
     }
 
@@ -1711,22 +1649,22 @@ mod tests {
 
         // +X -> -Z
         let mut state = prep_state(&["X"], &["Z"]);
-        state.f2(0);
+        state.f2(&q(0));
         check_state(&state, &["-Z"], &["W"]);
 
         // +Y -> -X
         let mut state = prep_state(&["iW"], &["X"]);
-        state.f2(0);
+        state.f2(&q(0));
         check_state(&state, &["-X"], &["Z"]);
 
         // +Z -> +Y
         let mut state = prep_state(&["Z"], &["X"]);
-        state.f2(0);
+        state.f2(&q(0));
         check_state(&state, &["iW"], &["Z"]);
 
         // -IYI -> IXI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.f2(1);
+        state.f2(&q(1));
         check_state(&state, &["IXI"], &["IZI"]);
     }
 
@@ -1737,22 +1675,22 @@ mod tests {
 
         // +X -> -Y
         let mut state = prep_state(&["X"], &["Z"]);
-        state.f2dg(0);
+        state.f2dg(&q(0));
         check_state(&state, &["-iW"], &["X"]);
 
         // +Y -> +Z
         let mut state = prep_state(&["iW"], &["X"]);
-        state.f2dg(0);
+        state.f2dg(&q(0));
         check_state(&state, &["Z"], &["W"]);
 
         // +Z -> -X
         let mut state = prep_state(&["Z"], &["X"]);
-        state.f2dg(0);
+        state.f2dg(&q(0));
         check_state(&state, &["-X"], &["W"]);
 
         // -IYI -> -IZI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.f2dg(1);
+        state.f2dg(&q(1));
         check_state(&state, &["-IZI"], &["IWI"]);
     }
 
@@ -1763,22 +1701,22 @@ mod tests {
 
         // +X -> +Y
         let mut state = prep_state(&["X"], &["Z"]);
-        state.f3(0);
+        state.f3(&q(0));
         check_state(&state, &["iW"], &["X"]);
 
         // +Y -> -Z
         let mut state = prep_state(&["iW"], &["X"]);
-        state.f3(0);
+        state.f3(&q(0));
         check_state(&state, &["-Z"], &["W"]);
 
         // +Z -> -X
         let mut state = prep_state(&["Z"], &["X"]);
-        state.f3(0);
+        state.f3(&q(0));
         check_state(&state, &["-X"], &["W"]);
 
         // -IYI -> IZI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.f3(1);
+        state.f3(&q(1));
         check_state(&state, &["IZI"], &["IWI"]);
     }
 
@@ -1789,22 +1727,22 @@ mod tests {
 
         // +X -> -Z
         let mut state = prep_state(&["X"], &["Z"]);
-        state.f3dg(0);
+        state.f3dg(&q(0));
         check_state(&state, &["-Z"], &["W"]);
 
         // +Y -> +X
         let mut state = prep_state(&["iW"], &["X"]);
-        state.f3dg(0);
+        state.f3dg(&q(0));
         check_state(&state, &["X"], &["Z"]);
 
         // +Z -> -Y
         let mut state = prep_state(&["Z"], &["X"]);
-        state.f3dg(0);
+        state.f3dg(&q(0));
         check_state(&state, &["-iW"], &["Z"]);
 
         // -IYI -> -IXI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.f3dg(1);
+        state.f3dg(&q(1));
         check_state(&state, &["-IXI"], &["IZI"]);
     }
 
@@ -1815,22 +1753,22 @@ mod tests {
 
         // +X -> +Z
         let mut state = prep_state(&["X"], &["Z"]);
-        state.f4(0);
+        state.f4(&q(0));
         check_state(&state, &["Z"], &["W"]);
 
         // +Y -> -X
         let mut state = prep_state(&["iW"], &["X"]);
-        state.f4(0);
+        state.f4(&q(0));
         check_state(&state, &["-X"], &["Z"]);
 
         // +Z -> -Y
         let mut state = prep_state(&["Z"], &["X"]);
-        state.f4(0);
+        state.f4(&q(0));
         check_state(&state, &["-iW"], &["Z"]);
 
         // -IYI -> IXI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.f4(1);
+        state.f4(&q(1));
         check_state(&state, &["IXI"], &["IZI"]);
     }
 
@@ -1841,22 +1779,22 @@ mod tests {
 
         // +X -> -Y
         let mut state = prep_state(&["X"], &["Z"]);
-        state.f4dg(0);
+        state.f4dg(&q(0));
         check_state(&state, &["-iW"], &["X"]);
 
         // +Y -> -Z
         let mut state = prep_state(&["iW"], &["X"]);
-        state.f4dg(0);
+        state.f4dg(&q(0));
         check_state(&state, &["-Z"], &["W"]);
 
         // +Z -> +X
         let mut state = prep_state(&["Z"], &["X"]);
-        state.f4dg(0);
+        state.f4dg(&q(0));
         check_state(&state, &["X"], &["W"]);
 
         // -IYI -> +IZI
         let mut state = prep_state(&["-iIWI"], &["IXI"]);
-        state.f4dg(1);
+        state.f4dg(&q(1));
         check_state(&state, &["IZI"], &["IWI"]);
     }
 
@@ -1869,49 +1807,50 @@ mod tests {
 
         // +IX -> +IX
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.cx(0, 1);
+        state.cx(&q2(0, 1));
         check_state(&state, &["IX"], &["ZZ"]);
 
         // +IZ -> +ZZ
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.cx(0, 1);
+        state.cx(&q2(0, 1));
         check_state(&state, &["ZZ"], &["IX"]);
 
         // +XI -> +XX
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.cx(0, 1);
+        state.cx(&q2(0, 1));
         check_state(&state, &["XX"], &["ZI"]);
 
         // +ZI -> +ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.cx(0, 1);
+        state.cx(&q2(0, 1));
         check_state(&state, &["ZI"], &["XX"]);
     }
 
     #[test]
     fn test_cy() {
-        // CY: +IX -> +ZX; +IZ -> +ZZ; +XI -> -XY; +ZI -> +ZI;
+        // CY: +IX -> +ZX; +IZ -> +ZZ; +XI -> +XY; +ZI -> +ZI;
+        // Note: CY = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ Y (standard convention)
 
         // TODO: Expand the set of stabilizer transformations evaluated.
 
         // +IX -> +ZX
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.cy(0, 1);
+        state.cy(&q2(0, 1));
         check_state(&state, &["ZX"], &["ZZ"]);
 
         // +IZ -> +ZZ
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.cy(0, 1);
+        state.cy(&q2(0, 1));
         check_state(&state, &["ZZ"], &["ZX"]);
 
-        // +XI -> -XY
+        // +XI -> +XY = +iXW (Y = iXZ = iW)
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.cy(0, 1);
-        check_state(&state, &["-iXW"], &["ZI"]);
+        state.cy(&q2(0, 1));
+        check_state(&state, &["+iXW"], &["ZI"]);
 
         // +ZI -> +ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.cy(0, 1);
+        state.cy(&q2(0, 1));
         check_state(&state, &["ZI"], &["XW"]);
     }
 
@@ -1924,22 +1863,22 @@ mod tests {
 
         // +IX -> +ZX
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.cz(0, 1);
+        state.cz(&q2(0, 1));
         check_state(&state, &["ZX"], &["IZ"]);
 
         // +IZ -> +IZ
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.cz(0, 1);
+        state.cz(&q2(0, 1));
         check_state(&state, &["IZ"], &["ZX"]);
 
         // +XI -> +XZ
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.cz(0, 1);
+        state.cz(&q2(0, 1));
         check_state(&state, &["XZ"], &["ZI"]);
 
         // +ZI -> +ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.cz(0, 1);
+        state.cz(&q2(0, 1));
         check_state(&state, &["ZI"], &["XZ"]);
     }
 
@@ -1955,22 +1894,22 @@ mod tests {
 
         // +IX -> +XI
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.sxx(0, 1);
+        state.sxx(&q2(0, 1));
         check_state(&state, &["IX"], &["XW"]);
 
         // +IZ -> -XY
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.sxx(0, 1);
+        state.sxx(&q2(0, 1));
         check_state(&state, &["-iXW"], &["IX"]);
 
         // +XI -> +XI
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.sxx(0, 1);
+        state.sxx(&q2(0, 1));
         check_state(&state, &["XI"], &["WX"]);
 
         // +ZI -> -YX
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.sxx(0, 1);
+        state.sxx(&q2(0, 1));
         check_state(&state, &["-iWX"], &["XI"]);
     }
 
@@ -1986,22 +1925,22 @@ mod tests {
 
         // +IX -> +XI
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.sxxdg(0, 1);
+        state.sxxdg(&q2(0, 1));
         check_state(&state, &["IX"], &["XW"]);
 
         // +IZ -> +XY
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.sxxdg(0, 1);
+        state.sxxdg(&q2(0, 1));
         check_state(&state, &["iXW"], &["IX"]);
 
         // +XI -> +XI
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.sxxdg(0, 1);
+        state.sxxdg(&q2(0, 1));
         check_state(&state, &["XI"], &["WX"]);
 
         // +ZI -> +YX
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.sxxdg(0, 1);
+        state.sxxdg(&q2(0, 1));
         check_state(&state, &["iWX"], &["XI"]);
     }
 
@@ -2017,22 +1956,22 @@ mod tests {
 
         // +IX -> -YZ
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.syy(0, 1);
+        state.syy(&q2(0, 1));
         check_state(&state, &["-iWZ"], &["WX"]);
 
         // +IZ -> +YX
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.syy(0, 1);
+        state.syy(&q2(0, 1));
         check_state(&state, &["iWX"], &["WZ"]);
 
         // +XI -> -ZY
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.syy(0, 1);
+        state.syy(&q2(0, 1));
         check_state(&state, &["-iZW"], &["XW"]);
 
         // +ZI -> +XY
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.syy(0, 1);
+        state.syy(&q2(0, 1));
         check_state(&state, &["iXW"], &["ZW"]);
     }
 
@@ -2048,21 +1987,21 @@ mod tests {
 
         // +IX -> YZ
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.syydg(0, 1);
+        state.syydg(&q2(0, 1));
         check_state(&state, &["iWZ"], &["WX"]);
 
         // +IZ -> -YX
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.syydg(0, 1);
+        state.syydg(&q2(0, 1));
         check_state(&state, &["-iWX"], &["WZ"]);
 
         // +XI -> ZY
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.syydg(0, 1);
+        state.syydg(&q2(0, 1));
         check_state(&state, &["iZW"], &["XW"]);
         // +ZI -> +XY
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.syydg(0, 1);
+        state.syydg(&q2(0, 1));
         check_state(&state, &["-iXW"], &["ZW"]);
     }
 
@@ -2078,22 +2017,22 @@ mod tests {
 
         // +IX -> ZY
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.szz(0, 1);
+        state.szz(&q2(0, 1));
         check_state(&state, &["iZW"], &["IZ"]);
 
         // +IZ -> IZ
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.szz(0, 1);
+        state.szz(&q2(0, 1));
         check_state(&state, &["IZ"], &["ZW"]);
 
         // +XI -> YZ
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.szz(0, 1);
+        state.szz(&q2(0, 1));
         check_state(&state, &["iWZ"], &["ZI"]);
 
         // +ZI -> ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.szz(0, 1);
+        state.szz(&q2(0, 1));
         check_state(&state, &["ZI"], &["WZ"]);
     }
 
@@ -2109,22 +2048,22 @@ mod tests {
 
         // +IX -> -ZY
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.szzdg(0, 1);
+        state.szzdg(&q2(0, 1));
         check_state(&state, &["-iZW"], &["IZ"]);
 
         // +IZ -> IZ
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.szzdg(0, 1);
+        state.szzdg(&q2(0, 1));
         check_state(&state, &["IZ"], &["ZW"]);
 
         // +XI -> -YZ
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.szzdg(0, 1);
+        state.szzdg(&q2(0, 1));
         check_state(&state, &["-iWZ"], &["ZI"]);
 
         // +ZI -> ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.szzdg(0, 1);
+        state.szzdg(&q2(0, 1));
         check_state(&state, &["ZI"], &["WZ"]);
     }
 
@@ -2140,22 +2079,22 @@ mod tests {
 
         // +IX -> +XI
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.swap(0, 1);
+        state.swap(&q2(0, 1));
         check_state(&state, &["XI"], &["ZI"]);
 
         // +IZ -> +ZI
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.swap(0, 1);
+        state.swap(&q2(0, 1));
         check_state(&state, &["ZI"], &["XI"]);
 
         // +XI -> +IX
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.swap(0, 1);
+        state.swap(&q2(0, 1));
         check_state(&state, &["IX"], &["IZ"]);
 
         // +ZI -> +IZ
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.swap(0, 1);
+        state.swap(&q2(0, 1));
         check_state(&state, &["IZ"], &["IX"]);
     }
 
@@ -2171,32 +2110,32 @@ mod tests {
 
         // +IX -> +XI
         let mut state = prep_state(&["IX"], &["IZ"]);
-        state.g(0, 1);
+        state.g(&q2(0, 1));
         check_state(&state, &["XI"], &["ZX"]);
 
         // +IZ -> +ZX
         let mut state = prep_state(&["IZ"], &["IX"]);
-        state.g(0, 1);
+        state.g(&q2(0, 1));
         check_state(&state, &["ZX"], &["XI"]);
 
         // +XI -> +IX
         let mut state = prep_state(&["XI"], &["ZI"]);
-        state.g(0, 1);
+        state.g(&q2(0, 1));
         check_state(&state, &["IX"], &["XZ"]);
 
         // +ZI -> +XZ
         let mut state = prep_state(&["ZI"], &["XI"]);
-        state.g(0, 1);
+        state.g(&q2(0, 1));
         check_state(&state, &["XZ"], &["IX"]);
     }
 
     fn one_bit_z_teleport(
-        mut state: SparseStab<VecSet<u32>, u32>,
-    ) -> (SparseStab<VecSet<u32>, u32>, bool) {
-        state.cx(1, 0).h(1);
-        let r1 = state.mz(1);
+        mut state: SparseStab<VecSet<usize>>,
+    ) -> (SparseStab<VecSet<usize>>, bool) {
+        state.cx(&q2(1, 0)).h(&q(1));
+        let r1 = state.mz(&q(1)).into_iter().next().unwrap();
         if r1.outcome {
-            state.z(0);
+            state.z(&q(0));
         }
         (state, r1.is_deterministic)
     }
@@ -2208,12 +2147,12 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
-            state.h(1); // Set input to |+>
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            state.h(&q(1)); // Set input to |+>
             (state, d1) = one_bit_z_teleport(state);
             // X basis meas
-            state.h(0);
-            let r0 = state.mz(0);
+            state.h(&q(0));
+            let r0 = state.mz(&q(0)).into_iter().next().unwrap();
             let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 0); // |+> -> 0 == false
             assert!(!d1); // Not deterministic
@@ -2228,13 +2167,13 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
-            state.x(1);
-            state.h(1); // Set input to |->
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            state.x(&q(1));
+            state.h(&q(1)); // Set input to |->
             (state, d1) = one_bit_z_teleport(state);
             // X basis meas
-            state.h(0);
-            let r0 = state.mz(0);
+            state.h(&q(0));
+            let r0 = state.mz(&q(0)).into_iter().next().unwrap();
             let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 1); // |-> -> 1 == true
             assert!(!d1); // Not deterministic
@@ -2249,12 +2188,12 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
-            state.sxdg(1); // Set input to |+i>
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            state.sxdg(&q(1)); // Set input to |+i>
             (state, d1) = one_bit_z_teleport(state);
             // Y basis meas
-            state.sx(0); // Y -> Z
-            let r0 = state.mz(0);
+            state.sx(&q(0)); // Y -> Z
+            let r0 = state.mz(&q(0)).into_iter().next().unwrap();
             let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 0); // |+X> -> 0 == false
             assert!(!d1); // Not deterministic
@@ -2269,13 +2208,13 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
-            state.x(1);
-            state.sxdg(1); // Set input to |-i>
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            state.x(&q(1));
+            state.sxdg(&q(1)); // Set input to |-i>
             (state, d1) = one_bit_z_teleport(state);
             // Y basis meas
-            state.sx(0); // Y -> Z
-            let r0 = state.mz(0);
+            state.sx(&q(0)); // Y -> Z
+            let r0 = state.mz(&q(0)).into_iter().next().unwrap();
             let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 1); // |-Y> -> 1 == true
             assert!(!d1); // Not deterministic
@@ -2290,10 +2229,10 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
             // Set input to |0>
             (state, d1) = one_bit_z_teleport(state);
-            let r0 = state.mz(0);
+            let r0 = state.mz(&q(0)).into_iter().next().unwrap();
             let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 0); // |0>
             assert!(!d1); // Not deterministic
@@ -2308,10 +2247,10 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
-            state.x(1); // Set input to |1>
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            state.x(&q(1)); // Set input to |1>
             (state, d1) = one_bit_z_teleport(state);
-            let r0 = state.mz(0);
+            let r0 = state.mz(&q(0)).into_iter().next().unwrap();
             let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 1); // |1> -> 1 == true
             assert!(!d1); // Not deterministic
@@ -2319,26 +2258,24 @@ mod tests {
         }
     }
 
-    fn teleport(
-        mut state: SparseStab<VecSet<u32>, u32>,
-    ) -> (SparseStab<VecSet<u32>, u32>, bool, bool) {
+    fn teleport(mut state: SparseStab<VecSet<usize>>) -> (SparseStab<VecSet<usize>>, bool, bool) {
         // |psi> -----.-H-MZ=m0
         //            |
         // |0>   -H-.-X---MZ=m1
         //          |
         // |0>   ---X------------X^m1-Z^m0-MZ=m2
 
-        state.h(1);
-        state.cx(1, 2);
-        state.cx(0, 1);
-        state.h(0);
-        let r0 = state.mz(0);
-        let r1 = state.mz(1);
+        state.h(&q(1));
+        state.cx(&q2(1, 2));
+        state.cx(&q2(0, 1));
+        state.h(&q(0));
+        let r0 = state.mz(&q(0)).into_iter().next().unwrap();
+        let r1 = state.mz(&q(1)).into_iter().next().unwrap();
         if r1.outcome {
-            state.x(2);
+            state.x(&q(2));
         }
         if r0.outcome {
-            state.z(2);
+            state.z(&q(2));
         }
         (state, r0.is_deterministic, r1.is_deterministic)
     }
@@ -2348,11 +2285,11 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
-            state.h(0);
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            state.h(&q(0));
             (state, d0, d1) = teleport(state);
-            state.h(2);
-            let r2 = state.mz(2);
+            state.h(&q(2));
+            let r2 = state.mz(&q(2)).into_iter().next().unwrap();
             let m2_int = u8::from(r2.outcome);
             assert_eq!(m2_int, 0);
             assert!(!d0);
@@ -2366,12 +2303,12 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
-            state.x(0);
-            state.h(0);
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            state.x(&q(0));
+            state.h(&q(0));
             (state, d0, d1) = teleport(state);
-            state.h(2);
-            let r2 = state.mz(2);
+            state.h(&q(2));
+            let r2 = state.mz(&q(2)).into_iter().next().unwrap();
             let m2_int = u8::from(r2.outcome);
 
             assert_eq!(m2_int, 1);
@@ -2386,11 +2323,11 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
-            state.sxdg(0);
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            state.sxdg(&q(0));
             (state, d0, d1) = teleport(state);
-            state.sx(2);
-            let r2 = state.mz(2);
+            state.sx(&q(2));
+            let r2 = state.mz(&q(2)).into_iter().next().unwrap();
             let m2_int = u8::from(r2.outcome);
             assert_eq!(m2_int, 0);
             assert!(!d0);
@@ -2404,12 +2341,12 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
-            state.x(0);
-            state.sxdg(0);
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            state.x(&q(0));
+            state.sxdg(&q(0));
             (state, d0, d1) = teleport(state);
-            state.sx(2);
-            let r2 = state.mz(2);
+            state.sx(&q(2));
+            let r2 = state.mz(&q(2)).into_iter().next().unwrap();
             let m2_int = u8::from(r2.outcome);
             assert_eq!(m2_int, 1);
             assert!(!d0);
@@ -2423,9 +2360,9 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
             (state, d0, d1) = teleport(state);
-            let r2 = state.mz(2);
+            let r2 = state.mz(&q(2)).into_iter().next().unwrap();
             let m2_int = u8::from(r2.outcome);
 
             assert_eq!(m2_int, 0);
@@ -2440,10 +2377,10 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
-            state.x(0); // input state |-Z>
+            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            state.x(&q(0)); // input state |-Z>
             (state, d0, d1) = teleport(state);
-            let r2 = state.mz(2);
+            let r2 = state.mz(&q(2)).into_iter().next().unwrap();
             let m2_int = u8::from(r2.outcome);
 
             assert_eq!(m2_int, 1);

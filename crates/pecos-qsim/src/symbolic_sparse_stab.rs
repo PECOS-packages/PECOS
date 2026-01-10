@@ -27,10 +27,10 @@ use crate::QuantumSimulator;
 use crate::sign_algebra::{SignAlgebra, SymbolicSign};
 use crate::symbolic_gens::SymbolicGens;
 use core::mem;
-use pecos_core::{BitSet, IndexableElement, Set, VecSet};
+use pecos_core::{BitSet, Set, VecSet};
 
 /// Standard type alias for symbolic sparse stabilizer simulator.
-pub type StdSymbolicSparseStab = SymbolicSparseStab<VecSet<usize>, usize>;
+pub type StdSymbolicSparseStab = SymbolicSparseStab<VecSet<usize>>;
 
 /// Result of a symbolic measurement.
 ///
@@ -249,8 +249,7 @@ impl std::ops::Index<usize> for MeasurementHistory {
 /// contribute to each outcome.
 ///
 /// # Type Parameters
-/// - `T`: Set type for sparse storage
-/// - `E`: Element type (qubit index type)
+/// - `T`: Set type for sparse storage with usize elements
 ///
 /// # Use Cases
 /// - Analyzing measurement dependency graphs
@@ -279,24 +278,22 @@ impl std::ops::Index<usize> for MeasurementHistory {
 /// assert_eq!(r0.outcome, r1.outcome);  // Same dependency = correlated
 /// ```
 #[derive(Clone, Debug)]
-pub struct SymbolicSparseStab<T, E>
+pub struct SymbolicSparseStab<T>
 where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
+    T: for<'a> Set<'a, Element = usize>,
 {
     num_qubits: usize,
-    stabs: SymbolicGens<T, E>,
-    destabs: SymbolicGens<T, E>,
+    stabs: SymbolicGens<T>,
+    destabs: SymbolicGens<T>,
     /// Counter for assigning unique indices to measurements
     measurement_counter: usize,
     /// History of all measurements performed.
     measurement_history: MeasurementHistory,
 }
 
-impl<T, E> SymbolicSparseStab<T, E>
+impl<T> SymbolicSparseStab<T>
 where
-    E: IndexableElement,
-    T: for<'a> Set<'a, Element = E>,
+    T: for<'a> Set<'a, Element = usize>,
 {
     /// Create a new symbolic stabilizer simulator.
     #[inline]
@@ -304,8 +301,8 @@ where
     pub fn new(num_qubits: usize) -> Self {
         let mut sim = Self {
             num_qubits,
-            stabs: SymbolicGens::<T, E>::new(num_qubits),
-            destabs: SymbolicGens::<T, E>::new(num_qubits),
+            stabs: SymbolicGens::<T>::new(num_qubits),
+            destabs: SymbolicGens::<T>::new(num_qubits),
             measurement_counter: 0,
             measurement_history: MeasurementHistory::new(),
         };
@@ -382,17 +379,15 @@ where
     /// - `{} ^ 1 ZII`: Identity sign, flipped (deterministic 1)
     /// - `{0} ^ 0 XIZ`: Depends on measurement 0, no flip
     /// - `{0,1} ^ 1 XIZ`: XOR of measurements 0,1, flipped
-    fn tableau_string(num_qubits: usize, gens: &SymbolicGens<T, E>) -> String {
+    fn tableau_string(num_qubits: usize, gens: &SymbolicGens<T>) -> String {
         use std::fmt::Write;
 
         let mut result = String::new();
         for i in 0..num_qubits {
-            let gen_e = E::from_index(i);
-
             // Compute the flip from signs_minus and signs_i
             // For stabilizers, we only care about the minus component
             // (imaginary components should cancel out in valid stabilizer states)
-            let has_minus = gens.signs_minus.contains(&gen_e);
+            let has_minus = gens.signs_minus.contains(&i);
             let flip = u8::from(has_minus);
 
             // Format the symbolic sign with flip
@@ -410,9 +405,8 @@ where
 
             // Format the Pauli string
             for qubit in 0..num_qubits {
-                let qubit_e = E::from_index(qubit);
-                let in_row_x = gens.row_x[i].contains(&qubit_e);
-                let in_row_z = gens.row_z[i].contains(&qubit_e);
+                let in_row_x = gens.row_x[i].contains(&qubit);
+                let in_row_z = gens.row_z[i].contains(&qubit);
 
                 let c = match (in_row_x, in_row_z) {
                     (false, false) => 'I',
@@ -442,17 +436,15 @@ where
 
     /// Pauli X gate. X -> X, Z -> -Z
     #[inline]
-    pub fn x(&mut self, q: E) -> &mut Self {
-        let qu = q.to_index();
-        self.stabs.signs_minus ^= &self.stabs.col_z[qu];
+    pub fn x(&mut self, q: usize) -> &mut Self {
+        self.stabs.signs_minus ^= &self.stabs.col_z[q];
         self
     }
 
     /// Pauli Y gate. X -> -X, Z -> -Z
     #[inline]
-    pub fn y(&mut self, q: E) -> &mut Self {
-        let qu = q.to_index();
-        for i in self.stabs.col_x[qu].symmetric_difference(&self.stabs.col_z[qu]) {
+    pub fn y(&mut self, q: usize) -> &mut Self {
+        for i in self.stabs.col_x[q].symmetric_difference(&self.stabs.col_z[q]) {
             self.stabs.signs_minus ^= i;
         }
         self
@@ -460,30 +452,27 @@ where
 
     /// Pauli Z gate. X -> -X, Z -> Z
     #[inline]
-    pub fn z(&mut self, q: E) -> &mut Self {
-        self.stabs.signs_minus ^= &self.stabs.col_x[q.to_index()];
+    pub fn z(&mut self, q: usize) -> &mut Self {
+        self.stabs.signs_minus ^= &self.stabs.col_x[q];
         self
     }
 
     /// Sqrt of Z gate (S gate). X -> Y, Z -> Z
     #[inline]
-    pub fn sz(&mut self, q: E) -> &mut Self {
-        let qu = q.to_index();
-
+    pub fn sz(&mut self, q: usize) -> &mut Self {
         // X -> i: track phase changes
         // i * i = -1, so if already has i, add minus and remove i
-        for i in self.stabs.signs_i.intersection(&self.stabs.col_x[qu]) {
+        for i in self.stabs.signs_i.intersection(&self.stabs.col_x[q]) {
             self.stabs.signs_minus ^= i;
         }
-        self.stabs.signs_i ^= &self.stabs.col_x[qu];
+        self.stabs.signs_i ^= &self.stabs.col_x[q];
 
         // Update the Pauli structure (X -> Y means add Z component)
         for g in [&mut self.stabs, &mut self.destabs] {
-            g.col_z[qu] ^= &g.col_x[qu];
+            g.col_z[q] ^= &g.col_x[q];
 
-            for &i in g.col_x[qu].iter() {
-                let iu = i.to_index();
-                g.row_z[iu] ^= &q;
+            for &i in g.col_x[q].iter() {
+                g.row_z[i] ^= &q;
             }
         }
         self
@@ -491,41 +480,34 @@ where
 
     /// Hadamard gate. X -> Z, Z -> X, Y -> -Y
     #[inline]
-    pub fn h(&mut self, q: E) -> &mut Self {
-        let qu = q.to_index();
-
+    pub fn h(&mut self, q: usize) -> &mut Self {
         // Y -> -Y: add minus for generators that have both X and Z on this qubit
-        for i in self.stabs.col_x[qu].intersection(&self.stabs.col_z[qu]) {
+        for i in self.stabs.col_x[q].intersection(&self.stabs.col_z[q]) {
             self.stabs.signs_minus ^= i;
         }
 
         // Swap X and Z for this qubit
         for g in [&mut self.stabs, &mut self.destabs] {
-            for i in g.col_x[qu].difference(&g.col_z[qu]) {
-                let iu = i.to_index();
-                g.row_x[iu].remove(&q);
-                g.row_z[iu].insert(q);
+            for i in g.col_x[q].difference(&g.col_z[q]) {
+                g.row_x[*i].remove(&q);
+                g.row_z[*i].insert(q);
             }
 
-            for i in g.col_z[qu].difference(&g.col_x[qu]) {
-                let iu = i.to_index();
-                g.row_z[iu].remove(&q);
-                g.row_x[iu].insert(q);
+            for i in g.col_z[q].difference(&g.col_x[q]) {
+                g.row_z[*i].remove(&q);
+                g.row_x[*i].insert(q);
             }
 
-            mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            mem::swap(&mut g.col_x[q], &mut g.col_z[q]);
         }
         self
     }
 
     /// CNOT gate. IX -> IX, XI -> XX, IZ -> ZZ, ZI -> ZI
     #[inline]
-    pub fn cx(&mut self, q1: E, q2: E) -> &mut Self {
-        let qu1 = q1.to_index();
-        let qu2 = q2.to_index();
-
+    pub fn cx(&mut self, q1: usize, q2: usize) -> &mut Self {
         for g in &mut [&mut self.stabs, &mut self.destabs] {
-            let (qu_min, qu_max) = if qu1 < qu2 { (qu1, qu2) } else { (qu2, qu1) };
+            let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
 
             // Handle col_x: XI -> XX
             {
@@ -534,7 +516,7 @@ where
                 let col_x_min = &mut mid[0];
                 let col_x_max = &mut right[0];
 
-                let (col_x_qu1, col_x_qu2) = if qu1 < qu2 {
+                let (col_x_qu1, col_x_qu2) = if q1 < q2 {
                     (col_x_min, col_x_max)
                 } else {
                     (col_x_max, col_x_min)
@@ -544,8 +526,7 @@ where
                 q2_set.insert(q2);
 
                 for i in col_x_qu1.iter() {
-                    let iu = i.to_index();
-                    g.row_x[iu].symmetric_difference_update(&q2_set);
+                    g.row_x[*i].symmetric_difference_update(&q2_set);
                 }
                 col_x_qu2.symmetric_difference_update(col_x_qu1);
             }
@@ -557,7 +538,7 @@ where
                 let col_z_min = &mut mid[0];
                 let col_z_max = &mut right[0];
 
-                let (col_z_qu1, col_z_qu2) = if qu1 < qu2 {
+                let (col_z_qu1, col_z_qu2) = if q1 < q2 {
                     (col_z_min, col_z_max)
                 } else {
                     (col_z_max, col_z_min)
@@ -567,8 +548,7 @@ where
                 q1_set.insert(q1);
 
                 for i in col_z_qu2.iter() {
-                    let iu = i.to_index();
-                    g.row_z[iu].symmetric_difference_update(&q1_set);
+                    g.row_z[*i].symmetric_difference_update(&q1_set);
                 }
                 col_z_qu1.symmetric_difference_update(col_z_qu2);
             }
@@ -583,10 +563,8 @@ where
     /// Returns a [`SymbolicMeasurementResult`] containing the set of measurement indices
     /// whose outcomes XOR together to determine this measurement's result.
     #[inline]
-    pub fn mz(&mut self, q: E) -> SymbolicMeasurementResult {
-        let qu = q.to_index();
-
-        let result = if self.stabs.col_x[qu].is_empty() {
+    pub fn mz(&mut self, q: usize) -> SymbolicMeasurementResult {
+        let result = if self.stabs.col_x[q].is_empty() {
             // Deterministic measurement
             self.deterministic_meas(q)
         } else {
@@ -604,29 +582,26 @@ where
     /// The outcome is determined by combining:
     /// 1. XOR of measurement dependencies from contributing stabilizers
     /// 2. Phase flip from `signs_minus` and `signs_i` (same logic as `SparseStab`)
-    fn deterministic_meas(&mut self, q: E) -> SymbolicMeasurementResult {
-        let qu = q.to_index();
-
+    fn deterministic_meas(&mut self, q: usize) -> SymbolicMeasurementResult {
         // Assign index and increment counter
         let index = self.measurement_counter;
         self.measurement_counter += 1;
 
         // --- Phase flip calculation (from SparseStab) ---
         // Count minuses from destabilizers that anti-commute with Z_q
-        let mut num_minuses = self.destabs.col_x[qu]
+        let mut num_minuses = self.destabs.col_x[q]
             .intersection(&self.stabs.signs_minus)
             .count();
 
-        let num_is = self.destabs.col_x[qu]
+        let num_is = self.destabs.col_x[q]
             .intersection(&self.stabs.signs_i)
             .count();
 
         // Account for Pauli multiplication phases
         let mut cumulative_x = T::new();
-        for row in self.destabs.col_x[qu].iter() {
-            let rowu = row.to_index();
-            num_minuses += self.stabs.row_z[rowu].intersection(&cumulative_x).count();
-            cumulative_x ^= &self.stabs.row_x[rowu];
+        for row in self.destabs.col_x[q].iter() {
+            num_minuses += self.stabs.row_z[*row].intersection(&cumulative_x).count();
+            cumulative_x ^= &self.stabs.row_x[*row];
         }
 
         if num_is & 3 != 0 {
@@ -641,9 +616,8 @@ where
         // that have X on qubit q
         let mut result_sign = SymbolicSign::empty();
 
-        for row in self.destabs.col_x[qu].iter() {
-            let rowu = row.to_index();
-            result_sign.multiply_assign(&self.stabs.signs[rowu]);
+        for row in self.destabs.col_x[q].iter() {
+            result_sign.multiply_assign(&self.stabs.signs[*row]);
         }
 
         SymbolicMeasurementResult {
@@ -657,23 +631,20 @@ where
     /// Handle a non-deterministic measurement.
     /// Assigns a new measurement index and updates the stabilizer tableau.
     #[allow(clippy::too_many_lines)]
-    fn nondeterministic_meas(&mut self, q: E) -> SymbolicMeasurementResult {
-        let qu = q.to_index();
-
+    fn nondeterministic_meas(&mut self, q: usize) -> SymbolicMeasurementResult {
         // Non-deterministic measurements always get an index (required for tracking)
         let measurement_index = self.measurement_counter;
         self.measurement_counter += 1;
 
-        let mut anticom_stabs_col = self.stabs.col_x[qu].clone();
-        let mut anticom_destabs_col = self.destabs.col_x[qu].clone();
+        let mut anticom_stabs_col = self.stabs.col_x[q].clone();
+        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
 
         // Find a stabilizer to replace (choose smallest weight for efficiency)
         let mut smallest_wt = 2 * self.num_qubits + 2;
-        let mut removed_id: Option<E> = None;
+        let mut removed_id: Option<usize> = None;
 
         for stab_id in anticom_stabs_col.iter() {
-            let stab_usize = stab_id.to_index();
-            let weight = self.stabs.row_x[stab_usize].len() + self.stabs.row_z[stab_usize].len();
+            let weight = self.stabs.row_x[*stab_id].len() + self.stabs.row_z[*stab_id].len();
 
             if weight < smallest_wt {
                 smallest_wt = weight;
@@ -683,9 +654,8 @@ where
 
         let id = removed_id.expect("Critical error: removed_id was None");
         anticom_stabs_col.remove(&id);
-        let id_usize = id.to_index();
-        let removed_row_x = self.stabs.row_x[id_usize].clone();
-        let removed_row_z = self.stabs.row_z[id_usize].clone();
+        let removed_row_x = self.stabs.row_x[id].clone();
+        let removed_row_z = self.stabs.row_z[id].clone();
 
         // --- Phase tracking for anticommuting stabilizers (from SparseStab) ---
         // If removed stabilizer has minus sign, propagate to others
@@ -720,93 +690,80 @@ where
 
         // Multiply all other anticommuting stabilizers by the removed one
         // This includes both measurement dependencies AND phase from Pauli multiplication
-        let removed_sign = self.stabs.signs[id_usize].clone();
+        let removed_sign = self.stabs.signs[id].clone();
         for g in anticom_stabs_col.iter() {
-            let gen_usize = g.to_index();
-
             // Multiply the symbolic measurement signs (XOR)
-            self.stabs.signs[gen_usize].multiply_assign(&removed_sign);
+            self.stabs.signs[*g].multiply_assign(&removed_sign);
 
             // Track phase from Pauli multiplication
-            let num_minuses = removed_row_z
-                .intersection(&self.stabs.row_x[gen_usize])
-                .count();
+            let num_minuses = removed_row_z.intersection(&self.stabs.row_x[*g]).count();
             if num_minuses & 1 != 0 {
                 self.stabs.signs_minus ^= g;
             }
 
             // Update the Pauli structure
-            self.stabs.row_x[gen_usize] ^= &removed_row_x;
-            self.stabs.row_z[gen_usize] ^= &removed_row_z;
+            self.stabs.row_x[*g] ^= &removed_row_x;
+            self.stabs.row_z[*g] ^= &removed_row_z;
         }
 
         // Update column storage for stabilizers
         for i in removed_row_x.iter() {
-            let iu = i.to_index();
-            self.stabs.col_x[iu] ^= &anticom_stabs_col;
+            self.stabs.col_x[*i] ^= &anticom_stabs_col;
         }
 
         for i in removed_row_z.iter() {
-            let iu = i.to_index();
-            self.stabs.col_z[iu] ^= &anticom_stabs_col;
+            self.stabs.col_z[*i] ^= &anticom_stabs_col;
         }
 
         // Remove the old stabilizer
-        for i in self.stabs.row_x[id_usize].iter() {
-            let iu = i.to_index();
-            self.stabs.col_x[iu].remove(&id);
+        for i in self.stabs.row_x[id].iter() {
+            self.stabs.col_x[*i].remove(&id);
         }
 
-        for i in self.stabs.row_z[id_usize].iter() {
-            let iu = i.to_index();
-            self.stabs.col_z[iu].remove(&id);
+        for i in self.stabs.row_z[id].iter() {
+            self.stabs.col_z[*i].remove(&id);
         }
 
         // Replace with the measured stabilizer Z_q
-        self.stabs.col_z[qu].insert(id);
-        self.stabs.row_x[id_usize].clear();
-        self.stabs.row_z[id_usize].clear();
-        self.stabs.row_z[id_usize].insert(q);
+        self.stabs.col_z[q].insert(id);
+        self.stabs.row_x[id].clear();
+        self.stabs.row_z[id].clear();
+        self.stabs.row_z[id].insert(q);
 
         // Set the sign of the new stabilizer to this measurement's index
         // Also clear any phase tracking for this stabilizer (fresh start)
-        self.stabs.signs[id_usize] = SymbolicSign::single(measurement_index);
+        self.stabs.signs[id] = SymbolicSign::single(measurement_index);
         self.stabs.signs_minus.remove(&id);
         self.stabs.signs_i.remove(&id);
 
         // Update destabilizers
-        for i in self.destabs.row_x[id_usize].iter() {
-            let iu = i.to_index();
-            self.destabs.col_x[iu].remove(&id);
+        for i in self.destabs.row_x[id].iter() {
+            self.destabs.col_x[*i].remove(&id);
         }
 
-        for i in self.destabs.row_z[id_usize].iter() {
-            let iu = i.to_index();
-            self.destabs.col_z[iu].remove(&id);
+        for i in self.destabs.row_z[id].iter() {
+            self.destabs.col_z[*i].remove(&id);
         }
 
         anticom_destabs_col.remove(&id);
 
         for i in removed_row_x.iter() {
-            let iu = i.to_index();
-            self.destabs.col_x[iu].insert(id);
-            self.destabs.col_x[iu] ^= &anticom_destabs_col;
+            self.destabs.col_x[*i].insert(id);
+            self.destabs.col_x[*i] ^= &anticom_destabs_col;
         }
 
         for i in removed_row_z.iter() {
-            let iu = i.to_index();
-            self.destabs.col_z[iu].insert(id);
-            self.destabs.col_z[iu] ^= &anticom_destabs_col;
+            self.destabs.col_z[*i].insert(id);
+            self.destabs.col_z[*i] ^= &anticom_destabs_col;
         }
 
         for row in anticom_destabs_col.iter() {
-            let ru = row.to_index();
-            self.destabs.row_x[ru] ^= &removed_row_x;
-            self.destabs.row_z[ru] ^= &removed_row_z;
+            self.destabs.row_x[*row] ^= &removed_row_x;
+            self.destabs.row_z[*row] ^= &removed_row_z;
         }
 
-        self.destabs.row_x[id_usize] = removed_row_x;
-        self.destabs.row_z[id_usize] = removed_row_z;
+        self.destabs.row_x[id] = removed_row_x;
+        self.destabs.row_z[id] = removed_row_z;
 
         // The outcome is just this measurement's index, with no flip
         // (the measurement result is "fresh" - no accumulated phase)
@@ -819,10 +776,9 @@ where
     }
 }
 
-impl<T, E> QuantumSimulator for SymbolicSparseStab<T, E>
+impl<T> QuantumSimulator for SymbolicSparseStab<T>
 where
-    E: IndexableElement,
-    T: for<'a> Set<'a, Element = E>,
+    T: for<'a> Set<'a, Element = usize>,
 {
     #[inline]
     fn reset(&mut self) -> &mut Self {

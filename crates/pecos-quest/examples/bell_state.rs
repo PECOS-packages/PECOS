@@ -1,5 +1,6 @@
 //! Example: Creating and measuring a Bell state using `QuEST` with PECOS-style API
 
+use pecos_core::{qid, qid2};
 use pecos_quest::{CliffordGateable, QuantumSimulator, QuestStateVec};
 
 fn main() {
@@ -33,10 +34,10 @@ fn main() {
 
     // Create Bell state: (|00⟩ + |11⟩)/√2
     println!("Creating Bell state...");
-    state.h(0); // Apply Hadamard to qubit 0
+    state.h(&qid(0)); // Apply Hadamard to qubit 0
     println!("Applied Hadamard to qubit 0");
 
-    state.cx(0, 1); // Apply CNOT with control=0, target=1
+    state.cx(&qid2(0, 1)); // Apply CNOT with control=0, target=1
     println!("Applied CNOT(0, 1)");
     println!();
 
@@ -64,21 +65,17 @@ fn main() {
     for measurement_round in 1..=5 {
         // Reset and recreate Bell state for each measurement
         let mut measurement_state: QuestStateVec = QuestStateVec::with_seed(2, measurement_round);
-        measurement_state.h(0).cx(0, 1);
+        measurement_state.h(&qid(0)).cx(&qid2(0, 1));
 
-        let result0 = measurement_state.mz(0);
-        let result1 = measurement_state.mz(1);
+        let result0 = measurement_state.mz(&qid(0))[0].outcome;
+        let result1 = measurement_state.mz(&qid(1))[0].outcome;
 
         println!(
             "  Round {}: Qubit 0: {} | Qubit 1: {} | Correlated: {}",
             measurement_round,
-            if result0.outcome { "1" } else { "0" },
-            if result1.outcome { "1" } else { "0" },
-            if result0.outcome == result1.outcome {
-                ""
-            } else {
-                "FAIL"
-            }
+            if result0 { "1" } else { "0" },
+            if result1 { "1" } else { "0" },
+            if result0 == result1 { "" } else { "FAIL" }
         );
     }
     println!();
@@ -91,7 +88,7 @@ fn main() {
     println!("Reset to |00⟩");
 
     // Create |++⟩ state
-    state.h(0).h(1);
+    state.h(&qid(0)).h(&qid(1));
     println!("Applied H⊗H to create |++⟩");
     println!("Probability of |00⟩: {:.3}", state.probability(0b00));
     println!("Probability of |01⟩: {:.3}", state.probability(0b01));
@@ -101,19 +98,19 @@ fn main() {
 
     // Apply some Pauli gates
     state.reset();
-    state.x(0); // |10⟩
+    state.x(&qid(0)); // |10⟩
     println!("Applied X(0) to create |10⟩");
     println!("Probability of |10⟩: {:.3}", state.probability(0b01));
 
-    state.z(0); // Add phase to |10⟩
+    state.z(&qid(0)); // Add phase to |10⟩
     println!("Applied Z(0) (adds phase, probability unchanged)");
     println!("Probability of |10⟩: {:.3}", state.probability(0b01));
     println!();
 
     // Demonstrate method chaining
     println!("Demonstrating method chaining:");
-    state.reset().h(0).cx(0, 1).z(1);
-    println!("Applied: reset().h(0).cx(0,1).z(1)");
+    state.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
+    println!("Applied: reset().h(&qid(0)).cx(0,1).z(&qid(1))");
     display_state_probabilities(&state);
 }
 

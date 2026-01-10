@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-pub use pecos_core::{IndexableElement, VecSet};
+pub use pecos_core::VecSet;
 
 pub use crate::{
     arbitrary_rotation_gateable::ArbitraryRotationGateable,

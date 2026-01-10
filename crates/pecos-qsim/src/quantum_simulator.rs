@@ -27,13 +27,14 @@ pub trait QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
+    /// use pecos_core::{qid, qid2};
     /// use pecos_qsim::{QuantumSimulator, CliffordGateable, StdSparseStab};
     ///
     /// let mut sim = StdSparseStab::new(2);
-    /// sim.x(0)
-    ///    .cx(0, 1)
+    /// sim.x(&qid(0))
+    ///    .cx(&qid2(0, 1))
     ///    .reset()  // Return to initial configuration
-    ///    .z(1);    // Can continue chaining methods
+    ///    .z(&qid(1));    // Can continue chaining methods
     /// ```
     fn reset(&mut self) -> &mut Self;
 }

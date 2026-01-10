@@ -42,6 +42,7 @@
 //! 4. Return only the measurement outcomes (fault bits are hidden)
 
 use pecos_core::BitSet;
+use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::measurement_sampler::SampleResult;
@@ -867,48 +868,40 @@ impl NoisyMeasurementHistoryBuilder {
                 // (sign changes don't affect measurement flips), so they fall through to _ => {}
                 GateType::H => {
                     if !location.qubits.is_empty() {
-                        prop.h(location.qubits[0]);
+                        prop.h(&[QubitId(location.qubits[0])]);
                     }
                 }
                 GateType::SZ => {
                     if !location.qubits.is_empty() {
-                        prop.sz(location.qubits[0]);
+                        prop.sz(&[QubitId(location.qubits[0])]);
                     }
                 }
                 GateType::SZdg => {
                     if !location.qubits.is_empty() {
                         // S† = S³
-                        let q = location.qubits[0];
-                        prop.sz(q);
-                        prop.sz(q);
-                        prop.sz(q);
+                        let q = QubitId(location.qubits[0]);
+                        prop.sz(&[q]).sz(&[q]).sz(&[q]);
                     }
                 }
 
                 // Two-qubit Clifford gates
                 GateType::CX => {
                     if location.qubits.len() >= 2 {
-                        prop.cx(location.qubits[0], location.qubits[1]);
+                        prop.cx(&[QubitId(location.qubits[0]), QubitId(location.qubits[1])]);
                     }
                 }
                 GateType::CY => {
                     if location.qubits.len() >= 2 {
-                        let (q1, q2) = (location.qubits[0], location.qubits[1]);
+                        let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
                         // CY = (I ⊗ S†) CX (I ⊗ S)
-                        prop.sz(q2);
-                        prop.cx(q1, q2);
-                        prop.sz(q2);
-                        prop.sz(q2);
-                        prop.sz(q2);
+                        prop.sz(&[q2]).cx(&[q1, q2]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
                     }
                 }
                 GateType::CZ => {
                     if location.qubits.len() >= 2 {
-                        let (q1, q2) = (location.qubits[0], location.qubits[1]);
+                        let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
                         // CZ = (I ⊗ H) CX (I ⊗ H)
-                        prop.h(q2);
-                        prop.cx(q1, q2);
-                        prop.h(q2);
+                        prop.h(&[q2]).cx(&[q1, q2]).h(&[q2]);
                     }
                 }
 
@@ -965,43 +958,35 @@ impl NoisyMeasurementHistoryBuilder {
             match location.gate_type {
                 GateType::H => {
                     if !location.qubits.is_empty() {
-                        prop.h(location.qubits[0]);
+                        prop.h(&[QubitId(location.qubits[0])]);
                     }
                 }
                 GateType::SZ => {
                     if !location.qubits.is_empty() {
-                        prop.sz(location.qubits[0]);
+                        prop.sz(&[QubitId(location.qubits[0])]);
                     }
                 }
                 GateType::SZdg => {
                     if !location.qubits.is_empty() {
-                        let q = location.qubits[0];
-                        prop.sz(q);
-                        prop.sz(q);
-                        prop.sz(q);
+                        let q = QubitId(location.qubits[0]);
+                        prop.sz(&[q]).sz(&[q]).sz(&[q]);
                     }
                 }
                 GateType::CX => {
                     if location.qubits.len() >= 2 {
-                        prop.cx(location.qubits[0], location.qubits[1]);
+                        prop.cx(&[QubitId(location.qubits[0]), QubitId(location.qubits[1])]);
                     }
                 }
                 GateType::CY => {
                     if location.qubits.len() >= 2 {
-                        let (q1, q2) = (location.qubits[0], location.qubits[1]);
-                        prop.sz(q2);
-                        prop.cx(q1, q2);
-                        prop.sz(q2);
-                        prop.sz(q2);
-                        prop.sz(q2);
+                        let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
+                        prop.sz(&[q2]).cx(&[q1, q2]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
                     }
                 }
                 GateType::CZ => {
                     if location.qubits.len() >= 2 {
-                        let (q1, q2) = (location.qubits[0], location.qubits[1]);
-                        prop.h(q2);
-                        prop.cx(q1, q2);
-                        prop.h(q2);
+                        let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
+                        prop.h(&[q2]).cx(&[q1, q2]).h(&[q2]);
                     }
                 }
                 GateType::Measure | GateType::MeasureFree | GateType::MeasureLeaked => {
@@ -1776,11 +1761,12 @@ mod tests {
     #[test]
     fn test_propagate_x_through_h_becomes_z() {
         // Test that X -> H -> Z (doesn't flip)
+        use pecos_core::QubitId;
         use pecos_qsim::{CliffordGateable, StdPauliProp};
 
         let mut prop = StdPauliProp::new();
         prop.add_x(0);
-        prop.h(0);
+        prop.h(&[QubitId(0)]);
 
         // After H, X becomes Z, which doesn't flip Z-basis measurement
         assert!(!prop.contains_x(0));
@@ -1794,7 +1780,7 @@ mod tests {
 
         let mut prop = StdPauliProp::new();
         prop.add_z(0);
-        prop.h(0);
+        prop.h(&[QubitId(0)]);
 
         // After H, Z becomes X, which does flip Z-basis measurement
         assert!(prop.contains_x(0));
@@ -1808,7 +1794,7 @@ mod tests {
 
         let mut prop = StdPauliProp::new();
         prop.add_x(0); // X on control
-        prop.cx(0, 1);
+        prop.cx(&[QubitId(0), QubitId(1)]);
 
         // X on control propagates to target: XI -> XX
         assert!(prop.contains_x(0));
@@ -1822,7 +1808,7 @@ mod tests {
 
         let mut prop = StdPauliProp::new();
         prop.add_z(1); // Z on target
-        prop.cx(0, 1);
+        prop.cx(&[QubitId(0), QubitId(1)]);
 
         // Z on target propagates to control: IZ -> ZZ
         assert!(prop.contains_z(0));

@@ -5,6 +5,7 @@
 //!
 //! NOTE: `QuEST` has thread safety issues - run with --test-threads=1
 
+use pecos_core::{qid, qid2};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, DensityMatrix, QuantumSimulator};
 use pecos_quest::QuestDensityMatrix;
 use pecos_rng::PecosRng;
@@ -61,14 +62,14 @@ fn test_x_gate() {
     let mut dm = DensityMatrix::with_seed(num_qubits, seed);
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::with_seed(num_qubits, seed);
 
-    dm.x(0);
-    qdm.x(0);
+    dm.x(&qid(0));
+    qdm.x(&qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
 
-    dm.x(1);
-    qdm.x(1);
+    dm.x(&qid(1));
+    qdm.x(&qid(1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -80,8 +81,8 @@ fn test_y_gate() {
     let mut dm = DensityMatrix::new(num_qubits);
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-    dm.y(0);
-    qdm.y(0);
+    dm.y(&qid(0));
+    qdm.y(&qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
@@ -95,17 +96,17 @@ fn test_z_gate() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Z on |0> should leave it unchanged
-    dm.z(0);
-    qdm.z(0);
+    dm.z(&qid(0));
+    qdm.z(&qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 
     // Create superposition first, then apply Z
-    dm.h(0);
-    qdm.h(0);
+    dm.h(&qid(0));
+    qdm.h(&qid(0));
 
-    dm.z(0);
-    qdm.z(0);
+    dm.z(&qid(0));
+    qdm.z(&qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -117,14 +118,14 @@ fn test_hadamard_gate() {
     let mut dm = DensityMatrix::new(num_qubits);
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-    dm.h(0);
-    qdm.h(0);
+    dm.h(&qid(0));
+    qdm.h(&qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
 
-    dm.h(1);
-    qdm.h(1);
+    dm.h(&qid(1));
+    qdm.h(&qid(1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -137,11 +138,11 @@ fn test_s_gate() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create |+> then apply S
-    dm.h(0);
-    qdm.h(0);
+    dm.h(&qid(0));
+    qdm.h(&qid(0));
 
-    dm.sz(0);
-    qdm.sz(0);
+    dm.sz(&qid(0));
+    qdm.sz(&qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
@@ -154,11 +155,11 @@ fn test_sdg_gate() {
     let mut dm = DensityMatrix::new(num_qubits);
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-    dm.h(0);
-    qdm.h(0);
+    dm.h(&qid(0));
+    qdm.h(&qid(0));
 
-    dm.szdg(0);
-    qdm.szdg(0);
+    dm.szdg(&qid(0));
+    qdm.szdg(&qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -171,11 +172,11 @@ fn test_cx_gate() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create Bell state
-    dm.h(0);
-    qdm.h(0);
+    dm.h(&qid(0));
+    qdm.h(&qid(0));
 
-    dm.cx(0, 1);
-    qdm.cx(0, 1);
+    dm.cx(&qid2(0, 1));
+    qdm.cx(&qid2(0, 1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
@@ -189,13 +190,13 @@ fn test_cz_gate() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Put both qubits in superposition
-    dm.h(0);
-    dm.h(1);
-    qdm.h(0);
-    qdm.h(1);
+    dm.h(&qid(0));
+    dm.h(&qid(1));
+    qdm.h(&qid(0));
+    qdm.h(&qid(1));
 
-    dm.cz(0, 1);
-    qdm.cz(0, 1);
+    dm.cz(&qid2(0, 1));
+    qdm.cz(&qid2(0, 1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -208,11 +209,11 @@ fn test_cy_gate() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Set control to |1>
-    dm.x(0);
-    qdm.x(0);
+    dm.x(&qid(0));
+    qdm.x(&qid(0));
 
-    dm.cy(0, 1);
-    qdm.cy(0, 1);
+    dm.cy(&qid2(0, 1));
+    qdm.cy(&qid2(0, 1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -225,11 +226,11 @@ fn test_swap_gate() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Put qubit 0 in |1>
-    dm.x(0);
-    qdm.x(0);
+    dm.x(&qid(0));
+    qdm.x(&qid(0));
 
-    dm.swap(0, 1);
-    qdm.swap(0, 1);
+    dm.swap(&qid2(0, 1));
+    qdm.swap(&qid2(0, 1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -241,8 +242,8 @@ fn test_rx_gate() {
     let mut dm = DensityMatrix::new(num_qubits);
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-    dm.rx(PI / 4.0, 0);
-    qdm.rx(PI / 4.0, 0);
+    dm.rx(PI / 4.0, &qid(0));
+    qdm.rx(PI / 4.0, &qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
@@ -255,8 +256,8 @@ fn test_ry_gate() {
     let mut dm = DensityMatrix::new(num_qubits);
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-    dm.ry(PI / 3.0, 0);
-    qdm.ry(PI / 3.0, 0);
+    dm.ry(PI / 3.0, &qid(0));
+    qdm.ry(PI / 3.0, &qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -270,23 +271,23 @@ fn test_ry_in_entangled_system() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create entanglement first
-    dm.h(0);
-    dm.h(1);
-    dm.cx(0, 1);
-    dm.h(2);
-    dm.cx(1, 2);
+    dm.h(&qid(0));
+    dm.h(&qid(1));
+    dm.cx(&qid2(0, 1));
+    dm.h(&qid(2));
+    dm.cx(&qid2(1, 2));
 
-    qdm.h(0);
-    qdm.h(1);
-    qdm.cx(0, 1);
-    qdm.h(2);
-    qdm.cx(1, 2);
+    qdm.h(&qid(0));
+    qdm.h(&qid(1));
+    qdm.cx(&qid2(0, 1));
+    qdm.h(&qid(2));
+    qdm.cx(&qid2(1, 2));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 
     // Now apply RY
-    dm.ry(PI / 5.0, 0);
-    qdm.ry(PI / 5.0, 0);
+    dm.ry(PI / 5.0, &qid(0));
+    qdm.ry(PI / 5.0, &qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -299,11 +300,11 @@ fn test_rz_gate() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create superposition first
-    dm.h(0);
-    qdm.h(0);
+    dm.h(&qid(0));
+    qdm.h(&qid(0));
 
-    dm.rz(PI / 6.0, 0);
-    qdm.rz(PI / 6.0, 0);
+    dm.rz(PI / 6.0, &qid(0));
+    qdm.rz(PI / 6.0, &qid(0));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -316,13 +317,13 @@ fn test_rzz_gate() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create superposition on both qubits
-    dm.h(0);
-    dm.h(1);
-    qdm.h(0);
-    qdm.h(1);
+    dm.h(&qid(0));
+    dm.h(&qid(1));
+    qdm.h(&qid(0));
+    qdm.h(&qid(1));
 
-    dm.rzz(PI / 4.0, 0, 1);
-    qdm.rzz(PI / 4.0, 0, 1);
+    dm.rzz(PI / 4.0, &qid2(0, 1));
+    qdm.rzz(PI / 4.0, &qid2(0, 1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
 }
@@ -335,10 +336,10 @@ fn test_bell_state() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create Bell state |Phi+> = (|00> + |11>)/sqrt(2)
-    dm.h(0);
-    dm.cx(0, 1);
-    qdm.h(0);
-    qdm.cx(0, 1);
+    dm.h(&qid(0));
+    dm.cx(&qid2(0, 1));
+    qdm.h(&qid(0));
+    qdm.cx(&qid2(0, 1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
@@ -355,12 +356,12 @@ fn test_ghz_state() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create GHZ state (|000> + |111>)/sqrt(2)
-    dm.h(0);
-    dm.cx(0, 1);
-    dm.cx(1, 2);
-    qdm.h(0);
-    qdm.cx(0, 1);
-    qdm.cx(1, 2);
+    dm.h(&qid(0));
+    dm.cx(&qid2(0, 1));
+    dm.cx(&qid2(1, 2));
+    qdm.h(&qid(0));
+    qdm.cx(&qid2(0, 1));
+    qdm.cx(&qid2(1, 2));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
@@ -374,21 +375,21 @@ fn test_complex_circuit() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Apply a complex sequence of gates
-    dm.h(0);
-    dm.h(1);
-    dm.cx(0, 2);
-    dm.rz(PI / 4.0, 1);
-    dm.cy(1, 0);
-    dm.rx(PI / 3.0, 2);
-    dm.cz(0, 1);
+    dm.h(&qid(0));
+    dm.h(&qid(1));
+    dm.cx(&qid2(0, 2));
+    dm.rz(PI / 4.0, &qid(1));
+    dm.cy(&qid2(1, 0));
+    dm.rx(PI / 3.0, &qid(2));
+    dm.cz(&qid2(0, 1));
 
-    qdm.h(0);
-    qdm.h(1);
-    qdm.cx(0, 2);
-    qdm.rz(PI / 4.0, 1);
-    qdm.cy(1, 0);
-    qdm.rx(PI / 3.0, 2);
-    qdm.cz(0, 1);
+    qdm.h(&qid(0));
+    qdm.h(&qid(1));
+    qdm.cx(&qid2(0, 2));
+    qdm.rz(PI / 4.0, &qid(1));
+    qdm.cy(&qid2(1, 0));
+    qdm.rx(PI / 3.0, &qid(2));
+    qdm.cz(&qid2(0, 1));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
@@ -402,10 +403,10 @@ fn test_reset() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create some state
-    dm.h(0);
-    dm.cx(0, 1);
-    qdm.h(0);
-    qdm.cx(0, 1);
+    dm.h(&qid(0));
+    dm.cx(&qid2(0, 1));
+    qdm.h(&qid(0));
+    qdm.cx(&qid2(0, 1));
 
     // Reset
     dm.reset();
@@ -423,8 +424,8 @@ fn test_measurement_deterministic() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::with_seed(num_qubits, seed);
 
     // Deterministic measurement on |0>
-    let dm_result = dm.mz(0);
-    let qdm_result = qdm.mz(0);
+    let dm_result = dm.mz(&qid(0)).into_iter().next().unwrap();
+    let qdm_result = qdm.mz(&qid(0)).into_iter().next().unwrap();
 
     assert_eq!(
         dm_result.outcome, qdm_result.outcome,
@@ -449,8 +450,8 @@ fn test_measurement_superposition() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::with_seed(num_qubits, seed);
 
     // Create superposition
-    dm.h(0);
-    qdm.h(0);
+    dm.h(&qid(0));
+    qdm.h(&qid(0));
 
     // Both should report 50/50 probabilities before measurement
     assert_close(dm.probability(0), 0.5, "pre-measurement prob 0");
@@ -459,8 +460,8 @@ fn test_measurement_superposition() {
     assert_close(qdm.probability(1), 0.5, "quest pre-measurement prob 1");
 
     // After measurement, state should be collapsed
-    let _dm_result = dm.mz(0);
-    let _qdm_result = qdm.mz(0);
+    let _dm_result = dm.mz(&qid(0));
+    let _qdm_result = qdm.mz(&qid(0));
 
     // Both should be in a definite state after measurement
     let dm_prob0 = dm.probability(0);
@@ -490,13 +491,13 @@ fn test_purity_pure_state() {
     compare_purity(&dm, &qdm);
     assert_close(dm.purity(), 1.0, "initial purity");
 
-    dm.h(0);
-    qdm.h(0);
+    dm.h(&qid(0));
+    qdm.h(&qid(0));
     compare_purity(&dm, &qdm);
     assert_close(dm.purity(), 1.0, "superposition purity");
 
-    dm.cx(0, 1);
-    qdm.cx(0, 1);
+    dm.cx(&qid2(0, 1));
+    qdm.cx(&qid2(0, 1));
     compare_purity(&dm, &qdm);
     assert_close(dm.purity(), 1.0, "entangled purity");
 }
@@ -520,8 +521,8 @@ fn test_rotation_angles() {
         let mut dm = DensityMatrix::new(num_qubits);
         let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-        dm.rx(theta, 0);
-        qdm.rx(theta, 0);
+        dm.rx(theta, &qid(0));
+        qdm.rx(theta, &qid(0));
 
         compare_probabilities(&dm, &qdm, num_qubits);
     }
@@ -535,21 +536,21 @@ fn test_larger_system_4_qubits() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Create a complex entangled state
-    dm.h(0);
-    dm.cx(0, 1);
-    dm.h(2);
-    dm.cx(2, 3);
-    dm.cz(1, 2);
-    dm.rx(PI / 3.0, 0);
-    dm.ry(PI / 4.0, 3);
+    dm.h(&qid(0));
+    dm.cx(&qid2(0, 1));
+    dm.h(&qid(2));
+    dm.cx(&qid2(2, 3));
+    dm.cz(&qid2(1, 2));
+    dm.rx(PI / 3.0, &qid(0));
+    dm.ry(PI / 4.0, &qid(3));
 
-    qdm.h(0);
-    qdm.cx(0, 1);
-    qdm.h(2);
-    qdm.cx(2, 3);
-    qdm.cz(1, 2);
-    qdm.rx(PI / 3.0, 0);
-    qdm.ry(PI / 4.0, 3);
+    qdm.h(&qid(0));
+    qdm.cx(&qid2(0, 1));
+    qdm.h(&qid(2));
+    qdm.cx(&qid2(2, 3));
+    qdm.cz(&qid2(1, 2));
+    qdm.rx(PI / 3.0, &qid(0));
+    qdm.ry(PI / 4.0, &qid(3));
 
     compare_probabilities(&dm, &qdm, num_qubits);
     compare_purity(&dm, &qdm);
@@ -561,9 +562,9 @@ fn test_density_matrix_trace_is_one() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply various operations
-    dm.h(0);
-    dm.cx(0, 1);
-    dm.rz(PI / 5.0, 0);
+    dm.h(&qid(0));
+    dm.cx(&qid2(0, 1));
+    dm.rz(PI / 5.0, &qid(0));
 
     // Check trace = sum of probabilities = 1
     let mut trace = 0.0;
@@ -578,9 +579,9 @@ fn test_density_matrix_is_hermitian() {
     let num_qubits = 2;
     let mut dm = DensityMatrix::new(num_qubits);
 
-    dm.h(0);
-    dm.cx(0, 1);
-    dm.sz(1);
+    dm.h(&qid(0));
+    dm.cx(&qid2(0, 1));
+    dm.sz(&qid(1));
 
     let rho = dm.get_density_matrix();
 
@@ -606,9 +607,9 @@ fn test_density_matrix_probabilities_sum_to_one() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create GHZ-like state
-    dm.h(0);
-    dm.cx(0, 1);
-    dm.cx(1, 2);
+    dm.h(&qid(0));
+    dm.cx(&qid2(0, 1));
+    dm.cx(&qid2(1, 2));
 
     let mut sum = 0.0;
     for i in 0..(1 << num_qubits) {
@@ -641,39 +642,39 @@ fn test_random_circuit_comparison() {
         ("cy", 1, 2),
     ];
 
-    for (op, q1, q2) in &ops {
+    for (op, q1, q_2) in &ops {
         match *op {
             "h" => {
-                dm.h(*q1);
-                qdm.h(*q1);
+                dm.h(&qid(*q1));
+                qdm.h(&qid(*q1));
             }
             "cx" => {
-                dm.cx(*q1, *q2);
-                qdm.cx(*q1, *q2);
+                dm.cx(&qid2(*q1, *q_2));
+                qdm.cx(&qid2(*q1, *q_2));
             }
             "cy" => {
-                dm.cy(*q1, *q2);
-                qdm.cy(*q1, *q2);
+                dm.cy(&qid2(*q1, *q_2));
+                qdm.cy(&qid2(*q1, *q_2));
             }
             "cz" => {
-                dm.cz(*q1, *q2);
-                qdm.cz(*q1, *q2);
+                dm.cz(&qid2(*q1, *q_2));
+                qdm.cz(&qid2(*q1, *q_2));
             }
             "swap" => {
-                dm.swap(*q1, *q2);
-                qdm.swap(*q1, *q2);
+                dm.swap(&qid2(*q1, *q_2));
+                qdm.swap(&qid2(*q1, *q_2));
             }
             "rx" => {
-                dm.rx(PI / 7.0, *q1);
-                qdm.rx(PI / 7.0, *q1);
+                dm.rx(PI / 7.0, &qid(*q1));
+                qdm.rx(PI / 7.0, &qid(*q1));
             }
             "ry" => {
-                dm.ry(PI / 5.0, *q1);
-                qdm.ry(PI / 5.0, *q1);
+                dm.ry(PI / 5.0, &qid(*q1));
+                qdm.ry(PI / 5.0, &qid(*q1));
             }
             "rz" => {
-                dm.rz(PI / 3.0, *q1);
-                qdm.rz(PI / 3.0, *q1);
+                dm.rz(PI / 3.0, &qid(*q1));
+                qdm.rz(PI / 3.0, &qid(*q1));
             }
             _ => {}
         }
@@ -695,49 +696,49 @@ fn test_all_single_qubit_gates() {
         let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
         // Start from |+> state for more interesting results
-        dm.h(0);
-        qdm.h(0);
+        dm.h(&qid(0));
+        qdm.h(&qid(0));
 
         match gate {
             "x" => {
-                dm.x(0);
-                qdm.x(0);
+                dm.x(&qid(0));
+                qdm.x(&qid(0));
             }
             "y" => {
-                dm.y(0);
-                qdm.y(0);
+                dm.y(&qid(0));
+                qdm.y(&qid(0));
             }
             "z" => {
-                dm.z(0);
-                qdm.z(0);
+                dm.z(&qid(0));
+                qdm.z(&qid(0));
             }
             "h" => {
-                dm.h(0);
-                qdm.h(0);
+                dm.h(&qid(0));
+                qdm.h(&qid(0));
             }
             "s" => {
-                dm.sz(0);
-                qdm.sz(0);
+                dm.sz(&qid(0));
+                qdm.sz(&qid(0));
             }
             "sdg" => {
-                dm.szdg(0);
-                qdm.szdg(0);
+                dm.szdg(&qid(0));
+                qdm.szdg(&qid(0));
             }
             "sx" => {
-                dm.sx(0);
-                qdm.sx(0);
+                dm.sx(&qid(0));
+                qdm.sx(&qid(0));
             }
             "sxdg" => {
-                dm.sxdg(0);
-                qdm.sxdg(0);
+                dm.sxdg(&qid(0));
+                qdm.sxdg(&qid(0));
             }
             "sy" => {
-                dm.sy(0);
-                qdm.sy(0);
+                dm.sy(&qid(0));
+                qdm.sy(&qid(0));
             }
             "sydg" => {
-                dm.sydg(0);
-                qdm.sydg(0);
+                dm.sydg(&qid(0));
+                qdm.sydg(&qid(0));
             }
             _ => {}
         }

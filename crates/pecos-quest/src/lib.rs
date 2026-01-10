@@ -33,6 +33,7 @@ pub use quantum_engine::{
 #[cfg(feature = "cuda")]
 pub use quantum_engine::QuestCudaStateVecEngine;
 
+use pecos_core::QubitId;
 pub use pecos_core::rng::RngManageable;
 pub use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
@@ -306,173 +307,229 @@ where
     }
 }
 
-impl<R> CliffordGateable<usize> for QuestStateVec<R>
+impl<R> CliffordGateable for QuestStateVec<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
-    fn h(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_hadamard(self.qureg.ptr, quest_qubit);
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_hadamard(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn x(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_pauli_x(self.qureg.ptr, quest_qubit);
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_s_gate(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn y(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_pauli_y(self.qureg.ptr, quest_qubit);
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let control = pair[0].index();
+            let target = pair[1].index();
+            self.check_qubit_index(control)
+                .expect("Invalid control qubit");
+            self.check_qubit_index(target)
+                .expect("Invalid target qubit");
+            let quest_control = self.convert_qubit_index(control);
+            let quest_target = self.convert_qubit_index(target);
+            unsafe {
+                ffi::quest_apply_cnot(self.qureg.ptr, quest_control, quest_target);
+            }
         }
         self
     }
 
-    fn z(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_pauli_z(self.qureg.ptr, quest_qubit);
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        use rand::Rng;
+
+        let mut results = Vec::with_capacity(qubits.len());
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+
+            // Get probability of measuring |0⟩ (deterministic calculation)
+            let prob_0 = unsafe { ffi::quest_calc_prob_of_outcome(self.qureg.ptr, quest_qubit, 0) };
+
+            // Sample outcome using our seeded Rust RNG
+            let outcome = i32::from(self.rng.random::<f64>() >= prob_0);
+
+            // Collapse state to the sampled outcome
+            let actual_prob = unsafe {
+                ffi::quest_apply_forced_measurement(self.qureg.ptr, quest_qubit, outcome)
+            };
+
+            results.push(MeasurementResult {
+                outcome: outcome != 0,
+                is_deterministic: (actual_prob - 1.0).abs() < f64::EPSILON,
+            });
+        }
+        results
+    }
+
+    // Override with native QuEST implementations for better performance
+
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_pauli_x(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn sz(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_s_gate(self.qureg.ptr, quest_qubit);
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_pauli_y(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn cx(&mut self, control: usize, target: usize) -> &mut Self {
-        self.check_qubit_index(control)
-            .expect("Invalid control qubit");
-        self.check_qubit_index(target)
-            .expect("Invalid target qubit");
-        let quest_control = self.convert_qubit_index(control);
-        let quest_target = self.convert_qubit_index(target);
-        unsafe {
-            ffi::quest_apply_cnot(self.qureg.ptr, quest_control, quest_target);
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_pauli_z(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn cz(&mut self, control: usize, target: usize) -> &mut Self {
-        self.check_qubit_index(control)
-            .expect("Invalid control qubit");
-        self.check_qubit_index(target)
-            .expect("Invalid target qubit");
-        let quest_control = self.convert_qubit_index(control);
-        let quest_target = self.convert_qubit_index(target);
-        unsafe {
-            ffi::quest_apply_cz(self.qureg.ptr, quest_control, quest_target);
+    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let control = pair[0].index();
+            let target = pair[1].index();
+            self.check_qubit_index(control)
+                .expect("Invalid control qubit");
+            self.check_qubit_index(target)
+                .expect("Invalid target qubit");
+            let quest_control = self.convert_qubit_index(control);
+            let quest_target = self.convert_qubit_index(target);
+            unsafe {
+                ffi::quest_apply_cz(self.qureg.ptr, quest_control, quest_target);
+            }
         }
         self
     }
 
     // SWAP gate - using trait default implementation
     // The native QuEST swap has GPU dependencies that cause linking issues
-    // fn swap(&mut self, qubit1: usize, qubit2: usize) -> &mut Self {
-    //     self.check_qubit_index(qubit1).expect("Invalid qubit1 index");
-    //     self.check_qubit_index(qubit2).expect("Invalid qubit2 index");
-    //     let quest_qubit1 = self.convert_qubit_index(qubit1);
-    //     let quest_qubit2 = self.convert_qubit_index(qubit2);
-    //     unsafe { ffi::quest_apply_swap(self.qureg.ptr, quest_qubit1, quest_qubit2); }
-    //     self
-    // }
-
-    fn mz(&mut self, qubit: usize) -> MeasurementResult {
-        use rand::Rng;
-
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-
-        // Get probability of measuring |0⟩ (deterministic calculation)
-        let prob_0 = unsafe { ffi::quest_calc_prob_of_outcome(self.qureg.ptr, quest_qubit, 0) };
-
-        // Sample outcome using our seeded Rust RNG
-        let outcome = i32::from(self.rng.random::<f64>() >= prob_0);
-
-        // Collapse state to the sampled outcome
-        let actual_prob =
-            unsafe { ffi::quest_apply_forced_measurement(self.qureg.ptr, quest_qubit, outcome) };
-
-        MeasurementResult {
-            outcome: outcome != 0,
-            is_deterministic: (actual_prob - 1.0).abs() < f64::EPSILON,
-        }
-    }
 }
 
-impl<R> ArbitraryRotationGateable<usize> for QuestStateVec<R>
+impl<R> ArbitraryRotationGateable for QuestStateVec<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
-    fn rx(&mut self, angle: f64, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_rotation_x(self.qureg.ptr, quest_qubit, angle);
+    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_rotation_x(self.qureg.ptr, quest_qubit, theta);
+            }
         }
         self
     }
 
-    fn ry(&mut self, angle: f64, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_rotation_y(self.qureg.ptr, quest_qubit, angle);
+    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_rotation_z(self.qureg.ptr, quest_qubit, theta);
+            }
         }
         self
     }
 
-    fn rz(&mut self, angle: f64, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_rotation_z(self.qureg.ptr, quest_qubit, angle);
+    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RZZ requires pairs of qubits"
+        );
+        let half_angle = theta / 2.0;
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0];
+            let q2 = pair[1];
+            self.check_qubit_index(q1.index())
+                .expect("Invalid qubit1 index");
+            self.check_qubit_index(q2.index())
+                .expect("Invalid qubit2 index");
+
+            self.rz(half_angle, &[q1]).rz(half_angle, &[q2]);
+            self.cz(&[q1, q2]);
+            self.rz(-half_angle, &[q1]).rz(-half_angle, &[q2]);
         }
         self
     }
 
-    fn rzz(&mut self, angle: f64, qubit1: usize, qubit2: usize) -> &mut Self {
-        self.check_qubit_index(qubit1)
-            .expect("Invalid qubit1 index");
-        self.check_qubit_index(qubit2)
-            .expect("Invalid qubit2 index");
+    // Override with native QuEST implementations
 
-        let half_angle = angle / 2.0;
-        self.rz(half_angle, qubit1).rz(half_angle, qubit2);
-        self.cz(qubit1, qubit2);
-        self.rz(-half_angle, qubit1).rz(-half_angle, qubit2);
-        self
-    }
-
-    fn t(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_t_gate(self.qureg.ptr, quest_qubit);
+    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_rotation_y(self.qureg.ptr, quest_qubit, theta);
+            }
         }
         self
     }
 
-    fn tdg(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_phase_shift(self.qureg.ptr, quest_qubit, -FRAC_PI_4);
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_t_gate(self.qureg.ptr, quest_qubit);
+            }
+        }
+        self
+    }
+
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_phase_shift(self.qureg.ptr, quest_qubit, -FRAC_PI_4);
+            }
         }
         self
     }
@@ -716,173 +773,229 @@ where
     }
 }
 
-impl<R> CliffordGateable<usize> for QuestDensityMatrix<R>
+impl<R> CliffordGateable for QuestDensityMatrix<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
-    fn h(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_hadamard(self.qureg.ptr, quest_qubit);
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_hadamard(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn x(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_pauli_x(self.qureg.ptr, quest_qubit);
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_s_gate(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn y(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_pauli_y(self.qureg.ptr, quest_qubit);
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let control = pair[0].index();
+            let target = pair[1].index();
+            self.check_qubit_index(control)
+                .expect("Invalid control qubit");
+            self.check_qubit_index(target)
+                .expect("Invalid target qubit");
+            let quest_control = self.convert_qubit_index(control);
+            let quest_target = self.convert_qubit_index(target);
+            unsafe {
+                ffi::quest_apply_cnot(self.qureg.ptr, quest_control, quest_target);
+            }
         }
         self
     }
 
-    fn z(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_pauli_z(self.qureg.ptr, quest_qubit);
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        use rand::Rng;
+
+        let mut results = Vec::with_capacity(qubits.len());
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+
+            // Get probability of measuring |0⟩ (deterministic calculation)
+            let prob_0 = unsafe { ffi::quest_calc_prob_of_outcome(self.qureg.ptr, quest_qubit, 0) };
+
+            // Sample outcome using our seeded Rust RNG
+            let outcome = i32::from(self.rng.random::<f64>() >= prob_0);
+
+            // Collapse state to the sampled outcome
+            let actual_prob = unsafe {
+                ffi::quest_apply_forced_measurement(self.qureg.ptr, quest_qubit, outcome)
+            };
+
+            results.push(MeasurementResult {
+                outcome: outcome != 0,
+                is_deterministic: (actual_prob - 1.0).abs() < f64::EPSILON,
+            });
+        }
+        results
+    }
+
+    // Override with native QuEST implementations for better performance
+
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_pauli_x(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn sz(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_s_gate(self.qureg.ptr, quest_qubit);
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_pauli_y(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn cx(&mut self, control: usize, target: usize) -> &mut Self {
-        self.check_qubit_index(control)
-            .expect("Invalid control qubit");
-        self.check_qubit_index(target)
-            .expect("Invalid target qubit");
-        let quest_control = self.convert_qubit_index(control);
-        let quest_target = self.convert_qubit_index(target);
-        unsafe {
-            ffi::quest_apply_cnot(self.qureg.ptr, quest_control, quest_target);
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_pauli_z(self.qureg.ptr, quest_qubit);
+            }
         }
         self
     }
 
-    fn cz(&mut self, control: usize, target: usize) -> &mut Self {
-        self.check_qubit_index(control)
-            .expect("Invalid control qubit");
-        self.check_qubit_index(target)
-            .expect("Invalid target qubit");
-        let quest_control = self.convert_qubit_index(control);
-        let quest_target = self.convert_qubit_index(target);
-        unsafe {
-            ffi::quest_apply_cz(self.qureg.ptr, quest_control, quest_target);
+    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let control = pair[0].index();
+            let target = pair[1].index();
+            self.check_qubit_index(control)
+                .expect("Invalid control qubit");
+            self.check_qubit_index(target)
+                .expect("Invalid target qubit");
+            let quest_control = self.convert_qubit_index(control);
+            let quest_target = self.convert_qubit_index(target);
+            unsafe {
+                ffi::quest_apply_cz(self.qureg.ptr, quest_control, quest_target);
+            }
         }
         self
     }
 
     // SWAP gate - using trait default implementation
     // The native QuEST swap has GPU dependencies that cause linking issues
-    // fn swap(&mut self, qubit1: usize, qubit2: usize) -> &mut Self {
-    //     self.check_qubit_index(qubit1).expect("Invalid qubit1 index");
-    //     self.check_qubit_index(qubit2).expect("Invalid qubit2 index");
-    //     let quest_qubit1 = self.convert_qubit_index(qubit1);
-    //     let quest_qubit2 = self.convert_qubit_index(qubit2);
-    //     unsafe { ffi::quest_apply_swap(self.qureg.ptr, quest_qubit1, quest_qubit2); }
-    //     self
-    // }
-
-    fn mz(&mut self, qubit: usize) -> MeasurementResult {
-        use rand::Rng;
-
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-
-        // Get probability of measuring |0⟩ (deterministic calculation)
-        let prob_0 = unsafe { ffi::quest_calc_prob_of_outcome(self.qureg.ptr, quest_qubit, 0) };
-
-        // Sample outcome using our seeded Rust RNG
-        let outcome = i32::from(self.rng.random::<f64>() >= prob_0);
-
-        // Collapse state to the sampled outcome
-        let actual_prob =
-            unsafe { ffi::quest_apply_forced_measurement(self.qureg.ptr, quest_qubit, outcome) };
-
-        MeasurementResult {
-            outcome: outcome != 0,
-            is_deterministic: (actual_prob - 1.0).abs() < f64::EPSILON,
-        }
-    }
 }
 
-impl<R> ArbitraryRotationGateable<usize> for QuestDensityMatrix<R>
+impl<R> ArbitraryRotationGateable for QuestDensityMatrix<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
-    fn rx(&mut self, angle: f64, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_rotation_x(self.qureg.ptr, quest_qubit, angle);
+    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_rotation_x(self.qureg.ptr, quest_qubit, theta);
+            }
         }
         self
     }
 
-    fn ry(&mut self, angle: f64, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_rotation_y(self.qureg.ptr, quest_qubit, angle);
+    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_rotation_z(self.qureg.ptr, quest_qubit, theta);
+            }
         }
         self
     }
 
-    fn rz(&mut self, angle: f64, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_rotation_z(self.qureg.ptr, quest_qubit, angle);
+    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RZZ requires pairs of qubits"
+        );
+        let half_angle = theta / 2.0;
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0];
+            let q2 = pair[1];
+            self.check_qubit_index(q1.index())
+                .expect("Invalid qubit1 index");
+            self.check_qubit_index(q2.index())
+                .expect("Invalid qubit2 index");
+
+            self.rz(half_angle, &[q1]).rz(half_angle, &[q2]);
+            self.cz(&[q1, q2]);
+            self.rz(-half_angle, &[q1]).rz(-half_angle, &[q2]);
         }
         self
     }
 
-    fn rzz(&mut self, angle: f64, qubit1: usize, qubit2: usize) -> &mut Self {
-        self.check_qubit_index(qubit1)
-            .expect("Invalid qubit1 index");
-        self.check_qubit_index(qubit2)
-            .expect("Invalid qubit2 index");
+    // Override with native QuEST implementations
 
-        let half_angle = angle / 2.0;
-        self.rz(half_angle, qubit1).rz(half_angle, qubit2);
-        self.cz(qubit1, qubit2);
-        self.rz(-half_angle, qubit1).rz(-half_angle, qubit2);
-        self
-    }
-
-    fn t(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_t_gate(self.qureg.ptr, quest_qubit);
+    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_rotation_y(self.qureg.ptr, quest_qubit, theta);
+            }
         }
         self
     }
 
-    fn tdg(&mut self, qubit: usize) -> &mut Self {
-        self.check_qubit_index(qubit).expect("Invalid qubit index");
-        let quest_qubit = self.convert_qubit_index(qubit);
-        unsafe {
-            ffi::quest_apply_phase_shift(self.qureg.ptr, quest_qubit, -FRAC_PI_4);
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_t_gate(self.qureg.ptr, quest_qubit);
+            }
+        }
+        self
+    }
+
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.check_qubit_index(q.index())
+                .expect("Invalid qubit index");
+            let quest_qubit = self.convert_qubit_index(q.index());
+            unsafe {
+                ffi::quest_apply_phase_shift(self.qureg.ptr, quest_qubit, -FRAC_PI_4);
+            }
         }
         self
     }

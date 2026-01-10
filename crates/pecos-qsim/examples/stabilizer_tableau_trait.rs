@@ -3,18 +3,19 @@
 // This example shows how different stabilizer simulators can implement
 // the same trait interface for accessing tableau information.
 
+use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, StabilizerTableauSimulator, StdSparseStab};
 
 /// Generic function that works with any stabilizer tableau simulator
 fn print_bell_state_tableaux<T>(name: &str, mut sim: T)
 where
-    T: StabilizerTableauSimulator + CliffordGateable<usize>,
+    T: StabilizerTableauSimulator + CliffordGateable,
 {
     println!("=== {name} ===");
 
     // Create Bell state |00> + |11>
-    sim.h(0);
-    sim.cx(0, 1);
+    sim.h(&[QubitId(0)]);
+    sim.cx(&[QubitId(0), QubitId(1)]);
 
     println!("Number of qubits: {}", sim.num_qubits());
     println!("\nStabilizers:");

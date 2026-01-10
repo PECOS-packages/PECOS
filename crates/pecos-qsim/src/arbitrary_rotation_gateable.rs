@@ -11,17 +11,23 @@
 // the License.
 
 use crate::CliffordGateable;
-use pecos_core::IndexableElement;
+use pecos_core::QubitId;
+use smallvec::SmallVec;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+
+/// Stack-allocated qubit buffer for small batches (up to 8 qubits).
+type QubitBuf = SmallVec<[QubitId; 8]>;
 
 /// A trait for implementing arbitrary rotation gates on a quantum system.
 ///
 /// This trait extends [`CliffordGateable`] and provides methods for applying
 /// single-qubit and two-qubit rotation gates around various axes.
 ///
-/// # Type Parameters
-/// - `T`: A type implementing [`IndexableElement`], representing the indices
-///   of qubits within the quantum system.
+/// # Slice-based API
+/// All methods take `&[QubitId]` slices, allowing both single-qubit and batch operations:
+///
+/// - Single-qubit gates: `sim.rx(theta, &[QubitId(0)])` or batch: `sim.rx(theta, &[q0, q1, q2])`
+/// - Two-qubit gates: `sim.rzz(theta, &[q0, q1])` or batch: `sim.rzz(theta, &[q0, q1, q2, q3])`
 ///
 /// # Note
 /// Most of the methods in this trait have default implementations. However, the
@@ -29,62 +35,62 @@ use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 /// - `rx`: Rotation around the X-axis.
 /// - `rz`: Rotation around the Z-axis.
 /// - `rzz`: Two-qubit rotation around the ZZ-axis.
-pub trait ArbitraryRotationGateable<T: IndexableElement>: CliffordGateable<T> {
+pub trait ArbitraryRotationGateable: CliffordGateable {
     /// Applies a rotation around the X-axis by an angle `theta`.
     ///
-    /// Gate RX(θ) = exp(-i θ X/2) = cos(θ/2) I - i*sin(θ/2) X
+    /// Gate RX(theta) = exp(-i theta X/2) = cos(theta/2) I - i*sin(theta/2) X
     ///
-    /// RX(θ) = [[cos(θ/2), -i*sin(θ/2)],
-    ///          [-i*sin(θ/2), cos(θ/2)]]
+    /// RX(theta) = [[cos(theta/2), -i*sin(theta/2)],
+    ///              [-i*sin(theta/2), cos(theta/2)]]
     ///
     /// # Parameters
     /// - `theta`: The rotation angle in radians.
-    /// - `q`: The target qubit index.
+    /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
-    fn rx(&mut self, theta: f64, q: T) -> &mut Self;
+    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a rotation around the Y-axis by an angle `theta`.
     ///
-    /// Gate RY(θ) = exp(-i θ Y/2) = cos(θ/2) I - i*sin(θ/2) Y
+    /// Gate RY(theta) = exp(-i theta Y/2) = cos(theta/2) I - i*sin(theta/2) Y
     ///
-    /// RY(θ) = [[cos(θ/2), -sin(θ/2)],
-    ///          [sin(θ/2), cos(θ/2)]]
+    /// RY(theta) = [[cos(theta/2), -sin(theta/2)],
+    ///              [sin(theta/2), cos(theta/2)]]
     ///
     /// By default, this is implemented in terms of `szdg`, `rx`, and `sz` gates:
-    /// RY(θ) = S · RX(θ) · S†
+    /// RY(theta) = S * RX(theta) * S^dagger
     ///
     /// # Parameters
     /// - `theta`: The rotation angle in radians.
-    /// - `q`: The target qubit index.
+    /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn ry(&mut self, theta: f64, q: T) -> &mut Self {
-        self.szdg(q).rx(theta, q).sz(q)
+    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        self.szdg(qubits).rx(theta, qubits).sz(qubits)
     }
 
     /// Applies a rotation around the Z-axis by an angle `theta`.
     ///
-    /// Gate RZ(θ) = exp(-i θ Z/2) = cos(θ/2) I - i*sin(θ/2) Z
+    /// Gate RZ(theta) = exp(-i theta Z/2) = cos(theta/2) I - i*sin(theta/2) Z
     ///
-    /// RZ(θ) = [[cos(θ/2)-i*sin(θ/2), 0],
-    ///          [0, cos(θ/2)+i*sin(θ/2)]]
+    /// RZ(theta) = [[cos(theta/2)-i*sin(theta/2), 0],
+    ///              [0, cos(theta/2)+i*sin(theta/2)]]
     ///
     /// # Parameters
     /// - `theta`: The rotation angle in radians.
-    /// - `q`: The target qubit index.
+    /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
-    fn rz(&mut self, theta: f64, q: T) -> &mut Self;
+    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a general single-qubit unitary U(theta, phi, lambda) gate.
     ///
-    /// `U1_3` = [[cos(θ/2), -e^(iλ)sin(θ/2)],
-    ///         [e^(iφ)sin(θ/2), e^(i(λ+φ))cos(θ/2)]]
+    /// `U1_3` = [[cos(theta/2), -e^(i*lambda)sin(theta/2)],
+    ///           [e^(i*phi)sin(theta/2), e^(i(lambda+phi))cos(theta/2)]]
     ///
     /// By default, this is implemented in terms of `rz` and `ry` gates.
     ///
@@ -92,13 +98,13 @@ pub trait ArbitraryRotationGateable<T: IndexableElement>: CliffordGateable<T> {
     /// - `theta`: The rotation angle around the Y-axis in radians.
     /// - `phi`: The first Z-axis rotation angle in radians.
     /// - `lambda`: The second Z-axis rotation angle in radians.
-    /// - `q`: The target qubit index.
+    /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn u(&mut self, theta: f64, phi: f64, lambda: f64, q: T) -> &mut Self {
-        self.rz(lambda, q).ry(theta, q).rz(phi, q)
+    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+        self.rz(lambda, qubits).ry(theta, qubits).rz(phi, qubits)
     }
 
     /// Applies an X-Y plane rotation gate with a specified angle and axis.
@@ -108,109 +114,126 @@ pub trait ArbitraryRotationGateable<T: IndexableElement>: CliffordGateable<T> {
     /// # Parameters
     /// - `theta`: The rotation angle in radians.
     /// - `phi`: The axis angle in radians.
-    /// - `q`: The target qubit index.
+    /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn r1xy(&mut self, theta: f64, phi: f64, q: T) -> &mut Self {
-        self.rz(-phi + FRAC_PI_2, q)
-            .ry(theta, q)
-            .rz(phi - FRAC_PI_2, q)
+    fn r1xy(&mut self, theta: f64, phi: f64, qubits: &[QubitId]) -> &mut Self {
+        self.rz(-phi + FRAC_PI_2, qubits)
+            .ry(theta, qubits)
+            .rz(phi - FRAC_PI_2, qubits)
     }
 
-    /// Applies the T gate (π/8 rotation around Z-axis).
+    /// Applies the T gate (pi/8 rotation around Z-axis).
     ///
     /// # Parameters
-    /// - `q`: The target qubit index.
+    /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn t(&mut self, q: T) -> &mut Self {
-        self.rz(FRAC_PI_4, q)
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.rz(FRAC_PI_4, qubits)
     }
 
-    /// Applies the T† (T-dagger) gate (−π/8 rotation around Z-axis).
+    /// Applies the T^dagger (T-dagger) gate (-pi/8 rotation around Z-axis).
     ///
     /// # Parameters
-    /// - `q`: The target qubit index.
+    /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn tdg(&mut self, q: T) -> &mut Self {
-        self.rz(-FRAC_PI_4, q)
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.rz(-FRAC_PI_4, qubits)
     }
 
     /// Applies a two-qubit XX rotation gate.
     ///
-    /// Apply RXX(θ) = exp(-i θ XX/2) gate
+    /// Apply RXX(theta) = exp(-i theta XX/2) gate
     ///
     /// By default, this is implemented in terms of Hadamard (`h`) and ZZ rotation (`rzz`) gates.
     ///
     /// # Parameters
     /// - `theta`: The rotation angle in radians.
-    /// - `q1`: The first qubit index.
-    /// - `q2`: The second qubit index.
+    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn rxx(&mut self, theta: f64, q1: T, q2: T) -> &mut Self {
-        self.h(q1).h(q2).rzz(theta, q1, q2).h(q1).h(q2)
+    fn rxx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RXX requires pairs of qubits"
+        );
+        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.h(&q1s).h(&q2s).rzz(theta, qubits).h(&q1s).h(&q2s)
     }
 
-    /// Apply RYY(θ) = exp(-i θ YY/2) gate, which implements evolution under the YY coupling between two qubits.
+    /// Apply RYY(theta) = exp(-i theta YY/2) gate, which implements evolution under the YY coupling
+    /// between two qubits.
     ///
-    /// The YY coupling generates entanglement between qubits through the Y⊗Y interaction.
-    /// For example, RYY(π/2) transforms basis states as follows:
-    /// - |00⟩ → (|00⟩ - i|11⟩)/√2
-    /// - |11⟩ → (|11⟩ - i|00⟩)/√2
-    /// - |01⟩ → (|01⟩ + i|10⟩)/√2
-    /// - |10⟩ → (|10⟩ + i|01⟩)/√2
+    /// The YY coupling generates entanglement between qubits through the Y tensor Y interaction.
+    /// For example, RYY(pi/2) transforms basis states as follows:
+    /// - |00> -> (|00> - i|11>)/sqrt(2)
+    /// - |11> -> (|11> - i|00>)/sqrt(2)
+    /// - |01> -> (|01> + i|10>)/sqrt(2)
+    /// - |10> -> (|10> + i|01>)/sqrt(2)
     ///
     /// By default, this is implemented in terms of SX and ZZ rotation (`rzz`) gates.
     ///
     /// # Parameters
     /// - `theta`: The rotation angle in radians.
-    /// - `q1`: The first qubit index.
-    /// - `q2`: The second qubit index.
+    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn ryy(&mut self, theta: f64, q1: T, q2: T) -> &mut Self {
-        self.sx(q1).sx(q2).rzz(theta, q1, q2).sxdg(q1).sxdg(q2)
+    fn ryy(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RYY requires pairs of qubits"
+        );
+        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.sx(&q1s)
+            .sx(&q2s)
+            .rzz(theta, qubits)
+            .sxdg(&q1s)
+            .sxdg(&q2s)
     }
 
-    /// Apply RZZ(θ) = exp(-i θ ZZ/2) gate, implementing evolution under the ZZ coupling between two qubits.
+    /// Apply RZZ(theta) = exp(-i theta ZZ/2) gate, implementing evolution under the ZZ coupling
+    /// between two qubits.
     ///
-    /// The ZZ coupling represents a phase interaction between qubits that is diagonal in the computational basis.
-    /// It is a key component in many quantum algorithms and appears naturally in various physical implementations.
-    /// The operation adds a θ/2 phase when the qubits have the same value, and -θ/2 phase when they differ.
+    /// The ZZ coupling represents a phase interaction between qubits that is diagonal in the
+    /// computational basis. It is a key component in many quantum algorithms and appears naturally
+    /// in various physical implementations. The operation adds a theta/2 phase when the qubits have
+    /// the same value, and -theta/2 phase when they differ.
     ///
     /// The action on basis states is:
-    /// - |00⟩ → exp(-iθ/2)|00⟩
-    /// - |11⟩ → exp(-iθ/2)|11⟩
-    /// - |01⟩ → exp(iθ/2)|01⟩
-    /// - |10⟩ → exp(iθ/2)|10⟩
+    /// - |00> -> exp(-i*theta/2)|00>
+    /// - |11> -> exp(-i*theta/2)|11>
+    /// - |01> -> exp(i*theta/2)|01>
+    /// - |10> -> exp(i*theta/2)|10>
     ///
     /// The matrix:
     /// ```text
-    /// RZZ(θ) = [[e^(-iθ/2),     0,          0,          0        ],
-    ///           [0,          e^(iθ/2),      0,          0        ],
-    ///           [0,             0,       e^(iθ/2),      0        ],
-    ///           [0,             0,          0,       e^(-iθ/2)   ]]
+    /// RZZ(theta) = [[e^(-i*theta/2),     0,          0,          0        ],
+    ///               [0,          e^(i*theta/2),      0,          0        ],
+    ///               [0,             0,       e^(i*theta/2),      0        ],
+    ///               [0,             0,          0,       e^(-i*theta/2)   ]]
+    /// ```
     ///
     /// # Parameters
     /// - `theta`: The rotation angle in radians.
-    /// - `q1`: The first qubit index.
-    /// - `q2`: The second qubit index.
+    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
-    fn rzz(&mut self, theta: f64, q1: T, q2: T) -> &mut Self;
+    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a composite rotation gate using RXX, RYY, and RZZ gates.
     ///
@@ -218,8 +241,7 @@ pub trait ArbitraryRotationGateable<T: IndexableElement>: CliffordGateable<T> {
     /// - `theta`: The rotation angle for the RXX gate in radians.
     /// - `phi`: The rotation angle for the RYY gate in radians.
     /// - `lambda`: The rotation angle for the RZZ gate in radians.
-    /// - `q1`: The first qubit index.
-    /// - `q2`: The second qubit index.
+    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
@@ -227,7 +249,7 @@ pub trait ArbitraryRotationGateable<T: IndexableElement>: CliffordGateable<T> {
     /// # Note
     /// The current implementation might have a reversed order of operations.
     #[inline]
-    fn rzzryyrxx(&mut self, theta: f64, phi: f64, lambda: f64, q1: T, q2: T) -> &mut Self {
-        self.rxx(theta, q1, q2).ryy(phi, q1, q2).rzz(lambda, q1, q2)
+    fn rzzryyrxx(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+        self.rxx(theta, qubits).ryy(phi, qubits).rzz(lambda, qubits)
     }
 }

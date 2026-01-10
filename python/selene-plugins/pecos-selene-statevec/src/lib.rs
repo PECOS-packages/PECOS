@@ -17,6 +17,7 @@
 //! for simulating any quantum circuit.
 
 use anyhow::{Result, anyhow, bail};
+use pecos_core::QubitId;
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, StateVec};
 use pecos_rng::PecosRng;
 use selene_core::export_simulator_plugin;
@@ -77,14 +78,12 @@ impl SimulatorInterface for StateVecSimulator {
             ));
         }
 
-        let q = Self::to_usize(qubit);
+        let q = QubitId(Self::to_usize(qubit));
 
         // RXY(theta, phi) = Rz(phi) * Rx(theta) * Rz(-phi)
         // Gates are applied left-to-right in code but the matrix multiplication
         // is right-to-left, so we apply Rz(-phi) first
-        self.simulator.rz(-phi, q);
-        self.simulator.rx(theta, q);
-        self.simulator.rz(phi, q);
+        self.simulator.rz(-phi, &[q]).rx(theta, &[q]).rz(phi, &[q]);
 
         Ok(())
     }
@@ -98,7 +97,7 @@ impl SimulatorInterface for StateVecSimulator {
             ));
         }
 
-        self.simulator.rz(theta, Self::to_usize(qubit));
+        self.simulator.rz(theta, &[QubitId(Self::to_usize(qubit))]);
         Ok(())
     }
 
@@ -111,8 +110,13 @@ impl SimulatorInterface for StateVecSimulator {
             ));
         }
 
-        self.simulator
-            .rzz(theta, Self::to_usize(qubit1), Self::to_usize(qubit2));
+        self.simulator.rzz(
+            theta,
+            &[
+                QubitId(Self::to_usize(qubit1)),
+                QubitId(Self::to_usize(qubit2)),
+            ],
+        );
         Ok(())
     }
 
@@ -125,8 +129,8 @@ impl SimulatorInterface for StateVecSimulator {
             ));
         }
 
-        let result = self.simulator.mz(Self::to_usize(qubit));
-        Ok(result.outcome)
+        let results = self.simulator.mz(&[QubitId(Self::to_usize(qubit))]);
+        Ok(results[0].outcome)
     }
 
     fn postselect(&mut self, qubit: u64, target_value: bool) -> Result<()> {
@@ -163,16 +167,16 @@ impl SimulatorInterface for StateVecSimulator {
         // Project onto the target value by measuring
         // Note: StateVec doesn't expose direct state manipulation for postselection,
         // so we measure and verify we got the expected outcome
-        let result = self.simulator.mz(q);
+        let results = self.simulator.mz(&[QubitId(q)]);
+        let outcome = results[0].outcome;
 
-        if result.outcome != target_value {
+        if outcome != target_value {
             // The measurement collapsed to the wrong value
             // Since this is a state vector simulator, we need to recreate the state
             // This is an approximation - in practice, postselection should be done differently
             return Err(anyhow!(
                 "Postselect(qubit={qubit}, target_value={target_value}) failed. \
-                 The measurement outcome was {} but postselection to {target_value} was requested.",
-                result.outcome
+                 The measurement outcome was {outcome} but postselection to {target_value} was requested.",
             ));
         }
 
@@ -188,13 +192,13 @@ impl SimulatorInterface for StateVecSimulator {
             ));
         }
 
-        let q = Self::to_usize(qubit);
+        let q = QubitId(Self::to_usize(qubit));
 
         // Measure the qubit and flip if needed to get |0>
-        let result = self.simulator.mz(q);
-        if result.outcome {
+        let results = self.simulator.mz(&[q]);
+        if results[0].outcome {
             // If we measured 1, apply X to flip to 0
-            self.simulator.x(q);
+            self.simulator.x(&[q]);
         }
 
         Ok(())

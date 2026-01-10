@@ -14,7 +14,7 @@
 mod qulacs_tests {
     use crate::QulacsStateVec;
     use num_complex::Complex64;
-    use pecos_core::RngManageable;
+    use pecos_core::{RngManageable, qid, qid2};
     use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
     use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, PI};
 
@@ -53,8 +53,8 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(2);
 
         // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
-        sim.h(0usize);
-        sim.cx(0usize, 1usize);
+        sim.h(&qid(0));
+        sim.cx(&qid2(0, 1));
 
         let state = sim.state();
         assert_eq!(state.len(), 4);
@@ -71,9 +71,9 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(3);
 
         // Create GHZ state |GHZ⟩ = (|000⟩ + |111⟩)/√2
-        sim.h(0usize);
-        sim.cx(0usize, 1usize);
-        sim.cx(1usize, 2usize);
+        sim.h(&qid(0));
+        sim.cx(&qid2(0, 1));
+        sim.cx(&qid2(1, 2));
 
         let state = sim.state();
         assert_eq!(state.len(), 8);
@@ -91,27 +91,27 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(1);
 
         // Test X gate: X|0⟩ = |1⟩
-        sim.x(0usize);
+        sim.x(&qid(0));
         assert!(sim.probability(0) < 1e-10);
         assert!((sim.probability(1) - 1.0).abs() < 1e-10);
 
         // Test X again: X|1⟩ = |0⟩
-        sim.x(0usize);
+        sim.x(&qid(0));
         assert!((sim.probability(0) - 1.0).abs() < 1e-10);
         assert!(sim.probability(1) < 1e-10);
 
         // Test Y gate
         sim.reset();
-        sim.y(0usize);
+        sim.y(&qid(0));
         let state = sim.state();
         assert!(state[0].norm() < 1e-10);
         assert!((state[1] - Complex64::new(0.0, 1.0)).norm() < 1e-10);
 
         // Test Z gate: Z|+⟩ = |−⟩
         sim.reset();
-        sim.h(0usize); // Create |+⟩
-        sim.z(0usize);
-        sim.h(0usize); // H|−⟩ = |1⟩
+        sim.h(&qid(0)); // Create |+⟩
+        sim.z(&qid(0));
+        sim.h(&qid(0)); // H|−⟩ = |1⟩
         assert!(sim.probability(0) < 1e-10);
         assert!((sim.probability(1) - 1.0).abs() < 1e-10);
     }
@@ -121,16 +121,16 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(1);
 
         // Test S gate: S = √Z
-        sim.h(0usize); // |+⟩
-        sim.sz(0usize);
+        sim.h(&qid(0)); // |+⟩
+        sim.sz(&qid(0));
         let state = sim.state();
         let expected_phase = Complex64::new(0.0, 1.0);
         assert!((state[1] / state[0] - expected_phase).norm() < 1e-10);
 
         // Test T gate: T = ⁴√Z
         sim.reset();
-        sim.h(0usize);
-        sim.t(0usize);
+        sim.h(&qid(0));
+        sim.t(&qid(0));
         let state = sim.state();
         let expected_t_phase = Complex64::from_polar(1.0, PI / 4.0);
         assert!((state[1] / state[0] - expected_t_phase).norm() < 1e-10);
@@ -141,7 +141,7 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(1);
 
         // Test RX(π) - Qulacs may use a different phase convention
-        sim.rx(PI, 0usize);
+        sim.rx(PI, &qid(0));
         let state = sim.state();
         assert!(state[0].norm() < 1e-10);
         // Check that we're in |1⟩ state (phase may differ between implementations)
@@ -149,16 +149,16 @@ mod qulacs_tests {
 
         // Test RY(π/2) rotation
         sim.reset();
-        sim.ry(FRAC_PI_2, 0usize);
+        sim.ry(FRAC_PI_2, &qid(0));
         let state = sim.state();
         assert!((state[0].norm() - FRAC_1_SQRT_2).abs() < 1e-10);
         assert!((state[1].norm() - FRAC_1_SQRT_2).abs() < 1e-10);
 
         // Test RZ(π) = -Z
         sim.reset();
-        sim.h(0usize); // Create |+⟩
-        sim.rz(PI, 0usize);
-        sim.h(0usize); // Should give |1⟩
+        sim.h(&qid(0)); // Create |+⟩
+        sim.rz(PI, &qid(0));
+        sim.h(&qid(0)); // Should give |1⟩
         assert!(sim.probability(0) < 1e-10);
         assert!((sim.probability(1) - 1.0).abs() < 1e-10);
     }
@@ -167,9 +167,9 @@ mod qulacs_tests {
     fn test_two_qubit_gates() {
         // Test CZ gate
         let mut sim = QulacsStateVec::new(2);
-        sim.h(0usize);
-        sim.h(1usize);
-        sim.cz(0usize, 1usize);
+        sim.h(&qid(0));
+        sim.h(&qid(1));
+        sim.cz(&qid2(0, 1));
         let state = sim.state();
         // CZ on |++⟩ gives (|00⟩ + |01⟩ + |10⟩ - |11⟩)/2
         assert!((state[0].norm() - 0.5).abs() < 1e-10);
@@ -180,11 +180,11 @@ mod qulacs_tests {
 
         // Test SWAP gate
         sim.reset();
-        sim.x(0usize); // |10⟩ in quantum notation, which is state 1 in computational basis
+        sim.x(&qid(0)); // |10⟩ in quantum notation, which is state 1 in computational basis
         let initial_state = sim.state();
         println!("Before SWAP: {initial_state:?}");
 
-        sim.swap(0usize, 1usize); // Should become |01⟩
+        sim.swap(&qid2(0, 1)); // Should become |01⟩
         let final_state = sim.state();
         println!("After SWAP: {final_state:?}");
 
@@ -241,8 +241,8 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(2);
 
         // Create some non-trivial state
-        sim.h(0usize);
-        sim.cx(0usize, 1usize);
+        sim.h(&qid(0));
+        sim.cx(&qid2(0, 1));
 
         // Reset should return to |00⟩
         sim.reset();
@@ -259,8 +259,8 @@ mod qulacs_tests {
         let mut sim2 = QulacsStateVec::with_seed(2, 42);
 
         // Prepare same state
-        sim1.h(0usize);
-        sim2.h(0usize);
+        sim1.h(&qid(0));
+        sim2.h(&qid(0));
 
         // Perform measurements - should get same results
         let mut results1 = Vec::new();
@@ -268,11 +268,11 @@ mod qulacs_tests {
 
         for _ in 0..10 {
             // Reset to same state each time
-            sim1.reset().h(0usize);
-            sim2.reset().h(0usize);
+            sim1.reset().h(&qid(0));
+            sim2.reset().h(&qid(0));
 
-            results1.push(sim1.mz(0usize).outcome);
-            results2.push(sim2.mz(0usize).outcome);
+            results1.push(sim1.mz(&qid(0))[0].outcome);
+            results2.push(sim2.mz(&qid(0))[0].outcome);
         }
 
         // Results should be identical
@@ -292,11 +292,11 @@ mod qulacs_tests {
 
         // Collect measurement results
         for _ in 0..20 {
-            sim1.reset().h(0usize);
-            sim2.reset().h(0usize);
+            sim1.reset().h(&qid(0));
+            sim2.reset().h(&qid(0));
 
-            results1.push(sim1.mz(0usize).outcome);
-            results2.push(sim2.mz(0usize).outcome);
+            results1.push(sim1.mz(&qid(0))[0].outcome);
+            results2.push(sim2.mz(&qid(0))[0].outcome);
         }
 
         // Results should be different (with very high probability)
@@ -317,11 +317,11 @@ mod qulacs_tests {
         sim.set_rng(new_rng);
 
         // Prepare superposition and measure
-        sim.h(0usize);
+        sim.h(&qid(0));
         let mut results = Vec::new();
         for _ in 0..10 {
-            sim.reset().h(0usize);
-            results.push(sim.mz(0usize).outcome);
+            sim.reset().h(&qid(0));
+            results.push(sim.mz(&qid(0))[0].outcome);
         }
 
         // Reset RNG with same seed - should get same results
@@ -330,8 +330,8 @@ mod qulacs_tests {
 
         let mut results2 = Vec::new();
         for _ in 0..10 {
-            sim.reset().h(0usize);
-            results2.push(sim.mz(0usize).outcome);
+            sim.reset().h(&qid(0));
+            results2.push(sim.mz(&qid(0))[0].outcome);
         }
 
         assert_eq!(
@@ -346,17 +346,17 @@ mod qulacs_tests {
 
         // Test measurement on definite states
         sim.reset(); // |0⟩
-        let result = sim.mz(0usize);
-        assert!(result.is_deterministic); // Should be deterministic
-        assert!(!result.outcome); // Should measure 0
+        let result = sim.mz(&qid(0));
+        assert!(result[0].is_deterministic); // Should be deterministic
+        assert!(!result[0].outcome); // Should measure 0
 
-        sim.x(0usize); // |1⟩
-        let result = sim.mz(0usize);
-        assert!(result.is_deterministic); // Should be deterministic
-        assert!(result.outcome); // Should measure 1
+        sim.x(&qid(0)); // |1⟩
+        let result = sim.mz(&qid(0));
+        assert!(result[0].is_deterministic); // Should be deterministic
+        assert!(result[0].outcome); // Should measure 1
 
         // Test measurement on superposition gives non-deterministic result
-        sim.reset().h(0usize); // |+⟩
+        sim.reset().h(&qid(0)); // |+⟩
 
         // Test that probabilities are correct for superposition BEFORE measurement
         let prob_0 = sim.probability(0);
@@ -364,8 +364,8 @@ mod qulacs_tests {
         assert!((prob_0 - 0.5).abs() < 1e-10);
         assert!((prob_1 - 0.5).abs() < 1e-10);
 
-        let result = sim.mz(0usize);
-        assert!(!result.is_deterministic); // Should be probabilistic
+        let result = sim.mz(&qid(0));
+        assert!(!result[0].is_deterministic); // Should be probabilistic
     }
 
     #[test]
@@ -373,11 +373,11 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(3);
 
         // Apply various gates
-        sim.h(0usize);
-        sim.cx(0usize, 1usize);
-        sim.ry(FRAC_PI_4, 2usize);
-        sim.cz(1usize, 2usize);
-        sim.t(0usize);
+        sim.h(&qid(0));
+        sim.cx(&qid2(0, 1));
+        sim.ry(FRAC_PI_4, &qid(2));
+        sim.cz(&qid2(1, 2));
+        sim.t(&qid(0));
 
         // Check normalization
         let state = sim.state();
@@ -396,12 +396,12 @@ mod qulacs_tests {
         let initial = sim.state();
 
         // Apply gates and their inverses
-        sim.h(0usize);
-        sim.cx(0usize, 1usize);
-        sim.sz(1usize);
-        sim.szdg(1usize); // S†
-        sim.cx(0usize, 1usize);
-        sim.h(0usize);
+        sim.h(&qid(0));
+        sim.cx(&qid2(0, 1));
+        sim.sz(&qid(1));
+        sim.szdg(&qid(1)); // S†
+        sim.cx(&qid2(0, 1));
+        sim.h(&qid(0));
 
         // Should be back to initial state
         let final_state = sim.state();
@@ -414,7 +414,7 @@ mod qulacs_tests {
 
         // Test CY gate implementation
         sim.prepare_computational_basis(0b10); // |10⟩
-        sim.cy(1usize, 0usize); // Control on qubit 1, target on qubit 0
+        sim.cy(&qid2(1, 0)); // Control on qubit 1, target on qubit 0
 
         // CY|10⟩ = i|11⟩
         let state = sim.state();
@@ -431,7 +431,7 @@ mod qulacs_tests {
 
         // Apply X to qubit 0 in PECOS convention (MSB)
         // Should produce state |1000> = index 8
-        sim.x(0usize);
+        sim.x(&qid(0));
         let state = sim.state();
 
         // Find non-zero amplitude
@@ -450,7 +450,7 @@ mod qulacs_tests {
 
         // Reset and test qubit 2
         sim.reset();
-        sim.x(2usize);
+        sim.x(&qid(2));
         let state = sim.state();
 
         let mut nonzero_idx = 0;
@@ -472,15 +472,15 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::with_seed(1, 42);
 
         // Prepare |+⟩ state
-        sim.h(0usize);
+        sim.h(&qid(0));
 
         // Measure many times and check statistics
         let n_trials = 1000;
         let mut count_zero = 0;
 
         for _ in 0..n_trials {
-            sim.reset().h(0usize);
-            if !sim.mz(0usize).outcome {
+            sim.reset().h(&qid(0));
+            if !sim.mz(&qid(0))[0].outcome {
                 count_zero += 1;
             }
         }
@@ -504,20 +504,20 @@ mod qulacs_tests {
         assert!(initial_vector[1].norm() < 1e-10);
 
         // Apply H gate to create superposition
-        sim.h(0usize);
+        sim.h(&qid(0));
         let superposition_vector = sim.state();
         let expected_amp = 1.0 / 2.0_f64.sqrt();
         assert!((superposition_vector[0].re - expected_amp).abs() < 1e-10);
         assert!((superposition_vector[1].re - expected_amp).abs() < 1e-10);
 
         // Measure - should collapse to either |0⟩ or |1⟩
-        let result = sim.mz(0usize);
+        let result = sim.mz(&qid(0));
         let final_vector = sim.state();
 
-        println!("Measurement outcome: {}", result.outcome);
+        println!("Measurement outcome: {}", result[0].outcome);
         println!("Final state vector: {final_vector:?}");
 
-        if result.outcome {
+        if result[0].outcome {
             // Should collapse to |1⟩
             assert!(
                 final_vector[0].norm() < 1e-10,

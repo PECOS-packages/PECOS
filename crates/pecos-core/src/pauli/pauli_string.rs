@@ -10,9 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::{
-    IndexableElement, Pauli, PauliBitmap, PauliOperator, PauliSparse, QuarterPhase, QubitId, VecSet,
-};
+use crate::{Pauli, PauliBitmap, PauliOperator, PauliSparse, QuarterPhase, QubitId, VecSet};
 
 /// A string of Pauli operators acting on multiple qubits
 #[allow(clippy::module_name_repetitions)]
@@ -70,7 +68,7 @@ impl PauliString {
         let mut z_positions = Vec::new();
 
         for (pauli, qubit) in self.paulis {
-            let idx = qubit.to_index();
+            let idx = qubit.index();
             match pauli {
                 Pauli::X => x_positions.push(idx),
                 Pauli::Z => z_positions.push(idx),
@@ -87,7 +85,7 @@ impl PauliString {
     /// Results in an error if `QubitId`s are larger than 64 bits or if failed to create a valid `PauliBitmap`
     pub fn into_pauli_bitmap(self) -> Result<PauliBitmap, String> {
         // Convert to BitSetPauli if all qubits are < 64
-        if self.paulis.iter().any(|(_, q)| q.to_index() >= 64) {
+        if self.paulis.iter().any(|(_, q)| q.index() >= 64) {
             return Err("QubitId larger than 64 bits".to_string());
         }
 
@@ -96,7 +94,7 @@ impl PauliString {
         let mut z_positions = Vec::new();
 
         for (pauli, qubit) in self.paulis {
-            let idx = qubit.to_index() as u64;
+            let idx = qubit.index() as u64;
             match pauli {
                 Pauli::X => x_positions.push(idx),
                 Pauli::Z => z_positions.push(idx),
@@ -125,7 +123,7 @@ impl From<PauliSparse<VecSet<usize>>> for PauliString {
 
         // Determine Pauli operator for each position
         for pos in all_positions {
-            let qubit = QubitId::from_index(pos);
+            let qubit = QubitId::new(pos);
             let pauli = match (
                 pauli_sparse.x_positions().contains(&pos),
                 pauli_sparse.z_positions().contains(&pos),
@@ -163,7 +161,7 @@ impl TryFrom<PauliBitmap> for PauliString {
                 (false, false) => continue,
             };
 
-            paulis.push((pauli, QubitId::from_index(i)));
+            paulis.push((pauli, QubitId::new(i)));
         }
 
         Ok(Self {

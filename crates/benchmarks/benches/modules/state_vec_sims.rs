@@ -26,6 +26,7 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
+use pecos_core::QubitId;
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec};
 use std::hint::black_box;
 
@@ -44,17 +45,17 @@ use pecos_qulacs::QulacsStateVec;
 /// Run a benchmark circuit: layers of H + RZ + CX gates.
 fn benchmark_circuit<S>(sim: &mut S, num_qubits: usize, num_layers: usize)
 where
-    S: CliffordGateable<usize> + ArbitraryRotationGateable<usize>,
+    S: CliffordGateable + ArbitraryRotationGateable,
 {
     for _layer in 0..num_layers {
         // Single-qubit layer: H and RZ on all qubits
         for q in 0..num_qubits {
-            sim.h(q);
-            sim.rz(0.1, q);
+            sim.h(&[QubitId(q)]);
+            sim.rz(0.1, &[QubitId(q)]);
         }
         // Two-qubit layer: CX between adjacent qubits
         for q in 0..(num_qubits - 1) {
-            sim.cx(q, q + 1);
+            sim.cx(&[QubitId(q), QubitId(q + 1)]);
         }
     }
 }
@@ -77,6 +78,8 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
         (18, 20),
         (20, 20),
         (22, 10), // Fewer layers for larger qubit counts
+        (24, 5),  // Large qubit count - GPU should dominate here
+        (26, 3),  // Very large - 512 MB state vector
     ];
 
     for (num_qubits, num_layers) in configs {

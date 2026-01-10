@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use pecos_core::{QubitId, qid, qid2};
 use pecos_cppsparsesim::CppSparseStab;
 use pecos_qsim::{CliffordGateable, QuantumSimulator};
 
@@ -18,10 +19,10 @@ fn test_basic_gates() {
     let mut sim = CppSparseStab::new(2);
 
     // Test basic single-qubit gates
-    sim.h(0);
-    sim.x(1);
-    sim.z(0);
-    sim.y(1);
+    sim.h(&qid(0));
+    sim.x(&qid(1));
+    sim.z(&qid(0));
+    sim.y(&qid(1));
 }
 
 #[test]
@@ -29,15 +30,15 @@ fn test_bell_state() {
     let mut sim = CppSparseStab::new(2);
 
     // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
-    sim.h(0);
-    sim.cx(0, 1);
+    sim.h(&qid(0));
+    sim.cx(&qid2(0, 1));
 
     // Measure both qubits
-    let r0 = sim.mz(0);
-    let r1 = sim.mz(1);
+    let r0 = sim.mz(&qid(0))[0].outcome;
+    let r1 = sim.mz(&qid(1))[0].outcome;
 
     // Both measurements should be equal (entangled)
-    assert_eq!(r0.outcome, r1.outcome);
+    assert_eq!(r0, r1);
 }
 
 #[test]
@@ -45,20 +46,20 @@ fn test_reset() {
     let mut sim = CppSparseStab::new(3);
 
     // Apply some gates
-    sim.h(0).cx(0, 1).h(2);
+    sim.h(&qid(0)).cx(&qid2(0, 1)).h(&qid(2));
 
     // Reset the simulator
     sim.reset();
 
     // After reset, all qubits should be in |0⟩ state
     // Measuring in Z basis should give 0
-    let r0 = sim.mz(0);
-    let r1 = sim.mz(1);
-    let r2 = sim.mz(2);
+    let r0 = sim.mz(&qid(0))[0].outcome;
+    let r1 = sim.mz(&qid(1))[0].outcome;
+    let r2 = sim.mz(&qid(2))[0].outcome;
 
-    assert!(!r0.outcome);
-    assert!(!r1.outcome);
-    assert!(!r2.outcome);
+    assert!(!r0);
+    assert!(!r1);
+    assert!(!r2);
     // Note: Determinism tracking has been removed from the wrapper
     // per design decision - the wrapper does not track determinism
 }
@@ -68,16 +69,16 @@ fn test_phase_gates() {
     let mut sim = CppSparseStab::new(1);
 
     // Test S and S† gates
-    sim.sz(0);
-    sim.szdg(0);
+    sim.sz(&qid(0));
+    sim.szdg(&qid(0));
 
     // Test SX and SX† gates
-    sim.sx(0);
-    sim.sxdg(0);
+    sim.sx(&qid(0));
+    sim.sxdg(&qid(0));
 
     // Test SY and SY† gates
-    sim.sy(0);
-    sim.sydg(0);
+    sim.sy(&qid(0));
+    sim.sydg(&qid(0));
 }
 
 #[test]
@@ -92,20 +93,28 @@ fn test_deterministic_with_seed() {
     let mut sim2 = CppSparseStab::new_with_seed(3, seed);
 
     // Apply same operations to both
-    sim1.h(0);
-    sim1.h(1);
-    sim1.cx(0, 2);
-    sim1.h(2);
+    sim1.h(&qid(0));
+    sim1.h(&qid(1));
+    sim1.cx(&qid2(0, 2));
+    sim1.h(&qid(2));
 
-    sim2.h(0);
-    sim2.h(1);
-    sim2.cx(0, 2);
-    sim2.h(2);
+    sim2.h(&qid(0));
+    sim2.h(&qid(1));
+    sim2.cx(&qid2(0, 2));
+    sim2.h(&qid(2));
 
     // Collect measurements from both simulators
-    let results1 = vec![sim1.mz(0).outcome, sim1.mz(1).outcome, sim1.mz(2).outcome];
+    let results1 = vec![
+        sim1.mz(&qid(0))[0].outcome,
+        sim1.mz(&qid(1))[0].outcome,
+        sim1.mz(&qid(2))[0].outcome,
+    ];
 
-    let results2 = vec![sim2.mz(0).outcome, sim2.mz(1).outcome, sim2.mz(2).outcome];
+    let results2 = vec![
+        sim2.mz(&qid(0))[0].outcome,
+        sim2.mz(&qid(1))[0].outcome,
+        sim2.mz(&qid(2))[0].outcome,
+    ];
 
     // Results should be identical with same seed
     assert_eq!(
@@ -115,12 +124,16 @@ fn test_deterministic_with_seed() {
 
     // Test with different seeds to ensure they differ
     let mut sim3 = CppSparseStab::new_with_seed(3, seed + 1);
-    sim3.h(0);
-    sim3.h(1);
-    sim3.cx(0, 2);
-    sim3.h(2);
+    sim3.h(&qid(0));
+    sim3.h(&qid(1));
+    sim3.cx(&qid2(0, 2));
+    sim3.h(&qid(2));
 
-    let _results3 = [sim3.mz(0).outcome, sim3.mz(1).outcome, sim3.mz(2).outcome];
+    let _results3 = [
+        sim3.mz(&qid(0))[0].outcome,
+        sim3.mz(&qid(1))[0].outcome,
+        sim3.mz(&qid(2))[0].outcome,
+    ];
 
     // Very unlikely to be the same with different seed
     // (1/8 chance, but we accept this small possibility)
@@ -144,16 +157,16 @@ fn test_different_seeds_different_results() {
 
         // Create superposition on all qubits
         for i in 0..5 {
-            sim1.h(i);
-            sim2.h(i);
+            sim1.h(&[QubitId::new(i)]);
+            sim2.h(&[QubitId::new(i)]);
         }
 
         // Measure all qubits
         let mut results1 = vec![];
         let mut results2 = vec![];
         for i in 0..5 {
-            results1.push(sim1.mz(i).outcome);
-            results2.push(sim2.mz(i).outcome);
+            results1.push(sim1.mz(&[QubitId::new(i)])[0].outcome);
+            results2.push(sim2.mz(&[QubitId::new(i)])[0].outcome);
         }
 
         if results1 == results2 {
@@ -175,28 +188,28 @@ fn test_forced_measurements() {
     let mut sim = CppSparseStab::new_with_seed(3, 123);
 
     // Put qubits in superposition
-    sim.h(0);
-    sim.h(1);
-    sim.h(2);
+    sim.h(&qid(0));
+    sim.h(&qid(1));
+    sim.h(&qid(2));
 
     // Force measurements to specific values
-    let r0 = sim.force_measure(0, false); // Force to 0
-    let r1 = sim.force_measure(1, true); // Force to 1
-    let r2 = sim.force_measure(2, false); // Force to 0
+    let r0 = sim.force_measure(&qid(0), false)[0].outcome; // Force to 0
+    let r1 = sim.force_measure(&qid(1), true)[0].outcome; // Force to 1
+    let r2 = sim.force_measure(&qid(2), false)[0].outcome; // Force to 0
 
-    assert!(!r0.outcome, "Forced measurement to 0 should return false");
-    assert!(r1.outcome, "Forced measurement to 1 should return true");
-    assert!(!r2.outcome, "Forced measurement to 0 should return false");
+    assert!(!r0, "Forced measurement to 0 should return false");
+    assert!(r1, "Forced measurement to 1 should return true");
+    assert!(!r2, "Forced measurement to 0 should return false");
 
     // After forcing, qubits should be in deterministic states
     // Measuring again should give same results
-    let r0_again = sim.mz(0);
-    let r1_again = sim.mz(1);
-    let r2_again = sim.mz(2);
+    let r0_again = sim.mz(&qid(0))[0].outcome;
+    let r1_again = sim.mz(&qid(1))[0].outcome;
+    let r2_again = sim.mz(&qid(2))[0].outcome;
 
-    assert!(!r0_again.outcome);
-    assert!(r1_again.outcome);
-    assert!(!r2_again.outcome);
+    assert!(!r0_again);
+    assert!(r1_again);
+    assert!(!r2_again);
 }
 
 #[test]
@@ -207,20 +220,14 @@ fn test_forced_measurement_on_deterministic_state() {
 
     // Qubit 0 is deterministically |0⟩
     // Try to force it to 1
-    let r0 = sim.force_measure(0, true);
-    assert!(
-        !r0.outcome,
-        "Forcing deterministic |0⟩ to 1 should still return 0"
-    );
+    let r0 = sim.force_measure(&qid(0), true)[0].outcome;
+    assert!(!r0, "Forcing deterministic |0⟩ to 1 should still return 0");
 
     // Put qubit 1 in |1⟩
-    sim.x(1);
+    sim.x(&qid(1));
     // Try to force it to 0
-    let r1 = sim.force_measure(1, false);
-    assert!(
-        r1.outcome,
-        "Forcing deterministic |1⟩ to 0 should still return 1"
-    );
+    let r1 = sim.force_measure(&qid(1), false)[0].outcome;
+    assert!(r1, "Forcing deterministic |1⟩ to 0 should still return 1");
 }
 
 #[test]
@@ -234,10 +241,10 @@ fn test_measurement_statistics() {
     for i in 0..num_trials {
         // Use different seeds but deterministic sequence
         let mut sim = CppSparseStab::new_with_seed(1, seed + i);
-        sim.h(0); // Put in superposition
+        sim.h(&qid(0)); // Put in superposition
 
-        let result = sim.mz(0);
-        if result.outcome {
+        let result = sim.mz(&qid(0))[0].outcome;
+        if result {
             ones += 1;
         } else {
             zeros += 1;
@@ -281,32 +288,32 @@ fn run_complex_circuit(seed: u32) -> Vec<bool> {
     let mut results = vec![];
 
     // Create a complex entangled state
-    sim.h(0);
-    sim.cx(0, 1);
-    sim.h(2);
-    sim.cx(2, 3);
-    sim.cx(1, 4);
-    sim.h(5);
-    sim.cz(3, 5);
+    sim.h(&qid(0));
+    sim.cx(&qid2(0, 1));
+    sim.h(&qid(2));
+    sim.cx(&qid2(2, 3));
+    sim.cx(&qid2(1, 4));
+    sim.h(&qid(5));
+    sim.cz(&qid2(3, 5));
 
     // Apply some single-qubit gates
-    sim.sz(0);
-    sim.sx(2);
-    sim.sy(4);
+    sim.sz(&qid(0));
+    sim.sx(&qid(2));
+    sim.sy(&qid(4));
 
     // Measure some qubits
-    results.push(sim.mz(0).outcome);
-    results.push(sim.mz(2).outcome);
+    results.push(sim.mz(&qid(0))[0].outcome);
+    results.push(sim.mz(&qid(2))[0].outcome);
 
     // Apply more gates
-    sim.h(1);
-    sim.cx(4, 5);
+    sim.h(&qid(1));
+    sim.cx(&qid2(4, 5));
 
     // Measure remaining qubits
-    results.push(sim.mz(1).outcome);
-    results.push(sim.mz(3).outcome);
-    results.push(sim.mz(4).outcome);
-    results.push(sim.mz(5).outcome);
+    results.push(sim.mz(&qid(1))[0].outcome);
+    results.push(sim.mz(&qid(3))[0].outcome);
+    results.push(sim.mz(&qid(4))[0].outcome);
+    results.push(sim.mz(&qid(5))[0].outcome);
 
     results
 }

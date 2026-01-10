@@ -146,8 +146,8 @@ impl PyCoinToss {
     /// Dictionary containing the measurement result: {location: outcome}
     /// where outcome is 0 or 1 based on the probability
     fn run_measure(&mut self, location: usize) -> PyResult<Py<PyAny>> {
-        let result = self.inner.mz(location);
-        let outcome = i32::from(result.outcome);
+        let results = self.inner.mz(&[QubitId(location)]);
+        let outcome = i32::from(results[0].outcome);
 
         Python::attach(|py| {
             let dict = PyDict::new(py);

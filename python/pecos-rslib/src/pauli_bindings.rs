@@ -16,9 +16,7 @@
 //! to Python, allowing quantum error models to use native Pauli representations
 //! instead of string-based arrays.
 
-use pecos::prelude::{
-    IndexableElement, Pauli as RustPauli, PauliString as RustPauliString, QuarterPhase, QubitId,
-};
+use pecos::prelude::{Pauli as RustPauli, PauliString as RustPauliString, QuarterPhase, QubitId};
 use pyo3::prelude::*;
 
 /// Single-qubit Pauli operator (I, X, Y, Z)
@@ -223,7 +221,7 @@ impl PauliString {
                     list.iter()
                         .map(|item| {
                             let (pauli, qubit): (Pauli, usize) = item.extract()?;
-                            Ok((pauli.0, QubitId::from_index(qubit)))
+                            Ok((pauli.0, QubitId::new(qubit)))
                         })
                         .collect::<PyResult<Vec<_>>>()?
                 }
@@ -234,7 +232,7 @@ impl PauliString {
                         .enumerate()
                         .map(|(idx, item)| {
                             let pauli: Pauli = item.extract()?;
-                            Ok((pauli.0, QubitId::from_index(idx)))
+                            Ok((pauli.0, QubitId::new(idx)))
                         })
                         .collect::<PyResult<Vec<_>>>()?
                 } else {
@@ -284,7 +282,7 @@ impl PauliString {
 
             // Only store non-identity operators (sparse representation)
             if pauli != RustPauli::I {
-                paulis.push((pauli, QubitId::from_index(i)));
+                paulis.push((pauli, QubitId::new(i)));
             }
         }
 
@@ -318,7 +316,7 @@ impl PauliString {
                     RustPauli::Y => 'Y',
                     RustPauli::Z => 'Z',
                 };
-                format!("{}_{}", p_char, q.to_index())
+                format!("{}_{}", p_char, q.index())
             })
             .collect::<Vec<_>>()
             .join(" ");
@@ -374,7 +372,7 @@ impl PauliString {
         self.inner
             .get_paulis()
             .iter()
-            .map(|(p, q)| (Pauli(*p), q.to_index()))
+            .map(|(p, q)| (Pauli(*p), q.index()))
             .collect()
     }
 }

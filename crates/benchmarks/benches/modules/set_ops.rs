@@ -16,73 +16,65 @@ use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Set Operations");
-    bench_set_operations::<usize, M>(&mut group, "usize");
-    bench_set_operations::<u16, M>(&mut group, "u16");
-    bench_vecset_operations::<usize, M>(&mut group, "usize");
-    bench_vecset_operations::<u16, M>(&mut group, "u16");
+    bench_set_operations(&mut group);
+    bench_vecset_operations(&mut group);
     group.finish();
 }
 
-fn bench_set_operations<E: IndexableElement + From<u16>, M: Measurement>(
-    group: &mut BenchmarkGroup<M>,
-    type_name: &str,
-) {
-    group.bench_function(format!("set_operations_{type_name}"), |b| {
+fn bench_set_operations<M: Measurement>(group: &mut BenchmarkGroup<M>) {
+    group.bench_function("set_operations_usize", |b| {
         b.iter(|| {
-            let mut set = VecSet::<E>::new();
-            for i in 0..100_u16 {
-                set.insert(E::from(i));
+            let mut set = VecSet::<usize>::new();
+            for i in 0..100_usize {
+                set.insert(i);
             }
-            for i in 0..100_u16 {
-                black_box(set.contains(&E::from(i)));
+            for i in 0..100_usize {
+                black_box(set.contains(&i));
             }
-            for i in 0..100_u16 {
-                set.remove(&E::from(i));
+            for i in 0..100_usize {
+                set.remove(&i);
             }
         });
     });
 }
 
-fn bench_vecset_operations<E: IndexableElement + From<u8> + Copy, M: Measurement>(
-    group: &mut BenchmarkGroup<M>,
-    type_name: &str,
-) {
+fn bench_vecset_operations<M: Measurement>(group: &mut BenchmarkGroup<M>) {
     // Benchmark insert
-    group.bench_function(format!("VecSet<{type_name}>/insert"), |b| {
+    group.bench_function("VecSet<usize>/insert", |b| {
         b.iter(|| {
-            let mut set = VecSet::<E>::new();
-            for i in 0..100_u8 {
-                set.insert(E::from(i));
+            let mut set = VecSet::<usize>::new();
+            for i in 0..100_usize {
+                set.insert(i);
             }
         });
     });
 
     // Benchmark contains
-    group.bench_function(format!("VecSet<{type_name}>/contains"), |b| {
-        let set: VecSet<E> = (0..100_u8).map(E::from).collect();
+    group.bench_function("VecSet<usize>/contains", |b| {
+        let set: VecSet<usize> = (0..100_usize).collect();
         b.iter(|| {
-            for i in 0..100_u8 {
-                black_box(set.contains(&E::from(i)));
+            for i in 0..100_usize {
+                black_box(set.contains(&i));
             }
         });
     });
 
     // Benchmark remove
-    group.bench_function(format!("VecSet<{type_name}>/remove"), |b| {
+    group.bench_function("VecSet<usize>/remove", |b| {
         b.iter(|| {
-            let mut set: VecSet<E> = (0..100_u8).map(E::from).collect();
-            for i in 0..100_u8 {
-                set.remove(&E::from(i));
+            let mut set: VecSet<usize> = (0..100_usize).collect();
+            for i in 0..100_usize {
+                set.remove(&i);
             }
         });
     });
 
     // Benchmark union
-    group.bench_function(format!("VecSet<{type_name}>/union"), |b| {
-        let set1: VecSet<E> = (0..50_u8).map(E::from).collect();
-        let set2: VecSet<E> = (25..75_u8).map(E::from).collect();
+    group.bench_function("VecSet<usize>/union", |b| {
+        let set1: VecSet<usize> = (0..50_usize).collect();
+        let set2: VecSet<usize> = (25..75_usize).collect();
         b.iter(|| {
-            let mut result = VecSet::<E>::new();
+            let mut result = VecSet::<usize>::new();
             for &item in set1.union(&set2) {
                 result.insert(item);
             }
@@ -91,11 +83,11 @@ fn bench_vecset_operations<E: IndexableElement + From<u8> + Copy, M: Measurement
     });
 
     // Benchmark intersection
-    group.bench_function(format!("VecSet<{type_name}>/intersection"), |b| {
-        let set1: VecSet<E> = (0..50_u8).map(E::from).collect();
-        let set2: VecSet<E> = (25..75_u8).map(E::from).collect();
+    group.bench_function("VecSet<usize>/intersection", |b| {
+        let set1: VecSet<usize> = (0..50_usize).collect();
+        let set2: VecSet<usize> = (25..75_usize).collect();
         b.iter(|| {
-            let mut result = VecSet::<E>::new();
+            let mut result = VecSet::<usize>::new();
             for &item in set1.intersection(&set2) {
                 result.insert(item);
             }

@@ -10,27 +10,20 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::IndexableElement;
+use crate::VecSet;
 use std::fmt;
 use std::ops::Deref;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct QubitId(pub usize);
 
-impl IndexableElement for QubitId {
-    #[inline]
-    fn to_index(&self) -> usize {
-        self.0
-    }
-
-    #[inline]
-    fn from_index(value: usize) -> Self {
-        Self(value)
-    }
-}
+/// Type alias for a set of qubit IDs, useful for collections of qubits.
+pub type QubitIdSet = VecSet<QubitId>;
 
 // Automatic conversion from usize to QubitId
 impl From<usize> for QubitId {
+    #[inline]
     fn from(value: usize) -> Self {
         QubitId(value)
     }
@@ -38,6 +31,7 @@ impl From<usize> for QubitId {
 
 // Automatic conversion from QubitId to usize
 impl From<QubitId> for usize {
+    #[inline]
     fn from(qubit: QubitId) -> usize {
         qubit.0
     }
@@ -47,6 +41,7 @@ impl From<QubitId> for usize {
 impl Deref for QubitId {
     type Target = usize;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -62,14 +57,86 @@ impl fmt::Display for QubitId {
 // Add convenience methods to match QubitIndex
 impl QubitId {
     /// Create a new `QubitId`
+    #[inline]
     #[must_use]
-    pub fn new(index: usize) -> Self {
+    pub const fn new(index: usize) -> Self {
         Self(index)
     }
 
     /// Get the underlying index value
+    #[inline]
     #[must_use]
-    pub fn index(&self) -> usize {
+    pub const fn index(&self) -> usize {
         self.0
     }
+}
+
+/// Helper function to create a single-qubit array for gate operations.
+///
+/// # Example
+/// ```
+/// use pecos_core::{QubitId, qid};
+/// let qubits = qid(0);
+/// assert_eq!(qubits, [QubitId(0)]);
+/// ```
+#[inline]
+#[must_use]
+pub const fn qid(n: usize) -> [QubitId; 1] {
+    [QubitId(n)]
+}
+
+/// Helper function to create a two-qubit array for gate operations.
+///
+/// # Example
+/// ```
+/// use pecos_core::{QubitId, qid2};
+/// let qubits = qid2(0, 1);
+/// assert_eq!(qubits, [QubitId(0), QubitId(1)]);
+/// ```
+#[inline]
+#[must_use]
+pub const fn qid2(a: usize, b: usize) -> [QubitId; 2] {
+    [QubitId(a), QubitId(b)]
+}
+
+/// Helper function to create a `Vec<QubitId>` from a collection of qubit indices.
+///
+/// Useful for batch single-qubit gate operations.
+///
+/// # Example
+/// ```
+/// use pecos_core::{QubitId, qids};
+/// let qubits = qids([0, 1, 2]);
+/// assert_eq!(qubits, vec![QubitId(0), QubitId(1), QubitId(2)]);
+/// ```
+#[inline]
+#[must_use]
+pub fn qids<I>(indices: I) -> Vec<QubitId>
+where
+    I: IntoIterator<Item = usize>,
+{
+    indices.into_iter().map(QubitId).collect()
+}
+
+/// Helper function to create a flattened `Vec<QubitId>` from pairs of qubit indices.
+///
+/// Useful for batch two-qubit gate operations where pairs are flattened to
+/// `[control0, target0, control1, target1, ...]`.
+///
+/// # Example
+/// ```
+/// use pecos_core::{QubitId, qids2};
+/// let qubits = qids2([(0, 1), (2, 3)]);
+/// assert_eq!(qubits, vec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
+/// ```
+#[inline]
+#[must_use]
+pub fn qids2<I>(pairs: I) -> Vec<QubitId>
+where
+    I: IntoIterator<Item = (usize, usize)>,
+{
+    pairs
+        .into_iter()
+        .flat_map(|(a, b)| [QubitId(a), QubitId(b)])
+        .collect()
 }

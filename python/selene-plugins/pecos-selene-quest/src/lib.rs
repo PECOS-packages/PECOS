@@ -29,6 +29,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use num_complex::Complex64;
+use pecos_core::QubitId;
 #[cfg(feature = "cuda")]
 use pecos_quest::QuantumSimulator;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuestDensityMatrix, QuestStateVec};
@@ -204,12 +205,13 @@ impl QuestSimulatorInner {
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn rz(&mut self, theta: f64, qubit: usize) {
+        let q = QubitId(qubit);
         match self {
             Self::StateVector(sim) => {
-                sim.rz(theta, qubit);
+                sim.rz(theta, &[q]);
             }
             Self::DensityMatrix(sim) => {
-                sim.rz(theta, qubit);
+                sim.rz(theta, &[q]);
             }
             #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => unsafe {
@@ -224,12 +226,13 @@ impl QuestSimulatorInner {
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn rx(&mut self, theta: f64, qubit: usize) {
+        let q = QubitId(qubit);
         match self {
             Self::StateVector(sim) => {
-                sim.rx(theta, qubit);
+                sim.rx(theta, &[q]);
             }
             Self::DensityMatrix(sim) => {
-                sim.rx(theta, qubit);
+                sim.rx(theta, &[q]);
             }
             #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => unsafe {
@@ -246,10 +249,10 @@ impl QuestSimulatorInner {
     fn cx(&mut self, control: usize, target: usize) {
         match self {
             Self::StateVector(sim) => {
-                sim.cx(control, target);
+                sim.cx(&[QubitId(control), QubitId(target)]);
             }
             Self::DensityMatrix(sim) => {
-                sim.cx(control, target);
+                sim.cx(&[QubitId(control), QubitId(target)]);
             }
             #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => unsafe {
@@ -264,12 +267,13 @@ impl QuestSimulatorInner {
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn x(&mut self, qubit: usize) {
+        let q = QubitId(qubit);
         match self {
             Self::StateVector(sim) => {
-                sim.x(qubit);
+                sim.x(&[q]);
             }
             Self::DensityMatrix(sim) => {
-                sim.x(qubit);
+                sim.x(&[q]);
             }
             #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => unsafe {
@@ -284,9 +288,10 @@ impl QuestSimulatorInner {
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn mz(&mut self, qubit: usize) -> pecos_quest::MeasurementResult {
+        let q = QubitId(qubit);
         match self {
-            Self::StateVector(sim) => sim.mz(qubit),
-            Self::DensityMatrix(sim) => sim.mz(qubit),
+            Self::StateVector(sim) => sim.mz(&[q]).into_iter().next().unwrap(),
+            Self::DensityMatrix(sim) => sim.mz(&[q]).into_iter().next().unwrap(),
             #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => {
                 let outcome = unsafe { (sim.backend.measure)(sim.qureg_handle, qubit as i32) };

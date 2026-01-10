@@ -1,4 +1,5 @@
 use num_complex::Complex64;
+use pecos_core::{qid, qid2};
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::DensityMatrix;
 
@@ -6,7 +7,7 @@ use pecos_qsim::DensityMatrix;
 fn test_get_density_matrix() {
     // Create a Bell state
     let mut state = DensityMatrix::new(2);
-    state.h(0).cx(0, 1);
+    state.h(&qid(0)).cx(&qid2(0, 1));
 
     // Get the density matrix
     let rho = state.get_density_matrix();
@@ -33,7 +34,7 @@ fn test_get_density_matrix() {
 fn test_density_matrix_to_string() {
     // Create a simple state
     let mut state = DensityMatrix::new(1);
-    state.h(0);
+    state.h(&qid(0));
 
     // Get the string representation
     let matrix_str = state.density_matrix_to_string(2, 1e-10);
@@ -85,10 +86,10 @@ fn test_real_world_circuit() {
 
     // Apply a sequence of gates
     state
-        .h(0) // Put qubit 0 in superposition
-        .cx(0, 1) // Entangle qubits 0 and 1
-        .z(0) // Apply phase flip to qubit 0
-        .h(1); // Apply Hadamard to qubit 1
+        .h(&qid(0)) // Put qubit 0 in superposition
+        .cx(&qid2(0, 1)) // Entangle qubits 0 and 1
+        .z(&qid(0)) // Apply phase flip to qubit 0
+        .h(&qid(1)); // Apply Hadamard to qubit 1
 
     // Get the density matrix
     let rho = state.get_density_matrix();
@@ -114,7 +115,7 @@ fn test_real_world_circuit() {
 fn test_export_formats() {
     // Create a Bell state
     let mut state = DensityMatrix::new(2);
-    state.h(0).cx(0, 1);
+    state.h(&qid(0)).cx(&qid2(0, 1));
 
     // Test flattened representation
     let flat = state.get_flattened_density_matrix();

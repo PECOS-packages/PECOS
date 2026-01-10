@@ -2,6 +2,7 @@
 // for recording and replaying quantum experiments
 
 use pecos_core::rng::{RecordingRng, ReplayingRng};
+use pecos_core::{qid, qid2};
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::StateVec;
 use pecos_rng::{PecosRng, Rng};
@@ -31,13 +32,13 @@ impl RecordingSimulator {
 
     // Delegate the h operation
     fn h(&mut self, qubit: usize) -> &mut Self {
-        self.simulator.h(qubit);
+        self.simulator.h(&qid(qubit));
         self
     }
 
     // Delegate the cx operation
     fn cx(&mut self, control: usize, target: usize) -> &mut Self {
-        self.simulator.cx(control, target);
+        self.simulator.cx(&qid2(control, target));
         self
     }
 
@@ -49,7 +50,7 @@ impl RecordingSimulator {
 
         // Apply the measurement to the simulator
         // Note: In a real implementation, we'd modify the simulator's state
-        self.simulator.mz(qubit);
+        self.simulator.mz(&qid(qubit));
 
         result
     }
@@ -88,13 +89,13 @@ impl ReplayingSimulator {
 
     // Delegate the h operation
     fn h(&mut self, qubit: usize) -> &mut Self {
-        self.simulator.h(qubit);
+        self.simulator.h(&qid(qubit));
         self
     }
 
     // Delegate the cx operation
     fn cx(&mut self, control: usize, target: usize) -> &mut Self {
-        self.simulator.cx(control, target);
+        self.simulator.cx(&qid2(control, target));
         self
     }
 
@@ -106,7 +107,7 @@ impl ReplayingSimulator {
 
         // Apply the measurement to the simulator
         // Note: In a real implementation, we'd modify the simulator's state
-        self.simulator.mz(qubit);
+        self.simulator.mz(&qid(qubit));
 
         result
     }

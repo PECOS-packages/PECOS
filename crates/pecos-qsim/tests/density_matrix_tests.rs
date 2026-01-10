@@ -1,3 +1,4 @@
+use pecos_core::{qid, qid2};
 use pecos_qsim::DensityMatrix;
 use pecos_qsim::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use pecos_qsim::clifford_gateable::CliffordGateable;
@@ -60,15 +61,15 @@ fn test_x_gate() {
     // Test X gate on computational basis state
     let mut dm = DensityMatrix::new(1);
 
-    // Apply X to |0⟩⟨0|
-    dm.x(0);
+    // Apply X to |0><0|
+    dm.x(&qid(0));
 
-    // Check state is |1⟩⟨1|
+    // Check state is |1><1|
     assert!(dm.probability(0) < 1e-10);
     assert!((dm.probability(1) - 1.0).abs() < 1e-10);
 
-    // Apply X again to return to |0⟩⟨0|
-    dm.x(0);
+    // Apply X again to return to |0><0|
+    dm.x(&qid(0));
 
     // Check state is |0⟩⟨0|
     assert!((dm.probability(0) - 1.0).abs() < 1e-10);
@@ -80,15 +81,15 @@ fn test_h_gate() {
     // Test H gate creating superposition
     let mut dm = DensityMatrix::new(1);
 
-    // Apply H to |0⟩⟨0|
-    dm.h(0);
+    // Apply H to |0><0|
+    dm.h(&qid(0));
 
     // Check probabilities are 0.5 for both outcomes
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
     assert!((dm.probability(1) - 0.5).abs() < 1e-10);
 
-    // Apply H again to return to |0⟩⟨0|
-    dm.h(0);
+    // Apply H again to return to |0><0|
+    dm.h(&qid(0));
 
     // Check state is |0⟩⟨0|
     assert!((dm.probability(0) - 1.0).abs() < 1e-10);
@@ -100,8 +101,8 @@ fn test_bell_state() {
     // Test creating a Bell state
     let mut dm = DensityMatrix::new(2);
 
-    // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
-    dm.h(0).cx(0, 1);
+    // Create Bell state |Phi+> = (|00> + |11>)/sqrt(2)
+    dm.h(&qid(0)).cx(&qid2(0, 1));
 
     // Check probabilities
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
@@ -138,8 +139,8 @@ fn test_rotation_gates() {
     // Test rotation gates
     let mut dm = DensityMatrix::new(1);
 
-    // Apply Rx(π/2) to |0⟩⟨0|
-    dm.rx(PI / 2.0, 0);
+    // Apply Rx(pi/2) to |0><0|
+    dm.rx(PI / 2.0, &qid(0));
 
     // Should result in equal superposition in X basis
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
@@ -147,7 +148,7 @@ fn test_rotation_gates() {
 
     // Reset and try Ry
     dm.reset();
-    dm.ry(PI / 2.0, 0);
+    dm.ry(PI / 2.0, &qid(0));
 
     // Should result in equal superposition in Y basis
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
@@ -227,7 +228,7 @@ fn test_bit_flip() {
 fn test_phase_flip() {
     // Test phase flip on superposition
     let mut dm = DensityMatrix::new(1);
-    dm.h(0); // Create superposition |+⟩
+    dm.h(&qid(0)); // Create superposition |+>
 
     // Apply 100% phase flip
     dm.apply_phase_flip(0, 1.0);
@@ -236,11 +237,11 @@ fn test_phase_flip() {
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
     assert!((dm.probability(1) - 0.5).abs() < 1e-10);
 
-    // State should still be pure, but it should be |−⟩ now
+    // State should still be pure, but it should be |-> now
     assert!(dm.is_pure());
 
-    // Apply H again to convert |−⟩ to |1⟩
-    dm.h(0);
+    // Apply H again to convert |-> to |1>
+    dm.h(&qid(0));
 
     // Should be |1⟩ with high probability
     assert!(dm.probability(0) < 1e-10);
@@ -251,10 +252,10 @@ fn test_phase_flip() {
 fn test_measurement() {
     // Test measurement on superposition
     let mut dm = DensityMatrix::new(1);
-    dm.h(0); // Create superposition
+    dm.h(&qid(0)); // Create superposition
 
     // Measure qubit 0
-    let result = dm.mz(0);
+    let result = dm.mz(&qid(0)).into_iter().next().unwrap();
 
     // State should be collapsed to either |0⟩ or |1⟩
     let prob0 = dm.probability(0);
@@ -271,31 +272,31 @@ fn test_measurement() {
     }
 
     // Measure again - should get same result and be deterministic
-    let result2 = dm.mz(0);
+    let result2 = dm.mz(&qid(0)).into_iter().next().unwrap();
     assert_eq!(result.outcome, result2.outcome);
     assert!(result2.is_deterministic);
 }
 
 #[test]
 fn test_complex_gates() {
-    // Test S and S† gates
+    // Test S and S dagger gates
     let mut dm = DensityMatrix::new(1);
 
-    // Apply H to create |+⟩
-    dm.h(0);
+    // Apply H to create |+>
+    dm.h(&qid(0));
 
-    // Apply S to create |i⟩ = |0⟩ + i|1⟩
-    dm.sz(0);
+    // Apply S to create |i> = |0> + i|1>
+    dm.sz(&qid(0));
 
     // Probabilities should still be 50-50
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
     assert!((dm.probability(1) - 0.5).abs() < 1e-10);
 
-    // Apply S† to get back to |+⟩
-    dm.szdg(0);
+    // Apply S dagger to get back to |+>
+    dm.szdg(&qid(0));
 
-    // Apply H to get back to |0⟩
-    dm.h(0);
+    // Apply H to get back to |0>
+    dm.h(&qid(0));
 
     // Should be |0⟩ with high probability
     assert!((dm.probability(0) - 1.0).abs() < 1e-10);
@@ -307,11 +308,11 @@ fn test_controlled_y_gate() {
     // Test controlled-Y gate
     let mut dm = DensityMatrix::new(2);
 
-    // Prepare |10⟩ - control=1, target=0
+    // Prepare |10> - control=1, target=0
     dm.prepare_computational_basis(2);
 
     // Apply CY(1,0) - should flip the target and add i phase
-    dm.cy(1, 0);
+    dm.cy(&qid2(1, 0));
 
     // Should now be in |11⟩ state
     assert!(dm.probability(0) < 1e-10);
@@ -374,7 +375,7 @@ fn test_depolarizing_channel_correctness() {
     // Diagonal elements: complex formula involving mixing
 
     let mut dm2 = DensityMatrix::new(1);
-    dm2.h(0);
+    dm2.h(&qid(0));
     let p2 = 0.3;
     dm2.apply_depolarizing_noise(0, p2);
 
@@ -414,7 +415,7 @@ fn test_bell_state_measurement_preserves_correlations() {
         let mut dm = DensityMatrix::with_seed(2, seed);
 
         // Create Bell state
-        dm.h(0).cx(0, 1);
+        dm.h(&qid(0)).cx(&qid2(0, 1));
 
         // Before measurement: P(00) = 0.5, P(11) = 0.5
         assert!((dm.probability(0) - 0.5).abs() < 1e-10);
@@ -423,7 +424,7 @@ fn test_bell_state_measurement_preserves_correlations() {
         assert!((dm.probability(3) - 0.5).abs() < 1e-10);
 
         // Measure qubit 0
-        let result = dm.mz(0);
+        let result = dm.mz(&qid(0)).into_iter().next().unwrap();
 
         // State should be pure after measurement
         assert!(dm.is_pure());
@@ -476,7 +477,7 @@ fn test_bell_state_measurement_preserves_correlations() {
         }
 
         // Measuring qubit 1 should now be deterministic and match qubit 0
-        let result2 = dm.mz(1);
+        let result2 = dm.mz(&qid(1)).into_iter().next().unwrap();
         assert!(result2.is_deterministic);
         assert_eq!(
             result.outcome, result2.outcome,

@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod thread_safety_tests {
     use crate::QulacsStateVec;
-    use pecos_core::RngManageable;
+    use pecos_core::{RngManageable, qid, qid2};
     use pecos_qsim::{CliffordGateable, QuantumSimulator};
     use pecos_rng::PecosRng;
     use std::sync::{Arc, Mutex};
@@ -37,8 +37,8 @@ mod thread_safety_tests {
         // Spawn threads that work on independent simulators
         let handle1 = thread::spawn(move || {
             let mut sim = sim1;
-            sim.h(0usize);
-            sim.cx(0usize, 1usize);
+            sim.h(&qid(0));
+            sim.cx(&qid2(0, 1));
             let state = sim.state();
             results1
                 .lock()
@@ -48,8 +48,8 @@ mod thread_safety_tests {
 
         let handle2 = thread::spawn(move || {
             let mut sim = sim2;
-            sim.x(0usize);
-            sim.h(1usize);
+            sim.x(&qid(0));
+            sim.h(&qid(1));
             let state = sim.state();
             results2
                 .lock()
@@ -59,8 +59,8 @@ mod thread_safety_tests {
 
         let handle3 = thread::spawn(move || {
             let mut sim = sim3;
-            sim.h(0usize);
-            sim.h(1usize);
+            sim.h(&qid(0));
+            sim.h(&qid(1));
             let state = sim.state();
             results3
                 .lock()
@@ -106,9 +106,9 @@ mod thread_safety_tests {
 
                     for _trial in 0..TRIALS_PER_THREAD {
                         sim.reset();
-                        sim.h(0usize);
-                        let result = sim.mz(0usize);
-                        measurement_results.push(result.outcome);
+                        sim.h(&qid(0));
+                        let result = sim.mz(&qid(0));
+                        measurement_results.push(result[0].outcome);
                     }
 
                     // Return thread ID and measurement statistics

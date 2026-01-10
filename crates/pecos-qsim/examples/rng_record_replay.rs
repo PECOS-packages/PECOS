@@ -7,7 +7,7 @@
 
 use pecos_core::RngManageable;
 use pecos_core::rng::{RecordingRng, ReplayingRng};
-use pecos_qsim::{CliffordGateable, StateVec};
+use pecos_qsim::{CliffordGateable, StateVec, qid, qid2};
 use pecos_rng::PecosRng;
 
 fn main() {
@@ -21,12 +21,12 @@ fn main() {
     println!("Running circuit with recording RNG:");
 
     // Create a Bell state
-    sim_recording.h(0).cx(0, 1);
+    sim_recording.h(&qid(0)).cx(&qid2(0, 1));
     println!("Created Bell state |00⟩ + |11⟩ / √2");
 
     // Measure both qubits - in a Bell state, results should match
-    let result1 = sim_recording.mz(0);
-    let result2 = sim_recording.mz(1);
+    let result1 = sim_recording.mz(&qid(0)).into_iter().next().unwrap();
+    let result2 = sim_recording.mz(&qid(1)).into_iter().next().unwrap();
 
     println!("Measurement outcomes:");
     println!("  Qubit 0: {}", if result1.outcome { "1" } else { "0" });
@@ -48,12 +48,12 @@ fn main() {
     let mut sim_replaying = StateVec::with_rng(2, replaying_rng);
 
     // Run the same circuit
-    sim_replaying.h(0).cx(0, 1);
+    sim_replaying.h(&qid(0)).cx(&qid2(0, 1));
     println!("Created Bell state |00⟩ + |11⟩ / √2");
 
     // Measure both qubits - should get the same results as before
-    let replay_result1 = sim_replaying.mz(0);
-    let replay_result2 = sim_replaying.mz(1);
+    let replay_result1 = sim_replaying.mz(&qid(0)).into_iter().next().unwrap();
+    let replay_result2 = sim_replaying.mz(&qid(1)).into_iter().next().unwrap();
 
     println!("Replayed measurement outcomes:");
     println!(

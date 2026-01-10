@@ -19,7 +19,7 @@ mod bridge;
 
 use bridge::ffi;
 use num_complex::Complex64;
-use pecos_core::{IndexableElement, RngManageable};
+use pecos_core::{QubitId, RngManageable};
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
@@ -151,7 +151,7 @@ where
     pub fn prepare_plus_state(&mut self) -> &mut Self {
         ffi::reset(self.state.pin_mut());
         for i in 0..self.num_qubits {
-            self.h(i);
+            self.h(&[QubitId(i)]);
         }
         self
     }
@@ -228,197 +228,235 @@ where
 }
 
 // Implement CliffordGateable trait
-impl<R, I> CliffordGateable<I> for QulacsStateVec<R>
+impl<R> CliffordGateable for QulacsStateVec<R>
 where
     R: RngCore + SeedableRng + Debug,
-    I: IndexableElement,
 {
-    fn x(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_x(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn y(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_y(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn z(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_z(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn h(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_h(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn sz(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_s(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn szdg(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sdag(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn sx(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sqrt_x(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn sxdg(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sqrt_xdag(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn sy(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sqrt_y(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn sydg(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sqrt_ydag(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn cx(&mut self, q1: I, q2: I) -> &mut Self {
-        let qulacs_q1 = self.convert_qubit_index(q1.to_index());
-        let qulacs_q2 = self.convert_qubit_index(q2.to_index());
-        ffi::apply_cnot(self.state.pin_mut(), qulacs_q1, qulacs_q2);
-        self
-    }
-
-    fn cy(&mut self, q1: I, q2: I) -> &mut Self {
-        // CY can be implemented using CX and single-qubit gates
-        // CY = (I ⊗ Sdg) CX (I ⊗ S)
-        self.szdg(q2);
-        self.cx(q1, q2);
-        self.sz(q2);
-        self
-    }
-
-    fn cz(&mut self, q1: I, q2: I) -> &mut Self {
-        let qulacs_q1 = self.convert_qubit_index(q1.to_index());
-        let qulacs_q2 = self.convert_qubit_index(q2.to_index());
-        ffi::apply_cz(self.state.pin_mut(), qulacs_q1, qulacs_q2);
-        self
-    }
-
-    fn swap(&mut self, q1: I, q2: I) -> &mut Self {
-        let qulacs_q1 = self.convert_qubit_index(q1.to_index());
-        let qulacs_q2 = self.convert_qubit_index(q2.to_index());
-        ffi::apply_swap(self.state.pin_mut(), qulacs_q1, qulacs_q2);
-        self
-    }
-
-    fn mz(&mut self, q: I) -> MeasurementResult {
-        let pecos_qubit = q.to_index();
-        let qulacs_qubit = self.convert_qubit_index(pecos_qubit);
-        let prob_zero = ffi::get_marginal_probability(&self.state, qulacs_qubit);
-        let is_deterministic = prob_zero.abs() < 1e-10 || (prob_zero - 1.0).abs() < 1e-10;
-
-        // The C++ measure_z function uses its own RNG (which we've seeded)
-        // and properly collapses the state
-        let outcome_bit = ffi::measure_z(self.state.pin_mut(), qulacs_qubit);
-        let outcome = outcome_bit != 0;
-
-        MeasurementResult {
-            outcome,
-            is_deterministic,
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_h(self.state.pin_mut(), qulacs_qubit);
         }
+        self
+    }
+
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_s(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let qulacs_q1 = self.convert_qubit_index(pair[0].index());
+            let qulacs_q2 = self.convert_qubit_index(pair[1].index());
+            ffi::apply_cnot(self.state.pin_mut(), qulacs_q1, qulacs_q2);
+        }
+        self
+    }
+
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let mut results = Vec::with_capacity(qubits.len());
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            let prob_zero = ffi::get_marginal_probability(&self.state, qulacs_qubit);
+            let is_deterministic = prob_zero.abs() < 1e-10 || (prob_zero - 1.0).abs() < 1e-10;
+
+            // The C++ measure_z function uses its own RNG (which we've seeded)
+            // and properly collapses the state
+            let outcome_bit = ffi::measure_z(self.state.pin_mut(), qulacs_qubit);
+            let outcome = outcome_bit != 0;
+
+            results.push(MeasurementResult {
+                outcome,
+                is_deterministic,
+            });
+        }
+        results
+    }
+
+    // Override with native Qulacs implementations for better performance
+
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_x(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_y(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_z(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_sdag(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_sqrt_x(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_sqrt_xdag(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_sqrt_y(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_sqrt_ydag(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let qulacs_q1 = self.convert_qubit_index(pair[0].index());
+            let qulacs_q2 = self.convert_qubit_index(pair[1].index());
+            ffi::apply_cz(self.state.pin_mut(), qulacs_q1, qulacs_q2);
+        }
+        self
+    }
+
+    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SWAP requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let qulacs_q1 = self.convert_qubit_index(pair[0].index());
+            let qulacs_q2 = self.convert_qubit_index(pair[1].index());
+            ffi::apply_swap(self.state.pin_mut(), qulacs_q1, qulacs_q2);
+        }
+        self
     }
 
     // Override the f() gate - the default implementation in the trait has the wrong order
     // The F gate matrix is [[1+i, 1-i], [1+i, -1+i]]/2 which equals SZ @ SX as a matrix
     // But when applying gates sequentially, we need SX first then SZ
-    fn f(&mut self, q: I) -> &mut Self {
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
         // Apply SX then SZ to get F = SZ @ SX matrix
         // This is because applying gates sequentially means the rightmost gate is applied first
-        self.sx(q);
-        self.sz(q);
+        self.sx(qubits);
+        self.sz(qubits);
         self
     }
 
     // Similarly for fdg - F† = (SZ @ SX)† = SX† @ SZ†
     // But when applying gates sequentially, we apply SZ† first then SX†
-    fn fdg(&mut self, q: I) -> &mut Self {
-        self.szdg(q);
-        self.sxdg(q);
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.szdg(qubits);
+        self.sxdg(qubits);
         self
     }
 }
 
 // Implement ArbitraryRotationGateable trait
-impl<R, I> ArbitraryRotationGateable<I> for QulacsStateVec<R>
+impl<R> ArbitraryRotationGateable for QulacsStateVec<R>
 where
     R: RngCore + SeedableRng + Debug,
-    I: IndexableElement,
 {
-    fn rx(&mut self, angle: f64, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_rx(self.state.pin_mut(), qulacs_qubit, angle);
+    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_rx(self.state.pin_mut(), qulacs_qubit, theta);
+        }
         self
     }
 
-    fn ry(&mut self, angle: f64, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_ry(self.state.pin_mut(), qulacs_qubit, angle);
+    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            // Both Qulacs and PECOS StateVec use the same convention: diag(e^(-iθ/2), e^(iθ/2))
+            // No phase correction needed
+            ffi::apply_rz(self.state.pin_mut(), qulacs_qubit, theta);
+        }
         self
     }
 
-    fn rz(&mut self, angle: f64, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        // Both Qulacs and PECOS StateVec use the same convention: diag(e^(-iθ/2), e^(iθ/2))
-        // No phase correction needed
-        ffi::apply_rz(self.state.pin_mut(), qulacs_qubit, angle);
-        self
-    }
-
-    fn t(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_t(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn tdg(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_tdag(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn rzz(&mut self, angle: f64, q1: I, q2: I) -> &mut Self {
+    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RZZ requires pairs of qubits"
+        );
         // RZZ(θ) = exp(-i θ/2 Z⊗Z)
         // Decomposition: CNOT(q1,q2), RZ(θ, q2), CNOT(q1,q2)
-        // Actually gives: diag(e^(-iθ/2), e^(iθ/2), e^(iθ/2), e^(-iθ/2))
-        let q1_raw = q1.to_index();
-        let q2_raw = q2.to_index();
-        let q1_conv = self.convert_qubit_index(q1_raw);
-        let q2_conv = self.convert_qubit_index(q2_raw);
-        ffi::apply_cnot(self.state.pin_mut(), q1_conv, q2_conv);
-        ffi::apply_rz(self.state.pin_mut(), q2_conv, angle);
-        ffi::apply_cnot(self.state.pin_mut(), q1_conv, q2_conv);
+        for pair in qubits.chunks_exact(2) {
+            let q1_conv = self.convert_qubit_index(pair[0].index());
+            let q2_conv = self.convert_qubit_index(pair[1].index());
+            ffi::apply_cnot(self.state.pin_mut(), q1_conv, q2_conv);
+            ffi::apply_rz(self.state.pin_mut(), q2_conv, theta);
+            ffi::apply_cnot(self.state.pin_mut(), q1_conv, q2_conv);
+        }
         self
     }
 
-    // Override the rzzryyrxx method to fix the order of operations
-    // The default trait implementation has a reversed order
-    // We want RXX @ RYY @ RZZ as the final matrix, but when applying
-    // gates sequentially, we apply them in the opposite order
-    fn rzzryyrxx(&mut self, theta: f64, phi: f64, lambda: f64, q1: I, q2: I) -> &mut Self {
-        // Apply RZZ first, then RYY, then RXX to get RXX @ RYY @ RZZ matrix
-        self.rzz(lambda, q1, q2).ryy(phi, q1, q2).rxx(theta, q1, q2)
+    // Override with native Qulacs implementations
+
+    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_ry(self.state.pin_mut(), qulacs_qubit, theta);
+        }
+        self
+    }
+
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_t(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
+    }
+
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qulacs_qubit = self.convert_qubit_index(q.index());
+            ffi::apply_tdag(self.state.pin_mut(), qulacs_qubit);
+        }
+        self
     }
 }
 

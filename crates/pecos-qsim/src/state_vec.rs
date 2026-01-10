@@ -13,7 +13,7 @@
 use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
-use pecos_core::RngManageable;
+use pecos_core::{QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 
 use core::fmt::Debug;
@@ -466,7 +466,7 @@ where
     }
 }
 
-impl<R> CliffordGateable<usize> for StateVec<R>
+impl<R> CliffordGateable for StateVec<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
@@ -474,31 +474,16 @@ where
     ///
     /// See [`CliffordGateable::x`] for mathematical details and gate properties.
     /// This implementation uses direct state vector manipulation for performance.
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(2);
-    ///
-    /// // Flip first qubit
-    /// state.x(0);
-    ///
-    /// // Create Bell state using X gate
-    /// state.h(1).cx(1, 0);
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn x(&mut self, qubit: usize) -> &mut Self {
-        let step = 1 << qubit;
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qubit = q.index();
+            let step = 1 << qubit;
 
-        for i in (0..self.state.len()).step_by(2 * step) {
-            for offset in 0..step {
-                self.state.swap(i + offset, i + offset + step);
+            for i in (0..self.state.len()).step_by(2 * step) {
+                for offset in 0..step {
+                    self.state.swap(i + offset, i + offset + step);
+                }
             }
         }
         self
@@ -508,29 +493,17 @@ where
     ///
     /// See [`CliffordGateable::y`] for mathematical details and gate properties.
     /// This implementation directly updates complex amplitudes including phases.
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(1);
-    ///
-    /// // Apply Y gate to create state with imaginary amplitudes
-    /// state.y(0);  // Creates i|1⟩
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn y(&mut self, qubit: usize) -> &mut Self {
-        for i in 0..self.state.len() {
-            if (i >> qubit) & 1 == 0 {
-                let flipped_i = i ^ (1 << qubit);
-                let temp = self.state[i];
-                self.state[i] = -Complex64::i() * self.state[flipped_i];
-                self.state[flipped_i] = Complex64::i() * temp;
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qubit = q.index();
+            for i in 0..self.state.len() {
+                if (i >> qubit) & 1 == 0 {
+                    let flipped_i = i ^ (1 << qubit);
+                    let temp = self.state[i];
+                    self.state[i] = -Complex64::i() * self.state[flipped_i];
+                    self.state[flipped_i] = Complex64::i() * temp;
+                }
             }
         }
         self
@@ -540,26 +513,14 @@ where
     ///
     /// See [`CliffordGateable::z`] for mathematical details and gate properties.
     /// Takes advantage of diagonal structure for optimal performance.
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(1);
-    ///
-    /// // Create superposition and apply phase
-    /// state.h(0).z(0);  // Creates (|0⟩ - |1⟩)/√2
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn z(&mut self, qubit: usize) -> &mut Self {
-        for i in 0..self.state.len() {
-            if (i >> qubit) & 1 == 1 {
-                self.state[i] = -self.state[i];
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qubit = q.index();
+            for i in 0..self.state.len() {
+                if (i >> qubit) & 1 == 1 {
+                    self.state[i] = -self.state[i];
+                }
             }
         }
         self
@@ -569,66 +530,42 @@ where
     ///
     /// See [`CliffordGateable::sz`] for mathematical details and gate properties.
     /// Implemented using optimized single-qubit rotation.
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(1);
-    ///
-    /// // Create state with π/2 phase
-    /// state.h(0).sz(0);  // Creates (|0⟩ + i|1⟩)/√2
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn sz(&mut self, qubit: usize) -> &mut Self {
-        self.single_qubit_rotation(
-            qubit,
-            Complex64::new(1.0, 0.0), // u00
-            Complex64::new(0.0, 0.0), // u01
-            Complex64::new(0.0, 0.0), // u10
-            Complex64::new(0.0, 1.0), // u11
-        )
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.single_qubit_rotation(
+                q.index(),
+                Complex64::new(1.0, 0.0), // u00
+                Complex64::new(0.0, 0.0), // u01
+                Complex64::new(0.0, 0.0), // u10
+                Complex64::new(0.0, 1.0), // u11
+            );
+        }
+        self
     }
 
     /// Implementation of Hadamard gate for state vectors.
     ///
     /// See [`CliffordGateable::h`] for mathematical details and gate properties.
     /// This implementation directly computes the superposition amplitudes.
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(2);
-    ///
-    /// // Create Bell state using Hadamard
-    /// state.h(0).cx(0, 1);
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn h(&mut self, qubit: usize) -> &mut Self {
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         let factor = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
-        let step = 1 << qubit;
+        for &q in qubits {
+            let qubit = q.index();
+            let step = 1 << qubit;
 
-        for i in (0..self.state.len()).step_by(2 * step) {
-            for offset in 0..step {
-                let j = i + offset;
-                let paired_j = j ^ step;
+            for i in (0..self.state.len()).step_by(2 * step) {
+                for offset in 0..step {
+                    let j = i + offset;
+                    let paired_j = j ^ step;
 
-                let a = self.state[j];
-                let b = self.state[paired_j];
+                    let a = self.state[j];
+                    let b = self.state[paired_j];
 
-                self.state[j] = factor * (a + b);
-                self.state[paired_j] = factor * (a - b);
+                    self.state[j] = factor * (a + b);
+                    self.state[paired_j] = factor * (a - b);
+                }
             }
         }
         self
@@ -638,47 +575,22 @@ where
     ///
     /// See [`CliffordGateable::cx`] for mathematical details and gate properties.
     /// Uses bit manipulation for fast controlled operations.
-    ///
-    /// # Arguments
-    /// * `qubit1` - Qubit ID and control qubit
-    /// * `qubit2` - Qubit ID and target qubit
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(3);
-    ///
-    /// // Create GHZ state with CNOT cascade
-    /// state.h(0).cx(0, 1).cx(1, 2);
-    /// ```
-    ///
-    /// ```rust
-    /// use num_complex::Complex64;
-    /// use pecos_qsim::{StateVec, CliffordGateable};
-    ///
-    /// let mut state_vec = StateVec::new(2);
-    ///
-    /// state_vec.prepare_computational_basis(2);  // |01⟩
-    /// state_vec.cx(1, 0);  // Control: qubit 1, Target: qubit 0
-    ///
-    /// let prob = state_vec.probability(3);  // Expect |11⟩
-    /// assert!((prob - 1.0).abs() < 1e-10);
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit1` and `qubit2` are valid qubit indices (i.e., `< number of qubits`).
-    /// - `qubit1 != qubit2`.
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn cx(&mut self, qubit1: usize, qubit2: usize) -> &mut Self {
-        for i in 0..self.state.len() {
-            let control_val = (i >> qubit1) & 1;
-            let target_val = (i >> qubit2) & 1;
-            if control_val == 1 && target_val == 0 {
-                let flipped_i = i ^ (1 << qubit2);
-                self.state.swap(i, flipped_i);
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+            for i in 0..self.state.len() {
+                let control_val = (i >> q1) & 1;
+                let target_val = (i >> q2) & 1;
+                if control_val == 1 && target_val == 0 {
+                    let flipped_i = i ^ (1 << q2);
+                    self.state.swap(i, flipped_i);
+                }
             }
         }
         self
@@ -688,41 +600,29 @@ where
     ///
     /// See [`CliffordGateable::cy`] for mathematical details and gate properties.
     /// Combines bit manipulation with phase updates for controlled-Y operation.
-    ///
-    /// # Arguments
-    /// * `qubit1` - Qubit ID and control qubit
-    /// * `qubit2` - Qubit ID and target qubit
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(2);
-    ///
-    /// // Create entangled state with imaginary phase
-    /// state.h(0).cy(0, 1);  // Creates (|00⟩ + i|11⟩)/√2
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit1` and `qubit2` are valid qubit indices (i.e., `< number of qubits`).
-    /// - `qubit1 != qubit2`.
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn cy(&mut self, qubit1: usize, qubit2: usize) -> &mut Self {
-        // Only process when control bit is 1 and target bit is 0
-        for i in 0..self.state.len() {
-            let control_val = (i >> qubit1) & 1;
-            let target_val = (i >> qubit2) & 1;
+    fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CY requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+            // Only process when control bit is 1 and target bit is 0
+            for i in 0..self.state.len() {
+                let control_val = (i >> q1) & 1;
+                let target_val = (i >> q2) & 1;
 
-            if control_val == 1 && target_val == 0 {
-                let flipped_i = i ^ (1 << qubit2);
+                if control_val == 1 && target_val == 0 {
+                    let flipped_i = i ^ (1 << q2);
 
-                // Y gate has different phases than X
-                // Y = [[0, -i], [i, 0]]
-                let temp = self.state[i];
-                self.state[i] = -Complex64::i() * self.state[flipped_i];
-                self.state[flipped_i] = Complex64::i() * temp;
+                    // Y gate has different phases than X
+                    // Y = [[0, -i], [i, 0]]
+                    let temp = self.state[i];
+                    self.state[i] = -Complex64::i() * self.state[flipped_i];
+                    self.state[flipped_i] = Complex64::i() * temp;
+                }
             }
         }
         self
@@ -732,35 +632,23 @@ where
     ///
     /// See [`CliffordGateable::cz`] for mathematical details and gate properties.
     /// Takes advantage of diagonal structure for optimal performance.
-    ///
-    /// # Arguments
-    /// * `qubit1` - Qubit ID and control qubit
-    /// * `qubit2` - Qubit ID and target qubit
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(2);
-    ///
-    /// // Create cluster state
-    /// state.h(0).h(1).cz(0, 1);
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit1` and `qubit2` are valid qubit indices (i.e., `< number of qubits`).
-    /// - `qubit1 != qubit2`.
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn cz(&mut self, qubit1: usize, qubit2: usize) -> &mut Self {
-        // CZ is simpler - just add phase when both control and target are 1
-        for i in 0..self.state.len() {
-            let control_val = (i >> qubit1) & 1;
-            let target_val = (i >> qubit2) & 1;
+    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+            // CZ is simpler - just add phase when both control and target are 1
+            for i in 0..self.state.len() {
+                let control_val = (i >> q1) & 1;
+                let target_val = (i >> q2) & 1;
 
-            if control_val == 1 && target_val == 1 {
-                self.state[i] = -self.state[i];
+                if control_val == 1 && target_val == 1 {
+                    self.state[i] = -self.state[i];
+                }
             }
         }
         self
@@ -770,35 +658,27 @@ where
     ///
     /// See [`CliffordGateable::swap`] for mathematical details and gate properties.
     /// Uses bit manipulation for efficient state vector updates.
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
-    ///
-    /// let mut state = StateVec::new(2);
-    ///
-    /// // Create state and swap qubits
-    /// state.h(0).x(1).swap(0, 1);
-    /// ```
-    ///
-    /// # Safety
-    /// This function assumes that:
-    /// - `qubit1` and `qubit2` are valid qubit indices (i.e., `< number of qubits`).
-    /// - `qubit1 != qubit2`.
-    /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn swap(&mut self, qubit1: usize, qubit2: usize) -> &mut Self {
-        let step1 = 1 << qubit1;
-        let step2 = 1 << qubit2;
+    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SWAP requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+            let step1 = 1 << q1;
+            let step2 = 1 << q2;
 
-        for i in 0..self.state.len() {
-            let bit1 = (i >> qubit1) & 1;
-            let bit2 = (i >> qubit2) & 1;
+            for i in 0..self.state.len() {
+                let bit1 = (i >> q1) & 1;
+                let bit2 = (i >> q2) & 1;
 
-            if bit1 != bit2 {
-                let swapped_index = i ^ step1 ^ step2;
-                if i < swapped_index {
-                    self.state.swap(i, swapped_index);
+                if bit1 != bit2 {
+                    let swapped_index = i ^ step1 ^ step2;
+                    if i < swapped_index {
+                        self.state.swap(i, swapped_index);
+                    }
                 }
             }
         }
@@ -813,61 +693,68 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable};
+    /// use pecos_core::QubitId;
     ///
     /// let mut state = StateVec::new(2);
     ///
     /// // Create Bell state and measure first qubit
-    /// state.h(0).cx(0, 1);
-    /// let result = state.mz(0);
-    /// // Second qubit measurement will match first
-    /// let result2 = state.mz(1);
-    /// assert_eq!(result.outcome, result2.outcome);
+    /// state.h(&[QubitId(0)]).cx(&[QubitId(0), QubitId(1)]);
+    /// let results = state.mz(&[QubitId(0), QubitId(1)]);
+    /// // Both qubits will have the same outcome due to entanglement
+    /// assert_eq!(results[0].outcome, results[1].outcome);
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
+    /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn mz(&mut self, qubit: usize) -> MeasurementResult {
-        let step = 1 << qubit;
-        let mut prob_one = 0.0;
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let mut results = Vec::with_capacity(qubits.len());
 
-        // Calculate probability of measuring |1⟩
-        for i in (0..self.state.len()).step_by(2 * step) {
-            for offset in 0..step {
-                let idx = i + offset + step; // Target bit = 1 positions
-                prob_one += self.state[idx].norm_sqr();
+        for &q in qubits {
+            let qubit = q.index();
+            let step = 1 << qubit;
+            let mut prob_one = 0.0;
+
+            // Calculate probability of measuring |1>
+            for i in (0..self.state.len()).step_by(2 * step) {
+                for offset in 0..step {
+                    let idx = i + offset + step; // Target bit = 1 positions
+                    prob_one += self.state[idx].norm_sqr();
+                }
             }
-        }
 
-        // Decide measurement outcome
-        let result = usize::from(self.rng.random::<f64>() < prob_one);
+            // Decide measurement outcome
+            let result = usize::from(self.rng.random::<f64>() < prob_one);
 
-        // Collapse and normalize state
-        let mut norm = 0.0;
-        for i in 0..self.state.len() {
-            let bit = (i >> qubit) & 1;
-            if bit == result {
-                norm += self.state[i].norm_sqr();
-            } else {
-                self.state[i] = Complex64::new(0.0, 0.0);
+            // Collapse and normalize state
+            let mut norm = 0.0;
+            for i in 0..self.state.len() {
+                let bit = (i >> qubit) & 1;
+                if bit == result {
+                    norm += self.state[i].norm_sqr();
+                } else {
+                    self.state[i] = Complex64::new(0.0, 0.0);
+                }
             }
+
+            let norm_inv = 1.0 / norm.sqrt();
+            for amp in &mut self.state {
+                *amp *= norm_inv;
+            }
+
+            results.push(MeasurementResult {
+                outcome: result != 0,
+                is_deterministic: false,
+            });
         }
 
-        let norm_inv = 1.0 / norm.sqrt();
-        for amp in &mut self.state {
-            *amp *= norm_inv;
-        }
-
-        MeasurementResult {
-            outcome: result != 0,
-            is_deterministic: false,
-        }
+        results
     }
 }
 
-impl<R> ArbitraryRotationGateable<usize> for StateVec<R>
+impl<R> ArbitraryRotationGateable for StateVec<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
@@ -879,29 +766,33 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, ArbitraryRotationGateable};
+    /// use pecos_core::QubitId;
     /// use std::f64::consts::FRAC_PI_2;
     ///
     /// let mut state = StateVec::new(1);
     ///
     /// // Create superposition with phase
-    /// state.rx(FRAC_PI_2, 0);  // Creates (|0⟩ - i|1⟩)/√2
+    /// state.rx(FRAC_PI_2, &[QubitId(0)]);  // Creates (|0> - i|1>)/sqrt(2)
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
+    /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn rx(&mut self, theta: f64, qubit: usize) -> &mut Self {
+    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
-        self.single_qubit_rotation(
-            qubit,
-            Complex64::new(cos, 0.0),
-            Complex64::new(0.0, -sin),
-            Complex64::new(0.0, -sin),
-            Complex64::new(cos, 0.0),
-        )
+        for &q in qubits {
+            self.single_qubit_rotation(
+                q.index(),
+                Complex64::new(cos, 0.0),
+                Complex64::new(0.0, -sin),
+                Complex64::new(0.0, -sin),
+                Complex64::new(cos, 0.0),
+            );
+        }
+        self
     }
 
     /// Implementation of rotation around the Y-axis.
@@ -912,29 +803,33 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, ArbitraryRotationGateable};
+    /// use pecos_core::QubitId;
     /// use std::f64::consts::PI;
     ///
     /// let mut state = StateVec::new(1);
     ///
     /// // Create equal superposition
-    /// state.ry(PI/2.0, 0);  // Creates (|0⟩ + |1⟩)/√2
+    /// state.ry(PI/2.0, &[QubitId(0)]);  // Creates (|0> + |1>)/sqrt(2)
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
+    /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn ry(&mut self, theta: f64, qubit: usize) -> &mut Self {
+    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
-        self.single_qubit_rotation(
-            qubit,
-            Complex64::new(cos, 0.0),
-            Complex64::new(-sin, 0.0),
-            Complex64::new(sin, 0.0),
-            Complex64::new(cos, 0.0),
-        )
+        for &q in qubits {
+            self.single_qubit_rotation(
+                q.index(),
+                Complex64::new(cos, 0.0),
+                Complex64::new(-sin, 0.0),
+                Complex64::new(sin, 0.0),
+                Complex64::new(cos, 0.0),
+            );
+        }
+        self
     }
 
     /// Implementation of rotation around the Z-axis.
@@ -945,29 +840,33 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable, ArbitraryRotationGateable};
+    /// use pecos_core::QubitId;
     /// use std::f64::consts::FRAC_PI_4;
     ///
     /// let mut state = StateVec::new(1);
     ///
     /// // Create superposition and add phase
-    /// state.h(0).rz(FRAC_PI_4, 0);  // T gate equivalent
+    /// state.h(&[QubitId(0)]).rz(FRAC_PI_4, &[QubitId(0)]);  // T gate equivalent
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
+    /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
-    fn rz(&mut self, theta: f64, qubit: usize) -> &mut Self {
+    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
         let e_pos = Complex64::from_polar(1.0, -theta / 2.0);
         let e_neg = Complex64::from_polar(1.0, theta / 2.0);
 
-        self.single_qubit_rotation(
-            qubit,
-            e_pos,
-            Complex64::new(0.0, 0.0),
-            Complex64::new(0.0, 0.0),
-            e_neg,
-        )
+        for &q in qubits {
+            self.single_qubit_rotation(
+                q.index(),
+                e_pos,
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                e_neg,
+            );
+        }
+        self
     }
 
     /// Implementation of general single-qubit unitary rotation.
@@ -978,20 +877,21 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, ArbitraryRotationGateable};
+    /// use pecos_core::QubitId;
     /// use std::f64::consts::{PI, FRAC_PI_2};
     ///
     /// let mut state = StateVec::new(1);
     ///
     /// // Create arbitrary rotation (equivalent to TH up to global phase)
-    /// state.u(FRAC_PI_2, 0.0, FRAC_PI_2, 0);
+    /// state.u(FRAC_PI_2, 0.0, FRAC_PI_2, &[QubitId(0)]);
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
+    /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubit: usize) -> &mut Self {
+    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
 
@@ -1001,7 +901,10 @@ where
         let u10 = Complex64::from_polar(sin, phi);
         let u11 = Complex64::from_polar(cos, phi + lambda);
 
-        self.single_qubit_rotation(qubit, u00, u01, u10, u11)
+        for &q in qubits {
+            self.single_qubit_rotation(q.index(), u00, u01, u10, u11);
+        }
+        self
     }
 
     /// Implementation of single-qubit rotation in XY plane.
@@ -1012,31 +915,35 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, ArbitraryRotationGateable};
+    /// use pecos_core::QubitId;
     /// use std::f64::consts::FRAC_PI_2;
     ///
     /// let mut state = StateVec::new(1);
     ///
     /// // 90-degree rotation around X+Y axis
-    /// state.r1xy(FRAC_PI_2, FRAC_PI_2, 0);
+    /// state.r1xy(FRAC_PI_2, FRAC_PI_2, &[QubitId(0)]);
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit` is a valid qubit index (i.e., `< number of qubits`).
+    /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn r1xy(&mut self, theta: f64, phi: f64, qubit: usize) -> &mut Self {
+    fn r1xy(&mut self, theta: f64, phi: f64, qubits: &[QubitId]) -> &mut Self {
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
 
         // Calculate the matrix elements
-        let r00 = Complex64::new(cos, 0.0); // cos(θ/2)
-        let r01 = -Complex64::new(0.0, sin) * Complex64::from_polar(1.0, -phi); // -i sin(θ/2) e^(-iφ)
-        let r10 = -Complex64::new(0.0, sin) * Complex64::from_polar(1.0, phi); // -i sin(θ/2) e^(iφ)
-        let r11 = Complex64::new(cos, 0.0); // cos(θ/2)
+        let r00 = Complex64::new(cos, 0.0); // cos(theta/2)
+        let r01 = -Complex64::new(0.0, sin) * Complex64::from_polar(1.0, -phi); // -i sin(theta/2) e^(-i*phi)
+        let r10 = -Complex64::new(0.0, sin) * Complex64::from_polar(1.0, phi); // -i sin(theta/2) e^(i*phi)
+        let r11 = Complex64::new(cos, 0.0); // cos(theta/2)
 
-        // Apply the single-qubit rotation using the matrix elements
-        self.single_qubit_rotation(qubit, r00, r01, r10, r11)
+        for &q in qubits {
+            // Apply the single-qubit rotation using the matrix elements
+            self.single_qubit_rotation(q.index(), r00, r01, r10, r11);
+        }
+        self
     }
 
     /// Implementation of two-qubit XX rotation.
@@ -1047,57 +954,67 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, ArbitraryRotationGateable};
+    /// use pecos_core::QubitId;
     /// use std::f64::consts::FRAC_PI_2;
     ///
     /// let mut state = StateVec::new(2);
     ///
     /// // Create maximally entangled state
-    /// state.rxx(FRAC_PI_2, 0, 1);  // Creates (|00⟩ - i|11⟩)/√2
+    /// state.rxx(FRAC_PI_2, &[QubitId(0), QubitId(1)]);  // Creates (|00> - i|11>)/sqrt(2)
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit1` and `qubit2` are valid qubit indices (i.e., `< number of qubits`).
-    /// - `qubit1 != qubit2`.
+    /// - `qubits.len() % 2 == 0` (pairs of qubits).
+    /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn rxx(&mut self, theta: f64, qubit1: usize, qubit2: usize) -> &mut Self {
+    fn rxx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RXX requires pairs of qubits"
+        );
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
         let neg_i_sin = Complex64::new(0.0, -sin); // -i*sin
 
-        // Make sure qubit1 < qubit2 for consistent ordering
-        let (q1, q2) = if qubit1 < qubit2 {
-            (qubit1, qubit2)
-        } else {
-            (qubit2, qubit1)
-        };
+        for pair in qubits.chunks_exact(2) {
+            let first = pair[0].index();
+            let second = pair[1].index();
 
-        for i in 0..self.state.len() {
-            let bit1 = (i >> q1) & 1;
-            let bit2 = (i >> q2) & 1;
+            // Make sure q1 < q2 for consistent ordering
+            let (q1, q2) = if first < second {
+                (first, second)
+            } else {
+                (second, first)
+            };
 
-            if bit1 == 0 && bit2 == 0 {
-                let i01 = i ^ (1 << q2);
-                let i10 = i ^ (1 << q1);
-                let i11 = i ^ (1 << q1) ^ (1 << q2);
+            for i in 0..self.state.len() {
+                let bit1 = (i >> q1) & 1;
+                let bit2 = (i >> q2) & 1;
 
-                let a00 = self.state[i];
-                let a01 = self.state[i01];
-                let a10 = self.state[i10];
-                let a11 = self.state[i11];
+                if bit1 == 0 && bit2 == 0 {
+                    let i01 = i ^ (1 << q2);
+                    let i10 = i ^ (1 << q1);
+                    let i11 = i ^ (1 << q1) ^ (1 << q2);
 
-                // Apply the correct RXX matrix
-                self.state[i] = cos * a00 + neg_i_sin * a11;
-                self.state[i01] = cos * a01 + neg_i_sin * a10;
-                self.state[i10] = cos * a10 + neg_i_sin * a01;
-                self.state[i11] = cos * a11 + neg_i_sin * a00;
+                    let a00 = self.state[i];
+                    let a01 = self.state[i01];
+                    let a10 = self.state[i10];
+                    let a11 = self.state[i11];
+
+                    // Apply the correct RXX matrix
+                    self.state[i] = cos * a00 + neg_i_sin * a11;
+                    self.state[i01] = cos * a01 + neg_i_sin * a10;
+                    self.state[i10] = cos * a10 + neg_i_sin * a01;
+                    self.state[i11] = cos * a11 + neg_i_sin * a00;
+                }
             }
         }
         self
     }
 
-    /// Implementation of the RYY(θ) gate for state vectors.
+    /// Implementation of the RYY(theta) gate for state vectors.
     ///
     /// See [`ArbitraryRotationGateable::ryy`] for mathematical details and gate properties.
     /// This implementation directly updates amplitudes in the state vector for optimal performance.
@@ -1105,55 +1022,65 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable, ArbitraryRotationGateable};
+    /// use pecos_core::QubitId;
     /// use std::f64::consts::FRAC_PI_2;
     ///
     /// let mut state = StateVec::new(2);
     ///
     /// // Create entangled state
-    /// state.h(0)
-    ///      .cx(0, 1);
+    /// state.h(&[QubitId(0)])
+    ///      .cx(&[QubitId(0), QubitId(1)]);
     ///
     /// // Apply RYY rotation
-    /// state.ryy(FRAC_PI_2, 0, 1);
+    /// state.ryy(FRAC_PI_2, &[QubitId(0), QubitId(1)]);
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit1` and `qubit2` are valid qubit indices (i.e., `< number of qubits`).
-    /// - `qubit1 != qubit2`.
+    /// - `qubits.len() % 2 == 0` (pairs of qubits).
+    /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn ryy(&mut self, theta: f64, q1: usize, q2: usize) -> &mut Self {
+    fn ryy(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RYY requires pairs of qubits"
+        );
         let cos = (theta / 2.0).cos();
         let i_sin = Complex64::new(0.0, 1.0) * (theta / 2.0).sin();
 
-        // No need to reorder q1 and q2 since we're using explicit masks
-        let mask1 = 1 << q1;
-        let mask2 = 1 << q2;
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
 
-        for i in 0..self.state.len() {
-            // Only process each set of 4 states once
-            if (i & (mask1 | mask2)) == 0 {
-                let i00 = i;
-                let i01 = i | mask2;
-                let i10 = i | mask1;
-                let i11 = i | mask1 | mask2;
+            // No need to reorder q1 and q2 since we're using explicit masks
+            let mask1 = 1 << q1;
+            let mask2 = 1 << q2;
 
-                let a00 = self.state[i00];
-                let a01 = self.state[i01];
-                let a10 = self.state[i10];
-                let a11 = self.state[i11];
+            for i in 0..self.state.len() {
+                // Only process each set of 4 states once
+                if (i & (mask1 | mask2)) == 0 {
+                    let i00 = i;
+                    let i01 = i | mask2;
+                    let i10 = i | mask1;
+                    let i11 = i | mask1 | mask2;
 
-                self.state[i00] = cos * a00 + i_sin * a11;
-                self.state[i01] = cos * a01 - i_sin * a10;
-                self.state[i10] = cos * a10 - i_sin * a01;
-                self.state[i11] = cos * a11 + i_sin * a00;
+                    let a00 = self.state[i00];
+                    let a01 = self.state[i01];
+                    let a10 = self.state[i10];
+                    let a11 = self.state[i11];
+
+                    self.state[i00] = cos * a00 + i_sin * a11;
+                    self.state[i01] = cos * a01 - i_sin * a10;
+                    self.state[i10] = cos * a10 - i_sin * a01;
+                    self.state[i11] = cos * a11 + i_sin * a00;
+                }
             }
         }
         self
     }
 
-    /// Implementation of the RZZ(θ) gate for state vectors.
+    /// Implementation of the RZZ(theta) gate for state vectors.
     ///
     /// See [`ArbitraryRotationGateable::rzz`] for mathematical details and gate properties.
     /// Takes advantage of the diagonal structure in the computational basis for optimal performance.
@@ -1161,40 +1088,51 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVec, CliffordGateable, ArbitraryRotationGateable};
+    /// use pecos_core::QubitId;
     /// use std::f64::consts::PI;
     ///
     /// let mut state = StateVec::new(3);
     ///
     /// // Create GHZ state
-    /// state.h(0)
-    ///      .cx(0, 1)
-    ///      .cx(1, 2);
+    /// state.h(&[QubitId(0)])
+    ///      .cx(&[QubitId(0), QubitId(1)])
+    ///      .cx(&[QubitId(1), QubitId(2)]);
     ///
     /// // Apply phase rotation between first and last qubit
-    /// state.rzz(PI/4.0, 0, 2);
+    /// state.rzz(PI/4.0, &[QubitId(0), QubitId(2)]);
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
-    /// - `qubit1` and `qubit2` are valid qubit indices (i.e., `< number of qubits`).
-    /// - `qubit1 != qubit2`.
+    /// - `qubits.len() % 2 == 0` (pairs of qubits).
+    /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
-    fn rzz(&mut self, theta: f64, qubit1: usize, qubit2: usize) -> &mut Self {
-        // RZZ is diagonal in computational basis - just add phases
-        for i in 0..self.state.len() {
-            let bit1 = (i >> qubit1) & 1;
-            let bit2 = (i >> qubit2) & 1;
+    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RZZ requires pairs of qubits"
+        );
 
-            // Phase depends on parity of bits
-            let phase = if bit1 ^ bit2 == 0 {
-                // Same bits (00 or 11) -> e^(-iθ/2)
-                Complex64::from_polar(1.0, -theta / 2.0)
-            } else {
-                // Different bits (01 or 10) -> e^(iθ/2)
-                Complex64::from_polar(1.0, theta / 2.0)
-            };
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
 
-            self.state[i] *= phase;
+            // RZZ is diagonal in computational basis - just add phases
+            for i in 0..self.state.len() {
+                let bit1 = (i >> q1) & 1;
+                let bit2 = (i >> q2) & 1;
+
+                // Phase depends on parity of bits
+                let phase = if bit1 ^ bit2 == 0 {
+                    // Same bits (00 or 11) -> e^(-i*theta/2)
+                    Complex64::from_polar(1.0, -theta / 2.0)
+                } else {
+                    // Different bits (01 or 10) -> e^(i*theta/2)
+                    Complex64::from_polar(1.0, theta / 2.0)
+                };
+
+                self.state[i] *= phase;
+            }
         }
         self
     }
@@ -1275,9 +1213,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_core::QubitId;
     use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI, TAU};
 
     use num_complex::Complex64;
+
+    // Helper to create qubit slice for single qubit
+    fn qid(n: usize) -> [QubitId; 1] {
+        [QubitId(n)]
+    }
+
+    // Helper to create qubit slice for two qubits
+    fn qid2(a: usize, b: usize) -> [QubitId; 2] {
+        [QubitId(a), QubitId(b)]
+    }
 
     /// Compare two quantum states up to global phase.
     ///
@@ -1339,7 +1288,7 @@ mod tests {
     fn test_reset() {
         let mut state_vec = StateVec::new(2);
 
-        state_vec.h(0).cx(0, 1); // Create Bell state
+        state_vec.h(&qid(0)).cx(&qid2(0, 1)); // Create Bell state
         state_vec.reset(); // Reset to |00⟩
 
         assert!((state_vec.probability(0) - 1.0).abs() < 1e-10);
@@ -1353,7 +1302,7 @@ mod tests {
         let mut state_vec = StateVec::new(1);
 
         // Prepare |+⟩ state
-        state_vec.h(0);
+        state_vec.h(&qid(0));
 
         let prob_zero = state_vec.probability(0);
         let prob_one = state_vec.probability(1);
@@ -1390,26 +1339,26 @@ mod tests {
         assert!(q.state[1].norm() < 1e-10);
 
         // Test X on |0> -> |1>
-        q.x(0);
+        q.x(&qid(0));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re - 1.0).abs() < 1e-10);
 
         // Test X on |1> -> |0>
-        q.x(0);
+        q.x(&qid(0));
         assert!((q.state[0].re - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
 
         // Test X on superposition
-        q.h(0);
+        q.h(&qid(0));
         let initial_state = q.state.clone();
-        q.x(0); // X|+> = |+>
+        q.x(&qid(0)); // X|+> = |+>
         for (state, initial) in q.state.iter().zip(initial_state.iter()) {
             assert!((state - initial).norm() < 1e-10);
         }
 
         // Test X on second qubit of two-qubit system
         let mut q = StateVec::new(2);
-        q.x(1);
+        q.x(&qid(1));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[2].re - 1.0).abs() < 1e-10);
     }
@@ -1419,19 +1368,19 @@ mod tests {
         let mut q = StateVec::new(1);
 
         // Test Y on |0⟩ -> i|1⟩
-        q.y(0);
+        q.y(&qid(0));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1] - Complex64::i()).norm() < 1e-10);
 
         // Test Y on i|1⟩ -> |0⟩
-        q.y(0);
+        q.y(&qid(0));
         assert!((q.state[0].re - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
 
         // Test Y on |+⟩
         let mut q = StateVec::new(1);
-        q.h(0); // Create |+⟩
-        q.y(0); // Should give i|-⟩
+        q.h(&qid(0)); // Create |+⟩
+        q.y(&qid(0)); // Should give i|-⟩
         let expected = FRAC_1_SQRT_2;
         assert!((q.state[0].im + expected).abs() < 1e-10);
         assert!((q.state[1].im - expected).abs() < 1e-10);
@@ -1442,20 +1391,20 @@ mod tests {
         let mut q = StateVec::new(1);
 
         // Test Z on |0⟩ -> |0⟩
-        q.z(0);
+        q.z(&qid(0));
         assert!((q.state[0].re - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
 
         // Test Z on |1⟩ -> -|1⟩
-        q.x(0); // Prepare |1⟩
-        q.z(0);
+        q.x(&qid(0)); // Prepare |1⟩
+        q.z(&qid(0));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re + 1.0).abs() < 1e-10);
 
         // Test Z on |+⟩ -> |-⟩
         let mut q = StateVec::new(1);
-        q.h(0); // Create |+⟩
-        q.z(0); // Should give |-⟩
+        q.h(&qid(0)); // Create |+⟩
+        q.z(&qid(0)); // Should give |-⟩
         let expected = FRAC_1_SQRT_2;
         assert!((q.state[0].re - expected).abs() < 1e-10);
         assert!((q.state[1].re + expected).abs() < 1e-10);
@@ -1464,7 +1413,7 @@ mod tests {
     #[test]
     fn test_h() {
         let mut q = StateVec::new(1);
-        q.h(0);
+        q.h(&qid(0));
 
         assert!((q.state[0].re - FRAC_1_SQRT_2).abs() < 1e-10);
         assert!((q.state[1].re - FRAC_1_SQRT_2).abs() < 1e-10);
@@ -1480,8 +1429,8 @@ mod tests {
     fn test_cx() {
         let mut q = StateVec::new(2);
         // Prep |+>
-        q.h(0);
-        q.cx(0, 1);
+        q.h(&qid(0));
+        q.cx(&qid2(0, 1));
 
         // Should be in Bell state (|00> + |11>)/sqrt(2)
         let expected = 1.0 / 2.0_f64.sqrt();
@@ -1496,10 +1445,10 @@ mod tests {
         let mut q = StateVec::new(2);
 
         // Create |+0⟩ state
-        q.h(0);
+        q.h(&qid(0));
 
         // Apply CY to get entangled state
-        q.cy(0, 1);
+        q.cy(&qid2(0, 1));
 
         // Should be (|00⟩ + i|11⟩)/√2
         let expected = FRAC_1_SQRT_2;
@@ -1514,11 +1463,11 @@ mod tests {
         let mut q = StateVec::new(2);
 
         // Create |++⟩ state
-        q.h(0);
-        q.h(1);
+        q.h(&qid(0));
+        q.h(&qid(1));
 
         // Apply CZ
-        q.cz(0, 1);
+        q.cz(&qid2(0, 1));
 
         // Should be (|00⟩ + |01⟩ + |10⟩ - |11⟩)/2
         let expected = 0.5;
@@ -1531,8 +1480,8 @@ mod tests {
     #[test]
     fn test_swap() {
         let mut q = StateVec::new(2);
-        q.x(0);
-        q.swap(0, 1);
+        q.x(&qid(0));
+        q.swap(&qid2(0, 1));
 
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[2].re - 1.0).abs() < 1e-10);
@@ -1545,15 +1494,15 @@ mod tests {
     fn test_mz() {
         // Test 1: Measuring |0> state
         let mut q = StateVec::new(1);
-        let result = q.mz(0);
+        let result = q.mz(&qid(0)).into_iter().next().unwrap();
         assert!(!result.outcome);
         assert!((q.state[0].re - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
 
         // Test 2: Measuring |1> state
         let mut q = StateVec::new(1);
-        q.x(0);
-        let result = q.mz(0);
+        q.x(&qid(0));
+        let result = q.mz(&qid(0)).into_iter().next().unwrap();
         assert!(result.outcome);
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re - 1.0).abs() < 1e-10);
@@ -1564,8 +1513,8 @@ mod tests {
 
         for _ in 0..trials {
             let mut q = StateVec::new(1);
-            q.h(0);
-            let result = q.mz(0);
+            q.h(&qid(0));
+            let result = q.mz(&qid(0)).into_iter().next().unwrap();
             if !result.outcome {
                 zeros += 1;
             }
@@ -1577,13 +1526,13 @@ mod tests {
 
         // Test 4: Measuring one qubit of a Bell state
         let mut q = StateVec::new(2);
-        q.h(0);
-        q.cx(0, 1);
+        q.h(&qid(0));
+        q.cx(&qid2(0, 1));
 
         // Measure first qubit
-        let result1 = q.mz(0);
+        let result1 = q.mz(&qid(0)).into_iter().next().unwrap();
         // Measure second qubit - should match first
-        let result2 = q.mz(1);
+        let result2 = q.mz(&qid(1)).into_iter().next().unwrap();
         assert_eq!(result1.outcome, result2.outcome);
     }
 
@@ -1592,11 +1541,11 @@ mod tests {
         let mut q = StateVec::new(1);
 
         // Put qubit in |1⟩ state
-        q.x(0);
+        q.x(&qid(0));
 
         // Measure twice - result should be the same
-        let result1 = q.mz(0);
-        let result2 = q.mz(0);
+        let result1 = q.mz(&qid(0)).into_iter().next().unwrap();
+        let result2 = q.mz(&qid(0)).into_iter().next().unwrap();
 
         assert!(result1.outcome);
         assert!(result2.outcome);
@@ -1607,10 +1556,10 @@ mod tests {
         let mut state_vec = StateVec::new(1);
 
         // Prepare |+⟩ = (|0⟩ + |1⟩) / √2
-        state_vec.h(0);
+        state_vec.h(&qid(0));
 
         // Simulate a measurement
-        let result = state_vec.mz(0);
+        let result = state_vec.mz(&qid(0)).into_iter().next().unwrap();
 
         // State should collapse to |0⟩ or |1⟩
         if result.outcome {
@@ -1626,11 +1575,11 @@ mod tests {
     fn test_pz() {
         let mut q = StateVec::new(1);
 
-        q.h(0);
+        q.h(&qid(0));
         assert!((q.state[0].re - FRAC_1_SQRT_2).abs() < 1e-10);
         assert!((q.state[1].re - FRAC_1_SQRT_2).abs() < 1e-10);
 
-        q.pz(0);
+        q.pz(&qid(0));
 
         assert!((q.state[0].re - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
@@ -1640,10 +1589,10 @@ mod tests {
     fn test_pz_multiple_qubits() {
         let mut q = StateVec::new(2);
 
-        q.h(0);
-        q.cx(0, 1);
+        q.h(&qid(0));
+        q.cx(&qid2(0, 1));
 
-        q.pz(0);
+        q.pz(&qid(0));
 
         let prob_0 = q.state[0].norm_sqr() + q.state[2].norm_sqr();
         let prob_1 = q.state[1].norm_sqr() + q.state[3].norm_sqr();
@@ -1660,13 +1609,13 @@ mod tests {
         let mut q = StateVec::new(1);
 
         // RX(π) should flip |0⟩ to -i|1⟩
-        q.rx(PI, 0);
+        q.rx(PI, &qid(0));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].norm() - 1.0).abs() < 1e-10);
 
         // RX(2π) should return to the initial state up to global phase
         let mut q = StateVec::new(1);
-        q.rx(2.0 * PI, 0);
+        q.rx(2.0 * PI, &qid(0));
         assert!((q.state[0].norm() - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
     }
@@ -1676,12 +1625,12 @@ mod tests {
         let mut q = StateVec::new(1);
 
         // RY(π) should flip |0⟩ to |1⟩
-        q.ry(PI, 0);
+        q.ry(PI, &qid(0));
         assert!(q.state[0].norm() < 1e-10); // Close to zero
         assert!((q.state[1].norm() - 1.0).abs() < 1e-10); // Magnitude 1 for |1⟩
 
         // Two RY(π) rotations should return to the initial state
-        q.ry(PI, 0);
+        q.ry(PI, &qid(0));
         assert!((q.state[0].norm() - 1.0).abs() < 1e-10); // Magnitude 1 for |0⟩
         assert!(q.state[1].norm() < 1e-10); // Close to zero
     }
@@ -1691,10 +1640,10 @@ mod tests {
         let mut q = StateVec::new(1);
 
         // RZ should only add phases, not change probabilities
-        q.h(0); // Put qubit in superposition
+        q.h(&qid(0)); // Put qubit in superposition
         let probs_before: Vec<f64> = q.state.iter().map(num_complex::Complex::norm_sqr).collect();
 
-        q.rz(FRAC_PI_2, 0); // Rotate Z by π/2
+        q.rz(FRAC_PI_2, &qid(0)); // Rotate Z by π/2
         let probs_after: Vec<f64> = q.state.iter().map(num_complex::Complex::norm_sqr).collect();
 
         for (p1, p2) in probs_before.iter().zip(probs_after.iter()) {
@@ -1710,7 +1659,7 @@ mod tests {
         let theta = PI / 5.0;
         let phi = PI / 7.0;
         let lambda = PI / 3.0;
-        q.u(theta, phi, lambda, 0);
+        q.u(theta, phi, lambda, &qid(0));
 
         // Verify normalization is preserved
         let norm: f64 = q.state.iter().map(num_complex::Complex::norm_sqr).sum();
@@ -1734,10 +1683,10 @@ mod tests {
         let phi = FRAC_PI_4;
 
         // Apply the manual `r1xy` implementation.
-        state_vec_r1xy.r1xy(theta, phi, 0);
+        state_vec_r1xy.r1xy(theta, phi, &qid(0));
 
         // Apply the `r1xy` implementation from the `ArbitraryRotationGateable` trait.
-        ArbitraryRotationGateable::r1xy(&mut trait_r1xy, theta, phi, 0);
+        ArbitraryRotationGateable::r1xy(&mut trait_r1xy, theta, phi, &qid(0));
 
         // Use the `assert_states_equal` function to compare the states up to a global phase.
         assert_states_equal(&state_vec_r1xy.state, &trait_r1xy.state);
@@ -1749,7 +1698,7 @@ mod tests {
     fn test_rxx() {
         // Test 1: RXX(π/2) on |00⟩ should give (|00⟩ - i|11⟩)/√2
         let mut q = StateVec::new(2);
-        q.rxx(FRAC_PI_2, 0, 1);
+        q.rxx(FRAC_PI_2, &qid2(0, 1));
 
         let expected = FRAC_1_SQRT_2;
         assert!((q.state[0].re - expected).abs() < 1e-10);
@@ -1759,9 +1708,9 @@ mod tests {
 
         // Test 2: RXX(2π) should return to original state up to global phase
         let mut q = StateVec::new(2);
-        q.h(0); // Create some initial state
+        q.h(&qid(0)); // Create some initial state
         let initial = q.state.clone();
-        q.rxx(TAU, 0, 1);
+        q.rxx(TAU, &qid2(0, 1));
 
         // Compare up to global phase
         if q.state[0].norm() > 1e-10 {
@@ -1773,7 +1722,7 @@ mod tests {
 
         // Test 3: RXX(π) should flip |00⟩ to |11⟩ up to phase
         let mut q = StateVec::new(2);
-        q.rxx(PI, 0, 1);
+        q.rxx(PI, &qid2(0, 1));
 
         // Should get -i|11⟩
         assert!(q.state[0].norm() < 1e-10);
@@ -1789,7 +1738,7 @@ mod tests {
         // Test all basis states for RYY(π/2)
         // |00⟩ -> (1/√2)|00⟩ - i(1/√2)|11⟩
         let mut q = StateVec::new(2);
-        q.ryy(FRAC_PI_2, 0, 1);
+        q.ryy(FRAC_PI_2, &qid2(0, 1));
         assert!((q.state[0].re - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
@@ -1797,8 +1746,8 @@ mod tests {
 
         // |11⟩ -> i(1/√2)|00⟩ + (1/√2)|11⟩
         let mut q = StateVec::new(2);
-        q.x(0).x(1); // Prepare |11⟩
-        q.ryy(FRAC_PI_2, 0, 1);
+        q.x(&qid(0)).x(&qid(1)); // Prepare |11⟩
+        q.ryy(FRAC_PI_2, &qid2(0, 1));
         assert!((q.state[0].im - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
@@ -1806,8 +1755,8 @@ mod tests {
 
         // |01⟩ -> (1/√2)|01⟩ + i(1/√2)|10⟩
         let mut q = StateVec::new(2);
-        q.x(1); // Prepare |01⟩
-        q.ryy(FRAC_PI_2, 0, 1);
+        q.x(&qid(1)); // Prepare |01⟩
+        q.ryy(FRAC_PI_2, &qid2(0, 1));
         assert!(q.state[0].norm() < 1e-10);
         assert!(q.state[1].re.abs() < 1e-10);
         assert!((q.state[1].im + expected).abs() < 1e-10);
@@ -1817,8 +1766,8 @@ mod tests {
 
         // |10⟩ -> (1/√2)|10⟩ + i(1/√2)|01⟩
         let mut q = StateVec::new(2);
-        q.x(0); // Prepare |10⟩
-        q.ryy(FRAC_PI_2, 0, 1);
+        q.x(&qid(0)); // Prepare |10⟩
+        q.ryy(FRAC_PI_2, &qid2(0, 1));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re - expected).abs() < 1e-10);
         assert!(q.state[1].im.abs() < 1e-10);
@@ -1830,9 +1779,9 @@ mod tests {
 
         // 1. Periodicity: RYY(2π) = I
         let mut q = StateVec::new(2);
-        q.h(0); // Create non-trivial initial state
+        q.h(&qid(0)); // Create non-trivial initial state
         let initial = q.state.clone();
-        q.ryy(TAU, 0, 1);
+        q.ryy(TAU, &qid2(0, 1));
         // Need to account for potential global phase
         if q.state[0].norm() > 1e-10 {
             let phase = q.state[0] / initial[0];
@@ -1847,10 +1796,10 @@ mod tests {
         // 2. Composition: RYY(θ₁)RYY(θ₂) = RYY(θ₁ + θ₂)
         let mut q1 = StateVec::new(2);
         let mut q2 = StateVec::new(2);
-        q1.h(0); // Create non-trivial initial state
-        q2.h(0); // Same initial state
-        q1.ryy(FRAC_PI_3, 0, 1).ryy(FRAC_PI_6, 0, 1);
-        q2.ryy(FRAC_PI_2, 0, 1);
+        q1.h(&qid(0)); // Create non-trivial initial state
+        q2.h(&qid(0)); // Same initial state
+        q1.ryy(FRAC_PI_3, &qid2(0, 1)).ryy(FRAC_PI_6, &qid2(0, 1));
+        q2.ryy(FRAC_PI_2, &qid2(0, 1));
         // Compare up to global phase
         if q1.state[0].norm() > 1e-10 {
             let phase = q1.state[0] / q2.state[0];
@@ -1865,10 +1814,10 @@ mod tests {
         // 3. Symmetry: RYY(θ,0,1) = RYY(θ,1,0)
         let mut q1 = StateVec::new(2);
         let mut q2 = StateVec::new(2);
-        q1.h(0).h(1); // Create non-trivial initial state
-        q2.h(0).h(1); // Same initial state
-        q1.ryy(FRAC_PI_3, 0, 1);
-        q2.ryy(FRAC_PI_3, 1, 0);
+        q1.h(&qid(0)).h(&qid(1)); // Create non-trivial initial state
+        q2.h(&qid(0)).h(&qid(1)); // Same initial state
+        q1.ryy(FRAC_PI_3, &qid2(0, 1));
+        q2.ryy(FRAC_PI_3, &qid2(1, 0));
         // States should be exactly equal (no phase difference)
         for (a, b) in q1.state.iter().zip(q2.state.iter()) {
             assert!((a - b).norm() < 1e-10, "Symmetry test failed: a={a}, b={b}");
@@ -1880,11 +1829,11 @@ mod tests {
         // Test 1: RZZ(π) on (|00⟩ + |11⟩)/√2 should give itself
         let mut q = StateVec::new(2);
         // Create Bell state
-        q.h(0);
-        q.cx(0, 1);
+        q.h(&qid(0));
+        q.cx(&qid2(0, 1));
         let initial = q.state.clone();
 
-        q.rzz(PI, 0, 1);
+        q.rzz(PI, &qid2(0, 1));
 
         // Compare up to global phase
         if q.state[0].norm() > 1e-10 {
@@ -1896,9 +1845,9 @@ mod tests {
 
         // Test 2: RZZ(π/2) on |++⟩
         let mut q = StateVec::new(2);
-        q.h(0);
-        q.h(1);
-        q.rzz(FRAC_PI_2, 0, 1);
+        q.h(&qid(0));
+        q.h(&qid(1));
+        q.rzz(FRAC_PI_2, &qid2(0, 1));
 
         // e^(-iπ/4) = (1-i)/√2
         // e^(iπ/4) = (1+i)/√2
@@ -1917,7 +1866,7 @@ mod tests {
     #[test]
     fn test_normalization() {
         let mut q = StateVec::new(1);
-        q.h(0).sz(0);
+        q.h(&qid(0)).sz(&qid(0));
         let norm: f64 = q.state.iter().map(num_complex::Complex::norm_sqr).sum();
         assert!((norm - 1.0).abs() < 1e-10);
     }
@@ -1925,9 +1874,9 @@ mod tests {
     #[test]
     fn test_unitarity() {
         let mut q = StateVec::new(1);
-        q.h(0);
+        q.h(&qid(0));
         let initial = q.state.clone();
-        q.h(0).h(0);
+        q.h(&qid(0)).h(&qid(0));
         assert_states_equal(&q.state, &initial);
     }
 
@@ -1940,9 +1889,9 @@ mod tests {
         let initial_state = q1.state.clone();
 
         // Test XYZ sequence
-        q1.x(0);
-        q1.y(0);
-        q1.z(0);
+        q1.x(&qid(0));
+        q1.y(&qid(0));
+        q1.z(&qid(0));
 
         // XYZ = -iI, so state should be -i times initial state
         if initial_state[0].norm() > 1e-10 {
@@ -1951,9 +1900,9 @@ mod tests {
         }
 
         // Test YZX sequence - should give same result
-        q2.y(0);
-        q2.z(0);
-        q2.x(0);
+        q2.y(&qid(0));
+        q2.z(&qid(0));
+        q2.x(&qid(0));
 
         // Compare q1 and q2 up to global phase
         if q1.state[0].norm() > 1e-10 {
@@ -2022,7 +1971,7 @@ mod tests {
         let mut q = StateVec::new(1);
 
         // Create random state with Hadamard
-        q.h(0);
+        q.h(&qid(0));
 
         // Apply Z gate as unitary
         let z00 = Complex64::new(1.0, 0.0);
@@ -2080,10 +2029,10 @@ mod tests {
         ];
 
         // Create Bell state using both methods
-        q1.h(0);
-        q1.cx(0, 1);
+        q1.h(&qid(0));
+        q1.cx(&qid2(0, 1));
 
-        q2.h(0);
+        q2.h(&qid(0));
         q2.two_qubit_unitary(0, 1, cnot);
 
         // Compare results
@@ -2098,7 +2047,7 @@ mod tests {
         let mut q = StateVec::new(2);
 
         // Prepare |10⟩ state
-        q.x(0);
+        q.x(&qid(0));
 
         // SWAP matrix
         let swap = [

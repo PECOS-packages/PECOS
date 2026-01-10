@@ -25,6 +25,7 @@ all-sims = ["gpu-sims", "quest", "qulacs"]
 pecos-gpu-sims = { path = "../pecos-gpu-sims", optional = true }
 pecos-quest = { path = "../pecos-quest", optional = true }
 pecos-qulacs = { path = "../pecos-qulacs", optional = true }
+pecos-core.workspace = true
 pecos-qsim.workspace = true
 
 [dev-dependencies]

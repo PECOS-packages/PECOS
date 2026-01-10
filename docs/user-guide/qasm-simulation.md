@@ -15,6 +15,27 @@ qasm_code = """
 """
 ```
 
+```hidden-rust
+use pecos::prelude::*;
+use pecos::quantum::{sparse_stabilizer, state_vector};
+use pecos::noise::GeneralNoiseModelBuilder;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+    let program = Qasm::from_string(qasm_code);
+    // CODE
+    Ok(())
+}
+```
+
 This guide will walk you through running quantum circuit simulations using PECOS's QASM interface. Whether you're simulating ideal quantum circuits or studying the effects of noise, PECOS provides the tools you need.
 
 ## What You'll Learn
@@ -181,7 +202,7 @@ lets you build the experiment once and rerun it multiple times:
 
     let program = Qasm::from_string(qasm_code);
 
-    let experiment = sim(program)
+    let mut experiment = sim(program)
         .seed(42)
         .workers(4)
         .noise(DepolarizingNoiseModel::builder().with_uniform_probability(0.01))
@@ -223,7 +244,7 @@ Real quantum computers are noisy. PECOS helps you understand how noise affects y
 
 === ":fontawesome-brands-rust: Rust"
 
-    ```rust
+    ```rust,skip
     use pecos::prelude::*;
 
     // No noise (ideal simulation)
@@ -277,7 +298,7 @@ For research or to match specific hardware characteristics, you can create detai
         .with_meas_1_probability(0.01)     // Measurement error |1> → |0>
         .with_p1_probability(0.0001)       // Single-qubit gate error
         .with_p2_probability(0.01)         // Two-qubit gate error
-        .with_idle_linear_rate(0.0001)     // Idle noise rate
+        .with_p_idle_linear_rate(0.0001)     // Idle noise rate
         .with_seed(42);                    // Deterministic noise
 
     // Use with sim()
@@ -426,7 +447,7 @@ This example shows how noise affects quantum entanglement:
         let program = Qasm::from_string(qasm_code);
 
         // Build simulation with depolarizing noise
-        let experiment = sim(program)
+        let mut experiment = sim(program)
             .seed(42)
             .workers(4)
             .noise(DepolarizingNoiseModel::builder().with_uniform_probability(0.01))

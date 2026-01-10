@@ -1,7 +1,5 @@
 # HUGR and Guppy Simulations
 
-<!--skip: Guppy examples require guppylang package which may not be installed-->
-
 This guide walks you through running quantum circuit simulations using PECOS's HUGR interface and the Guppy quantum programming language. HUGR (Hierarchical Unified Graph Representation) is a modern intermediate representation for quantum programs that supports native control flow based on measurement results.
 
 ## What You'll Learn
@@ -34,7 +32,6 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
@@ -86,7 +83,6 @@ The `sim(Guppy(...))` pattern returns a builder for configuration:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
@@ -122,13 +118,18 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
+    <!--expect-error: FileNotFoundError.*circuit\.hugr-->
     ```python
     from pecos import sim, Hugr
 
-    # From file
+    # From file (will fail if file doesn't exist)
     results = sim(Hugr.from_file("circuit.hugr")).run(1000)
+    ```
 
+    With an actual HUGR file:
+
+    <!--skip: requires pre-compiled .hugr file-->
+    ```python
     # From bytes
     with open("circuit.hugr", "rb") as f:
         hugr_bytes = f.read()
@@ -162,7 +163,6 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, x, measure, qubit
@@ -203,7 +203,6 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, x, measure, qubit
@@ -238,7 +237,7 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
+    <!--skip: while loop may exceed 60s timeout-->
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
@@ -273,7 +272,6 @@ Guppy supports modular quantum programs with helper functions:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from guppylang import guppy
     from guppylang.std.builtins import owned
@@ -308,7 +306,7 @@ HUGR programs work with different quantum backends:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
+    <!--skip: illustrative snippet referencing undefined circuits-->
     ```python
     from pecos import sim, Guppy
     from pecos_rslib import state_vector, sparse_stabilizer
@@ -333,7 +331,6 @@ Add realistic noise to your Guppy simulations:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
@@ -405,7 +402,20 @@ Results from Guppy simulations work the same as QASM:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
+    ```hidden-python
+    from guppylang import guppy
+    from guppylang.std.quantum import h, cx, measure, qubit
+    from pecos import sim, Guppy
+    from pecos_rslib import state_vector
+
+    @guppy
+    def bell_state() -> tuple[bool, bool]:
+        q0, q1 = qubit(), qubit()
+        h(q0)
+        cx(q0, q1)
+        return measure(q0), measure(q1)
+    ```
+
     ```python
     from collections import Counter
 
@@ -413,12 +423,14 @@ Results from Guppy simulations work the same as QASM:
 
     # Convert to dictionary
     data = results.to_dict()
-    # For a Bell state returning tuple[bool, bool]:
-    # Results are encoded as integers
-    # 0 = (False, False), 3 = (True, True)
+    # For a Bell state returning tuple[bool, bool], results are per-measurement lists
+    # measurement_0 and measurement_1 will be correlated (both 0 or both 1)
 
-    # Count occurrences
-    print(Counter(data.values()))
+    # Count correlated outcomes by zipping measurement results
+    m0 = data["measurement_0"]
+    m1 = data["measurement_1"]
+    outcomes = list(zip(m0, m1))
+    print(Counter(outcomes))  # {(0, 0): ~500, (1, 1): ~500}
     ```
 
 ## Common Issues and Solutions
@@ -427,8 +439,19 @@ Results from Guppy simulations work the same as QASM:
 
 If you see qubit allocation errors, increase the qubit limit:
 
-<!--skip-->
 ```python
+from pecos import sim, Guppy
+from pecos_rslib import state_vector
+from guppylang import guppy
+from guppylang.std.quantum import qubit, measure
+
+
+@guppy
+def my_circuit() -> bool:
+    q = qubit()
+    return measure(q)
+
+
 # Increase qubit pool for loops or dynamic allocation
 results = sim(Guppy(my_circuit)).qubits(20).quantum(state_vector()).run(100)
 ```
@@ -445,8 +468,14 @@ pip install guppylang
 
 Guppy enforces linear types. Each qubit must be used exactly once:
 
-<!--skip-->
+<!--expect-error: Drop violation-->
 ```python
+from guppylang import guppy
+from guppylang.std.quantum import qubit, measure
+from pecos import sim, Guppy
+from pecos_rslib import state_vector
+
+
 @guppy
 def bad_example() -> bool:
     q = qubit()
@@ -454,10 +483,26 @@ def bad_example() -> bool:
     return True
 
 
+# This will fail with a "Drop violation" error
+results = sim(Guppy(bad_example)).qubits(1).quantum(state_vector()).run(1)
+```
+
+The correct approach is to consume the qubit:
+
+```python
+from guppylang import guppy
+from guppylang.std.quantum import qubit, measure
+from pecos import sim, Guppy
+from pecos_rslib import state_vector
+
+
 @guppy
 def good_example() -> bool:
     q = qubit()
     return measure(q)  # q is consumed by measure
+
+
+results = sim(Guppy(good_example)).qubits(1).quantum(state_vector()).run(1)
 ```
 
 ## Next Steps

@@ -43,6 +43,28 @@ graph.edge_attrs(n0, n1)["path"] = [0, 1]
 graph.edge_attrs(n0, n1)["active"] = True
 ```
 
+```hidden-rust
+use pecos::graph::{Graph, Attribute};
+use serde_json::json;
+
+fn main() {
+    let mut graph = Graph::new();
+    let n0 = graph.add_node();
+    let n1 = graph.add_node();
+    let n2 = graph.add_node();
+    let n3 = graph.add_node();
+    graph.add_edge(n0, n1);
+    graph.add_edge(n1, n2);
+    graph.add_edge(n0, n2);
+    graph.add_edge(n2, n3);
+    graph.set_weight(n0, n1, 1.0);
+    graph.set_weight(n1, n2, 2.0);
+    graph.set_weight(n0, n2, 5.0);
+    let source_node = n0;
+    // CODE
+}
+```
+
 The PECOS Graph API provides a high-performance graph data structure with idiomatic APIs for both Rust and Python.
 
 ## Design Principles
@@ -271,7 +293,7 @@ Nodes can have arbitrary attributes attached to them, similar to edges.
         attrs.insert("label".to_string(),
                     Attribute::String("qubit_0".into()));
         attrs.insert("position".to_string(),
-                    Attribute::FloatList(vec![0.0, 1.0, 2.0]));
+                    Attribute::Json(json!([0.0, 1.0, 2.0])));
 
         // Batch extend
         attrs.extend([
@@ -444,10 +466,12 @@ Python provides three ways to set edge attributes:
 === ":fontawesome-brands-rust: Rust"
     ```rust
     // Find edge ID from node pair
-    let edge_id = graph.find_edge(n0, n1);  // Returns Option<usize>
-
-    // Get endpoints from edge ID
-    let endpoints = graph.edge_endpoints(edge_id);  // Returns Option<(usize, usize)>
+    if let Some(edge_id) = graph.find_edge(n0, n1) {
+        // Get endpoints from edge ID
+        if let Some((a, b)) = graph.edge_endpoints(edge_id) {
+            println!("Edge {}: {} -> {}", edge_id, a, b);
+        }
+    }
     ```
 
 ### Edge Information
@@ -470,10 +494,9 @@ Python provides three ways to set edge attributes:
     // Count edges
     let count = graph.edge_count();
 
-    // Iterate over edges
-    for (a, b) in graph.edges() {
-        let weight = graph.get_weight(a, b);
-        println!("Edge {}-{}: weight={:?}", a, b, weight);
+    // Iterate over edges (returns (node_a, node_b, weight) tuples)
+    for (a, b, weight) in graph.edges() {
+        println!("Edge {}-{}: weight={}", a, b, weight);
     }
     ```
 

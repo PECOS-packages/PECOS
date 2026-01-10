@@ -294,6 +294,7 @@ prog = Main(
     qb.CX(q[0], q[1]),
     qb.Measure(q) > c,
 )
+converter = SlrConverter(prog)
 ```
 
 ### Output Formats
@@ -318,15 +319,17 @@ qir = converter.qir()
 quantum_circuit = converter.quantum_circuit()
 ```
 
-Additional output formats (require optional dependencies):
+Additional output formats:
 
-<!--skip: requires stim package-->
+```python
+# Stim circuit
+stim_circuit = converter.stim()
+```
+
+<!--skip: qir_bc parsing issue-->
 ```python
 # QIR bytecode (requires llvmlite)
 qir_bc = converter.qir_bc()
-
-# Stim circuit (requires stim package)
-stim_circuit = converter.stim()
 ```
 
 ### Parallel Optimization
@@ -341,7 +344,12 @@ converter = SlrConverter(prog, optimize_parallel=False)
 
 ### Converting FROM Other Formats
 
-<!--skip: references stim_circuit and qc from prior example-->
+```hidden-python
+# Setup: get stim_circuit and qc from prior examples
+stim_circuit = converter.stim()
+qc = converter.quantum_circuit()
+```
+
 ```python
 from pecos.slr import SlrConverter
 

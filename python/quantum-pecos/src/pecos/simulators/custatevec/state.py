@@ -133,8 +133,9 @@ class CuStateVec(StateVector):
         """Clean up GPU resources when the object is destroyed."""
         # CuPy will release GPU memory when the variable ``self.cupy_vector`` is no longer
         # reachable. However, we need to manually destroy the library handle.
-        if self.libhandle:
-            cusv.destroy(self.libhandle)
+        libhandle = getattr(self, "libhandle", None)
+        if libhandle:
+            cusv.destroy(libhandle)
 
     @property
     def vector(self) -> Array:

@@ -16,7 +16,6 @@ Simulate a distance-3 repetition code with syndrome extraction using [Guppy](htt
     pip install quantum-pecos
     ```
 
-    <!--skip: Guppy example requires guppylang-->
     ```python
     from pecos import Guppy, sim, state_vector, depolarizing_noise
     from guppylang import guppy

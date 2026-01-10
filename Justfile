@@ -138,13 +138,22 @@ docs-build:
 docs port="8000":
     cargo run -p pecos --features cli -- docs --port {{port}}
 
-# Test all code examples in documentation
+# Test all code examples in documentation (generates pytest files and runs them)
 docs-test:
-    uv run python scripts/docs/test_code_examples.py
+    uv run python scripts/docs/generate_doc_tests.py
+    uv run pytest python/quantum-pecos/tests/docs/generated -v
 
-# Test only working code examples in documentation
-docs-test-working:
-    uv run python scripts/docs/test_working_examples.py
+# Generate doc tests without running them
+docs-test-generate:
+    uv run python scripts/docs/generate_doc_tests.py
+
+# Run doc tests with pytest options (e.g., just docs-test-run "-k bell_state")
+docs-test-run *args:
+    uv run pytest python/quantum-pecos/tests/docs/generated {{args}}
+
+# Legacy: test code examples with old script
+docs-test-legacy:
+    uv run python scripts/docs/test_code_examples.py
 
 # =============================================================================
 # Linting / Formatting

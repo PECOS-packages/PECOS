@@ -70,7 +70,6 @@ A repetition code encodes a single logical qubit across multiple physical qubits
 
     We'll use **Guppy**, a Python-embedded quantum programming language that offers type-safe qubit tracking and native control flow:
 
-    <!--skip-->
     ```python
     from pecos import Guppy, sim, state_vector, depolarizing_noise
     from guppylang import guppy
@@ -117,6 +116,7 @@ A repetition code encodes a single logical qubit across multiple physical qubits
 
     In Rust, we load pre-compiled **HUGR** (Hierarchical Unified Graph Representation) files:
 
+    <!--test-data: repetition_code.hugr-->
     ```rust
     use pecos_hugr::hugr_sim;
 

@@ -32,7 +32,6 @@ Use `from_file()` to load a WASM module from disk:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from pecos_rslib import WasmForeignObject
     from pathlib import Path
@@ -81,7 +80,6 @@ Use `from_bytes()` when you have the WASM binary in memory. This is useful for:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from pecos_rslib import WasmForeignObject
 
@@ -226,7 +224,6 @@ You can execute WASM functions directly:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from pecos_rslib import WasmForeignObject
 
@@ -263,7 +260,6 @@ WASM functions can be called from QASM programs using the foreign function synta
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from pecos import sim, Qasm
     from pecos_rslib import WasmForeignObject
@@ -357,7 +353,6 @@ WASM execution has a configurable timeout (default: 1 second) to prevent infinit
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     # 5 second timeout
     wasm = WasmForeignObject.from_file("compute.wasm", timeout=5.0)
@@ -381,7 +376,6 @@ You can limit the memory available to WASM modules:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     # Limit to 10 MB
     wasm = WasmForeignObject.from_file("compute.wasm", memory_size=10 * 1024 * 1024)
@@ -408,7 +402,6 @@ You can limit the memory available to WASM modules:
 
 WASM foreign objects support Python pickling for distributed execution:
 
-<!--skip-->
 ```python
 import pickle
 from pecos_rslib import WasmForeignObject
@@ -430,7 +423,6 @@ result = wasm_restored.exec("add", [1, 2])
 
 You can also use the explicit `to_dict()` and `from_dict()` methods:
 
-<!--skip-->
 ```python
 # Serialize to dict
 state = wasm.to_dict()
@@ -445,7 +437,6 @@ You can retrieve the compiled WASM bytes from a foreign object:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     wasm = WasmForeignObject.from_file("math.wat")  # Load from WAT
 
@@ -486,7 +477,6 @@ You can retrieve the compiled WASM bytes from a foreign object:
 
 For simulations with multiple shots, call `shot_reinit()` to reset module state:
 
-<!--skip-->
 ```python
 wasm = WasmForeignObject.from_file("stateful.wasm")
 wasm.init()
@@ -500,7 +490,6 @@ for shot in range(1000):
 
 To completely reset a module (re-run `init`):
 
-<!--skip-->
 ```python
 wasm.new_instance()  # Creates a fresh WASM instance
 wasm.init()  # Re-initialize
@@ -510,7 +499,6 @@ wasm.init()  # Re-initialize
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip-->
     ```python
     from pecos_rslib import WasmForeignObject
 

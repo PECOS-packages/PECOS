@@ -1849,6 +1849,39 @@ impl PyDAG {
         self.inner.depth()
     }
 
+    /// Returns an iterator over the layers of the DAG.
+    ///
+    /// A layer is a set of nodes that can be processed in parallel (all their
+    /// dependencies are in previous layers).
+    ///
+    /// # Arguments
+    ///
+    /// * `first_layer` - The starting nodes (typically `dag.roots()`)
+    ///
+    /// # Returns
+    ///
+    /// A list of layers, where each layer is a list of node indices.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// dag = DAG()
+    /// n0 = dag.add_node()
+    /// n1 = dag.add_node()
+    /// n2 = dag.add_node()
+    /// dag.add_edge(n0, n1)
+    /// dag.add_edge(n0, n2)
+    ///
+    /// for layer in dag.layers(dag.roots()):
+    ///     print(f"Layer: {layer}")
+    /// # Output:
+    /// # Layer: [0]
+    /// # Layer: [1, 2]
+    /// ```
+    fn layers(&self, first_layer: Vec<usize>) -> Vec<Vec<usize>> {
+        self.inner.layers(first_layer).collect()
+    }
+
     /// Returns the longest path in the DAG as (path, `total_weight`).
     fn longest_path(&self) -> (Vec<usize>, f64) {
         self.inner.longest_path()

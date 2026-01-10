@@ -151,3 +151,4 @@ PECOS_HOME = { value = "/custom/path", force = true }
 For specific development topics, see:
 
 - [Parallel Blocks and Optimization](parallel-blocks-and-optimization.md) - Guide to using and extending the Parallel block construct and optimizer
+- [Documentation Code Testing](doc-testing.md) - Guide to testing code examples in documentation

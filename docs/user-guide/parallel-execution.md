@@ -156,10 +156,10 @@ Parallel(
 
 Here's a complete example showing parallel quantum phase estimation:
 
-<!--skip-->
+<!--skip: CRZ gate not yet implemented-->
 ```python
 from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter
-from pecos.qeclib import qubit as qb
+from pecos.slr.qeclib import qubit as qb
 import numpy as np
 
 # Parallel Quantum Phase Estimation

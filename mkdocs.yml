@@ -72,6 +72,7 @@ nav:
 - Development:
   - development/DEVELOPMENT.md
   - Developer Tools CLI: development/dev-tools.md
+  - Documentation Testing: development/doc-testing.md
   - SLR and QECLib: development/slr-qeclib.md
   - Circuit Representations: development/circuit-representations.md
   - Parallel Blocks: development/parallel-blocks-and-optimization.md

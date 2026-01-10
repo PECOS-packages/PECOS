@@ -12,6 +12,9 @@ tmp/
 # pytest results
 junit/
 
+# Generated doc tests (from scripts/docs/generate_doc_tests.py)
+python/quantum-pecos/tests/docs/generated/
+
 # Cython
 *.pyc
 *.pyd

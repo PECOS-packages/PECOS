@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import cupy as cp
+import numpy as np
 
 if TYPE_CHECKING:
     from pecos.simulators.custatevec.state import CuStateVec
@@ -210,10 +211,10 @@ def RZ(
 
     matrix = cp.asarray(
         [
-            cp.exp(-1j * theta / 2),
+            np.exp(-1j * theta / 2),
             0,
             0,
-            cp.exp(1j * theta / 2),
+            np.exp(1j * theta / 2),
         ],
         dtype=state.cp_type,
     )

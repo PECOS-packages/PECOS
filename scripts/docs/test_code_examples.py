@@ -36,6 +36,54 @@ def find_markdown_files() -> list[Path]:
     return list(DOCS_DIR.rglob("*.md"))
 
 
+def _check_cuda_available() -> bool:
+    """Check if CUDA is available for running GPU examples.
+
+    Uses the same pattern as the Justfile: `pecos cuda check -q` for toolkit,
+    plus cupy availability check for Python CUDA packages.
+    """
+    # Check for CUDA toolkit using pecos CLI (same as Justfile pattern)
+    try:
+        result = subprocess.run(
+            ["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            return False
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+    # Check for cupy Python package (needed for Python CUDA examples)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import cupy; print(cupy.cuda.is_available())"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode != 0 or "True" not in result.stdout:
+            return False
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return False
+
+    return True
+
+
+# Cache CUDA availability at module load
+_CUDA_AVAILABLE: bool | None = None
+
+
+def is_cuda_available() -> bool:
+    """Return cached CUDA availability status."""
+    global _CUDA_AVAILABLE
+    if _CUDA_AVAILABLE is None:
+        _CUDA_AVAILABLE = _check_cuda_available()
+    return _CUDA_AVAILABLE
+
+
 def _dedent_code(code: str) -> str:
     """Remove common leading indentation from code."""
     lines = code.strip("\n").split("\n")
@@ -59,17 +107,23 @@ def _dedent_code(code: str) -> str:
 def extract_code_blocks(
     file_path: str | Path,
     language: str = "python",
-) -> list[tuple[str, bool]]:
+) -> list[tuple[str, bool, str | None]]:
     """Extract code blocks of a specific language from a Markdown file.
 
     Returns:
-        List of tuples (code_block, should_skip) where should_skip is True if
-        the block has a skip marker.
+        List of tuples (code_block, should_skip, expected_error) where:
+        - should_skip is True if the block has a skip marker
+        - expected_error is a regex pattern if the block should fail with that error
 
     Skip markers supported:
         - <!--skip--> or <!--skip: reason--> before the code fence
         - <!--pytest.mark.skip--> before the code fence
+        - <!--skip-if-no-cuda--> skips only if CUDA is not available
         - ```python,skip or ```rust,ignore suffix on the fence
+
+    Expected error markers:
+        - <!--expect-error: pattern--> before the code fence
+        - The pattern is matched against stderr output
 
     Hidden blocks (```hidden-python```) are accumulated as preamble and
     prepended to subsequent visible blocks for testing. Use <!--preamble-reset-->
@@ -78,9 +132,9 @@ def extract_code_blocks(
     with Path(file_path).open(encoding="utf-8") as f:
         content = f.read()
 
-    # Pattern to find code blocks with optional skip/reset marker before them
+    # Pattern to find code blocks with optional skip/reset/expect-error marker before them
     # Captures: (marker_comment, block_type, lang_suffix, code)
-    marker_pattern = r"(<!--\s*(?:skip[^>]*|pytest\.mark\.skip(?:if)?[^>]*|preamble-reset)\s*-->\s*)?"
+    marker_pattern = r"(<!--\s*(?:skip[^>]*|expect-error[^>]*|pytest\.mark\.skip(?:if)?[^>]*|preamble-reset)\s*-->\s*)?"
     fence_pattern = rf"```(hidden-)?{language}(,(?:skip|ignore|no_run))?(.*?)```"
     full_pattern = marker_pattern + fence_pattern
 
@@ -95,13 +149,30 @@ def extract_code_blocks(
             preamble = []
             continue
 
-        should_skip = bool(
-            marker_comment and "skip" in marker_comment.lower(),
-        ) or lang_suffix in (
+        # Handle conditional CUDA skip
+        skip_if_no_cuda = marker_comment and "skip-if-no-cuda" in marker_comment.lower()
+
+        should_skip = lang_suffix in (
             ",skip",
             ",ignore",
             ",no_run",
         )
+
+        if skip_if_no_cuda:
+            # Only skip if CUDA is not available
+            should_skip = not is_cuda_available()
+        elif marker_comment and "skip" in marker_comment.lower():
+            # Regular skip marker (but not skip-if-no-cuda which contains "skip")
+            should_skip = True
+
+        # Check for expected error pattern
+        expected_error = None
+        if marker_comment and "expect-error" in marker_comment.lower():
+            # Extract pattern from <!--expect-error: pattern-->
+            match = re.search(r"expect-error:\s*(.+?)\s*-->", marker_comment)
+            if match:
+                expected_error = match.group(1).strip()
+            should_skip = False  # Don't skip, we want to run and check error
 
         cleaned_code = _dedent_code(code)
 
@@ -115,18 +186,31 @@ def extract_code_blocks(
                 if preamble
                 else cleaned_code
             )
-            blocks.append((full_code, should_skip))
+            blocks.append((full_code, should_skip, expected_error))
 
     return blocks
+
+
+def _uses_guppy_decorator(code_block: str) -> bool:
+    """Check if the code uses @guppy decorator (requires file-based execution)."""
+    return "@guppy" in code_block
 
 
 def test_python_block(
     code_block: str,
     block_number: int,
     file_path: str | Path,
+    expected_error: str | None = None,
 ) -> bool | None:
-    """Test a Python code block by executing it and checking for errors."""
-    print(f"Testing Python block #{block_number} from {file_path}...")
+    """Test a Python code block by executing it and checking for errors.
+
+    If expected_error is provided, the test passes if the code fails with
+    an error message matching the pattern (regex).
+    """
+    if expected_error:
+        print(f"Testing Python block #{block_number} from {file_path} (expecting error)...")
+    else:
+        print(f"Testing Python block #{block_number} from {file_path}...")
 
     # Get the Python executable path
     python_executable = sys.executable
@@ -135,21 +219,73 @@ def test_python_block(
         return False
 
     try:
-        # Execute the code block and capture output
-        result = subprocess.run(
-            [python_executable, "-c", code_block],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-            shell=False,
-        )
+        # Guppy code needs to be in a file for inspect.getsourcelines() to work
+        if _uses_guppy_decorator(code_block):
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".py",
+                delete=False,
+                encoding="utf-8",
+            ) as f:
+                f.write(code_block)
+                temp_path = f.name
+            try:
+                result = subprocess.run(
+                    [python_executable, temp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,  # Guppy compilation can be slow
+                    check=False,
+                    shell=False,
+                )
+            finally:
+                Path(temp_path).unlink(missing_ok=True)
+        else:
+            # Execute the code block directly
+            result = subprocess.run(
+                [python_executable, "-c", code_block],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                shell=False,
+            )
 
+        # Handle expected error case
+        if expected_error:
+            if result.returncode == 0:
+                print(
+                    f"FAIL: Python block #{block_number} from {file_path} "
+                    f"was expected to fail but succeeded"
+                )
+                return False
+            # Check if error matches expected pattern
+            if re.search(expected_error, result.stderr):
+                print(
+                    f"PASS: Python block #{block_number} from {file_path} "
+                    f"(failed as expected with matching error)"
+                )
+                return True
+            else:
+                print(
+                    f"FAIL: Python block #{block_number} from {file_path} "
+                    f"failed but error didn't match pattern '{expected_error}':"
+                )
+                print(result.stderr[:500])  # Truncate long errors
+                return False
+
+        # Normal case: expect success
         if result.returncode != 0:
             print(f"FAIL: Error in Python block #{block_number} from {file_path}:")
             print(result.stderr)
             return False
     except subprocess.TimeoutExpired:
+        if expected_error and re.search(expected_error, "TimeoutExpired"):
+            print(
+                f"PASS: Python block #{block_number} from {file_path} "
+                f"(timed out as expected)"
+            )
+            return True
         print(f"FAIL: Timeout in Python block #{block_number} from {file_path}")
         return False
     except OSError as e:
@@ -267,11 +403,16 @@ def main() -> None:
 
     print("Testing PECOS documentation code examples...")
     print(
-        "Skip markers: <!--skip-->, <!--pytest.mark.skip-->, ```python,skip, ```rust,ignore",
+        "Skip markers: <!--skip-->, <!--skip-if-no-cuda-->, <!--pytest.mark.skip-->, ```python,skip, ```rust,ignore",
+    )
+    print(
+        "Expected error: <!--expect-error: pattern--> to test error cases",
     )
     print(
         "Hidden preamble: ```hidden-python``` blocks are prepended to subsequent blocks",
     )
+    cuda_available = is_cuda_available()
+    print(f"CUDA available: {cuda_available}")
     if skip_rust:
         print("Note: Rust blocks skipped by default (use --test-rust to enable)")
 
@@ -286,19 +427,19 @@ def main() -> None:
     # Test Python code blocks
     for file_path in markdown_files:
         python_blocks = extract_code_blocks(file_path, "python")
-        for i, (block, should_skip) in enumerate(python_blocks, 1):
+        for i, (block, should_skip, expected_error) in enumerate(python_blocks, 1):
             if should_skip:
                 print(f"SKIP: Python block #{i} from {file_path}")
                 python_skipped += 1
                 continue
-            result = test_python_block(block, i, file_path)
+            result = test_python_block(block, i, file_path, expected_error)
             python_results.append((file_path, i, result))
 
     # Test Rust code blocks
     if not args.python_only:
         for file_path in markdown_files:
             rust_blocks = extract_code_blocks(file_path, "rust")
-            for i, (block, should_skip) in enumerate(rust_blocks, 1):
+            for i, (block, should_skip, _expected_error) in enumerate(rust_blocks, 1):
                 if should_skip or skip_rust:
                     rust_skipped += 1
                     if not skip_rust:  # Only print if individually skipped

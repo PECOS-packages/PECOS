@@ -223,10 +223,10 @@ Comprehensive tests are available in:
 
 Here's a more complex example showing parallel phase gates:
 
-<!--skip-->
+<!--skip: CRZ gate not yet implemented-->
 ```python
 from pecos.slr import Main, Parallel, QReg
-from pecos.qeclib import qubit as qb
+from pecos.slr.qeclib import qubit as qb
 
 
 def qft_layer(q, n, k):

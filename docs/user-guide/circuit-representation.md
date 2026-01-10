@@ -4,6 +4,17 @@
 from pecos.quantum import DagCircuit, TickCircuit, Gate
 ```
 
+```hidden-rust
+use pecos::quantum::{DagCircuit, TickCircuit, Attribute};
+use pecos::core::{Gate, QubitId};
+use pecos::dag::DAG;
+use pecos::digraph::DiGraph;
+
+fn main() {
+    // CODE
+}
+```
+
 PECOS provides several ways to represent and work with quantum circuits, from high-level program formats to low-level data structures.
 
 ## Quick Guide: What Should I Use?
@@ -33,9 +44,8 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
 ### Example: Different Program Types
 
 === ":fontawesome-brands-python: Python"
-    <!--skip-->
     ```python
-    from pecos import sim, Guppy, Qasm, Hugr
+    from pecos import sim, Guppy, Qasm, state_vector
 
     # Guppy - recommended for new code
     from guppylang import guppy
@@ -43,29 +53,38 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
 
 
     @guppy
-    def bell_state():
+    def bell_state() -> tuple[bool, bool]:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
         return measure(q0), measure(q1)
 
 
-    results = sim(Guppy(bell_state)).run(100)
+    results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(100)
 
     # QASM - for existing circuits
     results = sim(
         Qasm(
             """
         OPENQASM 2.0;
+        include "qelib1.inc";
         qreg q[2];
+        creg c[2];
         h q[0];
         cx q[0], q[1];
         measure q -> c;
     """
         )
     ).run(100)
+    ```
 
-    # HUGR - from compiled output
+    For HUGR files compiled separately (requires actual file):
+
+    <!--expect-error: FileNotFoundError.*program\.hugr-->
+    ```python
+    from pecos import sim, Hugr
+
+    # HUGR - from compiled output (fails if file doesn't exist)
     results = sim(Hugr.from_file("program.hugr")).run(100)
     ```
 
@@ -397,7 +416,7 @@ A time-sliced circuit representation where gates are organized into discrete tim
 TickCircuit prevents scheduling conflicting gates in the same tick:
 
 === ":fontawesome-brands-python: Python"
-    <!--skip-->
+    <!--expect-error: QubitConflictError.*already in use-->
     ```python
     from pecos.quantum import TickCircuit
 
@@ -458,7 +477,6 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
 TickCircuit can be converted to and from DagCircuit:
 
 === ":fontawesome-brands-python: Python"
-    <!--skip-->
     ```python
     from pecos.quantum import DagCircuit, TickCircuit
 
@@ -467,10 +485,10 @@ TickCircuit can be converted to and from DagCircuit:
     tick_circuit.tick().h(0).h(1)
     tick_circuit.tick().cx(0, 1)
 
-    dag_circuit = DagCircuit.from_tick_circuit(tick_circuit)
+    dag_circuit = tick_circuit.to_dag_circuit()
 
     # DagCircuit -> TickCircuit
-    tick_circuit2 = TickCircuit.from_dag_circuit(dag_circuit)
+    tick_circuit2 = dag_circuit.to_tick_circuit()
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -497,7 +515,6 @@ For general graph algorithms beyond quantum circuits, PECOS provides `DiGraph` (
 A general directed graph with weighted edges and attributes:
 
 === ":fontawesome-brands-python: Python"
-    <!--skip-->
     ```python
     from pecos.graph import DiGraph
 
@@ -509,9 +526,12 @@ A general directed graph with weighted edges and attributes:
     n2 = graph.add_node()
 
     # Add edges with weights
-    graph.add_edge(n0, n1).weight(1.0)
-    graph.add_edge(n1, n2).weight(2.0)
-    graph.add_edge(n0, n2).weight(5.0)
+    graph.add_edge(n0, n1)
+    graph.set_weight(n0, n1, 1.0)
+    graph.add_edge(n1, n2)
+    graph.set_weight(n1, n2, 2.0)
+    graph.add_edge(n0, n2)
+    graph.set_weight(n0, n2, 5.0)
 
     # Query structure
     print(f"Predecessors of n2: {graph.predecessors(n2)}")
@@ -548,7 +568,6 @@ A general directed graph with weighted edges and attributes:
 A directed acyclic graph with topological ordering and cycle prevention:
 
 === ":fontawesome-brands-python: Python"
-    <!--skip-->
     ```python
     from pecos.graph import DAG
 

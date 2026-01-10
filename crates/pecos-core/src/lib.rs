@@ -46,7 +46,7 @@ pub use rng::{choose_weighted, coin_flip, gen_bools};
 // Random utilities struct for improved RNG API
 pub use rng::RandomUtils;
 
-pub use gates::Gate;
+pub use gates::{Gate, GateAngles, GateParams, GateQubits};
 pub use pauli::pauli_bitmap::PauliBitmap;
 pub use pauli::pauli_sparse::PauliSparse;
 pub use pauli::pauli_string::PauliString;

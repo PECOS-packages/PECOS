@@ -6,6 +6,19 @@
 use crate::Angle64;
 use crate::QubitId;
 use crate::gate_type::GateType;
+use smallvec::SmallVec;
+
+/// Stack-allocated qubit buffer for gates (up to 4 qubits inline).
+/// Most gates operate on 1-2 qubits, so this avoids heap allocation.
+pub type GateQubits = SmallVec<[QubitId; 4]>;
+
+/// Stack-allocated angle buffer for gates (up to 3 angles inline).
+/// Most gates have 0-2 angle parameters.
+pub type GateAngles = SmallVec<[Angle64; 3]>;
+
+/// Stack-allocated parameter buffer for gates (up to 2 params inline).
+/// Most gates have 0-1 non-angle parameters.
+pub type GateParams = SmallVec<[f64; 2]>;
 
 /// Flat gate command representation for quantum operations
 ///
@@ -24,11 +37,14 @@ pub struct Gate {
     pub gate_type: GateType,
     /// Rotation angles for parameterized gates (in full turns).
     /// Use `Angle64::from_turns()` or `Angle64::from_radians()` to create.
-    pub angles: Vec<Angle64>,
+    /// Stack-allocated for up to 3 angles.
+    pub angles: GateAngles,
     /// Other non-angle parameters (e.g., duration for Idle gate)
-    pub params: Vec<f64>,
-    /// The qubits the gate acts on
-    pub qubits: Vec<QubitId>,
+    /// Stack-allocated for up to 2 parameters.
+    pub params: GateParams,
+    /// The qubits the gate acts on.
+    /// Stack-allocated for up to 4 qubits.
+    pub qubits: GateQubits,
 }
 
 /// Legacy quantum gate representation for `ByteMessageBuilder` compatibility
@@ -42,32 +58,28 @@ impl Gate {
     #[must_use]
     pub fn new(
         gate_type: GateType,
-        angles: Vec<Angle64>,
-        params: Vec<f64>,
-        qubits: Vec<impl Into<QubitId>>,
+        angles: impl Into<GateAngles>,
+        params: impl Into<GateParams>,
+        qubits: impl Into<GateQubits>,
     ) -> Self {
         Self {
             gate_type,
-            angles,
-            params,
-            qubits: qubits.into_iter().map(Into::into).collect(),
+            angles: angles.into(),
+            params: params.into(),
+            qubits: qubits.into(),
         }
     }
 
     /// Create a new gate command with angles only (no other params)
     #[must_use]
-    pub fn with_angles(
-        gate_type: GateType,
-        angles: Vec<Angle64>,
-        qubits: Vec<impl Into<QubitId>>,
-    ) -> Self {
-        Self::new(gate_type, angles, vec![], qubits)
+    pub fn with_angles(gate_type: GateType, angles: impl Into<GateAngles>, qubits: impl Into<GateQubits>) -> Self {
+        Self::new(gate_type, angles, GateParams::new(), qubits)
     }
 
     /// Create a new gate command with no angles or params
     #[must_use]
-    pub fn simple(gate_type: GateType, qubits: Vec<impl Into<QubitId>>) -> Self {
-        Self::new(gate_type, vec![], vec![], qubits)
+    pub fn simple(gate_type: GateType, qubits: impl Into<GateQubits>) -> Self {
+        Self::new(gate_type, GateAngles::new(), GateParams::new(), qubits)
     }
 
     /// Total number of qubits being gated
@@ -84,10 +96,10 @@ impl Gate {
         self.num_qubits() / self.quantum_arity()
     }
 
-    /// Helper function to flatten qubit pairs into a vector of `QubitId`s
+    /// Helper function to flatten qubit pairs into a `GateQubits` buffer
     fn flatten_qubit_pairs(
         qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
-    ) -> Vec<QubitId> {
+    ) -> GateQubits {
         qubit_pairs
             .iter()
             .flat_map(|&(q1, q2)| [q1.into(), q2.into()])
@@ -97,25 +109,25 @@ impl Gate {
     /// Create X gate on multiple qubits
     #[must_use]
     pub fn x(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::X, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::X, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create Y gate on multiple qubits
     #[must_use]
     pub fn y(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::Y, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::Y, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create Z gate on multiple qubits
     #[must_use]
     pub fn z(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::Z, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::Z, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create H gate on multiple qubits
     #[must_use]
     pub fn h(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::H, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::H, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create CX gate from flat qubit list (control1, target1, control2, target2, ...)
@@ -129,7 +141,7 @@ impl Gate {
             qubits.len().is_multiple_of(2),
             "CX gate requires an even number of qubits"
         );
-        Self::simple(GateType::CX, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::CX, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create CX gate on multiple qubit pairs
@@ -150,7 +162,7 @@ impl Gate {
             qubits.len().is_multiple_of(2),
             "SZZ gate requires an even number of qubits"
         );
-        Self::simple(GateType::SZZ, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::SZZ, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create SZZ gate on multiple qubit pairs
@@ -171,7 +183,7 @@ impl Gate {
             qubits.len().is_multiple_of(2),
             "SZZdg gate requires an even number of qubits"
         );
-        Self::simple(GateType::SZZdg, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::SZZdg, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create `SZZdg` gate on multiple qubit pairs
@@ -194,8 +206,8 @@ impl Gate {
         );
         Self::with_angles(
             GateType::RZZ,
-            vec![theta],
-            qubits.iter().map(|&q| q.into()).collect(),
+            smallvec::smallvec![theta],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -214,8 +226,8 @@ impl Gate {
     pub fn rx(theta: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::with_angles(
             GateType::RX,
-            vec![theta],
-            qubits.iter().map(|&q| q.into()).collect(),
+            smallvec::smallvec![theta],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -224,8 +236,8 @@ impl Gate {
     pub fn ry(theta: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::with_angles(
             GateType::RY,
-            vec![theta],
-            qubits.iter().map(|&q| q.into()).collect(),
+            smallvec::smallvec![theta],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -234,8 +246,8 @@ impl Gate {
     pub fn rz(theta: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::with_angles(
             GateType::RZ,
-            vec![theta],
-            qubits.iter().map(|&q| q.into()).collect(),
+            smallvec::smallvec![theta],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -244,8 +256,8 @@ impl Gate {
     pub fn r1xy(theta: Angle64, phi: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::with_angles(
             GateType::R1XY,
-            vec![theta, phi],
-            qubits.iter().map(|&q| q.into()).collect(),
+            smallvec::smallvec![theta, phi],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -259,8 +271,8 @@ impl Gate {
     ) -> Self {
         Self::with_angles(
             GateType::U,
-            vec![theta, phi, lambda],
-            qubits.iter().map(|&q| q.into()).collect(),
+            smallvec::smallvec![theta, phi, lambda],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -269,7 +281,7 @@ impl Gate {
     pub fn measure(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::Measure,
-            qubits.iter().map(|&q| q.into()).collect(),
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -278,26 +290,26 @@ impl Gate {
     pub fn measure_leaked(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::MeasureLeaked,
-            qubits.iter().map(|&q| q.into()).collect(),
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
     /// Create Prep gate on multiple qubits
     #[must_use]
     pub fn prep(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::Prep, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::Prep, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create `QAlloc` gate to allocate qubits in the |0⟩ state
     #[must_use]
     pub fn qalloc(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::QAlloc, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::QAlloc, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create `QFree` gate to deallocate qubits
     #[must_use]
     pub fn qfree(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::QFree, qubits.iter().map(|&q| q.into()).collect())
+        Self::simple(GateType::QFree, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
     }
 
     /// Create `MeasureFree` gate (measure and deallocate) on multiple qubits
@@ -305,7 +317,7 @@ impl Gate {
     pub fn measure_free(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::MeasureFree,
-            qubits.iter().map(|&q| q.into()).collect(),
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -320,8 +332,13 @@ impl Gate {
     ///
     /// A new Idle gate with the specified parameters
     #[must_use]
-    pub fn idle(duration: f64, qubits: Vec<QubitId>) -> Self {
-        Self::new(GateType::Idle, vec![], vec![duration], qubits)
+    pub fn idle(duration: f64, qubits: impl Into<GateQubits>) -> Self {
+        Self::new(
+            GateType::Idle,
+            GateAngles::new(),
+            smallvec::smallvec![duration],
+            qubits,
+        )
     }
 
     /// Returns the duration of an idle gate, or 0.0 if not an idle gate
@@ -352,7 +369,7 @@ impl Gate {
     pub fn meas_crosstalk_global_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::MeasCrosstalkGlobalPayload,
-            qubits.iter().map(|&q| q.into()).collect(),
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -369,7 +386,7 @@ impl Gate {
     pub fn meas_crosstalk_local_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::MeasCrosstalkLocalPayload,
-            qubits.iter().map(|&q| q.into()).collect(),
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
 
@@ -467,23 +484,23 @@ mod tests {
         let x_gate = Gate::x(&[0, 1, 2]);
         assert_eq!(x_gate.gate_type, GateType::X);
         assert_eq!(
-            x_gate.qubits,
-            vec![QubitId::from(0), QubitId::from(1), QubitId::from(2)]
+            x_gate.qubits.as_slice(),
+            &[QubitId::from(0), QubitId::from(1), QubitId::from(2)]
         );
         assert!(x_gate.angles.is_empty());
 
         // Parameterized single qubit gates
         let rz_gate = Gate::rz(Angle64::from_turns(0.5), &[1, 2]);
         assert_eq!(rz_gate.gate_type, GateType::RZ);
-        assert_eq!(rz_gate.qubits, vec![QubitId::from(1), QubitId::from(2)]);
-        assert_eq!(rz_gate.angles, vec![Angle64::from_turns(0.5)]);
+        assert_eq!(rz_gate.qubits.as_slice(), &[QubitId::from(1), QubitId::from(2)]);
+        assert_eq!(rz_gate.angles.as_slice(), &[Angle64::from_turns(0.5)]);
 
         // Two qubit gates
         let cx_gate = Gate::cx(&[(0, 1), (2, 3)]);
         assert_eq!(cx_gate.gate_type, GateType::CX);
         assert_eq!(
-            cx_gate.qubits,
-            vec![
+            cx_gate.qubits.as_slice(),
+            &[
                 QubitId::from(0),
                 QubitId::from(1),
                 QubitId::from(2),
@@ -496,8 +513,8 @@ mod tests {
         let measure_gate = Gate::measure(&[2, 3]);
         assert_eq!(measure_gate.gate_type, GateType::Measure);
         assert_eq!(
-            measure_gate.qubits,
-            vec![QubitId::from(2), QubitId::from(3)]
+            measure_gate.qubits.as_slice(),
+            &[QubitId::from(2), QubitId::from(3)]
         );
         assert!(measure_gate.angles.is_empty());
     }
@@ -563,7 +580,7 @@ mod tests {
         // Test the helper function directly
         let pairs = [(0usize, 1usize), (2usize, 3usize), (4usize, 5usize)];
         let flattened = Gate::flatten_qubit_pairs(&pairs);
-        let expected: Vec<QubitId> = vec![0, 1, 2, 3, 4, 5]
+        let expected: GateQubits = vec![0, 1, 2, 3, 4, 5]
             .into_iter()
             .map(QubitId::from)
             .collect();
@@ -676,7 +693,7 @@ mod tests {
         let invalid_angles = Gate::new(
             GateType::RZ,
             vec![Angle64::from_turns(0.25), Angle64::from_turns(0.5)],
-            vec![],
+            Vec::<f64>::new(),
             vec![QubitId::from(0)],
         );
         assert!(invalid_angles.validate().is_err());
@@ -690,7 +707,7 @@ mod tests {
         let missing_angles = Gate::new(
             GateType::U,
             vec![Angle64::from_turns(0.25)],
-            vec![],
+            Vec::<f64>::new(),
             vec![QubitId::from(0)],
         );
         assert!(missing_angles.validate().is_err());
@@ -702,7 +719,7 @@ mod tests {
         );
 
         // Test invalid gates - wrong qubit count (not a multiple of quantum arity)
-        let invalid_qubits = Gate::new(GateType::CX, vec![], vec![], vec![QubitId::from(0)]);
+        let invalid_qubits = Gate::new(GateType::CX, Vec::<Angle64>::new(), Vec::<f64>::new(), vec![QubitId::from(0)]);
         assert!(invalid_qubits.validate().is_err());
         assert!(
             invalid_qubits
@@ -713,8 +730,8 @@ mod tests {
 
         let odd_cx_qubits = Gate::new(
             GateType::CX,
-            vec![],
-            vec![],
+            Vec::<Angle64>::new(),
+            Vec::<f64>::new(),
             vec![QubitId::from(0), QubitId::from(1), QubitId::from(2)],
         );
         assert!(odd_cx_qubits.validate().is_err());
@@ -728,16 +745,16 @@ mod tests {
         // Test valid multi-qubit gates
         let multi_x = Gate::new(
             GateType::X,
-            vec![],
-            vec![],
+            Vec::<Angle64>::new(),
+            Vec::<f64>::new(),
             vec![QubitId::from(0), QubitId::from(1), QubitId::from(2)],
         );
         assert!(multi_x.validate().is_ok()); // Multiple X gates on different qubits
 
         let multi_cx_gates = Gate::new(
             GateType::CX,
-            vec![],
-            vec![],
+            Vec::<Angle64>::new(),
+            Vec::<f64>::new(),
             vec![
                 QubitId::from(0),
                 QubitId::from(1),

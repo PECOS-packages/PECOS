@@ -378,7 +378,7 @@ impl PyGate {
     /// Get the non-angle parameters (e.g., duration for Idle gate).
     #[getter]
     fn params(&self) -> Vec<f64> {
-        self.inner.params.clone()
+        self.inner.params.to_vec()
     }
 
     /// Get the rotation angles in radians.

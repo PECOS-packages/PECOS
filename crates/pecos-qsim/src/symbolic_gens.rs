@@ -80,40 +80,108 @@ where
         self.num_qubits
     }
 
-    /// Clear all generator data.
+    /// Clear sign-related sets without reallocating.
     #[inline]
-    fn clear(&mut self) {
-        self.col_x.clear();
-        self.col_z.clear();
-        self.row_x.clear();
-        self.row_z.clear();
-        self.signs.clear();
+    fn clear_phase_signs(&mut self) {
         self.signs_minus.clear();
         self.signs_i.clear();
+    }
+
+    /// Clear all elements in a Vec of Sets, keeping the Vec's capacity.
+    #[inline]
+    fn clear_sets(sets: &mut [T]) {
+        for set in sets.iter_mut() {
+            set.clear();
+        }
+    }
+
+    /// Initialize a Vec of Sets as identity (set[i] = {i}), reusing existing allocations.
+    #[inline]
+    fn init_as_identity(sets: &mut [T]) {
+        for (i, set) in sets.iter_mut().enumerate() {
+            set.clear();
+            set.insert(i);
+        }
+    }
+
+    /// Ensure the Vec of Sets has exactly `num_qubits` elements, reusing capacity when possible.
+    #[inline]
+    fn ensure_size(sets: &mut Vec<T>, num_qubits: usize) {
+        match sets.len().cmp(&num_qubits) {
+            std::cmp::Ordering::Less => {
+                sets.reserve(num_qubits - sets.len());
+                while sets.len() < num_qubits {
+                    sets.push(T::new());
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                sets.truncate(num_qubits);
+            }
+            std::cmp::Ordering::Equal => {}
+        }
+    }
+
+    /// Ensure the Vec of SymbolicSigns has exactly `num_qubits` elements and clear them.
+    #[inline]
+    fn ensure_and_clear_signs(signs: &mut Vec<SymbolicSign>, num_qubits: usize) {
+        match signs.len().cmp(&num_qubits) {
+            std::cmp::Ordering::Less => {
+                signs.reserve(num_qubits - signs.len());
+                while signs.len() < num_qubits {
+                    signs.push(SymbolicSign::empty());
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                signs.truncate(num_qubits);
+            }
+            std::cmp::Ordering::Equal => {}
+        }
+        // Clear all signs to empty
+        for sign in signs.iter_mut() {
+            *sign = SymbolicSign::empty();
+        }
     }
 
     /// Initialize all generators as Z operators (stabilizers start as `Z_i` for each qubit).
     #[inline]
     pub fn init_all_z(&mut self) {
-        self.clear();
-        self.col_x = vec![T::new(); self.num_qubits];
-        self.col_z = new_index_set::<T>(self.num_qubits);
-        self.row_x = vec![T::new(); self.num_qubits];
-        self.row_z = new_index_set::<T>(self.num_qubits);
-        self.signs = vec![SymbolicSign::empty(); self.num_qubits];
-        // signs_minus and signs_i are already cleared
+        let n = self.num_qubits;
+
+        // Ensure all Vecs have the right size
+        Self::ensure_size(&mut self.col_x, n);
+        Self::ensure_size(&mut self.col_z, n);
+        Self::ensure_size(&mut self.row_x, n);
+        Self::ensure_size(&mut self.row_z, n);
+        Self::ensure_and_clear_signs(&mut self.signs, n);
+
+        // Clear and initialize: col_x and row_x are empty, col_z and row_z are identity
+        Self::clear_sets(&mut self.col_x);
+        Self::init_as_identity(&mut self.col_z);
+        Self::clear_sets(&mut self.row_x);
+        Self::init_as_identity(&mut self.row_z);
+
+        self.clear_phase_signs();
     }
 
     /// Initialize all generators as X operators (destabilizers start as `X_i` for each qubit).
     #[inline]
     pub fn init_all_x(&mut self) {
-        self.clear();
-        self.col_x = new_index_set::<T>(self.num_qubits);
-        self.col_z = vec![T::new(); self.num_qubits];
-        self.row_x = new_index_set::<T>(self.num_qubits);
-        self.row_z = vec![T::new(); self.num_qubits];
-        self.signs = vec![SymbolicSign::empty(); self.num_qubits];
-        // signs_minus and signs_i are already cleared
+        let n = self.num_qubits;
+
+        // Ensure all Vecs have the right size
+        Self::ensure_size(&mut self.col_x, n);
+        Self::ensure_size(&mut self.col_z, n);
+        Self::ensure_size(&mut self.row_x, n);
+        Self::ensure_size(&mut self.row_z, n);
+        Self::ensure_and_clear_signs(&mut self.signs, n);
+
+        // Clear and initialize: col_x and row_x are identity, col_z and row_z are empty
+        Self::init_as_identity(&mut self.col_x);
+        Self::clear_sets(&mut self.col_z);
+        Self::init_as_identity(&mut self.row_x);
+        Self::clear_sets(&mut self.row_z);
+
+        self.clear_phase_signs();
     }
 
     /// Multiply the sign of generator `target` by the sign of generator `source`.
@@ -143,21 +211,6 @@ where
     pub fn clear_sign(&mut self, gen_idx: usize) {
         self.signs[gen_idx] = SymbolicSign::empty();
     }
-}
-
-/// Helper function to create a vector of sets where set[i] contains just element i.
-#[inline]
-fn new_index_set<T>(num_qubits: usize) -> Vec<T>
-where
-    T: for<'a> Set<'a, Element = usize>,
-{
-    let mut sets = Vec::with_capacity(num_qubits);
-    for i in 0..num_qubits {
-        let mut set = T::new();
-        set.insert(i);
-        sets.push(set);
-    }
-    sets
 }
 
 #[cfg(test)]

@@ -442,7 +442,7 @@ mod tests {
         // Should have one Prep gate
         assert_eq!(parsed_gates.len(), 1);
         assert_eq!(parsed_gates[0].gate_type, GateType::Prep);
-        assert_eq!(parsed_gates[0].qubits, vec![QubitId(0)]);
+        assert_eq!(parsed_gates[0].qubits.as_slice(), &[QubitId(0)]);
 
         // Test preparation to |1⟩
         let mut builder = NoiseUtils::create_quantum_builder();
@@ -453,9 +453,9 @@ mod tests {
         // Should have two gates: Prep followed by X
         assert_eq!(parsed_gates.len(), 2);
         assert_eq!(parsed_gates[0].gate_type, GateType::Prep);
-        assert_eq!(parsed_gates[0].qubits, vec![QubitId(1)]);
+        assert_eq!(parsed_gates[0].qubits.as_slice(), &[QubitId(1)]);
         assert_eq!(parsed_gates[1].gate_type, GateType::X);
-        assert_eq!(parsed_gates[1].qubits, vec![QubitId(1)]);
+        assert_eq!(parsed_gates[1].qubits.as_slice(), &[QubitId(1)]);
     }
 
     #[test]

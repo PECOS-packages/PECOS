@@ -16,6 +16,7 @@ use core::mem;
 use pecos_core::{QubitId, RngManageable, Set, VecSet};
 use pecos_rng::rng_ext::RngProbabilityExt;
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use smallvec::SmallVec;
 
 #[expect(clippy::module_name_repetitions)]
 pub type StdSparseStab = SparseStab<VecSet<usize>>;
@@ -323,16 +324,17 @@ where
         if self.stabs.signs_i.contains(&id) {
             self.stabs.signs_i.remove(&id);
 
-            let gens_common = self
+            // Use SmallVec for temporary storage - anti-commuting stabilizers are typically few
+            let gens_common: SmallVec<[usize; 8]> = self
                 .stabs
                 .signs_i
                 .intersection(&anticom_stabs_col)
                 .copied()
-                .collect::<Vec<_>>();
-            let gens_only_stabs = anticom_stabs_col
+                .collect();
+            let gens_only_stabs: SmallVec<[usize; 8]> = anticom_stabs_col
                 .difference(&self.stabs.signs_i)
                 .copied()
-                .collect::<Vec<_>>();
+                .collect();
 
             for i in gens_common {
                 self.stabs.signs_minus ^= &i;

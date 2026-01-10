@@ -31,6 +31,7 @@ pecos-qsim.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 pecos = { workspace = true, features = ["runtime"] }
+pecos-engines.workspace = true
 pecos-rng.workspace = true
 rand.workspace = true
 rand_xoshiro.workspace = true

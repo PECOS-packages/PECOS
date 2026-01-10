@@ -753,9 +753,9 @@ mod tests {
         let parsed_commands = message.quantum_ops().unwrap();
         assert_eq!(parsed_commands.len(), 2);
         assert_eq!(parsed_commands[0].gate_type, GateType::H);
-        assert_eq!(parsed_commands[0].qubits, vec![QubitId(0)]);
+        assert_eq!(parsed_commands[0].qubits.as_slice(), &[QubitId(0)]);
         assert_eq!(parsed_commands[1].gate_type, GateType::CX);
-        assert_eq!(parsed_commands[1].qubits, vec![QubitId(0), QubitId(1)]);
+        assert_eq!(parsed_commands[1].qubits.as_slice(), &[QubitId(0), QubitId(1)]);
     }
 
     #[test]
@@ -973,18 +973,18 @@ mod tests {
         assert_eq!(operations.len(), 5);
 
         assert_eq!(operations[0].gate_type, GateType::Measure);
-        assert_eq!(operations[0].qubits, vec![QubitId(3)]);
+        assert_eq!(operations[0].qubits.as_slice(), &[QubitId(3)]);
 
         assert_eq!(operations[1].gate_type, GateType::Measure);
-        assert_eq!(operations[1].qubits, vec![QubitId(1)]);
+        assert_eq!(operations[1].qubits.as_slice(), &[QubitId(1)]);
 
         assert_eq!(operations[2].gate_type, GateType::Measure);
-        assert_eq!(operations[2].qubits, vec![QubitId(4)]);
+        assert_eq!(operations[2].qubits.as_slice(), &[QubitId(4)]);
 
         assert_eq!(operations[3].gate_type, GateType::Measure);
-        assert_eq!(operations[3].qubits, vec![QubitId(0)]);
+        assert_eq!(operations[3].qubits.as_slice(), &[QubitId(0)]);
 
         assert_eq!(operations[4].gate_type, GateType::Measure);
-        assert_eq!(operations[4].qubits, vec![QubitId(2)]);
+        assert_eq!(operations[4].qubits.as_slice(), &[QubitId(2)]);
     }
 }

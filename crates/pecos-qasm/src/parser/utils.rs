@@ -12,6 +12,7 @@ use crate::parser::native_gates::{canonical_gate_name, is_native_operation, pars
 use crate::parser::{Program, QASMParser};
 use pecos_core::Angle64;
 use pecos_core::prelude::{Gate, GateType, QubitId};
+use pecos_core::GateQubits;
 
 /// Convert parsed parameters (radians) into angles and other params based on gate type.
 ///
@@ -171,7 +172,7 @@ fn expand_gate_operation(
                     gate_type,
                     angles,
                     params,
-                    qubits.iter().map(|&q| QubitId(q)).collect(),
+                    qubits.iter().map(|&q| QubitId(q)).collect::<GateQubits>(),
                 );
                 Ok(vec![Operation::NativeGate(gate)])
             }

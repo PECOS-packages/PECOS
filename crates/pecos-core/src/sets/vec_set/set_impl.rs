@@ -12,6 +12,7 @@
 
 use crate::VecSet;
 use crate::sets::vec_set::iterators::{Difference, Intersection, SymmetricDifference, Union};
+use crate::sets::vec_set::SetBuffer;
 use core::slice::Iter;
 
 use crate::{Element, Set};
@@ -96,15 +97,15 @@ impl<'a, E: Element + 'a> Set<'a> for VecSet<E> {
 
     #[inline]
     fn remove(&mut self, value: &E) {
-        self.elements.retain(|&x| x != *value);
+        self.elements.retain(|x| *x != *value);
     }
 
     #[inline]
-    fn retain<F>(&mut self, f: F)
+    fn retain<F>(&mut self, mut f: F)
     where
         F: FnMut(&E) -> bool,
     {
-        self.elements.retain(f);
+        self.elements.retain(|x| f(x));
     }
 
     #[inline]
@@ -155,7 +156,7 @@ impl<'a, E: Element + 'a> Set<'a> for VecSet<E> {
     #[inline]
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            elements: Vec::with_capacity(capacity),
+            elements: SetBuffer::with_capacity(capacity),
         }
     }
 }

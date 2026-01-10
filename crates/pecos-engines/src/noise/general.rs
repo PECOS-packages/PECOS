@@ -1556,9 +1556,9 @@ mod tests {
         for &qubit in qubits {
             request_builder.add_gate_command(&Gate {
                 gate_type: GateType::Measure,
-                angles: vec![],
-                qubits: vec![QubitId(qubit)],
-                params: vec![],
+                angles: vec![].into(),
+                qubits: vec![QubitId(qubit)].into(),
+                params: vec![].into(),
             });
         }
         let measurement_request = request_builder.build();
@@ -1637,9 +1637,9 @@ mod tests {
         // Create a quantum gate operation (Prep on qubit 0)
         let gate = Gate {
             gate_type: GateType::Prep,
-            angles: vec![],
-            qubits: vec![QubitId(0)],
-            params: vec![],
+            angles: vec![].into(),
+            qubits: vec![QubitId(0)].into(),
+            params: vec![].into(),
         };
 
         // Create a builder and apply noise
@@ -1826,9 +1826,9 @@ mod tests {
         let _ = builder.for_quantum_operations();
         let prep_gate = Gate {
             gate_type: GateType::Prep,
-            angles: vec![],
-            qubits: vec![QubitId(0)],
-            params: vec![],
+            angles: vec![].into(),
+            qubits: vec![QubitId(0)].into(),
+            params: vec![].into(),
         };
         noise.apply_prep_faults(&prep_gate, &mut builder);
 
@@ -2743,9 +2743,9 @@ mod tests {
         // Create an idle gate
         let gate = Gate {
             gate_type: GateType::Idle,
-            angles: vec![],
-            qubits: vec![QubitId(0)],
-            params: vec![1.0], // 1 second duration
+            angles: vec![].into(),
+            qubits: vec![QubitId(0)].into(),
+            params: vec![1.0].into(), // 1 second duration
         };
 
         // Apply idle faults - should use coherent dephasing (RZ gates)
@@ -2766,9 +2766,9 @@ mod tests {
         let mut builder = ByteMessage::quantum_operations_builder();
         let multi_qubit_gate = Gate {
             gate_type: GateType::Idle,
-            angles: vec![],
-            qubits: vec![QubitId(0), QubitId(1), QubitId(2)], // 3 qubits
-            params: vec![1.0],                                // 1 second duration
+            angles: vec![].into(),
+            qubits: vec![QubitId(0), QubitId(1), QubitId(2)].into(), // 3 qubits
+            params: vec![1.0].into(),                                // 1 second duration
         };
 
         model.apply_idle_faults(
@@ -2902,17 +2902,17 @@ mod tests {
         // Create an RZ gate (noiseless - should not have noise applied)
         let rz_gate = Gate {
             gate_type: GateType::RZ,
-            angles: vec![Angle64::from_radians(0.1)],
-            qubits: vec![QubitId(0)],
-            params: vec![],
+            angles: vec![Angle64::from_radians(0.1)].into(),
+            qubits: vec![QubitId(0)].into(),
+            params: vec![].into(),
         };
 
         // Create an X gate (not noiseless - should have noise applied)
         let x_gate = Gate {
             gate_type: GateType::X,
-            angles: vec![],
-            qubits: vec![QubitId(0)],
-            params: vec![],
+            angles: vec![].into(),
+            qubits: vec![QubitId(0)].into(),
+            params: vec![].into(),
         };
 
         // Make sure RZ is recognized as noiseless

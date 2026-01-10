@@ -217,7 +217,7 @@ impl PyByteMessage {
 
             // Handle params vector (other non-angle parameters)
             if !op.params.is_empty() {
-                dict.set_item("params", op.params.clone())?;
+                dict.set_item("params", op.params.to_vec())?;
             }
 
             // result_id no longer exists on GateCommand

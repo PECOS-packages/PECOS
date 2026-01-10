@@ -771,11 +771,11 @@ mod tests {
         // Verify the commands
         assert_eq!(commands.len(), 3);
         assert_eq!(commands[0].gate_type, GateType::H);
-        assert_eq!(commands[0].qubits, vec![QubitId(0)]);
+        assert_eq!(commands[0].qubits.as_slice(), &[QubitId(0)]);
         assert_eq!(commands[1].gate_type, GateType::CX);
-        assert_eq!(commands[1].qubits, vec![QubitId(0), QubitId(1)]);
+        assert_eq!(commands[1].qubits.as_slice(), &[QubitId(0), QubitId(1)]);
         assert_eq!(commands[2].gate_type, GateType::Measure);
-        assert_eq!(commands[2].qubits, vec![QubitId(2)]);
+        assert_eq!(commands[2].qubits.as_slice(), &[QubitId(2)]);
     }
 
     #[test]
@@ -881,7 +881,7 @@ mod tests {
         assert_eq!(commands.len(), 3);
         for i in 0..3 {
             assert_eq!(commands[i].gate_type, GateType::Measure);
-            assert_eq!(commands[i].qubits, vec![QubitId(qubits[i])]);
+            assert_eq!(commands[i].qubits.as_slice(), &[QubitId(qubits[i])]);
         }
     }
 
@@ -905,7 +905,7 @@ mod tests {
         assert_eq!(commands.len(), 3);
         for i in 0..3 {
             assert_eq!(commands[i].gate_type, GateType::MeasureLeaked);
-            assert_eq!(commands[i].qubits, vec![QubitId(qubits[i])]);
+            assert_eq!(commands[i].qubits.as_slice(), &[QubitId(qubits[i])]);
         }
     }
 

@@ -20,11 +20,14 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
 use pecos::qsim::measurement_sampler::{MeasurementSampler, SequentialMeasurementSampler};
+use pecos_engines::quantum::SparseStabEngine;
+use pecos_engines::{Engine, EngineSystem, QuantumSystem};
 use rand::Rng;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     bench_surface_code_simulation(c);
+    bench_surface_code_noisy(c);
     bench_surface_code_sampling(c);
     bench_surface_code_shot_scaling(c);
     bench_simd_vs_scalar(c);
@@ -175,6 +178,133 @@ fn bench_surface_code_simulation<M: Measurement>(c: &mut Criterion<M>) {
             group.bench_with_input(BenchmarkId::new("symbolic_sim", &label), &(), |b, ()| {
                 b.iter(|| black_box(simulate_surface_code(&params, rounds)));
             });
+        }
+    }
+
+    group.finish();
+}
+
+/// Build a surface code syndrome extraction circuit as a ByteMessage.
+///
+/// This creates the same circuit structure as `simulate_surface_code` but
+/// in ByteMessage format for use with the engine infrastructure.
+fn build_surface_code_circuit(params: &SurfaceCodeParams, rounds: usize) -> ByteMessage {
+    let mut builder = ByteMessageBuilder::new();
+    let _ = builder.for_quantum_operations();
+
+    // Initialize data qubits in |+> state
+    for i in 0..params.num_data {
+        builder.add_h(&[i]);
+    }
+
+    // Perform syndrome extraction rounds
+    for _round in 0..rounds {
+        // Entangle ancillas with their data qubit neighbors
+        for a in 0..params.num_ancillas {
+            let ancilla = params.ancilla_start + a;
+            let neighbors = params.ancilla_neighbors(a);
+
+            if a < params.num_ancillas / 2 {
+                // X-type: CNOT with ancilla as control
+                for &data in &neighbors {
+                    builder.add_cx(&[ancilla], &[data]);
+                }
+            } else {
+                // Z-type: CNOT with ancilla as target
+                for &data in &neighbors {
+                    builder.add_cx(&[data], &[ancilla]);
+                }
+            }
+        }
+
+        // Measure all ancillas
+        for a in 0..params.num_ancillas {
+            let ancilla = params.ancilla_start + a;
+            builder.add_measurements(&[ancilla]);
+        }
+    }
+
+    builder.build()
+}
+
+/// Benchmark noisy surface code simulation using `SparseStabEngine` with `DepolarizingNoiseModel`.
+///
+/// This benchmarks the full noisy simulation pipeline:
+/// - Circuit transformation through noise model
+/// - Stabilizer state evolution through `SparseStab`
+/// - Multiple shots with different noise realizations
+fn bench_surface_code_noisy<M: Measurement>(c: &mut Criterion<M>) {
+    let mut group = c.benchmark_group("Surface Code - Noisy");
+
+    // Test different distances and error rates
+    for distance in [5, 11] {
+        let params = SurfaceCodeParams::new(distance);
+        let rounds = 3; // Fixed rounds for noise benchmarks
+
+        // Build the circuit once
+        let circuit = build_surface_code_circuit(&params, rounds);
+
+        // Throughput: number of gates + measurements per shot
+        let ops_per_run = rounds * (params.num_ancillas * 3 + params.num_ancillas);
+
+        for &error_rate in &[0.0, 0.001, 0.01] {
+            let label = format!("d{distance}_r{rounds}_p{error_rate}");
+
+            // Single shot benchmark (measures per-shot overhead)
+            group.throughput(Throughput::Elements(ops_per_run as u64));
+            group.bench_with_input(
+                BenchmarkId::new("single_shot", &label),
+                &(),
+                |b, ()| {
+                    // Create system outside the benchmark loop for setup
+                    let noise = Box::new(
+                        DepolarizingNoiseModel::builder()
+                            .with_uniform_probability(error_rate)
+                            .with_seed(42)
+                            .build(),
+                    );
+                    let engine = Box::new(SparseStabEngine::new(params.num_qubits));
+                    let mut system = QuantumSystem::new(noise, engine);
+                    system.set_seed(42);
+
+                    b.iter(|| {
+                        system.reset().expect("reset failed");
+                        let result = system
+                            .process_as_system(circuit.clone())
+                            .expect("process failed");
+                        black_box(result)
+                    });
+                },
+            );
+
+            // Multi-shot benchmark (100 shots)
+            let shots = 100;
+            group.throughput(Throughput::Elements((ops_per_run * shots) as u64));
+            group.bench_with_input(
+                BenchmarkId::new("100_shots", &label),
+                &(),
+                |b, ()| {
+                    let noise = Box::new(
+                        DepolarizingNoiseModel::builder()
+                            .with_uniform_probability(error_rate)
+                            .with_seed(42)
+                            .build(),
+                    );
+                    let engine = Box::new(SparseStabEngine::new(params.num_qubits));
+                    let mut system = QuantumSystem::new(noise, engine);
+                    system.set_seed(42);
+
+                    b.iter(|| {
+                        for _ in 0..shots {
+                            system.reset().expect("reset failed");
+                            let result = system
+                                .process_as_system(circuit.clone())
+                                .expect("process failed");
+                            black_box(&result);
+                        }
+                    });
+                },
+            );
         }
     }
 

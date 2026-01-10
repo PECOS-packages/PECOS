@@ -14,6 +14,9 @@ typ = "typ"
 # These are operation names in HUGR/Guppy integer operations
 ine = "ine"  # Integer not equal operation
 inot = "inot"  # Integer bitwise NOT operation
+# Float comparison operation (float less-than-or-equal)
+fle = "fle"
+Fle = "Fle"
 # QuEST v4.1.0 uses "calcExpec" (not "calcExpect") in function names
 Expec = "Expec"
 # NumPy uses "arange" (array range), not "arrange"

@@ -191,9 +191,11 @@ from pecos import (
     error_models,
     exceptions,  # Exception classes
     graph,
+    guppy,  # Direct Guppy code generation for QEC - bypasses SLR
     misc,
     programs,
     protocols,
+    qec,  # Pure QEC geometry (surface, color codes) - no SLR dependencies
     qeccs,
     quantum,  # Quantum types (DagCircuit, Gate, Pauli, etc.)
     simulators,
@@ -327,6 +329,7 @@ __all__ = [
     "general_noise",
     "get_guppy_backends",
     "graph",
+    "guppy",  # Direct Guppy code generation
     "hugr_engine",
     "i8",
     "i16",
@@ -355,6 +358,7 @@ __all__ = [
     "programs",
     "protocols",
     "qasm_engine",
+    "qec",  # Pure QEC geometry (no SLR dependencies)
     "qeccs",
     "qis_engine",
     "quantum",

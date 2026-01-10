@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.syn_extract.six_check_nonflagging import SixUnflaggedSyn
 from pecos.slr import CReg, QReg
+from pecos.slr.qeclib.steane.syn_extract.six_check_nonflagging import SixUnflaggedSyn
 
 
 def test_SixUnflaggedSyn(compare_qasm: Callable[..., None]) -> None:

@@ -3,8 +3,8 @@
 import re
 
 import pytest
-from pecos.qeclib import qubit
 from pecos.slr import CReg, Main, Permute, QReg, SlrConverter
+from pecos.slr.qeclib import qubit
 
 # QASM Tests
 

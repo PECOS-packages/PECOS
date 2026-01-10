@@ -1,8 +1,8 @@
 """Pytest fixtures for SLR tests."""
 
 import pytest
-from pecos.qeclib import qubit
 from pecos.slr import CReg, Main, Permute, QReg
+from pecos.slr.qeclib import qubit
 
 
 @pytest.fixture

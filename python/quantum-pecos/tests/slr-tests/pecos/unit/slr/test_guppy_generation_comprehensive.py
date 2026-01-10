@@ -4,8 +4,8 @@ These tests cover various quantum algorithms, patterns, and edge cases
 to ensure the Guppy generator produces correct output for diverse scenarios.
 """
 
-from pecos.qeclib import qubit as qb
 from pecos.slr import CReg, If, Main, Permute, QReg, Repeat, SlrConverter
+from pecos.slr.qeclib import qubit as qb
 
 
 def test_quantum_teleportation() -> None:

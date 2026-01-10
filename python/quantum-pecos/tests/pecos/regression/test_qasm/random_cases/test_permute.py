@@ -11,8 +11,8 @@
 
 """Testing SLR->QASM permute cases."""
 
-from pecos.qeclib.steane.steane_class import Steane
 from pecos.slr import Block, CReg, Main, Permute, SlrConverter
+from pecos.slr.qeclib.steane.steane_class import Steane
 
 
 def test_permute1() -> None:

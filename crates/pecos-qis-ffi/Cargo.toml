@@ -25,6 +25,8 @@ pecos-qis-ffi-types.workspace = true
 log.workspace = true
 # For heap allocation (malloc/free)
 libc.workspace = true
+# For JSON serialization of named results
+serde_json.workspace = true
 
 [features]
 default = []

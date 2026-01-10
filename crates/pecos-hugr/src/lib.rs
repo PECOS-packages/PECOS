@@ -79,7 +79,7 @@ mod engine;
 mod loader;
 
 pub use builder::{HugrEngineBuilder, hugr_engine, hugr_sim};
-pub use engine::HugrEngine;
+pub use engine::{CapturedResult, ClassicalValue, FutureId, HugrEngine, ResultValue, RngContextId};
 pub use loader::{load_hugr_from_bytes, load_hugr_from_file};
 
 // Re-export key types for convenience

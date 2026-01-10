@@ -11,8 +11,8 @@
 
 """Tests for SlrConverter with ParallelOptimizer integration."""
 
-from pecos.qeclib import qubit as qb
 from pecos.slr import Block, CReg, Main, Parallel, QReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
 
 
 def test_slr_converter_without_optimization() -> None:

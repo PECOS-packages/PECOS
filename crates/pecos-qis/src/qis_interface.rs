@@ -262,6 +262,17 @@ pub trait DynamicSyncHandle: Send + Sync {
     /// # Errors
     /// Returns an error if the FFI call fails.
     fn abort_execution(&self) -> Result<(), InterfaceError>;
+
+    /// Get named results from the execution context
+    ///
+    /// Returns a map of result names to their boolean values.
+    /// Named results are stored by `print_bool` and `print_bool_arr` FFI calls.
+    ///
+    /// # Errors
+    /// Returns an error if the FFI call fails or JSON parsing fails.
+    fn get_named_results(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, Vec<bool>>, InterfaceError>;
 }
 
 /// Box type for interface implementations

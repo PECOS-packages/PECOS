@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.preps.plus_h_state import PrepHStateFT
 from pecos.slr import CReg, QReg
+from pecos.slr.qeclib.steane.preps.plus_h_state import PrepHStateFT
 
 
 def test_PrepHStateFT(compare_qasm: Callable[..., None]) -> None:

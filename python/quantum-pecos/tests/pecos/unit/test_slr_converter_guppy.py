@@ -12,9 +12,9 @@
 """Tests for SlrConverter Guppy functionality."""
 
 
-from pecos.qeclib import qubit as qb
-from pecos.qeclib.steane.steane_class import Steane
 from pecos.slr import CReg, Main, Parallel, QReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
+from pecos.slr.qeclib.steane.steane_class import Steane
 
 
 def test_slr_converter_guppy_simple() -> None:

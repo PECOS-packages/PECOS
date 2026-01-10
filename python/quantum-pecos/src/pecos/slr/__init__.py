@@ -9,6 +9,8 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+# QEC library (moved from pecos.qeclib)
+from pecos.slr import qeclib
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
 from pecos.slr.loop_block import For, While
@@ -45,4 +47,6 @@ __all__ = [
     "SlrConverter",
     "Vars",
     "While",
+    # QEC library
+    "qeclib",
 ]

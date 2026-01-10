@@ -5,10 +5,10 @@ and compile to HUGR without errors. They serve as both documentation
 of expected translations and regression tests.
 """
 
-from pecos.qeclib import qubit as qb
-from pecos.qeclib.qubit.measures import Measure
-from pecos.qeclib.qubit.preps import Prep
 from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
+from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.preps import Prep
 
 
 def test_simple_bell_state() -> None:

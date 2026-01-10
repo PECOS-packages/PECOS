@@ -13,12 +13,12 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.decoders.lookup import (
+from pecos.slr import CReg, QReg
+from pecos.slr.qeclib.steane.decoders.lookup import (
     FlagLookupQASM,
     FlagLookupQASMActiveCorrectionX,
     FlagLookupQASMActiveCorrectionZ,
 )
-from pecos.slr import CReg, QReg
 
 
 def test_FlagLookupQASM(compare_qasm: Callable[..., None]) -> None:

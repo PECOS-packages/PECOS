@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.gates_tq.transversal_tq import CX, CY, CZ, SZZ
 from pecos.slr import QReg
+from pecos.slr.qeclib.steane.gates_tq.transversal_tq import CX, CY, CZ, SZZ
 
 
 def test_CX(compare_qasm: Callable[..., None]) -> None:

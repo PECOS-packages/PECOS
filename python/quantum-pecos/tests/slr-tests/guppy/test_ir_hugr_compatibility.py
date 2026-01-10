@@ -1,9 +1,9 @@
 """Test IR generator with HUGR compilation scenarios."""
 
-from pecos.qeclib import qubit
-from pecos.qeclib.qubit.measures import Measure
 from pecos.slr import CReg, If, Main, QReg
 from pecos.slr.gen_codes.guppy.ir_generator import IRGuppyGenerator
+from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 
 
 def test_ir_handles_array_measurement_patterns() -> None:

@@ -1,7 +1,7 @@
 """Demonstration of ParallelOptimizer transformation with QASM output."""
 
-from pecos.qeclib import qubit as qb
 from pecos.slr import Block, Main, Parallel, QReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
 
 
 def main() -> None:

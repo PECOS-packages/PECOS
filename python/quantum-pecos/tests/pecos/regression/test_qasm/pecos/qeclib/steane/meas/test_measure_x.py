@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.meas.measure_x import NoFlagMeasureX
 from pecos.slr import CReg, QReg
+from pecos.slr.qeclib.steane.meas.measure_x import NoFlagMeasureX
 
 
 def test_MeasureX(compare_qasm: Callable[..., None]) -> None:

@@ -1,8 +1,8 @@
 """Tests for measurement unrolling with permutations in both QASM and QIR generation."""
 
 import pytest
-from pecos.qeclib import qubit
 from pecos.slr import CReg, Main, Permute, QReg, SlrConverter
+from pecos.slr.qeclib import qubit
 
 
 def create_measurement_unrolling_program() -> tuple:

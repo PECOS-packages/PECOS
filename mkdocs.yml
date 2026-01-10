@@ -56,6 +56,8 @@ nav:
   - HUGR & Guppy Simulation: user-guide/hugr-simulation.md
   - Simulators: user-guide/simulators.md
   - Noise Model Builders: user-guide/noise-model-builders.md
+  - QEC Geometry: user-guide/qec-geometry.md
+  - QEC with Guppy: user-guide/qec-guppy.md
   - Decoders: user-guide/decoders.md
   - Graph API: user-guide/graph-api.md
   - Circuit Representation: user-guide/circuit-representation.md
@@ -67,6 +69,7 @@ nav:
 - Development:
   - development/DEVELOPMENT.md
   - Developer Tools CLI: development/dev-tools.md
+  - SLR and QECLib: development/slr-qeclib.md
   - development/QIS_ARCHITECTURE.md
 - Releases:
   - releases/changelog.md

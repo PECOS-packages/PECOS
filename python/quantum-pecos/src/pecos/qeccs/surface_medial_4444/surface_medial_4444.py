@@ -11,15 +11,17 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Medial Surface 4.4.4.4 quantum error correcting code implementation.
+"""Rotated Surface 4.4.4.4 quantum error correcting code implementation.
 
-This module provides the Medial Surface code on a 4.4.4.4 lattice structure,
-a topological quantum error correcting code with a medial layout.
+This module provides the Rotated Surface code on a 4.4.4.4 lattice structure,
+a topological quantum error correcting code. The rotated layout is the most
+commonly used surface code variant.
+
+Note: This is also known as the "medial" surface code in some literature.
 """
 
-from collections.abc import Generator
-
 from pecos.circuit_converters.checks2circuit import Check2Circuits
+from pecos.qec.surface.layouts import generate_surface_layout
 from pecos.qeccs.default_qecc import DefaultQECC
 from pecos.qeccs.surface_medial_4444.gates import (
     GateIdentity,
@@ -170,8 +172,7 @@ class SurfaceMedial4444(DefaultQECC):
     def _generate_layout(self) -> dict:
         """Creates the layout dictionary which describes the location of the qubits in the code.
 
-        :param qudit_ids:
-        :return:
+        Uses pecos.qec.surface.layouts for rotated surface code layout generation.
         """
         height = self.height
         width = self.width
@@ -179,78 +180,32 @@ class SurfaceMedial4444(DefaultQECC):
         lattice_width = 2 * width
         self.lattice_height = lattice_height
         self.lattice_width = lattice_width
-        data_ids = self._data_id_iter()
-        ancilla_ids = self._ancilla_id_iter()
 
         self.lattice_dimensions = {
-            "width": 2 * width,
-            "height": 2 * height,
+            "width": lattice_width,
+            "height": lattice_height,
         }
 
-        xy_iter = (
-            self._rotated_orientaition() if self.rotated else self._norm_orientaition()
-        )
+        # Use pecos.qec for layout generation
+        data_positions, ancilla_positions = generate_surface_layout(width, height)
 
-        # Determine the position of things
-        for x, y in xy_iter:
-            if 0 < x < lattice_width and 0 < y < lattice_height:
-                # Interior (no digons)
+        # Add data qubits
+        for nid, pos in enumerate(data_positions):
+            self.layout[nid] = pos
+            self.position2qudit[pos] = nid
+            self.qudit_set.add(nid)
+            self.data_qudit_set.add(nid)
 
-                if x % 2 == 1 and y % 2 == 1:  # That is, both coordinates are odd...
-                    # Data
-
-                    self._add_node(x, y, data_ids)
-
-                elif x % 2 == 0 and y % 2 == 0:
-                    # Ancilla
-
-                    self._add_node(x, y, ancilla_ids)
-
-            elif 0 < x < lattice_width or 0 < y < lattice_height:
-                # Not the corners or the interior
-
-                if y == 0:
-                    # Top: X checks
-
-                    if x != 0 and x % 4 == 0:
-                        self._add_node(x, y, ancilla_ids)
-
-                elif x == 0 and (y - 2) % 4 == 0:
-                    # Left column
-                    # X checks
-                    self._add_node(x, y, ancilla_ids)
-
-                if y == lattice_height:
-                    # Bottom: X checks
-
-                    if height % 2 == 0:
-                        if x != 0 and x % 4 == 0:
-                            self._add_node(x, y, ancilla_ids)
-
-                    elif (x - 2) % 4 == 0:
-                        self._add_node(x, y, ancilla_ids)
-
-                elif x == lattice_width:
-                    # Right column
-                    # X checks
-
-                    if width % 2 == 1:
-                        if y != 0 and y % 4 == 0:
-                            self._add_node(x, y, ancilla_ids)
-                    elif (y - 2) % 4 == 0:
-                        self._add_node(x, y, ancilla_ids)
+        # Add ancilla qubits
+        ancilla_start_id = len(data_positions)
+        for i, pos in enumerate(ancilla_positions):
+            nid = ancilla_start_id + i
+            self.layout[nid] = pos
+            self.position2qudit[pos] = nid
+            self.qudit_set.add(nid)
+            self.ancilla_qudit_set.add(nid)
 
         return self.layout
-
-    def _norm_orientaition(self) -> Generator[tuple[int, int], None, None]:
-        for y in range(self.lattice_height + 1):
-            for x in range(self.lattice_width + 1):
-                yield x, y
-
-    def _rotated_orientaition(self) -> Generator[tuple[int, int], None, None]:
-        for x in range(self.lattice_width + 1):
-            for y in range(self.lattice_height + 1):
-                yield x, y
 
     def _determine_sides(self) -> dict[str, list]:
         """Outputs a dictionary that describes the sides of the code.

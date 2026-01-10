@@ -177,11 +177,11 @@ def clean_project(root: Path, *, dry_run: bool = False) -> None:
             for pecos_rslib in site_packages.glob("pecos_rslib*"):
                 rmtree_safe(pecos_rslib, dry_run=dry_run)
 
-    # Clean uv cache for pecos-rslib
+    # Clean uv cache for pecos-rslib (use --force to avoid blocking on cache lock)
     if not dry_run:
-        run_command(["uv", "cache", "clean", "pecos-rslib"])
+        run_command(["uv", "cache", "clean", "--force", "pecos-rslib"])
     else:
-        print("  Would run: uv cache clean pecos-rslib")
+        print("  Would run: uv cache clean --force pecos-rslib")
 
 
 def clean_selene(root: Path, *, dry_run: bool = False) -> None:

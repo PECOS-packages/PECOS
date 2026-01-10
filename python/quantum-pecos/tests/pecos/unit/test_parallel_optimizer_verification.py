@@ -11,8 +11,8 @@
 
 """Verification tests showing exact transformations performed by ParallelOptimizer."""
 
-from pecos.qeclib import qubit as qb
 from pecos.slr import Block, Main, Parallel, QReg
+from pecos.slr.qeclib import qubit as qb
 from pecos.slr.transforms import ParallelOptimizer
 
 

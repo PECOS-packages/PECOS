@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.qeclib import qubit
 from pecos.slr import Comment, CReg, Main, QReg, Repeat
+from pecos.slr.qeclib import qubit
 
 if TYPE_CHECKING:
     import stim

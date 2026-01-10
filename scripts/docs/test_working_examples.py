@@ -20,38 +20,27 @@ making it useful for CI testing or demonstrating the testing framework.
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+# Import shared extraction function from test_code_examples
+from test_code_examples import extract_code_blocks
+
 # Files to test (relative to the docs directory)
 TEST_FILES = [
     "user-guide/resources/working-examples.md",
     "user-guide/resources/code-testing-examples.md",
     "development/code-examples.md",
+    # QEC documentation with verified examples
+    "development/slr-qeclib.md",
+    "user-guide/qec-guppy.md",
 ]
 
 # Base directory for markdown files
 DOCS_DIR = Path("docs")
-
-
-def extract_code_blocks(file_path: str | Path, language: str = "python") -> list[str]:
-    """Extract code blocks of a specific language from a Markdown file."""
-    with Path(file_path).open(encoding="utf-8") as f:
-        content = f.read()
-
-    # Find all code blocks with the specified language
-    # Exclude blocks with "untested" marker
-    pattern = (
-        rf"```(?:{language}|exec-{language}|hidden-{language})(?!.*?untested)(.*?)```"
-    )
-    blocks = re.findall(pattern, content, re.DOTALL)
-
-    # Clean up the blocks (remove leading/trailing whitespace)
-    return [block.strip() for block in blocks]
 
 
 def test_python_block(
@@ -188,13 +177,19 @@ def main() -> None:
 
         # Test Python code blocks
         python_blocks = extract_code_blocks(file_path, "python")
-        for i, block in enumerate(python_blocks, 1):
+        for i, (block, should_skip) in enumerate(python_blocks, 1):
+            if should_skip:
+                print(f"SKIP: Python block #{i} from {file_path}")
+                continue
             result = test_python_block(block, i, file_path)
             python_results.append((file_path, i, result))
 
-        # Test Rust code blocks
+        # Test Rust code blocks (skip by default, snippets need crate context)
         rust_blocks = extract_code_blocks(file_path, "rust")
-        for i, block in enumerate(rust_blocks, 1):
+        for i, (block, should_skip) in enumerate(rust_blocks, 1):
+            if should_skip:
+                print(f"SKIP: Rust block #{i} from {file_path}")
+                continue
             result = test_rust_block(block, i, file_path)
             rust_results.append((file_path, i, result))
 

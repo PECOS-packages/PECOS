@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
 from pecos.slr import CReg, QReg
+from pecos.slr.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
 
 
 def test_ParallelFlagQECActiveCorrection(compare_qasm: Callable[..., None]) -> None:

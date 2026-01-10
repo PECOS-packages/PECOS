@@ -1,8 +1,8 @@
 """Test partial array consumption in SLR."""
 
-from pecos.qeclib import qubit
-from pecos.qeclib.qubit.measures import Measure
 from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 
 
 class MeasureAncillas(Block):

@@ -310,7 +310,13 @@ where
             | GateType::U
             | GateType::R1XY
             | GateType::SZZ
-            | GateType::SZZdg => {
+            | GateType::SZZdg
+            | GateType::RZZ
+            | GateType::SWAP
+            | GateType::CRZ
+            | GateType::CCX
+            | GateType::SX
+            | GateType::SXdg => {
                 return Err(HugrExecutionError::UnsupportedGate {
                     gate_type: gate.gate_type,
                     gate_index: gate_idx,

@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.steane_class import Steane
 from pecos.slr import Barrier, CReg, If, Main
+from pecos.slr.qeclib.steane.steane_class import Steane
 
 
 def telep(prep_basis: str, meas_basis: str) -> Main:

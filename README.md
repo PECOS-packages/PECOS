@@ -28,32 +28,53 @@ For Julia or optional features (LLVM, CUDA), see the [Getting Started Guide](doc
 
 ## Quick Example
 
-Create and simulate a Bell state—an entangled pair of qubits:
+Simulate a distance-3 repetition code with syndrome extraction using [Guppy](https://github.com/CQCL/guppylang), a pythonic quantum programming language:
 
 ```python
-from pecos import sim, Qasm
+from pecos import Guppy, sim, state_vector, depolarizing_noise
+from guppylang import guppy
+from guppylang.std.quantum import qubit, cx, measure
+from guppylang.std.builtins import array, result
 
-# Define a Bell state circuit
-circuit = Qasm(
-    """
-OPENQASM 2.0;
-include "qelib1.inc";
-qreg q[2];
-creg c[2];
-h q[0];
-cx q[0], q[1];
-measure q -> c;
-"""
+
+@guppy
+def repetition_code() -> None:
+    # 3 data qubits encode logical |0⟩ = |000⟩
+    d0, d1, d2 = qubit(), qubit(), qubit()
+
+    # 2 ancillas for syndrome extraction
+    s0, s1 = qubit(), qubit()
+
+    # Measure parity between adjacent data qubits
+    cx(d0, s0)
+    cx(d1, s0)
+    cx(d1, s1)
+    cx(d2, s1)
+
+    # Extract syndromes as an array
+    result("syndrome", array(measure(s0), measure(s1)))
+
+    # Measure data qubits (required by Guppy)
+    _ = measure(d0), measure(d1), measure(d2)
+
+
+# Run 10 shots with 10% depolarizing noise
+noise = depolarizing_noise().with_uniform_probability(0.1)
+results = (
+    sim(Guppy(repetition_code))
+    .qubits(5)
+    .quantum(state_vector())
+    .noise(noise)
+    .seed(42)
+    .run(10)
 )
-
-# Run 10 shots
-results = sim(circuit).seed(42).run(10)
-print(results.to_binary_dict())  # {"c": ["00", "11", "00", ...]} - qubits always match!
+print(results["syndrome"])
+# [[1, 1], [0, 1], [0, 0], [1, 1], [0, 0], [0, 1], [1, 1], [0, 0], [0, 1], [0, 1]]
 ```
 
-The results show `"00"` (both qubits measured `|0⟩`) and `"11"` (both measured `|1⟩`)—never `"01"` or `"10"`. That's quantum entanglement in action.
+Non-trivial syndromes like `[1, 0]`, `[0, 1]`, `[1, 1]` indicate detected errors that a decoder would use to identify and correct faults.
 
-For a Rust example, see [For Rust Users](#for-rust-users) below.
+For OpenQASM, PHIR, or other formats, see the [documentation](#documentation). For a Rust example, see [For Rust Users](#for-rust-users) below.
 
 ## What Can You Do With PECOS?
 

@@ -7,6 +7,48 @@ from pecos import Guppy, sim
 from pecos_rslib import qasm_engine, qis_engine
 
 
+def _verify_bell_correlation(results: dict, label: str) -> None:
+    """Verify Bell state measurement correlation with detailed diagnostics."""
+    assert (
+        "measurement_0" in results
+    ), f"{label}: measurement_0 not found in {list(results.keys())}"
+    assert (
+        "measurement_1" in results
+    ), f"{label}: measurement_1 not found in {list(results.keys())}"
+
+    m0_list = results["measurement_0"]
+    m1_list = results["measurement_1"]
+
+    # Verify lists have same length (crucial for correct shot alignment)
+    assert len(m0_list) == len(m1_list), (
+        f"{label}: Result list length mismatch - "
+        f"measurement_0 has {len(m0_list)} values, measurement_1 has {len(m1_list)} values. "
+        f"This indicates a bug in result collection."
+    )
+
+    # Check correlation for each shot
+    mismatches = []
+    for i, (m0, m1) in enumerate(zip(m0_list, m1_list, strict=True)):
+        if m0 != m1:
+            mismatches.append((i, m0, m1))
+
+    if mismatches:
+        # Provide detailed diagnostic information
+        error_msg = (
+            f"{label}: Bell state measurements not correlated!\n"
+            f"Found {len(mismatches)} mismatched shots out of {len(m0_list)}.\n"
+            f"First 10 mismatches: {mismatches[:10]}\n"
+            f"Full m0 list: {m0_list}\n"
+            f"Full m1 list: {m1_list}\n"
+            f"For a Bell state |00⟩ + |11⟩, measurements must always be equal. "
+            f"Getting m0 != m1 indicates either:\n"
+            f"  1. Results from different shots got mixed together\n"
+            f"  2. TLS (thread-local storage) issue with result collection\n"
+            f"  3. A bug in the quantum simulation"
+        )
+        raise AssertionError(error_msg)
+
+
 def test_guppy_with_explicit_qis_override() -> None:
     """Test that Guppy functions can use explicit qis_engine() override."""
     from guppylang.std.builtins import result
@@ -32,8 +74,6 @@ def test_guppy_with_explicit_qis_override() -> None:
         .run(100)
         .to_binary_dict()
     )
-    assert "measurement_0" in results_auto
-    assert "measurement_1" in results_auto
 
     # Test 2: Use default auto-detection (since explicit override API changed)
     results_explicit = (
@@ -44,23 +84,10 @@ def test_guppy_with_explicit_qis_override() -> None:
         .run(100)
         .to_binary_dict()
     )
-    assert "measurement_0" in results_explicit
-    assert "measurement_1" in results_explicit
 
-    # Both should produce correlated results for Bell state
-    for results in [results_auto, results_explicit]:
-        assert (
-            "measurement_0" in results
-        ), f"measurement_0 not found in {list(results.keys())}"
-        assert (
-            "measurement_1" in results
-        ), f"measurement_1 not found in {list(results.keys())}"
-
-        # Check correlation
-        m0_list = results["measurement_0"]
-        m1_list = results["measurement_1"]
-        for m0, m1 in zip(m0_list, m1_list, strict=False):
-            assert m0 == m1, "Bell state measurements should be correlated"
+    # Verify Bell state correlation with detailed diagnostics
+    _verify_bell_correlation(results_auto, "results_auto (seed=42)")
+    _verify_bell_correlation(results_explicit, "results_explicit (seed=43)")
 
 
 def test_qasm_with_explicit_override() -> None:

@@ -13,11 +13,11 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.syn_extract.three_parallel_flagging import (
+from pecos.slr import CReg, QReg
+from pecos.slr.qeclib.steane.syn_extract.three_parallel_flagging import (
     ThreeParallelFlaggingXZZ,
     ThreeParallelFlaggingZXX,
 )
-from pecos.slr import CReg, QReg
 
 
 def test_ThreeParallelFlaggingXZZ(compare_qasm: Callable[..., None]) -> None:

@@ -4,6 +4,7 @@
 //! allowing direct access to the data and providing convenient conversion methods.
 
 use pecos::prelude::*;
+use pecos::results::{Data, DataVec};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -368,6 +369,32 @@ pub(crate) fn shot_map_to_dict_integers(py: Python<'_>, shot_map: &ShotMap) -> P
         } else if let Ok(bool_values) = shot_map.try_bools(reg_name) {
             for val in bool_values {
                 py_list.append(val)?;
+            }
+            py_dict.set_item(reg_name, py_list)?;
+        } else if let Some(DataVec::Vec(vecs)) = shot_map.get(reg_name) {
+            // Handle Vec type (arrays of values from print_bool_arr, etc.)
+            for inner_vec in vecs {
+                let py_inner_list = PyList::empty(py);
+                for data in inner_vec {
+                    match data {
+                        Data::U32(v) => {
+                            py_inner_list.append(v)?;
+                        }
+                        Data::Bool(v) => {
+                            py_inner_list.append(v)?;
+                        }
+                        Data::I64(v) => {
+                            py_inner_list.append(v)?;
+                        }
+                        Data::F64(v) => {
+                            py_inner_list.append(v)?;
+                        }
+                        _ => {
+                            // Skip unsupported data types within Vec
+                        }
+                    }
+                }
+                py_list.append(py_inner_list)?;
             }
             py_dict.set_item(reg_name, py_list)?;
         }

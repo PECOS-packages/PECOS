@@ -1,8 +1,8 @@
 """Test scope management in IR generator."""
 
-from pecos.qeclib.qubit.measures import Measure
 from pecos.slr import CReg, If, Main, QReg
 from pecos.slr.gen_codes.guppy.ir_generator import IRGuppyGenerator
+from pecos.slr.qeclib.qubit.measures import Measure
 
 
 def test_conditional_resource_balancing() -> None:

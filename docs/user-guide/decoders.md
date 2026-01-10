@@ -1,7 +1,5 @@
 # Decoders
 
-<!--skip: Decoder examples require QEC code objects-->
-
 PECOS provides quantum error correction decoders through both Python and Rust APIs. The availability of specific decoders varies by language.
 
 ## Overview
@@ -89,7 +87,8 @@ The Rust API provides access to a broader set of decoders:
 
 The `MWPM2D` decoder implements Minimum Weight Perfect Matching for 2D topological codes.
 
-```python,skip
+<!--skip-->
+```python
 from pecos.decoders import MWPM2D
 
 # Create decoder for a surface code
@@ -103,7 +102,7 @@ decoder = MWPM2D()
 
 A no-op decoder useful for testing decoder interfaces without actual decoding.
 
-```python,skip
+```python
 from pecos.decoders import DummyDecoder
 
 decoder = DummyDecoder()

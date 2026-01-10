@@ -1,6 +1,8 @@
 # Circuit Representation
 
-<!--skip: Circuit examples require Guppy and specific circuit APIs-->
+```hidden-python
+from pecos.quantum import DagCircuit, TickCircuit, Gate
+```
 
 PECOS provides several ways to represent and work with quantum circuits, from high-level program formats to low-level data structures.
 
@@ -31,7 +33,8 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
 ### Example: Different Program Types
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    <!--skip-->
+    ```python
     from pecos import sim, Guppy, Qasm, Hugr
 
     # Guppy - recommended for new code
@@ -112,7 +115,7 @@ A directed acyclic graph representation where nodes are gates and edges are qubi
 ### Quick Start
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     from pecos.quantum import DagCircuit
 
     # Fluent builder API
@@ -144,7 +147,7 @@ A directed acyclic graph representation where nodes are gates and edges are qubi
 The fluent API automatically wires gates on the same qubit:
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     from pecos.quantum import DagCircuit
 
     circuit = DagCircuit()
@@ -216,19 +219,19 @@ The fluent API automatically wires gates on the same qubit:
 Gates can have arbitrary metadata attached:
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    from pecos.quantum import DagCircuit, Attribute
+    ```python
+    from pecos.quantum import DagCircuit
 
     circuit = DagCircuit()
 
     # Attach metadata to the last gate
-    circuit.h(0).meta("error_rate", Attribute.float(0.001))
+    circuit.h(0).meta("error_rate", 0.001)
 
     # Multiple metadata entries
-    circuit.cx(0, 1).meta("duration_ns", Attribute.int(50))
+    circuit.cx(0, 1).meta("duration_ns", 50)
 
     # Measurements break the chain but still support metadata
-    circuit.mz(0).meta("basis", Attribute.string("Z"))
+    circuit.mz(0).meta("basis", "Z")
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -250,7 +253,7 @@ Gates can have arbitrary metadata attached:
 ### Circuit Analysis
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     circuit = DagCircuit()
     circuit.h(0).cx(0, 1).h(1).cx(1, 2).mz(0).mz(1).mz(2)
 
@@ -307,8 +310,8 @@ Gates can have arbitrary metadata attached:
 For advanced use cases, you can manually add gates and wire them:
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    from pecos.quantum import DagCircuit, Gate, QubitId
+    ```python
+    from pecos.quantum import DagCircuit, Gate
 
     circuit = DagCircuit()
 
@@ -317,7 +320,7 @@ For advanced use cases, you can manually add gates and wire them:
     cx_node = circuit.add_gate(Gate.cx([(0, 1)]))
 
     # Connect gates on qubit 0
-    circuit.connect(h_node, cx_node, QubitId(0))
+    circuit.connect(h_node, cx_node, 0)
 
     # Query connections
     print(f"Predecessors of CX: {circuit.predecessors(cx_node)}")
@@ -350,7 +353,7 @@ A time-sliced circuit representation where gates are organized into discrete tim
 ### Quick Start
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     from pecos.quantum import TickCircuit
 
     circuit = TickCircuit()
@@ -361,8 +364,10 @@ A time-sliced circuit representation where gates are organized into discrete tim
     # Second tick: entangling layer
     circuit.tick().cx(0, 1).cx(2, 3)
 
-    # Third tick: measurements
-    circuit.tick().mz(0).mz(1)
+    # Third tick: measurements (call separately, mz doesn't chain)
+    tick = circuit.tick()
+    tick.mz(0)
+    tick.mz(1)
 
     print(f"Number of ticks: {circuit.num_ticks()}")
     print(f"Total gates: {circuit.gate_count()}")
@@ -392,7 +397,8 @@ A time-sliced circuit representation where gates are organized into discrete tim
 TickCircuit prevents scheduling conflicting gates in the same tick:
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    <!--skip-->
+    ```python
     from pecos.quantum import TickCircuit
 
     circuit = TickCircuit()
@@ -422,16 +428,16 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
 ### Tick Metadata
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     circuit = TickCircuit()
 
     # Add metadata to a tick
     tick = circuit.tick()
-    tick.meta("round", Attribute.int(1))
-    tick.h(0).meta("error_rate", Attribute.float(0.001))
+    tick.meta("round", 1)
+    tick.h(0).meta("error_rate", 0.001)
 
     # Circuit-level metadata
-    circuit.set_meta("name", Attribute.string("Bell state"))
+    circuit.set_meta("name", "Bell state")
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -452,7 +458,8 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
 TickCircuit can be converted to and from DagCircuit:
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    <!--skip-->
+    ```python
     from pecos.quantum import DagCircuit, TickCircuit
 
     # TickCircuit -> DagCircuit
@@ -490,7 +497,8 @@ For general graph algorithms beyond quantum circuits, PECOS provides `DiGraph` (
 A general directed graph with weighted edges and attributes:
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    <!--skip-->
+    ```python
     from pecos.graph import DiGraph
 
     graph = DiGraph()
@@ -540,7 +548,8 @@ A general directed graph with weighted edges and attributes:
 A directed acyclic graph with topological ordering and cycle prevention:
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    <!--skip-->
+    ```python
     from pecos.graph import DAG
 
     dag = DAG()

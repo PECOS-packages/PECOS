@@ -73,6 +73,8 @@ nav:
   - development/DEVELOPMENT.md
   - Developer Tools CLI: development/dev-tools.md
   - SLR and QECLib: development/slr-qeclib.md
+  - Circuit Representations: development/circuit-representations.md
+  - Parallel Blocks: development/parallel-blocks-and-optimization.md
   - development/QIS_ARCHITECTURE.md
 - Releases:
   - releases/changelog.md

@@ -1,7 +1,5 @@
 # Getting Started
 
-<!--skip: Getting started examples require Guppy-->
-
 This guide will help you get up and running with PECOS quickly.
 
 ## Installation
@@ -38,7 +36,7 @@ This guide will help you get up and running with PECOS quickly.
 ## Verify Installation
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     import pecos
 
     print(pecos.__version__)
@@ -72,7 +70,8 @@ A repetition code encodes a single logical qubit across multiple physical qubits
 
     We'll use **Guppy**, a Python-embedded quantum programming language that offers type-safe qubit tracking and native control flow:
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from pecos import Guppy, sim, state_vector, depolarizing_noise
     from guppylang import guppy
     from guppylang.std.quantum import qubit, cx, measure

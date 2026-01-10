@@ -7,9 +7,13 @@ graph = Graph()
 n0 = graph.add_node()
 n1 = graph.add_node()
 n2 = graph.add_node()
+n3 = graph.add_node()
+n4 = graph.add_node()
+n5 = graph.add_node()
 graph.add_edge(n0, n1)
 graph.add_edge(n1, n2)
 graph.add_edge(n0, n2)
+graph.add_edge(n2, n3)
 graph.set_weight(n0, n1, 1.0)
 graph.set_weight(n1, n2, 2.0)
 graph.set_weight(n0, n2, 5.0)
@@ -338,7 +342,7 @@ Nodes can have arbitrary attributes attached to them, similar to edges.
 Python provides three ways to set edge attributes:
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     graph.add_edge(n0, n1)
     graph.set_weight(n0, n1, 5.0)
 
@@ -387,7 +391,7 @@ Python provides three ways to set edge attributes:
 ### Reading Edge Attributes
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     # Get weight
     weight = graph.get_weight(n0, n1)  # Returns float or None
 
@@ -427,7 +431,7 @@ Python provides three ways to set edge attributes:
 ### Finding Edges
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     # Find edge ID from node pair
     edge_id = graph.find_edge(n0, n1)  # Returns int or None
 
@@ -449,16 +453,15 @@ Python provides three ways to set edge attributes:
 ### Edge Information
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     # Count edges
     count = graph.edge_count()
 
     # List all edges
-    edges = graph.edges()  # Returns list of (node_a, node_b) tuples
+    edges = graph.edges()  # Returns list of (node_a, node_b, weight) tuples
 
     # Iterate over edges
-    for a, b in graph.edges():
-        weight = graph.get_weight(a, b)
+    for a, b, weight in graph.edges():
         print(f"Edge {a}-{b}: weight={weight}")
     ```
 
@@ -494,7 +497,7 @@ The `Attribute` enum supports these types:
 ### Complex Attribute Examples
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
+    ```python
     # Native types (fast path)
     graph.edge_attrs(0, 1)["label"] = "control"  # String
     graph.edge_attrs(0, 1)["weight_factor"] = 2.5  # Float

@@ -1,6 +1,23 @@
 # Parallel Execution in PECOS
 
-<!--skip: SLR examples require specific qubit API-->
+```hidden-python
+from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter, If
+from pecos.slr.qeclib import qubit as qb
+
+# Define registers for examples
+q = QReg("q", 6)
+c = CReg("c", 6)
+
+# Define a sample program for examples
+prog = Main(
+    q,
+    c,
+    Parallel(
+        qb.H(q[0]),
+        qb.H(q[1]),
+    ),
+)
+```
 
 This guide explains how to express parallel quantum operations in PECOS using the `Parallel` block construct.
 
@@ -16,9 +33,9 @@ By default, PECOS automatically optimizes operations within `Parallel` blocks to
 
 Use `Parallel` to indicate that operations can execute simultaneously:
 
-```python,skip
+```python
 from pecos.slr import Main, Parallel, QReg, CReg
-from pecos.qeclib import qubit as qb
+from pecos.slr.qeclib import qubit as qb
 
 # Create a program with parallel Hadamard gates
 prog = Main(
@@ -38,7 +55,7 @@ prog = Main(
 
 You can use nested blocks to group related operations:
 
-```python,skip
+```python
 # Three Bell pairs prepared in parallel
 prog = Main(
     q := QReg("q", 6),
@@ -65,7 +82,7 @@ prog = Main(
 
 PECOS automatically optimizes `Parallel` blocks to maximize parallelism by default:
 
-```python,skip
+```python
 from pecos.slr import SlrConverter
 
 # Optimization is enabled by default
@@ -110,7 +127,7 @@ All Hadamard gates execute first in parallel, followed by all CNOT gates in para
 
 Operations that share qubits cannot be parallelized:
 
-```python,skip
+```python
 # These operations must execute sequentially
 Parallel(
     qb.H(q[0]),
@@ -122,7 +139,7 @@ Parallel(
 
 Parallel blocks containing conditional operations are not optimized:
 
-```python,skip
+```python
 Parallel(
     qb.H(q[0]),
     If(c[0] == 1).Then(qb.X(q[1])),  # Control flow prevents optimization
@@ -139,7 +156,8 @@ Parallel(
 
 Here's a complete example showing parallel quantum phase estimation:
 
-```python,skip
+<!--skip-->
+```python
 from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter
 from pecos.qeclib import qubit as qb
 import numpy as np

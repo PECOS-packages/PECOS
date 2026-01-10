@@ -1,8 +1,25 @@
 # Parallel Blocks and Optimization
 
-<!--skip: SLR examples require specific qubit API-->
+```hidden-python
+from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter, If
+from pecos.slr.qeclib import qubit as qb
 
-This guide explains the `Parallel` block construct in PECOS's SLR (Structured Language Representation) and the optimization transformations available for parallel quantum operations.
+# Define registers for examples
+q = QReg("q", 6)
+c = CReg("c", 6)
+
+# Define a sample program for examples
+prog = Main(
+    q,
+    c,
+    Parallel(
+        qb.H(q[0]),
+        qb.H(q[1]),
+    ),
+)
+```
+
+This guide explains the `Parallel` block construct in PECOS's SLR (Simple Logical Representation) and the optimization transformations available for parallel quantum operations.
 
 ## Overview
 
@@ -14,9 +31,9 @@ When using `SlrConverter`, parallel optimization is enabled by default. This mea
 
 ### Creating Parallel Blocks
 
-```python,skip
+```python
 from pecos.slr import Main, Parallel, QReg
-from pecos.qeclib import qubit as qb
+from pecos.slr.qeclib import qubit as qb
 
 prog = Main(
     q := QReg("q", 4),
@@ -33,7 +50,7 @@ prog = Main(
 
 Parallel blocks can contain other blocks for logical grouping:
 
-```python,skip
+```python
 prog = Main(
     q := QReg("q", 6),
     Parallel(
@@ -62,7 +79,8 @@ The `ParallelOptimizer` transformation pass analyzes operations within `Parallel
 ### Example Transformation
 
 **Before optimization:**
-```python,skip
+<!--skip-->
+```python
 Parallel(
     Block(H(q[0]), CX(q[0], q[1])),
     Block(H(q[2]), CX(q[2], q[3])),
@@ -71,7 +89,8 @@ Parallel(
 ```
 
 **After optimization:**
-```python,skip
+<!--skip-->
+```python
 Block(
     Parallel(H(q[0]), H(q[2]), H(q[4])),  # All H gates
     Parallel(CX(q[0], q[1]), CX(q[2], q[3]), CX(q[4], q[5])),  # All CX gates
@@ -84,7 +103,7 @@ Block(
 
 The simplest way to use the optimizer is through `SlrConverter`:
 
-```python,skip
+```python
 from pecos.slr import SlrConverter
 
 # With optimization (default)
@@ -98,7 +117,7 @@ qasm_unoptimized = SlrConverter(prog, optimize_parallel=False).qasm()
 
 For more control, use the optimizer directly:
 
-```python,skip
+```python
 from pecos.slr.transforms import ParallelOptimizer
 
 optimizer = ParallelOptimizer()
@@ -137,7 +156,7 @@ The optimizer is conservative to ensure correctness:
 
 Parallel blocks containing control flow (`If`, `Repeat`) are not optimized:
 
-```python,skip
+```python
 Parallel(
     qb.H(q[0]),
     If(c[0] == 1).Then(qb.X(q[1])),  # Control flow prevents optimization
@@ -149,7 +168,7 @@ Parallel(
 
 Operations with qubit dependencies maintain their order:
 
-```python,skip
+```python
 Parallel(
     qb.H(q[0]),
     qb.CX(q[0], q[1]),  # Depends on H(q[0])
@@ -204,7 +223,8 @@ Comprehensive tests are available in:
 
 Here's a more complex example showing parallel phase gates:
 
-```python,skip
+<!--skip-->
+```python
 from pecos.slr import Main, Parallel, QReg
 from pecos.qeclib import qubit as qb
 

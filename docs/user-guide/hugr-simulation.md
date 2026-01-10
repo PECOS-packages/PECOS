@@ -34,7 +34,8 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
     from pecos import sim, Guppy
@@ -85,7 +86,8 @@ The `sim(Guppy(...))` pattern returns a builder for configuration:
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
     from pecos import sim, Guppy, depolarizing_noise
@@ -120,7 +122,8 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from pecos import sim, Hugr
 
     # From file
@@ -159,7 +162,8 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, x, measure, qubit
     from pecos import sim, Guppy
@@ -199,7 +203,8 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, x, measure, qubit
     from pecos import sim, Guppy
@@ -233,7 +238,8 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
     from pecos import sim, Guppy
@@ -267,7 +273,8 @@ Guppy supports modular quantum programs with helper functions:
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from guppylang import guppy
     from guppylang.std.builtins import owned
     from guppylang.std.quantum import h, cx, measure, qubit
@@ -301,7 +308,8 @@ HUGR programs work with different quantum backends:
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from pecos import sim, Guppy
     from pecos_rslib import state_vector, sparse_stabilizer
 
@@ -325,7 +333,8 @@ Add realistic noise to your Guppy simulations:
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
     from pecos import sim, Guppy, depolarizing_noise, GeneralNoiseModelBuilder
@@ -396,7 +405,8 @@ Results from Guppy simulations work the same as QASM:
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,skip
+    <!--skip-->
+    ```python
     from collections import Counter
 
     results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(1000)
@@ -417,7 +427,8 @@ Results from Guppy simulations work the same as QASM:
 
 If you see qubit allocation errors, increase the qubit limit:
 
-```python,skip
+<!--skip-->
+```python
 # Increase qubit pool for loops or dynamic allocation
 results = sim(Guppy(my_circuit)).qubits(20).quantum(state_vector()).run(100)
 ```
@@ -434,7 +445,8 @@ pip install guppylang
 
 Guppy enforces linear types. Each qubit must be used exactly once:
 
-```python,skip
+<!--skip-->
+```python
 @guppy
 def bad_example() -> bool:
     q = qubit()

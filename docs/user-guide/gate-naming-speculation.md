@@ -158,8 +158,8 @@ Encode the Pauli destinations directly in the name using `K` prefix (K for Cliff
 
 | Format | Example | Meaning |
 |--------|---------|---------|
-| K[X_dest][Z_dest] | KZX | X→Z, Z→X (Hadamard) |
-| K[XI_dest]\_[ZI_dest]\_[IX_dest]\_[IZ_dest] | KXX_ZI_IX_ZZ | CX gate |
+| K\[X_dest\]\[Z_dest\] | KZX | X→Z, Z→X (Hadamard) |
+| K\[XI_dest\]\_\[ZI_dest\]\_\[IX_dest\]\_\[IZ_dest\] | KXX_ZI_IX_ZZ | CX gate |
 
 The qubit count is implied by the structure (single Paulis vs two-Pauli terms with I).
 

@@ -1,5 +1,22 @@
 # Gate Reference
 
+```hidden-python
+import pecos as pc
+from pecos.simulators import SparseSim
+
+# Create a stabilizer simulator with 5 qubits
+state = SparseSim(num_qubits=5)
+
+# Define qubit indices for examples
+q = 0
+q0, q1 = 0, 1
+
+# Define rotation angles for parameterized gate examples
+theta = pc.f64.pi / 4
+phi = pc.f64.pi / 8
+lam = pc.f64.pi / 6
+```
+
 This guide provides a comprehensive reference for all quantum gates supported by PECOS simulators.
 
 ## Overview
@@ -80,12 +97,13 @@ I = [[1, 0],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("I", (q,))
+    ```python
+    state.run_gate("I", {q})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.identity(q);
     ```
 
@@ -109,12 +127,13 @@ X = [[0, 1],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("X", (q,))
+    ```python
+    state.run_gate("X", {q})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.x(q);
     ```
 
@@ -138,12 +157,13 @@ Y = [[ 0, -i],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("Y", (q,))
+    ```python
+    state.run_gate("Y", {q})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.y(q);
     ```
 
@@ -167,12 +187,13 @@ Z = [[1,  0],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("Z", (q,))
+    ```python
+    state.run_gate("Z", {q})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.z(q);
     ```
 
@@ -198,12 +219,13 @@ H = 1/√2 [[1,  1],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("H", (q,))
+    ```python
+    state.run_gate("H", {q})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.h(q);
     ```
 
@@ -222,7 +244,8 @@ PECOS provides additional Hadamard-like gates that perform basis transformations
 | H6 | X→-X, Y→-Z, Z→-Y | 1/√2 [[-1, -1], [-1, 1]] |
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.h2(q);  // H2 variant
     sim.h3(q);  // H3 variant
     sim.h4(q);  // H4 variant
@@ -252,12 +275,13 @@ SX = 1/2 [[1+i, 1-i],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("SX", (q,))
+    ```python
+    state.run_gate("SX", {q})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.sx(q);
     sim.sxdg(q);  // Adjoint (inverse)
     ```
@@ -282,7 +306,8 @@ SY = 1/√2 [[1, -1],
 ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.sy(q);
     sim.sydg(q);  // Adjoint (inverse)
     ```
@@ -307,12 +332,13 @@ SZ = [[1, 0],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("SZ", (q,))
+    ```python
+    state.run_gate("SZ", {q})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.sz(q);
     sim.szdg(q);  // Adjoint (inverse): [[1, 0], [0, -i]]
     ```
@@ -339,7 +365,8 @@ F = 1/√2 [[1, -i],
 ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.f(q);
     sim.fdg(q);  // Adjoint: X→Z, Y→X, Z→Y
     ```
@@ -356,7 +383,8 @@ F = 1/√2 [[1, -i],
 | F4† | X→-Y, Y→Z, Z→-X |
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.f2(q);   sim.f2dg(q);
     sim.f3(q);   sim.f3dg(q);
     sim.f4(q);   sim.f4dg(q);
@@ -387,14 +415,15 @@ CX = [[1, 0, 0, 0],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("CX", (control, target))
+    ```python
+    state.run_gate("CX", {(q0, q1)})
     # or
-    state.run_gate("CNOT", (control, target))
+    state.run_gate("CNOT", {(q0, q1)})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.cx(control, target);
     ```
 
@@ -421,12 +450,13 @@ CY = [[1,  0,  0,  0],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("CY", (control, target))
+    ```python
+    state.run_gate("CY", {(q0, q1)})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.cy(control, target);
     ```
 
@@ -453,12 +483,13 @@ CZ = [[1,  0,  0,  0],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("CZ", (q1, q2))
+    ```python
+    state.run_gate("CZ", {(q0, q1)})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.cz(q1, q2);
     ```
 
@@ -485,12 +516,13 @@ SWAP = [[1, 0, 0, 0],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("SWAP", (q1, q2))
+    ```python
+    state.run_gate("SWAP", {(q0, q1)})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.swap(q1, q2);
     ```
 
@@ -517,7 +549,8 @@ iSWAP = [[1, 0, 0, 0],
 ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.iswap(q1, q2);
     ```
 
@@ -544,7 +577,8 @@ SXX = 1/√2 [[1,  0,  0, -i],
 ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.sxx(q1, q2);
     sim.sxxdg(q1, q2);  // Adjoint
     ```
@@ -564,7 +598,8 @@ IZ → YX
 ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.syy(q1, q2);
     sim.syydg(q1, q2);  // Adjoint
     ```
@@ -592,12 +627,13 @@ SZZ = e^(-iπ/4) [[1,  0,  0,  0],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("SZZ", (q1, q2))
+    ```python
+    state.run_gate("SZZ", {(q0, q1)})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.szz(q1, q2);
     sim.szzdg(q1, q2);  // Adjoint
     ```
@@ -625,13 +661,20 @@ G = 1/2 [[ 1,  1,  1, -1],
 ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.g(q1, q2);
     ```
 
 ---
 
 ## Non-Clifford Gates
+
+```hidden-python
+# Switch to StateVec simulator for non-Clifford gates
+from pecos.simulators import StateVec
+state = StateVec(num_qubits=5)
+```
 
 Non-Clifford gates include arbitrary rotation gates that cannot be efficiently simulated with stabilizer methods. These require state vector or other universal simulators.
 
@@ -650,13 +693,14 @@ RX(θ) = [[cos(θ/2),    -i·sin(θ/2)],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    import math
-    state.run_gate("RX", (q,), angles=(math.pi/4,))
+    ```python
+    import pecos as pc
+    state.run_gate("RX", {q}, angles=(pc.f64.pi / 4,))
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.rx(theta, q);
     ```
 
@@ -675,12 +719,13 @@ RY(θ) = [[cos(θ/2), -sin(θ/2)],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("RY", (q,), angles=(theta,))
+    ```python
+    state.run_gate("RY", {q}, angles=(theta,))
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.ry(theta, q);
     ```
 
@@ -699,12 +744,13 @@ RZ(θ) = [[e^(-iθ/2),     0     ],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("RZ", (q,), angles=(theta,))
+    ```python
+    state.run_gate("RZ", {q}, angles=(theta,))
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.rz(theta, q);
     ```
 
@@ -721,13 +767,14 @@ T = [[1,        0     ],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("T", (q,))
-    state.run_gate("Tdg", (q,))  # Adjoint
+    ```python
+    state.run_gate("T", {q})
+    state.run_gate("Tdg", {q})  # Adjoint
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.t(q);
     sim.tdg(q);  // Adjoint (T†)
     ```
@@ -747,12 +794,14 @@ U(θ,φ,λ) = [[        cos(θ/2),      -e^(iλ)·sin(θ/2)],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("U", (q,), angles=(theta, phi, lam))
+    <!--skip-->
+    ```python
+    state.run_gate("U", {q}, angles=(theta, phi, lam))
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.u(theta, phi, lambda, q);
     ```
 
@@ -763,7 +812,8 @@ U(θ,φ,λ) = [[        cos(θ/2),      -e^(iλ)·sin(θ/2)],
 An X-Y plane rotation gate with a specified angle and axis.
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.r1xy(theta, phi, q);
     ```
 
@@ -778,7 +828,8 @@ Two-qubit rotation implementing evolution under the XX interaction.
 **Definition:** RXX(θ) = exp(-i θ XX/2)
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.rxx(theta, q1, q2);
     ```
 
@@ -797,7 +848,8 @@ The YY coupling generates entanglement through the Y⊗Y interaction. For exampl
 - |10⟩ → (|10⟩ + i|01⟩)/√2
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.ryy(theta, q1, q2);
     ```
 
@@ -824,12 +876,13 @@ RZZ(θ) = [[e^(-iθ/2),     0,          0,          0       ],
 ```
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    state.run_gate("RZZ", (q1, q2), angles=(theta,))
+    ```python
+    state.run_gate("RZZ", {(q0, q1)}, angles=(theta,))
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.rzz(theta, q1, q2);
     ```
 
@@ -846,12 +899,13 @@ Projects the state into either |0⟩ or |1⟩.
 - Outcome `true` (1): projected to |1⟩
 
 === ":fontawesome-brands-python: Python"
-    ```python,skip
-    result = state.run_gate("measure", (q,))
+    ```python
+    result = state.run_gate("MZ", {q})
     ```
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     let result = sim.mz(q);
     // result.outcome: true if |1⟩, false if |0⟩
     // result.is_deterministic: true if already in eigenstate
@@ -864,7 +918,8 @@ Projects the state into either |0⟩ or |1⟩.
 Projects the state into either |+⟩ or |-⟩, where |±⟩ = (|0⟩ ± |1⟩)/√2.
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     let result = sim.mx(q);   // Measure +X
     let result = sim.mnx(q);  // Measure -X
     ```
@@ -876,7 +931,8 @@ Projects the state into either |+⟩ or |-⟩, where |±⟩ = (|0⟩ ± |1⟩)/�
 Projects the state into either |+i⟩ or |-i⟩, where |±i⟩ = (|0⟩ ± i|1⟩)/√2.
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     let result = sim.my(q);   // Measure +Y
     let result = sim.mny(q);  // Measure -Y
     ```
@@ -888,7 +944,8 @@ Projects the state into either |+i⟩ or |-i⟩, where |±i⟩ = (|0⟩ ± i|1�
 ### Prepare in Z Eigenstates
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.pz(q);   // Prepare |0⟩ (eigenstate of +Z)
     sim.pnz(q);  // Prepare |1⟩ (eigenstate of -Z)
     ```
@@ -896,7 +953,8 @@ Projects the state into either |+i⟩ or |-i⟩, where |±i⟩ = (|0⟩ ± i|1�
 ### Prepare in X Eigenstates
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.px(q);   // Prepare |+⟩ = (|0⟩ + |1⟩)/√2
     sim.pnx(q);  // Prepare |-⟩ = (|0⟩ - |1⟩)/√2
     ```
@@ -904,7 +962,8 @@ Projects the state into either |+i⟩ or |-i⟩, where |±i⟩ = (|0⟩ ± i|1�
 ### Prepare in Y Eigenstates
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.py(q);   // Prepare |+i⟩ = (|0⟩ + i|1⟩)/√2
     sim.pny(q);  // Prepare |-i⟩ = (|0⟩ - i|1⟩)/√2
     ```
@@ -914,7 +973,8 @@ Projects the state into either |+i⟩ or |-i⟩, where |±i⟩ = (|0⟩ ± i|1�
 These operations measure and then prepare the qubit in a specific eigenstate regardless of the measurement outcome.
 
 === ":fontawesome-brands-rust: Rust"
-    ```rust,ignore
+    <!--skip-->
+    ```rust
     sim.mpz(q);   // Measure Z, prepare |0⟩
     sim.mpnz(q);  // Measure -Z, prepare |1⟩
     sim.mpx(q);   // Measure X, prepare |+⟩

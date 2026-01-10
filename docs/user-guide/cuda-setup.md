@@ -145,7 +145,8 @@ uv pip install -e "./python/quantum-pecos[all,cuda]"
 
 ### Test CUDA Installation
 
-```python,skip
+<!--skip-->
+```python
 # Test CuPy
 import cupy as cp
 
@@ -160,7 +161,8 @@ print(f"cuStateVec available: {custatevec is not None}")
 
 ### Test PECOS Simulators
 
-```python,skip
+<!--skip-->
+```python
 from pecos.simulators import CuStateVec, MPS
 
 # Test CuStateVec
@@ -245,7 +247,8 @@ uv pip install cupy-cuda12x cuquantum-python-cu12
 
 **Solution**: GPU memory is limited. Use smaller circuits or the MPS simulator for larger systems.
 
-```python,skip
+<!--skip-->
+```python
 # MPS can handle larger systems with less memory
 from pecos.simulators import MPS
 
@@ -350,7 +353,8 @@ To use GPU simulators in PECOS:
    just build-cuda
    ```
 5. **Verify GPU simulators**:
-   ```python,skip
+   <!--skip-->
+   ```python
    from pecos.simulators import CuStateVec, MPS
 
    sim = CuStateVec(2)  # Should work!

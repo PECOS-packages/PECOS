@@ -756,6 +756,17 @@ impl PyEdgeAttrsView {
         }
     }
 
+    /// Check if an attribute exists (dict-like interface).
+    fn __contains__(&self, py: Python<'_>, key: &str) -> bool {
+        let graph = self.graph.borrow(py);
+
+        if let Some(attrs) = graph.inner.edge_attrs(self.node_a, self.node_b) {
+            attrs.contains_key(key)
+        } else {
+            false
+        }
+    }
+
     /// Insert a key-value pair into edge attributes (chainable).
     ///
     /// This method allows for method chaining, similar to Rust's `BTreeMap` insert.

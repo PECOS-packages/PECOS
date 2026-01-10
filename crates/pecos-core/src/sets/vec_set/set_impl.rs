@@ -11,8 +11,8 @@
 // the License.
 
 use crate::VecSet;
-use crate::sets::vec_set::iterators::{Difference, Intersection, SymmetricDifference, Union};
 use crate::sets::vec_set::SetBuffer;
+use crate::sets::vec_set::iterators::{Difference, Intersection, SymmetricDifference, Union};
 use core::slice::Iter;
 
 use crate::{Element, Set};

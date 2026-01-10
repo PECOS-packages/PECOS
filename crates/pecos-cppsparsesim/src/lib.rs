@@ -78,7 +78,7 @@ mod ffi {
 /// A C++ sparse stabilizer state simulator wrapped for Rust
 ///
 /// This is a wrapper around the C++ sparse simulator implementation,
-/// providing the same interface as `StdSparseStab` but using the C++ backend.
+/// providing the same interface as `SparseStab` but using the C++ backend.
 pub struct CppSparseStab {
     state: cxx::UniquePtr<ffi::StateWrapper>,
     num_qubits: usize,
@@ -543,9 +543,6 @@ impl CppSparseStab {
         result
     }
 }
-
-// Re-export for convenience
-pub use crate::CppSparseStab as CppStdSparseStab;
 
 // Implement StabilizerTableauSimulator trait
 use pecos_qsim::StabilizerTableauSimulator;

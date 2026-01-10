@@ -66,12 +66,12 @@ The default simulator, optimized for QEC workloads with sparse stabilizer tablea
     ```rust
     use pecos::prelude::*;
 
-    // SparseSim (StdSparseStab) is used by default
+    // SparseSim (SparseStab) is used by default
     let results = sim(program.clone()).run(1000)?;
 
     // Or explicitly select it
     let results = sim(program)
-        .quantum(StdSparseStab::new)
+        .quantum(SparseStab::new)
         .run(1000)?;
     ```
 
@@ -337,7 +337,7 @@ The `sim()` API lets you switch simulators easily:
 
     ```rust
     use pecos::prelude::*;
-    use pecos::qsim::{StateVec, StdSparseStab};
+    use pecos::qsim::{StateVec, SparseStab};
 
     let program = Qasm::from_string(r#"
         OPENQASM 2.0;
@@ -349,7 +349,7 @@ The `sim()` API lets you switch simulators easily:
         measure q -> c;
     "#);
 
-    // Default (StdSparseStab for Clifford circuits)
+    // Default (SparseStab for Clifford circuits)
     let results = sim(program.clone()).run(1000)?;
 
     // Explicit simulator selection
@@ -358,7 +358,7 @@ The `sim()` API lets you switch simulators easily:
         .run(1000)?;
 
     let results = sim(program)
-        .quantum(StdSparseStab::new)
+        .quantum(SparseStab::new)
         .run(1000)?;
     ```
 
@@ -392,7 +392,7 @@ For fine-grained control, you can use simulators directly:
     use pecos::prelude::*;
 
     // Create simulator with 5 qubits
-    let mut state = StdSparseStab::new(5);
+    let mut state = SparseStab::new(5);
 
     // Apply gates
     state.h(0)?;

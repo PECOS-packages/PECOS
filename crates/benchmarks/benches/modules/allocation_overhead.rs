@@ -12,11 +12,11 @@
 
 //! Microbenchmarks for allocation overhead in trait default implementations.
 //!
-//! Compares the overhead of Vec vs SmallVec for temporary qubit buffers.
+//! Compares the overhead of Vec vs `SmallVec` for temporary qubit buffers.
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, StdSparseStab};
+use pecos_qsim::{CliffordGateable, SparseStab};
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
@@ -45,7 +45,7 @@ fn bench_gate_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("SparseStab_SZZ", &label),
             &(num_qubits, &qubits),
             |b, &(nq, qs)| {
-                let mut sim = StdSparseStab::new(nq);
+                let mut sim = SparseStab::new(nq);
                 b.iter(|| {
                     sim.szz(qs);
                     black_box(());
@@ -58,7 +58,7 @@ fn bench_gate_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("SparseStab_CZ", &label),
             &(num_qubits, &qubits),
             |b, &(nq, qs)| {
-                let mut sim = StdSparseStab::new(nq);
+                let mut sim = SparseStab::new(nq);
                 b.iter(|| {
                     sim.cz(qs);
                     black_box(());
@@ -71,7 +71,7 @@ fn bench_gate_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("SparseStab_iSWAP", &label),
             &(num_qubits, &qubits),
             |b, &(nq, qs)| {
-                let mut sim = StdSparseStab::new(nq);
+                let mut sim = SparseStab::new(nq);
                 b.iter(|| {
                     sim.iswap(qs);
                     black_box(());

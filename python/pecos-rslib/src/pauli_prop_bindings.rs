@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 /// It's particularly useful for fault propagation and stabilizer simulations.
 #[pyclass(name = "PauliProp")]
 pub struct PyPauliProp {
-    inner: StdPauliProp,
+    inner: PauliProp,
     num_qubits: Option<usize>,
     track_sign: bool,
 }
@@ -68,13 +68,13 @@ impl PyPauliProp {
     pub fn new(num_qubits: Option<usize>, track_sign: bool) -> Self {
         let inner = if track_sign {
             if let Some(n) = num_qubits {
-                StdPauliProp::with_sign_tracking(n)
+                PauliProp::with_sign_tracking(n)
             } else {
                 // Default to tracking with 0 qubits if not specified
-                StdPauliProp::with_sign_tracking(0)
+                PauliProp::with_sign_tracking(0)
             }
         } else {
-            StdPauliProp::new()
+            PauliProp::new()
         };
 
         PyPauliProp {
@@ -190,7 +190,7 @@ impl PyPauliProp {
         self.inner.sparse_string()
     }
 
-    /// Get the dense string representation (for `StdPauliProp`)
+    /// Get the dense string representation (for `PauliProp`)
     pub fn dense_string(&self) -> String {
         self.inner.dense_string()
     }

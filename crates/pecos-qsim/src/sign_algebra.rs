@@ -69,7 +69,7 @@ pub trait SignAlgebra: Clone + Debug + Default + Send + Sync {
 ///
 /// Represents signs as (-1)^minus * i^imag, giving the four phases: +1, -1, +i, -i.
 ///
-/// This is used in the standard `StdSparseStab` simulator where measurements
+/// This is used in the standard `SparseStab` simulator where measurements
 /// collapse to concrete 0/1 outcomes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PhaseSign {

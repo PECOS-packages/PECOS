@@ -29,9 +29,6 @@ use crate::symbolic_gens::SymbolicGens;
 use core::mem;
 use pecos_core::{BitSet, Set, VecSet};
 
-/// Standard type alias for symbolic sparse stabilizer simulator.
-pub type StdSymbolicSparseStab = SymbolicSparseStab<VecSet<usize>>;
-
 /// Result of a symbolic measurement.
 ///
 /// The outcome is represented as: `XOR(measurement_outcomes[i] for i in outcome) XOR flip`
@@ -259,10 +256,10 @@ impl std::ops::Index<usize> for MeasurementHistory {
 ///
 /// # Example
 /// ```rust
-/// use pecos_qsim::symbolic_sparse_stab::StdSymbolicSparseStab;
+/// use pecos_qsim::symbolic_sparse_stab::SymbolicSparseStab;
 /// use pecos_qsim::QuantumSimulator;
 ///
-/// let mut sim = StdSymbolicSparseStab::new(2);
+/// let mut sim = SymbolicSparseStab::new(2);
 ///
 /// // Create Bell state
 /// sim.h(0).cx(0, 1);
@@ -278,31 +275,25 @@ impl std::ops::Index<usize> for MeasurementHistory {
 /// assert_eq!(r0.outcome, r1.outcome);  // Same dependency = correlated
 /// ```
 #[derive(Clone, Debug)]
-pub struct SymbolicSparseStab<T>
-where
-    T: for<'a> Set<'a, Element = usize>,
-{
+pub struct SymbolicSparseStab {
     num_qubits: usize,
-    stabs: SymbolicGens<T>,
-    destabs: SymbolicGens<T>,
+    stabs: SymbolicGens,
+    destabs: SymbolicGens,
     /// Counter for assigning unique indices to measurements
     measurement_counter: usize,
     /// History of all measurements performed.
     measurement_history: MeasurementHistory,
 }
 
-impl<T> SymbolicSparseStab<T>
-where
-    T: for<'a> Set<'a, Element = usize>,
-{
+impl SymbolicSparseStab {
     /// Create a new symbolic stabilizer simulator.
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
         let mut sim = Self {
             num_qubits,
-            stabs: SymbolicGens::<T>::new(num_qubits),
-            destabs: SymbolicGens::<T>::new(num_qubits),
+            stabs: SymbolicGens::new(num_qubits),
+            destabs: SymbolicGens::new(num_qubits),
             measurement_counter: 0,
             measurement_history: MeasurementHistory::new(),
         };
@@ -331,9 +322,9 @@ where
     ///
     /// # Example
     /// ```rust
-    /// use pecos_qsim::symbolic_sparse_stab::StdSymbolicSparseStab;
+    /// use pecos_qsim::symbolic_sparse_stab::SymbolicSparseStab;
     ///
-    /// let mut sim = StdSymbolicSparseStab::new(2);
+    /// let mut sim = SymbolicSparseStab::new(2);
     /// sim.h(0).cx(0, 1);
     /// sim.mz(0);
     /// sim.mz(1);
@@ -379,7 +370,7 @@ where
     /// - `{} ^ 1 ZII`: Identity sign, flipped (deterministic 1)
     /// - `{0} ^ 0 XIZ`: Depends on measurement 0, no flip
     /// - `{0,1} ^ 1 XIZ`: XOR of measurements 0,1, flipped
-    fn tableau_string(num_qubits: usize, gens: &SymbolicGens<T>) -> String {
+    fn tableau_string(num_qubits: usize, gens: &SymbolicGens) -> String {
         use std::fmt::Write;
 
         let mut result = String::new();
@@ -471,7 +462,7 @@ where
         for g in [&mut self.stabs, &mut self.destabs] {
             g.col_z[q] ^= &g.col_x[q];
 
-            for &i in g.col_x[q].iter() {
+            for &i in &g.col_x[q] {
                 g.row_z[i] ^= &q;
             }
         }
@@ -522,7 +513,7 @@ where
                     (col_x_max, col_x_min)
                 };
 
-                let mut q2_set = T::new();
+                let mut q2_set = VecSet::new();
                 q2_set.insert(q2);
 
                 for i in col_x_qu1.iter() {
@@ -544,7 +535,7 @@ where
                     (col_z_max, col_z_min)
                 };
 
-                let mut q1_set = T::new();
+                let mut q1_set = VecSet::new();
                 q1_set.insert(q1);
 
                 for i in col_z_qu2.iter() {
@@ -598,8 +589,8 @@ where
             .count();
 
         // Account for Pauli multiplication phases
-        let mut cumulative_x = T::new();
-        for row in self.destabs.col_x[q].iter() {
+        let mut cumulative_x = VecSet::new();
+        for row in &self.destabs.col_x[q] {
             num_minuses += self.stabs.row_z[*row].intersection(&cumulative_x).count();
             cumulative_x ^= &self.stabs.row_x[*row];
         }
@@ -616,7 +607,7 @@ where
         // that have X on qubit q
         let mut result_sign = SymbolicSign::empty();
 
-        for row in self.destabs.col_x[q].iter() {
+        for row in &self.destabs.col_x[q] {
             result_sign.multiply_assign(&self.stabs.signs[*row]);
         }
 
@@ -643,7 +634,7 @@ where
         let mut smallest_wt = 2 * self.num_qubits + 2;
         let mut removed_id: Option<usize> = None;
 
-        for stab_id in anticom_stabs_col.iter() {
+        for stab_id in &anticom_stabs_col {
             let weight = self.stabs.row_x[*stab_id].len() + self.stabs.row_z[*stab_id].len();
 
             if weight < smallest_wt {
@@ -691,7 +682,7 @@ where
         // Multiply all other anticommuting stabilizers by the removed one
         // This includes both measurement dependencies AND phase from Pauli multiplication
         let removed_sign = self.stabs.signs[id].clone();
-        for g in anticom_stabs_col.iter() {
+        for g in &anticom_stabs_col {
             // Multiply the symbolic measurement signs (XOR)
             self.stabs.signs[*g].multiply_assign(&removed_sign);
 
@@ -707,20 +698,20 @@ where
         }
 
         // Update column storage for stabilizers
-        for i in removed_row_x.iter() {
+        for i in &removed_row_x {
             self.stabs.col_x[*i] ^= &anticom_stabs_col;
         }
 
-        for i in removed_row_z.iter() {
+        for i in &removed_row_z {
             self.stabs.col_z[*i] ^= &anticom_stabs_col;
         }
 
         // Remove the old stabilizer
-        for i in self.stabs.row_x[id].iter() {
+        for i in &self.stabs.row_x[id] {
             self.stabs.col_x[*i].remove(&id);
         }
 
-        for i in self.stabs.row_z[id].iter() {
+        for i in &self.stabs.row_z[id] {
             self.stabs.col_z[*i].remove(&id);
         }
 
@@ -737,27 +728,27 @@ where
         self.stabs.signs_i.remove(&id);
 
         // Update destabilizers
-        for i in self.destabs.row_x[id].iter() {
+        for i in &self.destabs.row_x[id] {
             self.destabs.col_x[*i].remove(&id);
         }
 
-        for i in self.destabs.row_z[id].iter() {
+        for i in &self.destabs.row_z[id] {
             self.destabs.col_z[*i].remove(&id);
         }
 
         anticom_destabs_col.remove(&id);
 
-        for i in removed_row_x.iter() {
+        for i in &removed_row_x {
             self.destabs.col_x[*i].insert(id);
             self.destabs.col_x[*i] ^= &anticom_destabs_col;
         }
 
-        for i in removed_row_z.iter() {
+        for i in &removed_row_z {
             self.destabs.col_z[*i].insert(id);
             self.destabs.col_z[*i] ^= &anticom_destabs_col;
         }
 
-        for row in anticom_destabs_col.iter() {
+        for row in &anticom_destabs_col {
             self.destabs.row_x[*row] ^= &removed_row_x;
             self.destabs.row_z[*row] ^= &removed_row_z;
         }
@@ -776,10 +767,7 @@ where
     }
 }
 
-impl<T> QuantumSimulator for SymbolicSparseStab<T>
-where
-    T: for<'a> Set<'a, Element = usize>,
-{
+impl QuantumSimulator for SymbolicSparseStab {
     #[inline]
     fn reset(&mut self) -> &mut Self {
         Self::reset(self)
@@ -792,7 +780,7 @@ mod tests {
 
     #[test]
     fn test_bell_state_symbolic() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         // Create Bell state
         sim.h(0).cx(0, 1);
@@ -813,7 +801,7 @@ mod tests {
 
     #[test]
     fn test_product_state_symbolic() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         // Measure qubit 0 without any gates - should be deterministic |0⟩
         let r0 = sim.mz(0);
@@ -830,7 +818,7 @@ mod tests {
 
     #[test]
     fn test_hadamard_measurement_symbolic() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
 
         // Apply H to put in superposition
         sim.h(0);
@@ -845,7 +833,7 @@ mod tests {
 
     #[test]
     fn test_ghz_state_symbolic() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
 
         // Create GHZ state: (|000⟩ + |111⟩)/√2
         sim.h(0).cx(0, 1).cx(1, 2);
@@ -871,7 +859,7 @@ mod tests {
 
     #[test]
     fn test_multiple_independent_measurements() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         // Put both qubits in superposition independently
         sim.h(0).h(1);
@@ -894,7 +882,7 @@ mod tests {
 
     #[test]
     fn test_measurement_counter() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
         assert_eq!(sim.measurement_count(), 0);
 
         // All deterministic measurements - counter always increments
@@ -910,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_measurement_counter_with_nondet() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
         assert_eq!(sim.measurement_count(), 0);
 
         // Make non-deterministic measurements
@@ -928,7 +916,7 @@ mod tests {
 
     #[test]
     fn test_deterministic_flag() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         // Deterministic measurement on |0⟩
         let r0 = sim.mz(0);
@@ -945,7 +933,7 @@ mod tests {
     fn test_x_gate_flip() {
         // User's example: start with |0⟩, apply X to flip to |1⟩
         // The stabilizer goes from +Z to -Z, so outcome should be {} ^ 1
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
 
         // Initial state: stabilized by +Z
         assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
@@ -964,7 +952,7 @@ mod tests {
     #[test]
     fn test_y_gate_flip() {
         // Y gate: X -> -X, Z -> -Z
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
 
         // Apply Y: +Z becomes -Z
         sim.y(0);
@@ -979,7 +967,7 @@ mod tests {
     #[test]
     fn test_z_gate_no_flip() {
         // Z gate: X -> -X, Z -> Z (no change to Z stabilizer)
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
 
         // Initial state: +Z
         assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
@@ -997,7 +985,7 @@ mod tests {
     #[test]
     fn test_double_x_cancels() {
         // X X = I, so two X gates should cancel
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
 
         sim.x(0);
         assert_eq!(sim.stab_tableau(), "{} ^ 1 Z\n");
@@ -1014,7 +1002,7 @@ mod tests {
     #[test]
     fn test_hadamard_then_measure() {
         // H on |0⟩ gives |+⟩ which is non-deterministic
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
 
         // H transforms Z stabilizer to X stabilizer
         sim.h(0);
@@ -1030,7 +1018,7 @@ mod tests {
     #[test]
     fn test_flip_propagates_through_bell() {
         // Create Bell state with an X gate first to introduce a flip
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         // Apply X to qubit 0 first, then create Bell state
         sim.x(0).h(0).cx(0, 1);
@@ -1050,7 +1038,7 @@ mod tests {
 
     #[test]
     fn test_tableau_format() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         // Initial state
         let tableau = sim.stab_tableau();
@@ -1067,7 +1055,7 @@ mod tests {
 
     #[test]
     fn test_measurement_history() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
 
         // Initially no measurements
         assert!(sim.measurement_history().is_empty());
@@ -1106,7 +1094,7 @@ mod tests {
 
     #[test]
     fn test_measurement_history_reset() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         sim.h(0);
         sim.mz(0);
@@ -1187,7 +1175,7 @@ mod tests {
 
     #[test]
     fn test_display_in_simulation() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         // Deterministic 0
         let r = sim.mz(0);
@@ -1215,7 +1203,7 @@ mod tests {
 
     #[test]
     fn test_history_formatting() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
 
         // Create GHZ state: first measurement non-deterministic, rest deterministic
         sim.h(0).cx(0, 1).cx(1, 2);
@@ -1246,7 +1234,7 @@ mod tests {
 
     #[test]
     fn test_history_formatting_empty() {
-        let sim = StdSymbolicSparseStab::new(2);
+        let sim = SymbolicSparseStab::new(2);
         let history = sim.measurement_history();
 
         assert_eq!(history.format_all(), "[]");
@@ -1257,7 +1245,7 @@ mod tests {
 
     #[test]
     fn test_history_formatting_with_flips() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
 
         // Apply X to get flip=1, then measure
         sim.x(0);

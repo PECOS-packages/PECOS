@@ -10,44 +10,41 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use core::fmt::Debug;
-use pecos_core::Set;
+use pecos_core::{Set, VecSet};
 
+/// Storage for stabilizer/destabilizer generators.
+///
+/// Uses `VecSet<usize>` for efficient sparse storage of Pauli operators.
 #[derive(Clone, Debug)]
-pub struct Gens<T>
-where
-    T: for<'a> Set<'a, Element = usize>,
-{
+pub struct Gens {
     num_qubits: usize,
-    pub col_x: Vec<T>,
-    pub col_z: Vec<T>,
-    pub row_x: Vec<T>,
-    pub row_z: Vec<T>,
-    pub sign: T,
-    pub signs_minus: T,
-    pub signs_i: T,
+    pub col_x: Vec<VecSet<usize>>,
+    pub col_z: Vec<VecSet<usize>>,
+    pub row_x: Vec<VecSet<usize>>,
+    pub row_z: Vec<VecSet<usize>>,
+    pub sign: VecSet<usize>,
+    pub signs_minus: VecSet<usize>,
+    pub signs_i: VecSet<usize>,
 }
 
-impl<T> Gens<T>
-where
-    T: for<'a> Set<'a, Element = usize>,
-{
+impl Gens {
     #[must_use]
     #[inline]
-    pub fn new(num_qubits: usize) -> Gens<T> {
+    pub fn new(num_qubits: usize) -> Gens {
         Self {
             num_qubits,
-            col_x: vec![T::new(); num_qubits],
-            col_z: vec![T::new(); num_qubits],
-            row_x: vec![T::new(); num_qubits],
-            row_z: vec![T::new(); num_qubits],
-            sign: T::new(),
-            signs_minus: T::new(),
-            signs_i: T::new(),
+            col_x: vec![VecSet::new(); num_qubits],
+            col_z: vec![VecSet::new(); num_qubits],
+            row_x: vec![VecSet::new(); num_qubits],
+            row_z: vec![VecSet::new(); num_qubits],
+            sign: VecSet::new(),
+            signs_minus: VecSet::new(),
+            signs_i: VecSet::new(),
         }
     }
 
     #[inline]
+    #[must_use]
     pub fn get_num_qubits(&self) -> usize {
         self.num_qubits
     }
@@ -62,7 +59,7 @@ where
 
     /// Clear all elements in a Vec of Sets, keeping the Vec's capacity.
     #[inline]
-    fn clear_sets(sets: &mut [T]) {
+    fn clear_sets(sets: &mut [VecSet<usize>]) {
         for set in sets.iter_mut() {
             set.clear();
         }
@@ -70,7 +67,7 @@ where
 
     /// Initialize a Vec of Sets as identity (set[i] = {i}), reusing existing allocations.
     #[inline]
-    fn init_as_identity(sets: &mut [T]) {
+    fn init_as_identity(sets: &mut [VecSet<usize>]) {
         for (i, set) in sets.iter_mut().enumerate() {
             set.clear();
             set.insert(i);
@@ -79,12 +76,12 @@ where
 
     /// Ensure the Vec has exactly `num_qubits` elements, reusing capacity when possible.
     #[inline]
-    fn ensure_size(sets: &mut Vec<T>, num_qubits: usize) {
+    fn ensure_size(sets: &mut Vec<VecSet<usize>>, num_qubits: usize) {
         match sets.len().cmp(&num_qubits) {
             std::cmp::Ordering::Less => {
                 sets.reserve(num_qubits - sets.len());
                 while sets.len() < num_qubits {
-                    sets.push(T::new());
+                    sets.push(VecSet::new());
                 }
             }
             std::cmp::Ordering::Greater => {

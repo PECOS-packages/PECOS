@@ -4,7 +4,7 @@
 // the same trait interface for accessing tableau information.
 
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, StabilizerTableauSimulator, StdSparseStab};
+use pecos_qsim::{CliffordGateable, SparseStab, StabilizerTableauSimulator};
 
 /// Generic function that works with any stabilizer tableau simulator
 fn print_bell_state_tableaux<T>(name: &str, mut sim: T)
@@ -31,7 +31,7 @@ where
 
 fn main() {
     // The trait allows us to work with different implementations uniformly
-    let sim = StdSparseStab::new(2);
+    let sim = SparseStab::new(2);
     print_bell_state_tableaux("Pure Rust Stabilizer Simulator", sim);
 
     // Future implementations can be added here:

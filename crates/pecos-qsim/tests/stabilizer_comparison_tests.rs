@@ -2,7 +2,7 @@ use pecos_core::{qid, qid2};
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::DensityMatrix;
 use pecos_qsim::QuantumSimulator;
-use pecos_qsim::StdSparseStab;
+use pecos_qsim::SparseStab;
 
 // Helper function to check if two probabilities are close enough
 fn assert_probs_equal(p1: f64, p2: f64) {
@@ -13,7 +13,7 @@ fn assert_probs_equal(p1: f64, p2: f64) {
 }
 
 // Helper function to compare the results of multiple basis states between simulators
-fn compare_probabilities(dm: &DensityMatrix, stab: &StdSparseStab, num_qubits: usize) {
+fn compare_probabilities(dm: &DensityMatrix, stab: &SparseStab, num_qubits: usize) {
     // For SparseStab, we can only compute probabilities for computational basis states
     // by measuring the Z operator on each qubit
 
@@ -61,7 +61,7 @@ fn compare_probabilities(dm: &DensityMatrix, stab: &StdSparseStab, num_qubits: u
 fn test_compare_initial_state() {
     // Test that both simulators start in the |0...0⟩ state
     let num_qubits = 2;
-    let stab = StdSparseStab::new(num_qubits);
+    let stab = SparseStab::new(num_qubits);
     let dm = DensityMatrix::new(num_qubits);
 
     compare_probabilities(&dm, &stab, num_qubits);
@@ -71,7 +71,7 @@ fn test_compare_initial_state() {
 fn test_compare_x_gate() {
     // Test X gates give identical results
     let num_qubits = 1;
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply X to qubit 0
@@ -87,28 +87,28 @@ fn test_compare_pauli_gates() {
     let num_qubits = 1;
 
     // Test X gate
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.x(&qid(0));
     dm.x(&qid(0));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test Y gate
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.y(&qid(0));
     dm.y(&qid(0));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test Z gate
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.z(&qid(0));
     dm.z(&qid(0));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test combinations of Pauli gates
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.x(&qid(0)).z(&qid(0));
     dm.x(&qid(0)).z(&qid(0));
@@ -119,7 +119,7 @@ fn test_compare_pauli_gates() {
 fn test_compare_hadamard() {
     // Test Hadamard gates give identical results
     let num_qubits = 1;
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply H to qubit 0
@@ -133,7 +133,7 @@ fn test_compare_hadamard() {
 fn test_compare_sz_gate() {
     // Test S gate (sqrt of Z) gives identical results
     let num_qubits = 1;
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Put qubit in superposition first
@@ -153,21 +153,21 @@ fn test_compare_phase_gates() {
     let num_qubits = 1;
 
     // Test S gate
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).sz(&qid(0));
     dm.h(&qid(0)).sz(&qid(0));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test S† gate
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).szdg(&qid(0));
     dm.h(&qid(0)).szdg(&qid(0));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test combined phases
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).sz(&qid(0)).sz(&qid(0)); // S^2 = Z
     dm.h(&qid(0)).sz(&qid(0)).sz(&qid(0));
@@ -178,7 +178,7 @@ fn test_compare_phase_gates() {
 fn test_compare_bell_state() {
     // Test creating a Bell state gives identical results
     let num_qubits = 2;
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply sequence of gates to create a Bell state
@@ -194,21 +194,21 @@ fn test_compare_two_qubit_gates() {
     let num_qubits = 2;
 
     // Test CNOT (CX) gate
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).cx(&qid2(0, 1));
     dm.h(&qid(0)).cx(&qid2(0, 1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test CZ gate
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).h(&qid(1)).cz(&qid2(0, 1));
     dm.h(&qid(0)).h(&qid(1)).cz(&qid2(0, 1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test SWAP gate
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.x(&qid(0)).swap(&qid2(0, 1));
     dm.x(&qid(0)).swap(&qid2(0, 1));
@@ -219,7 +219,7 @@ fn test_compare_two_qubit_gates() {
 fn test_compare_complex_circuit() {
     // Test a more complex Clifford circuit
     let num_qubits = 3;
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create a GHZ state
@@ -241,7 +241,7 @@ fn test_compare_measurements() {
     let num_qubits = 1;
     let seed = 42; // Fixed seed for deterministic behavior
 
-    let mut stab = StdSparseStab::with_seed(num_qubits, seed);
+    let mut stab = SparseStab::with_seed(num_qubits, seed);
     let mut dm = DensityMatrix::with_seed(num_qubits, seed);
 
     // Put qubits in superposition
@@ -268,19 +268,19 @@ fn test_compare_prepare_z() {
     let num_qubits = 2;
 
     // Test |00⟩ state - already the default state
-    let stab = StdSparseStab::new(num_qubits);
+    let stab = SparseStab::new(num_qubits);
     let dm = DensityMatrix::new(num_qubits);
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test |10⟩ state
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.x(&qid(0));
     dm.x(&qid(0));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test |11⟩ state
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.x(&qid(0)).x(&qid(1));
     dm.x(&qid(0)).x(&qid(1));
@@ -293,21 +293,21 @@ fn test_compare_prepare_x() {
     let num_qubits = 2;
 
     // Create |++⟩ state using Hadamard gates instead of direct methods
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).h(&qid(1));
     dm.h(&qid(0)).h(&qid(1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test |--⟩ state
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).h(&qid(1)).z(&qid(0)).z(&qid(1)); // Apply Z after H to get |-⟩
     dm.h(&qid(0)).h(&qid(1)).z(&qid(0)).z(&qid(1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test |+-⟩ state
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).h(&qid(1)).z(&qid(1)); // Apply Z to just qubit 1
     dm.h(&qid(0)).h(&qid(1)).z(&qid(1));
@@ -320,21 +320,21 @@ fn test_compare_prepare_y() {
     let num_qubits = 2;
 
     // Create |+i,+i⟩ state using S and H gates
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).h(&qid(1)).sz(&qid(0)).sz(&qid(1)); // H followed by S gives |+i⟩
     dm.h(&qid(0)).h(&qid(1)).sz(&qid(0)).sz(&qid(1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test |-i,-i⟩ state
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).h(&qid(1)).szdg(&qid(0)).szdg(&qid(1)); // H followed by S† gives |-i⟩
     dm.h(&qid(0)).h(&qid(1)).szdg(&qid(0)).szdg(&qid(1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Test |+i,-i⟩ state
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).h(&qid(1)).sz(&qid(0)).szdg(&qid(1));
     dm.h(&qid(0)).h(&qid(1)).sz(&qid(0)).szdg(&qid(1));
@@ -345,7 +345,7 @@ fn test_compare_prepare_y() {
 fn test_compare_reset() {
     // Test reset behavior
     let num_qubits = 2;
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply some gates to get to a non-trivial state
@@ -365,28 +365,28 @@ fn test_compare_bell_states() {
     let num_qubits = 2;
 
     // Bell state |Phi+> = (|00> + |11>)/sqrt(2)
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).cx(&qid2(0, 1));
     dm.h(&qid(0)).cx(&qid2(0, 1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Bell state |Phi-> = (|00> - |11>)/sqrt(2)
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
     dm.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Bell state |Psi+> = (|01> + |10>)/sqrt(2)
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
     dm.h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
     compare_probabilities(&dm, &stab, num_qubits);
 
     // Bell state |Psi-> = (|01> - |10>)/sqrt(2)
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
     stab.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
     dm.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
@@ -397,7 +397,7 @@ fn test_compare_bell_states() {
 fn test_compare_ghz_state() {
     // Test GHZ state preparation and operations
     let num_qubits = 3;
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create a GHZ state |000> + |111>
@@ -418,7 +418,7 @@ fn test_compare_w_state() {
     // Test W state preparation (|001> + |010> + |100>)
     // This is more complex but still within Clifford operations
     let num_qubits = 3;
-    let mut stab = StdSparseStab::new(num_qubits);
+    let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create a W state approximation using only Clifford gates
@@ -448,7 +448,7 @@ fn test_compare_mixed_basis_measurements() {
     let seed = 42;
 
     // Test X-basis measurements
-    let mut stab = StdSparseStab::with_seed(num_qubits, seed);
+    let mut stab = SparseStab::with_seed(num_qubits, seed);
     let mut dm = DensityMatrix::with_seed(num_qubits, seed);
 
     // Prepare |0> state (default)
@@ -465,7 +465,7 @@ fn test_compare_mixed_basis_measurements() {
     assert_eq!(stab_result.is_deterministic, dm_result.is_deterministic);
 
     // Test Y-basis measurements
-    let mut stab = StdSparseStab::with_seed(num_qubits, seed);
+    let mut stab = SparseStab::with_seed(num_qubits, seed);
     let mut dm = DensityMatrix::with_seed(num_qubits, seed);
 
     // Prepare |0> and then apply H and S to get to Y basis state

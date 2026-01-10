@@ -47,7 +47,7 @@ This guide will help you get up and running with PECOS quickly.
     use pecos::prelude::*;
 
     fn main() {
-        let sim = StdSparseStab::new(1);
+        let sim = SparseStab::new(1);
         println!("PECOS is working! Created a {}-qubit simulator", sim.num_qubits());
     }
     ```

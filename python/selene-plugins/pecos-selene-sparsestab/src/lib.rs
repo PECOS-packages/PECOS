@@ -19,7 +19,7 @@
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, StdSparseStab};
+use pecos_qsim::{CliffordGateable, SparseStab};
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;
@@ -52,7 +52,7 @@ struct Params {
 /// The PECOS `SparseStab` simulator wrapped for Selene compatibility.
 pub struct SparseStabSimulator {
     /// The underlying PECOS sparse stabilizer simulator
-    simulator: StdSparseStab,
+    simulator: SparseStab,
     /// Number of qubits in the system
     n_qubits: u64,
     /// Threshold for angle approximation to Clifford rotations
@@ -118,7 +118,7 @@ impl SimulatorInterface for SparseStabSimulator {
 
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         // Create a fresh simulator with the given seed for deterministic behavior
-        self.simulator = StdSparseStab::with_seed(Self::to_usize(self.n_qubits), seed);
+        self.simulator = SparseStab::with_seed(Self::to_usize(self.n_qubits), seed);
         Ok(())
     }
 
@@ -388,7 +388,7 @@ impl SimulatorInterfaceFactory for SparseStabSimulatorFactory {
                 "Error parsing arguments to PECOS SparseStab plugin: {e}"
             )),
             Ok(params) => Ok(Box::new(SparseStabSimulator {
-                simulator: StdSparseStab::with_seed(SparseStabSimulator::to_usize(n_qubits), 0),
+                simulator: SparseStab::with_seed(SparseStabSimulator::to_usize(n_qubits), 0),
                 n_qubits,
                 angle_threshold: params.angle_threshold,
             })),

@@ -7,7 +7,7 @@ use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
 use pecos_qsim::{
-    ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, StdSparseStab,
+    ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, SparseStab, StateVec,
 };
 use std::any::Any;
 use std::fmt::Debug;
@@ -463,7 +463,7 @@ impl QuantumEngine for StateVecEngine {
 /// A quantum engine that uses a stabilizer simulator
 #[derive(Debug, Clone)]
 pub struct SparseStabEngine {
-    simulator: StdSparseStab,
+    simulator: SparseStab,
 }
 
 impl SparseStabEngine {
@@ -471,7 +471,7 @@ impl SparseStabEngine {
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
         Self {
-            simulator: StdSparseStab::new(num_qubits),
+            simulator: SparseStab::new(num_qubits),
         }
     }
 
@@ -483,7 +483,7 @@ impl SparseStabEngine {
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self {
-            simulator: StdSparseStab::with_seed(num_qubits, seed),
+            simulator: SparseStab::with_seed(num_qubits, seed),
         }
     }
 }
@@ -639,7 +639,7 @@ impl Engine for SparseStabEngine {
 }
 
 impl RngManageable for SparseStabEngine {
-    type Rng = <StdSparseStab as RngManageable>::Rng;
+    type Rng = <SparseStab as RngManageable>::Rng;
 
     fn set_rng(&mut self, rng: Self::Rng) {
         self.simulator.set_rng(rng);
@@ -669,7 +669,7 @@ impl RngManageable for SparseStabEngine {
 impl QuantumEngine for SparseStabEngine {
     fn set_seed(&mut self, seed: u64) {
         // Create a new RNG with the given seed
-        let rng = <StdSparseStab as RngManageable>::Rng::seed_from_u64(seed);
+        let rng = <SparseStab as RngManageable>::Rng::seed_from_u64(seed);
 
         // Set the simulator's RNG
         self.simulator.set_rng(rng);

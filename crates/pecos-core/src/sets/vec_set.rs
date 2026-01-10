@@ -18,7 +18,7 @@ use crate::{Element, Set};
 use core::slice::Iter;
 use smallvec::SmallVec;
 
-/// Inline capacity for VecSet elements.
+/// Inline capacity for `VecSet` elements.
 /// Stabilizer weights are typically 2-4 elements in surface codes.
 /// Using 8 provides good performance for small circuits while avoiding
 /// significant memory overhead at larger scales.

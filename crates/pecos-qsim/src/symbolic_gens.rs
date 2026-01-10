@@ -20,8 +20,7 @@
 //! The final measurement outcome is: `XOR(measurement_outcomes) XOR phase_flip`
 
 use crate::sign_algebra::{SignAlgebra, SymbolicSign};
-use core::fmt::Debug;
-use pecos_core::Set;
+use pecos_core::{Set, VecSet};
 
 /// Generators for symbolic stabilizer simulation.
 ///
@@ -31,45 +30,41 @@ use pecos_core::Set;
 ///
 /// The final sign is: `{measurement_deps} ^ phase_flip` where `phase_flip` is computed
 /// from `signs_minus` and `signs_i`.
+///
+/// Uses `VecSet<usize>` for efficient sparse storage of Pauli operators.
 #[derive(Clone, Debug)]
-pub struct SymbolicGens<T>
-where
-    T: for<'a> Set<'a, Element = usize>,
-{
+pub struct SymbolicGens {
     num_qubits: usize,
     /// Column-wise storage of X operators: `col_x`[qubit] = set of generator indices with X on that qubit
-    pub col_x: Vec<T>,
+    pub col_x: Vec<VecSet<usize>>,
     /// Column-wise storage of Z operators: `col_z`[qubit] = set of generator indices with Z on that qubit
-    pub col_z: Vec<T>,
+    pub col_z: Vec<VecSet<usize>>,
     /// Row-wise storage of X operators: `row_x`[gen] = set of qubits where this generator has X
-    pub row_x: Vec<T>,
+    pub row_x: Vec<VecSet<usize>>,
     /// Row-wise storage of Z operators: `row_z`[gen] = set of qubits where this generator has Z
-    pub row_z: Vec<T>,
+    pub row_z: Vec<VecSet<usize>>,
     /// Symbolic signs for each generator: signs[gen] = set of measurement indices
     pub signs: Vec<SymbolicSign>,
     /// Traditional phase tracking: generators with a minus sign (from unitaries)
-    pub signs_minus: T,
+    pub signs_minus: VecSet<usize>,
     /// Traditional phase tracking: generators with an imaginary component (from unitaries)
-    pub signs_i: T,
+    pub signs_i: VecSet<usize>,
 }
 
-impl<T> SymbolicGens<T>
-where
-    T: for<'a> Set<'a, Element = usize>,
-{
+impl SymbolicGens {
     /// Create new symbolic generators for the given number of qubits.
     #[must_use]
     #[inline]
     pub fn new(num_qubits: usize) -> Self {
         Self {
             num_qubits,
-            col_x: vec![T::new(); num_qubits],
-            col_z: vec![T::new(); num_qubits],
-            row_x: vec![T::new(); num_qubits],
-            row_z: vec![T::new(); num_qubits],
+            col_x: vec![VecSet::new(); num_qubits],
+            col_z: vec![VecSet::new(); num_qubits],
+            row_x: vec![VecSet::new(); num_qubits],
+            row_z: vec![VecSet::new(); num_qubits],
             signs: vec![SymbolicSign::empty(); num_qubits],
-            signs_minus: T::new(),
-            signs_i: T::new(),
+            signs_minus: VecSet::new(),
+            signs_i: VecSet::new(),
         }
     }
 
@@ -89,7 +84,7 @@ where
 
     /// Clear all elements in a Vec of Sets, keeping the Vec's capacity.
     #[inline]
-    fn clear_sets(sets: &mut [T]) {
+    fn clear_sets(sets: &mut [VecSet<usize>]) {
         for set in sets.iter_mut() {
             set.clear();
         }
@@ -97,7 +92,7 @@ where
 
     /// Initialize a Vec of Sets as identity (set[i] = {i}), reusing existing allocations.
     #[inline]
-    fn init_as_identity(sets: &mut [T]) {
+    fn init_as_identity(sets: &mut [VecSet<usize>]) {
         for (i, set) in sets.iter_mut().enumerate() {
             set.clear();
             set.insert(i);
@@ -106,12 +101,12 @@ where
 
     /// Ensure the Vec of Sets has exactly `num_qubits` elements, reusing capacity when possible.
     #[inline]
-    fn ensure_size(sets: &mut Vec<T>, num_qubits: usize) {
+    fn ensure_size(sets: &mut Vec<VecSet<usize>>, num_qubits: usize) {
         match sets.len().cmp(&num_qubits) {
             std::cmp::Ordering::Less => {
                 sets.reserve(num_qubits - sets.len());
                 while sets.len() < num_qubits {
-                    sets.push(T::new());
+                    sets.push(VecSet::new());
                 }
             }
             std::cmp::Ordering::Greater => {
@@ -121,7 +116,7 @@ where
         }
     }
 
-    /// Ensure the Vec of SymbolicSigns has exactly `num_qubits` elements and clear them.
+    /// Ensure the Vec of `SymbolicSigns` has exactly `num_qubits` elements and clear them.
     #[inline]
     fn ensure_and_clear_signs(signs: &mut Vec<SymbolicSign>, num_qubits: usize) {
         match signs.len().cmp(&num_qubits) {
@@ -216,11 +211,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::VecSet;
 
     #[test]
     fn test_symbolic_gens_new() {
-        let gens: SymbolicGens<VecSet<usize>> = SymbolicGens::new(3);
+        let gens = SymbolicGens::new(3);
         assert_eq!(gens.get_num_qubits(), 3);
         assert_eq!(gens.signs.len(), 3);
         for sign in &gens.signs {
@@ -230,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_gens_init_all_z() {
-        let mut gens: SymbolicGens<VecSet<usize>> = SymbolicGens::new(2);
+        let mut gens = SymbolicGens::new(2);
         gens.init_all_z();
 
         // col_z should have generator i in set for qubit i
@@ -249,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_gens_multiply_signs() {
-        let mut gens: SymbolicGens<VecSet<usize>> = SymbolicGens::new(3);
+        let mut gens = SymbolicGens::new(3);
 
         // Set some signs
         gens.set_sign(0, SymbolicSign::single(0)); // {0}

@@ -37,14 +37,12 @@ pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
     SequentialMeasurementSampler,
 };
-pub use pauli_prop::{PauliProp, StdPauliProp};
+pub use pauli_prop::PauliProp;
 pub use pecos_core::{VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
-pub use sparse_stab::{SparseStab, StdSparseStab};
+pub use sparse_stab::SparseStab;
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 pub use state_vec::StateVec;
 pub use symbolic_gens::SymbolicGens;
-pub use symbolic_sparse_stab::{
-    MeasurementHistory, StdSymbolicSparseStab, SymbolicMeasurementResult, SymbolicSparseStab,
-};
+pub use symbolic_sparse_stab::{MeasurementHistory, SymbolicMeasurementResult, SymbolicSparseStab};

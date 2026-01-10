@@ -17,7 +17,7 @@ use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 
 #[pyclass(module = "pecos_rslib")]
 pub struct SparseSim {
-    inner: SparseStab<VecSet<usize>>,
+    inner: SparseStab,
 }
 
 #[pymethods]
@@ -25,7 +25,7 @@ impl SparseSim {
     #[new]
     fn new(num_qubits: usize) -> Self {
         SparseSim {
-            inner: SparseStab::<VecSet<usize>>::new(num_qubits),
+            inner: SparseStab::new(num_qubits),
         }
     }
 

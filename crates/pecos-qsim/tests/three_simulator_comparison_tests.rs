@@ -3,7 +3,7 @@ use pecos_qsim::CliffordGateable;
 use pecos_qsim::DensityMatrix;
 use pecos_qsim::QuantumSimulator;
 use pecos_qsim::StateVec;
-use pecos_qsim::{StdSparseStab, qid, qid2};
+use pecos_qsim::{SparseStab, qid, qid2};
 use std::f64::consts::PI;
 
 // Helper function to check if two probabilities are close enough
@@ -18,7 +18,7 @@ fn assert_probs_equal(p1: f64, p2: f64) {
 fn compare_all_probabilities(
     sv: &StateVec,
     dm: &DensityMatrix,
-    stab: &StdSparseStab,
+    stab: &SparseStab,
     num_qubits: usize,
 ) {
     for i in 0..(1 << num_qubits) {
@@ -61,12 +61,12 @@ fn compare_all_probabilities(
 // Helper function to compare a clifford circuit among all three simulators
 fn compare_clifford_circuit<F>(num_qubits: usize, circuit_fn: F)
 where
-    F: Fn(&mut StateVec, &mut DensityMatrix, &mut StdSparseStab),
+    F: Fn(&mut StateVec, &mut DensityMatrix, &mut SparseStab),
 {
     let seed = 42; // Fixed seed for determinism
     let mut sv = StateVec::with_seed(num_qubits, seed);
     let mut dm = DensityMatrix::with_seed(num_qubits, seed);
-    let mut stab = StdSparseStab::with_seed(num_qubits, seed);
+    let mut stab = SparseStab::with_seed(num_qubits, seed);
 
     // Apply the circuit to all three simulators
     circuit_fn(&mut sv, &mut dm, &mut stab);
@@ -100,7 +100,7 @@ fn test_initial_state_consistency() {
     for num_qubits in 1..=5 {
         let sv = StateVec::new(num_qubits);
         let dm = DensityMatrix::new(num_qubits);
-        let stab = StdSparseStab::new(num_qubits);
+        let stab = SparseStab::new(num_qubits);
 
         compare_all_probabilities(&sv, &dm, &stab, num_qubits);
     }
@@ -246,7 +246,7 @@ fn test_measurement_consistency() {
     // Test Z-basis measurement
     let mut sv = StateVec::with_seed(num_qubits, seed);
     let mut dm = DensityMatrix::with_seed(num_qubits, seed);
-    let mut stab = StdSparseStab::with_seed(num_qubits, seed);
+    let mut stab = SparseStab::with_seed(num_qubits, seed);
 
     // Put qubits in superposition
     sv.h(&qid(0));
@@ -272,7 +272,7 @@ fn test_measurement_consistency() {
     // Test X-basis measurement (H→Z→H)
     let mut sv = StateVec::with_seed(num_qubits, seed);
     let mut dm = DensityMatrix::with_seed(num_qubits, seed);
-    let mut stab = StdSparseStab::with_seed(num_qubits, seed);
+    let mut stab = SparseStab::with_seed(num_qubits, seed);
 
     // Prepare |0⟩, then apply Z to get a deterministic result
     sv.z(&qid(0));
@@ -368,7 +368,7 @@ fn test_prepare_computational_basis_consistency() {
         for i in 0..(1 << num_qubits) {
             let mut sv = StateVec::new(num_qubits);
             let mut dm = DensityMatrix::new(num_qubits);
-            let mut stab = StdSparseStab::new(num_qubits);
+            let mut stab = SparseStab::new(num_qubits);
 
             // For stabilizer simulator, we need to manually apply X gates
             // based on the bits of i
@@ -394,7 +394,7 @@ fn test_prepare_plus_states_consistency() {
     for num_qubits in 1..=3 {
         let mut sv = StateVec::new(num_qubits);
         let mut dm = DensityMatrix::new(num_qubits);
-        let mut stab = StdSparseStab::new(num_qubits);
+        let mut stab = SparseStab::new(num_qubits);
 
         // Apply H to all qubits
         for q in 0..num_qubits {
@@ -414,7 +414,7 @@ fn test_reset_consistency() {
     for num_qubits in 1..=3 {
         let mut sv = StateVec::new(num_qubits);
         let mut dm = DensityMatrix::new(num_qubits);
-        let mut stab = StdSparseStab::new(num_qubits);
+        let mut stab = SparseStab::new(num_qubits);
 
         // Apply some gates to get to a non-trivial state
         sv.h(&qid(0));

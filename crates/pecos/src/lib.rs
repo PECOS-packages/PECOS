@@ -677,7 +677,7 @@ pub mod decoders {
 /// use pecos::qsim::measurement_sampler::MeasurementSampler;
 /// use pecos::prelude::*;
 ///
-/// let mut sim = StdSymbolicSparseStab::new(2);
+/// let mut sim = SymbolicSparseStab::new(2);
 /// sim.h(0).cx(0, 1);
 /// sim.mz(0);
 /// sim.mz(1);

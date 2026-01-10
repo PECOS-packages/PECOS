@@ -46,7 +46,7 @@ use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::measurement_sampler::SampleResult;
-use pecos_qsim::pauli_prop::StdPauliProp;
+use pecos_qsim::pauli_prop::PauliProp;
 use pecos_qsim::symbolic_sparse_stab::MeasurementHistory;
 use pecos_quantum::Circuit;
 use pecos_rng::{PecosRng, Rng, RngBulkExt, SeedableRng};
@@ -552,7 +552,7 @@ struct GateLocation {
 /// use pecos_experimental::{
 ///     NoisyMeasurementHistoryBuilder, DepolarizingNoiseModel, execute_hugr,
 /// };
-/// use pecos_qsim::StdSymbolicSparseStab;
+/// use pecos_qsim::SymbolicSparseStab;
 /// use pecos_quantum::{DagCircuit, Gate};
 ///
 /// // Create a circuit with gates that can have faults
@@ -563,7 +563,7 @@ struct GateLocation {
 /// circuit.add_gate(Gate::measure(&[1]));
 ///
 /// // Run symbolic simulation to get noiseless measurement history
-/// let mut sim = StdSymbolicSparseStab::new(2);
+/// let mut sim = SymbolicSparseStab::new(2);
 /// execute_hugr(&mut sim, &circuit).unwrap();
 ///
 /// // Build noisy measurement history
@@ -849,7 +849,7 @@ impl NoisyMeasurementHistoryBuilder {
         all_gates: &[GateLocation],
         measurement_positions: &std::collections::HashMap<usize, usize>,
     ) -> BTreeSet<usize> {
-        let mut prop = StdPauliProp::new();
+        let mut prop = PauliProp::new();
 
         // Add the initial Pauli
         match pauli {
@@ -937,7 +937,7 @@ impl NoisyMeasurementHistoryBuilder {
         all_gates: &[GateLocation],
         measurement_positions: &std::collections::HashMap<usize, usize>,
     ) -> BTreeSet<usize> {
-        let mut prop = StdPauliProp::new();
+        let mut prop = PauliProp::new();
 
         // Add both Paulis
         match pauli1 {
@@ -1737,9 +1737,9 @@ mod tests {
     #[test]
     fn test_propagate_x_fault_direct_to_measurement() {
         // Test that an X fault on qubit 0 right before measurement 0 affects m0
-        use pecos_qsim::StdPauliProp;
+        use pecos_qsim::PauliProp;
 
-        let mut prop = StdPauliProp::new();
+        let mut prop = PauliProp::new();
         prop.add_x(0);
 
         // X on qubit 0 should flip Z-basis measurement on qubit 0
@@ -1749,9 +1749,9 @@ mod tests {
     #[test]
     fn test_propagate_z_fault_no_flip() {
         // Test that a Z fault doesn't flip Z-basis measurements directly
-        use pecos_qsim::StdPauliProp;
+        use pecos_qsim::PauliProp;
 
-        let mut prop = StdPauliProp::new();
+        let mut prop = PauliProp::new();
         prop.add_z(0);
 
         // Z on qubit 0 should NOT flip Z-basis measurement on qubit 0
@@ -1762,9 +1762,9 @@ mod tests {
     fn test_propagate_x_through_h_becomes_z() {
         // Test that X -> H -> Z (doesn't flip)
         use pecos_core::QubitId;
-        use pecos_qsim::{CliffordGateable, StdPauliProp};
+        use pecos_qsim::{CliffordGateable, PauliProp};
 
-        let mut prop = StdPauliProp::new();
+        let mut prop = PauliProp::new();
         prop.add_x(0);
         prop.h(&[QubitId(0)]);
 
@@ -1776,9 +1776,9 @@ mod tests {
     #[test]
     fn test_propagate_z_through_h_becomes_x() {
         // Test that Z -> H -> X (does flip)
-        use pecos_qsim::{CliffordGateable, StdPauliProp};
+        use pecos_qsim::{CliffordGateable, PauliProp};
 
-        let mut prop = StdPauliProp::new();
+        let mut prop = PauliProp::new();
         prop.add_z(0);
         prop.h(&[QubitId(0)]);
 
@@ -1790,9 +1790,9 @@ mod tests {
     #[test]
     fn test_propagate_x_through_cx_spreads() {
         // Test that X on control of CX spreads to target
-        use pecos_qsim::{CliffordGateable, StdPauliProp};
+        use pecos_qsim::{CliffordGateable, PauliProp};
 
-        let mut prop = StdPauliProp::new();
+        let mut prop = PauliProp::new();
         prop.add_x(0); // X on control
         prop.cx(&[QubitId(0), QubitId(1)]);
 
@@ -1804,9 +1804,9 @@ mod tests {
     #[test]
     fn test_propagate_z_through_cx_spreads() {
         // Test that Z on target of CX spreads to control
-        use pecos_qsim::{CliffordGateable, StdPauliProp};
+        use pecos_qsim::{CliffordGateable, PauliProp};
 
-        let mut prop = StdPauliProp::new();
+        let mut prop = PauliProp::new();
         prop.add_z(1); // Z on target
         prop.cx(&[QubitId(0), QubitId(1)]);
 

@@ -32,7 +32,7 @@ fn bench_bell_state<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Measurement Sampling - Bell State");
 
     // Create the Bell state measurement history once
-    let mut sim = StdSymbolicSparseStab::new(2);
+    let mut sim = SymbolicSparseStab::new(2);
     sim.h(0).cx(0, 1);
     sim.mz(0);
     sim.mz(1);
@@ -62,7 +62,7 @@ fn bench_bell_state<M: Measurement>(c: &mut Criterion<M>) {
 fn bench_ghz_state<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Measurement Sampling - GHZ State");
 
-    let mut sim = StdSymbolicSparseStab::new(3);
+    let mut sim = SymbolicSparseStab::new(3);
     sim.h(0).cx(0, 1).cx(1, 2);
     sim.mz(0);
     sim.mz(1);
@@ -94,7 +94,7 @@ fn bench_many_random_measurements<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Measurement Sampling - Many Random");
 
     // Create many independent random measurements (all |+> states)
-    let mut sim = StdSymbolicSparseStab::new(20);
+    let mut sim = SymbolicSparseStab::new(20);
     for i in 0..20 {
         sim.h(i);
     }
@@ -128,7 +128,7 @@ fn bench_scaling_shots<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Measurement Sampling - Scaling Shots");
 
     // A medium complexity circuit: 10 qubits, entangled
-    let mut sim = StdSymbolicSparseStab::new(10);
+    let mut sim = SymbolicSparseStab::new(10);
     sim.h(0);
     for i in 0..9 {
         sim.cx(i, i + 1);
@@ -165,7 +165,7 @@ fn bench_scaling_measurements<M: Measurement>(c: &mut Criterion<M>) {
 
     for num_measurements in [10, 50, 100, 200, 500, 1000] {
         // Create a GHZ-like state with all qubits entangled
-        let mut sim = StdSymbolicSparseStab::new(num_measurements);
+        let mut sim = SymbolicSparseStab::new(num_measurements);
         sim.h(0);
         for i in 0..(num_measurements - 1) {
             sim.cx(i, i + 1);

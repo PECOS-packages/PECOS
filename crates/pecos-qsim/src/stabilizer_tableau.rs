@@ -27,9 +27,9 @@ use crate::QuantumSimulator;
 /// # Examples
 /// ```rust
 /// use pecos_core::{qid, qid2};
-/// use pecos_qsim::{StabilizerTableauSimulator, CliffordGateable, StdSparseStab};
+/// use pecos_qsim::{StabilizerTableauSimulator, CliffordGateable, SparseStab};
 ///
-/// let mut sim = StdSparseStab::new(2);
+/// let mut sim = SparseStab::new(2);
 /// sim.h(&qid(0)).cx(&qid2(0, 1));  // Create Bell state
 ///
 /// // Print the stabilizer tableau
@@ -43,9 +43,9 @@ pub trait StabilizerTableauSimulator: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{StabilizerTableauSimulator, StdSparseStab};
+    /// use pecos_qsim::{StabilizerTableauSimulator, SparseStab};
     ///
-    /// let sim = StdSparseStab::new(2);
+    /// let sim = SparseStab::new(2);
     /// let tableau = sim.stab_tableau();
     /// assert!(tableau.contains("+ZI"));
     /// assert!(tableau.contains("+IZ"));
@@ -59,9 +59,9 @@ pub trait StabilizerTableauSimulator: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{StabilizerTableauSimulator, StdSparseStab};
+    /// use pecos_qsim::{StabilizerTableauSimulator, SparseStab};
     ///
-    /// let sim = StdSparseStab::new(2);
+    /// let sim = SparseStab::new(2);
     /// let tableau = sim.destab_tableau();
     /// assert!(tableau.contains("+XI"));
     /// assert!(tableau.contains("+IX"));
@@ -75,9 +75,9 @@ pub trait StabilizerTableauSimulator: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{StabilizerTableauSimulator, StdSparseStab};
+    /// use pecos_qsim::{StabilizerTableauSimulator, SparseStab};
     ///
-    /// let sim = StdSparseStab::new(1);
+    /// let sim = SparseStab::new(1);
     /// let full = sim.full_tableau();
     /// assert!(full.contains("Destabilizers:"));
     /// assert!(full.contains("Stabilizers:"));

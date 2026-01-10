@@ -17,13 +17,11 @@ pub use crate::{
     clifford_gateable::{CliffordGateable, MeasurementResult},
     coin_toss::CoinToss,
     measurement_sampler::{MeasurementSampler, SampleResult, SequentialMeasurementSampler},
-    pauli_prop::{PauliProp, StdPauliProp},
+    pauli_prop::PauliProp,
     quantum_simulator::QuantumSimulator,
     sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign},
-    sparse_stab::{SparseStab, StdSparseStab},
+    sparse_stab::SparseStab,
     stabilizer_tableau::StabilizerTableauSimulator,
     state_vec::StateVec,
-    symbolic_sparse_stab::{
-        MeasurementHistory, StdSymbolicSparseStab, SymbolicMeasurementResult, SymbolicSparseStab,
-    },
+    symbolic_sparse_stab::{MeasurementHistory, SymbolicMeasurementResult, SymbolicSparseStab},
 };

@@ -28,9 +28,9 @@ pub trait QuantumSimulator {
     /// # Examples
     /// ```rust
     /// use pecos_core::{qid, qid2};
-    /// use pecos_qsim::{QuantumSimulator, CliffordGateable, StdSparseStab};
+    /// use pecos_qsim::{QuantumSimulator, CliffordGateable, SparseStab};
     ///
-    /// let mut sim = StdSparseStab::new(2);
+    /// let mut sim = SparseStab::new(2);
     /// sim.x(&qid(0))
     ///    .cx(&qid2(0, 1))
     ///    .reset()  // Return to initial configuration

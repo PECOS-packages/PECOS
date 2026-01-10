@@ -86,10 +86,10 @@ pub struct MeasurementResult {
 ///
 /// # Examples
 /// ```rust
-/// use pecos_qsim::{CliffordGateable, StdSparseStab};
+/// use pecos_qsim::{CliffordGateable, SparseStab};
 /// use pecos_core::QubitId;
 ///
-/// let mut sim = StdSparseStab::new(2);
+/// let mut sim = SparseStab::new(2);
 ///
 /// // Create Bell state
 /// sim.h(&[QubitId(0)]).cx(&[QubitId(0), QubitId(1)]);

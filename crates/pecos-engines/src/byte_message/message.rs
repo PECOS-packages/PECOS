@@ -755,7 +755,10 @@ mod tests {
         assert_eq!(parsed_commands[0].gate_type, GateType::H);
         assert_eq!(parsed_commands[0].qubits.as_slice(), &[QubitId(0)]);
         assert_eq!(parsed_commands[1].gate_type, GateType::CX);
-        assert_eq!(parsed_commands[1].qubits.as_slice(), &[QubitId(0), QubitId(1)]);
+        assert_eq!(
+            parsed_commands[1].qubits.as_slice(),
+            &[QubitId(0), QubitId(1)]
+        );
     }
 
     #[test]

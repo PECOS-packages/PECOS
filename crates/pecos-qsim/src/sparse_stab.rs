@@ -18,9 +18,6 @@ use pecos_rng::rng_ext::RngProbabilityExt;
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 use smallvec::SmallVec;
 
-#[expect(clippy::module_name_repetitions)]
-pub type StdSparseStab = SparseStab<VecSet<usize>>;
-
 /// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
 ///
 /// This implementation is based on the work found in the thesis "Quantum Algorithms, Architecture,
@@ -38,16 +35,15 @@ pub type StdSparseStab = SparseStab<VecSet<usize>>;
 /// - Signs (± and ±i) for each generator
 ///
 /// # Type Parameters
-/// - T: A set type that implements the Set trait with usize elements, used for storing operator locations
 /// - R: A random number generator type, defaults to `PecosRng`
 ///
 /// # Examples
 /// ```rust
-/// use pecos_core::{VecSet, qid, qid2};
+/// use pecos_core::{qid, qid2};
 /// use pecos_qsim::{QuantumSimulator, CliffordGateable, SparseStab};
 ///
 /// // Create a new 2-qubit stabilizer state
-/// let mut sim = SparseStab::<VecSet<usize>>::new(2);
+/// let mut sim = SparseStab::new(2);
 ///
 /// // Create Bell state |Φ+> = (|00> + |11>)/√2
 /// sim.h(&qid(0))
@@ -102,32 +98,46 @@ pub type StdSparseStab = SparseStab<VecSet<usize>>;
 /// 2. Ryan-Anderson, "Quantum Algorithms, Architecture, and Error Correction"
 ///    <https://arxiv.org/abs/1812.04735>
 #[derive(Clone, Debug)]
-pub struct SparseStab<T, R = PecosRng>
+pub struct SparseStab<R = PecosRng>
 where
-    T: for<'a> Set<'a, Element = usize>,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     pub(crate) num_qubits: usize,
-    stabs: Gens<T>,
-    destabs: Gens<T>,
+    stabs: Gens,
+    destabs: Gens,
     rng: R,
 }
-impl<T, R> SparseStab<T, R>
-where
-    R: RngCore + SeedableRng + Rng + Debug,
-    T: for<'a> Set<'a, Element = usize>,
-{
+
+/// Constructors for `SparseStab` with the default RNG type (`PecosRng`).
+///
+/// These methods provide ergonomic construction without needing to specify the RNG type.
+impl SparseStab {
+    /// Create a new stabilizer simulator with the default RNG.
+    ///
+    /// This is the most common constructor - it uses the default `PecosRng` seeded
+    /// from the operating system's random number generator.
+    ///
+    /// # Arguments
+    /// * `num_qubits` - Number of qubits in the system
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::SparseStab;
+    ///
+    /// // Create a new 2-qubit stabilizer state
+    /// let mut sim = SparseStab::new(2);
+    /// ```
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let rng = R::from_os_rng();
+        let rng = PecosRng::from_os_rng();
         Self::with_rng(num_qubits, rng)
     }
 
-    /// Create a new stabilizer simulator with a specific seed for the random number generator
+    /// Create a new stabilizer simulator with a specific seed.
     ///
     /// This method allows for deterministic behavior by setting a specific seed for the
-    /// random number generator, while still using the default RNG type (`PecosRng`).
+    /// random number generator.
     ///
     /// # Arguments
     /// * `num_qubits` - Number of qubits in the system
@@ -135,18 +145,24 @@ where
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::StdSparseStab;
+    /// use pecos_qsim::SparseStab;
     ///
-    /// // Create a simulator with a specific seed
-    /// let state = StdSparseStab::with_seed(2, 42);
+    /// // Create a simulator with a specific seed for reproducibility
+    /// let state = SparseStab::with_seed(2, 42);
     /// ```
     #[inline]
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
-        let rng = R::seed_from_u64(seed);
+        let rng = PecosRng::seed_from_u64(seed);
         Self::with_rng(num_qubits, rng)
     }
+}
 
+/// Methods available on `SparseStab` with any RNG type.
+impl<R> SparseStab<R>
+where
+    R: RngCore + SeedableRng + Rng + Debug,
+{
     /// Returns the number of qubits in the system
     ///
     /// # Returns
@@ -154,8 +170,8 @@ where
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{QuantumSimulator, StdSparseStab, qid, qid2};
-    /// let state = StdSparseStab::new(2);
+    /// use pecos_qsim::{QuantumSimulator, SparseStab};
+    /// let state = SparseStab::new(2);
     /// let num = state.num_qubits();
     /// assert_eq!(num, 2);
     /// ```
@@ -164,12 +180,29 @@ where
         self.num_qubits
     }
 
+    /// Create a stabilizer simulator with a custom RNG.
+    ///
+    /// Use this when you need a specific RNG type or have an existing RNG instance.
+    ///
+    /// # Arguments
+    /// * `num_qubits` - Number of qubits in the system
+    /// * `rng` - The random number generator to use
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::SparseStab;
+    /// use rand::SeedableRng;
+    /// use rand::rngs::SmallRng;
+    ///
+    /// let rng = SmallRng::seed_from_u64(42);
+    /// let sim = SparseStab::with_rng(2, rng);
+    /// ```
     #[inline]
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
         let mut stab = Self {
             num_qubits,
-            stabs: Gens::<T>::new(num_qubits),
-            destabs: Gens::<T>::new(num_qubits),
+            stabs: Gens::new(num_qubits),
+            destabs: Gens::new(num_qubits),
             rng,
         };
         stab.reset();
@@ -195,10 +228,10 @@ where
     }
 
     #[inline]
-    fn check_row_eq_col(gens: &Gens<T>) {
+    fn check_row_eq_col(gens: &Gens) {
         // TODO: Verify that this is doing what is intended...
         for (i, row) in gens.row_x.iter().enumerate() {
-            for &j in row.iter() {
+            for &j in row {
                 assert!(
                     gens.col_x[j].contains(&i),
                     "Column-wise sparse matrix doesn't match row-wise spare matrix"
@@ -209,7 +242,7 @@ where
 
     /// Utility that creates a string for the Pauli generates of a `Gens`.
     #[inline]
-    fn tableau_string(num_qubits: usize, gens: &Gens<T>) -> String {
+    fn tableau_string(num_qubits: usize, gens: &Gens) -> String {
         // TODO: calculate signs so we are really doing Y and not W
         let mut result =
             String::with_capacity(num_qubits * gens.row_x.len() + gens.row_x.len() + 2);
@@ -260,7 +293,7 @@ where
     }
 
     #[inline]
-    pub fn signs_minus(&self) -> &T {
+    pub fn signs_minus(&self) -> &VecSet<usize> {
         &self.stabs.signs_minus
     }
 
@@ -274,8 +307,8 @@ where
             .intersection(&self.stabs.signs_i)
             .count();
 
-        let mut cumulative_x = T::new();
-        for &row in self.destabs.col_x[q].iter() {
+        let mut cumulative_x = VecSet::new();
+        for &row in &self.destabs.col_x[q] {
             num_minuses += &self.stabs.row_z[row].intersection(&cumulative_x).count();
             cumulative_x ^= &self.stabs.row_x[row];
         }
@@ -299,7 +332,7 @@ where
         let mut smallest_wt = 2 * self.num_qubits + 2;
         let mut removed_id: Option<usize> = None;
 
-        for &stab_id in anticom_stabs_col.iter() {
+        for &stab_id in &anticom_stabs_col {
             let weight = self.stabs.row_x[stab_id].len() + self.stabs.row_z[stab_id].len();
 
             if weight < smallest_wt {
@@ -346,7 +379,7 @@ where
             }
         }
 
-        for &g in anticom_stabs_col.iter() {
+        for &g in &anticom_stabs_col {
             let num_minuses = removed_row_z.intersection(&self.stabs.row_x[g]).count();
 
             if num_minuses & 1 != 0 {
@@ -358,19 +391,19 @@ where
             self.stabs.row_z[g] ^= &removed_row_z;
         }
 
-        for &i in removed_row_x.iter() {
+        for &i in &removed_row_x {
             self.stabs.col_x[i] ^= &anticom_stabs_col;
         }
 
-        for &i in removed_row_z.iter() {
+        for &i in &removed_row_z {
             self.stabs.col_z[i] ^= &anticom_stabs_col;
         }
 
-        for &i in self.stabs.row_x[id].iter() {
+        for &i in &self.stabs.row_x[id] {
             self.stabs.col_x[i].remove(&id);
         }
 
-        for &i in self.stabs.row_z[id].iter() {
+        for &i in &self.stabs.row_z[id] {
             self.stabs.col_z[i].remove(&id);
         }
 
@@ -382,27 +415,27 @@ where
         self.stabs.row_z[id].clear();
         self.stabs.row_z[id].insert(q);
 
-        for &i in self.destabs.row_x[id].iter() {
+        for &i in &self.destabs.row_x[id] {
             self.destabs.col_x[i].remove(&id);
         }
 
-        for &i in self.destabs.row_z[id].iter() {
+        for &i in &self.destabs.row_z[id] {
             self.destabs.col_z[i].remove(&id);
         }
 
         anticom_destabs_col.remove(&id);
 
-        for &i in removed_row_x.iter() {
+        for &i in &removed_row_x {
             self.destabs.col_x[i].insert(id);
             self.destabs.col_x[i] ^= &anticom_destabs_col;
         }
 
-        for &i in removed_row_z.iter() {
+        for &i in &removed_row_z {
             self.destabs.col_z[i].insert(id);
             self.destabs.col_z[i] ^= &anticom_destabs_col;
         }
 
-        for &row in anticom_destabs_col.iter() {
+        for &row in &anticom_destabs_col {
             self.destabs.row_x[row] ^= &removed_row_x;
             self.destabs.row_z[row] ^= &removed_row_z;
         }
@@ -451,10 +484,9 @@ where
     }
 }
 
-impl<T, R> QuantumSimulator for SparseStab<T, R>
+impl<R> QuantumSimulator for SparseStab<R>
 where
     R: RngCore + SeedableRng + Rng + Debug,
-    T: for<'a> Set<'a, Element = usize>,
 {
     #[inline]
     fn reset(&mut self) -> &mut Self {
@@ -462,9 +494,8 @@ where
     }
 }
 
-impl<T, R> CliffordGateable for SparseStab<T, R>
+impl<R> CliffordGateable for SparseStab<R>
 where
-    T: for<'a> Set<'a, Element = usize>,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
@@ -526,7 +557,7 @@ where
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_z[qu] ^= &g.col_x[qu];
 
-                for &i in g.col_x[qu].iter() {
+                for &i in &g.col_x[qu] {
                     g.row_z[i] ^= &qu;
                 }
             }
@@ -603,7 +634,7 @@ where
                         (col_x_max, col_x_min)
                     };
 
-                    let mut q2_set = T::new();
+                    let mut q2_set = VecSet::new();
                     q2_set.insert(q2);
 
                     for &i in col_x_qu1.iter() {
@@ -625,7 +656,7 @@ where
                         (col_z_max, col_z_min)
                     };
 
-                    let mut q1_set = T::new();
+                    let mut q1_set = VecSet::new();
                     q1_set.insert(q1);
 
                     for &i in col_z_qu2.iter() {
@@ -669,9 +700,8 @@ where
     }
 }
 
-impl<T, R> RngManageable for SparseStab<T, R>
+impl<R> RngManageable for SparseStab<R>
 where
-    T: for<'a> Set<'a, Element = usize>,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     type Rng = R;
@@ -708,9 +738,8 @@ where
 // Implement StabilizerTableauSimulator trait for SparseStab
 use crate::stabilizer_tableau::StabilizerTableauSimulator;
 
-impl<T, R> StabilizerTableauSimulator for SparseStab<T, R>
+impl<R> StabilizerTableauSimulator for SparseStab<R>
 where
-    T: for<'a> Set<'a, Element = usize>,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     fn stab_tableau(&self) -> String {
@@ -730,7 +759,7 @@ where
 mod tests {
     use super::*;
     use crate::CliffordGateable;
-    use pecos_core::{QubitId, VecSet};
+    use pecos_core::QubitId;
 
     // Helper to create qubit slice for single qubit
     fn q(n: usize) -> [QubitId; 1] {
@@ -742,7 +771,7 @@ mod tests {
         [QubitId(a), QubitId(b)]
     }
 
-    fn check_matrix(m: &[&str], gens: &Gens<VecSet<usize>>) {
+    fn check_matrix(m: &[&str], gens: &Gens) {
         for (r, v) in m.iter().enumerate() {
             let (_, phase, v) = split_pauli(v);
 
@@ -802,7 +831,7 @@ mod tests {
     }
 
     #[inline]
-    fn check_state(state: &SparseStab<VecSet<usize>>, stabs: &[&str], destabs: &[&str]) {
+    fn check_state(state: &SparseStab, stabs: &[&str], destabs: &[&str]) {
         check_matrix(stabs, &state.stabs);
         check_matrix(destabs, &state.destabs);
         // SparseStab::verify_matrix(&state);
@@ -825,7 +854,7 @@ mod tests {
         (n, phase, pauli_str)
     }
 
-    fn prep_pauli_gens(pauli_vec: &[&str], gens: &mut Gens<VecSet<usize>>) {
+    fn prep_pauli_gens(pauli_vec: &[&str], gens: &mut Gens) {
         // TODO: Think about how to automatically determine the destabilizers you need so you can optionally only provide stabilizers...
 
         gens.signs_i.clear();
@@ -886,8 +915,8 @@ mod tests {
         }
     }
 
-    fn prep_state(stabs: &[&str], destabs: &[&str]) -> SparseStab<VecSet<usize>> {
-        let mut state = SparseStab::<VecSet<usize>>::new(3);
+    fn prep_state(stabs: &[&str], destabs: &[&str]) -> SparseStab {
+        let mut state = SparseStab::new(3);
         prep_pauli_gens(stabs, &mut state.stabs);
         prep_pauli_gens(destabs, &mut state.destabs);
 
@@ -2131,9 +2160,7 @@ mod tests {
         check_state(&state, &["XZ"], &["IX"]);
     }
 
-    fn one_bit_z_teleport(
-        mut state: SparseStab<VecSet<usize>>,
-    ) -> (SparseStab<VecSet<usize>>, bool) {
+    fn one_bit_z_teleport(mut state: SparseStab) -> (SparseStab, bool) {
         state.cx(&q2(1, 0)).h(&q(1));
         let r1 = state.mz(&q(1)).into_iter().next().unwrap();
         if r1.outcome {
@@ -2149,7 +2176,7 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            let mut state: SparseStab = SparseStab::new(2);
             state.h(&q(1)); // Set input to |+>
             (state, d1) = one_bit_z_teleport(state);
             // X basis meas
@@ -2169,7 +2196,7 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            let mut state: SparseStab = SparseStab::new(2);
             state.x(&q(1));
             state.h(&q(1)); // Set input to |->
             (state, d1) = one_bit_z_teleport(state);
@@ -2190,7 +2217,7 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            let mut state: SparseStab = SparseStab::new(2);
             state.sxdg(&q(1)); // Set input to |+i>
             (state, d1) = one_bit_z_teleport(state);
             // Y basis meas
@@ -2210,7 +2237,7 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            let mut state: SparseStab = SparseStab::new(2);
             state.x(&q(1));
             state.sxdg(&q(1)); // Set input to |-i>
             (state, d1) = one_bit_z_teleport(state);
@@ -2231,7 +2258,7 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            let mut state: SparseStab = SparseStab::new(2);
             // Set input to |0>
             (state, d1) = one_bit_z_teleport(state);
             let r0 = state.mz(&q(0)).into_iter().next().unwrap();
@@ -2249,7 +2276,7 @@ mod tests {
 
         for _ in 1_u32..=100 {
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(2);
+            let mut state: SparseStab = SparseStab::new(2);
             state.x(&q(1)); // Set input to |1>
             (state, d1) = one_bit_z_teleport(state);
             let r0 = state.mz(&q(0)).into_iter().next().unwrap();
@@ -2260,7 +2287,7 @@ mod tests {
         }
     }
 
-    fn teleport(mut state: SparseStab<VecSet<usize>>) -> (SparseStab<VecSet<usize>>, bool, bool) {
+    fn teleport(mut state: SparseStab) -> (SparseStab, bool, bool) {
         // |psi> -----.-H-MZ=m0
         //            |
         // |0>   -H-.-X---MZ=m1
@@ -2287,7 +2314,7 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            let mut state: SparseStab = SparseStab::new(3);
             state.h(&q(0));
             (state, d0, d1) = teleport(state);
             state.h(&q(2));
@@ -2305,7 +2332,7 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            let mut state: SparseStab = SparseStab::new(3);
             state.x(&q(0));
             state.h(&q(0));
             (state, d0, d1) = teleport(state);
@@ -2325,7 +2352,7 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            let mut state: SparseStab = SparseStab::new(3);
             state.sxdg(&q(0));
             (state, d0, d1) = teleport(state);
             state.sx(&q(2));
@@ -2343,7 +2370,7 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            let mut state: SparseStab = SparseStab::new(3);
             state.x(&q(0));
             state.sxdg(&q(0));
             (state, d0, d1) = teleport(state);
@@ -2362,7 +2389,7 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            let mut state: SparseStab = SparseStab::new(3);
             (state, d0, d1) = teleport(state);
             let r2 = state.mz(&q(2)).into_iter().next().unwrap();
             let m2_int = u8::from(r2.outcome);
@@ -2379,7 +2406,7 @@ mod tests {
         for _ in 1_u32..=100 {
             let d0;
             let d1;
-            let mut state: SparseStab<VecSet<usize>> = SparseStab::new(3);
+            let mut state: SparseStab = SparseStab::new(3);
             state.x(&q(0)); // input state |-Z>
             (state, d0, d1) = teleport(state);
             let r2 = state.mz(&q(2)).into_iter().next().unwrap();

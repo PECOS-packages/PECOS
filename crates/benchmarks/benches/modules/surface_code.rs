@@ -115,8 +115,8 @@ impl SurfaceCodeParams {
 /// - Each ancilla is entangled with 2-4 data qubits via CNOT gates
 /// - Ancillas are measured, creating non-deterministic outcomes in round 1
 /// - Subsequent rounds create computed measurements (XOR with previous round)
-fn simulate_surface_code(params: &SurfaceCodeParams, rounds: usize) -> StdSymbolicSparseStab {
-    let mut sim = StdSymbolicSparseStab::new(params.num_qubits);
+fn simulate_surface_code(params: &SurfaceCodeParams, rounds: usize) -> SymbolicSparseStab {
+    let mut sim = SymbolicSparseStab::new(params.num_qubits);
 
     // Initialize data qubits in |+> state (typical for X-error detection)
     for i in 0..params.num_data {
@@ -184,10 +184,10 @@ fn bench_surface_code_simulation<M: Measurement>(c: &mut Criterion<M>) {
     group.finish();
 }
 
-/// Build a surface code syndrome extraction circuit as a ByteMessage.
+/// Build a surface code syndrome extraction circuit as a `ByteMessage`.
 ///
 /// This creates the same circuit structure as `simulate_surface_code` but
-/// in ByteMessage format for use with the engine infrastructure.
+/// in `ByteMessage` format for use with the engine infrastructure.
 fn build_surface_code_circuit(params: &SurfaceCodeParams, rounds: usize) -> ByteMessage {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
@@ -252,59 +252,51 @@ fn bench_surface_code_noisy<M: Measurement>(c: &mut Criterion<M>) {
 
             // Single shot benchmark (measures per-shot overhead)
             group.throughput(Throughput::Elements(ops_per_run as u64));
-            group.bench_with_input(
-                BenchmarkId::new("single_shot", &label),
-                &(),
-                |b, ()| {
-                    // Create system outside the benchmark loop for setup
-                    let noise = Box::new(
-                        DepolarizingNoiseModel::builder()
-                            .with_uniform_probability(error_rate)
-                            .with_seed(42)
-                            .build(),
-                    );
-                    let engine = Box::new(SparseStabEngine::new(params.num_qubits));
-                    let mut system = QuantumSystem::new(noise, engine);
-                    system.set_seed(42);
+            group.bench_with_input(BenchmarkId::new("single_shot", &label), &(), |b, ()| {
+                // Create system outside the benchmark loop for setup
+                let noise = Box::new(
+                    DepolarizingNoiseModel::builder()
+                        .with_uniform_probability(error_rate)
+                        .with_seed(42)
+                        .build(),
+                );
+                let engine = Box::new(SparseStabEngine::new(params.num_qubits));
+                let mut system = QuantumSystem::new(noise, engine);
+                system.set_seed(42);
 
-                    b.iter(|| {
-                        system.reset().expect("reset failed");
-                        let result = system
-                            .process_as_system(circuit.clone())
-                            .expect("process failed");
-                        black_box(result)
-                    });
-                },
-            );
+                b.iter(|| {
+                    system.reset().expect("reset failed");
+                    let result = system
+                        .process_as_system(circuit.clone())
+                        .expect("process failed");
+                    black_box(result)
+                });
+            });
 
             // Multi-shot benchmark (100 shots)
             let shots = 100;
             group.throughput(Throughput::Elements((ops_per_run * shots) as u64));
-            group.bench_with_input(
-                BenchmarkId::new("100_shots", &label),
-                &(),
-                |b, ()| {
-                    let noise = Box::new(
-                        DepolarizingNoiseModel::builder()
-                            .with_uniform_probability(error_rate)
-                            .with_seed(42)
-                            .build(),
-                    );
-                    let engine = Box::new(SparseStabEngine::new(params.num_qubits));
-                    let mut system = QuantumSystem::new(noise, engine);
-                    system.set_seed(42);
+            group.bench_with_input(BenchmarkId::new("100_shots", &label), &(), |b, ()| {
+                let noise = Box::new(
+                    DepolarizingNoiseModel::builder()
+                        .with_uniform_probability(error_rate)
+                        .with_seed(42)
+                        .build(),
+                );
+                let engine = Box::new(SparseStabEngine::new(params.num_qubits));
+                let mut system = QuantumSystem::new(noise, engine);
+                system.set_seed(42);
 
-                    b.iter(|| {
-                        for _ in 0..shots {
-                            system.reset().expect("reset failed");
-                            let result = system
-                                .process_as_system(circuit.clone())
-                                .expect("process failed");
-                            black_box(&result);
-                        }
-                    });
-                },
-            );
+                b.iter(|| {
+                    for _ in 0..shots {
+                        system.reset().expect("reset failed");
+                        let result = system
+                            .process_as_system(circuit.clone())
+                            .expect("process failed");
+                        black_box(&result);
+                    }
+                });
+            });
         }
     }
 

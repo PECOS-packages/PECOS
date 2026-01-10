@@ -25,11 +25,11 @@
 //! # Example
 //!
 //! ```rust
-//! use pecos_qsim::symbolic_sparse_stab::StdSymbolicSparseStab;
+//! use pecos_qsim::symbolic_sparse_stab::SymbolicSparseStab;
 //! use pecos_qsim::measurement_sampler::{SequentialMeasurementSampler, MeasurementSampler};
 //!
 //! // Create a Bell state and measure
-//! let mut sim = StdSymbolicSparseStab::new(2);
+//! let mut sim = SymbolicSparseStab::new(2);
 //! sim.h(0).cx(0, 1);
 //! sim.mz(0);
 //! sim.mz(1);
@@ -446,7 +446,7 @@ impl SequentialMeasurementSampler {
 /// use pecos_qsim::measurement_sampler::MeasurementSampler;
 ///
 /// // Create a Bell state and measure
-/// let mut sim = StdSymbolicSparseStab::new(2);
+/// let mut sim = SymbolicSparseStab::new(2);
 /// sim.h(0).cx(0, 1);
 /// sim.mz(0);
 /// sim.mz(1);
@@ -670,9 +670,9 @@ impl MeasurementSampler {
 ///
 /// ```rust
 /// use pecos_qsim::measurement_sampler::{MeasurementSampler, SampleResult};
-/// use pecos_qsim::symbolic_sparse_stab::StdSymbolicSparseStab;
+/// use pecos_qsim::symbolic_sparse_stab::SymbolicSparseStab;
 ///
-/// let mut sim = StdSymbolicSparseStab::new(2);
+/// let mut sim = SymbolicSparseStab::new(2);
 /// sim.h(0).cx(0, 1);
 /// sim.mz(0);
 /// sim.mz(1);
@@ -913,7 +913,7 @@ impl MeasurementSampler {
     /// use pecos_qsim::prelude::*;
     /// use pecos_qsim::measurement_sampler::MeasurementSampler;
     ///
-    /// let mut sim = StdSymbolicSparseStab::new(2);
+    /// let mut sim = SymbolicSparseStab::new(2);
     /// sim.h(0).cx(0, 1);
     /// sim.mz(0);
     /// sim.mz(1);
@@ -942,7 +942,7 @@ impl MeasurementSampler {
     /// use pecos_qsim::prelude::*;
     /// use pecos_qsim::measurement_sampler::MeasurementSampler;
     ///
-    /// let mut sim = StdSymbolicSparseStab::new(2);
+    /// let mut sim = SymbolicSparseStab::new(2);
     /// sim.h(0).cx(0, 1);
     /// sim.mz(0);
     /// sim.mz(1);
@@ -979,7 +979,7 @@ impl MeasurementSampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::symbolic_sparse_stab::StdSymbolicSparseStab;
+    use crate::symbolic_sparse_stab::SymbolicSparseStab;
 
     // -------------------------------------------------------------------------
     // Tests for deterministic zero
@@ -987,7 +987,7 @@ mod tests {
 
     #[test]
     fn test_deterministic_zero_shot() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
         sim.mz(0);
 
         let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
@@ -1000,7 +1000,7 @@ mod tests {
 
     #[test]
     fn test_deterministic_zero_columnar() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
         sim.mz(0);
 
         let sampler = MeasurementSampler::new(sim.measurement_history());
@@ -1017,7 +1017,7 @@ mod tests {
 
     #[test]
     fn test_deterministic_one_shot() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
         sim.x(0);
         sim.mz(0);
 
@@ -1031,7 +1031,7 @@ mod tests {
 
     #[test]
     fn test_deterministic_one_columnar() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
         sim.x(0);
         sim.mz(0);
 
@@ -1049,7 +1049,7 @@ mod tests {
 
     #[test]
     fn test_random_measurement_shot() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
         sim.h(0);
         sim.mz(0);
 
@@ -1065,7 +1065,7 @@ mod tests {
 
     #[test]
     fn test_random_measurement_columnar() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
         sim.h(0);
         sim.mz(0);
 
@@ -1085,7 +1085,7 @@ mod tests {
 
     #[test]
     fn test_bell_state_correlation_shot() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
         sim.h(0).cx(0, 1);
         sim.mz(0);
         sim.mz(1);
@@ -1110,7 +1110,7 @@ mod tests {
 
     #[test]
     fn test_bell_state_correlation_columnar() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
         sim.h(0).cx(0, 1);
         sim.mz(0);
         sim.mz(1);
@@ -1139,7 +1139,7 @@ mod tests {
 
     #[test]
     fn test_ghz_state_correlation_shot() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
         sim.h(0).cx(0, 1).cx(1, 2);
         sim.mz(0);
         sim.mz(1);
@@ -1164,7 +1164,7 @@ mod tests {
 
     #[test]
     fn test_ghz_state_correlation_columnar() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
         sim.h(0).cx(0, 1).cx(1, 2);
         sim.mz(0);
         sim.mz(1);
@@ -1193,7 +1193,7 @@ mod tests {
 
     #[test]
     fn test_empty_history_shot() {
-        let sim = StdSymbolicSparseStab::new(2);
+        let sim = SymbolicSparseStab::new(2);
         let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
 
         assert_eq!(sampler.num_measurements(), 0);
@@ -1205,7 +1205,7 @@ mod tests {
 
     #[test]
     fn test_empty_history_columnar() {
-        let sim = StdSymbolicSparseStab::new(2);
+        let sim = SymbolicSparseStab::new(2);
         let sampler = MeasurementSampler::new(sim.measurement_history());
 
         assert_eq!(sampler.num_measurements(), 0);
@@ -1221,7 +1221,7 @@ mod tests {
 
     #[test]
     fn test_repetition_code_syndromes_shot() {
-        let mut sim = StdSymbolicSparseStab::new(5);
+        let mut sim = SymbolicSparseStab::new(5);
 
         sim.h(0).cx(0, 1).cx(0, 2);
         sim.h(3).cx(0, 3).cx(1, 3).h(3);
@@ -1253,7 +1253,7 @@ mod tests {
 
     #[test]
     fn test_repetition_code_syndromes_columnar() {
-        let mut sim = StdSymbolicSparseStab::new(5);
+        let mut sim = SymbolicSparseStab::new(5);
 
         sim.h(0).cx(0, 1).cx(0, 2);
         sim.h(3).cx(0, 3).cx(1, 3).h(3);
@@ -1286,7 +1286,7 @@ mod tests {
     // Test that both samplers produce statistically equivalent results
     #[test]
     fn test_samplers_equivalent() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
         sim.h(0).cx(0, 1).cx(1, 2);
         sim.mz(0);
         sim.mz(1);
@@ -1319,7 +1319,7 @@ mod tests {
     // Test large shot counts (where columnar should excel)
     #[test]
     fn test_large_shot_count() {
-        let mut sim = StdSymbolicSparseStab::new(10);
+        let mut sim = SymbolicSparseStab::new(10);
         for i in 0..10 {
             sim.h(i);
         }
@@ -1346,7 +1346,7 @@ mod tests {
     // Test the raw sampling API
     #[test]
     fn test_raw_sampling() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
         sim.h(0).cx(0, 1);
         sim.mz(0);
         sim.mz(1);
@@ -1371,7 +1371,7 @@ mod tests {
     // Test raw sampling with very large shot count
     #[test]
     fn test_raw_sampling_large() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
         sim.h(0).cx(0, 1).cx(1, 2);
         sim.mz(0);
         sim.mz(1);
@@ -1507,7 +1507,7 @@ mod tests {
     // Test handling of more than 64 shots with raw output
     #[test]
     fn test_many_shots_raw() {
-        let mut sim = StdSymbolicSparseStab::new(5);
+        let mut sim = SymbolicSparseStab::new(5);
         sim.h(0);
         for i in 0..4 {
             sim.cx(i, i + 1);
@@ -1552,7 +1552,7 @@ mod tests {
 
     #[test]
     fn test_sample_result_basic() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
         sim.h(0).cx(0, 1);
         sim.mz(0);
         sim.mz(1);
@@ -1575,7 +1575,7 @@ mod tests {
 
     #[test]
     fn test_sample_result_count_ones() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
         sim.h(0);
         sim.mz(0);
 
@@ -1593,7 +1593,7 @@ mod tests {
 
     #[test]
     fn test_sample_result_iter_matches_get() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
         sim.h(0).cx(0, 1).cx(1, 2);
         sim.mz(0);
         sim.mz(1);
@@ -1612,7 +1612,7 @@ mod tests {
 
     #[test]
     fn test_sample_result_iter_shots() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
         sim.x(0); // Deterministic 1
         sim.mz(0);
         sim.mz(1); // Deterministic 0
@@ -1628,7 +1628,7 @@ mod tests {
 
     #[test]
     fn test_sample_result_try_get() {
-        let mut sim = StdSymbolicSparseStab::new(1);
+        let mut sim = SymbolicSparseStab::new(1);
         sim.mz(0);
 
         let sampler = MeasurementSampler::new(sim.measurement_history());
@@ -1645,7 +1645,7 @@ mod tests {
 
     #[test]
     fn test_sample_result_shot_and_format() {
-        let mut sim = StdSymbolicSparseStab::new(3);
+        let mut sim = SymbolicSparseStab::new(3);
         sim.x(0); // m0 = 1
         sim.mz(0);
         sim.mz(1); // m1 = 0
@@ -1671,7 +1671,7 @@ mod tests {
 
     #[test]
     fn test_sample_result_column_access() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
         sim.h(0).cx(0, 1);
         sim.mz(0);
         sim.mz(1);
@@ -1692,7 +1692,7 @@ mod tests {
 
     #[test]
     fn test_sample_result_index_syntax() {
-        let mut sim = StdSymbolicSparseStab::new(2);
+        let mut sim = SymbolicSparseStab::new(2);
         sim.h(0).cx(0, 1);
         sim.mz(0);
         sim.mz(1);

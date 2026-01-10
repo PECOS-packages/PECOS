@@ -72,7 +72,11 @@ impl Gate {
 
     /// Create a new gate command with angles only (no other params)
     #[must_use]
-    pub fn with_angles(gate_type: GateType, angles: impl Into<GateAngles>, qubits: impl Into<GateQubits>) -> Self {
+    pub fn with_angles(
+        gate_type: GateType,
+        angles: impl Into<GateAngles>,
+        qubits: impl Into<GateQubits>,
+    ) -> Self {
         Self::new(gate_type, angles, GateParams::new(), qubits)
     }
 
@@ -109,25 +113,37 @@ impl Gate {
     /// Create X gate on multiple qubits
     #[must_use]
     pub fn x(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::X, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::X,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create Y gate on multiple qubits
     #[must_use]
     pub fn y(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::Y, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::Y,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create Z gate on multiple qubits
     #[must_use]
     pub fn z(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::Z, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::Z,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create H gate on multiple qubits
     #[must_use]
     pub fn h(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::H, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::H,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create CX gate from flat qubit list (control1, target1, control2, target2, ...)
@@ -141,7 +157,10 @@ impl Gate {
             qubits.len().is_multiple_of(2),
             "CX gate requires an even number of qubits"
         );
-        Self::simple(GateType::CX, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::CX,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create CX gate on multiple qubit pairs
@@ -162,7 +181,10 @@ impl Gate {
             qubits.len().is_multiple_of(2),
             "SZZ gate requires an even number of qubits"
         );
-        Self::simple(GateType::SZZ, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::SZZ,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create SZZ gate on multiple qubit pairs
@@ -183,7 +205,10 @@ impl Gate {
             qubits.len().is_multiple_of(2),
             "SZZdg gate requires an even number of qubits"
         );
-        Self::simple(GateType::SZZdg, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::SZZdg,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create `SZZdg` gate on multiple qubit pairs
@@ -297,19 +322,28 @@ impl Gate {
     /// Create Prep gate on multiple qubits
     #[must_use]
     pub fn prep(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::Prep, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::Prep,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create `QAlloc` gate to allocate qubits in the |0⟩ state
     #[must_use]
     pub fn qalloc(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::QAlloc, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::QAlloc,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create `QFree` gate to deallocate qubits
     #[must_use]
     pub fn qfree(qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        Self::simple(GateType::QFree, qubits.iter().map(|&q| q.into()).collect::<GateQubits>())
+        Self::simple(
+            GateType::QFree,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
     }
 
     /// Create `MeasureFree` gate (measure and deallocate) on multiple qubits
@@ -492,7 +526,10 @@ mod tests {
         // Parameterized single qubit gates
         let rz_gate = Gate::rz(Angle64::from_turns(0.5), &[1, 2]);
         assert_eq!(rz_gate.gate_type, GateType::RZ);
-        assert_eq!(rz_gate.qubits.as_slice(), &[QubitId::from(1), QubitId::from(2)]);
+        assert_eq!(
+            rz_gate.qubits.as_slice(),
+            &[QubitId::from(1), QubitId::from(2)]
+        );
         assert_eq!(rz_gate.angles.as_slice(), &[Angle64::from_turns(0.5)]);
 
         // Two qubit gates
@@ -719,7 +756,12 @@ mod tests {
         );
 
         // Test invalid gates - wrong qubit count (not a multiple of quantum arity)
-        let invalid_qubits = Gate::new(GateType::CX, Vec::<Angle64>::new(), Vec::<f64>::new(), vec![QubitId::from(0)]);
+        let invalid_qubits = Gate::new(
+            GateType::CX,
+            Vec::<Angle64>::new(),
+            Vec::<f64>::new(),
+            vec![QubitId::from(0)],
+        );
         assert!(invalid_qubits.validate().is_err());
         assert!(
             invalid_qubits

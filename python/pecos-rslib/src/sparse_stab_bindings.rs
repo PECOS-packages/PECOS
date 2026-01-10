@@ -17,7 +17,7 @@ use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 
 #[pyclass(name = "SparseSim")]
 pub struct PySparseSim {
-    inner: SparseStab<VecSet<usize>>,
+    inner: SparseStab,
 }
 
 #[pymethods]
@@ -25,7 +25,7 @@ impl PySparseSim {
     #[new]
     fn new(num_qubits: usize) -> Self {
         PySparseSim {
-            inner: SparseStab::<VecSet<usize>>::new(num_qubits),
+            inner: SparseStab::new(num_qubits),
         }
     }
 

@@ -17,7 +17,7 @@
 //! 2. Get symbolic measurement dependencies (`MeasurementHistory`)
 //! 3. Sample efficiently using `MeasurementSampler`
 
-use pecos::qsim::{MeasurementHistory, MeasurementSampler, StdSymbolicSparseStab};
+use pecos::qsim::{MeasurementHistory, MeasurementSampler, SymbolicSparseStab};
 use pecos::quantum::{Circuit, SimpleHugr, read_hugr_envelope};
 use pecos_experimental::{
     DepolarizingNoiseModel, HugrExecutionError, NoisyMeasurementHistory,
@@ -173,7 +173,7 @@ pub fn execute_hugr_symbolic(
     let n_qubits = num_qubits.unwrap_or_else(|| simple_hugr.qubits().len());
 
     // Create symbolic simulator and execute
-    let mut sim = StdSymbolicSparseStab::new(n_qubits);
+    let mut sim = SymbolicSparseStab::new(n_qubits);
 
     execute_hugr(&mut sim, &simple_hugr).map_err(|e| match e {
         HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
@@ -237,7 +237,7 @@ pub fn execute_dag_circuit_symbolic(
     let n_qubits = num_qubits.unwrap_or_else(|| circuit.inner.qubits().len());
 
     // Create symbolic simulator and execute
-    let mut sim = StdSymbolicSparseStab::new(n_qubits);
+    let mut sim = SymbolicSparseStab::new(n_qubits);
 
     execute_hugr(&mut sim, &circuit.inner).map_err(|e| match e {
         HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
@@ -413,7 +413,7 @@ pub fn execute_hugr_symbolic_noisy(
     let n_qubits = num_qubits.unwrap_or_else(|| simple_hugr.qubits().len());
 
     // Create symbolic simulator and execute
-    let mut sim = StdSymbolicSparseStab::new(n_qubits);
+    let mut sim = SymbolicSparseStab::new(n_qubits);
 
     execute_hugr(&mut sim, &simple_hugr).map_err(|e| match e {
         HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
@@ -471,7 +471,7 @@ pub fn execute_dag_circuit_symbolic_noisy(
     let n_qubits = num_qubits.unwrap_or_else(|| circuit.inner.qubits().len());
 
     // Create symbolic simulator and execute
-    let mut sim = StdSymbolicSparseStab::new(n_qubits);
+    let mut sim = SymbolicSparseStab::new(n_qubits);
 
     execute_hugr(&mut sim, &circuit.inner).map_err(|e| match e {
         HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(

@@ -435,12 +435,7 @@ impl Engine for StateVecEngine {
                     // No active operation needed in the simulator
                     // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)
                 }
-                GateType::SX
-                | GateType::SXdg
-                | GateType::SY
-                | GateType::SYdg
-                | GateType::RXX
-                | GateType::RYY => {
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
                     return Err(quantum_error(format!(
                         "Gate type {:?} is not yet supported by StateVecEngine",
                         cmd.gate_type

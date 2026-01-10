@@ -73,11 +73,6 @@ pub enum GateType {
     /// Toffoli gate (CCX, 3 qubits)
     CCX = 90,
 
-    /// Square root of X gate (also known as V gate)
-    SX = 24,
-    /// Inverse of square root of X gate (also known as Vdg gate)
-    SXdg = 25,
-
     // MX = 100
     // MnX = 101
     // MY = 102
@@ -127,8 +122,6 @@ impl From<u8> for GateType {
             34 => GateType::Tdg,
             35 => GateType::U,
             36 => GateType::R1XY,
-            24 => GateType::SX,
-            25 => GateType::SXdg,
             50 => GateType::CX,
             51 => GateType::CY,
             52 => GateType::CZ,
@@ -177,8 +170,6 @@ impl GateType {
             | GateType::H
             | GateType::T
             | GateType::Tdg
-            | GateType::SX
-            | GateType::SXdg
             | GateType::CX
             | GateType::CY
             | GateType::CZ
@@ -239,8 +230,6 @@ impl GateType {
             | GateType::RZ
             | GateType::T
             | GateType::Tdg
-            | GateType::SX
-            | GateType::SXdg
             | GateType::R1XY
             | GateType::U
             | GateType::Measure
@@ -278,7 +267,13 @@ impl GateType {
     pub const fn angle_arity(self) -> usize {
         match self {
             // Rotation gates with angle parameters
-            GateType::RX | GateType::RY | GateType::RZ | GateType::RXX | GateType::RYY | GateType::RZZ | GateType::CRZ => 1,
+            GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::CRZ => 1,
             GateType::R1XY => 2,
             GateType::U => 3,
             // All other gates have no angle parameters
@@ -335,8 +330,6 @@ impl fmt::Display for GateType {
             GateType::Tdg => write!(f, "Tdg"),
             GateType::U => write!(f, "U"),
             GateType::R1XY => write!(f, "R1XY"),
-            GateType::SX => write!(f, "SX"),
-            GateType::SXdg => write!(f, "SXdg"),
             GateType::CX => write!(f, "CX"),
             GateType::CY => write!(f, "CY"),
             GateType::CZ => write!(f, "CZ"),

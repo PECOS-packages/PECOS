@@ -20,6 +20,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
 use pecos::qsim::measurement_sampler::{MeasurementSampler, SequentialMeasurementSampler};
+use pecos::qsim::SparseStab;
 use pecos_engines::quantum::SparseStabEngine;
 use pecos_engines::{Engine, EngineSystem, QuantumSystem};
 use rand::Rng;
@@ -27,6 +28,7 @@ use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     bench_surface_code_simulation(c);
+    bench_sparse_stab_simulation(c);
     bench_surface_code_noisy(c);
     bench_surface_code_sampling(c);
     bench_surface_code_shot_scaling(c);
@@ -117,7 +119,15 @@ impl SurfaceCodeParams {
 /// - Subsequent rounds create computed measurements (XOR with previous round)
 fn simulate_surface_code(params: &SurfaceCodeParams, rounds: usize) -> SymbolicSparseStab {
     let mut sim = SymbolicSparseStab::new(params.num_qubits);
+    sim.reset();
+    run_circuit_only(&mut sim, params, rounds);
+    sim
+}
 
+/// Run surface code circuit on an existing simulator WITHOUT reset.
+/// Assumes the simulator is already in a clean initial state.
+/// Use this to benchmark pure circuit simulation without reset overhead.
+fn run_circuit_only(sim: &mut SymbolicSparseStab, params: &SurfaceCodeParams, rounds: usize) {
     // Initialize data qubits in |+> state (typical for X-error detection)
     for i in 0..params.num_data {
         sim.h(i);
@@ -155,19 +165,24 @@ fn simulate_surface_code(params: &SurfaceCodeParams, rounds: usize) -> SymbolicS
             sim.mz(ancilla);
         }
     }
-
-    sim
 }
 
 /// Benchmark the simulation phase (running circuits through `SymbolicSparseStab`).
+///
+/// Provides three benchmark variants:
+/// - `circuit_only`: Pure circuit simulation (reset happens in setup, not timed)
+/// - `full_shot`: Reset + circuit on populated simulator (Monte Carlo pattern)
+/// - `with_alloc`: Fresh allocation + reset + circuit (one-shot pattern)
 fn bench_surface_code_simulation<M: Measurement>(c: &mut Criterion<M>) {
+    use criterion::BatchSize;
+
     let mut group = c.benchmark_group("Surface Code - Simulation");
 
     // Test different distances and round counts
     for distance in [5, 11, 17] {
         let params = SurfaceCodeParams::new(distance);
 
-        for rounds in [1, 3, 5, 10] {
+        for rounds in [1, 3, 5, 10, 20] {
             let label = format!("d{distance}_r{rounds}");
 
             // Throughput: number of gates + measurements
@@ -175,8 +190,145 @@ fn bench_surface_code_simulation<M: Measurement>(c: &mut Criterion<M>) {
             let ops_per_run = rounds * (params.num_ancillas * 3 + params.num_ancillas); // ~3 CNOTs + 1 meas per ancilla
             group.throughput(Throughput::Elements(ops_per_run as u64));
 
-            group.bench_with_input(BenchmarkId::new("symbolic_sim", &label), &(), |b, ()| {
+            // 1. Circuit-only: Pure simulation without reset overhead
+            // Uses iter_batched so reset happens in setup (not timed)
+            group.bench_with_input(BenchmarkId::new("circuit_only", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        // Setup: create and reset simulator (not timed)
+                        let mut sim = SymbolicSparseStab::new(params.num_qubits);
+                        sim.reset();
+                        sim
+                    },
+                    |mut sim| {
+                        // Routine: only circuit execution (timed)
+                        run_circuit_only(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
+
+            // 2. Full shot: Reset + circuit on populated simulator (Monte Carlo pattern)
+            // This is what happens per shot in Monte Carlo: reset populated state, run circuit
+            group.bench_with_input(BenchmarkId::new("full_shot", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        // Setup: create simulator and populate it (not timed)
+                        let mut sim = SymbolicSparseStab::new(params.num_qubits);
+                        sim.reset();
+                        run_circuit_only(&mut sim, &params, rounds);
+                        sim
+                    },
+                    |mut sim| {
+                        // Routine: reset + circuit (timed) - this is the Monte Carlo shot
+                        sim.reset();
+                        run_circuit_only(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
+
+            // 3. With allocation: Fresh alloc + reset + circuit (one-shot pattern)
+            // Note: Criterion drops return value after timing, so drop cost not included
+            group.bench_with_input(BenchmarkId::new("with_alloc", &label), &(), |b, ()| {
                 b.iter(|| black_box(simulate_surface_code(&params, rounds)));
+            });
+        }
+    }
+
+    group.finish();
+}
+
+/// Run surface code circuit on SparseStab (for Monte Carlo benchmarking).
+fn run_circuit_sparse_stab<R: rand::RngCore + rand::SeedableRng + std::fmt::Debug>(
+    sim: &mut SparseStab<R>,
+    params: &SurfaceCodeParams,
+    rounds: usize,
+) {
+    use pecos::quantum::QubitId;
+
+    // Initialize data qubits in |+> state
+    for i in 0..params.num_data {
+        sim.h(&[QubitId::from(i)]);
+    }
+
+    // Perform syndrome extraction rounds
+    for _round in 0..rounds {
+        for a in 0..params.num_ancillas {
+            let ancilla = QubitId::from(params.ancilla_start + a);
+            let neighbors = params.ancilla_neighbors(a);
+
+            if a < params.num_ancillas / 2 {
+                for &data in &neighbors {
+                    sim.cx(&[ancilla, QubitId::from(data)]);
+                }
+            } else {
+                for &data in &neighbors {
+                    sim.cx(&[QubitId::from(data), ancilla]);
+                }
+            }
+        }
+
+        for a in 0..params.num_ancillas {
+            let ancilla = QubitId::from(params.ancilla_start + a);
+            sim.mz(&[ancilla]);
+        }
+    }
+}
+
+/// Benchmark SparseStab directly (what Monte Carlo uses internally).
+///
+/// This isolates SparseStab performance without engine overhead:
+/// - `circuit_only`: Pure circuit simulation (reset in setup)
+/// - `full_shot`: Reset + circuit on populated simulator (Monte Carlo pattern)
+fn bench_sparse_stab_simulation<M: Measurement>(c: &mut Criterion<M>) {
+    use criterion::BatchSize;
+
+    let mut group = c.benchmark_group("SparseStab - Simulation");
+
+    for distance in [5, 11, 17] {
+        let params = SurfaceCodeParams::new(distance);
+
+        for rounds in [1, 5, 10] {
+            let label = format!("d{distance}_r{rounds}");
+
+            let ops_per_run = rounds * (params.num_ancillas * 3 + params.num_ancillas);
+            group.throughput(Throughput::Elements(ops_per_run as u64));
+
+            // Circuit-only: reset in setup (not timed)
+            group.bench_with_input(BenchmarkId::new("circuit_only", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        let mut sim = SparseStab::new(params.num_qubits);
+                        sim.reset();
+                        sim
+                    },
+                    |mut sim| {
+                        run_circuit_sparse_stab(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
+
+            // Full shot: reset + circuit on populated sim (Monte Carlo pattern)
+            group.bench_with_input(BenchmarkId::new("full_shot", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        let mut sim = SparseStab::new(params.num_qubits);
+                        sim.reset();
+                        run_circuit_sparse_stab(&mut sim, &params, rounds);
+                        sim
+                    },
+                    |mut sim| {
+                        sim.reset();
+                        run_circuit_sparse_stab(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
             });
         }
     }

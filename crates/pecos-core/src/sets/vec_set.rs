@@ -72,6 +72,18 @@ impl<E: Element> VecSet<E> {
     pub fn iter(&self) -> Iter<'_, E> {
         self.elements.iter()
     }
+
+    /// Clear the set and set it to contain exactly one element.
+    /// This is an optimized operation for reset scenarios where we know
+    /// the set should contain exactly one element.
+    ///
+    /// Unlike `clear()` + `insert()`, this skips the `contains()` check
+    /// since we know the set is empty after clearing.
+    #[inline]
+    pub fn set_single(&mut self, value: E) {
+        self.elements.clear();
+        self.elements.push(value);
+    }
 }
 
 impl<E: Element> Default for VecSet<E> {

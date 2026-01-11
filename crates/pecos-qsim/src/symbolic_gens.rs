@@ -91,11 +91,11 @@ impl SymbolicGens {
     }
 
     /// Initialize a Vec of Sets as identity (set[i] = {i}), reusing existing allocations.
+    /// Uses `set_single` to avoid the contains() check since we know the set is empty.
     #[inline]
     fn init_as_identity(sets: &mut [VecSet<usize>]) {
         for (i, set) in sets.iter_mut().enumerate() {
-            set.clear();
-            set.insert(i);
+            set.set_single(i);
         }
     }
 

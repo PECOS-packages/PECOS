@@ -295,21 +295,25 @@ where
             }
 
             // Unsupported gates
-            GateType::RX
+            GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
+            | GateType::RX
             | GateType::RY
             | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
             | GateType::T
             | GateType::Tdg
             | GateType::U
             | GateType::R1XY
             | GateType::SZZ
             | GateType::SZZdg
-            | GateType::RZZ
             | GateType::SWAP
             | GateType::CRZ
-            | GateType::CCX
-            | GateType::SX
-            | GateType::SXdg => {
+            | GateType::CCX => {
                 return Err(HugrExecutionError::UnsupportedGate {
                     gate_type: gate.gate_type,
                     gate_index: gate_idx,

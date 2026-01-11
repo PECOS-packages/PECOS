@@ -17,10 +17,14 @@ pub enum GateType {
     X = 0b01,
     Z = 0b10,
     Y = 0b11,
-    // SX = 4,
-    // SXdg = 5,
-    // SY = 6
-    // SYdg = 7
+    /// sqrt(X) gate
+    SX = 4,
+    /// sqrt(X)-dagger gate
+    SXdg = 5,
+    /// sqrt(Y) gate
+    SY = 6,
+    /// sqrt(Y)-dagger gate
+    SYdg = 7,
     SZ = 8,
     SZdg = 9,
     H = 10,
@@ -60,18 +64,14 @@ pub enum GateType {
     // G = 61
     /// Controlled-RZ gate (2 qubits, 1 angle parameter)
     CRZ = 70,
-
-    // RXX = 80
-    // RYY = 81
+    /// RXX rotation gate
+    RXX = 80,
+    /// RYY rotation gate
+    RYY = 81,
     RZZ = 82,
     // RXXYYZZ
     /// Toffoli gate (CCX, 3 qubits)
     CCX = 90,
-
-    /// Square root of X gate (also known as V gate)
-    SX = 24,
-    /// Inverse of square root of X gate (also known as Vdg gate)
-    SXdg = 25,
 
     // MX = 100
     // MnX = 101
@@ -108,6 +108,10 @@ impl From<u8> for GateType {
             1 => GateType::X,
             2 => GateType::Z,
             3 => GateType::Y,
+            4 => GateType::SX,
+            5 => GateType::SXdg,
+            6 => GateType::SY,
+            7 => GateType::SYdg,
             8 => GateType::SZ,
             9 => GateType::SZdg,
             10 => GateType::H,
@@ -118,8 +122,6 @@ impl From<u8> for GateType {
             34 => GateType::Tdg,
             35 => GateType::U,
             36 => GateType::R1XY,
-            24 => GateType::SX,
-            25 => GateType::SXdg,
             50 => GateType::CX,
             51 => GateType::CY,
             52 => GateType::CZ,
@@ -127,6 +129,8 @@ impl From<u8> for GateType {
             58 => GateType::SZZdg,
             59 => GateType::SWAP,
             70 => GateType::CRZ,
+            80 => GateType::RXX,
+            81 => GateType::RYY,
             82 => GateType::RZZ,
             90 => GateType::CCX,
             104 => GateType::Measure,
@@ -157,13 +161,15 @@ impl GateType {
             | GateType::X
             | GateType::Y
             | GateType::Z
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
             | GateType::SZ
             | GateType::SZdg
             | GateType::H
             | GateType::T
             | GateType::Tdg
-            | GateType::SX
-            | GateType::SXdg
             | GateType::CX
             | GateType::CY
             | GateType::CZ
@@ -184,6 +190,8 @@ impl GateType {
             GateType::RX
             | GateType::RY
             | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
             | GateType::RZZ
             | GateType::CRZ
             | GateType::Idle => 1,
@@ -210,6 +218,10 @@ impl GateType {
             | GateType::X
             | GateType::Y
             | GateType::Z
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
             | GateType::SZ
             | GateType::SZdg
             | GateType::H
@@ -218,8 +230,6 @@ impl GateType {
             | GateType::RZ
             | GateType::T
             | GateType::Tdg
-            | GateType::SX
-            | GateType::SXdg
             | GateType::R1XY
             | GateType::U
             | GateType::Measure
@@ -240,6 +250,8 @@ impl GateType {
             | GateType::SZZdg
             | GateType::SWAP
             | GateType::CRZ
+            | GateType::RXX
+            | GateType::RYY
             | GateType::RZZ => 2,
 
             // Three-qubit gates
@@ -255,7 +267,13 @@ impl GateType {
     pub const fn angle_arity(self) -> usize {
         match self {
             // Rotation gates with angle parameters
-            GateType::RX | GateType::RY | GateType::RZ | GateType::RZZ | GateType::CRZ => 1,
+            GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::CRZ => 1,
             GateType::R1XY => 2,
             GateType::U => 3,
             // All other gates have no angle parameters
@@ -298,6 +316,10 @@ impl fmt::Display for GateType {
             GateType::X => write!(f, "X"),
             GateType::Y => write!(f, "Y"),
             GateType::Z => write!(f, "Z"),
+            GateType::SX => write!(f, "SX"),
+            GateType::SXdg => write!(f, "SXdg"),
+            GateType::SY => write!(f, "SY"),
+            GateType::SYdg => write!(f, "SYdg"),
             GateType::SZ => write!(f, "SZ"),
             GateType::SZdg => write!(f, "SZdg"),
             GateType::H => write!(f, "H"),
@@ -308,13 +330,13 @@ impl fmt::Display for GateType {
             GateType::Tdg => write!(f, "Tdg"),
             GateType::U => write!(f, "U"),
             GateType::R1XY => write!(f, "R1XY"),
-            GateType::SX => write!(f, "SX"),
-            GateType::SXdg => write!(f, "SXdg"),
             GateType::CX => write!(f, "CX"),
             GateType::CY => write!(f, "CY"),
             GateType::CZ => write!(f, "CZ"),
             GateType::SZZ => write!(f, "SZZ"),
             GateType::SZZdg => write!(f, "SZZdg"),
+            GateType::RXX => write!(f, "RXX"),
+            GateType::RYY => write!(f, "RYY"),
             GateType::SWAP => write!(f, "SWAP"),
             GateType::CRZ => write!(f, "CRZ"),
             GateType::RZZ => write!(f, "RZZ"),

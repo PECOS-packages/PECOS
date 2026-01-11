@@ -157,20 +157,22 @@ impl BiasedDepolarizingNoiseModel {
         for gate in gates {
             match gate.gate_type {
                 GateType::X
-                | GateType::Y
                 | GateType::Z
-                | GateType::SZ
-                | GateType::SZdg
+                | GateType::Y
                 | GateType::SX
                 | GateType::SXdg
+                | GateType::SY
+                | GateType::SYdg
+                | GateType::SZ
+                | GateType::SZdg
                 | GateType::H
-                | GateType::T
-                | GateType::Tdg
                 | GateType::RX
                 | GateType::RY
-                | GateType::R1XY
                 | GateType::RZ
-                | GateType::U => {
+                | GateType::T
+                | GateType::Tdg
+                | GateType::U
+                | GateType::R1XY => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying single-qubit gate with possible fault");
                     self.apply_sq_faults(&mut builder, gate);
@@ -178,11 +180,13 @@ impl BiasedDepolarizingNoiseModel {
                 GateType::CX
                 | GateType::CY
                 | GateType::CZ
-                | GateType::RZZ
                 | GateType::SZZ
                 | GateType::SZZdg
                 | GateType::SWAP
-                | GateType::CRZ => {
+                | GateType::CRZ
+                | GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying two-qubit gate with possible fault");
                     self.apply_tq_faults(&mut builder, gate);

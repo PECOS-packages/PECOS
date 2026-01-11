@@ -46,14 +46,21 @@
 //!
 //! // Each tick() returns a handle for adding gates
 //! // Regular gates chain, but preps/measurements break the chain
-//! circuit.tick().pz(0);               // Tick 0: Prepare q0 (breaks chain)
-//! circuit.tick().pz(1);               // Tick 1: Prepare q1 (breaks chain)
-//! circuit.tick().h(0).x(1);           // Tick 2: H and X chain together
-//! circuit.tick().cx(0, 1);            // Tick 3: CNOT
-//! circuit.tick().mz(0);               // Tick 4: Measure q0 (breaks chain)
-//! circuit.tick().mz(1);               // Tick 5: Measure q1 (breaks chain)
+//! circuit.tick().pz(&[0]);              // Tick 0: Prepare q0 (breaks chain)
+//! circuit.tick().pz(&[1]);              // Tick 1: Prepare q1 (breaks chain)
+//! circuit.tick().h(&[0]).x(&[1]);       // Tick 2: H and X chain together
+//! circuit.tick().cx(&[(0, 1)]);         // Tick 3: CNOT
+//! circuit.tick().mz(&[0]);              // Tick 4: Measure q0 (breaks chain)
+//! circuit.tick().mz(&[1]);              // Tick 5: Measure q1 (breaks chain)
 //!
 //! assert_eq!(circuit.num_ticks(), 6);
+//!
+//! // All methods accept slices for bulk operations:
+//! let mut circuit2 = TickCircuit::new();
+//! circuit2.tick().pz(&[0, 1, 2, 3]);    // Prep multiple qubits
+//! circuit2.tick().h(&[0, 1, 2, 3]);     // H on multiple qubits
+//! circuit2.tick().cx(&[(0, 1), (2, 3)]); // Multiple CX gates
+//! circuit2.tick().mz(&[0, 1, 2, 3]);    // Measure multiple qubits
 //! ```
 
 mod circuit;

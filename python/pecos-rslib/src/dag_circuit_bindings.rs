@@ -230,6 +230,38 @@ impl PyGateType {
     }
 
     #[classattr]
+    #[pyo3(name = "SX")]
+    fn sx() -> Self {
+        Self {
+            inner: GateType::SX,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SXdg")]
+    fn sxdg() -> Self {
+        Self {
+            inner: GateType::SXdg,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SY")]
+    fn sy() -> Self {
+        Self {
+            inner: GateType::SY,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SYdg")]
+    fn sydg() -> Self {
+        Self {
+            inner: GateType::SYdg,
+        }
+    }
+
+    #[classattr]
     #[pyo3(name = "T")]
     fn t() -> Self {
         Self { inner: GateType::T }
@@ -244,10 +276,32 @@ impl PyGateType {
     }
 
     #[classattr]
+    #[pyo3(name = "I")]
+    fn i() -> Self {
+        Self { inner: GateType::I }
+    }
+
+    #[classattr]
     #[pyo3(name = "CX")]
     fn cx() -> Self {
         Self {
             inner: GateType::CX,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "CY")]
+    fn cy() -> Self {
+        Self {
+            inner: GateType::CY,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "CZ")]
+    fn cz() -> Self {
+        Self {
+            inner: GateType::CZ,
         }
     }
 
@@ -273,6 +327,44 @@ impl PyGateType {
         Self {
             inner: GateType::RZ,
         }
+    }
+
+    #[classattr]
+    #[pyo3(name = "RXX")]
+    fn rxx() -> Self {
+        Self {
+            inner: GateType::RXX,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "RYY")]
+    fn ryy() -> Self {
+        Self {
+            inner: GateType::RYY,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "RZZ")]
+    fn rzz_attr() -> Self {
+        Self {
+            inner: GateType::RZZ,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "R1XY")]
+    fn r1xy() -> Self {
+        Self {
+            inner: GateType::R1XY,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "U")]
+    fn u() -> Self {
+        Self { inner: GateType::U }
     }
 
     #[classattr]
@@ -441,11 +533,67 @@ impl PyGate {
         }
     }
 
+    /// Create an Identity gate.
+    #[staticmethod]
+    fn i(qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::i(&qubits),
+        }
+    }
+
+    /// Create an SX gate (sqrt-X).
+    #[staticmethod]
+    fn sx(qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::sx(&qubits),
+        }
+    }
+
+    /// Create an `SXdg` gate (sqrt-X dagger).
+    #[staticmethod]
+    fn sxdg(qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::sxdg(&qubits),
+        }
+    }
+
+    /// Create an SY gate (sqrt-Y).
+    #[staticmethod]
+    fn sy(qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::sy(&qubits),
+        }
+    }
+
+    /// Create an `SYdg` gate (sqrt-Y dagger).
+    #[staticmethod]
+    fn sydg(qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::sydg(&qubits),
+        }
+    }
+
     /// Create a CX (CNOT) gate.
     #[staticmethod]
     fn cx(pairs: Vec<(usize, usize)>) -> Self {
         Self {
             inner: Gate::cx(&pairs),
+        }
+    }
+
+    /// Create a CY gate.
+    #[staticmethod]
+    fn cy(pairs: Vec<(usize, usize)>) -> Self {
+        Self {
+            inner: Gate::cy(&pairs),
+        }
+    }
+
+    /// Create a CZ gate.
+    #[staticmethod]
+    fn cz(pairs: Vec<(usize, usize)>) -> Self {
+        Self {
+            inner: Gate::cz(&pairs),
         }
     }
 
@@ -470,6 +618,57 @@ impl PyGate {
     fn rz(angle: f64, qubits: Vec<usize>) -> Self {
         Self {
             inner: Gate::rz(Angle64::from_radians(angle), &qubits),
+        }
+    }
+
+    /// Create an RXX gate.
+    #[staticmethod]
+    fn rxx(angle: f64, pairs: Vec<(usize, usize)>) -> Self {
+        Self {
+            inner: Gate::rxx(Angle64::from_radians(angle), &pairs),
+        }
+    }
+
+    /// Create an RYY gate.
+    #[staticmethod]
+    fn ryy(angle: f64, pairs: Vec<(usize, usize)>) -> Self {
+        Self {
+            inner: Gate::ryy(Angle64::from_radians(angle), &pairs),
+        }
+    }
+
+    /// Create an RZZ gate.
+    #[staticmethod]
+    #[pyo3(name = "rzz")]
+    fn rzz_gate(angle: f64, pairs: Vec<(usize, usize)>) -> Self {
+        Self {
+            inner: Gate::rzz(Angle64::from_radians(angle), &pairs),
+        }
+    }
+
+    /// Create an R1XY gate.
+    #[staticmethod]
+    fn r1xy(theta: f64, phi: f64, qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::r1xy(
+                Angle64::from_radians(theta),
+                Angle64::from_radians(phi),
+                &qubits,
+            ),
+        }
+    }
+
+    /// Create a U gate.
+    #[staticmethod]
+    #[pyo3(name = "u")]
+    fn u_gate(theta: f64, phi: f64, lam: f64, qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::u(
+                Angle64::from_radians(theta),
+                Angle64::from_radians(phi),
+                Angle64::from_radians(lam),
+                &qubits,
+            ),
         }
     }
 
@@ -1563,6 +1762,52 @@ impl PyTick {
         self.inner.uses_qubit(QubitId::from(qubit))
     }
 
+    /// Check if any of the given qubits are already in use in this tick.
+    ///
+    /// Returns a list of conflicting qubit IDs.
+    fn find_conflicts(&self, qubits: Vec<usize>) -> Vec<PyQubitId> {
+        let qubit_ids: Vec<QubitId> = qubits.into_iter().map(QubitId::from).collect();
+        self.inner
+            .find_conflicts(&qubit_ids)
+            .into_iter()
+            .map(|q| PyQubitId { inner: q })
+            .collect()
+    }
+
+    /// Add a gate to this tick.
+    ///
+    /// Returns the index of the added gate within this tick.
+    fn add_gate(&mut self, gate: &PyGate) -> usize {
+        self.inner.add_gate(gate.inner.clone())
+    }
+
+    /// Try to add a gate to this tick, returning an error if any qubit is already in use.
+    ///
+    /// Returns the gate index if successful.
+    ///
+    /// Raises:
+    ///     `ValueError`: If any qubit in the gate is already used by another gate in this tick.
+    fn try_add_gate(&mut self, gate: &PyGate) -> PyResult<usize> {
+        self.inner
+            .try_add_gate(gate.inner.clone())
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+    }
+
+    /// Remove all gates that use any of the specified qubits.
+    ///
+    /// Returns the number of gates removed.
+    fn discard(&mut self, qubits: Vec<usize>) -> usize {
+        let qubit_ids: Vec<QubitId> = qubits.into_iter().map(QubitId::from).collect();
+        self.inner.discard(&qubit_ids)
+    }
+
+    /// Remove a specific gate by index.
+    ///
+    /// Returns the removed gate, or None if the index is out of bounds.
+    fn remove_gate(&mut self, idx: usize) -> Option<PyGate> {
+        self.inner.remove_gate(idx).map(|g| PyGate { inner: g })
+    }
+
     fn __repr__(&self) -> String {
         format!("Tick(gates={})", self.inner.len())
     }
@@ -1642,6 +1887,154 @@ impl PyTickCircuit {
         self.inner
             .get_meta(key)
             .map(|attr| attribute_to_py(py, attr))
+    }
+
+    // =========================================================================
+    // Circuit manipulation
+    // =========================================================================
+
+    /// Clear the circuit and start fresh.
+    ///
+    /// This completely replaces the circuit with a new empty instance.
+    /// For performance-critical code, consider using `reset()` instead.
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// Reset the circuit state while preserving allocated memory.
+    ///
+    /// This is faster than `clear()` when reusing the same circuit multiple times.
+    fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    /// Reserve empty ticks in advance.
+    ///
+    /// Args:
+    ///     n: The number of empty ticks to reserve.
+    fn reserve_ticks(&mut self, n: usize) {
+        self.inner.reserve_ticks(n);
+    }
+
+    /// Insert an empty tick at a specific position.
+    ///
+    /// All ticks at or after `idx` are shifted to the right.
+    /// Returns a `TickHandle` to the newly inserted tick.
+    ///
+    /// Args:
+    ///     idx: The position at which to insert the new tick.
+    ///
+    /// Raises:
+    ///     `IndexError`: If `idx > num_ticks()`.
+    fn insert_tick(slf: Py<Self>, py: Python<'_>, idx: usize) -> PyResult<PyTickHandle> {
+        {
+            let mut circuit = slf.borrow_mut(py);
+            let num_ticks = circuit.inner.ticks().len();
+            if idx > num_ticks {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "insert_tick index {idx} out of bounds for circuit with {num_ticks} ticks"
+                )));
+            }
+            // Insert the tick
+            let _ = circuit.inner.insert_tick(idx);
+        }
+        // Return a handle to the inserted tick
+        Ok(PyTickHandle {
+            circuit: slf,
+            tick_idx: idx,
+            last_gate_idx: None,
+        })
+    }
+
+    /// Get a handle to an existing tick for adding more gates.
+    ///
+    /// This allows adding gates to a tick that was previously created.
+    ///
+    /// Args:
+    ///     idx: The index of the tick to get a handle for.
+    ///
+    /// Raises:
+    ///     `IndexError`: If `idx >= num_ticks()`.
+    fn tick_at(slf: Py<Self>, py: Python<'_>, idx: usize) -> PyResult<PyTickHandle> {
+        {
+            let circuit = slf.borrow(py);
+            let num_ticks = circuit.inner.ticks().len();
+            if idx >= num_ticks {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "tick_at index {idx} out of bounds for circuit with {num_ticks} ticks"
+                )));
+            }
+        }
+        Ok(PyTickHandle {
+            circuit: slf,
+            tick_idx: idx,
+            last_gate_idx: None,
+        })
+    }
+
+    // =========================================================================
+    // Iteration helpers
+    // =========================================================================
+
+    /// Get all qubits used in the circuit.
+    ///
+    /// Returns:
+    ///     A list of qubit IDs used in the circuit.
+    fn all_qubits(&self) -> Vec<usize> {
+        self.inner
+            .all_qubits()
+            .into_iter()
+            .map(usize::from)
+            .collect()
+    }
+
+    /// Count gates by type across the entire circuit.
+    ///
+    /// Returns:
+    ///     A dictionary mapping gate type names to counts.
+    fn gate_counts_by_type(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let counts = self.inner.gate_counts_by_type();
+        let dict = PyDict::new(py);
+        for (gate_type, count) in counts {
+            dict.set_item(format!("{gate_type:?}"), count)?;
+        }
+        Ok(dict.into())
+    }
+
+    /// Get all gates in the circuit as a list.
+    ///
+    /// Returns:
+    ///     A list of (`tick_index`, gate) tuples.
+    fn gates(&self) -> Vec<(usize, PyGate)> {
+        self.inner
+            .iter_gates_with_tick()
+            .map(|(tick_idx, gate)| {
+                (
+                    tick_idx,
+                    PyGate {
+                        inner: gate.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Remove all gates that use any of the specified qubits from a tick.
+    ///
+    /// Args:
+    ///     qubits: List of qubit IDs. Gates using any of these qubits will be removed.
+    ///     `tick_idx`: The index of the tick to modify.
+    ///
+    /// Returns:
+    ///     The number of gates removed, or None if the tick index is out of bounds.
+    ///
+    /// Example:
+    ///     >>> circuit = `TickCircuit()`
+    ///     >>> circuit.tick().h(0).x(1).cx(2, 3)
+    ///     >>> circuit.discard([0, 2], 0)  # Remove H on q0 and CX on q2,q3
+    ///     2
+    fn discard(&mut self, qubits: Vec<usize>, tick_idx: usize) -> Option<usize> {
+        self.inner.discard(&qubits, tick_idx)
     }
 
     /// Convert this `TickCircuit` to a `DagCircuit`.
@@ -1908,31 +2301,57 @@ impl PyTickHandle {
         Ok(slf)
     }
 
-    /// Apply an S gate (sqrt-Z).
-    fn sz(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::simple(GateType::SZ, vec![QubitId::from(q)]))?;
+    /// Apply an Identity gate.
+    fn i(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::i(&[q]))?;
         Ok(slf)
     }
 
-    /// Apply an S-dagger gate.
+    /// Apply an SX gate (sqrt-X).
+    fn sx(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::sx(&[q]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SX-dagger gate.
+    fn sxdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::sxdg(&[q]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SY gate (sqrt-Y).
+    fn sy(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::sy(&[q]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SY-dagger gate.
+    fn sydg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::sydg(&[q]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SZ gate (sqrt-Z).
+    fn sz(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::sz(&[q]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SZ-dagger gate.
     fn szdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::simple(GateType::SZdg, vec![QubitId::from(q)]))?;
+        slf.borrow_mut(py).add_gate_internal(py, Gate::szdg(&[q]))?;
         Ok(slf)
     }
 
     /// Apply a T gate.
     fn t(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::simple(GateType::T, vec![QubitId::from(q)]))?;
+        slf.borrow_mut(py).add_gate_internal(py, Gate::t(&[q]))?;
         Ok(slf)
     }
 
     /// Apply a T-dagger gate.
     fn tdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::simple(GateType::Tdg, vec![QubitId::from(q)]))?;
+        slf.borrow_mut(py).add_gate_internal(py, Gate::tdg(&[q]))?;
         Ok(slf)
     }
 
@@ -1957,6 +2376,52 @@ impl PyTickHandle {
         Ok(slf)
     }
 
+    /// Apply an R1XY rotation (single-qubit gate with two angle parameters).
+    ///
+    /// Args:
+    ///     theta: First rotation angle in radians.
+    ///     phi: Second rotation angle in radians.
+    ///     q: The qubit to rotate.
+    fn r1xy(slf: Py<Self>, py: Python<'_>, theta: f64, phi: f64, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(
+            py,
+            Gate::r1xy(
+                Angle64::from_radians(theta),
+                Angle64::from_radians(phi),
+                &[q],
+            ),
+        )?;
+        Ok(slf)
+    }
+
+    /// Apply a U gate (general single-qubit unitary with three angle parameters).
+    ///
+    /// Args:
+    ///     theta: First rotation angle in radians.
+    ///     phi: Second rotation angle in radians.
+    ///     lam: Third rotation angle (lambda) in radians.
+    ///     q: The qubit to rotate.
+    #[pyo3(name = "u")]
+    fn u_gate(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: f64,
+        phi: f64,
+        lam: f64,
+        q: usize,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(
+            py,
+            Gate::u(
+                Angle64::from_radians(theta),
+                Angle64::from_radians(phi),
+                Angle64::from_radians(lam),
+                &[q],
+            ),
+        )?;
+        Ok(slf)
+    }
+
     // =========================================================================
     // Two-qubit gates
     // =========================================================================
@@ -1965,6 +2430,20 @@ impl PyTickHandle {
     fn cx(slf: Py<Self>, py: Python<'_>, ctrl: usize, tgt: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
             .add_gate_internal(py, Gate::cx(&[(ctrl, tgt)]))?;
+        Ok(slf)
+    }
+
+    /// Apply a CY gate.
+    fn cy(slf: Py<Self>, py: Python<'_>, ctrl: usize, tgt: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::cy(&[(ctrl, tgt)]))?;
+        Ok(slf)
+    }
+
+    /// Apply a CZ gate.
+    fn cz(slf: Py<Self>, py: Python<'_>, ctrl: usize, tgt: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::cz(&[(ctrl, tgt)]))?;
         Ok(slf)
     }
 
@@ -1979,6 +2458,20 @@ impl PyTickHandle {
     fn szzdg(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
             .add_gate_internal(py, Gate::szzdg(&[(q1, q2)]))?;
+        Ok(slf)
+    }
+
+    /// Apply an RXX rotation.
+    fn rxx(slf: Py<Self>, py: Python<'_>, theta: f64, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::rxx(Angle64::from_radians(theta), &[(q1, q2)]))?;
+        Ok(slf)
+    }
+
+    /// Apply an RYY rotation.
+    fn ryy(slf: Py<Self>, py: Python<'_>, theta: f64, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::ryy(Angle64::from_radians(theta), &[(q1, q2)]))?;
         Ok(slf)
     }
 

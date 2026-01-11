@@ -435,6 +435,12 @@ impl Engine for StateVecEngine {
                     // No active operation needed in the simulator
                     // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)
                 }
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                    return Err(quantum_error(format!(
+                        "Gate type {:?} is not yet supported by StateVecEngine",
+                        cmd.gate_type
+                    )));
+                }
                 GateType::QAlloc => {
                     // Allocate qubits in |0⟩ state - for state vector sim, same as Prep
                     for q in &cmd.qubits {

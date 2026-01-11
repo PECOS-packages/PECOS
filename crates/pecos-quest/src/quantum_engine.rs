@@ -238,6 +238,12 @@ impl Engine for QuestStateVecEngine {
                         }
                     }
                 }
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                    return Err(PecosError::Processing(format!(
+                        "Gate type {:?} is not yet supported by QuestStateVecEngine",
+                        cmd.gate_type
+                    )));
+                }
             }
         }
 
@@ -493,6 +499,12 @@ impl Engine for QuestDensityMatrixEngine {
                                 .u(cmd.params[0], cmd.params[1], cmd.params[2], **q);
                         }
                     }
+                }
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                    return Err(PecosError::Processing(format!(
+                        "Gate type {:?} is not yet supported by QuestDensityMatrixEngine",
+                        cmd.gate_type
+                    )));
                 }
             }
         }
@@ -1223,6 +1235,12 @@ impl Engine for QuestCudaStateVecEngine {
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::QFree => {
                     // No operation needed (QFree is just a marker for qubit lifecycle)
+                }
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                    return Err(PecosError::Processing(format!(
+                        "Gate type {:?} is not yet supported by QuestCudaStateVecEngine",
+                        cmd.gate_type
+                    )));
                 }
             }
         }

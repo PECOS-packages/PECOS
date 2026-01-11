@@ -269,29 +269,9 @@ where
         self
     }
 
-    fn sx(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sqrt_x(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn sxdg(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sqrt_xdag(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn sy(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sqrt_y(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
-
-    fn sydg(&mut self, q: I) -> &mut Self {
-        let qulacs_qubit = self.convert_qubit_index(q.to_index());
-        ffi::apply_sqrt_ydag(self.state.pin_mut(), qulacs_qubit);
-        self
-    }
+    // NOTE: sx, sxdg, sy, sydg use the default trait implementations to ensure
+    // consistency with StateVec's decomposition. The native Qulacs sqrt gates
+    // have different conventions that cause state vector mismatches.
 
     fn cx(&mut self, q1: I, q2: I) -> &mut Self {
         let qulacs_q1 = self.convert_qubit_index(q1.to_index());

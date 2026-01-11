@@ -84,6 +84,70 @@ impl<E: Element> VecSet<E> {
         self.elements.clear();
         self.elements.push(value);
     }
+
+    /// Fused operation: XOR each element in `self ∩ other` into `target`.
+    /// Equivalent to: `for i in self.intersection(other) { target ^= i; }`
+    /// but avoids iterator creation overhead and inlines the XOR operation.
+    #[inline]
+    pub fn xor_intersection_into(&self, other: &Self, target: &mut Self) {
+        // Iterate over the smaller set for better performance
+        let (smaller, larger) = if self.elements.len() <= other.elements.len() {
+            (&self.elements, &other.elements)
+        } else {
+            (&other.elements, &self.elements)
+        };
+        for &elt in smaller {
+            if larger.contains(&elt) {
+                // Inline symmetric_difference_item_update
+                if let Some(pos) = target.elements.iter().position(|x| *x == elt) {
+                    target.elements.swap_remove(pos);
+                } else {
+                    target.elements.push(elt);
+                }
+            }
+        }
+    }
+
+    /// Fused operation: XOR each element in `self ⊕ other` (symmetric difference) into `target`.
+    /// Equivalent to: `for i in self.symmetric_difference(other) { target ^= i; }`
+    /// but avoids iterator creation overhead and inlines the XOR operation.
+    #[inline]
+    pub fn xor_symmetric_difference_into(&self, other: &Self, target: &mut Self) {
+        // Process elements in self that are not in other
+        for &elt in &self.elements {
+            if !other.elements.contains(&elt) {
+                if let Some(pos) = target.elements.iter().position(|x| *x == elt) {
+                    target.elements.swap_remove(pos);
+                } else {
+                    target.elements.push(elt);
+                }
+            }
+        }
+        // Process elements in other that are not in self
+        for &elt in &other.elements {
+            if !self.elements.contains(&elt) {
+                if let Some(pos) = target.elements.iter().position(|x| *x == elt) {
+                    target.elements.swap_remove(pos);
+                } else {
+                    target.elements.push(elt);
+                }
+            }
+        }
+    }
+
+    /// Count elements in the intersection of `self` and `other`.
+    /// Equivalent to: `self.intersection(other).count()`
+    /// but avoids iterator struct creation overhead.
+    #[inline]
+    pub fn intersection_count(&self, other: &Self) -> usize {
+        // Iterate over smaller set for better performance
+        let (smaller, larger) = if self.elements.len() <= other.elements.len() {
+            (&self.elements, &other.elements)
+        } else {
+            (&other.elements, &self.elements)
+        };
+        smaller.iter().filter(|x| larger.contains(x)).count()
+    }
 }
 
 impl<E: Element> Default for VecSet<E> {
@@ -168,7 +232,10 @@ mod tests {
         let mut set_a = VecSet::<u32>::from([4, 5, 6, 4]);
         let set_b = VecSet::<u32>::from([1, 3, 4]);
         set_a.symmetric_difference_update(&set_b);
-        assert_eq!(set_a.elements.as_slice(), &[5, 6, 1, 3]);
+        // Use sorted comparison since swap_remove doesn't preserve order
+        let mut result: Vec<_> = set_a.elements.to_vec();
+        result.sort();
+        assert_eq!(result, vec![1, 3, 5, 6]);
     }
 
     #[test]
@@ -286,7 +353,10 @@ mod tests {
         let set_b: VecSet<u8> = VecSet::from([2, 3, 6]);
         let set_c: VecSet<u8> = VecSet::from([3]);
         set_a ^= set_b.difference(&set_c).copied().collect::<VecSet<_>>();
-        assert_eq!(set_a.elements.as_slice(), &[1, 3, 4, 5, 6]);
+        // Use sorted comparison since swap_remove doesn't preserve order
+        let mut result: Vec<_> = set_a.elements.to_vec();
+        result.sort();
+        assert_eq!(result, vec![1, 3, 4, 5, 6]);
     }
 
     #[test]
@@ -295,6 +365,9 @@ mod tests {
         let set_b: VecSet<u8> = VecSet::from([2, 3, 6]);
         let set_c: VecSet<u8> = VecSet::from([3]);
         set_a ^= &set_b - &set_c; // TODO: Get this to work for Set
-        assert_eq!(set_a.elements.as_slice(), &[1, 3, 4, 5, 6]);
+        // Use sorted comparison since swap_remove doesn't preserve order
+        let mut result: Vec<_> = set_a.elements.to_vec();
+        result.sort();
+        assert_eq!(result, vec![1, 3, 4, 5, 6]);
     }
 }

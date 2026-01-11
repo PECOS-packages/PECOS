@@ -125,7 +125,7 @@ impl Engine for StateVecEngine {
             self.ensure_qubit_count(required_qubits);
         }
 
-        let mut measurements = Vec::new();
+        let mut measurements: Vec<usize> = Vec::new();
 
         for cmd in &batch {
             match cmd.gate_type {
@@ -348,11 +348,8 @@ impl Engine for StateVecEngine {
                     debug!("Processing measurement on qubits {:?}", cmd.qubits);
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
-                        // According to the documentation:
                         // mz() outcome: true if projected to |1⟩, false if projected to |0⟩
-                        // So we can directly convert the boolean to u32
-                        let outcome = u32::from(meas_result.outcome);
-                        measurements.push(outcome);
+                        measurements.push(usize::from(meas_result.outcome));
                     }
                 }
                 GateType::Prep => {
@@ -378,8 +375,7 @@ impl Engine for StateVecEngine {
                     debug!("Processing MeasureFree gate on qubits {:?}", cmd.qubits);
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
-                        let outcome = u32::from(meas_result.outcome);
-                        measurements.push(outcome);
+                        measurements.push(usize::from(meas_result.outcome));
                     }
                 }
                 GateType::U => {
@@ -399,10 +395,7 @@ impl Engine for StateVecEngine {
 
         // Create a message with the measurement results
         let mut builder = ByteMessage::outcomes_builder();
-
-        // Convert measurements from u32 to usize and add to builder
-        let outcomes: Vec<usize> = measurements.iter().map(|&m| m as usize).collect();
-        builder.add_outcomes(&outcomes);
+        builder.add_outcomes(&measurements);
 
         Ok(builder.build())
     }
@@ -574,7 +567,7 @@ impl Engine for SparseStabEngine {
 
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
         let batch = message.quantum_ops()?;
-        let mut measurements = Vec::new();
+        let mut measurements: Vec<usize> = Vec::new();
 
         for cmd in &batch {
             match cmd.gate_type {
@@ -600,11 +593,8 @@ impl Engine for SparseStabEngine {
                     debug!("Processing measurement on qubits {:?}", cmd.qubits);
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
-                        // According to the documentation:
                         // mz() outcome: true if projected to |1⟩, false if projected to |0⟩
-                        // So we can directly convert the boolean to u32
-                        let outcome = u32::from(meas_result.outcome);
-                        measurements.push(outcome);
+                        measurements.push(usize::from(meas_result.outcome));
                     }
                 }
                 GateType::Prep => {
@@ -626,8 +616,7 @@ impl Engine for SparseStabEngine {
 
         // Create a message with the measurement results
         let mut builder = ByteMessage::outcomes_builder();
-        let outcomes: Vec<usize> = measurements.iter().map(|&m| m as usize).collect();
-        builder.add_outcomes(&outcomes);
+        builder.add_outcomes(&measurements);
 
         Ok(builder.build())
     }

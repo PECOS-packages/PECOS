@@ -16,7 +16,6 @@ use core::mem;
 use pecos_core::{QubitId, RngManageable, Set, VecSet};
 use pecos_rng::rng_ext::RngProbabilityExt;
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
-use smallvec::SmallVec;
 
 /// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
 ///
@@ -299,17 +298,14 @@ where
 
     #[inline]
     fn deterministic_meas(&mut self, q: usize) -> MeasurementResult {
-        let mut num_minuses = self.destabs.col_x[q]
-            .intersection(&self.stabs.signs_minus)
-            .count();
+        // Use optimized intersection_count to avoid iterator creation overhead
+        let mut num_minuses = self.destabs.col_x[q].intersection_count(&self.stabs.signs_minus);
 
-        let num_is = &self.destabs.col_x[q]
-            .intersection(&self.stabs.signs_i)
-            .count();
+        let num_is = self.destabs.col_x[q].intersection_count(&self.stabs.signs_i);
 
         let mut cumulative_x = VecSet::new();
         for &row in &self.destabs.col_x[q] {
-            num_minuses += &self.stabs.row_z[row].intersection(&cumulative_x).count();
+            num_minuses += self.stabs.row_z[row].intersection_count(&cumulative_x);
             cumulative_x ^= &self.stabs.row_x[row];
         }
         if num_is & 3 != 0 {
@@ -347,8 +343,10 @@ where
         let id = removed_id.expect("Critical error: removed_id was None");
 
         anticom_stabs_col.remove(&id);
-        let removed_row_x = self.stabs.row_x[id].clone();
-        let removed_row_z = self.stabs.row_z[id].clone();
+        // Use take instead of clone: the original rows are cleared later anyway (and take leaves them empty).
+        // We'll iterate over these copies in the column update loop below.
+        let removed_row_x = std::mem::take(&mut self.stabs.row_x[id]);
+        let removed_row_z = std::mem::take(&mut self.stabs.row_z[id]);
 
         if self.stabs.signs_minus.contains(&id) {
             self.stabs.signs_minus ^= &anticom_stabs_col;
@@ -357,30 +355,16 @@ where
         if self.stabs.signs_i.contains(&id) {
             self.stabs.signs_i.remove(&id);
 
-            // Use SmallVec for temporary storage - anti-commuting stabilizers are typically few
-            let gens_common: SmallVec<[usize; 8]> = self
-                .stabs
+            // Fused: XOR intersection into signs_minus, then XOR signs_i with anticom_stabs_col
+            // This replaces the SmallVec allocations and separate loops
+            self.stabs
                 .signs_i
-                .intersection(&anticom_stabs_col)
-                .copied()
-                .collect();
-            let gens_only_stabs: SmallVec<[usize; 8]> = anticom_stabs_col
-                .difference(&self.stabs.signs_i)
-                .copied()
-                .collect();
-
-            for i in gens_common {
-                self.stabs.signs_minus ^= &i;
-                self.stabs.signs_i.remove(&i);
-            }
-
-            for i in gens_only_stabs {
-                self.stabs.signs_i.insert(i);
-            }
+                .xor_intersection_into(&anticom_stabs_col, &mut self.stabs.signs_minus);
+            self.stabs.signs_i ^= &anticom_stabs_col;
         }
 
         for &g in &anticom_stabs_col {
-            let num_minuses = removed_row_z.intersection(&self.stabs.row_x[g]).count();
+            let num_minuses = removed_row_z.intersection_count(&self.stabs.row_x[g]);
 
             if num_minuses & 1 != 0 {
                 // num_minuses % 2 != 0 (is odd)
@@ -399,20 +383,19 @@ where
             self.stabs.col_z[i] ^= &anticom_stabs_col;
         }
 
-        for &i in &self.stabs.row_x[id] {
+        // Iterate over removed_row_x/z instead of self.stabs.row_x/z[id] since we used take above
+        for &i in &removed_row_x {
             self.stabs.col_x[i].remove(&id);
         }
 
-        for &i in &self.stabs.row_z[id] {
+        for &i in &removed_row_z {
             self.stabs.col_z[i].remove(&id);
         }
 
         // Remove replaced stabilizer with the measured stabilizer
         self.stabs.col_z[q].insert(id);
 
-        // Row update
-        self.stabs.row_x[id].clear();
-        self.stabs.row_z[id].clear();
+        // Row update - no need to clear since we used take() above
         self.stabs.row_z[id].insert(q);
 
         for &i in &self.destabs.row_x[id] {
@@ -516,10 +499,11 @@ where
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             let qu = q.index();
-            // stabs.signs_minus ^= stabs.col_x[qubit] ^ stabs.col_z[qubit]
-            for i in self.stabs.col_x[qu].symmetric_difference(&self.stabs.col_z[qu]) {
-                self.stabs.signs_minus ^= i;
-            }
+            // Fused: XOR elements in (col_x[qu] ⊕ col_z[qu]) into signs_minus
+            self.stabs.col_x[qu].xor_symmetric_difference_into(
+                &self.stabs.col_z[qu],
+                &mut self.stabs.signs_minus,
+            );
         }
         self
     }
@@ -549,9 +533,11 @@ where
             // stabs.signs_minus ^= stabs.signs_i & stabs.col_x[qubit]
             // For each X add an i unless there is already an i there then delete it.
             // stabs.signs_i ^= stabs.col_x[qubit]
-            for i in self.stabs.signs_i.intersection(&self.stabs.col_x[qu]) {
-                self.stabs.signs_minus ^= i;
-            }
+            // Fused: XOR elements in (signs_i ∩ col_x[qu]) into signs_minus
+            self.stabs.signs_i.xor_intersection_into(
+                &self.stabs.col_x[qu],
+                &mut self.stabs.signs_minus,
+            );
             self.stabs.signs_i ^= &self.stabs.col_x[qu];
 
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -571,11 +557,11 @@ where
         for &q in qubits {
             let qu = q.index();
 
-            // self.stabs.signs_minus.symmetric_difference_update(self.stabs.col_x[qu].intersection())
-            // self.stabs.signs_minus ^= &self.stabs.col_x[qu] & &self.stabs.col_z[qu];
-            for i in self.stabs.col_x[qu].intersection(&self.stabs.col_z[qu]) {
-                self.stabs.signs_minus ^= i;
-            }
+            // Fused: XOR elements in (col_x[qu] ∩ col_z[qu]) into signs_minus
+            self.stabs.col_x[qu].xor_intersection_into(
+                &self.stabs.col_z[qu],
+                &mut self.stabs.signs_minus,
+            );
 
             for g in [&mut self.stabs, &mut self.destabs] {
                 for i in g.col_x[qu].difference(&g.col_z[qu]) {
@@ -634,11 +620,9 @@ where
                         (col_x_max, col_x_min)
                     };
 
-                    let mut q2_set = VecSet::new();
-                    q2_set.insert(q2);
-
+                    // Use single-element XOR directly instead of creating a temporary VecSet
                     for &i in col_x_qu1.iter() {
-                        g.row_x[i].symmetric_difference_update(&q2_set);
+                        g.row_x[i].symmetric_difference_item_update(&q2);
                     }
                     col_x_qu2.symmetric_difference_update(col_x_qu1);
                 }
@@ -656,11 +640,9 @@ where
                         (col_z_max, col_z_min)
                     };
 
-                    let mut q1_set = VecSet::new();
-                    q1_set.insert(q1);
-
+                    // Use single-element XOR directly instead of creating a temporary VecSet
                     for &i in col_z_qu2.iter() {
-                        g.row_z[i].symmetric_difference_update(&q1_set);
+                        g.row_z[i].symmetric_difference_item_update(&q1);
                     }
                     col_z_qu1.symmetric_difference_update(col_z_qu2);
                 }

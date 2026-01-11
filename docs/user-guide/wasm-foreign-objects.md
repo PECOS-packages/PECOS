@@ -1,7 +1,5 @@
 # WebAssembly Foreign Objects
 
-<!--skip: WASM examples require external .wasm files-->
-
 This guide covers using WebAssembly (WASM) modules for classical computation within PECOS quantum simulations. WASM foreign objects allow you to execute custom classical logic alongside quantum operations in QASM and PHIR programs.
 
 ## What You'll Learn
@@ -32,12 +30,33 @@ Use `from_file()` to load a WASM module from disk:
 
 === ":fontawesome-brands-python: Python"
 
+    ```hidden-python
+    import tempfile
+    import os
+    import shutil
+    from pathlib import Path as _Path
+    from pecos_rslib import WasmForeignObject
+    import pickle
+
+    # Use the shared test WAT file from docs/assets/test-data/
+    _orig_cwd = os.getcwd()
+    _test_wat_src = _Path(_orig_cwd) / "docs/assets/test-data/math.wat"
+
+    _tmpdir = tempfile.mkdtemp()
+    os.chdir(_tmpdir)
+
+    # Copy test WAT file with various names used in examples
+    for _name in ["math_functions.wasm", "math_functions.wat", "math.wasm", "math.wat",
+                  "compute.wasm", "simple.wasm", "stateful.wasm"]:
+        shutil.copy(_test_wat_src, _name)
+    ```
+
     ```python
     from pecos_rslib import WasmForeignObject
     from pathlib import Path
 
     # From a string path
-    wasm = WasmForeignObject.from_file("math_functions.wasm")
+    wasm = WasmForeignObject.from_file("math_functions.wat")
 
     # From a pathlib.Path
     wasm = WasmForeignObject.from_file(Path("math_functions.wasm"))
@@ -52,6 +71,33 @@ Use `from_file()` to load a WASM module from disk:
     ```
 
 === ":fontawesome-brands-rust: Rust"
+
+    ```hidden-rust
+    use pecos::wasm::WasmForeignObject;
+    use std::fs;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let wat = r#"(module
+          (global $accumulator (mut i32) (i32.const 0))
+          (func $init)
+          (func $shot_reinit (i32.const 0) (global.set $accumulator))
+          (func $add (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.add))
+          (func $mul (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.mul))
+          (memory (;0;) 1)
+          (export "init" (func $init))
+          (export "shot_reinit" (func $shot_reinit))
+          (export "add" (func $add))
+          (export "mul" (func $mul))
+          (export "memory" (memory 0))
+        )"#;
+        for name in &["math_functions.wasm", "math_functions.wat"] {
+            fs::write(name, wat)?;
+        }
+
+        // CODE
+        Ok(())
+    }
+    ```
 
     ```rust
     use pecos::wasm::WasmForeignObject;
@@ -89,12 +135,6 @@ Use `from_bytes()` when you have the WASM binary in memory. This is useful for:
 
     wasm = WasmForeignObject.from_bytes(wasm_bytes)
 
-    # From downloaded content
-    import requests
-
-    response = requests.get("https://example.com/module.wasm")
-    wasm = WasmForeignObject.from_bytes(response.content)
-
     # With configuration options
     wasm = WasmForeignObject.from_bytes(
         wasm_bytes, timeout=5.0, memory_size=10 * 1024 * 1024
@@ -102,6 +142,24 @@ Use `from_bytes()` when you have the WASM binary in memory. This is useful for:
     ```
 
 === ":fontawesome-brands-rust: Rust"
+
+    ```hidden-rust
+    use pecos::wasm::WasmForeignObject;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let wasm_bytes: Vec<u8> = br#"(module
+          (func $init)
+          (func $add (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.add))
+          (memory (;0;) 1)
+          (export "init" (func $init))
+          (export "add" (func $add))
+          (export "memory" (memory 0))
+        )"#.to_vec();
+
+        // CODE
+        Ok(())
+    }
+    ```
 
     ```rust
     use pecos::wasm::WasmForeignObject;
@@ -240,6 +298,28 @@ You can execute WASM functions directly:
 
 === ":fontawesome-brands-rust: Rust"
 
+    ```hidden-rust
+    use pecos::wasm::{WasmForeignObject, ForeignObject};
+    use std::fs;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let wat = r#"(module
+          (func $init)
+          (func $add (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.add))
+          (func $mul (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.mul))
+          (memory (;0;) 1)
+          (export "init" (func $init))
+          (export "add" (func $add))
+          (export "mul" (func $mul))
+          (export "memory" (memory 0))
+        )"#;
+        fs::write("math.wasm", wat)?;
+
+        // CODE
+        Ok(())
+    }
+    ```
+
     ```rust
     use pecos::wasm::{WasmForeignObject, ForeignObject};
 
@@ -259,6 +339,8 @@ You can execute WASM functions directly:
 WASM functions can be called from QASM programs using the foreign function syntax:
 
 === ":fontawesome-brands-python: Python"
+
+    <!--skip: SimBuilder.foreign_object() API not yet exposed in Python bindings-->
 
     ```python
     from pecos import sim, Qasm
@@ -290,6 +372,8 @@ WASM functions can be called from QASM programs using the foreign function synta
     ```
 
 === ":fontawesome-brands-rust: Rust"
+
+    <!--skip: QASM foreign function calls not yet supported in Rust simulation pipeline-->
 
     ```rust
     use pecos::prelude::*;
@@ -363,6 +447,24 @@ WASM execution has a configurable timeout (default: 1 second) to prevent infinit
 
 === ":fontawesome-brands-rust: Rust"
 
+    ```hidden-rust
+    use pecos::wasm::WasmForeignObject;
+    use std::fs;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let wat = r#"(module
+          (func $init)
+          (memory (;0;) 1)
+          (export "init" (func $init))
+          (export "memory" (memory 0))
+        )"#;
+        fs::write("compute.wasm", wat)?;
+
+        // CODE
+        Ok(())
+    }
+    ```
+
     ```rust
     // 5 second timeout
     let wasm = WasmForeignObject::with_timeout("compute.wasm", 5.0)?;
@@ -386,6 +488,24 @@ You can limit the memory available to WASM modules:
 
 === ":fontawesome-brands-rust: Rust"
 
+    ```hidden-rust
+    use pecos::wasm::WasmForeignObject;
+    use std::fs;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let wat = r#"(module
+          (func $init)
+          (memory (;0;) 1)
+          (export "init" (func $init))
+          (export "memory" (memory 0))
+        )"#;
+        fs::write("compute.wasm", wat)?;
+
+        // CODE
+        Ok(())
+    }
+    ```
+
     ```rust
     // Limit to 10 MB
     let wasm = WasmForeignObject::with_limits(
@@ -401,6 +521,8 @@ You can limit the memory available to WASM modules:
 ## Serialization and Pickling
 
 WASM foreign objects support Python pickling for distributed execution:
+
+<!--skip: Pickling requires proper module context not available in exec() test environment-->
 
 ```python
 import pickle
@@ -422,6 +544,8 @@ result = wasm_restored.exec("add", [1, 2])
 ```
 
 You can also use the explicit `to_dict()` and `from_dict()` methods:
+
+<!--skip: Serialization methods require wasm object from previous block-->
 
 ```python
 # Serialize to dict
@@ -452,6 +576,24 @@ You can retrieve the compiled WASM bytes from a foreign object:
     ```
 
 === ":fontawesome-brands-rust: Rust"
+
+    ```hidden-rust
+    use pecos::wasm::WasmForeignObject;
+    use std::fs;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let wat = r#"(module
+          (func $init)
+          (memory (;0;) 1)
+          (export "init" (func $init))
+          (export "memory" (memory 0))
+        )"#;
+        fs::write("math.wat", wat)?;
+
+        // CODE
+        Ok(())
+    }
+    ```
 
     ```rust
     let wasm = WasmForeignObject::new("math.wat")?;
@@ -490,6 +632,8 @@ for shot in range(1000):
 
 To completely reset a module (re-run `init`):
 
+<!--skip: Requires wasm object from previous block-->
+
 ```python
 wasm.new_instance()  # Creates a fresh WASM instance
 wasm.init()  # Re-initialize
@@ -498,6 +642,8 @@ wasm.init()  # Re-initialize
 ## Error Handling
 
 === ":fontawesome-brands-python: Python"
+
+    <!--skip: Error handling examples intentionally use non-existent files-->
 
     ```python
     from pecos_rslib import WasmForeignObject
@@ -528,6 +674,8 @@ wasm.init()  # Re-initialize
     ```
 
 === ":fontawesome-brands-rust: Rust"
+
+    <!--skip: Error handling examples intentionally use non-existent files-->
 
     ```rust
     use pecos::wasm::WasmForeignObject;

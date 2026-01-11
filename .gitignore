@@ -15,6 +15,9 @@ junit/
 # Generated doc tests (from scripts/docs/generate_doc_tests.py)
 python/quantum-pecos/tests/docs/generated/
 
+# Generated WASM binaries (compile from .wat source)
+*.wasm
+
 # Cython
 *.pyc
 *.pyd

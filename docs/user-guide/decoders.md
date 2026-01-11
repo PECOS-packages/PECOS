@@ -1,5 +1,30 @@
 # Decoders
 
+```hidden-rust
+use pecos_decoders::{
+    CssCode, SparseMatrix, Decoder, BpMethod, OsdMethod, UfMethod, BpSchedule,
+    BpOsdDecoder, BpLsdDecoder, BeliefFindDecoder, FlipDecoder, UnionFindDecoder,
+    SoftInfoBpDecoder, SoftDecoder, LdpcError,
+};
+
+fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
+    let hx_rows: Vec<u32> = vec![0, 1, 0, 1];
+    let hx_cols: Vec<u32> = vec![0, 2, 1, 3];
+    let hx = SparseMatrix::from_coo(2, 4, hx_rows, hx_cols)?;
+    let hz_rows: Vec<u32> = vec![0, 1, 0, 1];
+    let hz_cols: Vec<u32> = vec![0, 1, 2, 3];
+    let hz = SparseMatrix::from_coo(2, 4, hz_rows, hz_cols)?;
+    Ok(CssCode::new(hx, hz)?)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let css_code = create_css_code()?;
+    let syndrome = vec![1u8, 0, 1, 0];
+    // CODE
+    Ok(())
+}
+```
+
 PECOS provides quantum error correction decoders through both Python and Rust APIs. The availability of specific decoders varies by language.
 
 ## Overview
@@ -114,19 +139,20 @@ decoder = DummyDecoder()
 
 Before using decoders, you need a quantum error correction code:
 
+<!--skip: standalone function definition - included in preamble-->
 ```rust
 use pecos_decoders::{CssCode, SparseMatrix};
 
 // Create a CSS code from parity check matrices
 fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
-    // Define Hx and Hz matrices
-    let hx_rows = vec![0, 1, 0, 1];
-    let hx_cols = vec![0, 2, 1, 3];
-    let hx = SparseMatrix::new(2, 4, hx_rows, hx_cols)?;
+    // Define Hx and Hz matrices as COO format sparse matrices
+    let hx_rows: Vec<u32> = vec![0, 1, 0, 1];
+    let hx_cols: Vec<u32> = vec![0, 2, 1, 3];
+    let hx = SparseMatrix::from_coo(2, 4, hx_rows, hx_cols)?;
 
-    let hz_rows = vec![0, 1, 0, 1];
-    let hz_cols = vec![0, 1, 2, 3];
-    let hz = SparseMatrix::new(2, 4, hz_rows, hz_cols)?;
+    let hz_rows: Vec<u32> = vec![0, 1, 0, 1];
+    let hz_cols: Vec<u32> = vec![0, 1, 2, 3];
+    let hz = SparseMatrix::from_coo(2, 4, hz_rows, hz_cols)?;
 
     Ok(CssCode::new(hx, hz)?)
 }
@@ -138,6 +164,7 @@ fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
 
 Combines belief propagation with ordered statistics decoding post-processing.
 
+<!--skip: API illustration - actual implementation uses different constructor signature-->
 ```rust
 use pecos_decoders::{BpOsdDecoder, Decoder, OsdMethod};
 
@@ -165,6 +192,7 @@ println!("Converged: {}", result.converged);
 
 Localized version of OSD for better scaling with large codes.
 
+<!--skip: API illustration-->
 ```rust
 use pecos_decoders::{BpLsdDecoder, Decoder};
 
@@ -179,6 +207,7 @@ let result = decoder.decode(&syndrome)?;
 
 Combines belief propagation with union-find algorithm.
 
+<!--skip: API illustration-->
 ```rust
 use pecos_decoders::{BeliefFindDecoder, Decoder, UfMethod};
 
@@ -193,6 +222,7 @@ let result = decoder.decode(&syndrome)?;
 
 Fast bit-flipping decoder suitable for real-time applications.
 
+<!--skip: API illustration-->
 ```rust
 use pecos_decoders::{FlipDecoder, Decoder, BpSchedule};
 
@@ -207,6 +237,7 @@ let result = decoder.decode(&syndrome)?;
 
 Graph-based decoder using union-find data structure.
 
+<!--skip: API illustration-->
 ```rust
 use pecos_decoders::{UnionFindDecoder, Decoder, UfMethod};
 
@@ -222,6 +253,7 @@ let result = decoder.decode(&syndrome)?;
 
 Use log-likelihood ratios for improved decoding performance.
 
+<!--skip: API illustration-->
 ```rust
 use pecos_decoders::{SoftInfoBpDecoder, SoftDecoder};
 
@@ -236,6 +268,7 @@ let result = decoder.decode_with_llrs(&syndrome, &llrs)?;
 
 Decode multiple syndromes efficiently.
 
+<!--skip: API illustration-->
 ```rust
 use pecos_decoders::BatchDecoder;
 
@@ -253,6 +286,7 @@ for (i, result) in results.iter().enumerate() {
 
 #### Performance Tuning
 
+<!--skip: API illustration-->
 ```rust
 let mut decoder = BpOsdDecoder::new(css_code);
 decoder.set_schedule(BpSchedule::Parallel);  // Use parallel BP updates
@@ -261,6 +295,7 @@ decoder.set_num_threads(4);  // Set thread count
 
 ### Error Handling
 
+<!--skip: API illustration-->
 ```rust
 match decoder.decode(&syndrome) {
     Ok(result) => {

@@ -62,6 +62,19 @@ def cuda_check():
     return cuda_available()
 
 
+@pytest.fixture(autouse=True)
+def restore_cwd():
+    """Restore the current working directory after each test.
+
+    Some tests (e.g., WASM examples) change the working directory,
+    which can interfere with other tests that rely on path resolution.
+    """
+    import os
+    original_cwd = os.getcwd()
+    yield
+    os.chdir(original_cwd)
+
+
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "slow: marks tests as slow")

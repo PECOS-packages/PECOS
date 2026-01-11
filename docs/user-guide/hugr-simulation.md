@@ -65,6 +65,7 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
 === ":fontawesome-brands-rust: Rust"
 
+    <!--skip: requires pre-compiled bell_state.hugr file-->
     ```rust
     use pecos_hugr::{hugr_engine, hugr_sim};
     use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
@@ -138,6 +139,7 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 === ":fontawesome-brands-rust: Rust"
 
+    <!--skip: requires pre-compiled circuit.hugr file-->
     ```rust
     use pecos_hugr::{hugr_engine, hugr_sim};
     use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};

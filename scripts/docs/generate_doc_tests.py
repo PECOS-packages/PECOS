@@ -178,9 +178,18 @@ def _rust_wrap_snippet(code: str) -> str:
     lines = code.strip().split('\n')
     module_level = []
     main_body = []
+    in_multiline_use = False  # Track if we're inside a multi-line use statement
 
     for line in lines:
         stripped = line.strip()
+
+        # Continue multi-line use statement until we see the closing };
+        if in_multiline_use:
+            module_level.append(line)
+            # Count braces to handle nested structures
+            in_multiline_use = not stripped.endswith('};')
+            continue
+
         # Keep use statements, extern crate, and comments at module level
         if (stripped.startswith('use ') or
             stripped.startswith('extern crate ') or
@@ -189,6 +198,9 @@ def _rust_wrap_snippet(code: str) -> str:
             # But only if we haven't started the main body yet
             if not main_body or stripped.startswith('//') or stripped == '':
                 module_level.append(line)
+                # Check if this is the start of a multi-line use statement
+                if stripped.startswith('use ') and '{' in stripped and '};' not in stripped:
+                    in_multiline_use = True
             else:
                 main_body.append(line)
         else:
@@ -714,10 +726,12 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
         "",
         "[dependencies]",
         '# Enable runtime and hugr features for full API access',
-        'pecos = {{ path = "{project_root}/crates/pecos", features = ["runtime", "hugr"] }}',
+        'pecos = {{ path = "{project_root}/crates/pecos", features = ["runtime", "hugr", "wasm"] }}',
         '# Also include internal crates that docs may reference directly',
         'pecos-hugr = {{ path = "{project_root}/crates/pecos-hugr" }}',
         'pecos-num = {{ path = "{project_root}/crates/pecos-num" }}',
+        'pecos-decoders = {{ path = "{project_root}/crates/pecos-decoders", features = ["ldpc"] }}',
+        'pecos-decoder-core = {{ path = "{project_root}/crates/pecos-decoder-core" }}',
         '# Common external crates used in documentation examples',
         'serde_json = "1.0"',
         '"""',
@@ -999,6 +1013,19 @@ def cuda_available() -> bool:
 def cuda_check():
     """Fixture that returns CUDA availability."""
     return cuda_available()
+
+
+@pytest.fixture(autouse=True)
+def restore_cwd():
+    """Restore the current working directory after each test.
+
+    Some tests (e.g., WASM examples) change the working directory,
+    which can interfere with other tests that rely on path resolution.
+    """
+    import os
+    original_cwd = os.getcwd()
+    yield
+    os.chdir(original_cwd)
 
 
 def pytest_configure(config):

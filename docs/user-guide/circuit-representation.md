@@ -299,7 +299,10 @@ Gates can have arbitrary metadata attached:
 === ":fontawesome-brands-rust: Rust"
     ```rust
     let mut circuit = DagCircuit::new();
-    circuit.h(0).cx(0, 1).h(1).cx(1, 2).mz(0).mz(1).mz(2);
+    circuit.h(0).cx(0, 1).h(1).cx(1, 2);
+    circuit.mz(0);
+    circuit.mz(1);
+    circuit.mz(2);
 
     // Basic metrics
     println!("Total gates: {}", circuit.gate_count());
@@ -399,13 +402,13 @@ A time-sliced circuit representation where gates are organized into discrete tim
     let mut circuit = TickCircuit::new();
 
     // First tick: parallel gates
-    circuit.tick().h(0).h(1).h(2);
+    circuit.tick().h(&[0, 1, 2]);
 
     // Second tick: entangling layer
-    circuit.tick().cx(0, 1).cx(2, 3);
+    circuit.tick().cx(&[(0, 1), (2, 3)]);
 
     // Third tick: measurements
-    circuit.tick().mz(0).mz(1);
+    circuit.tick().mz(&[0, 1]);
 
     println!("Number of ticks: {}", circuit.num_ticks());
     println!("Total gates: {}", circuit.gate_count());
@@ -434,9 +437,9 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
     let mut circuit = TickCircuit::new();
     let mut tick = circuit.tick();
 
-    tick.h(0);
+    tick.h(&[0]);
     // This would error: qubit 0 already used
-    // tick.cx(0, 1);
+    // tick.cx(&[(0, 1)]);
 
     // Use try_add_gate for fallible operations
     if let Err(e) = tick.try_add_gate(Gate::cx(&[(0, 1)])) {
@@ -466,7 +469,7 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
     // Add metadata to a tick
     let mut tick = circuit.tick();
     tick.meta("round", Attribute::Int(1));
-    tick.h(0).meta("error_rate", Attribute::Float(0.001));
+    tick.h(&[0]).meta("error_rate", Attribute::Float(0.001));
 
     // Circuit-level metadata
     circuit.set_meta("name", Attribute::String("Bell state".into()));
@@ -497,8 +500,8 @@ TickCircuit can be converted to and from DagCircuit:
 
     // TickCircuit -> DagCircuit
     let mut tick_circuit = TickCircuit::new();
-    tick_circuit.tick().h(0).h(1);
-    tick_circuit.tick().cx(0, 1);
+    tick_circuit.tick().h(&[0, 1]);
+    tick_circuit.tick().cx(&[(0, 1)]);
 
     let dag_circuit = DagCircuit::from(tick_circuit);
 
@@ -542,7 +545,7 @@ A general directed graph with weighted edges and attributes:
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    use pecos::graph::DiGraph;
+    use pecos::digraph::DiGraph;
 
     let mut graph = DiGraph::new();
 
@@ -600,7 +603,7 @@ A directed acyclic graph with topological ordering and cycle prevention:
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    use pecos::graph::DAG;
+    use pecos::dag::DAG;
 
     let mut dag = DAG::new();
 

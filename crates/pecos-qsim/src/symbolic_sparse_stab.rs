@@ -435,9 +435,11 @@ impl SymbolicSparseStab {
     /// Pauli Y gate. X -> -X, Z -> -Z
     #[inline]
     pub fn y(&mut self, q: usize) -> &mut Self {
-        for i in self.stabs.col_x[q].symmetric_difference(&self.stabs.col_z[q]) {
-            self.stabs.signs_minus ^= i;
-        }
+        // Fused: XOR elements in (col_x[q] ⊕ col_z[q]) into signs_minus
+        self.stabs.col_x[q].xor_symmetric_difference_into(
+            &self.stabs.col_z[q],
+            &mut self.stabs.signs_minus,
+        );
         self
     }
 
@@ -453,9 +455,11 @@ impl SymbolicSparseStab {
     pub fn sz(&mut self, q: usize) -> &mut Self {
         // X -> i: track phase changes
         // i * i = -1, so if already has i, add minus and remove i
-        for i in self.stabs.signs_i.intersection(&self.stabs.col_x[q]) {
-            self.stabs.signs_minus ^= i;
-        }
+        // Fused: XOR elements in (signs_i ∩ col_x[q]) into signs_minus
+        self.stabs.signs_i.xor_intersection_into(
+            &self.stabs.col_x[q],
+            &mut self.stabs.signs_minus,
+        );
         self.stabs.signs_i ^= &self.stabs.col_x[q];
 
         // Update the Pauli structure (X -> Y means add Z component)
@@ -473,9 +477,11 @@ impl SymbolicSparseStab {
     #[inline]
     pub fn h(&mut self, q: usize) -> &mut Self {
         // Y -> -Y: add minus for generators that have both X and Z on this qubit
-        for i in self.stabs.col_x[q].intersection(&self.stabs.col_z[q]) {
-            self.stabs.signs_minus ^= i;
-        }
+        // Fused: XOR elements in (col_x[q] ∩ col_z[q]) into signs_minus
+        self.stabs.col_x[q].xor_intersection_into(
+            &self.stabs.col_z[q],
+            &mut self.stabs.signs_minus,
+        );
 
         // Swap X and Z for this qubit
         for g in [&mut self.stabs, &mut self.destabs] {
@@ -513,11 +519,9 @@ impl SymbolicSparseStab {
                     (col_x_max, col_x_min)
                 };
 
-                let mut q2_set = VecSet::new();
-                q2_set.insert(q2);
-
-                for i in col_x_qu1.iter() {
-                    g.row_x[*i].symmetric_difference_update(&q2_set);
+                // Use single-element XOR directly instead of creating a temporary VecSet
+                for &i in col_x_qu1.iter() {
+                    g.row_x[i].symmetric_difference_item_update(&q2);
                 }
                 col_x_qu2.symmetric_difference_update(col_x_qu1);
             }
@@ -535,11 +539,9 @@ impl SymbolicSparseStab {
                     (col_z_max, col_z_min)
                 };
 
-                let mut q1_set = VecSet::new();
-                q1_set.insert(q1);
-
-                for i in col_z_qu2.iter() {
-                    g.row_z[*i].symmetric_difference_update(&q1_set);
+                // Use single-element XOR directly instead of creating a temporary VecSet
+                for &i in col_z_qu2.iter() {
+                    g.row_z[i].symmetric_difference_item_update(&q1);
                 }
                 col_z_qu1.symmetric_difference_update(col_z_qu2);
             }
@@ -580,19 +582,14 @@ impl SymbolicSparseStab {
 
         // --- Phase flip calculation (from SparseStab) ---
         // Count minuses from destabilizers that anti-commute with Z_q
-        let mut num_minuses = self.destabs.col_x[q]
-            .intersection(&self.stabs.signs_minus)
-            .count();
-
-        let num_is = self.destabs.col_x[q]
-            .intersection(&self.stabs.signs_i)
-            .count();
+        let mut num_minuses = self.destabs.col_x[q].intersection_count(&self.stabs.signs_minus);
+        let num_is = self.destabs.col_x[q].intersection_count(&self.stabs.signs_i);
 
         // Account for Pauli multiplication phases
         let mut cumulative_x = VecSet::new();
-        for row in &self.destabs.col_x[q] {
-            num_minuses += self.stabs.row_z[*row].intersection(&cumulative_x).count();
-            cumulative_x ^= &self.stabs.row_x[*row];
+        for &row in &self.destabs.col_x[q] {
+            num_minuses += self.stabs.row_z[row].intersection_count(&cumulative_x);
+            cumulative_x ^= &self.stabs.row_x[row];
         }
 
         if num_is & 3 != 0 {
@@ -687,7 +684,7 @@ impl SymbolicSparseStab {
             self.stabs.signs[*g].multiply_assign(&removed_sign);
 
             // Track phase from Pauli multiplication
-            let num_minuses = removed_row_z.intersection(&self.stabs.row_x[*g]).count();
+            let num_minuses = removed_row_z.intersection_count(&self.stabs.row_x[*g]);
             if num_minuses & 1 != 0 {
                 self.stabs.signs_minus ^= g;
             }

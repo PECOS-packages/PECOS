@@ -908,13 +908,11 @@ where
     #[allow(clippy::too_many_lines)]
     #[inline]
     fn nondeterministic_meas(&mut self, q: usize, result: bool) -> MeasurementResult {
-        let mut anticom_stabs_col = self.stabs.col_x[q].clone();
-        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
-
+        // Find the stabilizer with smallest weight to remove
         let mut smallest_wt = 2 * self.num_qubits + 2;
         let mut removed_id: Option<usize> = None;
 
-        for stab_id in anticom_stabs_col.iter().copied() {
+        for stab_id in self.stabs.col_x[q].iter().copied() {
             let weight = self.stabs.row_x[stab_id].len() + self.stabs.row_z[stab_id].len();
 
             if weight < smallest_wt {
@@ -925,11 +923,14 @@ where
 
         let id = removed_id.expect("Critical error: removed_id was None");
 
+        // Clone col_x[q] and remove id once - reused for all operations
+        let mut anticom_stabs_col = self.stabs.col_x[q].clone();
         anticom_stabs_col.remove(id);
+
         let removed_row_x = std::mem::take(&mut self.stabs.row_x[id]);
         let removed_row_z = std::mem::take(&mut self.stabs.row_z[id]);
 
-        // Cross-type: BitSet signs XOR with VecSet column (using optimized slice method)
+        // Cross-type: BitSet signs XOR with VecSet column (use pre-computed clone)
         if self.stabs.signs_minus.contains(id) {
             self.stabs
                 .signs_minus
@@ -948,6 +949,7 @@ where
                 .xor_assign_slice(anticom_stabs_col.as_slice());
         }
 
+        // Process all anticommuting stabilizers (already excludes id)
         for g in anticom_stabs_col.iter().copied() {
             let num_minuses = removed_row_z.intersection_count(&self.stabs.row_x[g]);
 
@@ -981,6 +983,8 @@ where
             self.destabs.col_z[i].remove(id);
         }
 
+        // Clone destabs col and remove id once
+        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
         anticom_destabs_col.remove(id);
 
         for i in removed_row_x.iter().copied() {
@@ -993,9 +997,11 @@ where
             self.destabs.col_z[i].xor_assign(&anticom_destabs_col);
         }
 
-        for row in anticom_destabs_col.iter().copied() {
-            self.destabs.row_x[row].xor_assign(&removed_row_x);
-            self.destabs.row_z[row].xor_assign(&removed_row_z);
+        for row in self.destabs.col_x[q].iter().copied() {
+            if row != id {
+                self.destabs.row_x[row].xor_assign(&removed_row_x);
+                self.destabs.row_z[row].xor_assign(&removed_row_z);
+            }
         }
 
         self.destabs.row_x[id] = removed_row_x;

@@ -32,7 +32,7 @@ pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
 pub use density_matrix::DensityMatrix;
-pub use gens::{Gens, GensBitSet, GensGeneric, GensVecSet};
+pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
@@ -42,7 +42,7 @@ pub use pauli_prop::PauliProp;
 pub use pecos_core::{VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
-pub use sparse_stab::{SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabVecSet};
+pub use sparse_stab::{SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabVecSet};
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 pub use state_vec::StateVec;
 pub use symbolic_gens::{

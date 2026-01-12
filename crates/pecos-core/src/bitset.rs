@@ -260,6 +260,96 @@ impl BitSet {
     pub fn words_mut(&mut self) -> &mut [u64] {
         &mut self.words
     }
+
+    /// XOR (toggle) each index from an iterator into this set.
+    ///
+    /// This is useful for cross-type operations where the source is not a BitSet
+    /// (e.g., iterating over a VecSet and XORing into a BitSet).
+    #[inline]
+    pub fn xor_assign_iter(&mut self, iter: impl Iterator<Item = usize>) {
+        for index in iter {
+            self.toggle(index);
+        }
+    }
+
+    /// XOR (toggle) each index from a slice into this set.
+    ///
+    /// Optimized version with inlined toggle logic.
+    #[inline]
+    pub fn xor_assign_slice(&mut self, indices: &[usize]) {
+        for &index in indices {
+            let word_idx = index / 64;
+            let bit_idx = index % 64;
+
+            if word_idx >= self.words.len() {
+                self.words.resize(word_idx + 1, 0);
+            }
+            self.words[word_idx] ^= 1u64 << bit_idx;
+        }
+    }
+
+    /// XOR indices that are present in both `iter` and `other` into this set.
+    ///
+    /// This is useful for cross-type sign propagation where `other` is a different set type.
+    /// For each index in `iter`, if it's also in `other`, toggle it in `self`.
+    #[inline]
+    pub fn xor_intersection_iter(&mut self, iter: impl Iterator<Item = usize>, other: &Self) {
+        for index in iter {
+            if other.contains(index) {
+                self.toggle(index);
+            }
+        }
+    }
+
+    /// XOR indices from a slice that are present in `other` into this set.
+    ///
+    /// Optimized version with inlined contains and toggle.
+    #[inline]
+    pub fn xor_intersection_slice(&mut self, indices: &[usize], other: &Self) {
+        for &index in indices {
+            let word_idx = index / 64;
+            let bit_idx = index % 64;
+            let mask = 1u64 << bit_idx;
+
+            // Check if index is in other (inlined contains)
+            let in_other =
+                word_idx < other.words.len() && (other.words[word_idx] & mask) != 0;
+
+            if in_other {
+                // Toggle in self (inlined toggle)
+                if word_idx >= self.words.len() {
+                    self.words.resize(word_idx + 1, 0);
+                }
+                self.words[word_idx] ^= mask;
+            }
+        }
+    }
+
+    /// Count elements present in both `iter` and this set.
+    ///
+    /// This is useful for cross-type intersection counting.
+    #[inline]
+    pub fn intersection_count_iter(&self, iter: impl Iterator<Item = usize>) -> usize {
+        iter.filter(|&index| self.contains(index)).count()
+    }
+
+    /// Count elements from a slice that are present in this set.
+    ///
+    /// Optimized version with inlined contains check.
+    #[inline]
+    pub fn intersection_count_slice(&self, indices: &[usize]) -> usize {
+        let mut count = 0;
+        for &index in indices {
+            let word_idx = index / 64;
+            let bit_idx = index % 64;
+            if word_idx < self.words.len()
+                && (unsafe { *self.words.get_unchecked(word_idx) } & (1u64 << bit_idx)) != 0
+            {
+                count += 1;
+            }
+        }
+        count
+    }
 }
 
 impl FromIterator<usize> for BitSet {

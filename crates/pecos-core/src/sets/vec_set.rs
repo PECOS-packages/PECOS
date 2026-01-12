@@ -73,6 +73,15 @@ impl<E: Element> VecSet<E> {
         self.elements.iter()
     }
 
+    /// Get the elements as a slice.
+    ///
+    /// This provides direct access to the underlying storage for optimized
+    /// operations that can work with slices instead of iterators.
+    #[inline]
+    pub fn as_slice(&self) -> &[E] {
+        &self.elements
+    }
+
     /// Clear the set and set it to contain exactly one element.
     /// This is an optimized operation for reset scenarios where we know
     /// the set should contain exactly one element.
@@ -147,6 +156,56 @@ impl<E: Element> VecSet<E> {
             (&other.elements, &self.elements)
         };
         smaller.iter().filter(|x| larger.contains(x)).count()
+    }
+}
+
+// Cross-type methods for VecSet<usize> to work with BitSet
+impl VecSet<usize> {
+    /// XOR elements in the intersection of `self` and `other` into a BitSet target.
+    ///
+    /// This is useful for hybrid implementations where Pauli data uses VecSet
+    /// but sign data uses BitSet.
+    #[inline]
+    pub fn xor_intersection_into_bitset(
+        &self,
+        other: &Self,
+        target: &mut crate::BitSet,
+    ) {
+        // Iterate over the smaller set for better performance
+        let (smaller, larger) = if self.elements.len() <= other.elements.len() {
+            (&self.elements, &other.elements)
+        } else {
+            (&other.elements, &self.elements)
+        };
+        for &elt in smaller {
+            if larger.contains(&elt) {
+                target.toggle(elt);
+            }
+        }
+    }
+
+    /// XOR elements in the symmetric difference of `self` and `other` into a BitSet target.
+    ///
+    /// This is useful for hybrid implementations where Pauli data uses VecSet
+    /// but sign data uses BitSet.
+    #[inline]
+    pub fn xor_symmetric_difference_into_bitset(
+        &self,
+        other: &Self,
+        target: &mut crate::BitSet,
+    ) {
+        // Elements in self but not in other
+        for &elt in &self.elements {
+            if !other.elements.contains(&elt) {
+                target.toggle(elt);
+            }
+        }
+        // Elements in other but not in self
+        for &elt in &other.elements {
+            if !self.elements.contains(&elt) {
+                target.toggle(elt);
+            }
+        }
     }
 }
 

@@ -386,20 +386,14 @@ where
             self.stabs.row_z[g].xor_assign(&removed_row_z);
         }
 
+        // Fused loops: XOR and remove in single pass
         for i in removed_row_x.iter() {
             self.stabs.col_x[i].xor_assign(&anticom_stabs_col);
-        }
-
-        for i in removed_row_z.iter() {
-            self.stabs.col_z[i].xor_assign(&anticom_stabs_col);
-        }
-
-        // Iterate over removed_row_x/z instead of self.stabs.row_x/z[id] since we used take above
-        for i in removed_row_x.iter() {
             self.stabs.col_x[i].remove(id);
         }
 
         for i in removed_row_z.iter() {
+            self.stabs.col_z[i].xor_assign(&anticom_stabs_col);
             self.stabs.col_z[i].remove(id);
         }
 
@@ -740,6 +734,525 @@ use crate::stabilizer_tableau::StabilizerTableauSimulator;
 impl<S, R> StabilizerTableauSimulator for SparseStabGeneric<S, R>
 where
     S: IndexSet,
+    R: RngCore + SeedableRng + Rng + Debug,
+{
+    fn stab_tableau(&self) -> String {
+        Self::tableau_string(self.num_qubits, &self.stabs)
+    }
+
+    fn destab_tableau(&self) -> String {
+        Self::tableau_string(self.num_qubits, &self.destabs)
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+// ============================================================================
+// SparseStabHybrid - Uses VecSet for Paulis, BitSet for signs
+// ============================================================================
+
+use crate::GensHybrid;
+
+/// Hybrid sparse stabilizer simulator using `VecSet` for Pauli data and `BitSet` for signs.
+///
+/// This combines the benefits of both set types:
+/// - `VecSet` is faster for gate operations on small sets (typical stabilizer weights 2-4)
+/// - `BitSet` is faster for sign membership checks during measurements (O(1) vs O(n))
+///
+/// The hybrid approach is particularly beneficial for multi-round simulations like
+/// surface code syndrome extraction, where sign sets grow over time.
+#[derive(Clone, Debug)]
+pub struct SparseStabHybrid<R: RngCore + SeedableRng + Rng + Debug = PecosRng> {
+    pub(crate) num_qubits: usize,
+    pub(crate) stabs: GensHybrid,
+    pub(crate) destabs: GensHybrid,
+    rng: R,
+}
+
+impl SparseStabHybrid<PecosRng> {
+    /// Create a new hybrid stabilizer simulator with the default RNG.
+    #[inline]
+    #[must_use]
+    pub fn new(num_qubits: usize) -> Self {
+        let rng = PecosRng::from_os_rng();
+        Self::with_rng(num_qubits, rng)
+    }
+
+    /// Create a new hybrid stabilizer simulator with a specific seed.
+    #[inline]
+    #[must_use]
+    pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        let rng = PecosRng::seed_from_u64(seed);
+        Self::with_rng(num_qubits, rng)
+    }
+}
+
+impl<R> SparseStabHybrid<R>
+where
+    R: RngCore + SeedableRng + Rng + Debug,
+{
+    /// Create a hybrid stabilizer simulator with a custom RNG.
+    #[inline]
+    pub fn with_rng(num_qubits: usize, rng: R) -> Self {
+        let mut stab = Self {
+            num_qubits,
+            stabs: GensHybrid::new(num_qubits),
+            destabs: GensHybrid::new(num_qubits),
+            rng,
+        };
+        stab.reset();
+        stab
+    }
+
+    /// Returns the number of qubits in the system.
+    #[inline]
+    pub fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
+    /// Reset to the |0...0> state.
+    #[inline]
+    pub fn reset(&mut self) -> &mut Self {
+        self.stabs.init_all_z();
+        self.destabs.init_all_x();
+        self
+    }
+
+    /// Negate the sign of a stabilizer generator.
+    #[inline]
+    pub fn neg(&mut self, s: usize) {
+        self.stabs.signs_minus.toggle(s);
+    }
+
+    /// Get the signs_minus BitSet.
+    #[inline]
+    pub fn signs_minus(&self) -> &BitSet {
+        &self.stabs.signs_minus
+    }
+
+    /// Helper to produce a string representation of a generator set in tableau form.
+    #[inline]
+    fn tableau_string(num_qubits: usize, gens: &GensHybrid) -> String {
+        let mut result =
+            String::with_capacity(num_qubits * gens.row_x.len() + gens.row_x.len() + 2);
+        for i in 0..gens.row_x.len() {
+            if gens.signs_minus.contains(i) {
+                result.push('-');
+            } else {
+                result.push('+');
+            }
+            if gens.signs_i.contains(i) {
+                result.push('i');
+            }
+
+            for qubit in 0..num_qubits {
+                let in_row_x = gens.row_x[i].contains(qubit);
+                let in_row_z = gens.row_z[i].contains(qubit);
+
+                let char = match (in_row_x, in_row_z) {
+                    (false, false) => 'I',
+                    (true, false) => 'X',
+                    (false, true) => 'Z',
+                    (true, true) => 'Y',
+                };
+                result.push(char);
+            }
+            result.push('\n');
+        }
+
+        result
+    }
+
+    /// Produces a textual representation of the stabilizer in tableau form.
+    #[inline]
+    pub fn stab_tableau(&self) -> String {
+        Self::tableau_string(self.num_qubits, &self.stabs)
+    }
+
+    /// Produces a textual representation of the destabilizer in tableau form.
+    #[inline]
+    pub fn destab_tableau(&self) -> String {
+        Self::tableau_string(self.num_qubits, &self.destabs)
+    }
+
+    #[inline]
+    fn deterministic_meas(&mut self, q: usize) -> MeasurementResult {
+        // Use BitSet's optimized slice-based intersection count
+        let mut num_minuses = self
+            .stabs
+            .signs_minus
+            .intersection_count_slice(self.destabs.col_x[q].as_slice());
+
+        let num_is = self
+            .stabs
+            .signs_i
+            .intersection_count_slice(self.destabs.col_x[q].as_slice());
+
+        let mut cumulative_x: VecSet<usize> = VecSet::new();
+        for row in self.destabs.col_x[q].iter().copied() {
+            num_minuses += self.stabs.row_z[row].intersection_count(&cumulative_x);
+            cumulative_x.xor_assign(&self.stabs.row_x[row]);
+        }
+        if num_is & 3 != 0 {
+            num_minuses += 1;
+        }
+        let outcome = num_minuses & 1 != 0;
+        MeasurementResult {
+            outcome,
+            is_deterministic: true,
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[inline]
+    fn nondeterministic_meas(&mut self, q: usize, result: bool) -> MeasurementResult {
+        let mut anticom_stabs_col = self.stabs.col_x[q].clone();
+        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
+
+        let mut smallest_wt = 2 * self.num_qubits + 2;
+        let mut removed_id: Option<usize> = None;
+
+        for stab_id in anticom_stabs_col.iter().copied() {
+            let weight = self.stabs.row_x[stab_id].len() + self.stabs.row_z[stab_id].len();
+
+            if weight < smallest_wt {
+                smallest_wt = weight;
+                removed_id = Some(stab_id);
+            }
+        }
+
+        let id = removed_id.expect("Critical error: removed_id was None");
+
+        anticom_stabs_col.remove(id);
+        let removed_row_x = std::mem::take(&mut self.stabs.row_x[id]);
+        let removed_row_z = std::mem::take(&mut self.stabs.row_z[id]);
+
+        // Cross-type: BitSet signs XOR with VecSet column (using optimized slice method)
+        if self.stabs.signs_minus.contains(id) {
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(anticom_stabs_col.as_slice());
+        }
+
+        if self.stabs.signs_i.contains(id) {
+            self.stabs.signs_i.remove(id);
+
+            // Cross-type: XOR (BitSet signs_i ∩ VecSet anticom_stabs_col) into BitSet signs_minus
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(anticom_stabs_col.as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(anticom_stabs_col.as_slice());
+        }
+
+        for g in anticom_stabs_col.iter().copied() {
+            let num_minuses = removed_row_z.intersection_count(&self.stabs.row_x[g]);
+
+            if num_minuses & 1 != 0 {
+                self.stabs.signs_minus.toggle(g);
+            }
+
+            self.stabs.row_x[g].xor_assign(&removed_row_x);
+            self.stabs.row_z[g].xor_assign(&removed_row_z);
+        }
+
+        // Fused loops: XOR and remove in single pass
+        for i in removed_row_x.iter().copied() {
+            self.stabs.col_x[i].xor_assign(&anticom_stabs_col);
+            self.stabs.col_x[i].remove(id);
+        }
+
+        for i in removed_row_z.iter().copied() {
+            self.stabs.col_z[i].xor_assign(&anticom_stabs_col);
+            self.stabs.col_z[i].remove(id);
+        }
+
+        self.stabs.col_z[q].insert(id);
+        self.stabs.row_z[id].insert(q);
+
+        for i in self.destabs.row_x[id].iter().copied() {
+            self.destabs.col_x[i].remove(id);
+        }
+
+        for i in self.destabs.row_z[id].iter().copied() {
+            self.destabs.col_z[i].remove(id);
+        }
+
+        anticom_destabs_col.remove(id);
+
+        for i in removed_row_x.iter().copied() {
+            self.destabs.col_x[i].insert(id);
+            self.destabs.col_x[i].xor_assign(&anticom_destabs_col);
+        }
+
+        for i in removed_row_z.iter().copied() {
+            self.destabs.col_z[i].insert(id);
+            self.destabs.col_z[i].xor_assign(&anticom_destabs_col);
+        }
+
+        for row in anticom_destabs_col.iter().copied() {
+            self.destabs.row_x[row].xor_assign(&removed_row_x);
+            self.destabs.row_z[row].xor_assign(&removed_row_z);
+        }
+
+        self.destabs.row_x[id] = removed_row_x;
+        self.destabs.row_z[id] = removed_row_z;
+
+        let outcome = self.apply_outcome(id, result);
+        MeasurementResult {
+            outcome,
+            is_deterministic: false,
+        }
+    }
+
+    /// Measurement of the +Z_q operator where random outcomes are forced to a particular value.
+    #[inline]
+    pub fn mz_forced(&mut self, q: usize, forced_outcome: bool) -> MeasurementResult {
+        if self.stabs.col_x[q].is_empty() {
+            self.deterministic_meas(q)
+        } else {
+            self.nondeterministic_meas(q, forced_outcome)
+        }
+    }
+
+    /// Preparation of the +Z_q operator where random outcomes are forced to a particular value.
+    #[inline]
+    pub fn pz_forced(&mut self, q: usize, forced_outcome: bool) -> &mut Self {
+        let result = self.mz_forced(q, forced_outcome);
+        if result.outcome {
+            // Cross-type: BitSet signs_minus XOR with VecSet col_z (optimized slice)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[q].as_slice());
+        }
+        self
+    }
+
+    #[inline]
+    fn apply_outcome(&mut self, id: usize, meas_outcome: bool) -> bool {
+        if meas_outcome {
+            self.stabs.signs_minus.insert(id);
+        } else {
+            self.stabs.signs_minus.remove(id);
+        }
+        meas_outcome
+    }
+}
+
+impl<R> QuantumSimulator for SparseStabHybrid<R>
+where
+    R: RngCore + SeedableRng + Rng + Debug,
+{
+    #[inline]
+    fn reset(&mut self) -> &mut Self {
+        Self::reset(self)
+    }
+}
+
+impl<R> CliffordGateable for SparseStabHybrid<R>
+where
+    R: RngCore + SeedableRng + Rng + Debug,
+{
+    /// Pauli X gate. X -> X, Z -> -Z
+    #[inline]
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            // Cross-type: BitSet signs_minus XOR with VecSet col_z (optimized slice)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+        }
+        self
+    }
+
+    /// Pauli Y gate. X -> -X, Z -> -Z
+    #[inline]
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            // Cross-type: VecSet symmetric difference into BitSet
+            self.stabs.col_x[qu]
+                .xor_symmetric_difference_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+        }
+        self
+    }
+
+    /// Pauli Z gate. X -> -X, Z -> Z
+    #[inline]
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            // Cross-type: BitSet signs_minus XOR with VecSet col_x (optimized slice)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[q.index()].as_slice());
+        }
+        self
+    }
+
+    /// Sqrt of Z gate.
+    #[inline]
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // Cross-type: XOR (BitSet signs_i ∩ VecSet col_x) into BitSet signs_minus (optimized slice)
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+
+                for i in g.col_x[qu].iter().copied() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Hadamard gate. X -> Z, Z -> X
+    #[inline]
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // Cross-type: VecSet intersection into BitSet
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            for g in [&mut self.stabs, &mut self.destabs] {
+                // Elements in col_x but not in col_z: X -> Z
+                for i in g.col_x[qu].iter().copied() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+
+                // Elements in col_z but not in col_x: Z -> X
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Controlled-X (CNOT) gate.
+    #[inline]
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            for g in [&mut self.stabs, &mut self.destabs] {
+                let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
+
+                // Handle col_x
+                {
+                    let (_left, right) = g.col_x.split_at_mut(qu_min);
+                    let (mid, right) = right.split_at_mut(qu_max - qu_min);
+                    let col_x_min = &mut mid[0];
+                    let col_x_max = &mut right[0];
+
+                    let (col_x_qu1, col_x_qu2) = if q1 < q2 {
+                        (col_x_min, col_x_max)
+                    } else {
+                        (col_x_max, col_x_min)
+                    };
+
+                    for i in col_x_qu1.iter().copied() {
+                        g.row_x[i].toggle(q2);
+                    }
+                    col_x_qu2.xor_assign(col_x_qu1);
+                }
+
+                // Handle col_z
+                {
+                    let (_left, right) = g.col_z.split_at_mut(qu_min);
+                    let (mid, right) = right.split_at_mut(qu_max - qu_min);
+                    let col_z_min = &mut mid[0];
+                    let col_z_max = &mut right[0];
+
+                    let (col_z_qu1, col_z_qu2) = if q1 < q2 {
+                        (col_z_min, col_z_max)
+                    } else {
+                        (col_z_max, col_z_min)
+                    };
+
+                    for i in col_z_qu2.iter().copied() {
+                        g.row_z[i].toggle(q1);
+                    }
+                    col_z_qu1.xor_assign(col_z_qu2);
+                }
+            }
+        }
+        self
+    }
+
+    /// Measures qubits in the Z basis.
+    #[inline]
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let mut results = Vec::with_capacity(qubits.len());
+
+        for &q in qubits {
+            let qu = q.index();
+            let deterministic = self.stabs.col_x[qu].is_empty();
+
+            let result = if deterministic {
+                self.deterministic_meas(qu)
+            } else {
+                let outcome = self.rng.coin_flip();
+                self.nondeterministic_meas(qu, outcome)
+            };
+            results.push(result);
+        }
+
+        results
+    }
+}
+
+impl<R> RngManageable for SparseStabHybrid<R>
+where
+    R: RngCore + SeedableRng + Rng + Debug,
+{
+    type Rng = R;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.rng = rng;
+    }
+
+    #[inline]
+    fn rng(&self) -> &Self::Rng {
+        &self.rng
+    }
+
+    #[inline]
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        &mut self.rng
+    }
+}
+
+impl<R> StabilizerTableauSimulator for SparseStabHybrid<R>
+where
     R: RngCore + SeedableRng + Rng + Debug,
 {
     fn stab_tableau(&self) -> String {

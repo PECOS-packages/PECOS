@@ -37,6 +37,123 @@ pub type GensBitSet = GensGeneric<BitSet>;
 /// Generator storage using `VecSet<usize>` for lower overhead on small sets.
 pub type GensVecSet = GensGeneric<VecSet<usize>>;
 
+/// Hybrid generator storage using `VecSet` for Pauli data and `BitSet` for signs.
+///
+/// This combines the benefits of both set types:
+/// - `VecSet` is faster for small sets (typical in Pauli operations)
+/// - `BitSet` is faster for membership checks on sign sets during measurements
+#[derive(Clone, Debug)]
+pub struct GensHybrid {
+    num_qubits: usize,
+    pub col_x: Vec<VecSet<usize>>,
+    pub col_z: Vec<VecSet<usize>>,
+    pub row_x: Vec<VecSet<usize>>,
+    pub row_z: Vec<VecSet<usize>>,
+    pub signs_minus: BitSet,
+    pub signs_i: BitSet,
+}
+
+impl GensHybrid {
+    #[must_use]
+    #[inline]
+    pub fn new(num_qubits: usize) -> Self {
+        Self {
+            num_qubits,
+            col_x: (0..num_qubits).map(|_| VecSet::new()).collect(),
+            col_z: (0..num_qubits).map(|_| VecSet::new()).collect(),
+            row_x: (0..num_qubits).map(|_| VecSet::new()).collect(),
+            row_z: (0..num_qubits).map(|_| VecSet::new()).collect(),
+            // Pre-allocate BitSets to avoid resizes during measurement
+            signs_minus: BitSet::with_capacity(num_qubits),
+            signs_i: BitSet::with_capacity(num_qubits),
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn get_num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
+    /// Clear all sign sets without reallocating the Vec storage.
+    #[inline]
+    fn clear_signs(&mut self) {
+        self.signs_minus.clear();
+        self.signs_i.clear();
+    }
+
+    /// Clear all elements in a slice of VecSets, keeping the Vec's capacity.
+    #[inline]
+    fn clear_sets(sets: &mut [VecSet<usize>]) {
+        for set in sets.iter_mut() {
+            set.clear();
+        }
+    }
+
+    /// Initialize a slice of VecSets as identity (set[i] = {i}), reusing existing allocations.
+    #[inline]
+    fn init_as_identity(sets: &mut [VecSet<usize>]) {
+        for (i, set) in sets.iter_mut().enumerate() {
+            set.set_single(i);
+        }
+    }
+
+    /// Ensure the Vec has exactly `num_qubits` elements, reusing capacity when possible.
+    #[inline]
+    fn ensure_size(sets: &mut Vec<VecSet<usize>>, num_qubits: usize) {
+        match sets.len().cmp(&num_qubits) {
+            std::cmp::Ordering::Less => {
+                sets.reserve(num_qubits - sets.len());
+                while sets.len() < num_qubits {
+                    sets.push(VecSet::new());
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                sets.truncate(num_qubits);
+            }
+            std::cmp::Ordering::Equal => {}
+        }
+    }
+
+    #[inline]
+    pub fn init_all_z(&mut self) {
+        let n = self.get_num_qubits();
+
+        // Ensure all Vecs have the right size
+        Self::ensure_size(&mut self.col_x, n);
+        Self::ensure_size(&mut self.col_z, n);
+        Self::ensure_size(&mut self.row_x, n);
+        Self::ensure_size(&mut self.row_z, n);
+
+        // Clear and initialize: col_x and row_x are empty, col_z and row_z are identity
+        Self::clear_sets(&mut self.col_x);
+        Self::init_as_identity(&mut self.col_z);
+        Self::clear_sets(&mut self.row_x);
+        Self::init_as_identity(&mut self.row_z);
+
+        self.clear_signs();
+    }
+
+    #[inline]
+    pub fn init_all_x(&mut self) {
+        let n = self.get_num_qubits();
+
+        // Ensure all Vecs have the right size
+        Self::ensure_size(&mut self.col_x, n);
+        Self::ensure_size(&mut self.col_z, n);
+        Self::ensure_size(&mut self.row_x, n);
+        Self::ensure_size(&mut self.row_z, n);
+
+        // Clear and initialize: col_x and row_x are identity, col_z and row_z are empty
+        Self::init_as_identity(&mut self.col_x);
+        Self::clear_sets(&mut self.col_z);
+        Self::init_as_identity(&mut self.row_x);
+        Self::clear_sets(&mut self.row_z);
+
+        self.clear_signs();
+    }
+}
+
 impl<S: IndexSet> GensGeneric<S> {
     #[must_use]
     #[inline]

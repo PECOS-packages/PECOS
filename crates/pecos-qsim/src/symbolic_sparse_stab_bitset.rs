@@ -238,39 +238,39 @@ impl SymbolicSparseStab {
         // Process stabs
         {
             // Handle col_x: XI -> XX
-            let col_x_q1_indices: Vec<usize> = self.stabs.col_x[q1].iter().collect();
-            for i in &col_x_q1_indices {
+            let x_col_indices: Vec<usize> = self.stabs.col_x[q1].iter().collect();
+            for i in &x_col_indices {
                 self.stabs.row_x[*i] ^= &q2_set;
             }
-            let col_x_q1_clone = self.stabs.col_x[q1].clone();
-            self.stabs.col_x[q2] ^= &col_x_q1_clone;
+            let x_col_copy = self.stabs.col_x[q1].clone();
+            self.stabs.col_x[q2] ^= &x_col_copy;
 
             // Handle col_z: IZ -> ZZ
-            let col_z_q2_indices: Vec<usize> = self.stabs.col_z[q2].iter().collect();
-            for i in &col_z_q2_indices {
+            let z_col_indices: Vec<usize> = self.stabs.col_z[q2].iter().collect();
+            for i in &z_col_indices {
                 self.stabs.row_z[*i] ^= &q1_set;
             }
-            let col_z_q2_clone = self.stabs.col_z[q2].clone();
-            self.stabs.col_z[q1] ^= &col_z_q2_clone;
+            let z_col_copy = self.stabs.col_z[q2].clone();
+            self.stabs.col_z[q1] ^= &z_col_copy;
         }
 
         // Process destabs
         {
             // Handle col_x: XI -> XX
-            let col_x_q1_indices: Vec<usize> = self.destabs.col_x[q1].iter().collect();
-            for i in &col_x_q1_indices {
+            let x_col_indices: Vec<usize> = self.destabs.col_x[q1].iter().collect();
+            for i in &x_col_indices {
                 self.destabs.row_x[*i] ^= &q2_set;
             }
-            let col_x_q1_clone = self.destabs.col_x[q1].clone();
-            self.destabs.col_x[q2] ^= &col_x_q1_clone;
+            let x_col_copy = self.destabs.col_x[q1].clone();
+            self.destabs.col_x[q2] ^= &x_col_copy;
 
             // Handle col_z: IZ -> ZZ
-            let col_z_q2_indices: Vec<usize> = self.destabs.col_z[q2].iter().collect();
-            for i in &col_z_q2_indices {
+            let z_col_indices: Vec<usize> = self.destabs.col_z[q2].iter().collect();
+            for i in &z_col_indices {
                 self.destabs.row_z[*i] ^= &q1_set;
             }
-            let col_z_q2_clone = self.destabs.col_z[q2].clone();
-            self.destabs.col_z[q1] ^= &col_z_q2_clone;
+            let z_col_copy = self.destabs.col_z[q2].clone();
+            self.destabs.col_z[q1] ^= &z_col_copy;
         }
 
         self

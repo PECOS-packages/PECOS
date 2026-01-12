@@ -107,6 +107,7 @@ fn bench_vecset_operations<M: Measurement>(group: &mut BenchmarkGroup<M>) {
 /// - Single element toggle (used in CX gate's inner loop)
 /// - XOR / `symmetric_difference_update` (used in many gates)
 /// - Iteration (used for applying updates)
+#[allow(clippy::too_many_lines)]
 fn bench_bitset_vs_vecset<M: Measurement>(group: &mut BenchmarkGroup<M>) {
     // Parameters matching surface code simulation
     // Small sets: stabilizer weights of 2-4

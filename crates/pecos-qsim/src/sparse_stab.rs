@@ -96,6 +96,7 @@ use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 ///    <https://arxiv.org/abs/quant-ph/0406196>
 /// 2. Ryan-Anderson, "Quantum Algorithms, Architecture, and Error Correction"
 ///    <https://arxiv.org/abs/1812.04735>
+///
 /// Generic sparse stabilizer simulator over set type S.
 #[derive(Clone, Debug)]
 pub struct SparseStabGeneric<
@@ -834,7 +835,7 @@ where
         self.stabs.signs_minus.toggle(s);
     }
 
-    /// Get the signs_minus BitSet.
+    /// Get the `signs_minus` `BitSet`.
     #[inline]
     pub fn signs_minus(&self) -> &BitSet {
         &self.stabs.signs_minus
@@ -1031,7 +1032,7 @@ where
         }
     }
 
-    /// Measurement of the +Z_q operator where random outcomes are forced to a particular value.
+    /// Measurement of the +`Z_q` operator where random outcomes are forced to a particular value.
     #[inline]
     pub fn mz_forced(&mut self, q: usize, forced_outcome: bool) -> MeasurementResult {
         if self.stabs.col_x[q].is_empty() {
@@ -1041,7 +1042,7 @@ where
         }
     }
 
-    /// Preparation of the +Z_q operator where random outcomes are forced to a particular value.
+    /// Preparation of the +`Z_q` operator where random outcomes are forced to a particular value.
     #[inline]
     pub fn pz_forced(&mut self, q: usize, forced_outcome: bool) -> &mut Self {
         let result = self.mz_forced(q, forced_outcome);
@@ -1067,26 +1068,26 @@ where
     /// Convert this hybrid simulator to a pure BitSet-based simulator.
     ///
     /// This is useful when the tableau has become dense (many elements per row)
-    /// and BitSet's O(1) operations would be faster than VecSet's O(n) operations.
+    /// and `BitSet`'s O(1) operations would be faster than `VecSet`'s O(n) operations.
     ///
-    /// The conversion iterates over all VecSet elements to populate the BitSets,
-    /// which is O(total_elements) where total_elements is the sum of all set sizes.
+    /// The conversion iterates over all `VecSet` elements to populate the `BitSets`,
+    /// which is `O(total_elements)` where `total_elements` is the sum of all set sizes.
     #[must_use]
     pub fn to_bitset(self) -> SparseStabGeneric<BitSet, R> {
-        let n = self.num_qubits;
-
         // Helper to convert a slice of VecSets to a Vec of BitSets
         fn convert_sets(sets: &[VecSet<usize>], num_qubits: usize) -> Vec<BitSet> {
             sets.iter()
                 .map(|vs| {
                     let mut bs = BitSet::with_capacity(num_qubits);
-                    for &elem in vs.iter() {
+                    for &elem in vs {
                         bs.insert(elem);
                     }
                     bs
                 })
                 .collect()
         }
+
+        let n = self.num_qubits;
 
         // Convert Gens (stabs and destabs)
         let stabs = GensGeneric::from_parts(
@@ -1151,8 +1152,10 @@ where
         for &q in qubits {
             let qu = q.index();
             // Cross-type: VecSet symmetric difference into BitSet
-            self.stabs.col_x[qu]
-                .xor_symmetric_difference_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.col_x[qu].xor_symmetric_difference_into_bitset(
+                &self.stabs.col_z[qu],
+                &mut self.stabs.signs_minus,
+            );
         }
         self
     }

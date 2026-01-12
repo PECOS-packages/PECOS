@@ -161,16 +161,12 @@ impl<E: Element> VecSet<E> {
 
 // Cross-type methods for VecSet<usize> to work with BitSet
 impl VecSet<usize> {
-    /// XOR elements in the intersection of `self` and `other` into a BitSet target.
+    /// XOR elements in the intersection of `self` and `other` into a `BitSet` target.
     ///
-    /// This is useful for hybrid implementations where Pauli data uses VecSet
-    /// but sign data uses BitSet.
+    /// This is useful for hybrid implementations where Pauli data uses `VecSet`
+    /// but sign data uses `BitSet`.
     #[inline]
-    pub fn xor_intersection_into_bitset(
-        &self,
-        other: &Self,
-        target: &mut crate::BitSet,
-    ) {
+    pub fn xor_intersection_into_bitset(&self, other: &Self, target: &mut crate::BitSet) {
         // Iterate over the smaller set for better performance
         let (smaller, larger) = if self.elements.len() <= other.elements.len() {
             (&self.elements, &other.elements)
@@ -184,16 +180,12 @@ impl VecSet<usize> {
         }
     }
 
-    /// XOR elements in the symmetric difference of `self` and `other` into a BitSet target.
+    /// XOR elements in the symmetric difference of `self` and `other` into a `BitSet` target.
     ///
-    /// This is useful for hybrid implementations where Pauli data uses VecSet
-    /// but sign data uses BitSet.
+    /// This is useful for hybrid implementations where Pauli data uses `VecSet`
+    /// but sign data uses `BitSet`.
     #[inline]
-    pub fn xor_symmetric_difference_into_bitset(
-        &self,
-        other: &Self,
-        target: &mut crate::BitSet,
-    ) {
+    pub fn xor_symmetric_difference_into_bitset(&self, other: &Self, target: &mut crate::BitSet) {
         // Elements in self but not in other
         for &elt in &self.elements {
             if !other.elements.contains(&elt) {

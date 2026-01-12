@@ -42,7 +42,9 @@ pub use pauli_prop::PauliProp;
 pub use pecos_core::{VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
-pub use sparse_stab::{SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabVecSet};
+pub use sparse_stab::{
+    SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabVecSet,
+};
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 pub use state_vec::StateVec;
 pub use symbolic_gens::{

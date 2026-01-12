@@ -263,8 +263,8 @@ impl BitSet {
 
     /// XOR (toggle) each index from an iterator into this set.
     ///
-    /// This is useful for cross-type operations where the source is not a BitSet
-    /// (e.g., iterating over a VecSet and XORing into a BitSet).
+    /// This is useful for cross-type operations where the source is not a `BitSet`
+    /// (e.g., iterating over a `VecSet` and `XORing` into a `BitSet`).
     #[inline]
     pub fn xor_assign_iter(&mut self, iter: impl Iterator<Item = usize>) {
         for index in iter {
@@ -312,8 +312,7 @@ impl BitSet {
             let mask = 1u64 << bit_idx;
 
             // Check if index is in other (inlined contains)
-            let in_other =
-                word_idx < other.words.len() && (other.words[word_idx] & mask) != 0;
+            let in_other = word_idx < other.words.len() && (other.words[word_idx] & mask) != 0;
 
             if in_other {
                 // Toggle in self (inlined toggle)
@@ -337,6 +336,7 @@ impl BitSet {
     ///
     /// Optimized version with inlined contains check.
     #[inline]
+    #[must_use]
     pub fn intersection_count_slice(&self, indices: &[usize]) -> usize {
         let mut count = 0;
         for &index in indices {

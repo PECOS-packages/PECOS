@@ -82,7 +82,7 @@ impl GensHybrid {
         self.signs_i.clear();
     }
 
-    /// Clear all elements in a slice of VecSets, keeping the Vec's capacity.
+    /// Clear all elements in a slice of `VecSets`, keeping the Vec's capacity.
     #[inline]
     fn clear_sets(sets: &mut [VecSet<usize>]) {
         for set in sets.iter_mut() {
@@ -90,7 +90,7 @@ impl GensHybrid {
         }
     }
 
-    /// Initialize a slice of VecSets as identity (set[i] = {i}), reusing existing allocations.
+    /// Initialize a slice of `VecSets` as identity (set[i] = {i}), reusing existing allocations.
     #[inline]
     fn init_as_identity(sets: &mut [VecSet<usize>]) {
         for (i, set) in sets.iter_mut().enumerate() {

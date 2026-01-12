@@ -333,8 +333,8 @@ where
     #[allow(clippy::too_many_lines)]
     #[inline]
     fn nondeterministic_meas(&mut self, q: usize, result: bool) -> MeasurementResult {
+        // Clone only stabs.col_x[q] initially - defer destabs clone until needed
         let mut anticom_stabs_col = self.stabs.col_x[q].clone();
-        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
 
         let mut smallest_wt = 2 * self.num_qubits + 2;
         let mut removed_id: Option<usize> = None;
@@ -345,9 +345,10 @@ where
             if weight < smallest_wt {
                 smallest_wt = weight;
                 removed_id = Some(stab_id);
-                // break // TODO: Should it exit early? // If we do... it avoids smallest weight
-                // TODO: Does the smallest weight matter? Maybe at least break if smallest weight == 1
-                // TODO: Does it always exist? If so, can we avoid Some()?
+                // Early termination: weight 1 is optimal (single-qubit Pauli)
+                if weight == 1 {
+                    break;
+                }
             }
         }
 
@@ -411,6 +412,8 @@ where
             self.destabs.col_z[i].remove(id);
         }
 
+        // Clone destabs.col_x[q] only when needed (deferred from start of function)
+        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
         anticom_destabs_col.remove(id);
 
         for i in removed_row_x.iter() {
@@ -769,6 +772,9 @@ pub struct SparseStabHybrid<R: RngCore + SeedableRng + Rng + Debug = PecosRng> {
     pub(crate) stabs: GensHybrid,
     pub(crate) destabs: GensHybrid,
     rng: R,
+    // Scratch buffers for measurement to avoid repeated allocations
+    scratch_stabs_col: VecSet<usize>,
+    scratch_destabs_col: VecSet<usize>,
 }
 
 impl SparseStabHybrid<PecosRng> {
@@ -801,6 +807,8 @@ where
             stabs: GensHybrid::new(num_qubits),
             destabs: GensHybrid::new(num_qubits),
             rng,
+            scratch_stabs_col: VecSet::new(),
+            scratch_destabs_col: VecSet::new(),
         };
         stab.reset();
         stab
@@ -918,13 +926,18 @@ where
             if weight < smallest_wt {
                 smallest_wt = weight;
                 removed_id = Some(stab_id);
+                // Early termination: weight 1 is optimal (single-qubit Pauli)
+                if weight == 1 {
+                    break;
+                }
             }
         }
 
         let id = removed_id.expect("Critical error: removed_id was None");
 
-        // Clone col_x[q] and remove id once - reused for all operations
-        let mut anticom_stabs_col = self.stabs.col_x[q].clone();
+        // Reuse scratch buffer to avoid allocation - take it, use it, put it back
+        let mut anticom_stabs_col = std::mem::take(&mut self.scratch_stabs_col);
+        anticom_stabs_col.clone_from(&self.stabs.col_x[q]);
         anticom_stabs_col.remove(id);
 
         let removed_row_x = std::mem::take(&mut self.stabs.row_x[id]);
@@ -983,8 +996,9 @@ where
             self.destabs.col_z[i].remove(id);
         }
 
-        // Clone destabs col and remove id once
-        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
+        // Reuse scratch buffer for destabs col
+        let mut anticom_destabs_col = std::mem::take(&mut self.scratch_destabs_col);
+        anticom_destabs_col.clone_from(&self.destabs.col_x[q]);
         anticom_destabs_col.remove(id);
 
         for i in removed_row_x.iter().copied() {
@@ -997,15 +1011,18 @@ where
             self.destabs.col_z[i].xor_assign(&anticom_destabs_col);
         }
 
-        for row in self.destabs.col_x[q].iter().copied() {
-            if row != id {
-                self.destabs.row_x[row].xor_assign(&removed_row_x);
-                self.destabs.row_z[row].xor_assign(&removed_row_z);
-            }
+        // Use anticom_destabs_col (already has id removed) to avoid per-iteration check
+        for row in anticom_destabs_col.iter().copied() {
+            self.destabs.row_x[row].xor_assign(&removed_row_x);
+            self.destabs.row_z[row].xor_assign(&removed_row_z);
         }
 
         self.destabs.row_x[id] = removed_row_x;
         self.destabs.row_z[id] = removed_row_z;
+
+        // Put scratch buffers back for reuse
+        self.scratch_stabs_col = anticom_stabs_col;
+        self.scratch_destabs_col = anticom_destabs_col;
 
         let outcome = self.apply_outcome(id, result);
         MeasurementResult {

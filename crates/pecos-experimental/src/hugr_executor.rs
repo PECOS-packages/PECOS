@@ -289,9 +289,16 @@ where
             }
 
             // Unsupported gates
-            GateType::RX
+            GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
+            | GateType::RX
             | GateType::RY
             | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
             | GateType::T
             | GateType::Tdg
             | GateType::U

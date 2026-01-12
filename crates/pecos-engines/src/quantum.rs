@@ -161,6 +161,18 @@ impl Engine for StateVecEngine {
                     debug!("Processing SXdg gate on qubits {:?}", cmd.qubits);
                     self.simulator.sxdg(&cmd.qubits);
                 }
+                GateType::SX => {
+                    for q in &cmd.qubits {
+                        debug!("Processing SX gate on qubit {q:?}");
+                        self.simulator.sx(usize::from(*q));
+                    }
+                }
+                GateType::SXdg => {
+                    for q in &cmd.qubits {
+                        debug!("Processing SXdg gate on qubit {q:?}");
+                        self.simulator.sxdg(usize::from(*q));
+                    }
+                }
                 GateType::T => {
                     debug!("Processing T gate on qubits {:?}", cmd.qubits);
                     self.simulator.t(&cmd.qubits);
@@ -301,6 +313,86 @@ impl Engine for StateVecEngine {
                         self.simulator.cx(&[c0, c1]);
                     }
                 }
+                GateType::SWAP => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SWAP gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        debug!(
+                            "Processing SWAP gate on qubits {:?} and {:?}",
+                            qubits[0], qubits[1]
+                        );
+                        // SWAP = CX(0,1) CX(1,0) CX(0,1)
+                        let q0 = usize::from(qubits[0]);
+                        let q1 = usize::from(qubits[1]);
+                        self.simulator.cx(q0, q1);
+                        self.simulator.cx(q1, q0);
+                        self.simulator.cx(q0, q1);
+                    }
+                }
+                GateType::CRZ => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "CRZ gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.is_empty() {
+                        return Err(quantum_error("CRZ gate requires at least one angle"));
+                    }
+                    let angle = cmd.angles[0].to_radians();
+                    let half_angle = angle / 2.0;
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        debug!(
+                            "Processing CRZ gate on qubits {:?} and {:?} with angle {:?}",
+                            qubits[0], qubits[1], angle
+                        );
+                        // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
+                        let control = usize::from(qubits[0]);
+                        let target = usize::from(qubits[1]);
+                        self.simulator.rz(half_angle, target);
+                        self.simulator.cx(control, target);
+                        self.simulator.rz(-half_angle, target);
+                        self.simulator.cx(control, target);
+                    }
+                }
+                GateType::CCX => {
+                    if cmd.qubits.len() % 3 != 0 {
+                        return Err(quantum_error(format!(
+                            "CCX gate requires a multiple of 3 qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    for qubits in cmd.qubits.chunks_exact(3) {
+                        debug!(
+                            "Processing CCX gate with controls {:?}, {:?} and target {:?}",
+                            qubits[0], qubits[1], qubits[2]
+                        );
+                        // Toffoli decomposition into Clifford+T gates
+                        let c0 = usize::from(qubits[0]);
+                        let c1 = usize::from(qubits[1]);
+                        let target = usize::from(qubits[2]);
+                        // Standard decomposition (15 gates)
+                        self.simulator.h(target);
+                        self.simulator.cx(c1, target);
+                        self.simulator.tdg(target);
+                        self.simulator.cx(c0, target);
+                        self.simulator.t(target);
+                        self.simulator.cx(c1, target);
+                        self.simulator.tdg(target);
+                        self.simulator.cx(c0, target);
+                        self.simulator.t(c1);
+                        self.simulator.t(target);
+                        self.simulator.cx(c0, c1);
+                        self.simulator.h(target);
+                        self.simulator.t(c0);
+                        self.simulator.tdg(c1);
+                        self.simulator.cx(c0, c1);
+                    }
+                }
                 GateType::RX => {
                     if !cmd.angles.is_empty() {
                         let angle = cmd.angles[0].to_radians();
@@ -364,6 +456,12 @@ impl Engine for StateVecEngine {
                     // Just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
                     // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)
+                }
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                    return Err(quantum_error(format!(
+                        "Gate type {:?} is not yet supported by StateVecEngine",
+                        cmd.gate_type
+                    )));
                 }
                 GateType::QAlloc => {
                     // Allocate qubits in |0⟩ state - for state vector sim, same as Prep

@@ -112,34 +112,63 @@ impl Engine for QuestStateVecEngine {
                         }
                     }
                 }
+                GateType::SWAP => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        // SWAP = CX(0,1) CX(1,0) CX(0,1)
+                        let q0 = usize::from(qubits[0]);
+                        let q1 = usize::from(qubits[1]);
+                        self.simulator.cx(q0, q1);
+                        self.simulator.cx(q1, q0);
+                        self.simulator.cx(q0, q1);
+                    }
+                }
+                GateType::CRZ => {
+                    if !cmd.params.is_empty() {
+                        let angle = cmd.params[0];
+                        let half_angle = angle / 2.0;
+                        for qubits in cmd.qubits.chunks_exact(2) {
+                            // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
+                            let control = usize::from(qubits[0]);
+                            let target = usize::from(qubits[1]);
+                            self.simulator.rz(half_angle, target);
+                            self.simulator.cx(control, target);
+                            self.simulator.rz(-half_angle, target);
+                            self.simulator.cx(control, target);
+                        }
+                    }
+                }
                 GateType::CCX => {
-                    for triple in cmd.qubits.chunks_exact(3) {
+                    for qubits in cmd.qubits.chunks_exact(3) {
                         // Toffoli decomposition into Clifford+T gates
-                        let c0 = triple[0];
-                        let c1 = triple[1];
-                        let target = triple[2];
-                        self.simulator.h(&[target]);
-                        self.simulator.cx(&[c1, target]);
-                        self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[c0, target]);
-                        self.simulator.t(&[target]);
-                        self.simulator.cx(&[c1, target]);
-                        self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[c0, target]);
-                        self.simulator.t(&[c1]);
-                        self.simulator.t(&[target]);
-                        self.simulator.cx(&[c0, c1]);
-                        self.simulator.h(&[target]);
-                        self.simulator.t(&[c0]);
-                        self.simulator.tdg(&[c1]);
-                        self.simulator.cx(&[c0, c1]);
+                        let c0 = usize::from(qubits[0]);
+                        let c1 = usize::from(qubits[1]);
+                        let target = usize::from(qubits[2]);
+                        self.simulator.h(target);
+                        self.simulator.cx(c1, target);
+                        self.simulator.tdg(target);
+                        self.simulator.cx(c0, target);
+                        self.simulator.t(target);
+                        self.simulator.cx(c1, target);
+                        self.simulator.tdg(target);
+                        self.simulator.cx(c0, target);
+                        self.simulator.t(c1);
+                        self.simulator.t(target);
+                        self.simulator.cx(c0, c1);
+                        self.simulator.h(target);
+                        self.simulator.t(c0);
+                        self.simulator.tdg(c1);
+                        self.simulator.cx(c0, c1);
                     }
                 }
                 GateType::SX => {
-                    self.simulator.sx(&cmd.qubits);
+                    for q in &cmd.qubits {
+                        self.simulator.sx(usize::from(*q));
+                    }
                 }
                 GateType::SXdg => {
-                    self.simulator.sxdg(&cmd.qubits);
+                    for q in &cmd.qubits {
+                        self.simulator.sxdg(usize::from(*q));
+                    }
                 }
                 GateType::RX => {
                     if !cmd.params.is_empty() {
@@ -184,6 +213,12 @@ impl Engine for QuestStateVecEngine {
                         self.simulator
                             .u(cmd.params[0], cmd.params[1], cmd.params[2], &cmd.qubits);
                     }
+                }
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                    return Err(PecosError::Processing(format!(
+                        "Gate type {:?} is not yet supported by QuestStateVecEngine",
+                        cmd.gate_type
+                    )));
                 }
             }
         }
@@ -311,34 +346,63 @@ impl Engine for QuestDensityMatrixEngine {
                         }
                     }
                 }
+                GateType::SWAP => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        // SWAP = CX(0,1) CX(1,0) CX(0,1)
+                        let q0 = usize::from(qubits[0]);
+                        let q1 = usize::from(qubits[1]);
+                        self.simulator.cx(q0, q1);
+                        self.simulator.cx(q1, q0);
+                        self.simulator.cx(q0, q1);
+                    }
+                }
+                GateType::CRZ => {
+                    if !cmd.params.is_empty() {
+                        let angle = cmd.params[0];
+                        let half_angle = angle / 2.0;
+                        for qubits in cmd.qubits.chunks_exact(2) {
+                            // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
+                            let control = usize::from(qubits[0]);
+                            let target = usize::from(qubits[1]);
+                            self.simulator.rz(half_angle, target);
+                            self.simulator.cx(control, target);
+                            self.simulator.rz(-half_angle, target);
+                            self.simulator.cx(control, target);
+                        }
+                    }
+                }
                 GateType::CCX => {
-                    for triple in cmd.qubits.chunks_exact(3) {
+                    for qubits in cmd.qubits.chunks_exact(3) {
                         // Toffoli decomposition into Clifford+T gates
-                        let c0 = triple[0];
-                        let c1 = triple[1];
-                        let target = triple[2];
-                        self.simulator.h(&[target]);
-                        self.simulator.cx(&[c1, target]);
-                        self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[c0, target]);
-                        self.simulator.t(&[target]);
-                        self.simulator.cx(&[c1, target]);
-                        self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[c0, target]);
-                        self.simulator.t(&[c1]);
-                        self.simulator.t(&[target]);
-                        self.simulator.cx(&[c0, c1]);
-                        self.simulator.h(&[target]);
-                        self.simulator.t(&[c0]);
-                        self.simulator.tdg(&[c1]);
-                        self.simulator.cx(&[c0, c1]);
+                        let c0 = usize::from(qubits[0]);
+                        let c1 = usize::from(qubits[1]);
+                        let target = usize::from(qubits[2]);
+                        self.simulator.h(target);
+                        self.simulator.cx(c1, target);
+                        self.simulator.tdg(target);
+                        self.simulator.cx(c0, target);
+                        self.simulator.t(target);
+                        self.simulator.cx(c1, target);
+                        self.simulator.tdg(target);
+                        self.simulator.cx(c0, target);
+                        self.simulator.t(c1);
+                        self.simulator.t(target);
+                        self.simulator.cx(c0, c1);
+                        self.simulator.h(target);
+                        self.simulator.t(c0);
+                        self.simulator.tdg(c1);
+                        self.simulator.cx(c0, c1);
                     }
                 }
                 GateType::SX => {
-                    self.simulator.sx(&cmd.qubits);
+                    for q in &cmd.qubits {
+                        self.simulator.sx(usize::from(*q));
+                    }
                 }
                 GateType::SXdg => {
-                    self.simulator.sxdg(&cmd.qubits);
+                    for q in &cmd.qubits {
+                        self.simulator.sxdg(usize::from(*q));
+                    }
                 }
                 GateType::RX => {
                     if !cmd.params.is_empty() {
@@ -383,6 +447,12 @@ impl Engine for QuestDensityMatrixEngine {
                         self.simulator
                             .u(cmd.params[0], cmd.params[1], cmd.params[2], &cmd.qubits);
                     }
+                }
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                    return Err(PecosError::Processing(format!(
+                        "Gate type {:?} is not yet supported by QuestDensityMatrixEngine",
+                        cmd.gate_type
+                    )));
                 }
             }
         }
@@ -1104,6 +1174,12 @@ impl Engine for QuestCudaStateVecEngine {
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::QFree => {
                     // No operation needed (QFree is just a marker for qubit lifecycle)
+                }
+                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                    return Err(PecosError::Processing(format!(
+                        "Gate type {:?} is not yet supported by QuestCudaStateVecEngine",
+                        cmd.gate_type
+                    )));
                 }
             }
         }

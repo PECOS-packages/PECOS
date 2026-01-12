@@ -67,6 +67,11 @@ class LogicalCircuit(QuantumCircuit):
 
         self.suppress_warning = suppress_warning
 
+        # Store logical gates separately (they have .circuits attribute that iter_ticks needs)
+        self._logical_gates: list[
+            list[tuple[LogicalGateProtocol, LocationSet, dict[str, Any]]]
+        ] = []
+
         super().__init__(**params)
 
     def append(
@@ -83,10 +88,18 @@ class LogicalCircuit(QuantumCircuit):
             gate_locations: Set of locations where the gate should be applied.
             **params: Additional parameters for the gate.
         """
+        # Store the logical gate in our separate storage (for iter_ticks)
         if gate_locations is None and not isinstance(logical_gate, dict):
-            super().append(logical_gate, frozenset([None]), **params)
+            locations: LocationSet = frozenset([None])
         else:
-            super().append(logical_gate, gate_locations, **params)
+            locations = gate_locations or set()
+
+        # Add a new tick to logical gates storage
+        self._logical_gates.append([(logical_gate, locations, params)])  # type: ignore[arg-type]
+
+        # Also call parent's append to maintain tick count
+        # Use a dummy symbol since logical gates aren't actual physical gates
+        self.add_ticks(1)
 
         if self.layout is None:
             qecc = logical_gate.qecc
@@ -162,6 +175,28 @@ class LogicalCircuit(QuantumCircuit):
         msg = "!!!"
         raise NotImplementedError(msg)
 
+    def items(
+        self,
+        tick: int | None = None,
+    ) -> Iterator[tuple[Any, LocationSet, dict[str, Any]]]:
+        """Return an iterator over logical gates.
+
+        Args:
+            tick: If specified, return only gates from that tick.
+                  If None, return gates from all ticks.
+
+        Yields:
+            Tuples of (logical_gate, locations, params).
+        """
+        if tick is not None:
+            # Return gates from specific tick
+            if 0 <= tick < len(self._logical_gates):
+                yield from self._logical_gates[tick]
+        else:
+            # Return gates from all ticks
+            for tick_gates in self._logical_gates:
+                yield from tick_gates
+
     def iter_ticks(self) -> Iterator[tuple[Any, tuple[int, int, int], dict[str, Any]]]:
         """An iterator for looping over the various quantum circuits comprising this data structure."""
         for logical_tick in range(len(self)):
@@ -180,26 +215,36 @@ class LogicalCircuit(QuantumCircuit):
 
     def __iter__(self) -> Iterator[Any]:
         """Iterate over all logical gates in the circuit."""
-        for element in self._ticks:
-            for gate, _, _ in element.items():
-                yield gate
+        for gate, _, _ in self.items():
+            yield gate
 
     def __str__(self) -> str:
         """Return string representation of the logical circuit."""
-        return f"LogicalCircuit({self._ticks})"
+        ticks_repr = []
+        for _tick_idx, tick_gates in enumerate(self._logical_gates):
+            gates_str = ", ".join(
+                f"{getattr(gate, 'symbol', str(gate))}: {locs}"
+                for gate, locs, _ in tick_gates
+            )
+            ticks_repr.append(f"Tick({{{gates_str}}})")
+        return f"LogicalCircuit([{', '.join(ticks_repr)}])"
 
     def __repr__(self) -> str:
         """Return detailed string representation of the logical circuit."""
         return self.__str__()
+
+    def __len__(self) -> int:
+        """Return the number of logical ticks in the circuit."""
+        return len(self._logical_gates)
 
     def __getitem__(self, tick: int | tuple[int, int, int]) -> ParamGateCollection:
         """Returns tick when instance[index] is used.
 
         Args:
         ----
-            tick(int): Tick index of ``self._ticks``.
+            tick(int): Tick index of the circuit.
         """
         if isinstance(tick, int):
-            return self._ticks[tick]
+            return super().__getitem__(tick)
         logical_tick, _, _ = tick
         return self[logical_tick]

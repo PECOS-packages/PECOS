@@ -54,16 +54,15 @@ This guide will help you get up and running with PECOS quickly.
 
 ## Your First Simulation
 
-Now that PECOS is installed, let's create a simple quantum circuit. We'll create a **Bell state**—a fundamental entangled state used throughout quantum computing and quantum error correction.
+Now that PECOS is installed, let's simulate a quantum error correction circuit. We'll create a **distance-3 repetition code**—a fundamental building block for protecting quantum information from errors.
 
 ### What We're Building
 
-A Bell state is created by:
+A repetition code encodes a single logical qubit across multiple physical qubits:
 
-1. Applying a Hadamard gate (H) to put a qubit in superposition
-2. Applying a CNOT gate to entangle two qubits
-
-The result is the state $\frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$, where measuring either qubit always gives the same result as the other.
+1. **3 data qubits** store the logical state: $|0\rangle_L = |000\rangle$, $|1\rangle_L = |111\rangle$
+2. **2 ancilla qubits** measure parity between adjacent data qubits (syndrome extraction)
+3. **Noise** introduces random errors that the syndromes detect
 
 ### Running the Simulation
 
@@ -72,27 +71,45 @@ The result is the state $\frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$, where mea
     We'll use **Guppy**, a Python-embedded quantum programming language that offers type-safe qubit tracking and native control flow:
 
     ```python
+    from pecos import Guppy, sim, state_vector, depolarizing_noise
     from guppylang import guppy
-    from guppylang.std.quantum import h, cx, measure, qubit
-    from pecos import sim, Guppy
-    from pecos_rslib import state_vector
+    from guppylang.std.quantum import qubit, cx, measure
+    from guppylang.std.builtins import array, result
 
 
     @guppy
-    def bell_state() -> tuple[bool, bool]:
-        """Create and measure a Bell state."""
-        q0 = qubit()
-        q1 = qubit()
-        h(q0)
-        cx(q0, q1)
-        return measure(q0), measure(q1)
+    def repetition_code() -> None:
+        # 3 data qubits encode logical |0⟩ = |000⟩
+        d0, d1, d2 = qubit(), qubit(), qubit()
+
+        # 2 ancillas for syndrome extraction
+        s0, s1 = qubit(), qubit()
+
+        # Measure parity between adjacent data qubits
+        cx(d0, s0)
+        cx(d1, s0)
+        cx(d1, s1)
+        cx(d2, s1)
+
+        # Extract syndromes as an array
+        result("syndrome", array(measure(s0), measure(s1)))
+
+        # Measure data qubits (required by Guppy)
+        _ = measure(d0), measure(d1), measure(d2)
 
 
-    # Run 10 shots of the simulation
-    results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(10)
-
-    # View results
-    print(f"Results: {results.to_dict()}")
+    # Run 10 shots with 10% depolarizing noise
+    noise = depolarizing_noise().with_uniform_probability(0.1)
+    results = (
+        sim(Guppy(repetition_code))
+        .qubits(5)
+        .quantum(state_vector())
+        .noise(noise)
+        .seed(42)
+        .run(10)
+    )
+    print(results["syndrome"])
+    # [[1, 1], [0, 1], [0, 0], [1, 1], [0, 0], [0, 1], [1, 1], [0, 0], [0, 1], [0, 1]]
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -103,14 +120,14 @@ The result is the state $\frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$, where mea
     use pecos_hugr::hugr_sim;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        // Load and run a pre-compiled Bell state circuit
-        let results = hugr_sim("bell_state.hugr")
+        // Load and run a pre-compiled repetition code circuit
+        let results = hugr_sim("repetition_code.hugr")
             .seed(42)
             .run(10)?;
 
         // View results
         for shot in &results.shots {
-            println!("Measurement: {:?}", shot.data);
+            println!("Syndrome: {:?}", shot.data);
         }
         Ok(())
     }
@@ -122,10 +139,16 @@ The result is the state $\frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$, where mea
 
 ### Understanding the Output
 
-Run the code multiple times (with different seeds). You'll notice:
+The syndromes tell you which errors occurred:
 
-- Results contain values like `0` (binary `00`) and `3` (binary `11`)
-- Both qubits **always** have the same value—this is quantum entanglement!
+| Syndrome | Meaning |
+|----------|---------|
+| `[0, 0]` | No detected errors |
+| `[1, 0]` | Error on qubit d0 (left edge) |
+| `[0, 1]` | Error on qubit d2 (right edge) |
+| `[1, 1]` | Error on qubit d1 (middle) |
+
+A decoder uses these syndromes to identify and correct errors—see the [Decoders](decoders.md) guide.
 
 The `sim()` function is PECOS's unified simulation API. It accepts circuits in various formats (Guppy, HUGR, QASM) and provides a builder pattern for configuration.
 

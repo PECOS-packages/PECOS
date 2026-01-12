@@ -597,11 +597,15 @@ impl QASMEngine {
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::QFree => Ok(()), // No-op gates (QFree is just a marker)
             GateType::X
-            | GateType::Y
             | GateType::Z
-            | GateType::H
+            | GateType::Y
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
             | GateType::SZ
             | GateType::SZdg
+            | GateType::H
             | GateType::T
             | GateType::Tdg
             | GateType::Prep
@@ -619,6 +623,8 @@ impl QASMEngine {
             GateType::RX
             | GateType::RY
             | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
             | GateType::RZZ
             | GateType::R1XY
             | GateType::U => {

@@ -110,6 +110,15 @@ impl Gate {
             .collect()
     }
 
+    /// Create Identity gate on multiple qubits
+    #[must_use]
+    pub fn i(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::I,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Create X gate on multiple qubits
     #[must_use]
     pub fn x(qubits: &[impl Into<QubitId> + Copy]) -> Self {
@@ -146,6 +155,78 @@ impl Gate {
         )
     }
 
+    /// Create SX gate (sqrt-X) on multiple qubits
+    #[must_use]
+    pub fn sx(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::SX,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create `SXdg` gate (sqrt-X dagger) on multiple qubits
+    #[must_use]
+    pub fn sxdg(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::SXdg,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create SY gate (sqrt-Y) on multiple qubits
+    #[must_use]
+    pub fn sy(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::SY,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create `SYdg` gate (sqrt-Y dagger) on multiple qubits
+    #[must_use]
+    pub fn sydg(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::SYdg,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create SZ gate (sqrt-Z) on multiple qubits
+    #[must_use]
+    pub fn sz(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::SZ,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create `SZdg` gate (sqrt-Z dagger) on multiple qubits
+    #[must_use]
+    pub fn szdg(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::SZdg,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create T gate on multiple qubits
+    #[must_use]
+    pub fn t(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::T,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create Tdg gate on multiple qubits
+    #[must_use]
+    pub fn tdg(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::Tdg,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Create CX gate from flat qubit list (control1, target1, control2, target2, ...)
     ///
     /// # Panics
@@ -168,6 +249,54 @@ impl Gate {
     pub fn cx(qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
         let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
         Self::cx_vec(&flat_qubits)
+    }
+
+    /// Create CY gate from flat qubit list (control1, target1, control2, target2, ...)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of qubits is not even, as `CY` gates require pairs of qubits.
+    #[must_use]
+    pub fn cy_vec(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        assert!(
+            qubits.len().is_multiple_of(2),
+            "CY gate requires an even number of qubits"
+        );
+        Self::simple(
+            GateType::CY,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create CY gate on multiple qubit pairs
+    #[must_use]
+    pub fn cy(qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
+        Self::cy_vec(&flat_qubits)
+    }
+
+    /// Create CZ gate from flat qubit list (control1, target1, control2, target2, ...)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of qubits is not even, as `CZ` gates require pairs of qubits.
+    #[must_use]
+    pub fn cz_vec(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ gate requires an even number of qubits"
+        );
+        Self::simple(
+            GateType::CZ,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create CZ gate on multiple qubit pairs
+    #[must_use]
+    pub fn cz(qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
+        Self::cz_vec(&flat_qubits)
     }
 
     /// Create SZZ gate from flat qubit list (`qubit1_1`, `qubit2_1`, `qubit1_2`, `qubit2_2`, ...)
@@ -216,6 +345,62 @@ impl Gate {
     pub fn szzdg(qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
         let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
         Self::szzdg_vec(&flat_qubits)
+    }
+
+    /// Create RXX gate from flat qubit list (`qubit1_1`, `qubit2_1`, `qubit1_2`, `qubit2_2`, ...)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of qubits is not even, as `RXX` gates require pairs of qubits.
+    #[must_use]
+    pub fn rxx_vec(theta: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        assert!(
+            qubits.len().is_multiple_of(2),
+            "RXX gate requires an even number of qubits"
+        );
+        Self::with_angles(
+            GateType::RXX,
+            vec![theta],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create RXX gate on multiple qubit pairs
+    #[must_use]
+    pub fn rxx(
+        theta: Angle64,
+        qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
+        Self::rxx_vec(theta, &flat_qubits)
+    }
+
+    /// Create RYY gate from flat qubit list (`qubit1_1`, `qubit2_1`, `qubit1_2`, `qubit2_2`, ...)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of qubits is not even, as `RYY` gates require pairs of qubits.
+    #[must_use]
+    pub fn ryy_vec(theta: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        assert!(
+            qubits.len().is_multiple_of(2),
+            "RYY gate requires an even number of qubits"
+        );
+        Self::with_angles(
+            GateType::RYY,
+            vec![theta],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create RYY gate on multiple qubit pairs
+    #[must_use]
+    pub fn ryy(
+        theta: Angle64,
+        qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
+        Self::ryy_vec(theta, &flat_qubits)
     }
 
     /// Create RZZ gate from flat qubit list (`qubit1_1`, `qubit2_1`, `qubit1_2`, `qubit2_2`, ...)

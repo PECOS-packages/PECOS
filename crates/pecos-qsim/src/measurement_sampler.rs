@@ -25,7 +25,7 @@
 //! # Example
 //!
 //! ```rust
-//! use pecos_qsim::symbolic_sparse_stab::SymbolicSparseStab;
+//! use pecos_qsim::SymbolicSparseStab;
 //! use pecos_qsim::measurement_sampler::{SequentialMeasurementSampler, MeasurementSampler};
 //!
 //! // Create a Bell state and measure
@@ -670,7 +670,7 @@ impl MeasurementSampler {
 ///
 /// ```rust
 /// use pecos_qsim::measurement_sampler::{MeasurementSampler, SampleResult};
-/// use pecos_qsim::symbolic_sparse_stab::SymbolicSparseStab;
+/// use pecos_qsim::SymbolicSparseStab;
 ///
 /// let mut sim = SymbolicSparseStab::new(2);
 /// sim.h(0).cx(0, 1);
@@ -979,7 +979,7 @@ impl MeasurementSampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::symbolic_sparse_stab::SymbolicSparseStab;
+    use crate::SymbolicSparseStab;
 
     // -------------------------------------------------------------------------
     // Tests for deterministic zero

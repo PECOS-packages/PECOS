@@ -10,10 +10,10 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::{CliffordGateable, Gens, MeasurementResult, QuantumSimulator};
+use crate::{CliffordGateable, GensGeneric, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
-use pecos_core::{QubitId, RngManageable, Set, VecSet};
+use pecos_core::{BitSet, IndexSet, QubitId, RngManageable, VecSet};
 use pecos_rng::rng_ext::RngProbabilityExt;
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 
@@ -96,21 +96,31 @@ use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 ///    <https://arxiv.org/abs/quant-ph/0406196>
 /// 2. Ryan-Anderson, "Quantum Algorithms, Architecture, and Error Correction"
 ///    <https://arxiv.org/abs/1812.04735>
+/// Generic sparse stabilizer simulator over set type S.
 #[derive(Clone, Debug)]
-pub struct SparseStab<R = PecosRng>
-where
-    R: RngCore + SeedableRng + Rng + Debug,
-{
+pub struct SparseStabGeneric<
+    S: IndexSet = BitSet,
+    R: RngCore + SeedableRng + Rng + Debug = PecosRng,
+> {
     pub(crate) num_qubits: usize,
-    stabs: Gens,
-    destabs: Gens,
+    stabs: GensGeneric<S>,
+    destabs: GensGeneric<S>,
     rng: R,
 }
 
-/// Constructors for `SparseStab` with the default RNG type (`PecosRng`).
+/// Default sparse stabilizer simulator using `BitSet` for O(1) toggle operations.
+pub type SparseStab<R = PecosRng> = SparseStabGeneric<BitSet, R>;
+
+/// Sparse stabilizer simulator using `BitSet` (same as `SparseStab`).
+pub type SparseStabBitSet<R = PecosRng> = SparseStabGeneric<BitSet, R>;
+
+/// Sparse stabilizer simulator using `VecSet` for lower overhead on small circuits.
+pub type SparseStabVecSet<R = PecosRng> = SparseStabGeneric<VecSet<usize>, R>;
+
+/// Constructors for `SparseStab` with the default set and RNG types.
 ///
-/// These methods provide ergonomic construction without needing to specify the RNG type.
-impl SparseStab {
+/// These methods provide ergonomic construction without needing to specify types.
+impl SparseStabGeneric<BitSet, PecosRng> {
     /// Create a new stabilizer simulator with the default RNG.
     ///
     /// This is the most common constructor - it uses the default `PecosRng` seeded
@@ -157,9 +167,10 @@ impl SparseStab {
     }
 }
 
-/// Methods available on `SparseStab` with any RNG type.
-impl<R> SparseStab<R>
+/// Methods available on `SparseStabGeneric` with any set and RNG types.
+impl<S, R> SparseStabGeneric<S, R>
 where
+    S: IndexSet,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     /// Returns the number of qubits in the system
@@ -200,8 +211,8 @@ where
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
         let mut stab = Self {
             num_qubits,
-            stabs: Gens::new(num_qubits),
-            destabs: Gens::new(num_qubits),
+            stabs: GensGeneric::<S>::new(num_qubits),
+            destabs: GensGeneric::<S>::new(num_qubits),
             rng,
         };
         stab.reset();
@@ -227,12 +238,12 @@ where
     }
 
     #[inline]
-    fn check_row_eq_col(gens: &Gens) {
+    fn check_row_eq_col(gens: &GensGeneric<S>) {
         // TODO: Verify that this is doing what is intended...
         for (i, row) in gens.row_x.iter().enumerate() {
-            for &j in row {
+            for j in row.iter() {
                 assert!(
-                    gens.col_x[j].contains(&i),
+                    gens.col_x[j].contains(i),
                     "Column-wise sparse matrix doesn't match row-wise spare matrix"
                 );
             }
@@ -241,23 +252,23 @@ where
 
     /// Utility that creates a string for the Pauli generates of a `Gens`.
     #[inline]
-    fn tableau_string(num_qubits: usize, gens: &Gens) -> String {
+    fn tableau_string(num_qubits: usize, gens: &GensGeneric<S>) -> String {
         // TODO: calculate signs so we are really doing Y and not W
         let mut result =
             String::with_capacity(num_qubits * gens.row_x.len() + gens.row_x.len() + 2);
         for i in 0..gens.row_x.len() {
-            if gens.signs_minus.contains(&i) {
+            if gens.signs_minus.contains(i) {
                 result.push('-');
             } else {
                 result.push('+');
             }
-            if gens.signs_i.contains(&i) {
+            if gens.signs_i.contains(i) {
                 result.push('i');
             }
 
             for qubit in 0..num_qubits {
-                let in_row_x = gens.row_x[i].contains(&qubit);
-                let in_row_z = gens.row_z[i].contains(&qubit);
+                let in_row_x = gens.row_x[i].contains(qubit);
+                let in_row_z = gens.row_z[i].contains(qubit);
 
                 let char = match (in_row_x, in_row_z) {
                     (false, false) => 'I',
@@ -288,11 +299,11 @@ where
     /// Negate the sign of a stabilizer generator.
     #[inline]
     pub fn neg(&mut self, s: usize) {
-        self.stabs.signs_minus ^= &s;
+        self.stabs.signs_minus.toggle(s);
     }
 
     #[inline]
-    pub fn signs_minus(&self) -> &VecSet<usize> {
+    pub fn signs_minus(&self) -> &S {
         &self.stabs.signs_minus
     }
 
@@ -303,10 +314,10 @@ where
 
         let num_is = self.destabs.col_x[q].intersection_count(&self.stabs.signs_i);
 
-        let mut cumulative_x = VecSet::new();
-        for &row in &self.destabs.col_x[q] {
+        let mut cumulative_x = S::new();
+        for row in self.destabs.col_x[q].iter() {
             num_minuses += self.stabs.row_z[row].intersection_count(&cumulative_x);
-            cumulative_x ^= &self.stabs.row_x[row];
+            cumulative_x.xor_assign(&self.stabs.row_x[row]);
         }
         if num_is & 3 != 0 {
             // num_is % 4 != 0
@@ -328,7 +339,7 @@ where
         let mut smallest_wt = 2 * self.num_qubits + 2;
         let mut removed_id: Option<usize> = None;
 
-        for &stab_id in &anticom_stabs_col {
+        for stab_id in anticom_stabs_col.iter() {
             let weight = self.stabs.row_x[stab_id].len() + self.stabs.row_z[stab_id].len();
 
             if weight < smallest_wt {
@@ -342,54 +353,54 @@ where
 
         let id = removed_id.expect("Critical error: removed_id was None");
 
-        anticom_stabs_col.remove(&id);
+        anticom_stabs_col.remove(id);
         // Use take instead of clone: the original rows are cleared later anyway (and take leaves them empty).
         // We'll iterate over these copies in the column update loop below.
         let removed_row_x = std::mem::take(&mut self.stabs.row_x[id]);
         let removed_row_z = std::mem::take(&mut self.stabs.row_z[id]);
 
-        if self.stabs.signs_minus.contains(&id) {
-            self.stabs.signs_minus ^= &anticom_stabs_col;
+        if self.stabs.signs_minus.contains(id) {
+            self.stabs.signs_minus.xor_assign(&anticom_stabs_col);
         }
 
-        if self.stabs.signs_i.contains(&id) {
-            self.stabs.signs_i.remove(&id);
+        if self.stabs.signs_i.contains(id) {
+            self.stabs.signs_i.remove(id);
 
             // Fused: XOR intersection into signs_minus, then XOR signs_i with anticom_stabs_col
             // This replaces the SmallVec allocations and separate loops
             self.stabs
                 .signs_i
                 .xor_intersection_into(&anticom_stabs_col, &mut self.stabs.signs_minus);
-            self.stabs.signs_i ^= &anticom_stabs_col;
+            self.stabs.signs_i.xor_assign(&anticom_stabs_col);
         }
 
-        for &g in &anticom_stabs_col {
+        for g in anticom_stabs_col.iter() {
             let num_minuses = removed_row_z.intersection_count(&self.stabs.row_x[g]);
 
             if num_minuses & 1 != 0 {
                 // num_minuses % 2 != 0 (is odd)
-                self.stabs.signs_minus ^= &g;
+                self.stabs.signs_minus.toggle(g);
             }
 
-            self.stabs.row_x[g] ^= &removed_row_x;
-            self.stabs.row_z[g] ^= &removed_row_z;
+            self.stabs.row_x[g].xor_assign(&removed_row_x);
+            self.stabs.row_z[g].xor_assign(&removed_row_z);
         }
 
-        for &i in &removed_row_x {
-            self.stabs.col_x[i] ^= &anticom_stabs_col;
+        for i in removed_row_x.iter() {
+            self.stabs.col_x[i].xor_assign(&anticom_stabs_col);
         }
 
-        for &i in &removed_row_z {
-            self.stabs.col_z[i] ^= &anticom_stabs_col;
+        for i in removed_row_z.iter() {
+            self.stabs.col_z[i].xor_assign(&anticom_stabs_col);
         }
 
         // Iterate over removed_row_x/z instead of self.stabs.row_x/z[id] since we used take above
-        for &i in &removed_row_x {
-            self.stabs.col_x[i].remove(&id);
+        for i in removed_row_x.iter() {
+            self.stabs.col_x[i].remove(id);
         }
 
-        for &i in &removed_row_z {
-            self.stabs.col_z[i].remove(&id);
+        for i in removed_row_z.iter() {
+            self.stabs.col_z[i].remove(id);
         }
 
         // Remove replaced stabilizer with the measured stabilizer
@@ -398,29 +409,29 @@ where
         // Row update - no need to clear since we used take() above
         self.stabs.row_z[id].insert(q);
 
-        for &i in &self.destabs.row_x[id] {
-            self.destabs.col_x[i].remove(&id);
+        for i in self.destabs.row_x[id].iter() {
+            self.destabs.col_x[i].remove(id);
         }
 
-        for &i in &self.destabs.row_z[id] {
-            self.destabs.col_z[i].remove(&id);
+        for i in self.destabs.row_z[id].iter() {
+            self.destabs.col_z[i].remove(id);
         }
 
-        anticom_destabs_col.remove(&id);
+        anticom_destabs_col.remove(id);
 
-        for &i in &removed_row_x {
+        for i in removed_row_x.iter() {
             self.destabs.col_x[i].insert(id);
-            self.destabs.col_x[i] ^= &anticom_destabs_col;
+            self.destabs.col_x[i].xor_assign(&anticom_destabs_col);
         }
 
-        for &i in &removed_row_z {
+        for i in removed_row_z.iter() {
             self.destabs.col_z[i].insert(id);
-            self.destabs.col_z[i] ^= &anticom_destabs_col;
+            self.destabs.col_z[i].xor_assign(&anticom_destabs_col);
         }
 
-        for &row in &anticom_destabs_col {
-            self.destabs.row_x[row] ^= &removed_row_x;
-            self.destabs.row_z[row] ^= &removed_row_z;
+        for row in anticom_destabs_col.iter() {
+            self.destabs.row_x[row].xor_assign(&removed_row_x);
+            self.destabs.row_z[row].xor_assign(&removed_row_z);
         }
 
         self.destabs.row_x[id] = removed_row_x;
@@ -450,7 +461,7 @@ where
         let result = self.mz_forced(q, forced_outcome);
         if result.outcome {
             // Inline X gate: X -> X, Z -> -Z
-            self.stabs.signs_minus ^= &self.stabs.col_z[q];
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[q]);
         }
         self
     }
@@ -461,14 +472,15 @@ where
         if meas_outcome {
             self.stabs.signs_minus.insert(id);
         } else {
-            self.stabs.signs_minus.remove(&id);
+            self.stabs.signs_minus.remove(id);
         }
         meas_outcome
     }
 }
 
-impl<R> QuantumSimulator for SparseStab<R>
+impl<S, R> QuantumSimulator for SparseStabGeneric<S, R>
 where
+    S: IndexSet,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     #[inline]
@@ -477,8 +489,9 @@ where
     }
 }
 
-impl<R> CliffordGateable for SparseStab<R>
+impl<S, R> CliffordGateable for SparseStabGeneric<S, R>
 where
+    S: IndexSet,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
@@ -489,7 +502,7 @@ where
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             let qu = q.index();
-            self.stabs.signs_minus ^= &self.stabs.col_z[qu];
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
         }
         self
     }
@@ -500,10 +513,8 @@ where
         for &q in qubits {
             let qu = q.index();
             // Fused: XOR elements in (col_x[qu] ⊕ col_z[qu]) into signs_minus
-            self.stabs.col_x[qu].xor_symmetric_difference_into(
-                &self.stabs.col_z[qu],
-                &mut self.stabs.signs_minus,
-            );
+            self.stabs.col_x[qu]
+                .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
         }
         self
     }
@@ -512,7 +523,9 @@ where
     #[inline]
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.stabs.signs_minus ^= &self.stabs.col_x[q.index()];
+            self.stabs
+                .signs_minus
+                .xor_assign(&self.stabs.col_x[q.index()]);
         }
         self
     }
@@ -534,17 +547,16 @@ where
             // For each X add an i unless there is already an i there then delete it.
             // stabs.signs_i ^= stabs.col_x[qubit]
             // Fused: XOR elements in (signs_i ∩ col_x[qu]) into signs_minus
-            self.stabs.signs_i.xor_intersection_into(
-                &self.stabs.col_x[qu],
-                &mut self.stabs.signs_minus,
-            );
-            self.stabs.signs_i ^= &self.stabs.col_x[qu];
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
 
             for g in [&mut self.stabs, &mut self.destabs] {
-                g.col_z[qu] ^= &g.col_x[qu];
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
 
-                for &i in &g.col_x[qu] {
-                    g.row_z[i] ^= &qu;
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
                 }
             }
         }
@@ -558,20 +570,24 @@ where
             let qu = q.index();
 
             // Fused: XOR elements in (col_x[qu] ∩ col_z[qu]) into signs_minus
-            self.stabs.col_x[qu].xor_intersection_into(
-                &self.stabs.col_z[qu],
-                &mut self.stabs.signs_minus,
-            );
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
 
             for g in [&mut self.stabs, &mut self.destabs] {
-                for i in g.col_x[qu].difference(&g.col_z[qu]) {
-                    g.row_x[*i].remove(&qu);
-                    g.row_z[*i].insert(qu);
+                // Elements in col_x but not in col_z: X -> Z
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
                 }
 
-                for i in g.col_z[qu].difference(&g.col_x[qu]) {
-                    g.row_z[*i].remove(&qu);
-                    g.row_x[*i].insert(qu);
+                // Elements in col_z but not in col_x: Z -> X
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
                 }
 
                 mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
@@ -620,11 +636,11 @@ where
                         (col_x_max, col_x_min)
                     };
 
-                    // Use single-element XOR directly instead of creating a temporary VecSet
-                    for &i in col_x_qu1.iter() {
-                        g.row_x[i].symmetric_difference_item_update(&q2);
+                    // Use single-element toggle instead of creating a temporary set
+                    for i in col_x_qu1.iter() {
+                        g.row_x[i].toggle(q2);
                     }
-                    col_x_qu2.symmetric_difference_update(col_x_qu1);
+                    col_x_qu2.xor_assign(col_x_qu1);
                 }
 
                 // Handle col_z
@@ -640,11 +656,11 @@ where
                         (col_z_max, col_z_min)
                     };
 
-                    // Use single-element XOR directly instead of creating a temporary VecSet
-                    for &i in col_z_qu2.iter() {
-                        g.row_z[i].symmetric_difference_item_update(&q1);
+                    // Use single-element toggle instead of creating a temporary set
+                    for i in col_z_qu2.iter() {
+                        g.row_z[i].toggle(q1);
                     }
-                    col_z_qu1.symmetric_difference_update(col_z_qu2);
+                    col_z_qu1.xor_assign(col_z_qu2);
                 }
             }
         }
@@ -682,8 +698,9 @@ where
     }
 }
 
-impl<R> RngManageable for SparseStab<R>
+impl<S, R> RngManageable for SparseStabGeneric<S, R>
 where
+    S: IndexSet,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     type Rng = R;
@@ -717,11 +734,12 @@ where
     }
 }
 
-// Implement StabilizerTableauSimulator trait for SparseStab
+// Implement StabilizerTableauSimulator trait for SparseStabGeneric
 use crate::stabilizer_tableau::StabilizerTableauSimulator;
 
-impl<R> StabilizerTableauSimulator for SparseStab<R>
+impl<S, R> StabilizerTableauSimulator for SparseStabGeneric<S, R>
 where
+    S: IndexSet,
     R: RngCore + SeedableRng + Rng + Debug,
 {
     fn stab_tableau(&self) -> String {
@@ -740,7 +758,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CliffordGateable;
+    use crate::{CliffordGateable, Gens};
     use pecos_core::QubitId;
 
     // Helper to create qubit slice for single qubit
@@ -762,20 +780,20 @@ mod tests {
 
             match phase {
                 "+" => {
-                    assert!(!gens.signs_minus.contains(&r));
-                    assert!(!gens.signs_i.contains(&r));
+                    assert!(!gens.signs_minus.contains(r));
+                    assert!(!gens.signs_i.contains(r));
                 }
                 "-" => {
-                    assert!(gens.signs_minus.contains(&r));
-                    assert!(!gens.signs_i.contains(&r));
+                    assert!(gens.signs_minus.contains(r));
+                    assert!(!gens.signs_i.contains(r));
                 }
                 "+i" => {
-                    assert!(!gens.signs_minus.contains(&r));
-                    assert!(gens.signs_i.contains(&r));
+                    assert!(!gens.signs_minus.contains(r));
+                    assert!(gens.signs_i.contains(r));
                 }
                 "-i" => {
-                    assert!(gens.signs_minus.contains(&r));
-                    assert!(gens.signs_i.contains(&r));
+                    assert!(gens.signs_minus.contains(r));
+                    assert!(gens.signs_i.contains(r));
                 }
                 _ => unreachable!(),
             }
@@ -783,28 +801,28 @@ mod tests {
             for (c, val) in v.chars().enumerate() {
                 match val {
                     'I' => {
-                        assert!(!gens.col_x[c].contains(&r));
-                        assert!(!gens.col_z[c].contains(&r));
-                        assert!(!gens.row_x[r].contains(&c));
-                        assert!(!gens.row_z[r].contains(&c));
+                        assert!(!gens.col_x[c].contains(r));
+                        assert!(!gens.col_z[c].contains(r));
+                        assert!(!gens.row_x[r].contains(c));
+                        assert!(!gens.row_z[r].contains(c));
                     }
                     'X' => {
-                        assert!(gens.col_x[c].contains(&r));
-                        assert!(!gens.col_z[c].contains(&r));
-                        assert!(gens.row_x[r].contains(&c));
-                        assert!(!gens.row_z[r].contains(&c));
+                        assert!(gens.col_x[c].contains(r));
+                        assert!(!gens.col_z[c].contains(r));
+                        assert!(gens.row_x[r].contains(c));
+                        assert!(!gens.row_z[r].contains(c));
                     }
                     'Z' => {
-                        assert!(!gens.col_x[c].contains(&r));
-                        assert!(gens.col_z[c].contains(&r));
-                        assert!(!gens.row_x[r].contains(&c));
-                        assert!(gens.row_z[r].contains(&c));
+                        assert!(!gens.col_x[c].contains(r));
+                        assert!(gens.col_z[c].contains(r));
+                        assert!(!gens.row_x[r].contains(c));
+                        assert!(gens.row_z[r].contains(c));
                     }
                     'W' => {
-                        assert!(gens.col_x[c].contains(&r));
-                        assert!(gens.col_z[c].contains(&r));
-                        assert!(gens.row_x[r].contains(&c));
-                        assert!(gens.row_z[r].contains(&c));
+                        assert!(gens.col_x[c].contains(r));
+                        assert!(gens.col_z[c].contains(r));
+                        assert!(gens.row_x[r].contains(c));
+                        assert!(gens.row_z[r].contains(c));
                     }
                     _ => unreachable!(),
                 }

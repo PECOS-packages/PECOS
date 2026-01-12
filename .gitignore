@@ -9,6 +9,12 @@ tmp/
 # Cargo config with machine-specific LLVM paths
 .cargo/config.toml
 
+# Profiling artifacts
+perf.data
+perf.data.old
+flamegraph.svg
+*.flamegraph.svg
+
 # pytest results
 junit/
 

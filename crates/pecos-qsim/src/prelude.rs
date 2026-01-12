@@ -23,5 +23,8 @@ pub use crate::{
     sparse_stab::SparseStab,
     stabilizer_tableau::StabilizerTableauSimulator,
     state_vec::StateVec,
-    symbolic_sparse_stab::{MeasurementHistory, SymbolicMeasurementResult, SymbolicSparseStab},
+    symbolic_sparse_stab::{
+        MeasurementHistory, SymbolicMeasurementResult, SymbolicSparseStabVecSet,
+    },
+    symbolic_sparse_stab_bitset::SymbolicSparseStab,
 };

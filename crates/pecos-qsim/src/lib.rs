@@ -26,12 +26,13 @@ pub mod stabilizer_tableau;
 pub mod state_vec;
 pub mod symbolic_gens;
 pub mod symbolic_sparse_stab;
+pub mod symbolic_sparse_stab_bitset;
 
 pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
 pub use density_matrix::DensityMatrix;
-pub use gens::Gens;
+pub use gens::{Gens, GensBitSet, GensGeneric, GensVecSet};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
@@ -41,8 +42,13 @@ pub use pauli_prop::PauliProp;
 pub use pecos_core::{VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
-pub use sparse_stab::SparseStab;
+pub use sparse_stab::{SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabVecSet};
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 pub use state_vec::StateVec;
-pub use symbolic_gens::SymbolicGens;
-pub use symbolic_sparse_stab::{MeasurementHistory, SymbolicMeasurementResult, SymbolicSparseStab};
+pub use symbolic_gens::{
+    SymbolicGens, SymbolicGensBitSet, SymbolicGensGeneric, SymbolicGensVecSet,
+};
+pub use symbolic_sparse_stab::{
+    MeasurementHistory, SymbolicMeasurementResult, SymbolicSparseStabVecSet,
+};
+pub use symbolic_sparse_stab_bitset::SymbolicSparseStab;

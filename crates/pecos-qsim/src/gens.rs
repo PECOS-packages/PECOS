@@ -10,36 +10,45 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_core::{Set, VecSet};
+use pecos_core::{BitSet, IndexSet, VecSet};
 
-/// Storage for stabilizer/destabilizer generators.
+/// Storage for stabilizer/destabilizer generators, generic over the set type.
 ///
-/// Uses `VecSet<usize>` for efficient sparse storage of Pauli operators.
+/// Uses `IndexSet` trait to allow different implementations:
+/// - [`BitSet`]: O(1) toggle operations, efficient for larger circuits
+/// - [`VecSet<usize>`]: Lower overhead for small sets
 #[derive(Clone, Debug)]
-pub struct Gens {
+pub struct GensGeneric<S: IndexSet> {
     num_qubits: usize,
-    pub col_x: Vec<VecSet<usize>>,
-    pub col_z: Vec<VecSet<usize>>,
-    pub row_x: Vec<VecSet<usize>>,
-    pub row_z: Vec<VecSet<usize>>,
-    pub sign: VecSet<usize>,
-    pub signs_minus: VecSet<usize>,
-    pub signs_i: VecSet<usize>,
+    pub col_x: Vec<S>,
+    pub col_z: Vec<S>,
+    pub row_x: Vec<S>,
+    pub row_z: Vec<S>,
+    pub signs_minus: S,
+    pub signs_i: S,
 }
 
-impl Gens {
+/// Default generator storage using `BitSet` for O(1) toggle operations.
+pub type Gens = GensGeneric<BitSet>;
+
+/// Generator storage using `BitSet` (same as `Gens`).
+pub type GensBitSet = GensGeneric<BitSet>;
+
+/// Generator storage using `VecSet<usize>` for lower overhead on small sets.
+pub type GensVecSet = GensGeneric<VecSet<usize>>;
+
+impl<S: IndexSet> GensGeneric<S> {
     #[must_use]
     #[inline]
-    pub fn new(num_qubits: usize) -> Gens {
+    pub fn new(num_qubits: usize) -> Self {
         Self {
             num_qubits,
-            col_x: vec![VecSet::new(); num_qubits],
-            col_z: vec![VecSet::new(); num_qubits],
-            row_x: vec![VecSet::new(); num_qubits],
-            row_z: vec![VecSet::new(); num_qubits],
-            sign: VecSet::new(),
-            signs_minus: VecSet::new(),
-            signs_i: VecSet::new(),
+            col_x: (0..num_qubits).map(|_| S::new()).collect(),
+            col_z: (0..num_qubits).map(|_| S::new()).collect(),
+            row_x: (0..num_qubits).map(|_| S::new()).collect(),
+            row_z: (0..num_qubits).map(|_| S::new()).collect(),
+            signs_minus: S::new(),
+            signs_i: S::new(),
         }
     }
 
@@ -52,23 +61,22 @@ impl Gens {
     /// Clear all sign sets without reallocating the Vec storage.
     #[inline]
     fn clear_signs(&mut self) {
-        self.sign.clear();
         self.signs_minus.clear();
         self.signs_i.clear();
     }
 
-    /// Clear all elements in a Vec of Sets, keeping the Vec's capacity.
+    /// Clear all elements in a slice of Sets, keeping the Vec's capacity.
     #[inline]
-    fn clear_sets(sets: &mut [VecSet<usize>]) {
+    fn clear_sets(sets: &mut [S]) {
         for set in sets.iter_mut() {
             set.clear();
         }
     }
 
-    /// Initialize a Vec of Sets as identity (set[i] = {i}), reusing existing allocations.
-    /// Uses `set_single` to avoid the contains() check since we know the set is empty.
+    /// Initialize a slice of Sets as identity (set[i] = {i}), reusing existing allocations.
+    /// Uses `set_single` to avoid the `contains()` check since we know the set is empty.
     #[inline]
-    fn init_as_identity(sets: &mut [VecSet<usize>]) {
+    fn init_as_identity(sets: &mut [S]) {
         for (i, set) in sets.iter_mut().enumerate() {
             set.set_single(i);
         }
@@ -76,12 +84,12 @@ impl Gens {
 
     /// Ensure the Vec has exactly `num_qubits` elements, reusing capacity when possible.
     #[inline]
-    fn ensure_size(sets: &mut Vec<VecSet<usize>>, num_qubits: usize) {
+    fn ensure_size(sets: &mut Vec<S>, num_qubits: usize) {
         match sets.len().cmp(&num_qubits) {
             std::cmp::Ordering::Less => {
                 sets.reserve(num_qubits - sets.len());
                 while sets.len() < num_qubits {
-                    sets.push(VecSet::new());
+                    sets.push(S::new());
                 }
             }
             std::cmp::Ordering::Greater => {

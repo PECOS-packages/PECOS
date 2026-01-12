@@ -118,6 +118,27 @@ impl BitSet {
         !was_present
     }
 
+    /// Toggle an index in the set (insert if absent, remove if present).
+    ///
+    /// This is equivalent to XOR with a single-element set but without
+    /// creating a temporary `BitSet`.
+    ///
+    /// Returns `true` if the index is now present, `false` if it was removed.
+    #[inline]
+    pub fn toggle(&mut self, index: usize) -> bool {
+        let word_idx = index / 64;
+        let bit_idx = index % 64;
+        let mask = 1u64 << bit_idx;
+
+        // Extend if necessary
+        if word_idx >= self.words.len() {
+            self.words.resize(word_idx + 1, 0);
+        }
+
+        self.words[word_idx] ^= mask;
+        (self.words[word_idx] & mask) != 0
+    }
+
     /// Remove an index from the set.
     ///
     /// Returns `true` if the index was present, `false` otherwise.
@@ -301,6 +322,14 @@ impl std::ops::BitXorAssign<&BitSet> for BitSet {
     }
 }
 
+// Implement BitXorAssign for single element (toggle)
+impl std::ops::BitXorAssign<&usize> for BitSet {
+    #[inline]
+    fn bitxor_assign(&mut self, rhs: &usize) {
+        self.toggle(*rhs);
+    }
+}
+
 // Implement BitXor for convenient ^ syntax
 impl std::ops::BitXor for &BitSet {
     type Output = BitSet;
@@ -308,6 +337,110 @@ impl std::ops::BitXor for &BitSet {
     #[inline]
     fn bitxor(self, rhs: Self) -> Self::Output {
         self.symmetric_difference(rhs)
+    }
+}
+
+// Implement IndexSet for BitSet
+impl crate::index_set::IndexSet for BitSet {
+    type Iter<'a> = BitSetIter<'a>;
+
+    #[inline]
+    fn new() -> Self {
+        Self::new()
+    }
+
+    #[inline]
+    fn insert(&mut self, index: usize) -> bool {
+        Self::insert(self, index)
+    }
+
+    #[inline]
+    fn remove(&mut self, index: usize) -> bool {
+        Self::remove(self, index)
+    }
+
+    #[inline]
+    fn contains(&self, index: usize) -> bool {
+        Self::contains(self, index)
+    }
+
+    #[inline]
+    fn toggle(&mut self, index: usize) {
+        Self::toggle(self, index);
+    }
+
+    #[inline]
+    fn xor_assign(&mut self, other: &Self) {
+        self.symmetric_difference_update(other);
+    }
+
+    #[inline]
+    fn iter(&self) -> Self::Iter<'_> {
+        Self::iter(self)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        Self::is_empty(self)
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        Self::len(self)
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        Self::clear(self);
+    }
+
+    #[inline]
+    fn intersection_count(&self, other: &Self) -> usize {
+        let min_len = self.words.len().min(other.words.len());
+        let mut count = 0;
+        for i in 0..min_len {
+            count += (self.words[i] & other.words[i]).count_ones() as usize;
+        }
+        count
+    }
+
+    #[inline]
+    fn xor_intersection_into(&self, other: &Self, target: &mut Self) {
+        let min_len = self.words.len().min(other.words.len());
+        // Ensure target has enough words
+        if target.words.len() < min_len {
+            target.words.resize(min_len, 0);
+        }
+        for i in 0..min_len {
+            let intersection = self.words[i] & other.words[i];
+            if i < target.words.len() {
+                target.words[i] ^= intersection;
+            }
+        }
+    }
+
+    #[inline]
+    fn xor_symmetric_difference_into(&self, other: &Self, target: &mut Self) {
+        let max_len = self.words.len().max(other.words.len());
+        // Ensure target has enough words
+        if target.words.len() < max_len {
+            target.words.resize(max_len, 0);
+        }
+        // XOR elements that are in self XOR other into target
+        for i in 0..max_len {
+            let self_word = if i < self.words.len() {
+                self.words[i]
+            } else {
+                0
+            };
+            let other_word = if i < other.words.len() {
+                other.words[i]
+            } else {
+                0
+            };
+            let symmetric_diff = self_word ^ other_word;
+            target.words[i] ^= symmetric_diff;
+        }
     }
 }
 

@@ -169,6 +169,101 @@ impl<'a, E: Element> IntoIterator for &'a VecSet<E> {
     }
 }
 
+// Implement IndexSet for VecSet<usize>
+impl crate::index_set::IndexSet for VecSet<usize> {
+    type Iter<'a> = std::iter::Copied<std::slice::Iter<'a, usize>>;
+
+    #[inline]
+    fn new() -> Self {
+        Self::new()
+    }
+
+    #[inline]
+    fn insert(&mut self, index: usize) -> bool {
+        use crate::sets::set::Set;
+        if Set::contains(self, &index) {
+            false
+        } else {
+            Set::insert(self, index);
+            true
+        }
+    }
+
+    #[inline]
+    fn remove(&mut self, index: usize) -> bool {
+        use crate::sets::set::Set;
+        if Set::contains(self, &index) {
+            Set::remove(self, &index);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    fn contains(&self, index: usize) -> bool {
+        use crate::sets::set::Set;
+        Set::contains(self, &index)
+    }
+
+    #[inline]
+    fn toggle(&mut self, index: usize) {
+        use crate::sets::set::Set;
+        Set::symmetric_difference_item_update(self, &index);
+    }
+
+    #[inline]
+    fn xor_assign(&mut self, other: &Self) {
+        use crate::sets::set::Set;
+        Set::symmetric_difference_update(self, other);
+    }
+
+    #[inline]
+    fn iter(&self) -> Self::Iter<'_> {
+        self.elements.iter().copied()
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        use crate::sets::set::Set;
+        Set::is_empty(self)
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        use crate::sets::set::Set;
+        Set::len(self)
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        use crate::sets::set::Set;
+        Set::clear(self);
+    }
+
+    #[inline]
+    fn set_single(&mut self, index: usize) {
+        // Use optimized version that skips contains check
+        self.elements.clear();
+        self.elements.push(index);
+    }
+
+    #[inline]
+    fn intersection_count(&self, other: &Self) -> usize {
+        Self::intersection_count(self, other)
+    }
+
+    #[inline]
+    fn xor_intersection_into(&self, other: &Self, target: &mut Self) {
+        Self::xor_intersection_into(self, other, target);
+    }
+
+    #[inline]
+    fn xor_symmetric_difference_into(&self, other: &Self, target: &mut Self) {
+        Self::xor_symmetric_difference_into(self, other, target);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::set::Set;
@@ -234,7 +329,7 @@ mod tests {
         set_a.symmetric_difference_update(&set_b);
         // Use sorted comparison since swap_remove doesn't preserve order
         let mut result: Vec<_> = set_a.elements.to_vec();
-        result.sort();
+        result.sort_unstable();
         assert_eq!(result, vec![1, 3, 5, 6]);
     }
 
@@ -355,7 +450,7 @@ mod tests {
         set_a ^= set_b.difference(&set_c).copied().collect::<VecSet<_>>();
         // Use sorted comparison since swap_remove doesn't preserve order
         let mut result: Vec<_> = set_a.elements.to_vec();
-        result.sort();
+        result.sort_unstable();
         assert_eq!(result, vec![1, 3, 4, 5, 6]);
     }
 
@@ -367,7 +462,7 @@ mod tests {
         set_a ^= &set_b - &set_c; // TODO: Get this to work for Set
         // Use sorted comparison since swap_remove doesn't preserve order
         let mut result: Vec<_> = set_a.elements.to_vec();
-        result.sort();
+        result.sort_unstable();
         assert_eq!(result, vec![1, 3, 4, 5, 6]);
     }
 }

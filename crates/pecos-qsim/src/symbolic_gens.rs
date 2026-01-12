@@ -12,17 +12,40 @@
 
 //! Symbolic generators for stabilizer states with measurement-indexed signs.
 //!
-//! This module provides [`SymbolicGens`], a variant of the generator storage that tracks
+//! This module provides [`SymbolicGensGeneric`], a variant of the generator storage that tracks
 //! stabilizer signs in two parts:
 //! 1. **Measurement dependencies** (`signs`): Sets of measurement indices that XOR together
 //! 2. **Phase flips** (`signs_minus`, `signs_i`): Traditional phase tracking from unitary gates
 //!
 //! The final measurement outcome is: `XOR(measurement_outcomes) XOR phase_flip`
+//!
+//! # Set Type Parameter
+//!
+//! The `S` parameter controls which set implementation is used for Pauli operator storage:
+//! - [`BitSet`](pecos_core::BitSet): O(1) toggle operations, better for large circuits
+//! - [`VecSet<usize>`](pecos_core::VecSet): Lower overhead for small sets
+//!
+//! The default type alias [`SymbolicGens`] uses `BitSet` for optimal large-circuit performance.
 
 use crate::sign_algebra::{SignAlgebra, SymbolicSign};
-use pecos_core::{Set, VecSet};
+use pecos_core::{BitSet, IndexSet, VecSet};
 
-/// Generators for symbolic stabilizer simulation.
+/// Default symbolic generators using `BitSet` for optimal performance.
+///
+/// Uses O(1) toggle operations instead of O(n) linear search,
+/// making it significantly faster for circuits with 100+ qubits.
+pub type SymbolicGens = SymbolicGensGeneric<BitSet>;
+
+/// Symbolic generators using `BitSet` (same as [`SymbolicGens`]).
+pub type SymbolicGensBitSet = SymbolicGensGeneric<BitSet>;
+
+/// Symbolic generators using `VecSet` for small circuits.
+///
+/// May have lower overhead for very small circuits (< 50 qubits),
+/// but [`SymbolicGens`] (`BitSet`) is recommended for most use cases.
+pub type SymbolicGensVecSet = SymbolicGensGeneric<VecSet<usize>>;
+
+/// Generic generators for symbolic stabilizer simulation.
 ///
 /// Tracks stabilizer signs in two parts:
 /// 1. **Measurement dependencies** (`signs`): Per-generator sets of measurement indices
@@ -31,40 +54,42 @@ use pecos_core::{Set, VecSet};
 /// The final sign is: `{measurement_deps} ^ phase_flip` where `phase_flip` is computed
 /// from `signs_minus` and `signs_i`.
 ///
-/// Uses `VecSet<usize>` for efficient sparse storage of Pauli operators.
+/// # Type Parameter
+///
+/// - `S`: The set type used for Pauli operator storage (must implement [`IndexSet`])
 #[derive(Clone, Debug)]
-pub struct SymbolicGens {
+pub struct SymbolicGensGeneric<S: IndexSet> {
     num_qubits: usize,
     /// Column-wise storage of X operators: `col_x`[qubit] = set of generator indices with X on that qubit
-    pub col_x: Vec<VecSet<usize>>,
+    pub col_x: Vec<S>,
     /// Column-wise storage of Z operators: `col_z`[qubit] = set of generator indices with Z on that qubit
-    pub col_z: Vec<VecSet<usize>>,
+    pub col_z: Vec<S>,
     /// Row-wise storage of X operators: `row_x`[gen] = set of qubits where this generator has X
-    pub row_x: Vec<VecSet<usize>>,
+    pub row_x: Vec<S>,
     /// Row-wise storage of Z operators: `row_z`[gen] = set of qubits where this generator has Z
-    pub row_z: Vec<VecSet<usize>>,
+    pub row_z: Vec<S>,
     /// Symbolic signs for each generator: signs[gen] = set of measurement indices
     pub signs: Vec<SymbolicSign>,
     /// Traditional phase tracking: generators with a minus sign (from unitaries)
-    pub signs_minus: VecSet<usize>,
+    pub signs_minus: S,
     /// Traditional phase tracking: generators with an imaginary component (from unitaries)
-    pub signs_i: VecSet<usize>,
+    pub signs_i: S,
 }
 
-impl SymbolicGens {
+impl<S: IndexSet> SymbolicGensGeneric<S> {
     /// Create new symbolic generators for the given number of qubits.
     #[must_use]
     #[inline]
     pub fn new(num_qubits: usize) -> Self {
         Self {
             num_qubits,
-            col_x: vec![VecSet::new(); num_qubits],
-            col_z: vec![VecSet::new(); num_qubits],
-            row_x: vec![VecSet::new(); num_qubits],
-            row_z: vec![VecSet::new(); num_qubits],
+            col_x: (0..num_qubits).map(|_| S::new()).collect(),
+            col_z: (0..num_qubits).map(|_| S::new()).collect(),
+            row_x: (0..num_qubits).map(|_| S::new()).collect(),
+            row_z: (0..num_qubits).map(|_| S::new()).collect(),
             signs: vec![SymbolicSign::empty(); num_qubits],
-            signs_minus: VecSet::new(),
-            signs_i: VecSet::new(),
+            signs_minus: S::new(),
+            signs_i: S::new(),
         }
     }
 
@@ -84,29 +109,29 @@ impl SymbolicGens {
 
     /// Clear all elements in a Vec of Sets, keeping the Vec's capacity.
     #[inline]
-    fn clear_sets(sets: &mut [VecSet<usize>]) {
+    fn clear_sets(sets: &mut [S]) {
         for set in sets.iter_mut() {
             set.clear();
         }
     }
 
     /// Initialize a Vec of Sets as identity (set[i] = {i}), reusing existing allocations.
-    /// Uses `set_single` to avoid the contains() check since we know the set is empty.
     #[inline]
-    fn init_as_identity(sets: &mut [VecSet<usize>]) {
+    fn init_as_identity(sets: &mut [S]) {
         for (i, set) in sets.iter_mut().enumerate() {
-            set.set_single(i);
+            set.clear();
+            set.insert(i);
         }
     }
 
     /// Ensure the Vec of Sets has exactly `num_qubits` elements, reusing capacity when possible.
     #[inline]
-    fn ensure_size(sets: &mut Vec<VecSet<usize>>, num_qubits: usize) {
+    fn ensure_size(sets: &mut Vec<S>, num_qubits: usize) {
         match sets.len().cmp(&num_qubits) {
             std::cmp::Ordering::Less => {
                 sets.reserve(num_qubits - sets.len());
                 while sets.len() < num_qubits {
-                    sets.push(VecSet::new());
+                    sets.push(S::new());
                 }
             }
             std::cmp::Ordering::Greater => {
@@ -228,8 +253,8 @@ mod tests {
         gens.init_all_z();
 
         // col_z should have generator i in set for qubit i
-        assert!(gens.col_z[0].contains(&0));
-        assert!(gens.col_z[1].contains(&1));
+        assert!(gens.col_z[0].contains(0));
+        assert!(gens.col_z[1].contains(1));
 
         // col_x should be empty
         assert!(gens.col_x[0].is_empty());
@@ -265,5 +290,17 @@ mod tests {
         gens.multiply_signs(2, 0);
         assert_eq!(gens.signs[2].measurements.len(), 1);
         assert!(gens.signs[2].measurements.contains(1));
+    }
+
+    #[test]
+    fn test_symbolic_gens_vecset() {
+        // Test that VecSet version also works
+        let mut gens = SymbolicGensVecSet::new(2);
+        gens.init_all_z();
+
+        assert!(gens.col_z[0].contains(0));
+        assert!(gens.col_z[1].contains(1));
+        assert!(gens.col_x[0].is_empty());
+        assert!(gens.col_x[1].is_empty());
     }
 }

@@ -169,6 +169,36 @@ impl<S: IndexSet> GensGeneric<S> {
         }
     }
 
+    /// Create a new `GensGeneric` from pre-populated parts.
+    ///
+    /// # Safety
+    /// The caller must ensure all vectors have length `num_qubits`.
+    #[must_use]
+    #[inline]
+    pub fn from_parts(
+        num_qubits: usize,
+        col_x: Vec<S>,
+        col_z: Vec<S>,
+        row_x: Vec<S>,
+        row_z: Vec<S>,
+        signs_minus: S,
+        signs_i: S,
+    ) -> Self {
+        debug_assert!(col_x.len() == num_qubits);
+        debug_assert!(col_z.len() == num_qubits);
+        debug_assert!(row_x.len() == num_qubits);
+        debug_assert!(row_z.len() == num_qubits);
+        Self {
+            num_qubits,
+            col_x,
+            col_z,
+            row_x,
+            row_z,
+            signs_minus,
+            signs_i,
+        }
+    }
+
     #[inline]
     #[must_use]
     pub fn get_num_qubits(&self) -> usize {

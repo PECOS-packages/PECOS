@@ -1063,6 +1063,59 @@ where
         }
         meas_outcome
     }
+
+    /// Convert this hybrid simulator to a pure BitSet-based simulator.
+    ///
+    /// This is useful when the tableau has become dense (many elements per row)
+    /// and BitSet's O(1) operations would be faster than VecSet's O(n) operations.
+    ///
+    /// The conversion iterates over all VecSet elements to populate the BitSets,
+    /// which is O(total_elements) where total_elements is the sum of all set sizes.
+    #[must_use]
+    pub fn to_bitset(self) -> SparseStabGeneric<BitSet, R> {
+        let n = self.num_qubits;
+
+        // Helper to convert a slice of VecSets to a Vec of BitSets
+        fn convert_sets(sets: &[VecSet<usize>], num_qubits: usize) -> Vec<BitSet> {
+            sets.iter()
+                .map(|vs| {
+                    let mut bs = BitSet::with_capacity(num_qubits);
+                    for &elem in vs.iter() {
+                        bs.insert(elem);
+                    }
+                    bs
+                })
+                .collect()
+        }
+
+        // Convert Gens (stabs and destabs)
+        let stabs = GensGeneric::from_parts(
+            n,
+            convert_sets(&self.stabs.col_x, n),
+            convert_sets(&self.stabs.col_z, n),
+            convert_sets(&self.stabs.row_x, n),
+            convert_sets(&self.stabs.row_z, n),
+            self.stabs.signs_minus,
+            self.stabs.signs_i,
+        );
+
+        let destabs = GensGeneric::from_parts(
+            n,
+            convert_sets(&self.destabs.col_x, n),
+            convert_sets(&self.destabs.col_z, n),
+            convert_sets(&self.destabs.row_x, n),
+            convert_sets(&self.destabs.row_z, n),
+            self.destabs.signs_minus,
+            self.destabs.signs_i,
+        );
+
+        SparseStabGeneric {
+            num_qubits: n,
+            stabs,
+            destabs,
+            rng: self.rng,
+        }
+    }
 }
 
 impl<R> QuantumSimulator for SparseStabHybrid<R>

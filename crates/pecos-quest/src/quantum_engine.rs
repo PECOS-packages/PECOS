@@ -112,63 +112,34 @@ impl Engine for QuestStateVecEngine {
                         }
                     }
                 }
-                GateType::SWAP => {
-                    for qubits in cmd.qubits.chunks_exact(2) {
-                        // SWAP = CX(0,1) CX(1,0) CX(0,1)
-                        let q0 = usize::from(qubits[0]);
-                        let q1 = usize::from(qubits[1]);
-                        self.simulator.cx(q0, q1);
-                        self.simulator.cx(q1, q0);
-                        self.simulator.cx(q0, q1);
-                    }
-                }
-                GateType::CRZ => {
-                    if !cmd.params.is_empty() {
-                        let angle = cmd.params[0];
-                        let half_angle = angle / 2.0;
-                        for qubits in cmd.qubits.chunks_exact(2) {
-                            // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
-                            let control = usize::from(qubits[0]);
-                            let target = usize::from(qubits[1]);
-                            self.simulator.rz(half_angle, target);
-                            self.simulator.cx(control, target);
-                            self.simulator.rz(-half_angle, target);
-                            self.simulator.cx(control, target);
-                        }
-                    }
-                }
                 GateType::CCX => {
                     for qubits in cmd.qubits.chunks_exact(3) {
                         // Toffoli decomposition into Clifford+T gates
-                        let c0 = usize::from(qubits[0]);
-                        let c1 = usize::from(qubits[1]);
-                        let target = usize::from(qubits[2]);
-                        self.simulator.h(target);
-                        self.simulator.cx(c1, target);
-                        self.simulator.tdg(target);
-                        self.simulator.cx(c0, target);
-                        self.simulator.t(target);
-                        self.simulator.cx(c1, target);
-                        self.simulator.tdg(target);
-                        self.simulator.cx(c0, target);
-                        self.simulator.t(c1);
-                        self.simulator.t(target);
-                        self.simulator.cx(c0, c1);
-                        self.simulator.h(target);
-                        self.simulator.t(c0);
-                        self.simulator.tdg(c1);
-                        self.simulator.cx(c0, c1);
+                        let c0 = qubits[0];
+                        let c1 = qubits[1];
+                        let target = qubits[2];
+                        self.simulator.h(&[target]);
+                        self.simulator.cx(&[c1, target]);
+                        self.simulator.tdg(&[target]);
+                        self.simulator.cx(&[c0, target]);
+                        self.simulator.t(&[target]);
+                        self.simulator.cx(&[c1, target]);
+                        self.simulator.tdg(&[target]);
+                        self.simulator.cx(&[c0, target]);
+                        self.simulator.t(&[c1]);
+                        self.simulator.t(&[target]);
+                        self.simulator.cx(&[c0, c1]);
+                        self.simulator.h(&[target]);
+                        self.simulator.t(&[c0]);
+                        self.simulator.tdg(&[c1]);
+                        self.simulator.cx(&[c0, c1]);
                     }
                 }
                 GateType::SX => {
-                    for q in &cmd.qubits {
-                        self.simulator.sx(usize::from(*q));
-                    }
+                    self.simulator.sx(&cmd.qubits);
                 }
                 GateType::SXdg => {
-                    for q in &cmd.qubits {
-                        self.simulator.sxdg(usize::from(*q));
-                    }
+                    self.simulator.sxdg(&cmd.qubits);
                 }
                 GateType::RX => {
                     if !cmd.params.is_empty() {
@@ -346,63 +317,34 @@ impl Engine for QuestDensityMatrixEngine {
                         }
                     }
                 }
-                GateType::SWAP => {
-                    for qubits in cmd.qubits.chunks_exact(2) {
-                        // SWAP = CX(0,1) CX(1,0) CX(0,1)
-                        let q0 = usize::from(qubits[0]);
-                        let q1 = usize::from(qubits[1]);
-                        self.simulator.cx(q0, q1);
-                        self.simulator.cx(q1, q0);
-                        self.simulator.cx(q0, q1);
-                    }
-                }
-                GateType::CRZ => {
-                    if !cmd.params.is_empty() {
-                        let angle = cmd.params[0];
-                        let half_angle = angle / 2.0;
-                        for qubits in cmd.qubits.chunks_exact(2) {
-                            // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
-                            let control = usize::from(qubits[0]);
-                            let target = usize::from(qubits[1]);
-                            self.simulator.rz(half_angle, target);
-                            self.simulator.cx(control, target);
-                            self.simulator.rz(-half_angle, target);
-                            self.simulator.cx(control, target);
-                        }
-                    }
-                }
                 GateType::CCX => {
                     for qubits in cmd.qubits.chunks_exact(3) {
                         // Toffoli decomposition into Clifford+T gates
-                        let c0 = usize::from(qubits[0]);
-                        let c1 = usize::from(qubits[1]);
-                        let target = usize::from(qubits[2]);
-                        self.simulator.h(target);
-                        self.simulator.cx(c1, target);
-                        self.simulator.tdg(target);
-                        self.simulator.cx(c0, target);
-                        self.simulator.t(target);
-                        self.simulator.cx(c1, target);
-                        self.simulator.tdg(target);
-                        self.simulator.cx(c0, target);
-                        self.simulator.t(c1);
-                        self.simulator.t(target);
-                        self.simulator.cx(c0, c1);
-                        self.simulator.h(target);
-                        self.simulator.t(c0);
-                        self.simulator.tdg(c1);
-                        self.simulator.cx(c0, c1);
+                        let c0 = qubits[0];
+                        let c1 = qubits[1];
+                        let target = qubits[2];
+                        self.simulator.h(&[target]);
+                        self.simulator.cx(&[c1, target]);
+                        self.simulator.tdg(&[target]);
+                        self.simulator.cx(&[c0, target]);
+                        self.simulator.t(&[target]);
+                        self.simulator.cx(&[c1, target]);
+                        self.simulator.tdg(&[target]);
+                        self.simulator.cx(&[c0, target]);
+                        self.simulator.t(&[c1]);
+                        self.simulator.t(&[target]);
+                        self.simulator.cx(&[c0, c1]);
+                        self.simulator.h(&[target]);
+                        self.simulator.t(&[c0]);
+                        self.simulator.tdg(&[c1]);
+                        self.simulator.cx(&[c0, c1]);
                     }
                 }
                 GateType::SX => {
-                    for q in &cmd.qubits {
-                        self.simulator.sx(usize::from(*q));
-                    }
+                    self.simulator.sx(&cmd.qubits);
                 }
                 GateType::SXdg => {
-                    for q in &cmd.qubits {
-                        self.simulator.sxdg(usize::from(*q));
-                    }
+                    self.simulator.sxdg(&cmd.qubits);
                 }
                 GateType::RX => {
                     if !cmd.params.is_empty() {

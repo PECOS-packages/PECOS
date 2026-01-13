@@ -315,41 +315,7 @@ where
         self
     }
 
-    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            let qulacs_qubit = self.convert_qubit_index(q.index());
-            ffi::apply_sqrt_x(self.state.pin_mut(), qulacs_qubit);
-        }
-        self
-    }
-
-    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            let qulacs_qubit = self.convert_qubit_index(q.index());
-            ffi::apply_sqrt_xdag(self.state.pin_mut(), qulacs_qubit);
-        }
-    fn cx(&mut self, q1: I, q2: I) -> &mut Self {
-        let qulacs_q1 = self.convert_qubit_index(q1.to_index());
-        let qulacs_q2 = self.convert_qubit_index(q2.to_index());
-        ffi::apply_cnot(self.state.pin_mut(), qulacs_q1, qulacs_q2);
-        self
-    }
-
-    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            let qulacs_qubit = self.convert_qubit_index(q.index());
-            ffi::apply_sqrt_y(self.state.pin_mut(), qulacs_qubit);
-        }
-        self
-    }
-
-    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            let qulacs_qubit = self.convert_qubit_index(q.index());
-            ffi::apply_sqrt_ydag(self.state.pin_mut(), qulacs_qubit);
-        }
-        self
-    }
+    // sx, sxdg, sy, sydg use trait default decompositions for consistency with StateVec
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(

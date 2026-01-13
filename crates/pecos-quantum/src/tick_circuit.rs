@@ -61,7 +61,7 @@
 //! ```
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, Nanoseconds, QubitId};
+use pecos_core::{Angle64, Gate, GateQubits, Nanoseconds, QubitId};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Attribute;
@@ -1396,7 +1396,7 @@ impl<'a> TickHandle<'a> {
         let ns: Nanoseconds = duration.into();
         self.add_gate(Gate::idle(
             ns.as_f64(),
-            qubits.iter().map(|&q| q.into()).collect(),
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         ))
     }
 }

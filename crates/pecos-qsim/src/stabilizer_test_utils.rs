@@ -15,6 +15,10 @@
 //! This module provides generic test functions that can be used to verify any
 //! stabilizer simulator that implements [`CliffordGateable`] and [`QuantumSimulator`].
 //!
+//! All functions in this module use assertions to verify expected behavior and
+//! will panic if the test conditions are not met. This is the expected behavior
+//! for test utilities.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -29,13 +33,17 @@
 //! }
 //! ```
 
+// All functions in this module are test utilities that panic on test failure.
+// This is expected behavior, so we allow missing panics documentation.
+#![allow(clippy::missing_panics_doc)]
+
 use crate::{CliffordGateable, DensityMatrix, MeasurementResult, QuantumSimulator};
 use pecos_core::QubitId;
 use pecos_rng::Rng;
 
 /// Trait for stabilizer simulators that support forced measurement outcomes.
 ///
-/// This is required for probability comparison tests against DensityMatrix.
+/// This is required for probability comparison tests against `DensityMatrix`.
 pub trait ForcedMeasurement {
     /// Measure qubit in Z basis, forcing the outcome for non-deterministic cases.
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult;
@@ -54,10 +62,7 @@ pub fn verify_h_squared_is_identity<S: CliffordGateable + QuantumSimulator>(sim:
     sim.h(&[QubitId::new(0)]);
 
     let result = sim.mz(&[QubitId::new(0)]);
-    assert!(
-        result[0].is_deterministic,
-        "H^2|0> should be deterministic"
-    );
+    assert!(result[0].is_deterministic, "H^2|0> should be deterministic");
     assert!(!result[0].outcome, "H^2|0> should measure 0");
 }
 
@@ -312,7 +317,10 @@ pub fn verify_sx_squared_is_x<S: CliffordGateable + QuantumSimulator>(sim: &mut 
     sim.sx(&[QubitId::new(0)]);
 
     let result = sim.mz(&[QubitId::new(0)]);
-    assert!(result[0].is_deterministic, "SX^2|0> should be deterministic");
+    assert!(
+        result[0].is_deterministic,
+        "SX^2|0> should be deterministic"
+    );
     assert!(result[0].outcome, "SX^2|0> = X|0> should measure 1");
 }
 
@@ -330,7 +338,7 @@ pub fn verify_sx_creates_superposition<S: CliffordGateable + QuantumSimulator>(s
     );
 }
 
-/// Verify SXdg is inverse of SX: SX * SXdg = I.
+/// Verify `SXdg` is inverse of SX: SX * `SXdg` = I.
 pub fn verify_sx_sxdg_is_identity<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&[QubitId::new(0)]); // Create superposition first
@@ -356,7 +364,10 @@ pub fn verify_sy_squared_is_y<S: CliffordGateable + QuantumSimulator>(sim: &mut 
 
     // Y|0> = i|1>, so measurement gives 1
     let result = sim.mz(&[QubitId::new(0)]);
-    assert!(result[0].is_deterministic, "SY^2|0> should be deterministic");
+    assert!(
+        result[0].is_deterministic,
+        "SY^2|0> should be deterministic"
+    );
     assert!(result[0].outcome, "SY^2|0> = Y|0> should measure 1");
 }
 
@@ -372,7 +383,7 @@ pub fn verify_sy_creates_superposition<S: CliffordGateable + QuantumSimulator>(s
     );
 }
 
-/// Verify SYdg is inverse of SY: SY * SYdg = I.
+/// Verify `SYdg` is inverse of SY: SY * `SYdg` = I.
 pub fn verify_sy_sydg_is_identity<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&[QubitId::new(0)]); // Create superposition first
@@ -417,7 +428,10 @@ pub fn verify_cy_control_one<S: CliffordGateable + QuantumSimulator>(sim: &mut S
         result[0].is_deterministic,
         "CY with control=1 should make target deterministic"
     );
-    assert!(result[0].outcome, "CY with control=1 should flip target to 1");
+    assert!(
+        result[0].outcome,
+        "CY with control=1 should flip target to 1"
+    );
 }
 
 /// Verify CY^2 = I (CY squared is identity).
@@ -463,10 +477,7 @@ pub fn verify_cz_control_one<S: CliffordGateable + QuantumSimulator>(sim: &mut S
         result[0].is_deterministic,
         "CZ with control=1 should make target deterministic"
     );
-    assert!(
-        result[0].outcome,
-        "CZ with control=1: H CZ H |+> = |1>"
-    );
+    assert!(result[0].outcome, "CZ with control=1: H CZ H |+> = |1>");
 }
 
 /// Verify CZ is symmetric: CZ(0,1) = CZ(1,0).
@@ -499,8 +510,14 @@ pub fn verify_cz_symmetric<S: CliffordGateable + QuantumSimulator + ForcedMeasur
         r1_a.is_deterministic, r1_b.is_deterministic,
         "CZ symmetry: q1 determinism should match"
     );
-    assert_eq!(r0_a.outcome, r0_b.outcome, "CZ symmetry: q0 outcome should match");
-    assert_eq!(r1_a.outcome, r1_b.outcome, "CZ symmetry: q1 outcome should match");
+    assert_eq!(
+        r0_a.outcome, r0_b.outcome,
+        "CZ symmetry: q0 outcome should match"
+    );
+    assert_eq!(
+        r1_a.outcome, r1_b.outcome,
+        "CZ symmetry: q1 outcome should match"
+    );
 }
 
 /// Verify SWAP gate exchanges qubit states.
@@ -548,8 +565,14 @@ pub fn verify_swap_symmetric<S: CliffordGateable + QuantumSimulator>(sim: &mut S
     let r0_b = sim.mz(&[QubitId::new(0)]);
     let r1_b = sim.mz(&[QubitId::new(1)]);
 
-    assert_eq!(r0_a[0].outcome, r0_b[0].outcome, "SWAP symmetry: q0 should match");
-    assert_eq!(r1_a[0].outcome, r1_b[0].outcome, "SWAP symmetry: q1 should match");
+    assert_eq!(
+        r0_a[0].outcome, r0_b[0].outcome,
+        "SWAP symmetry: q0 should match"
+    );
+    assert_eq!(
+        r1_a[0].outcome, r1_b[0].outcome,
+        "SWAP symmetry: q1 should match"
+    );
 }
 
 /// Run all specific gate tests.
@@ -637,8 +660,14 @@ pub fn verify_measurement_idempotence_entangled<S: CliffordGateable + QuantumSim
 
     // Also verify q1 is now deterministic and correlated
     let r3 = sim.mz(&[QubitId::new(1)]);
-    assert!(r3[0].is_deterministic, "Partner qubit should be deterministic");
-    assert_eq!(r1[0].outcome, r3[0].outcome, "Bell pair should be correlated");
+    assert!(
+        r3[0].is_deterministic,
+        "Partner qubit should be deterministic"
+    );
+    assert_eq!(
+        r1[0].outcome, r3[0].outcome,
+        "Bell pair should be correlated"
+    );
 }
 
 /// Verify measurement idempotence after applying gates post-measurement.
@@ -657,7 +686,10 @@ pub fn verify_measurement_idempotence_with_gates<S: CliffordGateable + QuantumSi
     // Measure again
     let r2 = sim.mz(&[QubitId::new(0)]);
 
-    assert!(r2[0].is_deterministic, "Post-X measurement should be deterministic");
+    assert!(
+        r2[0].is_deterministic,
+        "Post-X measurement should be deterministic"
+    );
     assert_ne!(
         r1[0].outcome, r2[0].outcome,
         "X should flip the measurement outcome"
@@ -1156,8 +1188,14 @@ pub fn verify_xz_commute_different_qubits<
     let r0_b = sim.mz_forced(0, false);
     let r1_b = sim.mz_forced(1, false);
 
-    assert_eq!(r0_a.outcome, r0_b.outcome, "X,Z commute on different qubits: q0");
-    assert_eq!(r1_a.outcome, r1_b.outcome, "X,Z commute on different qubits: q1");
+    assert_eq!(
+        r0_a.outcome, r0_b.outcome,
+        "X,Z commute on different qubits: q0"
+    );
+    assert_eq!(
+        r1_a.outcome, r1_b.outcome,
+        "X,Z commute on different qubits: q1"
+    );
 }
 
 /// Verify that CX gates on disjoint qubits commute.
@@ -1233,7 +1271,9 @@ pub fn verify_h_commute_different_qubits<
 }
 
 /// Verify that CX(a,b) and CX(a,c) commute when b != c (same control, different targets).
-pub fn verify_cx_same_control_commute<S: CliffordGateable + QuantumSimulator + ForcedMeasurement>(
+pub fn verify_cx_same_control_commute<
+    S: CliffordGateable + QuantumSimulator + ForcedMeasurement,
+>(
     sim: &mut S,
 ) {
     // CX(0,1) CX(0,2)
@@ -1267,9 +1307,7 @@ pub fn verify_cx_same_control_commute<S: CliffordGateable + QuantumSimulator + F
 }
 
 /// Verify that S and Z commute (they're both diagonal).
-pub fn verify_s_z_commute<S: CliffordGateable + QuantumSimulator + ForcedMeasurement>(
-    sim: &mut S,
-) {
+pub fn verify_s_z_commute<S: CliffordGateable + QuantumSimulator + ForcedMeasurement>(sim: &mut S) {
     // S Z
     sim.reset();
     sim.h(&[QubitId::new(0)]);
@@ -1332,7 +1370,9 @@ pub fn verify_all_commutation_relations_extended<
 ///
 /// This clones the simulator, forces measurements to get the target state,
 /// and returns the probability (0.5^n for n non-deterministic measurements).
-pub fn calculate_basis_probability<S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone>(
+pub fn calculate_basis_probability<
+    S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone,
+>(
     sim: &S,
     basis_state: usize,
     num_qubits: usize,
@@ -1354,7 +1394,7 @@ pub fn calculate_basis_probability<S: CliffordGateable + QuantumSimulator + Forc
     probability
 }
 
-/// Compare probabilities against DensityMatrix for all basis states.
+/// Compare probabilities against `DensityMatrix` for all basis states.
 ///
 /// This is the gold standard test for verifying stabilizer simulator correctness.
 pub fn verify_probabilities_match_density_matrix<
@@ -1377,7 +1417,7 @@ pub fn verify_probabilities_match_density_matrix<
     }
 }
 
-/// Apply the same Clifford circuit to a stabilizer simulator and DensityMatrix,
+/// Apply the same Clifford circuit to a stabilizer simulator and `DensityMatrix`,
 /// then verify they have matching probabilities.
 pub fn verify_circuit_matches_density_matrix<
     S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone,
@@ -1434,6 +1474,9 @@ pub fn generate_random_clifford_circuit<R: Rng>(
         let gate_type: u8 = rng.random_range(0..14);
         let q0 = rng.random_range(0..num_qubits);
 
+        // The explicit `0` case is intentional for clarity, even though the wildcard also returns H.
+        // The wildcard handles fallback when num_qubits < 2 and a two-qubit gate is selected.
+        #[allow(clippy::match_same_arms)]
         let gate = match gate_type {
             0 => CliffordGate::H(q0),
             1 => CliffordGate::S(q0),
@@ -1524,10 +1567,10 @@ pub fn apply_circuit<S: CliffordGateable>(sim: &mut S, circuit: &[CliffordGate])
     }
 }
 
-/// Verify that a stabilizer simulator matches DensityMatrix on a random circuit.
+/// Verify that a stabilizer simulator matches `DensityMatrix` on a random circuit.
 ///
 /// This generates a random circuit with the given seed and verifies that
-/// the stabilizer simulator produces the same probabilities as DensityMatrix.
+/// the stabilizer simulator produces the same probabilities as `DensityMatrix`.
 pub fn verify_random_circuit_matches_density_matrix<
     S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone,
 >(
@@ -1640,6 +1683,7 @@ pub fn compare_simulators_on_random_circuit<
     seed: u64,
 ) {
     use pecos_rng::PecosRng;
+    const TOLERANCE: f64 = 1e-10;
 
     let mut rng = PecosRng::seed_from_u64(seed);
     let circuit = generate_random_clifford_circuit(&mut rng, num_qubits, num_gates);
@@ -1651,7 +1695,6 @@ pub fn compare_simulators_on_random_circuit<
     apply_circuit(sim2, &circuit);
 
     // Compare probabilities for all basis states
-    const TOLERANCE: f64 = 1e-10;
     for basis_state in 0..(1 << num_qubits) {
         let prob1 = calculate_basis_probability(sim1, basis_state, num_qubits);
         let prob2 = calculate_basis_probability(sim2, basis_state, num_qubits);
@@ -1793,7 +1836,10 @@ pub fn compare_mid_circuit_measurement<
     let r1 = sim1.mz_forced(0, forced_outcome);
     let r2 = sim2.mz_forced(0, forced_outcome);
 
-    assert_eq!(r1.is_deterministic, r2.is_deterministic, "Mid-circuit determinism mismatch");
+    assert_eq!(
+        r1.is_deterministic, r2.is_deterministic,
+        "Mid-circuit determinism mismatch"
+    );
     assert_eq!(r1.outcome, r2.outcome, "Mid-circuit outcome mismatch");
 
     // Generate and apply second half
@@ -1905,7 +1951,10 @@ pub fn compare_reset_behavior<
         let r1 = sim1.mz_forced(q, forced);
         let r2 = sim2.mz_forced(q, forced);
 
-        assert_eq!(r1.is_deterministic, r2.is_deterministic, "Reset test: determinism mismatch");
+        assert_eq!(
+            r1.is_deterministic, r2.is_deterministic,
+            "Reset test: determinism mismatch"
+        );
         assert_eq!(r1.outcome, r2.outcome, "Reset test: outcome mismatch");
     }
 }
@@ -1926,6 +1975,7 @@ pub fn verify_measurement_order_independence<
     seed: u64,
 ) {
     use pecos_rng::PecosRng;
+    const TOLERANCE: f64 = 1e-10;
 
     assert!(num_qubits >= 2, "Need at least 2 qubits");
 
@@ -1941,14 +1991,14 @@ pub fn verify_measurement_order_independence<
 
     // Measure in forward order: 0, 1, 2, ...
     let mut forward_probs = vec![0.0; 1 << num_qubits];
-    for basis_state in 0..(1 << num_qubits) {
-        forward_probs[basis_state] = calculate_basis_probability(sim, basis_state, num_qubits);
+    for (basis_state, prob) in forward_probs.iter_mut().enumerate() {
+        *prob = calculate_basis_probability(sim, basis_state, num_qubits);
     }
 
     // Measure in reverse order: n-1, n-2, ..., 0
     // We need to calculate probabilities differently for reverse order
     let mut reverse_probs = vec![0.0; 1 << num_qubits];
-    for basis_state in 0..(1 << num_qubits) {
+    for (basis_state, prob) in reverse_probs.iter_mut().enumerate() {
         let mut sim_copy = sim_clone.clone();
         let mut probability = 1.0;
 
@@ -1964,11 +2014,10 @@ pub fn verify_measurement_order_independence<
                 break;
             }
         }
-        reverse_probs[basis_state] = probability;
+        *prob = probability;
     }
 
     // Compare probabilities
-    const TOLERANCE: f64 = 1e-10;
     for basis_state in 0..(1 << num_qubits) {
         assert!(
             (forward_probs[basis_state] - reverse_probs[basis_state]).abs() < TOLERANCE,
@@ -2042,7 +2091,10 @@ pub fn generate_two_qubit_only_circuit<R: Rng>(
     num_qubits: usize,
     num_gates: usize,
 ) -> Vec<CliffordGate> {
-    assert!(num_qubits >= 2, "Need at least 2 qubits for two-qubit gates");
+    assert!(
+        num_qubits >= 2,
+        "Need at least 2 qubits for two-qubit gates"
+    );
 
     let mut circuit = Vec::with_capacity(num_gates);
 
@@ -2066,7 +2118,7 @@ pub fn generate_two_qubit_only_circuit<R: Rng>(
     circuit
 }
 
-/// Verify single-qubit-only circuits match DensityMatrix.
+/// Verify single-qubit-only circuits match `DensityMatrix`.
 pub fn verify_single_qubit_only_circuit<
     S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone,
 >(
@@ -2088,7 +2140,7 @@ pub fn verify_single_qubit_only_circuit<
     verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
 }
 
-/// Verify two-qubit-only circuits match DensityMatrix.
+/// Verify two-qubit-only circuits match `DensityMatrix`.
 pub fn verify_two_qubit_only_circuit<
     S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone,
 >(
@@ -2144,7 +2196,7 @@ pub fn run_basic_stabilizer_test_suite<S: CliffordGateable + QuantumSimulator>(
 
 /// Run the full stabilizer test suite on a simulator.
 ///
-/// This requires the simulator to implement Clone and ForcedMeasurement
+/// This requires the simulator to implement Clone and `ForcedMeasurement`
 /// for the probability comparison tests.
 pub fn run_full_stabilizer_test_suite<
     S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone,
@@ -2267,7 +2319,7 @@ mod tests {
         // Compare SparseStab (BitSet) vs SparseStabHybrid on random circuits
         let mut sim1 = SparseStab::new(3);
         let mut sim2 = SparseStabHybrid::new(3);
-        compare_simulators_on_random_circuits(&mut sim1, &mut sim2, 3, 30, 10, 101112);
+        compare_simulators_on_random_circuits(&mut sim1, &mut sim2, 3, 30, 10, 101_112);
     }
 
     #[test]
@@ -2275,7 +2327,7 @@ mod tests {
         // Compare SparseStabVecSet vs SparseStabHybrid on random circuits
         let mut sim1 = SparseStabVecSet::new(3);
         let mut sim2 = SparseStabHybrid::new(3);
-        compare_simulators_on_random_circuits(&mut sim1, &mut sim2, 3, 30, 10, 131415);
+        compare_simulators_on_random_circuits(&mut sim1, &mut sim2, 3, 30, 10, 131_415);
     }
 
     #[test]
@@ -2294,7 +2346,7 @@ mod tests {
         // Direct comparison (no Clone required)
         let mut sim1 = SparseStab::new(3);
         let mut sim2 = SparseStabVecSet::new(3);
-        compare_simulators_on_random_circuits_direct(&mut sim1, &mut sim2, 3, 30, 20, 161718);
+        compare_simulators_on_random_circuits_direct(&mut sim1, &mut sim2, 3, 30, 20, 161_718);
     }
 
     #[test]
@@ -2302,7 +2354,7 @@ mod tests {
         // Direct comparison (no Clone required)
         let mut sim1 = SparseStab::new(3);
         let mut sim2 = SparseStabHybrid::new(3);
-        compare_simulators_on_random_circuits_direct(&mut sim1, &mut sim2, 3, 30, 20, 192021);
+        compare_simulators_on_random_circuits_direct(&mut sim1, &mut sim2, 3, 30, 20, 192_021);
     }
 
     #[test]
@@ -2314,7 +2366,7 @@ mod tests {
 
         // Run 5 circuits, comparing all pairs
         for i in 0..5 {
-            let seed = 222324 + i;
+            let seed = 222_324 + i;
 
             // Reset all
             bitset.reset();
@@ -2339,7 +2391,7 @@ mod tests {
     fn test_mid_circuit_measurement_sparse_stab() {
         let mut sim = SparseStab::new(3);
         for seed in 0..10 {
-            verify_mid_circuit_measurement(&mut sim, 3, 100000 + seed);
+            verify_mid_circuit_measurement(&mut sim, 3, 100_000 + seed);
         }
     }
 
@@ -2348,7 +2400,7 @@ mod tests {
         let mut sim1 = SparseStab::new(3);
         let mut sim2 = SparseStabVecSet::new(3);
         for seed in 0..10 {
-            compare_mid_circuit_measurement(&mut sim1, &mut sim2, 3, 200000 + seed);
+            compare_mid_circuit_measurement(&mut sim1, &mut sim2, 3, 200_000 + seed);
         }
     }
 
@@ -2360,13 +2412,13 @@ mod tests {
 
         for seed in 0..5 {
             // Compare bitset vs vecset
-            compare_mid_circuit_measurement(&mut bitset, &mut vecset, 4, 300000 + seed);
+            compare_mid_circuit_measurement(&mut bitset, &mut vecset, 4, 300_000 + seed);
 
             // Compare bitset vs hybrid
-            compare_mid_circuit_measurement(&mut bitset, &mut hybrid, 4, 300000 + seed);
+            compare_mid_circuit_measurement(&mut bitset, &mut hybrid, 4, 300_000 + seed);
 
             // Compare vecset vs hybrid
-            compare_mid_circuit_measurement(&mut vecset, &mut hybrid, 4, 300000 + seed);
+            compare_mid_circuit_measurement(&mut vecset, &mut hybrid, 4, 300_000 + seed);
         }
     }
 
@@ -2378,7 +2430,7 @@ mod tests {
     fn test_reset_mid_circuit_sparse_stab() {
         let mut sim = SparseStab::new(3);
         for seed in 0..10 {
-            verify_reset_mid_circuit(&mut sim, 3, 400000 + seed);
+            verify_reset_mid_circuit(&mut sim, 3, 400_000 + seed);
         }
     }
 
@@ -2389,9 +2441,9 @@ mod tests {
         let mut hybrid = SparseStabHybrid::new(4);
 
         for seed in 0..5 {
-            compare_reset_behavior(&mut bitset, &mut vecset, 4, 500000 + seed);
-            compare_reset_behavior(&mut bitset, &mut hybrid, 4, 500000 + seed);
-            compare_reset_behavior(&mut vecset, &mut hybrid, 4, 500000 + seed);
+            compare_reset_behavior(&mut bitset, &mut vecset, 4, 500_000 + seed);
+            compare_reset_behavior(&mut bitset, &mut hybrid, 4, 500_000 + seed);
+            compare_reset_behavior(&mut vecset, &mut hybrid, 4, 500_000 + seed);
         }
     }
 
@@ -2403,7 +2455,7 @@ mod tests {
     fn test_measurement_order_independence_sparse_stab() {
         let mut sim = SparseStab::new(3);
         for seed in 0..10 {
-            verify_measurement_order_independence(&mut sim, 3, 600000 + seed);
+            verify_measurement_order_independence(&mut sim, 3, 600_000 + seed);
         }
     }
 
@@ -2414,9 +2466,9 @@ mod tests {
         let mut hybrid = SparseStabHybrid::new(4);
 
         for seed in 0..5 {
-            verify_measurement_order_independence(&mut bitset, 4, 700000 + seed);
-            verify_measurement_order_independence(&mut vecset, 4, 700000 + seed);
-            verify_measurement_order_independence(&mut hybrid, 4, 700000 + seed);
+            verify_measurement_order_independence(&mut bitset, 4, 700_000 + seed);
+            verify_measurement_order_independence(&mut vecset, 4, 700_000 + seed);
+            verify_measurement_order_independence(&mut hybrid, 4, 700_000 + seed);
         }
     }
 
@@ -2445,7 +2497,7 @@ mod tests {
     fn test_single_qubit_only_circuits() {
         let mut sim = SparseStab::new(3);
         for seed in 0..10 {
-            verify_single_qubit_only_circuit(&mut sim, 3, 800000 + seed);
+            verify_single_qubit_only_circuit(&mut sim, 3, 800_000 + seed);
         }
     }
 
@@ -2453,7 +2505,7 @@ mod tests {
     fn test_two_qubit_only_circuits() {
         let mut sim = SparseStab::new(4);
         for seed in 0..10 {
-            verify_two_qubit_only_circuit(&mut sim, 4, 900000 + seed);
+            verify_two_qubit_only_circuit(&mut sim, 4, 900_000 + seed);
         }
     }
 
@@ -2464,9 +2516,9 @@ mod tests {
         let mut hybrid = SparseStabHybrid::new(3);
 
         for seed in 0..5 {
-            verify_single_qubit_only_circuit(&mut bitset, 3, 1000000 + seed);
-            verify_single_qubit_only_circuit(&mut vecset, 3, 1000000 + seed);
-            verify_single_qubit_only_circuit(&mut hybrid, 3, 1000000 + seed);
+            verify_single_qubit_only_circuit(&mut bitset, 3, 1_000_000 + seed);
+            verify_single_qubit_only_circuit(&mut vecset, 3, 1_000_000 + seed);
+            verify_single_qubit_only_circuit(&mut hybrid, 3, 1_000_000 + seed);
         }
     }
 
@@ -2477,9 +2529,9 @@ mod tests {
         let mut hybrid = SparseStabHybrid::new(4);
 
         for seed in 0..5 {
-            verify_two_qubit_only_circuit(&mut bitset, 4, 1100000 + seed);
-            verify_two_qubit_only_circuit(&mut vecset, 4, 1100000 + seed);
-            verify_two_qubit_only_circuit(&mut hybrid, 4, 1100000 + seed);
+            verify_two_qubit_only_circuit(&mut bitset, 4, 1_100_000 + seed);
+            verify_two_qubit_only_circuit(&mut vecset, 4, 1_100_000 + seed);
+            verify_two_qubit_only_circuit(&mut hybrid, 4, 1_100_000 + seed);
         }
     }
 

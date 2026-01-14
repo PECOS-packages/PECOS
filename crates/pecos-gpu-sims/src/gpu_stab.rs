@@ -3,6 +3,11 @@
 //! This implementation uses a persistent kernel approach that queues gates and
 //! processes them in a single GPU dispatch, minimizing dispatch overhead.
 
+// stab_x/stab_z and destab_x/destab_z are standard quantum stabilizer terminology
+#![allow(clippy::similar_names)]
+// GPU uses 32-bit values; casting from usize to u32 is intentional
+#![allow(clippy::cast_possible_truncation)]
+
 use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use rand::{RngCore, SeedableRng};
@@ -19,9 +24,6 @@ const GATE_CX: u32 = 6;
 const GATE_CZ: u32 = 7;
 const GATE_SWAP: u32 = 8;
 
-// Maximum gates per batch (buffer size / 4 bytes per gate)
-const MAX_GATE_QUEUE_SIZE: usize = 65536;
-
 /// Pack a single-qubit gate into the queue format
 fn pack_single_gate(gate_type: u32, target: u32) -> u32 {
     (gate_type & 0xF) | ((target & 0x3FFF) << 4)
@@ -32,13 +34,62 @@ fn pack_two_qubit_gate(gate_type: u32, control: u32, target: u32) -> u32 {
     (gate_type & 0xF) | ((target & 0x3FFF) << 4) | ((control & 0x3FFF) << 18)
 }
 
-// Number of gate queue buffers for deferred submission
-const NUM_QUEUE_BUFFERS: usize = 8;
+/// Decode a packed gate to get (`gate_type`, `target_qubit`)
+#[inline]
+fn decode_gate(packed: u32) -> (u32, u32) {
+    let gate_type = packed & 0xF;
+    let target = (packed >> 4) & 0x3FFF;
+    (gate_type, target)
+}
+
+/// Check if a gate type is single-qubit (can be safely reordered)
+#[inline]
+fn is_single_qubit_gate(gate_type: u32) -> bool {
+    gate_type <= GATE_Z // H, S, SDG, X, Y, Z are single-qubit
+}
+
+/// Sort runs of single-qubit gates by target qubit for better cache locality.
+/// Two-qubit gates act as barriers - we only sort within runs of single-qubit gates.
+/// This is safe because single-qubit gates on different qubits commute.
+fn sort_gate_queue(gate_queue: &mut [u32]) {
+    if gate_queue.len() <= 2 {
+        return; // Nothing to sort (index 0 is num_gates header)
+    }
+
+    let gates = &mut gate_queue[1..]; // Skip the num_gates header
+    let mut run_start = 0;
+
+    while run_start < gates.len() {
+        // Find the end of the current run of single-qubit gates
+        let mut run_end = run_start;
+        while run_end < gates.len() {
+            let (gate_type, _) = decode_gate(gates[run_end]);
+            if !is_single_qubit_gate(gate_type) {
+                break;
+            }
+            run_end += 1;
+        }
+
+        // Sort the run by target qubit if it has more than one gate
+        if run_end - run_start > 1 {
+            gates[run_start..run_end].sort_by_key(|&packed| {
+                let (_, target) = decode_gate(packed);
+                target
+            });
+        }
+
+        // Skip the two-qubit gate (if any) and continue
+        run_start = run_end + 1;
+    }
+}
+
+// Size of gate queue buffer - supports up to this many gates per sync
+const GATE_QUEUE_BUFFER_SIZE: usize = 256 * 1024; // 256K gates
 
 /// GPU Stabilizer simulator using persistent kernel approach.
 ///
 /// Gates are queued and executed in batches to minimize dispatch overhead.
-/// Uses deferred submission with multiple buffers to batch queue.submit() calls.
+/// Uses deferred submission with multiple buffers to batch `queue.submit()` calls.
 pub struct GpuStab<R: RngCore + SeedableRng = rand::rngs::StdRng> {
     num_qubits: u32,
     gen_words: u32,
@@ -60,19 +111,16 @@ pub struct GpuStab<R: RngCore + SeedableRng = rand::rngs::StdRng> {
     params_buffer: wgpu::Buffer,
     staging_buffer: wgpu::Buffer,
 
-    // Pool of gate queue buffers for deferred submission
-    gate_queue_buffers: Vec<wgpu::Buffer>,
-    bind_groups: Vec<wgpu::BindGroup>,
-    current_buffer_idx: usize,
+    // Single gate queue buffer for all pending gates
+    gate_queue_buffer: wgpu::Buffer,
+    main_bind_group: wgpu::BindGroup,
 
     // Pipeline
     process_queue_pipeline: wgpu::ComputePipeline,
 
-    // Gate queue (CPU side)
+    // Gate queue (CPU side) - gates accumulate here until sync()
+    // Index 0 is reserved for num_gates header
     gate_queue: Vec<u32>,
-
-    // Deferred submission state
-    pending_command_buffers: Vec<wgpu::CommandBuffer>,
 
     // For measurement
     anticommuting_buffer: wgpu::Buffer,
@@ -82,6 +130,10 @@ pub struct GpuStab<R: RngCore + SeedableRng = rand::rngs::StdRng> {
 
 impl GpuStab<rand::rngs::StdRng> {
     /// Create a new GPU stabilizer simulator with the given number of qubits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if GPU initialization fails.
     pub fn new(num_qubits: usize) -> Result<Self, String> {
         Self::with_seed(num_qubits, rand::random())
     }
@@ -89,6 +141,11 @@ impl GpuStab<rand::rngs::StdRng> {
 
 impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
     /// Create a new GPU stabilizer simulator with a specific RNG seed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if GPU initialization fails.
+    #[allow(clippy::too_many_lines)] // GPU initialization requires many setup steps
     pub fn with_seed(num_qubits: usize, seed: u64) -> Result<Self, String> {
         let rng = R::seed_from_u64(seed);
 
@@ -102,24 +159,21 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         }))
         .map_err(|_| "No GPU adapter found")?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("GpuStab Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("GpuStab Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
         .map_err(|e| format!("Failed to create device: {e}"))?;
 
         let num_qubits = num_qubits as u32;
         let gen_words = num_qubits.div_ceil(32);
 
         // Buffer sizes
-        let tableau_size = (num_qubits as u64) * (gen_words as u64) * 4;
-        let packed_signs_size = (gen_words as u64) * 4; // Packed: one bit per generator
+        let tableau_size = u64::from(num_qubits) * u64::from(gen_words) * 4;
+        let packed_signs_size = u64::from(gen_words) * 4; // Packed: one bit per generator
         let params_size = 32u64; // 8 u32s
-        let gate_queue_size = (MAX_GATE_QUEUE_SIZE * 4) as u64;
 
         // Create tableau buffers
         let stab_x_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -183,19 +237,16 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             mapped_at_creation: false,
         });
 
-        // Pool of gate queue buffers for deferred submission
-        let mut gate_queue_buffers = Vec::with_capacity(NUM_QUEUE_BUFFERS);
-        for i in 0..NUM_QUEUE_BUFFERS {
-            gate_queue_buffers.push(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("Gate Queue Buffer {}", i)),
-                size: gate_queue_size + 4, // +4 for num_gates header
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-        }
+        // Single large gate queue buffer for all pending gates
+        let gate_queue_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Gate Queue Buffer"),
+            size: (GATE_QUEUE_BUFFER_SIZE as u64 + 1) * 4, // +1 for num_gates header
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         // One u32 per generator for anticommuting flags (not packed)
-        let anticommuting_size = (num_qubits as u64) * 4;
+        let anticommuting_size = u64::from(num_qubits) * 4;
 
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Staging Buffer"),
@@ -332,48 +383,45 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
                 }],
             });
 
-        // Create bind groups - one per gate queue buffer for deferred submission
-        let mut bind_groups = Vec::with_capacity(NUM_QUEUE_BUFFERS);
-        for (i, gate_queue_buffer) in gate_queue_buffers.iter().enumerate() {
-            bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Main Bind Group {}", i)),
-                layout: &main_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: stab_x_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: stab_z_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: destab_x_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: destab_z_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: sign_minus_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: params_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: gate_queue_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 7,
-                        resource: sign_i_buffer.as_entire_binding(),
-                    },
-                ],
-            }));
-        }
+        // Single bind group for gate processing
+        let main_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Main Bind Group"),
+            layout: &main_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: stab_x_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: stab_z_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: destab_x_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: destab_z_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: sign_minus_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: gate_queue_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: sign_i_buffer.as_entire_binding(),
+                },
+            ],
+        });
 
         let find_anticommuting_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Find Anticommuting Bind Group"),
@@ -397,7 +445,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
                 layout: Some(&main_pipeline_layout),
                 module: &gate_shader,
                 entry_point: Some("process_gate_queue"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 cache: None,
             });
 
@@ -406,7 +454,10 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         let find_anticommuting_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Find Anticommuting Pipeline Layout"),
-                bind_group_layouts: &[&main_bind_group_layout, &find_anticommuting_bind_group_layout],
+                bind_group_layouts: &[
+                    &main_bind_group_layout,
+                    &find_anticommuting_bind_group_layout,
+                ],
                 immediate_size: 0,
             });
 
@@ -416,7 +467,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
                 layout: Some(&find_anticommuting_pipeline_layout),
                 module: &regular_shader,
                 entry_point: Some("find_anticommuting"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 cache: None,
             });
 
@@ -434,12 +485,14 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             sign_i_buffer,
             params_buffer,
             staging_buffer,
-            gate_queue_buffers,
-            bind_groups,
-            current_buffer_idx: 0,
+            gate_queue_buffer,
+            main_bind_group,
             process_queue_pipeline,
-            gate_queue: Vec::with_capacity(1024),
-            pending_command_buffers: Vec::with_capacity(NUM_QUEUE_BUFFERS),
+            gate_queue: {
+                let mut q = Vec::with_capacity(1024);
+                q.push(0); // Placeholder for num_gates at index 0
+                q
+            },
             anticommuting_buffer,
             find_anticommuting_bind_group,
             find_anticommuting_pipeline,
@@ -448,7 +501,51 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         // Initialize to |0...0> state
         sim.initialize_state();
 
+        // Warmup: do a dummy dispatch to trigger shader JIT compilation
+        // This moves the JIT overhead from first user sync to initialization
+        sim.warmup_gpu();
+
         Ok(sim)
+    }
+
+    /// Warmup the GPU by doing a dummy dispatch.
+    /// This triggers shader JIT compilation so first real sync is fast.
+    fn warmup_gpu(&mut self) {
+        // Queue a single no-op gate (will be overwritten by initialize_state anyway)
+        self.gate_queue.push(pack_single_gate(GATE_H, 0));
+        self.gate_queue[0] = 1; // num_gates = 1
+
+        // Write to buffer
+        self.queue.write_buffer(
+            &self.gate_queue_buffer,
+            0,
+            bytemuck::cast_slice(&self.gate_queue),
+        );
+
+        // Create and submit warmup command
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.process_queue_pipeline);
+            pass.set_bind_group(0, &self.main_bind_group, &[]);
+            pass.dispatch_workgroups(self.gen_words.div_ceil(256), 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Wait for completion to ensure JIT is done
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+
+        // Reset gate queue
+        self.gate_queue.clear();
+        self.gate_queue.push(0);
+
+        // Re-initialize state (warmup modified it)
+        self.initialize_state();
     }
 
     /// Initialize the tableau to the |0...0> state
@@ -470,14 +567,20 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         }
 
         // Upload to GPU
-        self.queue
-            .write_buffer(&self.stab_x_buffer, 0, &vec![0u8; num_qubits * gen_words * 4]);
+        self.queue.write_buffer(
+            &self.stab_x_buffer,
+            0,
+            &vec![0u8; num_qubits * gen_words * 4],
+        );
         self.queue
             .write_buffer(&self.stab_z_buffer, 0, bytemuck::cast_slice(&stab_z));
         self.queue
             .write_buffer(&self.destab_x_buffer, 0, bytemuck::cast_slice(&destab_x));
-        self.queue
-            .write_buffer(&self.destab_z_buffer, 0, &vec![0u8; num_qubits * gen_words * 4]);
+        self.queue.write_buffer(
+            &self.destab_z_buffer,
+            0,
+            &vec![0u8; num_qubits * gen_words * 4],
+        );
         // Packed signs: one bit per generator -> gen_words u32s
         self.queue
             .write_buffer(&self.sign_minus_buffer, 0, &vec![0u8; gen_words * 4]);
@@ -510,53 +613,45 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             .push(pack_two_qubit_gate(gate_type, control, target));
     }
 
-    /// Submit all pending command buffers to the GPU.
-    /// Called automatically before measurement or when buffer pool is exhausted.
+    /// Submit all pending gates to the GPU and execute them.
+    /// This is non-blocking - the GPU work may still be in progress when this returns.
+    /// Call `wait()` to ensure completion before reading results.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the gate queue exceeds the buffer capacity.
     pub fn sync(&mut self) {
-        if self.pending_command_buffers.is_empty() {
+        // gate_queue[0] is reserved for num_gates, actual gates start at index 1
+        if self.gate_queue.len() <= 1 {
             return;
         }
 
-        // Submit all pending command buffers in one call
-        self.queue
-            .submit(self.pending_command_buffers.drain(..));
+        // Check buffer capacity
+        assert!(
+            self.gate_queue.len() <= GATE_QUEUE_BUFFER_SIZE + 1,
+            "Gate queue overflow: {} gates exceeds buffer size {}",
+            self.gate_queue.len() - 1,
+            GATE_QUEUE_BUFFER_SIZE
+        );
 
-        // Reset buffer index
-        self.current_buffer_idx = 0;
-    }
+        // Sort single-qubit gates by target qubit for better cache locality
+        sort_gate_queue(&mut self.gate_queue);
 
-    /// Flush the gate queue - record command buffer for deferred execution.
-    /// Command buffers are batched and submitted together when sync() is called
-    /// or when the buffer pool is exhausted.
-    pub fn flush(&mut self) {
-        if self.gate_queue.is_empty() {
-            return;
-        }
+        // Update num_gates at index 0
+        let num_gates = (self.gate_queue.len() - 1) as u32;
+        self.gate_queue[0] = num_gates;
 
-        // If buffer pool is exhausted, sync first
-        if self.current_buffer_idx >= NUM_QUEUE_BUFFERS {
-            self.sync();
-        }
-
-        let buffer_idx = self.current_buffer_idx;
-        let num_gates = self.gate_queue.len() as u32;
-
-        // Write gate queue with num_gates as header to current buffer
-        let current_buffer = &self.gate_queue_buffers[buffer_idx];
-        self.queue
-            .write_buffer(current_buffer, 0, bytemuck::bytes_of(&num_gates));
+        // Write all gates to GPU buffer
         self.queue.write_buffer(
-            current_buffer,
-            4,
+            &self.gate_queue_buffer,
+            0,
             bytemuck::cast_slice(&self.gate_queue),
         );
 
-        // Record command buffer (don't submit yet)
+        // Create and submit command buffer with single dispatch
         let mut encoder = self
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: None,
-            });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -564,31 +659,50 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.process_queue_pipeline);
-            pass.set_bind_group(0, &self.bind_groups[buffer_idx], &[]);
+            pass.set_bind_group(0, &self.main_bind_group, &[]);
             pass.dispatch_workgroups(self.gen_words.div_ceil(256), 1, 1);
         }
 
-        // Add to pending list instead of submitting
-        self.pending_command_buffers.push(encoder.finish());
-        self.current_buffer_idx += 1;
+        self.queue.submit(std::iter::once(encoder.finish()));
 
-        // Clear the gate queue
+        // Reset gate queue, keeping placeholder for num_gates
         self.gate_queue.clear();
+        self.gate_queue.push(0);
+    }
+
+    /// Block until all submitted GPU work completes.
+    /// Call this before reading results or when timing GPU execution.
+    pub fn wait(&mut self) {
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+    }
+
+    /// Submit pending gates and wait for completion (sync + wait).
+    /// Use this when you need accurate timing or before reading results.
+    pub fn sync_wait(&mut self) {
+        self.sync();
+        self.wait();
+    }
+
+    /// Flush is now a no-op - gates accumulate until `sync()` is called.
+    /// This enables batching multiple flushes into a single GPU dispatch.
+    pub fn flush(&mut self) {
+        // Gates stay in gate_queue until sync() is called
+        // This is intentional to reduce dispatch overhead
     }
 
     /// Find first anticommuting stabilizer (for measurement)
     fn find_first_anticommuting(&mut self, qubit: u32) -> Option<usize> {
-        // Flush and sync to ensure all pending gates are executed
+        // Flush and wait to ensure all pending gates are executed
         self.flush();
-        self.sync();
+        self.sync_wait();
 
         // Update params for find_anticommuting
         let params = [
             self.num_qubits,
             self.gen_words,
             self.num_qubits, // num_gens
-            qubit,          // target_qubit
-            0,              // control_qubit (unused)
+            qubit,           // target_qubit
+            0,               // control_qubit (unused)
             0,
             0,
             0,
@@ -608,7 +722,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.find_anticommuting_pipeline);
-            pass.set_bind_group(0, &self.bind_groups[0], &[]);
+            pass.set_bind_group(0, &self.main_bind_group, &[]);
             pass.set_bind_group(1, &self.find_anticommuting_bind_group, &[]);
             pass.dispatch_workgroups(self.num_qubits.div_ceil(256), 1, 1);
         }
@@ -618,13 +732,13 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             0,
             &self.staging_buffer,
             0,
-            (self.num_qubits as u64) * 4,
+            u64::from(self.num_qubits) * 4,
         );
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
         // Map and read only the relevant portion
-        let read_size = (self.num_qubits as u64) * 4;
+        let read_size = u64::from(self.num_qubits) * 4;
         let buffer_slice = self.staging_buffer.slice(..read_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -710,17 +824,15 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
                     num_is += 1;
                 }
 
-                for q2 in 0..num_qubits {
-                    if cumulative_x[q2]
-                        && Self::get_bit_transposed(&stab_z, q2, gen_idx, gen_words)
-                    {
+                for (q2, &cx) in cumulative_x.iter().enumerate().take(num_qubits) {
+                    if cx && Self::get_bit_transposed(&stab_z, q2, gen_idx, gen_words) {
                         num_minuses += 1;
                     }
                 }
 
-                for q2 in 0..num_qubits {
+                for (q2, cx) in cumulative_x.iter_mut().enumerate().take(num_qubits) {
                     if Self::get_bit_transposed(&stab_x, q2, gen_idx, gen_words) {
-                        cumulative_x[q2] = !cumulative_x[q2];
+                        *cx = !*cx;
                     }
                 }
             }
@@ -730,7 +842,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             num_minuses += 1;
         }
 
-        num_minuses % 2 != 0
+        !num_minuses.is_multiple_of(2)
     }
 }
 
@@ -778,7 +890,10 @@ impl<R: RngCore + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
     }
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "CX requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
         for pair in qubits.chunks_exact(2) {
             self.queue_two_qubit_gate(GATE_CX, pair[0].index() as u32, pair[1].index() as u32);
         }
@@ -786,7 +901,10 @@ impl<R: RngCore + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
     }
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "CZ requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
         for pair in qubits.chunks_exact(2) {
             self.queue_two_qubit_gate(GATE_CZ, pair[0].index() as u32, pair[1].index() as u32);
         }
@@ -794,7 +912,10 @@ impl<R: RngCore + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
     }
 
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "SWAP requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SWAP requires pairs of qubits"
+        );
         for pair in qubits.chunks_exact(2) {
             self.queue_two_qubit_gate(GATE_SWAP, pair[0].index() as u32, pair[1].index() as u32);
         }
@@ -808,7 +929,7 @@ impl<R: RngCore + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
         let mut results = Vec::with_capacity(qubits.len());
 
         for &q in qubits {
-            let qubit = q.index() as usize;
+            let qubit = q.index();
             let first_anticommuting = self.find_first_anticommuting(qubit as u32);
 
             if first_anticommuting.is_some() {
@@ -865,9 +986,10 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
 
 impl<R: RngCore + SeedableRng + Debug> QuantumSimulator for GpuStab<R> {
     fn reset(&mut self) -> &mut Self {
+        // Wait for any pending GPU work before resetting
+        self.wait();
         self.gate_queue.clear();
-        self.pending_command_buffers.clear();
-        self.current_buffer_idx = 0;
+        self.gate_queue.push(0); // Placeholder for num_gates at index 0
         self.initialize_state();
         self
     }
@@ -878,15 +1000,15 @@ impl<R: RngCore + SeedableRng + Debug> Debug for GpuStab<R> {
         f.debug_struct("GpuStab")
             .field("num_qubits", &self.num_qubits)
             .field("queued_gates", &self.gate_queue.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_qsim::stabilizer_test_utils::ForcedMeasurement;
     use pecos_qsim::SparseStab;
+    use pecos_qsim::stabilizer_test_utils::ForcedMeasurement;
 
     impl<R: RngCore + SeedableRng + Debug> ForcedMeasurement for GpuStab<R> {
         fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
@@ -910,19 +1032,25 @@ mod tests {
 
     #[test]
     fn test_queue_batching() {
-        let Some(mut sim) = gpu_sim(100, 42) else { return };
+        let Some(mut sim) = gpu_sim(100, 42) else {
+            return;
+        };
 
         // Queue many gates
         for i in 0..100 {
             sim.h(&[QubitId::new(i)]);
         }
 
-        // All gates should be queued
-        assert_eq!(sim.gate_queue.len(), 100);
+        // All gates should be queued (gate_queue[0] is num_gates placeholder)
+        assert_eq!(sim.gate_queue.len() - 1, 100);
 
-        // Flush executes them all
+        // Flush is now a no-op, gates stay until sync
         sim.flush();
-        assert_eq!(sim.gate_queue.len(), 0);
+        assert_eq!(sim.gate_queue.len() - 1, 100);
+
+        // Sync executes all gates (only placeholder remains)
+        sim.sync();
+        assert_eq!(sim.gate_queue.len() - 1, 0);
     }
 
     // ========================================================================
@@ -931,7 +1059,9 @@ mod tests {
 
     #[test]
     fn test_initial_state_measurement() {
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Initial state should measure as |0> deterministically
@@ -947,14 +1077,16 @@ mod tests {
                 gpu_r.is_deterministic, cpu_r.is_deterministic,
                 "Determinism should match CPU"
             );
-            assert_eq!(gpu_r.outcome, false, "Initial state should measure 0");
+            assert!(!gpu_r.outcome, "Initial state should measure 0");
             assert_eq!(gpu_r.outcome, cpu_r.outcome, "Outcome should match CPU");
         }
     }
 
     #[test]
     fn test_x_gate_deterministic() {
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // Apply X to qubit 0 - should flip to |1>
@@ -967,17 +1099,28 @@ mod tests {
         let cpu_r1 = cpu.mz_forced(1, false);
 
         assert!(gpu_r0.is_deterministic, "X|0> should be deterministic");
-        assert_eq!(gpu_r0.outcome, true, "X|0> should measure 1");
-        assert_eq!(gpu_r0.outcome, cpu_r0.outcome, "X gate: q0 outcome mismatch");
+        assert!(gpu_r0.outcome, "X|0> should measure 1");
+        assert_eq!(
+            gpu_r0.outcome, cpu_r0.outcome,
+            "X gate: q0 outcome mismatch"
+        );
 
-        assert!(gpu_r1.is_deterministic, "Unmodified qubit should be deterministic");
-        assert_eq!(gpu_r1.outcome, false, "Unmodified qubit should measure 0");
-        assert_eq!(gpu_r1.outcome, cpu_r1.outcome, "X gate: q1 outcome mismatch");
+        assert!(
+            gpu_r1.is_deterministic,
+            "Unmodified qubit should be deterministic"
+        );
+        assert!(!gpu_r1.outcome, "Unmodified qubit should measure 0");
+        assert_eq!(
+            gpu_r1.outcome, cpu_r1.outcome,
+            "X gate: q1 outcome mismatch"
+        );
     }
 
     #[test]
     fn test_z_gate_on_computational_basis() {
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // Z on |0> should have no effect on measurement
@@ -988,7 +1131,7 @@ mod tests {
         let cpu_r = cpu.mz_forced(0, false);
 
         assert!(gpu_r.is_deterministic, "Z|0> should be deterministic");
-        assert_eq!(gpu_r.outcome, false, "Z|0> should still measure 0");
+        assert!(!gpu_r.outcome, "Z|0> should still measure 0");
         assert_eq!(gpu_r.outcome, cpu_r.outcome, "Z gate: outcome mismatch");
 
         // Z on |1> should have no effect on Z-basis measurement
@@ -1003,13 +1146,15 @@ mod tests {
         let cpu_r = cpu.mz_forced(0, false);
 
         assert!(gpu_r.is_deterministic, "ZX|0> should be deterministic");
-        assert_eq!(gpu_r.outcome, true, "ZX|0> should measure 1");
+        assert!(gpu_r.outcome, "ZX|0> should measure 1");
         assert_eq!(gpu_r.outcome, cpu_r.outcome, "ZX gate: outcome mismatch");
     }
 
     #[test]
     fn test_y_gate_deterministic() {
-        let Some(mut gpu) = gpu_sim(1, 42) else { return };
+        let Some(mut gpu) = gpu_sim(1, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(1);
 
         // Y on |0> should flip to |1> (with phase)
@@ -1020,7 +1165,7 @@ mod tests {
         let cpu_r = cpu.mz_forced(0, false);
 
         assert!(gpu_r.is_deterministic, "Y|0> should be deterministic");
-        assert_eq!(gpu_r.outcome, true, "Y|0> should measure 1");
+        assert!(gpu_r.outcome, "Y|0> should measure 1");
         assert_eq!(gpu_r.outcome, cpu_r.outcome, "Y gate: outcome mismatch");
     }
 
@@ -1030,7 +1175,9 @@ mod tests {
 
     #[test]
     fn test_h_gate_non_deterministic() {
-        let Some(mut gpu) = gpu_sim(1, 42) else { return };
+        let Some(mut gpu) = gpu_sim(1, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(1);
 
         // H on |0> creates superposition - non-deterministic
@@ -1049,7 +1196,9 @@ mod tests {
 
     #[test]
     fn test_h_h_identity() {
-        let Some(mut gpu) = gpu_sim(1, 42) else { return };
+        let Some(mut gpu) = gpu_sim(1, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(1);
 
         // H H = I, should return to |0>
@@ -1062,8 +1211,11 @@ mod tests {
         let cpu_r = cpu.mz_forced(0, false);
 
         assert!(gpu_r.is_deterministic, "HH|0> should be deterministic");
-        assert_eq!(gpu_r.outcome, false, "HH|0> should measure 0");
-        assert_eq!(gpu_r.outcome, cpu_r.outcome, "HH identity: outcome mismatch");
+        assert!(!gpu_r.outcome, "HH|0> should measure 0");
+        assert_eq!(
+            gpu_r.outcome, cpu_r.outcome,
+            "HH identity: outcome mismatch"
+        );
     }
 
     // ========================================================================
@@ -1072,7 +1224,9 @@ mod tests {
 
     #[test]
     fn test_s_gate_gpu_vs_cpu() {
-        let Some(mut gpu) = gpu_sim(1, 42) else { return };
+        let Some(mut gpu) = gpu_sim(1, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(1);
 
         // S on |0> has no effect on Z-measurement
@@ -1083,7 +1237,7 @@ mod tests {
         let cpu_r = cpu.mz_forced(0, false);
 
         assert!(gpu_r.is_deterministic, "S|0> should be deterministic");
-        assert_eq!(gpu_r.outcome, false, "S|0> should measure 0");
+        assert!(!gpu_r.outcome, "S|0> should measure 0");
         assert_eq!(gpu_r.outcome, cpu_r.outcome, "S gate: outcome mismatch");
 
         // Test S on |+>
@@ -1105,7 +1259,9 @@ mod tests {
 
     #[test]
     fn test_s_s_s_s_identity() {
-        let Some(mut gpu) = gpu_sim(1, 42) else { return };
+        let Some(mut gpu) = gpu_sim(1, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(1);
 
         // S^4 = I
@@ -1122,7 +1278,7 @@ mod tests {
         let cpu_r = cpu.mz_forced(0, false);
 
         assert!(gpu_r.is_deterministic, "S^4|0> should be deterministic");
-        assert_eq!(gpu_r.outcome, false, "S^4|0> should measure 0");
+        assert!(!gpu_r.outcome, "S^4|0> should measure 0");
         assert_eq!(
             gpu_r.outcome, cpu_r.outcome,
             "S^4 identity: outcome mismatch"
@@ -1135,7 +1291,9 @@ mod tests {
 
     #[test]
     fn test_sdg_gate_gpu_vs_cpu() {
-        let Some(mut gpu) = gpu_sim(1, 42) else { return };
+        let Some(mut gpu) = gpu_sim(1, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(1);
 
         // Sdg on |0> has no effect on Z-measurement
@@ -1146,17 +1304,19 @@ mod tests {
         let cpu_r = cpu.mz_forced(0, false);
 
         assert!(gpu_r.is_deterministic, "Sdg|0> should be deterministic");
-        assert_eq!(gpu_r.outcome, false, "Sdg|0> should measure 0");
+        assert!(!gpu_r.outcome, "Sdg|0> should measure 0");
         assert_eq!(gpu_r.outcome, cpu_r.outcome, "Sdg gate: outcome mismatch");
     }
 
     #[test]
     fn test_s_sdg_identity() {
-        let Some(mut gpu) = gpu_sim(1, 42) else { return };
+        let Some(mut gpu) = gpu_sim(1, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(1);
 
         // S Sdg = I
-        gpu.h(&[QubitId::new(0)]);  // Create superposition first
+        gpu.h(&[QubitId::new(0)]); // Create superposition first
         gpu.sz(&[QubitId::new(0)]);
         gpu.szdg(&[QubitId::new(0)]);
         cpu.h(&[QubitId::new(0)]);
@@ -1178,7 +1338,9 @@ mod tests {
 
     #[test]
     fn test_cx_deterministic() {
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // CX with control in |0> - target unchanged
@@ -1190,10 +1352,16 @@ mod tests {
         let cpu_r0 = cpu.mz_forced(0, false);
         let cpu_r1 = cpu.mz_forced(1, false);
 
-        assert!(gpu_r0.is_deterministic, "CX: control should be deterministic");
-        assert!(gpu_r1.is_deterministic, "CX: target should be deterministic");
-        assert_eq!(gpu_r0.outcome, false, "CX: control should measure 0");
-        assert_eq!(gpu_r1.outcome, false, "CX: target should measure 0");
+        assert!(
+            gpu_r0.is_deterministic,
+            "CX: control should be deterministic"
+        );
+        assert!(
+            gpu_r1.is_deterministic,
+            "CX: target should be deterministic"
+        );
+        assert!(!gpu_r0.outcome, "CX: control should measure 0");
+        assert!(!gpu_r1.outcome, "CX: target should measure 0");
         assert_eq!(gpu_r0.outcome, cpu_r0.outcome, "CX: control mismatch");
         assert_eq!(gpu_r1.outcome, cpu_r1.outcome, "CX: target mismatch");
 
@@ -1210,17 +1378,25 @@ mod tests {
         let cpu_r0 = cpu.mz_forced(0, false);
         let cpu_r1 = cpu.mz_forced(1, false);
 
-        assert!(gpu_r0.is_deterministic, "CX |1>: control should be deterministic");
-        assert!(gpu_r1.is_deterministic, "CX |1>: target should be deterministic");
-        assert_eq!(gpu_r0.outcome, true, "CX |1>: control should measure 1");
-        assert_eq!(gpu_r1.outcome, true, "CX |1>: target should measure 1");
+        assert!(
+            gpu_r0.is_deterministic,
+            "CX |1>: control should be deterministic"
+        );
+        assert!(
+            gpu_r1.is_deterministic,
+            "CX |1>: target should be deterministic"
+        );
+        assert!(gpu_r0.outcome, "CX |1>: control should measure 1");
+        assert!(gpu_r1.outcome, "CX |1>: target should measure 1");
         assert_eq!(gpu_r0.outcome, cpu_r0.outcome, "CX |1>: control mismatch");
         assert_eq!(gpu_r1.outcome, cpu_r1.outcome, "CX |1>: target mismatch");
     }
 
     #[test]
     fn test_cx_entanglement() {
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // H CX creates Bell state - both measurements non-deterministic but correlated
@@ -1233,7 +1409,10 @@ mod tests {
         let cpu_r0 = cpu.mz_forced(0, false);
 
         // First measurement should be non-deterministic
-        assert!(!gpu_r0.is_deterministic, "Bell state: first meas non-deterministic");
+        assert!(
+            !gpu_r0.is_deterministic,
+            "Bell state: first meas non-deterministic"
+        );
         assert_eq!(
             gpu_r0.is_deterministic, cpu_r0.is_deterministic,
             "Bell state: determinism mismatch"
@@ -1246,7 +1425,9 @@ mod tests {
 
     #[test]
     fn test_cz_deterministic() {
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // CZ on computational basis - no effect on Z measurement
@@ -1266,7 +1447,9 @@ mod tests {
 
     #[test]
     fn test_cz_on_superposition() {
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // Put both qubits in superposition, then CZ
@@ -1292,7 +1475,9 @@ mod tests {
 
     #[test]
     fn test_swap_gate() {
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // Set q0 to |1>, q1 to |0>, then swap
@@ -1308,8 +1493,8 @@ mod tests {
 
         assert!(gpu_r0.is_deterministic, "SWAP: q0 should be deterministic");
         assert!(gpu_r1.is_deterministic, "SWAP: q1 should be deterministic");
-        assert_eq!(gpu_r0.outcome, false, "SWAP: q0 should now be 0");
-        assert_eq!(gpu_r1.outcome, true, "SWAP: q1 should now be 1");
+        assert!(!gpu_r0.outcome, "SWAP: q0 should now be 0");
+        assert!(gpu_r1.outcome, "SWAP: q1 should now be 1");
         assert_eq!(gpu_r0.outcome, cpu_r0.outcome, "SWAP: q0 mismatch");
         assert_eq!(gpu_r1.outcome, cpu_r1.outcome, "SWAP: q1 mismatch");
     }
@@ -1320,7 +1505,9 @@ mod tests {
 
     #[test]
     fn test_multi_qubit_circuit() {
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Apply X to all qubits
@@ -1334,15 +1521,20 @@ mod tests {
             let gpu_r = gpu.mz_forced(i, false);
             let cpu_r = cpu.mz_forced(i, false);
 
-            assert!(gpu_r.is_deterministic, "Multi X: q{} should be deterministic", i);
-            assert_eq!(gpu_r.outcome, true, "Multi X: q{} should measure 1", i);
-            assert_eq!(gpu_r.outcome, cpu_r.outcome, "Multi X: q{} mismatch", i);
+            assert!(
+                gpu_r.is_deterministic,
+                "Multi X: q{i} should be deterministic"
+            );
+            assert!(gpu_r.outcome, "Multi X: q{i} should measure 1");
+            assert_eq!(gpu_r.outcome, cpu_r.outcome, "Multi X: q{i} mismatch");
         }
     }
 
     #[test]
     fn test_batched_gates() {
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Apply H to all, then S to all, then H to all
@@ -1366,13 +1558,11 @@ mod tests {
 
             assert_eq!(
                 gpu_r.is_deterministic, cpu_r.is_deterministic,
-                "Batched HSH: q{} determinism mismatch",
-                i
+                "Batched HSH: q{i} determinism mismatch"
             );
             assert_eq!(
                 gpu_r.outcome, cpu_r.outcome,
-                "Batched HSH: q{} outcome mismatch",
-                i
+                "Batched HSH: q{i} outcome mismatch"
             );
         }
     }
@@ -1383,7 +1573,9 @@ mod tests {
 
     #[test]
     fn test_larger_system() {
-        let Some(mut gpu) = gpu_sim(50, 42) else { return };
+        let Some(mut gpu) = gpu_sim(50, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(50);
 
         // Apply alternating X and Z gates
@@ -1403,15 +1595,20 @@ mod tests {
             let cpu_r = cpu.mz_forced(i, false);
 
             let expected = i % 2 == 0; // X flips, Z doesn't
-            assert!(gpu_r.is_deterministic, "Large: q{} should be deterministic", i);
-            assert_eq!(gpu_r.outcome, expected, "Large: q{} wrong outcome", i);
-            assert_eq!(gpu_r.outcome, cpu_r.outcome, "Large: q{} mismatch", i);
+            assert!(
+                gpu_r.is_deterministic,
+                "Large: q{i} should be deterministic"
+            );
+            assert_eq!(gpu_r.outcome, expected, "Large: q{i} wrong outcome");
+            assert_eq!(gpu_r.outcome, cpu_r.outcome, "Large: q{i} mismatch");
         }
     }
 
     #[test]
     fn test_random_circuit() {
-        let Some(mut gpu) = gpu_sim(10, 42) else { return };
+        let Some(mut gpu) = gpu_sim(10, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(10);
 
         // Apply a deterministic sequence of gates
@@ -1450,13 +1647,11 @@ mod tests {
 
             assert_eq!(
                 gpu_r.is_deterministic, cpu_r.is_deterministic,
-                "Random circuit: q{} determinism mismatch",
-                i
+                "Random circuit: q{i} determinism mismatch"
             );
             assert_eq!(
                 gpu_r.outcome, cpu_r.outcome,
-                "Random circuit: q{} outcome mismatch",
-                i
+                "Random circuit: q{i} outcome mismatch"
             );
         }
     }

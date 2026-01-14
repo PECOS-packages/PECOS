@@ -6,6 +6,9 @@
 //
 // Signs are packed as bits: sign_minus[word_idx] and sign_i[word_idx] each
 // contain one bit per generator, enabling bitwise sign updates.
+//
+// OPTIMIZATION: Signs are cached in local variables to reduce global memory traffic.
+// Only one read at start and one write at end, instead of per-gate reads/writes.
 
 // Stabilizer tableau buffers
 @group(0) @binding(0) var<storage, read_write> stab_x: array<u32>;
@@ -61,183 +64,36 @@ fn decode_gate(packed: u32) -> vec3<u32> {
 }
 
 // =============================================================================
-// Inline gate implementations with packed sign updates
+// Main kernel with sign caching optimization
 // =============================================================================
 
-fn apply_h_inline(word_idx: u32, q: u32) {
-    let row_offset = q * params.gen_words + word_idx;
-
-    let orig_stab_x = stab_x[row_offset];
-    let orig_stab_z = stab_z[row_offset];
-
-    // Swap X and Z
-    stab_x[row_offset] = orig_stab_z;
-    stab_z[row_offset] = orig_stab_x;
-
-    let destab_x_word = destab_x[row_offset];
-    let destab_z_word = destab_z[row_offset];
-    destab_x[row_offset] = destab_z_word;
-    destab_z[row_offset] = destab_x_word;
-
-    // H: flip minus sign when both X and Z were set (Y -> -Y)
-    sign_minus[word_idx] ^= (orig_stab_x & orig_stab_z);
-}
-
-fn apply_s_inline(word_idx: u32, q: u32) {
-    let row_offset = q * params.gen_words + word_idx;
-
-    let orig_stab_x = stab_x[row_offset];
-    let orig_stab_z = stab_z[row_offset];
-
-    // S: Z -> Z, X -> XZ (Y with i phase)
-    stab_z[row_offset] = orig_stab_z ^ orig_stab_x;
-
-    let orig_destab_x = destab_x[row_offset];
-    let orig_destab_z = destab_z[row_offset];
-    destab_z[row_offset] = orig_destab_z ^ orig_destab_x;
-
-    // S: when X is set, add i phase
-    // When both X and Z were set (was Y), also flip minus (i * i = -1 component)
-    let had_xz = orig_stab_x & orig_stab_z;
-    sign_minus[word_idx] ^= had_xz;
-    sign_i[word_idx] ^= orig_stab_x;
-}
-
-fn apply_sdg_inline(word_idx: u32, q: u32) {
-    let row_offset = q * params.gen_words + word_idx;
-
-    let orig_stab_x = stab_x[row_offset];
-    let orig_stab_z = stab_z[row_offset];
-
-    stab_z[row_offset] = orig_stab_z ^ orig_stab_x;
-
-    let orig_destab_x = destab_x[row_offset];
-    let orig_destab_z = destab_z[row_offset];
-    destab_z[row_offset] = orig_destab_z ^ orig_destab_x;
-
-    // S†: when X is set, add -i phase (i^3)
-    // -i = toggle i, and if already had i, also toggle minus
-    // For each generator with X: if sign_i was set, toggle minus; then toggle i
-    let had_i = sign_i[word_idx];
-    sign_minus[word_idx] ^= (orig_stab_x & had_i);
-    sign_i[word_idx] ^= orig_stab_x;
-}
-
-fn apply_x_inline(word_idx: u32, q: u32) {
-    let row_offset = q * params.gen_words + word_idx;
-    let stab_z_word = stab_z[row_offset];
-
-    // X: flip minus sign when Z is present
-    sign_minus[word_idx] ^= stab_z_word;
-}
-
-fn apply_y_inline(word_idx: u32, q: u32) {
-    let row_offset = q * params.gen_words + word_idx;
-
-    let stab_x_word = stab_x[row_offset];
-    let stab_z_word = stab_z[row_offset];
-
-    // Y: flip minus sign when exactly one of X or Z (XOR)
-    sign_minus[word_idx] ^= (stab_x_word ^ stab_z_word);
-}
-
-fn apply_z_inline(word_idx: u32, q: u32) {
-    let row_offset = q * params.gen_words + word_idx;
-    let stab_x_word = stab_x[row_offset];
-
-    // Z: flip minus sign when X is present
-    sign_minus[word_idx] ^= stab_x_word;
-}
-
-fn apply_cx_inline(word_idx: u32, ctrl: u32, tgt: u32) {
-    let ctrl_offset = ctrl * params.gen_words + word_idx;
-    let tgt_offset = tgt * params.gen_words + word_idx;
-
-    // Read before update
-    let ctrl_x = stab_x[ctrl_offset];
-    let tgt_z = stab_z[tgt_offset];
-
-    // CX: X_tgt ^= X_ctrl, Z_ctrl ^= Z_tgt
-    stab_x[tgt_offset] = stab_x[tgt_offset] ^ ctrl_x;
-    stab_z[ctrl_offset] = stab_z[ctrl_offset] ^ tgt_z;
-
-    let ctrl_destab_x = destab_x[ctrl_offset];
-    let tgt_destab_z = destab_z[tgt_offset];
-
-    destab_x[tgt_offset] = destab_x[tgt_offset] ^ ctrl_destab_x;
-    destab_z[ctrl_offset] = destab_z[ctrl_offset] ^ tgt_destab_z;
-
-    // Sign update: flip when ctrl_x AND tgt_z AND (ctrl_z_new == tgt_x_new)
-    // ctrl_z_new = ctrl_z ^ tgt_z, tgt_x_new = tgt_x ^ ctrl_x
-    // (cz_new == tx_new) means they are both 0 or both 1, i.e., NOT(cz_new XOR tx_new)
-    let ctrl_z_new = stab_z[ctrl_offset];
-    let tgt_x_new = stab_x[tgt_offset];
-    let same = ~(ctrl_z_new ^ tgt_x_new);
-    sign_minus[word_idx] ^= (ctrl_x & tgt_z & same);
-}
-
-fn apply_cz_inline(word_idx: u32, a: u32, b: u32) {
-    let a_offset = a * params.gen_words + word_idx;
-    let b_offset = b * params.gen_words + word_idx;
-
-    let a_x = stab_x[a_offset];
-    let b_x = stab_x[b_offset];
-
-    // CZ: Z_a ^= X_b, Z_b ^= X_a
-    stab_z[a_offset] = stab_z[a_offset] ^ b_x;
-    stab_z[b_offset] = stab_z[b_offset] ^ a_x;
-
-    let a_destab_x = destab_x[a_offset];
-    let b_destab_x = destab_x[b_offset];
-
-    destab_z[a_offset] = destab_z[a_offset] ^ b_destab_x;
-    destab_z[b_offset] = destab_z[b_offset] ^ a_destab_x;
-
-    // Sign update: flip when both have X AND (az_new == bz_new)
-    let az_new = stab_z[a_offset];
-    let bz_new = stab_z[b_offset];
-    let same = ~(az_new ^ bz_new);
-    sign_minus[word_idx] ^= (a_x & b_x & same);
-}
-
-fn apply_swap_inline(word_idx: u32, a: u32, b: u32) {
-    let a_offset = a * params.gen_words + word_idx;
-    let b_offset = b * params.gen_words + word_idx;
-
-    // Swap all arrays
-    let tmp_stab_x = stab_x[a_offset];
-    stab_x[a_offset] = stab_x[b_offset];
-    stab_x[b_offset] = tmp_stab_x;
-
-    let tmp_stab_z = stab_z[a_offset];
-    stab_z[a_offset] = stab_z[b_offset];
-    stab_z[b_offset] = tmp_stab_z;
-
-    let tmp_destab_x = destab_x[a_offset];
-    destab_x[a_offset] = destab_x[b_offset];
-    destab_x[b_offset] = tmp_destab_x;
-
-    let tmp_destab_z = destab_z[a_offset];
-    destab_z[a_offset] = destab_z[b_offset];
-    destab_z[b_offset] = tmp_destab_z;
-
-    // SWAP has no sign updates
-}
-
-// =============================================================================
-// Main kernel
-// =============================================================================
+// Shared memory for broadcasting num_gates to all threads in workgroup
+var<workgroup> shared_num_gates: u32;
 
 @compute @workgroup_size(256)
-fn process_gate_queue(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let word_idx = global_id.x;
+fn process_gate_queue(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_index) local_idx: u32
+) {
+    // First thread loads num_gates, then all threads sync
+    if (local_idx == 0u) {
+        shared_num_gates = gate_queue[0];
+    }
+    workgroupBarrier();
 
+    let word_idx = global_id.x;
     if (word_idx >= params.gen_words) {
         return;
     }
 
-    // Read num_gates from first element of gate queue
-    let num_gates = gate_queue[0];
+    let num_gates = shared_num_gates;
+    if (num_gates == 0u) {
+        return;
+    }
+
+    // Cache signs in local variables - reduces global memory traffic
+    var local_sign_minus = sign_minus[word_idx];
+    var local_sign_i = sign_i[word_idx];
 
     // Process all gates in sequence (gates start at index 1)
     for (var gate_idx: u32 = 0u; gate_idx < num_gates; gate_idx = gate_idx + 1u) {
@@ -248,33 +104,125 @@ fn process_gate_queue(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         switch (gate_type) {
             case GATE_H: {
-                apply_h_inline(word_idx, tgt_qubit);
+                let row_offset = tgt_qubit * params.gen_words + word_idx;
+                let orig_stab_x = stab_x[row_offset];
+                let orig_stab_z = stab_z[row_offset];
+                // Swap X and Z
+                stab_x[row_offset] = orig_stab_z;
+                stab_z[row_offset] = orig_stab_x;
+                let destab_x_word = destab_x[row_offset];
+                let destab_z_word = destab_z[row_offset];
+                destab_x[row_offset] = destab_z_word;
+                destab_z[row_offset] = destab_x_word;
+                // H: flip minus sign when both X and Z were set (Y -> -Y)
+                local_sign_minus ^= (orig_stab_x & orig_stab_z);
             }
             case GATE_S: {
-                apply_s_inline(word_idx, tgt_qubit);
+                let row_offset = tgt_qubit * params.gen_words + word_idx;
+                let orig_stab_x = stab_x[row_offset];
+                let orig_stab_z = stab_z[row_offset];
+                // S: Z -> Z, X -> XZ (Y with i phase)
+                stab_z[row_offset] = orig_stab_z ^ orig_stab_x;
+                let orig_destab_x = destab_x[row_offset];
+                let orig_destab_z = destab_z[row_offset];
+                destab_z[row_offset] = orig_destab_z ^ orig_destab_x;
+                // S: when X is set, add i phase
+                let had_xz = orig_stab_x & orig_stab_z;
+                local_sign_minus ^= had_xz;
+                local_sign_i ^= orig_stab_x;
             }
             case GATE_SDG: {
-                apply_sdg_inline(word_idx, tgt_qubit);
+                let row_offset = tgt_qubit * params.gen_words + word_idx;
+                let orig_stab_x = stab_x[row_offset];
+                let orig_stab_z = stab_z[row_offset];
+                stab_z[row_offset] = orig_stab_z ^ orig_stab_x;
+                let orig_destab_x = destab_x[row_offset];
+                let orig_destab_z = destab_z[row_offset];
+                destab_z[row_offset] = orig_destab_z ^ orig_destab_x;
+                // S†: use cached sign_i value
+                let had_i = local_sign_i;
+                local_sign_minus ^= (orig_stab_x & had_i);
+                local_sign_i ^= orig_stab_x;
             }
             case GATE_X: {
-                apply_x_inline(word_idx, tgt_qubit);
+                let row_offset = tgt_qubit * params.gen_words + word_idx;
+                let stab_z_word = stab_z[row_offset];
+                // X: flip minus sign when Z is present
+                local_sign_minus ^= stab_z_word;
             }
             case GATE_Y: {
-                apply_y_inline(word_idx, tgt_qubit);
+                let row_offset = tgt_qubit * params.gen_words + word_idx;
+                let stab_x_word = stab_x[row_offset];
+                let stab_z_word = stab_z[row_offset];
+                // Y: flip minus sign when exactly one of X or Z (XOR)
+                local_sign_minus ^= (stab_x_word ^ stab_z_word);
             }
             case GATE_Z: {
-                apply_z_inline(word_idx, tgt_qubit);
+                let row_offset = tgt_qubit * params.gen_words + word_idx;
+                let stab_x_word = stab_x[row_offset];
+                // Z: flip minus sign when X is present
+                local_sign_minus ^= stab_x_word;
             }
             case GATE_CX: {
-                apply_cx_inline(word_idx, ctrl_qubit, tgt_qubit);
+                let ctrl_offset = ctrl_qubit * params.gen_words + word_idx;
+                let tgt_offset = tgt_qubit * params.gen_words + word_idx;
+                // Read before update
+                let ctrl_x = stab_x[ctrl_offset];
+                let tgt_z = stab_z[tgt_offset];
+                // CX: X_tgt ^= X_ctrl, Z_ctrl ^= Z_tgt
+                stab_x[tgt_offset] = stab_x[tgt_offset] ^ ctrl_x;
+                stab_z[ctrl_offset] = stab_z[ctrl_offset] ^ tgt_z;
+                let ctrl_destab_x = destab_x[ctrl_offset];
+                let tgt_destab_z = destab_z[tgt_offset];
+                destab_x[tgt_offset] = destab_x[tgt_offset] ^ ctrl_destab_x;
+                destab_z[ctrl_offset] = destab_z[ctrl_offset] ^ tgt_destab_z;
+                // Sign update
+                let ctrl_z_new = stab_z[ctrl_offset];
+                let tgt_x_new = stab_x[tgt_offset];
+                let same = ~(ctrl_z_new ^ tgt_x_new);
+                local_sign_minus ^= (ctrl_x & tgt_z & same);
             }
             case GATE_CZ: {
-                apply_cz_inline(word_idx, ctrl_qubit, tgt_qubit);
+                let a_offset = ctrl_qubit * params.gen_words + word_idx;
+                let b_offset = tgt_qubit * params.gen_words + word_idx;
+                let a_x = stab_x[a_offset];
+                let b_x = stab_x[b_offset];
+                // CZ: Z_a ^= X_b, Z_b ^= X_a
+                stab_z[a_offset] = stab_z[a_offset] ^ b_x;
+                stab_z[b_offset] = stab_z[b_offset] ^ a_x;
+                let a_destab_x = destab_x[a_offset];
+                let b_destab_x = destab_x[b_offset];
+                destab_z[a_offset] = destab_z[a_offset] ^ b_destab_x;
+                destab_z[b_offset] = destab_z[b_offset] ^ a_destab_x;
+                // Sign update
+                let az_new = stab_z[a_offset];
+                let bz_new = stab_z[b_offset];
+                let same = ~(az_new ^ bz_new);
+                local_sign_minus ^= (a_x & b_x & same);
             }
             case GATE_SWAP: {
-                apply_swap_inline(word_idx, ctrl_qubit, tgt_qubit);
+                let a_offset = ctrl_qubit * params.gen_words + word_idx;
+                let b_offset = tgt_qubit * params.gen_words + word_idx;
+                // Swap all arrays
+                let tmp_stab_x = stab_x[a_offset];
+                stab_x[a_offset] = stab_x[b_offset];
+                stab_x[b_offset] = tmp_stab_x;
+                let tmp_stab_z = stab_z[a_offset];
+                stab_z[a_offset] = stab_z[b_offset];
+                stab_z[b_offset] = tmp_stab_z;
+                let tmp_destab_x = destab_x[a_offset];
+                destab_x[a_offset] = destab_x[b_offset];
+                destab_x[b_offset] = tmp_destab_x;
+                let tmp_destab_z = destab_z[a_offset];
+                destab_z[a_offset] = destab_z[b_offset];
+                destab_z[b_offset] = tmp_destab_z;
+                // SWAP has no sign updates
             }
             default: {}
         }
     }
+
+    // Write cached signs back to global memory (once instead of per-gate)
+    sign_minus[word_idx] = local_sign_minus;
+    sign_i[word_idx] = local_sign_i;
 }

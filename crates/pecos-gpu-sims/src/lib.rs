@@ -27,13 +27,18 @@
 //! ```
 
 mod gpu;
+mod gpu_sampler;
 mod gpu_stab;
 pub mod prelude;
 
+#[cfg(test)]
+mod gpu_sampler_validation;
+
 pub use gpu::{GpuError, GpuStateVec};
+pub use gpu_sampler::{GpuMeasurementSampler, GpuSampleResult};
 pub use gpu_stab::GpuStab;
 
-/// Default GPU stabilizer simulator using StdRng
+/// Default GPU stabilizer simulator using `StdRng`
 pub type DefaultGpuStab = GpuStab<rand::rngs::StdRng>;
 
 use std::f64::consts::FRAC_1_SQRT_2;

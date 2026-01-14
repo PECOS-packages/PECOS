@@ -23,6 +23,7 @@ pub mod quantum_simulator;
 pub mod sign_algebra;
 pub mod sparse_stab;
 pub mod stabilizer_tableau;
+pub mod stabilizer_test_utils;
 pub mod state_vec;
 pub mod symbolic_gens;
 pub mod symbolic_sparse_stab;

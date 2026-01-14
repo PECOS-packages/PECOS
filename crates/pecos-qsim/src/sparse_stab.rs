@@ -168,6 +168,25 @@ impl SparseStabGeneric<BitSet, PecosRng> {
     }
 }
 
+/// Constructors for `SparseStabVecSet` with the default RNG type.
+impl SparseStabGeneric<VecSet<usize>, PecosRng> {
+    /// Create a new VecSet-based stabilizer simulator with the default RNG.
+    #[inline]
+    #[must_use]
+    pub fn new(num_qubits: usize) -> Self {
+        let rng = PecosRng::from_os_rng();
+        Self::with_rng(num_qubits, rng)
+    }
+
+    /// Create a new VecSet-based stabilizer simulator with a specific seed.
+    #[inline]
+    #[must_use]
+    pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        let rng = PecosRng::seed_from_u64(seed);
+        Self::with_rng(num_qubits, rng)
+    }
+}
+
 /// Methods available on `SparseStabGeneric` with any set and RNG types.
 impl<S, R> SparseStabGeneric<S, R>
 where
@@ -1344,6 +1363,31 @@ where
 
     fn num_qubits(&self) -> usize {
         self.num_qubits
+    }
+}
+
+// ============================================================================
+// ForcedMeasurement trait implementations for probability comparison tests
+// ============================================================================
+
+use crate::stabilizer_test_utils::ForcedMeasurement;
+
+impl<S, R> ForcedMeasurement for SparseStabGeneric<S, R>
+where
+    S: IndexSet,
+    R: RngCore + SeedableRng + Rng + Debug,
+{
+    fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
+        SparseStabGeneric::mz_forced(self, qubit, forced_outcome)
+    }
+}
+
+impl<R> ForcedMeasurement for SparseStabHybrid<R>
+where
+    R: RngCore + SeedableRng + Rng + Debug,
+{
+    fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
+        SparseStabHybrid::mz_forced(self, qubit, forced_outcome)
     }
 }
 
@@ -3013,4 +3057,112 @@ mod tests {
 
     // TODO: Consider "forcing" the random number for cleaner testing.
     // TODO: Consider a seed to still have random numbers but make them predictable
+
+    // ========================================================================
+    // Generic Test Suite (using stabilizer_test_utils)
+    // ========================================================================
+
+    use crate::stabilizer_test_utils;
+
+    // ========================================================================
+    // SparseStab (BitSet) Tests
+    // ========================================================================
+
+    #[test]
+    fn test_bitset_gate_identities_suite() {
+        let mut sim = SparseStab::new(2);
+        stabilizer_test_utils::verify_all_gate_identities(&mut sim);
+    }
+
+    #[test]
+    fn test_bitset_bell_state_correlations_suite() {
+        let mut sim = SparseStab::new(2);
+        stabilizer_test_utils::verify_bell_state_correlations(&mut sim);
+    }
+
+    #[test]
+    fn test_bitset_ghz_state_correlations_suite() {
+        let mut sim = SparseStab::new(4);
+        stabilizer_test_utils::verify_ghz_state_correlations(&mut sim, 4);
+    }
+
+    #[test]
+    fn test_bitset_basic_stabilizer_suite() {
+        let mut sim = SparseStab::new(3);
+        stabilizer_test_utils::run_basic_stabilizer_test_suite(&mut sim, 3);
+    }
+
+    #[test]
+    fn test_bitset_full_stabilizer_suite() {
+        let mut sim = SparseStab::new(3);
+        stabilizer_test_utils::run_full_stabilizer_test_suite(&mut sim, 3);
+    }
+
+    // ========================================================================
+    // SparseStabVecSet Tests
+    // ========================================================================
+
+    #[test]
+    fn test_vecset_gate_identities_suite() {
+        let mut sim = SparseStabVecSet::new(2);
+        stabilizer_test_utils::verify_all_gate_identities(&mut sim);
+    }
+
+    #[test]
+    fn test_vecset_bell_state_correlations_suite() {
+        let mut sim = SparseStabVecSet::new(2);
+        stabilizer_test_utils::verify_bell_state_correlations(&mut sim);
+    }
+
+    #[test]
+    fn test_vecset_ghz_state_correlations_suite() {
+        let mut sim = SparseStabVecSet::new(4);
+        stabilizer_test_utils::verify_ghz_state_correlations(&mut sim, 4);
+    }
+
+    #[test]
+    fn test_vecset_basic_stabilizer_suite() {
+        let mut sim = SparseStabVecSet::new(3);
+        stabilizer_test_utils::run_basic_stabilizer_test_suite(&mut sim, 3);
+    }
+
+    #[test]
+    fn test_vecset_full_stabilizer_suite() {
+        let mut sim = SparseStabVecSet::new(3);
+        stabilizer_test_utils::run_full_stabilizer_test_suite(&mut sim, 3);
+    }
+
+    // ========================================================================
+    // SparseStabHybrid Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hybrid_gate_identities_suite() {
+        let mut sim = SparseStabHybrid::new(2);
+        stabilizer_test_utils::verify_all_gate_identities(&mut sim);
+    }
+
+    #[test]
+    fn test_hybrid_bell_state_correlations_suite() {
+        let mut sim = SparseStabHybrid::new(2);
+        stabilizer_test_utils::verify_bell_state_correlations(&mut sim);
+    }
+
+    #[test]
+    fn test_hybrid_ghz_state_correlations_suite() {
+        let mut sim = SparseStabHybrid::new(4);
+        stabilizer_test_utils::verify_ghz_state_correlations(&mut sim, 4);
+    }
+
+    #[test]
+    fn test_hybrid_basic_stabilizer_suite() {
+        let mut sim = SparseStabHybrid::new(3);
+        stabilizer_test_utils::run_basic_stabilizer_test_suite(&mut sim, 3);
+    }
+
+    #[test]
+    fn test_hybrid_full_stabilizer_suite() {
+        let mut sim = SparseStabHybrid::new(3);
+        stabilizer_test_utils::run_full_stabilizer_test_suite(&mut sim, 3);
+    }
 }

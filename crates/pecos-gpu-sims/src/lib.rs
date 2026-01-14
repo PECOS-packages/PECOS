@@ -8,6 +8,11 @@
 //! - DirectX 12 (Windows)
 //! - WebGPU (browsers via WASM)
 //!
+//! # Simulators
+//!
+//! - [`GpuStateVec`]: State vector simulator for universal quantum circuits
+//! - [`GpuStab`]: Stabilizer tableau simulator for Clifford circuits (experimental)
+//!
 //! # Example
 //!
 //! ```no_run
@@ -22,9 +27,14 @@
 //! ```
 
 mod gpu;
+mod gpu_stab;
 pub mod prelude;
 
 pub use gpu::{GpuError, GpuStateVec};
+pub use gpu_stab::GpuStab;
+
+/// Default GPU stabilizer simulator using StdRng
+pub type DefaultGpuStab = GpuStab<rand::rngs::StdRng>;
 
 use std::f64::consts::FRAC_1_SQRT_2;
 

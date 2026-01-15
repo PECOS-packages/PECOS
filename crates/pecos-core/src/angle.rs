@@ -21,6 +21,7 @@
 //! let radians = half_turn.to_radians();
 //! assert!((radians - std::f64::consts::PI).abs() < 1e-6);
 //! ```
+mod macros;
 mod parse;
 
 use num_traits::{

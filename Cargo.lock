@@ -3354,6 +3354,10 @@ dependencies = [
 [[package]]
 name = "pecos-qec"
 version = "0.1.1"
+dependencies = [
+ "pecos-core",
+ "thiserror 2.0.17",
+]
 
 [[package]]
 name = "pecos-qis"

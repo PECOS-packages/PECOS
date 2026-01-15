@@ -11,5 +11,9 @@ categories.workspace = true
 description = "Quantum error correction utilities for PECOS"
 readme = "README.md"
 
+[dependencies]
+pecos-core = { path = "../pecos-core" }
+thiserror.workspace = true
+
 [lints]
 workspace = true

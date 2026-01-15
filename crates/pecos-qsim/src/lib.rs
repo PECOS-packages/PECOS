@@ -33,7 +33,7 @@ pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
 pub use density_matrix::DensityMatrix;
-pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet};
+pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClassification};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,

@@ -10,13 +10,14 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+pub mod algebra;
+
 #[allow(clippy::module_name_repetitions)]
 pub mod pauli_bitmap;
 
 #[allow(clippy::module_name_repetitions)]
 pub mod pauli_sparse;
 
-mod pauli_stabilizer_string;
 #[allow(clippy::module_name_repetitions)]
 pub mod pauli_string;
 

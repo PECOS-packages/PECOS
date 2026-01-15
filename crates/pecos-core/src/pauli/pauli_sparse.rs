@@ -44,6 +44,73 @@ where
 
 impl<T> PauliSparse<T>
 where
+    T: for<'a> Set<'a, Element = usize>,
+{
+    /// Returns a reference to the X positions set.
+    ///
+    /// Positions in `x_positions` are affected by the X operator.
+    /// Positions in both `x_positions` and `z_positions` are affected by Y.
+    #[inline]
+    #[must_use]
+    pub fn x_set(&self) -> &T {
+        &self.x_positions
+    }
+
+    /// Returns a reference to the Z positions set.
+    ///
+    /// Positions in `z_positions` are affected by the Z operator.
+    /// Positions in both `x_positions` and `z_positions` are affected by Y.
+    #[inline]
+    #[must_use]
+    pub fn z_set(&self) -> &T {
+        &self.z_positions
+    }
+
+    /// Creates a `PauliSparse` directly from X and Z position sets.
+    ///
+    /// This is the most efficient way to create a `PauliSparse` when you already
+    /// have the X and Z sets (e.g., from a stabilizer tableau). Y operators are
+    /// represented as positions present in both sets.
+    ///
+    /// # Parameters
+    /// - `phase`: The phase of the Pauli operator (`+1`, `-1`, `+i`, or `-i`).
+    /// - `x_positions`: Set of positions with X component.
+    /// - `z_positions`: Set of positions with Z component.
+    ///
+    /// # Examples
+    /// ```
+    /// use pecos_core::{PauliSparse, QuarterPhase, VecSet};
+    ///
+    /// let x_set = VecSet::from_iter([0, 1]);
+    /// let z_set = VecSet::from_iter([1, 2]);  // qubit 1 has Y (both X and Z)
+    ///
+    /// let pauli = PauliSparse::from_xz_sets(QuarterPhase::PlusOne, x_set, z_set);
+    /// ```
+    #[must_use]
+    pub fn from_xz_sets(phase: QuarterPhase, x_positions: T, z_positions: T) -> Self {
+        Self {
+            phase,
+            x_positions,
+            z_positions,
+        }
+    }
+
+    /// Returns `true` if this is the identity operator (no X, Y, or Z components).
+    #[inline]
+    #[must_use]
+    pub fn is_identity(&self) -> bool {
+        self.x_positions.is_empty() && self.z_positions.is_empty()
+    }
+
+    /// Sets the phase of this Pauli operator.
+    #[inline]
+    pub fn set_phase(&mut self, phase: QuarterPhase) {
+        self.phase = phase;
+    }
+}
+
+impl<T> PauliSparse<T>
+where
     T: for<'a> Set<'a, Element = usize> + FromIterator<usize>,
     for<'a> &'a T: BitOr<Output = T>,
 {
@@ -304,5 +371,53 @@ mod tests {
             PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[1], &[], &[0])
                 .unwrap();
         assert!(!p1.commutes_with(&p2));
+    }
+
+    #[test]
+    fn test_from_xz_sets() {
+        let x_set = VecSet::from_iter([0usize, 1]);
+        let z_set = VecSet::from_iter([1usize, 2]);
+
+        let pauli = PauliSparse::from_xz_sets(QuarterPhase::MinusOne, x_set, z_set);
+
+        assert_eq!(pauli.phase(), QuarterPhase::MinusOne);
+        assert_sets_equal(pauli.x_set(), &VecSet::from_iter([0usize, 1]));
+        assert_sets_equal(pauli.z_set(), &VecSet::from_iter([1usize, 2]));
+        // Qubit 1 has Y (in both sets), weight should be 3
+        assert_eq!(pauli.weight(), 3);
+    }
+
+    #[test]
+    fn test_set_accessors() {
+        let pauli =
+            PauliSparse::with_operators(QuarterPhase::PlusOne, &[0usize, 1], &[2usize], &[3usize])
+                .unwrap();
+
+        // x_set should contain 0, 1, 2 (x positions + y position)
+        assert_sets_equal(pauli.x_set(), &VecSet::from_iter([0usize, 1, 2]));
+        // z_set should contain 2, 3 (z position + y position)
+        assert_sets_equal(pauli.z_set(), &VecSet::from_iter([2usize, 3]));
+    }
+
+    #[test]
+    fn test_is_identity() {
+        let identity = PauliSparse::<VecSet<usize>>::new();
+        assert!(identity.is_identity());
+
+        let not_identity =
+            PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[0], &[], &[])
+                .unwrap();
+        assert!(!not_identity.is_identity());
+    }
+
+    #[test]
+    fn test_set_phase() {
+        let mut pauli =
+            PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[0], &[], &[])
+                .unwrap();
+        assert_eq!(pauli.phase(), QuarterPhase::PlusOne);
+
+        pauli.set_phase(QuarterPhase::MinusI);
+        assert_eq!(pauli.phase(), QuarterPhase::MinusI);
     }
 }

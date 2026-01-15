@@ -239,6 +239,8 @@ where
 /// Reset the thread-local operation collector
 pub fn reset_interface() {
     with_interface(OperationCollector::reset);
+    // Also reset the collection mode read counter for loop termination
+    ffi::reset_collection_read_count();
 }
 
 /// Get a clone of the thread-local operation collector

@@ -32,6 +32,12 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
 === ":fontawesome-brands-python: Python"
 
+    ```hidden-python
+    import os
+    # Create shared directory for HUGR files that Rust tests can use
+    os.makedirs("/tmp/pecos-doc-tests", exist_ok=True)
+    ```
+
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
@@ -61,11 +67,16 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
     print(results.to_dict())
     # Results: always correlated (00 or 11)
+
+    # Save compiled HUGR for other examples
+    _hugr = bell_state.compile()
+    with open("/tmp/pecos-doc-tests/bell_state.hugr", "w") as f:
+        f.write(_hugr.to_str())
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
-    <!--skip: requires pre-compiled bell_state.hugr file-->
+    <!--test-data: bell_state.hugr-->
     ```rust
     use pecos_hugr::{hugr_engine, hugr_sim};
     use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
@@ -119,6 +130,13 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 === ":fontawesome-brands-python: Python"
 
+    ```hidden-python
+    import os
+    # Ensure circuit.hugr doesn't exist so we get FileNotFoundError
+    if os.path.exists("circuit.hugr"):
+        os.remove("circuit.hugr")
+    ```
+
     <!--expect-error: FileNotFoundError.*circuit\.hugr-->
     ```python
     from pecos import sim, Hugr
@@ -129,17 +147,26 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
     With an actual HUGR file:
 
-    <!--skip: requires pre-compiled .hugr file-->
+    ```hidden-python
+    import shutil
+    from pecos import sim, Hugr
+    from pecos_rslib import state_vector
+    # Use the bell_state.hugr generated earlier
+    shutil.copy("/tmp/pecos-doc-tests/bell_state.hugr", "circuit.hugr")
+    # Also save as circuit.hugr for Rust tests
+    shutil.copy("/tmp/pecos-doc-tests/bell_state.hugr", "/tmp/pecos-doc-tests/circuit.hugr")
+    ```
+
     ```python
     # From bytes
     with open("circuit.hugr", "rb") as f:
         hugr_bytes = f.read()
-    results = sim(Hugr(hugr_bytes)).run(1000)
+    results = sim(Hugr(hugr_bytes)).qubits(2).quantum(state_vector()).run(1000)
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
-    <!--skip: requires pre-compiled circuit.hugr file-->
+    <!--test-data: circuit.hugr-->
     ```rust
     use pecos_hugr::{hugr_engine, hugr_sim};
     use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
@@ -239,7 +266,7 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip: while loop may exceed 60s timeout-->
+    <!--skip: HUGR while loop interpreter has known performance issues-->
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit

@@ -729,6 +729,7 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
         'pecos = {{ path = "{project_root}/crates/pecos", features = ["runtime", "hugr", "wasm"] }}',
         '# Also include internal crates that docs may reference directly',
         'pecos-hugr = {{ path = "{project_root}/crates/pecos-hugr" }}',
+        'pecos-engines = {{ path = "{project_root}/crates/pecos-engines" }}',
         'pecos-num = {{ path = "{project_root}/crates/pecos-num" }}',
         'pecos-decoders = {{ path = "{project_root}/crates/pecos-decoders", features = ["ldpc"] }}',
         'pecos-decoder-core = {{ path = "{project_root}/crates/pecos-decoder-core" }}',
@@ -743,6 +744,8 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
         "",
         "        # Copy test data files if needed",
         "        test_data_dir = project_root / 'docs' / 'assets' / 'test-data'",
+        "        hugr_test_data_dir = project_root / 'crates' / 'pecos' / 'tests' / 'test_data' / 'hugr'",
+        "        python_generated_dir = Path('/tmp/pecos-doc-tests')",
     ]
 
     # Add file copy commands for each test data file
@@ -750,12 +753,18 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
         for test_file in block.test_data:
             escaped_file = test_file.replace('"', '\\"')
             lines.extend([
-                f'        src_file = test_data_dir / "{escaped_file}"',
-                "        if src_file.exists():",
+                f'        # Look for {escaped_file} in multiple locations',
+                f'        src_file = None',
+                f'        for search_dir in [python_generated_dir, test_data_dir, hugr_test_data_dir]:',
+                f'            candidate = search_dir / "{escaped_file}"',
+                f'            if candidate.exists():',
+                f'                src_file = candidate',
+                f'                break',
+                f'        if src_file:',
                 f'            import shutil',
                 f'            shutil.copy(src_file, tmpdir / "{escaped_file}")',
-                "        else:",
-                f'            pytest.skip(f"Test data file not found: {{src_file}}")',
+                f'        else:',
+                f'            pytest.skip(f"Test data file not found: {escaped_file}")',
             ])
 
     lines.extend([

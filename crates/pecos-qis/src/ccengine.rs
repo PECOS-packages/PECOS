@@ -768,25 +768,14 @@ impl ClassicalEngine for QisEngine {
         // Convert stored measurement results to PECOS shot format
         let mut shot = Shot::default();
 
-        // Add measurements from stored results (numeric IDs)
-        for (result_id, value) in &self.measurement_results {
-            shot.data.insert(
-                format!("measurement_{result_id}"),
-                Data::U32(u32::from(*value)),
-            );
-            debug!(
-                "QisEngine: Added to shot: measurement_{} = {}",
-                result_id,
-                i32::from(*value)
-            );
-        }
-
-        // Add named results from print_bool/print_bool_arr calls
+        // First, try to get named results from print_bool/print_bool_arr calls
+        let mut has_named_results = false;
         if let Some(state) = &self.dynamic_state
             && let Some(handle) = &state.sync_handle
         {
             match handle.get_named_results() {
                 Ok(named_results) => {
+                    has_named_results = !named_results.is_empty();
                     for (name, values) in named_results {
                         // Convert Vec<bool> to Data
                         // For single values, store as U32; for arrays, store as Vec<U32>
@@ -807,10 +796,29 @@ impl ClassicalEngine for QisEngine {
             }
         }
 
+        // Only add raw measurements if there are no named results.
+        // This handles circuits with variable loop iterations where each shot
+        // may produce a different number of raw measurements, but the named
+        // results (from result() calls) are consistent.
+        if !has_named_results {
+            for (result_id, value) in &self.measurement_results {
+                shot.data.insert(
+                    format!("measurement_{result_id}"),
+                    Data::U32(u32::from(*value)),
+                );
+                debug!(
+                    "QisEngine: Added to shot: measurement_{} = {}",
+                    result_id,
+                    i32::from(*value)
+                );
+            }
+        }
+
         debug!("QisEngine: Final shot data: {:?}", shot.data);
         debug!(
-            "Returning shot with {} measurement results",
-            self.measurement_results.len()
+            "Returning shot with {} measurement results (has_named_results={})",
+            self.measurement_results.len(),
+            has_named_results
         );
         Ok(shot)
     }

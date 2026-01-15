@@ -438,6 +438,10 @@ pub struct HugrEngine {
     /// Maps the Conditional node to the qubit ID whose measurement determines the branch.
     pending_conditionals: BTreeMap<Node, QubitId>,
 
+    /// Pending bool.read nodes waiting for measurement results.
+    /// These are re-added to the work queue when measurement results arrive.
+    pending_bool_reads: BTreeSet<Node>,
+
     /// Classical wire values: tracks bool/integer/float values flowing through wires.
     /// Key is (node, `output_port`), value is the classical value.
     classical_values: BTreeMap<WireKey, ClassicalValue>,
@@ -466,6 +470,10 @@ pub struct HugrEngine {
     /// Pending CFG blocks waiting for Sum value (measurement result) to determine branch.
     /// Maps (`cfg_node`, `block_node`) to the list of successor blocks.
     pending_cfg_branches: BTreeMap<(Node, Node), Vec<Node>>,
+
+    /// Pending block propagations that need re-propagation after measurement results.
+    /// Stores (cfg_node, from_block, to_block) tuples.
+    pending_measurement_propagations: Vec<(Node, Node, Node)>,
 
     // === Call/FuncDefn Support ===
     /// `FuncDefn` nodes extracted from the HUGR.
@@ -592,6 +600,10 @@ struct DataflowBlockInfo {
     quantum_ops: BTreeSet<Node>,
     /// All Call nodes inside this block.
     call_nodes: BTreeSet<Node>,
+    /// All Conditional nodes inside this block.
+    conditional_nodes: BTreeSet<Node>,
+    /// All tket.bool operation nodes inside this block.
+    bool_ops: BTreeSet<Node>,
     /// Input node inside this block (kept for future wire tracing).
     #[allow(dead_code)]
     input_node: Option<Node>,
@@ -986,13 +998,21 @@ impl HugrEngine {
         // Find all Call nodes inside this block
         let call_nodes = Self::find_call_nodes_in_block(hugr, node);
 
+        // Find all Conditional nodes inside this block
+        let conditional_nodes = Self::find_conditional_nodes_in_block(hugr, node);
+
+        // Find all tket.bool operation nodes inside this block
+        let bool_ops = Self::find_bool_ops_in_block(hugr, node);
+
         debug!(
-            "DataflowBlock {:?}: {} inputs, {} successors, {} quantum ops, {} calls",
+            "DataflowBlock {:?}: {} inputs, {} successors, {} quantum ops, {} calls, {} conditionals, {} bool_ops",
             node,
             num_inputs,
             num_successors,
             quantum_ops.len(),
-            call_nodes.len()
+            call_nodes.len(),
+            conditional_nodes.len(),
+            bool_ops.len()
         );
 
         DataflowBlockInfo {
@@ -1002,6 +1022,8 @@ impl HugrEngine {
             successors,
             quantum_ops,
             call_nodes,
+            conditional_nodes,
+            bool_ops,
             input_node,
             output_node,
         }
@@ -1070,6 +1092,79 @@ impl HugrEngine {
             // Recurse into nested containers (but not into FuncDefns)
             if !matches!(op, OpType::FuncDefn(_)) {
                 Self::collect_call_nodes_recursive(hugr, child, calls);
+            }
+        }
+    }
+
+    /// Find all Conditional nodes inside a CFG block.
+    fn find_conditional_nodes_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
+        let mut conditionals = BTreeSet::new();
+        Self::collect_conditional_nodes_recursive(hugr, block, &mut conditionals);
+        conditionals
+    }
+
+    /// Recursively collect Conditional nodes in a subtree.
+    fn collect_conditional_nodes_recursive(
+        hugr: &Hugr,
+        node: Node,
+        conditionals: &mut BTreeSet<Node>,
+    ) {
+        for child in hugr.children(node) {
+            let op = hugr.get_optype(child);
+            if matches!(op, OpType::Conditional(_)) {
+                conditionals.insert(child);
+            }
+            // Recurse into nested containers (but not into FuncDefns or Conditionals)
+            if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
+                Self::collect_conditional_nodes_recursive(hugr, child, conditionals);
+            }
+        }
+    }
+
+    /// Find all tket.bool operation nodes inside a CFG block.
+    fn find_bool_ops_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
+        let mut bool_ops = BTreeSet::new();
+        Self::collect_bool_ops_recursive(hugr, block, &mut bool_ops);
+        bool_ops
+    }
+
+    /// Recursively collect tket.bool operation nodes in a subtree.
+    fn collect_bool_ops_recursive(hugr: &Hugr, node: Node, bool_ops: &mut BTreeSet<Node>) {
+        for child in hugr.children(node) {
+            let op = hugr.get_optype(child);
+            if let Some(ext_op) = op.as_extension_op() {
+                let ext_id = ext_op.extension_id();
+                if ext_id.as_ref() as &str == "tket.bool" {
+                    bool_ops.insert(child);
+                }
+            }
+            // Recurse into nested containers (but not into FuncDefns)
+            if !matches!(op, OpType::FuncDefn(_)) {
+                Self::collect_bool_ops_recursive(hugr, child, bool_ops);
+            }
+        }
+    }
+
+    /// Find all extension ops inside a CFG block (excluding tket.bool which is tracked separately).
+    fn find_extension_ops_in_block(hugr: &Hugr, block: Node) -> Vec<Node> {
+        let mut extension_ops = Vec::new();
+        Self::collect_extension_ops_recursive(hugr, block, &mut extension_ops);
+        extension_ops
+    }
+
+    fn collect_extension_ops_recursive(hugr: &Hugr, node: Node, extension_ops: &mut Vec<Node>) {
+        for child in hugr.children(node) {
+            let op = hugr.get_optype(child);
+            if let Some(ext_op) = op.as_extension_op() {
+                let ext_id = ext_op.extension_id();
+                // Skip tket.bool as those are tracked separately
+                if ext_id.as_ref() as &str != "tket.bool" {
+                    extension_ops.push(child);
+                }
+            }
+            // Recurse into nested containers (but not into FuncDefns or Conditionals)
+            if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
+                Self::collect_extension_ops_recursive(hugr, child, extension_ops);
             }
         }
     }
@@ -1279,6 +1374,7 @@ impl HugrEngine {
 
         // Clear Conditional control flow state
         self.pending_conditionals.clear();
+        self.pending_bool_reads.clear();
         self.classical_values.clear();
         self.measurement_output_wires.clear();
         self.active_cases.clear();
@@ -1286,6 +1382,7 @@ impl HugrEngine {
         // Clear CFG control flow state
         self.active_cfgs.clear();
         self.pending_cfg_branches.clear();
+        self.pending_measurement_propagations.clear();
 
         // Clear Call/FuncDefn control flow state
         self.active_calls.clear();
@@ -2562,6 +2659,22 @@ impl HugrEngine {
         }
     }
 
+    /// Re-queue pending bool.read nodes that were waiting for measurement results.
+    /// When a measurement result arrives, the classical value is stored and we need to
+    /// retry any bool.read nodes that were deferred because their input wasn't ready.
+    fn retry_pending_bool_reads(&mut self) {
+        // Move pending bool.reads to work queue so they can be retried
+        let pending: Vec<_> = std::mem::take(&mut self.pending_bool_reads)
+            .into_iter()
+            .collect();
+
+        for node in pending {
+            if !self.processed.contains(&node) && !self.work_queue.contains(&node) {
+                self.work_queue.push_back(node);
+            }
+        }
+    }
+
     /// Get the Input and Output nodes for a dataflow container.
     /// Uses HUGR's native `get_io()` method which handles different container types properly.
     fn get_io_nodes(hugr: &Hugr, container: Node) -> Option<(Node, Node)> {
@@ -2635,11 +2748,13 @@ impl HugrEngine {
 
             // Check the current block
             if let Some(block_info) = cfg_info.blocks.get(&active_cfg.current_block) {
-                // Check if the processed node is either a quantum op or a Call in this block
+                // Check if the processed node is in this block (quantum, call, conditional, or bool_op)
                 let is_in_block = block_info.quantum_ops.contains(&processed_node)
-                    || block_info.call_nodes.contains(&processed_node);
+                    || block_info.call_nodes.contains(&processed_node)
+                    || block_info.conditional_nodes.contains(&processed_node)
+                    || block_info.bool_ops.contains(&processed_node);
                 if is_in_block {
-                    // Check if all ops AND calls in this block are now processed
+                    // Check if all ops, calls, conditionals, and bool_ops in this block are now processed
                     let all_quantum_done = block_info
                         .quantum_ops
                         .iter()
@@ -2648,8 +2763,16 @@ impl HugrEngine {
                         .call_nodes
                         .iter()
                         .all(|call| self.processed.contains(call));
+                    let all_conditionals_done = block_info
+                        .conditional_nodes
+                        .iter()
+                        .all(|cond| self.processed.contains(cond));
+                    let all_bools_done = block_info
+                        .bool_ops
+                        .iter()
+                        .all(|op| self.processed.contains(op));
 
-                    if all_quantum_done && all_calls_done {
+                    if all_quantum_done && all_calls_done && all_conditionals_done && all_bools_done {
                         block_completions.push((
                             *cfg_node,
                             active_cfg.current_block,
@@ -2752,6 +2875,11 @@ impl HugrEngine {
         // Propagate wire mappings from completed block to successor block
         self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
 
+        // Record this propagation for re-propagation after measurement results
+        // are available (measurement results may not be stored yet when we transition)
+        self.pending_measurement_propagations
+            .push((cfg_node, from_block, to_block));
+
         // Update active CFG state
         if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
             active_cfg.completed_blocks.insert(from_block);
@@ -2790,10 +2918,47 @@ impl HugrEngine {
                 }
             }
 
-            debug!("[TRACE] Activated block {to_block:?} with {num_ops} ops and {num_calls} calls");
+            // Also activate Conditional nodes in this block
+            // Clear processed state first so they can be re-executed in loops
+            for &cond_node in &block_info.conditional_nodes {
+                self.processed.remove(&cond_node);
+            }
+            for &cond_node in &block_info.conditional_nodes {
+                self.nodes_inside_cfg_blocks.remove(&cond_node);
+                if !self.work_queue.contains(&cond_node) && !self.processed.contains(&cond_node) {
+                    self.work_queue.push_back(cond_node);
+                }
+            }
 
-            // Handle blocks with no quantum ops AND no calls - immediately complete and transition
-            if num_ops == 0 && num_calls == 0 {
+            // Also activate bool ops in this block
+            // Clear processed state first so they can be re-executed in loops
+            for &op_node in &block_info.bool_ops {
+                self.processed.remove(&op_node);
+            }
+            for &op_node in &block_info.bool_ops {
+                self.nodes_inside_cfg_blocks.remove(&op_node);
+                if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node) {
+                    self.work_queue.push_back(op_node);
+                }
+            }
+
+            // Also activate other extension ops in this block (like tket.result)
+            // Find all extension ops that are children of this block
+            let extension_ops: Vec<Node> = Self::find_extension_ops_in_block(hugr, to_block);
+            for op_node in extension_ops {
+                self.processed.remove(&op_node);
+                self.nodes_inside_cfg_blocks.remove(&op_node);
+                if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node) {
+                    self.work_queue.push_back(op_node);
+                }
+            }
+
+            let num_conditionals = block_info.conditional_nodes.len();
+            let num_bool_ops = block_info.bool_ops.len();
+            debug!("[TRACE] Activated block {to_block:?} with {num_ops} ops, {num_calls} calls, {num_conditionals} conditionals, {num_bool_ops} bool_ops");
+
+            // Handle blocks with no operations - immediately complete and transition
+            if num_ops == 0 && num_calls == 0 && num_conditionals == 0 && num_bool_ops == 0 {
                 debug!(
                     "[TRACE] Block {to_block:?} has 0 ops and 0 calls, trying to resolve branch"
                 );
@@ -2875,6 +3040,7 @@ impl HugrEngine {
 
     /// Complete CFG execution and propagate outputs.
     fn complete_cfg_execution(&mut self, hugr: &Hugr, cfg_node: Node, final_block: Node) {
+        debug!("complete_cfg_execution: CFG {:?} from block {:?}", cfg_node, final_block);
         debug!("Completing CFG {cfg_node:?} from block {final_block:?}");
 
         // Propagate outputs from final block to CFG output ports
@@ -2888,10 +3054,25 @@ impl HugrEngine {
         self.complete_func_call_if_needed(hugr, cfg_node);
 
         // Add CFG successors to work queue
-        for succ_node in hugr.output_neighbours(cfg_node) {
-            if (self.quantum_ops.contains_key(&succ_node)
+        let successors: Vec<_> = hugr.output_neighbours(cfg_node).collect();
+        debug!("CFG {:?} has {} successors: {:?}", cfg_node, successors.len(), successors);
+        for succ_node in successors {
+            // Include classical ops (like tket.result) as well as quantum ops
+            let is_relevant = self.quantum_ops.contains_key(&succ_node)
+                || self.classical_ops.contains_key(&succ_node)
                 || self.conditionals.contains_key(&succ_node)
-                || self.cfgs.contains_key(&succ_node))
+                || self.cfgs.contains_key(&succ_node)
+                || self.tailloops.contains_key(&succ_node);
+
+            // Also check if it's an extension op by looking at the optype
+            let succ_op = hugr.get_optype(succ_node);
+            let is_extension = succ_op.as_extension_op().is_some();
+
+            debug!("Successor {:?}: op={:?}, is_relevant={}, is_extension={}, processed={}, in_queue={}",
+                succ_node, succ_op, is_relevant, is_extension,
+                self.processed.contains(&succ_node), self.work_queue.contains(&succ_node));
+
+            if (is_relevant || is_extension)
                 && !self.processed.contains(&succ_node)
                 && !self.work_queue.contains(&succ_node)
                 && Self::all_predecessors_ready(
@@ -2903,6 +3084,7 @@ impl HugrEngine {
                     &self.processed,
                 )
             {
+                debug!("CFG complete: adding successor {:?} to work queue", succ_node);
                 self.work_queue.push_back(succ_node);
             }
         }
@@ -3012,7 +3194,6 @@ impl HugrEngine {
 
         let (Some(from_output), Some(to_input)) = (from_output, to_input) else {
             debug!("[TRACE] Cannot propagate: from_output={from_output:?}, to_input={to_input:?}");
-            debug!("Cannot propagate: from_output={from_output:?}, to_input={to_input:?}");
             return;
         };
 
@@ -3082,7 +3263,37 @@ impl HugrEngine {
                     from_output,
                     port_idx + 1
                 );
+
+                // Fallback: if the Output node has no connection for this port,
+                // try to get the value from the Input node's corresponding output.
+                // This handles cases where values are "passed through" without explicit wiring.
+                let from_input = Self::find_input_node(hugr, from_block);
+                if let Some(from_input_node) = from_input {
+                    let input_wire = (from_input_node, port_idx);
+                    if let Some(value) = self.classical_values.get(&input_wire).cloned() {
+                        let to_wire = (to_input, port_idx);
+                        debug!(
+                            "[TRACE] Fallback: propagating {:?} from input {:?} to {:?}",
+                            value, input_wire, to_wire
+                        );
+                        self.classical_values.insert(to_wire, value);
+                    }
+                }
             }
+        }
+    }
+
+    /// Re-propagate measurement values to successor blocks.
+    ///
+    /// When a CFG block completes and transitions to a successor, the propagation
+    /// happens before measurement results are available. This function re-propagates
+    /// values after measurement results are stored.
+    fn repropagate_measurement_values(&mut self, hugr: &Hugr) {
+        // Take ownership of the pending list to avoid borrow issues
+        let pending: Vec<_> = std::mem::take(&mut self.pending_measurement_propagations);
+
+        for (_cfg_node, from_block, to_block) in pending {
+            self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
         }
     }
 
@@ -3351,6 +3562,9 @@ impl HugrEngine {
                         }
                     }
                     debug!("Conditional {current_node:?} expanded, branch {branch_index} selected");
+
+                    // Check if this Conditional completion allows a CFG block to complete
+                    self.check_cfg_block_completion(&hugr, current_node);
                 } else {
                     // Can't resolve yet - likely waiting for measurement result
                     // Add to pending conditionals and continue
@@ -3426,14 +3640,36 @@ impl HugrEngine {
                             }
                         }
                     }
+
+                    // Also activate Conditional nodes in the entry block
+                    for &cond_node in &block_info.conditional_nodes {
+                        self.nodes_inside_cfg_blocks.remove(&cond_node);
+                        if !self.work_queue.contains(&cond_node)
+                            && !self.processed.contains(&cond_node)
+                        {
+                            self.work_queue.push_back(cond_node);
+                        }
+                    }
+
+                    // Also activate bool ops in the entry block
+                    for &op_node in &block_info.bool_ops {
+                        self.nodes_inside_cfg_blocks.remove(&op_node);
+                        if !self.work_queue.contains(&op_node)
+                            && !self.processed.contains(&op_node)
+                        {
+                            self.work_queue.push_back(op_node);
+                        }
+                    }
+
+                    let num_calls = block_info.call_nodes.len();
+                    let num_conditionals = block_info.conditional_nodes.len();
+                    let num_bool_ops = block_info.bool_ops.len();
                     debug!(
-                        "CFG {current_node:?}: activated entry block {entry_block:?} with {num_ops} ops"
+                        "CFG {current_node:?}: activated entry block {entry_block:?} with {num_ops} ops, {num_conditionals} conditionals, {num_bool_ops} bool_ops"
                     );
 
-                    // If entry block has no quantum ops AND no calls, immediately transition to successor
-                    // If it has calls, we must wait for them to complete
-                    let num_calls = block_info.call_nodes.len();
-                    if num_ops == 0 && num_calls == 0 {
+                    // If entry block has no operations, immediately transition to successor
+                    if num_ops == 0 && num_calls == 0 && num_conditionals == 0 && num_bool_ops == 0 {
                         debug!(
                             "[TRACE] Entry block {:?} has 0 ops and 0 calls, successors: {:?}",
                             entry_block, block_info.successors
@@ -3671,6 +3907,10 @@ impl HugrEngine {
             // Check for tket.result, tket.qsystem, tket.futures, tket.debug extension ops
             if self.handle_extension_op(&hugr, current_node) {
                 self.processed.insert(current_node);
+
+                // Check if this extension op completion allows a CFG block to complete
+                // This is especially important for tket.bool ops in loop control
+                self.check_cfg_block_completion(&hugr, current_node);
 
                 // Add ready successors to work queue
                 for succ_node in hugr.output_neighbours(current_node) {
@@ -4448,9 +4688,12 @@ impl HugrEngine {
 
         match op_name {
             "result_bool" => {
-                if let Some(value) = self.get_input_value(hugr, node, 0)
+                let input_value = self.get_input_value(hugr, node, 0);
+                debug!("result_bool at {:?}: input_value={:?}, label={}", node, input_value, label);
+                if let Some(value) = input_value
                     && let Some(b) = value.as_bool()
                 {
+                    debug!("result_bool capturing: label={}, value={}", label, b);
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::Bool(b),
@@ -5065,10 +5308,23 @@ impl HugrEngine {
             "read" => {
                 // read: tket.bool -> Sum<bool>
                 // Convert opaque bool to Sum type
-                let value = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let input_value = self.get_input_value(hugr, node, 0);
+                debug!("tket.bool.read at {:?}: input_value={:?}", node, input_value);
+
+                // If the input value is not available (e.g., measurement result pending),
+                // defer this operation by returning false. It will be retried later
+                // when the measurement result is available.
+                let Some(input_val) = input_value else {
+                    debug!("tket.bool.read at {:?}: deferring - input not ready", node);
+                    // Track this node so it can be retried when measurement results arrive
+                    self.pending_bool_reads.insert(node);
+                    return false;
+                };
+
+                // Successfully resolved - remove from pending if it was there
+                self.pending_bool_reads.remove(&node);
+
+                let value = input_val.as_bool().unwrap_or(false);
                 self.classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
                 debug!("tket.bool.read: {value}");
@@ -6032,8 +6288,19 @@ impl HugrEngine {
 
     /// Try to extract a string label from a debug representation.
     fn extract_string_from_debug(debug_str: &str) -> Option<String> {
-        // Look for patterns like: "label" or label = "value"
-        // Find content between quotes
+        // Look for pattern: args: [String("label")]
+        // This is the format used by ExtensionOp's debug output
+        if let Some(args_idx) = debug_str.find("args: [String(\"") {
+            let start = args_idx + "args: [String(\"".len();
+            if let Some(end) = debug_str[start..].find("\")]") {
+                let label = &debug_str[start..start + end];
+                if !label.is_empty() {
+                    return Some(label.to_string());
+                }
+            }
+        }
+
+        // Fallback: look for quoted strings, but skip common non-label values
         let mut in_quotes = false;
         let mut quote_char = '"';
         let mut label = String::new();
@@ -6049,6 +6316,8 @@ impl HugrEngine {
                     && !label.contains("::")
                     && !label.starts_with("tket")
                     && !label.contains("Op")
+                    && !label.contains("result")
+                    && !label.contains("Report")
                 {
                     return Some(label);
                 }
@@ -6067,8 +6336,14 @@ impl HugrEngine {
         let in_port = IncomingPort::from(port);
         if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
             let wire_key = (src_node, src_port.index());
-            self.classical_values.get(&wire_key).cloned()
+            let value = self.classical_values.get(&wire_key).cloned();
+            debug!(
+                "get_input_value({:?}, {}): src={:?}:{}, wire_key={:?}, value={:?}",
+                node, port, src_node, src_port.index(), wire_key, value
+            );
+            value
         } else {
+            debug!("get_input_value({:?}, {}): no linked output", node, port);
             None
         }
     }
@@ -6198,6 +6473,7 @@ impl Default for HugrEngine {
             // Control flow fields (Conditional)
             conditionals: BTreeMap::new(),
             pending_conditionals: BTreeMap::new(),
+            pending_bool_reads: BTreeSet::new(),
             classical_values: BTreeMap::new(),
             measurement_output_wires: BTreeMap::new(),
             nodes_inside_cases: BTreeSet::new(),
@@ -6207,6 +6483,7 @@ impl Default for HugrEngine {
             nodes_inside_cfg_blocks: BTreeSet::new(),
             active_cfgs: BTreeMap::new(),
             pending_cfg_branches: BTreeMap::new(),
+            pending_measurement_propagations: Vec::new(),
             // Control flow fields (Call/FuncDefn)
             func_defns: BTreeMap::new(),
             call_targets: BTreeMap::new(),
@@ -6327,6 +6604,16 @@ impl ClassicalEngine for HugrEngine {
                 // Check if any pending TailLoop controls can now be resolved
                 self.try_resolve_pending_tailloops();
 
+                // Re-propagate measurement values to successor blocks
+                // This is needed because block transitions happen before measurement
+                // results are available
+                if let Some(hugr) = self.hugr.clone() {
+                    self.repropagate_measurement_values(&hugr);
+                }
+
+                // Retry any bool.read nodes that were waiting for measurement results
+                self.retry_pending_bool_reads();
+
                 Ok(())
             }
             Err(e) => Err(PecosError::Input(format!(
@@ -6338,21 +6625,50 @@ impl ClassicalEngine for HugrEngine {
     fn get_results(&self) -> Result<Shot, PecosError> {
         let mut result = Shot::default();
 
-        // Convert measurement results to output format
-        // Group by qubit ID
-        for (&qubit_id, &value) in &self.measurement_results {
-            let key = format!("q{}", qubit_id.0);
-            result.data.insert(key, Data::U32(value));
+        // Only include raw measurement results if there are no captured results.
+        // When the user uses result() to capture specific values, the raw measurements
+        // are internal to the algorithm (e.g., in repeat-until-success loops where
+        // the number of measurements varies between shots).
+        if self.captured_results.is_empty() {
+            // Convert measurement results to output format
+            // Group by qubit ID
+            for (&qubit_id, &value) in &self.measurement_results {
+                let key = format!("q{}", qubit_id.0);
+                result.data.insert(key, Data::U32(value));
+            }
+
+            // Also provide a combined "measurements" array
+            if !self.measurement_results.is_empty() {
+                let mut sorted_results: Vec<_> = self.measurement_results.iter().collect();
+                sorted_results.sort_by_key(|(q, _)| q.0);
+                let values: Vec<u32> = sorted_results.iter().map(|(_, v)| **v).collect();
+                result
+                    .data
+                    .insert("measurements".to_string(), Data::from_u32_vec(values));
+            }
         }
 
-        // Also provide a combined "measurements" array
-        if !self.measurement_results.is_empty() {
-            let mut sorted_results: Vec<_> = self.measurement_results.iter().collect();
-            sorted_results.sort_by_key(|(q, _)| q.0);
-            let values: Vec<u32> = sorted_results.iter().map(|(_, v)| **v).collect();
-            result
-                .data
-                .insert("measurements".to_string(), Data::from_u32_vec(values));
+        // Add captured results from result() calls
+        for captured in &self.captured_results {
+            let data = match &captured.value {
+                ResultValue::Bool(b) => Data::U32(u32::from(*b)),
+                ResultValue::Int(i) => Data::I64(*i),
+                ResultValue::UInt(u) => Data::U64(*u),
+                ResultValue::Float(f) => Data::F64(*f),
+                ResultValue::ArrayBool(arr) => {
+                    Data::from_u32_vec(arr.iter().map(|b| u32::from(*b)).collect())
+                }
+                ResultValue::ArrayInt(arr) => {
+                    Data::Vec(arr.iter().map(|i| Data::I64(*i)).collect())
+                }
+                ResultValue::ArrayUInt(arr) => {
+                    Data::Vec(arr.iter().map(|u| Data::U64(*u)).collect())
+                }
+                ResultValue::ArrayFloat(arr) => {
+                    Data::Vec(arr.iter().map(|f| Data::F64(*f)).collect())
+                }
+            };
+            result.data.insert(captured.label.clone(), data);
         }
 
         Ok(result)
@@ -6449,6 +6765,12 @@ impl Clone for HugrEngine {
             hugr: self.hugr.clone(),
             quantum_ops: self.quantum_ops.clone(),
             classical_ops: self.classical_ops.clone(),
+            // Control flow structures must be cloned, not defaulted
+            conditionals: self.conditionals.clone(),
+            cfgs: self.cfgs.clone(),
+            func_defns: self.func_defns.clone(),
+            call_targets: self.call_targets.clone(),
+            tailloops: self.tailloops.clone(),
             ..Self::default()
         };
 

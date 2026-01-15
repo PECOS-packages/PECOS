@@ -191,7 +191,10 @@ struct QuantumOp {
 /// Check if a gate type is a rotation gate that takes angle parameters.
 #[must_use]
 pub fn is_rotation_gate(gate_type: GateType) -> bool {
-    matches!(gate_type, GateType::RX | GateType::RY | GateType::RZ)
+    matches!(
+        gate_type,
+        GateType::RX | GateType::RY | GateType::RZ | GateType::CRZ
+    )
 }
 
 /// Try to extract a constant numeric value from a HUGR Const node.
@@ -437,6 +440,16 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
                 return trace_back_for_const(hugr, src_node, depth + 1);
             }
         }
+
+        // Handle float negation (fneg) - used for negative rotation angles
+        if op_name == "fneg" {
+            let input_port = IncomingPort::from(0);
+            if let Some((src_node, _)) = hugr.single_linked_output(node, input_port)
+                && let Some((val, is_half_turns)) = trace_back_for_const(hugr, src_node, depth + 1)
+            {
+                return Some((-val, is_half_turns));
+            }
+        }
     }
 
     // For UnpackTuple, trace through
@@ -456,7 +469,8 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
         // 2. Numeric argument values
         let mut is_division = false;
         let mut is_multiplication = false;
-        let mut numeric_values: Vec<(usize, f64)> = Vec::new();
+        let mut is_negation = false;
+        let mut numeric_values: Vec<(usize, f64, bool)> = Vec::new();
 
         // Get the number of input ports for this node
         let num_inputs = hugr.num_inputs(node);
@@ -476,19 +490,29 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
                     if func_name.contains("__mul__") || func_name.contains("__rmul__") {
                         is_multiplication = true;
                     }
+                    if func_name.contains("__neg__") {
+                        is_negation = true;
+                    }
                 }
 
                 // Try to get a numeric value from this input
-                if let Some((val, _)) = trace_back_for_const(hugr, src_node, depth + 1) {
-                    numeric_values.push((port_idx, val));
+                if let Some((val, is_half_turns)) = trace_back_for_const(hugr, src_node, depth + 1)
+                {
+                    numeric_values.push((port_idx, val, is_half_turns));
                 }
             }
+        }
+
+        // If this is a negation call and we have a numeric value, negate it
+        if is_negation && !numeric_values.is_empty() {
+            let (_, val, is_half_turns) = numeric_values[0];
+            return Some((-val, is_half_turns));
         }
 
         // If this is a division call and we have two numeric values, compute the result
         if is_division && numeric_values.len() >= 2 {
             // Sort by port index to get correct order (numerator first, denominator second)
-            numeric_values.sort_by_key(|(idx, _)| *idx);
+            numeric_values.sort_by_key(|(idx, _, _)| *idx);
             let numerator = numeric_values[0].1;
             let denominator = numeric_values[1].1;
             if denominator != 0.0 {
@@ -498,14 +522,14 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
 
         // If this is a multiplication call and we have two numeric values, compute the result
         if is_multiplication && numeric_values.len() >= 2 {
-            numeric_values.sort_by_key(|(idx, _)| *idx);
+            numeric_values.sort_by_key(|(idx, _, _)| *idx);
             let factor1 = numeric_values[0].1;
             let factor2 = numeric_values[1].1;
             return Some((factor1 * factor2, false));
         }
 
         // For other calls, try to return the first numeric value found
-        if let Some((_, val)) = numeric_values.first() {
+        if let Some((_, val, _)) = numeric_values.first() {
             return Some((*val, false));
         }
     }

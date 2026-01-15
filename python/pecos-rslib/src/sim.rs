@@ -132,65 +132,24 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
             }),
         })
     } else if let Ok(hugr_prog) = program.extract::<PyHugr>(py) {
-        // Compile HUGR to LLVM first
+        // Use direct HUGR interpreter (faster and supports loops better than LLVM path)
         log::debug!(
-            "HUGR program detected (size: {} bytes), compiling to LLVM...",
+            "HUGR program detected (size: {} bytes), using direct interpreter",
             hugr_prog.inner.hugr.len()
         );
 
-        // Compile HUGR to LLVM IR
-        let llvm_ir = compile_hugr_bytes_to_string(&hugr_prog.inner.hugr).map_err(|e| {
-            log::error!("HUGR compilation failed: {e}");
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "HUGR compilation failed: {e}"
-            ))
-        })?;
-        log::info!(
-            "HUGR compilation succeeded (LLVM IR size: {} bytes)",
-            llvm_ir.len()
-        );
-
-        // Create QIS program from the compiled LLVM IR
-        log::debug!("Creating QIS program from compiled LLVM IR...");
-        let qis_prog = Qis::from_string(llvm_ir);
-
-        // Get Selene simple runtime
-        log::debug!("Getting Selene simple runtime...");
-        let selene_runtime = selene_simple_runtime().map_err(|e| {
-            log::error!("Selene simple runtime not available: {e}");
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Selene simple runtime not available: {e}\n\
-                    \n\
-                    The default runtime for HUGR programs is Selene simple.\n\
-                    Please ensure Selene is built:\n\
-                    cd ../selene && cargo build --release"
-            ))
-        })?;
-
-        // Use QIS control engine with Helios interface
-        log::debug!("Creating QIS engine with Helios interface for HUGR program...");
-        let engine_builder = pecos::qis_engine()
-            .runtime(selene_runtime)
-            .interface(helios_interface_builder())
-            .try_program(qis_prog)
-            .map_err(|e| {
-                log::error!("Failed to load compiled HUGR program: {e}");
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to load compiled HUGR program: {e}"
-                ))
-            })?;
-        log::info!("HUGR program loaded successfully");
+        // Create HUGR engine builder with the HUGR bytes
+        let engine_builder = pecos::hugr_engine().hugr_bytes(hugr_prog.inner.hugr.clone());
+        log::info!("HUGR program loaded successfully via direct interpreter");
 
         Ok(PySimBuilder {
-            inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
+            inner: SimBuilderInner::Hugr(crate::engine_builders::PyHugrSimBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(engine_builder))),
                 seed: None,
                 workers: None,
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
-                keep_intermediate_files: false,
-                hugr_bytes: Some(hugr_prog.inner.hugr.clone()), // Store HUGR bytes for artifact saving
             }),
         })
     } else if let Ok(phir_prog) = program.extract::<PyPhirJson>(py) {
@@ -660,7 +619,51 @@ impl PySimBuilder {
                     sim_builder = sim_builder.qubits(n);
                 }
 
-                // TODO: Add quantum and noise builder support for HUGR
+                // Apply quantum engine builder if present
+                if let Some(ref qe_py) = builder.quantum_engine_builder {
+                    sim_builder = Python::attach(|py| -> PyResult<_> {
+                        if let Ok(mut state_vec) = qe_py.extract::<PyStateVectorEngineBuilder>(py) {
+                            if let Some(inner) = state_vec.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut sparse_stab) =
+                            qe_py.extract::<PySparseStabilizerEngineBuilder>(py)
+                        {
+                            if let Some(inner) = sparse_stab.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else {
+                            Ok(sim_builder)
+                        }
+                    })?;
+                }
+
+                // Apply noise builder if present
+                if let Some(ref noise_py) = builder.noise_builder {
+                    sim_builder = Python::attach(|py| -> PyResult<_> {
+                        if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
+                            Ok(sim_builder.noise(general.inner.clone()))
+                        } else if let Ok(depolarizing) =
+                            noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
+                        {
+                            Ok(sim_builder.noise(depolarizing.inner.clone()))
+                        } else if let Ok(biased) =
+                            noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
+                        {
+                            Ok(sim_builder.noise(biased.inner.clone()))
+                        } else {
+                            Ok(sim_builder)
+                        }
+                    })?;
+                }
 
                 match sim_builder.run(shots) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
@@ -953,7 +956,54 @@ impl PySimBuilder {
                         sim_builder = sim_builder.qubits(n);
                     }
 
-                    // TODO: Add quantum and noise builder support for HUGR
+                    // Apply quantum engine builder if present
+                    if let Some(ref qe_py) = builder.quantum_engine_builder {
+                        sim_builder = Python::attach(|py| -> PyResult<_> {
+                            if let Ok(mut state_vec) =
+                                qe_py.extract::<PyStateVectorEngineBuilder>(py)
+                            {
+                                if let Some(inner) = state_vec.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut sparse_stab) =
+                                qe_py.extract::<PySparseStabilizerEngineBuilder>(py)
+                            {
+                                if let Some(inner) = sparse_stab.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else {
+                                Ok(sim_builder)
+                            }
+                        })?;
+                    }
+
+                    // Apply noise builder if present
+                    if let Some(ref noise_py) = builder.noise_builder {
+                        sim_builder = Python::attach(|py| -> PyResult<_> {
+                            if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
+                            {
+                                Ok(sim_builder.noise(general.inner.clone()))
+                            } else if let Ok(depolarizing) =
+                                noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
+                            {
+                                Ok(sim_builder.noise(depolarizing.inner.clone()))
+                            } else if let Ok(biased) =
+                                noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
+                            {
+                                Ok(sim_builder.noise(biased.inner.clone()))
+                            } else {
+                                Ok(sim_builder)
+                            }
+                        })?;
+                    }
 
                     let engine = sim_builder.build().map_err(|e| {
                         PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))

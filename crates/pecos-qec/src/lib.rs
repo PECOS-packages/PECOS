@@ -34,11 +34,9 @@ pub mod stabilizer_code;
 pub mod surface;
 
 pub use distance::{
-    calculate_distance, find_min_weight_logicals, DistanceResult, DistanceSearchConfig,
-    WeightedPauliIterator,
+    DistanceResult, DistanceSearchConfig, WeightedPauliIterator, calculate_distance,
+    find_min_weight_logicals,
 };
-pub use geometry::{
-    CheckSchedule, LogicalOperator, PauliOp, StabilizerCheck, StabilizerColor,
-};
+pub use geometry::{CheckSchedule, LogicalOperator, PauliOp, StabilizerCheck, StabilizerColor};
 pub use stabilizer_code::{StabilizerCode, StabilizerCodeError};
 pub use surface::{SurfaceCode, SurfaceCodeBuilder};

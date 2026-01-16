@@ -45,7 +45,7 @@
 //! let ps = -PauliString::x(0);                            // -X
 //! ```
 
-use crate::{Pauli, PauliString, QuarterPhase, QubitId, Phase};
+use crate::{Pauli, PauliString, Phase, QuarterPhase, QubitId};
 use std::ops::{BitAnd, Mul, Neg};
 
 // ============================================================================
@@ -84,10 +84,8 @@ impl BitAnd for PauliString {
         let new_phase = self.phase().multiply(&rhs.phase());
 
         // Combine paulis (assuming no overlap - tensor product)
-        let mut paulis: Vec<(Pauli, QubitId)> = self.iter_pairs()
-            .map(|(p, q)| (p, q))
-            .collect();
-        paulis.extend(rhs.iter_pairs().map(|(p, q)| (p, q)));
+        let mut paulis: Vec<(Pauli, QubitId)> = self.iter_pairs().collect();
+        paulis.extend(rhs.iter_pairs());
 
         // Sort by qubit for canonical form
         paulis.sort_by_key(|(_, q)| *q);
@@ -127,7 +125,7 @@ impl BitAnd<&PauliString> for &PauliString {
 /// Multiply two Paulis on the same qubit.
 /// Returns (phase, result) where result may be I.
 fn multiply_paulis(a: Pauli, b: Pauli) -> (QuarterPhase, Pauli) {
-    use Pauli::*;
+    use Pauli::{I, X, Y, Z};
     match (a, b) {
         // Identity
         (I, p) | (p, I) => (QuarterPhase::PlusOne, p),
@@ -160,7 +158,8 @@ impl Mul for PauliString {
         let mut result: Vec<(Pauli, QubitId)> = Vec::new();
 
         // Collect all qubits
-        let mut all_qubits: Vec<QubitId> = self.iter_pairs()
+        let mut all_qubits: Vec<QubitId> = self
+            .iter_pairs()
             .map(|(_, q)| q)
             .chain(rhs.iter_pairs().map(|(_, q)| q))
             .collect();
@@ -311,7 +310,7 @@ mod tests {
     fn test_mul_self_inverse() {
         // X * X = I
         let ps = PauliString::x(0) * PauliString::x(0);
-        assert_eq!(ps.weight(), 0);  // Identity
+        assert_eq!(ps.weight(), 0); // Identity
         assert_eq!(ps.phase(), QuarterPhase::PlusOne);
     }
 

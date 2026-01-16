@@ -200,7 +200,10 @@ impl Iterator for WeightedPauliIterator {
 /// This is an exponential-time algorithm. For codes with many qubits, it may take
 /// a very long time to complete. Use `config.max_weight` to limit the search.
 #[must_use]
-pub fn calculate_distance(code: &StabilizerCode, config: &DistanceSearchConfig) -> Option<DistanceResult> {
+pub fn calculate_distance(
+    code: &StabilizerCode,
+    config: &DistanceSearchConfig,
+) -> Option<DistanceResult> {
     let max_weight = config.max_weight.unwrap_or(code.num_qubits());
 
     // Build indices once for O(weight) lookups instead of O(num_stabilizers * weight)
@@ -275,10 +278,7 @@ mod tests {
     fn pauli_string(paulis: &[(Pauli, usize)]) -> PauliString {
         PauliString::with_phase_and_paulis(
             pecos_core::QuarterPhase::PlusOne,
-            paulis
-                .iter()
-                .map(|&(p, q)| (p, QubitId::new(q)))
-                .collect(),
+            paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
     }
 
@@ -322,13 +322,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code = StabilizerCode::new(
-            3,
-            vec![stab1, stab2],
-            vec![logical_z],
-            vec![logical_x],
-        )
-        .unwrap();
+        let code =
+            StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
 
         let config = DistanceSearchConfig::default();
         let result = calculate_distance(&code, &config);

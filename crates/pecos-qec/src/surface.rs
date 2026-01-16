@@ -38,8 +38,8 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
-use crate::geometry::{CheckSchedule, LogicalOperator, StabilizerCheck};
 use crate::StabilizerCode;
+use crate::geometry::{CheckSchedule, LogicalOperator, StabilizerCheck};
 
 /// Orientation of surface code patch boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -231,13 +231,8 @@ impl SurfaceCode {
         let logical_zs = vec![self.logical_z.to_pauli_string()];
         let logical_xs = vec![self.logical_x.to_pauli_string()];
 
-        let mut code = StabilizerCode::new(
-            self.num_data,
-            stabilizers,
-            logical_zs,
-            logical_xs,
-        )
-        .expect("Surface code should always produce valid stabilizer code");
+        let mut code = StabilizerCode::new(self.num_data, stabilizers, logical_zs, logical_xs)
+            .expect("Surface code should always produce valid stabilizer code");
 
         code.set_distance(self.distance());
         code
@@ -339,7 +334,13 @@ impl SurfaceCodeBuilder {
 /// Returns (`num_data`, `x_stabilizers`, `z_stabilizers`, `logical_x`, `logical_z`).
 fn generate_rotated_layout(
     d: usize,
-) -> (usize, Vec<StabilizerCheck>, Vec<StabilizerCheck>, LogicalOperator, LogicalOperator) {
+) -> (
+    usize,
+    Vec<StabilizerCheck>,
+    Vec<StabilizerCheck>,
+    LogicalOperator,
+    LogicalOperator,
+) {
     let num_data = d * d;
     let mut x_stabs = Vec::new();
     let mut z_stabs = Vec::new();
@@ -470,7 +471,13 @@ fn generate_rotated_layout(
 /// Generate the standard (non-rotated) surface code layout for distance d.
 fn generate_standard_layout(
     d: usize,
-) -> (usize, Vec<StabilizerCheck>, Vec<StabilizerCheck>, LogicalOperator, LogicalOperator) {
+) -> (
+    usize,
+    Vec<StabilizerCheck>,
+    Vec<StabilizerCheck>,
+    LogicalOperator,
+    LogicalOperator,
+) {
     // For a standard d x d surface code:
     // - d^2 data qubits
     // - (d-1) * d / 2 X stabilizers (horizontal plaquettes)
@@ -582,7 +589,7 @@ mod tests {
             for j in (i + 1)..stabs.len() {
                 use pecos_core::PauliOperator;
                 if !stabs[i].commutes_with(&stabs[j]) {
-                    println!("Anticommute: {} and {}", i, j);
+                    println!("Anticommute: {i} and {j}");
                     println!("  {}: {:?}", i, stabs[i]);
                     println!("  {}: {:?}", j, stabs[j]);
                 }

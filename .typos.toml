@@ -25,3 +25,5 @@ arange = "arange"
 nd = "nd"
 # delocate is a macOS wheel repair tool (delocate-wheel command)
 delocate = "delocate"
+# Short for "numerator" in fraction/ratio macros
+numer = "numer"

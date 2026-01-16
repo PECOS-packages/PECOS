@@ -598,15 +598,12 @@ mod tests {
     use super::*;
     use pecos_core::Pauli;
 
-    /// Helper to create a PauliString from a simple specification.
+    /// Helper to create a `PauliString` from a simple specification.
     fn pauli_string(paulis: &[(Pauli, usize)]) -> PauliString {
         use pecos_core::QubitId;
         PauliString::with_phase_and_paulis(
             pecos_core::QuarterPhase::PlusOne,
-            paulis
-                .iter()
-                .map(|&(p, q)| (p, QubitId::new(q)))
-                .collect(),
+            paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
     }
 
@@ -622,13 +619,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code = StabilizerCode::new(
-            3,
-            vec![stab1, stab2],
-            vec![logical_z],
-            vec![logical_x],
-        )
-        .unwrap();
+        let code =
+            StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
 
         assert_eq!(code.num_qubits(), 3);
         assert_eq!(code.num_logical_qubits(), 1);
@@ -650,13 +642,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code = StabilizerCode::new(
-            3,
-            vec![stab1, stab2],
-            vec![logical_z],
-            vec![logical_x],
-        )
-        .unwrap();
+        let code =
+            StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
 
         assert!(code.verify().is_ok());
     }
@@ -736,13 +723,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code = StabilizerCode::new(
-            3,
-            vec![stab1, stab2],
-            vec![logical_z],
-            vec![logical_x],
-        )
-        .unwrap();
+        let code =
+            StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
 
         // Single X error is detectable (not a logical error)
         let x0 = pauli_string(&[(Pauli::X, 0)]);
@@ -763,24 +745,19 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code = StabilizerCode::new(
-            3,
-            vec![stab1, stab2],
-            vec![logical_z],
-            vec![logical_x],
-        )
-        .unwrap();
+        let code =
+            StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
 
         let indices = code.build_indices();
 
         // Test various operators
         let test_cases = [
-            pauli_string(&[(Pauli::X, 0)]),                                    // Single X
-            pauli_string(&[(Pauli::X, 1)]),                                    // X on middle qubit
-            pauli_string(&[(Pauli::Z, 0)]),                                    // Single Z
-            pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]),      // XXX
-            pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]),      // ZZZ
-            pauli_string(&[(Pauli::Y, 0), (Pauli::Y, 1)]),                     // YY
+            pauli_string(&[(Pauli::X, 0)]), // Single X
+            pauli_string(&[(Pauli::X, 1)]), // X on middle qubit
+            pauli_string(&[(Pauli::Z, 0)]), // Single Z
+            pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]), // XXX
+            pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]), // ZZZ
+            pauli_string(&[(Pauli::Y, 0), (Pauli::Y, 1)]), // YY
         ];
 
         for pauli in &test_cases {
@@ -807,9 +784,9 @@ mod tests {
 
             // syndrome should match (sorted since indexed returns BTreeSet order)
             let mut expected_syndrome = code.syndrome(pauli);
-            expected_syndrome.sort();
+            expected_syndrome.sort_unstable();
             let mut indexed_syndrome = code.syndrome_indexed(pauli, &indices.stabilizer);
-            indexed_syndrome.sort();
+            indexed_syndrome.sort_unstable();
             assert_eq!(
                 expected_syndrome, indexed_syndrome,
                 "syndrome mismatch for {pauli:?}"
@@ -832,7 +809,7 @@ mod tests {
         // X error on qubit 1 should trigger both stabilizers
         let x1 = pauli_string(&[(Pauli::X, 1)]);
         let mut syndrome = code.syndrome_indexed(&x1, &index);
-        syndrome.sort();
+        syndrome.sort_unstable();
         assert_eq!(syndrome, vec![0, 1]);
 
         // X error on qubit 2 should trigger stabilizer 1 only

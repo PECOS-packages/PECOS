@@ -141,7 +141,7 @@ impl RotationType {
         }
     }
 
-    /// Returns the corresponding GateType for this rotation.
+    /// Returns the corresponding `GateType` for this rotation.
     #[must_use]
     pub fn to_gate_type(&self) -> GateType {
         match self {
@@ -238,6 +238,20 @@ impl From<Vec<QubitId>> for Qubits {
     }
 }
 
+impl From<std::ops::Range<usize>> for Qubits {
+    fn from(range: std::ops::Range<usize>) -> Self {
+        assert!(!range.is_empty(), "empty range not allowed for Qubits");
+        Qubits(range.map(QubitId).collect())
+    }
+}
+
+impl From<std::ops::RangeInclusive<usize>> for Qubits {
+    fn from(range: std::ops::RangeInclusive<usize>) -> Self {
+        assert!(!range.is_empty(), "empty range not allowed for Qubits");
+        Qubits(range.map(QubitId).collect())
+    }
+}
+
 impl Qubits {
     /// Returns true if there are no qubits.
     #[must_use]
@@ -302,7 +316,12 @@ impl From<(QubitId, QubitId)> for QubitPairs {
 
 impl<const N: usize> From<[(usize, usize); N]> for QubitPairs {
     fn from(pairs: [(usize, usize); N]) -> Self {
-        QubitPairs(pairs.into_iter().map(|(a, b)| (QubitId(a), QubitId(b))).collect())
+        QubitPairs(
+            pairs
+                .into_iter()
+                .map(|(a, b)| (QubitId(a), QubitId(b)))
+                .collect(),
+        )
     }
 }
 
@@ -314,7 +333,12 @@ impl<const N: usize> From<[(QubitId, QubitId); N]> for QubitPairs {
 
 impl From<&[(usize, usize)]> for QubitPairs {
     fn from(pairs: &[(usize, usize)]) -> Self {
-        QubitPairs(pairs.iter().map(|&(a, b)| (QubitId(a), QubitId(b))).collect())
+        QubitPairs(
+            pairs
+                .iter()
+                .map(|&(a, b)| (QubitId(a), QubitId(b)))
+                .collect(),
+        )
     }
 }
 
@@ -326,7 +350,12 @@ impl From<&[(QubitId, QubitId)]> for QubitPairs {
 
 impl From<Vec<(usize, usize)>> for QubitPairs {
     fn from(pairs: Vec<(usize, usize)>) -> Self {
-        QubitPairs(pairs.into_iter().map(|(a, b)| (QubitId(a), QubitId(b))).collect())
+        QubitPairs(
+            pairs
+                .into_iter()
+                .map(|(a, b)| (QubitId(a), QubitId(b)))
+                .collect(),
+        )
     }
 }
 
@@ -372,7 +401,7 @@ impl QubitPairs {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operator {
     /// Pauli operator (single or multi-qubit)
-    /// Wraps PauliString for exact Pauli algebra
+    /// Wraps `PauliString` for exact Pauli algebra
     Pauli(PauliString),
 
     /// Rotation gate with angle: exp(-i θ/2 P)
@@ -409,7 +438,11 @@ pub enum Operator {
 impl Operator {
     /// Creates a rotation gate expression.
     #[must_use]
-    pub fn rotation(rotation_type: RotationType, angle: Angle64, qubits: impl Into<SmallVec<[usize; 2]>>) -> Self {
+    pub fn rotation(
+        rotation_type: RotationType,
+        angle: Angle64,
+        qubits: impl Into<SmallVec<[usize; 2]>>,
+    ) -> Self {
         Self::Rotation {
             rotation_type,
             angle,
@@ -439,13 +472,20 @@ impl Operator {
                 ))
             }
             // Rotation adjoint: negate the angle
-            Self::Rotation { rotation_type, angle, qubits } => Self::Rotation {
+            Self::Rotation {
+                rotation_type,
+                angle,
+                qubits,
+            } => Self::Rotation {
                 rotation_type: *rotation_type,
                 angle: negate_angle(*angle),
                 qubits: qubits.clone(),
             },
             // Gate adjoint: wrap or simplify for self-adjoint gates
-            Self::Gate { gate_type, qubits: _ } => {
+            Self::Gate {
+                gate_type,
+                qubits: _,
+            } => {
                 if gate_type.is_self_adjoint() {
                     self.clone()
                 } else {
@@ -453,9 +493,9 @@ impl Operator {
                 }
             }
             // Tensor adjoint: adjoint of each part
-            Self::Tensor(parts) => Self::Tensor(parts.iter().map(|p| p.dg()).collect()),
+            Self::Tensor(parts) => Self::Tensor(parts.iter().map(Operator::dg).collect()),
             // Compose adjoint: reverse order and adjoint each
-            Self::Compose(parts) => Self::Compose(parts.iter().rev().map(|p| p.dg()).collect()),
+            Self::Compose(parts) => Self::Compose(parts.iter().rev().map(Operator::dg).collect()),
             // Double adjoint: unwrap
             Self::Adjoint(inner) => (**inner).clone(),
             // Phase adjoint: conjugate phase (negate), adjoint inner
@@ -509,10 +549,9 @@ impl Operator {
                 is_multiple_of_quarter_turn(*angle)
             }
             Self::Gate { gate_type, .. } => gate_type.is_clifford(),
-            Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(|p| p.is_clifford()),
-            Self::Adjoint(inner) => inner.is_clifford(),
+            Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(Operator::is_clifford),
             // Phase doesn't affect Clifford-ness (global phase)
-            Self::Phase { inner, .. } => inner.is_clifford(),
+            Self::Adjoint(inner) | Self::Phase { inner, .. } => inner.is_clifford(),
         }
     }
 
@@ -538,8 +577,7 @@ impl Operator {
                     part.collect_qubits(result);
                 }
             }
-            Self::Adjoint(inner) => inner.collect_qubits(result),
-            Self::Phase { inner, .. } => inner.collect_qubits(result),
+            Self::Adjoint(inner) | Self::Phase { inner, .. } => inner.collect_qubits(result),
         }
     }
 }
@@ -592,7 +630,7 @@ impl Mul<Operator> for ImaginaryUnit {
     type Output = Operator;
 
     fn mul(self, rhs: Operator) -> Operator {
-        rhs.with_phase(Angle64::QUARTER_TURN)  // i = e^{iπ/2}
+        rhs.with_phase(Angle64::QUARTER_TURN) // i = e^{iπ/2}
     }
 }
 
@@ -607,16 +645,19 @@ impl Mul<&Operator> for ImaginaryUnit {
 impl Mul<Operator> for NegImaginaryUnit {
     type Output = Operator;
 
+    #[allow(clippy::suspicious_arithmetic_impl)] // Adding angles for phase computation
     fn mul(self, rhs: Operator) -> Operator {
-        rhs.with_phase(Angle64::QUARTER_TURN + Angle64::HALF_TURN)  // -i = e^{i3π/2}
+        rhs.with_phase(Angle64::QUARTER_TURN + Angle64::HALF_TURN) // -i = e^{i3π/2}
     }
 }
 
 impl Mul<&Operator> for NegImaginaryUnit {
     type Output = Operator;
 
+    #[allow(clippy::suspicious_arithmetic_impl)] // Adding angles for phase computation
     fn mul(self, rhs: &Operator) -> Operator {
-        rhs.clone().with_phase(Angle64::QUARTER_TURN + Angle64::HALF_TURN)
+        rhs.clone()
+            .with_phase(Angle64::QUARTER_TURN + Angle64::HALF_TURN)
     }
 }
 
@@ -670,6 +711,7 @@ impl Neg for PhaseValue {
 impl Mul<PhaseValue> for ImaginaryUnit {
     type Output = PhaseValue;
 
+    #[allow(clippy::suspicious_arithmetic_impl)] // Adding angles for phase computation
     fn mul(self, rhs: PhaseValue) -> PhaseValue {
         // i * e^{iθ} = e^{i(θ + π/2)}
         PhaseValue(rhs.0 + Angle64::QUARTER_TURN)
@@ -679,6 +721,7 @@ impl Mul<PhaseValue> for ImaginaryUnit {
 impl Mul<PhaseValue> for NegImaginaryUnit {
     type Output = PhaseValue;
 
+    #[allow(clippy::suspicious_arithmetic_impl)] // Adding angles for phase computation
     fn mul(self, rhs: PhaseValue) -> PhaseValue {
         // -i * e^{iθ} = e^{i(θ + 3π/2)}
         PhaseValue(rhs.0 + Angle64::QUARTER_TURN + Angle64::HALF_TURN)
@@ -702,7 +745,7 @@ impl Mul<&Operator> for PhaseValue {
 }
 
 impl Operator {
-    /// Attempts to convert a rotation to its named GateType equivalent.
+    /// Attempts to convert a rotation to its named `GateType` equivalent.
     #[must_use]
     pub fn to_named_gate(&self) -> Option<GateType> {
         match self {
@@ -720,9 +763,11 @@ impl Operator {
                     None
                 }
             }
-            Self::Rotation { rotation_type, angle, .. } => {
-                rotation_to_gate_type(*rotation_type, *angle)
-            }
+            Self::Rotation {
+                rotation_type,
+                angle,
+                ..
+            } => rotation_to_gate_type(*rotation_type, *angle),
             Self::Gate { gate_type, .. } => Some(*gate_type),
             _ => None,
         }
@@ -751,7 +796,7 @@ impl Operator {
     /// Checks if this operator is equivalent to a Pauli operator.
     ///
     /// Returns true for:
-    /// - `Pauli` variants (any PauliString)
+    /// - `Pauli` variants (any `PauliString`)
     /// - Half-turn rotations: `RX(π)`, `RY(π)`, `RZ(π)`
     /// - Named Pauli gates: `X`, `Y`, `Z`
     #[must_use]
@@ -823,32 +868,17 @@ impl Operator {
         }
     }
 
-    /// Checks if this expression represents an identity operation.
-    #[must_use]
-    pub fn is_identity(&self) -> bool {
-        match self {
-            // PauliString is identity if it has no non-identity Paulis and phase +1
-            Self::Pauli(ps) => ps.weight() == 0 && ps.phase() == QuarterPhase::PlusOne,
-            Self::Rotation { angle, .. } => *angle == Angle64::ZERO,
-            Self::Gate { gate_type, .. } => matches!(gate_type, GateType::I),
-            Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(|p| p.is_identity()),
-            Self::Adjoint(inner) => inner.is_identity(),
-            // Phase doesn't affect identity-ness (global phase is ignored for unitaries)
-            // However, for PauliString extraction, phase matters
-            Self::Phase { inner, .. } => inner.is_identity(),
-        }
-    }
-
     /// Simplifies this gate expression by:
     /// - Merging adjacent rotations of the same type on the same qubits
     /// - Canceling inverse operations (rotation + its negation)
     /// - Removing identity operations (zero-angle rotations)
     /// - Flattening single-element containers
     #[must_use]
+    #[allow(clippy::missing_panics_doc)] // Internal expects are guarded by length checks
     pub fn simplify(&self) -> Self {
         match self {
-            // Pauli is already in simplified form
-            Self::Pauli(_) => self.clone(),
+            // Pauli and Gate are already in simplified form
+            Self::Pauli(_) | Self::Gate { .. } => self.clone(),
 
             Self::Rotation { angle, .. } => {
                 // Remove identity rotations
@@ -858,26 +888,20 @@ impl Operator {
                 self.clone()
             }
 
-            Self::Gate { .. } => self.clone(),
-
             Self::Tensor(parts) => {
-                // Simplify each part and filter out identities
-                let simplified: Vec<_> = parts
-                    .iter()
-                    .map(|p| p.simplify())
-                    .filter(|p| !p.is_identity())
-                    .collect();
+                // Simplify each part but preserve identities (they define the Hilbert space dimension)
+                let simplified: Vec<_> = parts.iter().map(Operator::simplify).collect();
 
                 match simplified.len() {
-                    0 => Id(0), // Empty tensor = identity
-                    1 => simplified.into_iter().next().unwrap(),
+                    0 => Self::Pauli(PauliString::default()), // Empty tensor = identity
+                    1 => simplified.into_iter().next().expect("length is 1"),
                     _ => Self::Tensor(simplified),
                 }
             }
 
             Self::Compose(parts) => {
                 // First simplify each part
-                let simplified: Vec<_> = parts.iter().map(|p| p.simplify()).collect();
+                let simplified: Vec<_> = parts.iter().map(Operator::simplify).collect();
 
                 // Flatten nested Compose nodes
                 let flattened = flatten_compose(simplified);
@@ -886,14 +910,11 @@ impl Operator {
                 let merged = merge_adjacent_rotations(flattened);
 
                 // Filter out identities
-                let filtered: Vec<_> = merged
-                    .into_iter()
-                    .filter(|p| !p.is_identity())
-                    .collect();
+                let filtered: Vec<_> = merged.into_iter().filter(|p| !p.is_identity()).collect();
 
                 match filtered.len() {
-                    0 => Id(0), // Empty composition = identity
-                    1 => filtered.into_iter().next().unwrap(),
+                    0 => I(0), // Empty composition = identity
+                    1 => filtered.into_iter().next().expect("length is 1"),
                     _ => Self::Compose(filtered),
                 }
             }
@@ -919,24 +940,48 @@ impl Operator {
         }
     }
 
-    /// Conjugates this operator by another: `gate.dg() * self * gate` (i.e., U†AU).
+    /// Conjugates this operator by another: `gate * self * gate.dg()` (i.e., UAU†).
+    ///
+    /// This is the stabilizer update convention: when gate U is applied to a state,
+    /// a stabilizer S transforms as S → U S U†.
+    ///
+    /// For Heisenberg picture evolution (U†AU), use [`conjdg`](Self::conjdg).
     ///
     /// # Example
     ///
     /// ```
     /// use pecos_core::operator::{X, Z, H, T};
     ///
-    /// // Conjugate Pauli by Clifford
+    /// // Stabilizer update: applying H to qubit 0
     /// let stabilizer = X(0) & Z(1);
-    /// let result = stabilizer.conj(&H(0));
+    /// let updated = stabilizer.conj(&H(0));  // H * (X⊗Z) * H†
     ///
     /// // Works with any operators
     /// let a = T(0);
     /// let b = X(0);
-    /// let conjugated = b.conj(&a);  // T† X T
+    /// let conjugated = b.conj(&a);  // T X T†
     /// ```
     #[must_use]
     pub fn conj(&self, gate: &Operator) -> Self {
+        gate.clone() * self.clone() * gate.dg()
+    }
+
+    /// Conjugates this operator by the adjoint of another: `gate.dg() * self * gate` (i.e., U†AU).
+    ///
+    /// This is the Heisenberg picture convention: operators evolve as A → U†AU.
+    ///
+    /// For stabilizer updates (UAU†), use [`conj`](Self::conj).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_core::operator::{X, H};
+    ///
+    /// // Heisenberg evolution: how X evolves under H
+    /// let evolved = X(0).conjdg(&H(0));  // H† X H
+    /// ```
+    #[must_use]
+    pub fn conjdg(&self, gate: &Operator) -> Self {
         gate.dg() * self.clone() * gate.clone()
     }
 
@@ -956,7 +1001,7 @@ impl Operator {
     /// ```
     #[must_use]
     pub fn phase(&self) -> crate::GlobalPhase {
-        use crate::{GlobalPhase, PauliOperator};
+        use crate::GlobalPhase;
 
         match self {
             Self::Pauli(ps) => GlobalPhase::from(ps.phase()),
@@ -986,9 +1031,9 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::Id;
+    /// use pecos_core::operator::I;
     ///
-    /// assert!(Id(0).is_identity());
+    /// assert!(I(0).is_identity());
     /// ```
     #[must_use]
     pub fn is_identity(&self) -> bool {
@@ -996,8 +1041,7 @@ impl Operator {
             Self::Pauli(ps) => ps.weight() == 0 && ps.phase() == crate::QuarterPhase::PlusOne,
             Self::Gate { gate_type, .. } => *gate_type == GateType::I,
             Self::Rotation { angle, .. } => *angle == Angle64::ZERO,
-            Self::Tensor(parts) => parts.iter().all(|p| p.is_identity()),
-            Self::Compose(parts) => parts.iter().all(|p| p.is_identity()),
+            Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(Operator::is_identity),
             Self::Adjoint(inner) => inner.is_identity(),
             Self::Phase { phase, inner } => *phase == Angle64::ZERO && inner.is_identity(),
         }
@@ -1026,20 +1070,27 @@ impl Operator {
         // A is Hermitian if A = A†
         // For structural comparison, we check known Hermitian operators
         match self {
-            Self::Pauli(_) => true,  // All Paulis are Hermitian
+            Self::Pauli(_) => true, // All Paulis are Hermitian
             Self::Gate { gate_type, .. } => matches!(
                 gate_type,
-                GateType::I | GateType::X | GateType::Y | GateType::Z |
-                GateType::H | GateType::CX | GateType::CY | GateType::CZ | GateType::SWAP
+                GateType::I
+                    | GateType::X
+                    | GateType::Y
+                    | GateType::Z
+                    | GateType::H
+                    | GateType::CX
+                    | GateType::CY
+                    | GateType::CZ
+                    | GateType::SWAP
             ),
             Self::Rotation { angle, .. } => {
                 // Rotations are Hermitian only at angle 0 or π
                 *angle == Angle64::ZERO || *angle == Angle64::HALF_TURN
             }
-            Self::Tensor(parts) => parts.iter().all(|p| p.is_hermitian()),
-            Self::Compose(_) => false,  // Composition of Hermitians isn't generally Hermitian
-            Self::Adjoint(inner) => inner.is_hermitian(),  // (A†)† = A, so same as inner
-            Self::Phase { .. } => false,  // Phase factors break Hermiticity unless trivial
+            Self::Tensor(parts) => parts.iter().all(Operator::is_hermitian),
+            // Composition of Hermitians isn't generally Hermitian; phase factors break Hermiticity
+            Self::Compose(_) | Self::Phase { .. } => false,
+            Self::Adjoint(inner) => inner.is_hermitian(), // (A†)† = A, so same as inner
         }
     }
 
@@ -1061,10 +1112,11 @@ impl Operator {
         match n {
             0 => Self::Gate {
                 gate_type: GateType::I,
-                qubits: self.qubits().into_iter().next().map_or(
-                    smallvec::smallvec![0],
-                    |q| smallvec::smallvec![q]
-                ),
+                qubits: self
+                    .qubits()
+                    .into_iter()
+                    .next()
+                    .map_or(smallvec::smallvec![0], |q| smallvec::smallvec![q]),
             },
             1 => self.clone(),
             _ => {
@@ -1075,43 +1127,6 @@ impl Operator {
                 result
             }
         }
-    }
-
-    /// Returns the commutator [A, B] = AB - BA.
-    ///
-    /// Note: This returns a symbolic expression, not a simplified result.
-    /// For Paulis, use `.commutes()` to check if they commute/anti-commute.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use pecos_core::operator::{X, Z};
-    ///
-    /// let a = X(0);
-    /// let b = Z(0);
-    /// let comm = a.commutator(&b);  // XZ - ZX
-    /// ```
-    #[must_use]
-    pub fn commutator(&self, other: &Operator) -> Self {
-        self.clone() * other.clone() - other.clone() * self.clone()
-    }
-
-    /// Returns the anticommutator {A, B} = AB + BA.
-    ///
-    /// Note: This returns a symbolic expression, not a simplified result.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use pecos_core::operator::{X, Z};
-    ///
-    /// let a = X(0);
-    /// let b = Z(0);
-    /// let anticomm = a.anticommutator(&b);  // XZ + ZX
-    /// ```
-    #[must_use]
-    pub fn anticommutator(&self, other: &Operator) -> Self {
-        self.clone() * other.clone() + other.clone() * self.clone()
     }
 
     /// Checks whether this operator commutes with another.
@@ -1148,7 +1163,135 @@ impl Operator {
         }
     }
 
-    /// Converts this gate expression to a CliffordRep (generator propagation).
+    /// Returns whether this operator is unitary.
+    ///
+    /// All operators in this enum are unitary by construction.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_core::operator::{X, H, RZ};
+    /// use pecos_core::Angle64;
+    ///
+    /// assert!(X(0).is_unitary());
+    /// assert!(H(0).is_unitary());
+    /// assert!(RZ(Angle64::QUARTER_TURN, 0).is_unitary());
+    /// ```
+    #[must_use]
+    pub fn is_unitary(&self) -> bool {
+        true // All Operator variants are unitary by construction
+    }
+
+    /// Decomposes this operator into a sequence of primitive gates.
+    ///
+    /// Returns a flat vector of `Gate` structs representing the operator
+    /// as a sequence of native gates.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_core::operator::{H, CX};
+    ///
+    /// let circuit = CX(0, 1) * H(0);  // H then CX
+    /// let gates = circuit.decompose();
+    /// assert_eq!(gates.len(), 2);
+    /// ```
+    #[must_use]
+    pub fn decompose(&self) -> Vec<crate::Gate> {
+        use crate::{Gate, Pauli};
+
+        match self {
+            Self::Pauli(ps) => {
+                // Convert PauliString to individual gates
+                let mut gates = Vec::new();
+                for (pauli, qubit) in ps.iter_pairs() {
+                    let gate = match pauli {
+                        Pauli::I => continue, // Skip identity
+                        Pauli::X => Gate::simple(GateType::X, smallvec::smallvec![qubit]),
+                        Pauli::Y => Gate::simple(GateType::Y, smallvec::smallvec![qubit]),
+                        Pauli::Z => Gate::simple(GateType::Z, smallvec::smallvec![qubit]),
+                    };
+                    gates.push(gate);
+                }
+                // Handle global phase if not +1
+                // (Phase is tracked separately in PauliString but not representable in Gate)
+                gates
+            }
+
+            Self::Rotation {
+                rotation_type,
+                angle,
+                qubits,
+            } => {
+                let gate_type = match rotation_type {
+                    RotationType::RX => GateType::RX,
+                    RotationType::RY => GateType::RY,
+                    RotationType::RZ => GateType::RZ,
+                    RotationType::RXX => GateType::RXX,
+                    RotationType::RYY => GateType::RYY,
+                    RotationType::RZZ => GateType::RZZ,
+                };
+                let qubit_ids: crate::GateQubits =
+                    qubits.iter().map(|&q| crate::QubitId(q)).collect();
+                vec![Gate::with_angles(
+                    gate_type,
+                    smallvec::smallvec![*angle],
+                    qubit_ids,
+                )]
+            }
+
+            Self::Gate { gate_type, qubits } => {
+                let qubit_ids: crate::GateQubits =
+                    qubits.iter().map(|&q| crate::QubitId(q)).collect();
+                vec![Gate::simple(*gate_type, qubit_ids)]
+            }
+
+            Self::Tensor(parts) => {
+                // Decompose each part and concatenate
+                parts.iter().flat_map(Operator::decompose).collect()
+            }
+
+            Self::Compose(parts) => {
+                // Decompose each part in application order
+                parts.iter().flat_map(Operator::decompose).collect()
+            }
+
+            Self::Adjoint(inner) => {
+                // Decompose inner, reverse, and adjoint each gate
+                let mut gates = inner.decompose();
+                gates.reverse();
+                for gate in &mut gates {
+                    // Negate angles for rotation gates
+                    for angle in &mut gate.angles {
+                        *angle = Angle64::ZERO - *angle;
+                    }
+                    // Some gates need special handling
+                    gate.gate_type = match gate.gate_type {
+                        GateType::SX => GateType::SXdg,
+                        GateType::SXdg => GateType::SX,
+                        GateType::SY => GateType::SYdg,
+                        GateType::SYdg => GateType::SY,
+                        GateType::SZ => GateType::SZdg,
+                        GateType::SZdg => GateType::SZ,
+                        GateType::T => GateType::Tdg,
+                        GateType::Tdg => GateType::T,
+                        GateType::SZZ => GateType::SZZdg,
+                        GateType::SZZdg => GateType::SZZ,
+                        other => other, // Self-adjoint gates unchanged
+                    };
+                }
+                gates
+            }
+
+            Self::Phase { inner, .. } => {
+                // Global phase doesn't affect gate sequence
+                // (Phase information is lost in decomposition)
+                inner.decompose()
+            }
+        }
+    }
+
+    /// Converts this gate expression to a `CliffordRep` (generator propagation).
     ///
     /// Returns `None` if the expression contains non-Clifford operations.
     ///
@@ -1179,9 +1322,11 @@ impl Operator {
                 Some(result)
             }
 
-            Self::Rotation { rotation_type, angle, qubits } => {
-                rotation_to_clifford_rep(*rotation_type, *angle, qubits, num_qubits)
-            }
+            Self::Rotation {
+                rotation_type,
+                angle,
+                qubits,
+            } => rotation_to_clifford_rep(*rotation_type, *angle, qubits, num_qubits),
 
             Self::Gate { gate_type, qubits } => {
                 gate_type_to_clifford_rep(*gate_type, qubits, num_qubits)
@@ -1215,7 +1360,9 @@ impl Operator {
 
             Self::Adjoint(inner) => {
                 // Get the inner CliffordRep and take its inverse
-                inner.to_clifford_rep(num_qubits).map(|cliff| cliff.inverse())
+                inner
+                    .to_clifford_rep(num_qubits)
+                    .map(|cliff| cliff.inverse())
             }
 
             Self::Phase { inner, .. } => {
@@ -1226,7 +1373,7 @@ impl Operator {
     }
 }
 
-/// Convert a rotation to CliffordRep if it's Clifford.
+/// Convert a rotation to `CliffordRep` if it's Clifford.
 fn rotation_to_clifford_rep(
     rotation_type: RotationType,
     angle: Angle64,
@@ -1324,7 +1471,7 @@ fn rotation_to_clifford_rep(
     }
 }
 
-/// Convert a GateType to CliffordRep.
+/// Convert a `GateType` to `CliffordRep`.
 fn gate_type_to_clifford_rep(
     gate_type: GateType,
     qubits: &SmallVec<[usize; 3]>,
@@ -1404,8 +1551,11 @@ fn gate_type_to_clifford_rep(
     }
 }
 
-/// Extend a CliffordRep to act on more qubits (identity on new qubits).
-fn extend_clifford(cliff: crate::clifford_rep::CliffordRep, target_qubits: usize) -> crate::clifford_rep::CliffordRep {
+/// Extend a `CliffordRep` to act on more qubits (identity on new qubits).
+fn extend_clifford(
+    cliff: crate::clifford_rep::CliffordRep,
+    target_qubits: usize,
+) -> crate::clifford_rep::CliffordRep {
     use crate::clifford_rep::CliffordRep;
 
     if cliff.num_qubits() >= target_qubits {
@@ -1427,53 +1577,86 @@ fn extend_clifford(cliff: crate::clifford_rep::CliffordRep, target_qubits: usize
 }
 
 // Helper functions to apply single-qubit Cliffords to a CliffordRep
-fn apply_x(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_x(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     let x_cliff = crate::clifford_rep::CliffordRep::x(qubit);
     extend_clifford(x_cliff, cliff.num_qubits()).compose(cliff)
 }
 
-fn apply_y(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_y(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     let y_cliff = crate::clifford_rep::CliffordRep::y(qubit);
     extend_clifford(y_cliff, cliff.num_qubits()).compose(cliff)
 }
 
-fn apply_z(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_z(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     let z_cliff = crate::clifford_rep::CliffordRep::z(qubit);
     extend_clifford(z_cliff, cliff.num_qubits()).compose(cliff)
 }
 
-fn apply_s(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_s(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     let s_cliff = crate::clifford_rep::CliffordRep::s(qubit);
     extend_clifford(s_cliff, cliff.num_qubits()).compose(cliff)
 }
 
-fn apply_sdg(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_sdg(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     let sdg_cliff = crate::clifford_rep::CliffordRep::sdg(qubit);
     extend_clifford(sdg_cliff, cliff.num_qubits()).compose(cliff)
 }
 
-fn apply_sx(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_sx(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     let sx_cliff = crate::clifford_rep::CliffordRep::sx(qubit);
     extend_clifford(sx_cliff, cliff.num_qubits()).compose(cliff)
 }
 
-fn apply_sxdg(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_sxdg(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     // SX† = SX^3 = SX * SX * SX
     let sx_cliff = crate::clifford_rep::CliffordRep::sx(qubit);
     let extended = extend_clifford(sx_cliff.clone(), cliff.num_qubits());
-    extended.compose(&extended).compose(&extended).compose(cliff)
+    extended
+        .compose(&extended)
+        .compose(&extended)
+        .compose(cliff)
 }
 
-fn apply_sy(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_sy(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     let sy_cliff = crate::clifford_rep::CliffordRep::sy(qubit);
     extend_clifford(sy_cliff, cliff.num_qubits()).compose(cliff)
 }
 
-fn apply_sydg(cliff: &crate::clifford_rep::CliffordRep, qubit: usize) -> crate::clifford_rep::CliffordRep {
+fn apply_sydg(
+    cliff: &crate::clifford_rep::CliffordRep,
+    qubit: usize,
+) -> crate::clifford_rep::CliffordRep {
     // SY† = SY^3
     let sy_cliff = crate::clifford_rep::CliffordRep::sy(qubit);
     let extended = extend_clifford(sy_cliff.clone(), cliff.num_qubits());
-    extended.compose(&extended).compose(&extended).compose(cliff)
+    extended
+        .compose(&extended)
+        .compose(&extended)
+        .compose(cliff)
 }
 
 /// Flatten nested Compose nodes into a single level.
@@ -1503,18 +1686,18 @@ fn merge_adjacent_rotations(parts: Vec<Operator>) -> Vec<Operator> {
         let current = &parts[idx];
 
         // Check if next element can be merged with current
-        if idx + 1 < parts.len() {
-            if let Some(merged) = try_merge_rotations(current, &parts[idx + 1]) {
-                // Skip the merged element
-                if merged.is_identity() {
-                    // Both cancelled out, skip both
-                    idx += 2;
-                    continue;
-                }
-                result.push(merged);
+        if idx + 1 < parts.len()
+            && let Some(merged) = try_merge_rotations(current, &parts[idx + 1])
+        {
+            // Skip the merged element
+            if merged.is_identity() {
+                // Both cancelled out, skip both
                 idx += 2;
                 continue;
             }
+            result.push(merged);
+            idx += 2;
+            continue;
         }
 
         result.push(parts[idx].clone());
@@ -1534,8 +1717,16 @@ fn merge_adjacent_rotations(parts: Vec<Operator>) -> Vec<Operator> {
 fn try_merge_rotations(a: &Operator, b: &Operator) -> Option<Operator> {
     match (a, b) {
         (
-            Operator::Rotation { rotation_type: rt_a, angle: angle_a, qubits: qubits_a },
-            Operator::Rotation { rotation_type: rt_b, angle: angle_b, qubits: qubits_b },
+            Operator::Rotation {
+                rotation_type: rt_a,
+                angle: angle_a,
+                qubits: qubits_a,
+            },
+            Operator::Rotation {
+                rotation_type: rt_b,
+                angle: angle_b,
+                qubits: qubits_b,
+            },
         ) => {
             // Can only merge if same rotation type and same qubits
             if rt_a == rt_b && qubits_a == qubits_b {
@@ -1553,7 +1744,7 @@ fn try_merge_rotations(a: &Operator, b: &Operator) -> Option<Operator> {
     }
 }
 
-/// Convert a rotation (type + angle) to a named GateType if one exists.
+/// Convert a rotation (type + angle) to a named `GateType` if one exists.
 #[must_use]
 pub fn rotation_to_gate_type(rotation_type: RotationType, angle: Angle64) -> Option<GateType> {
     // Check for standard angles
@@ -1565,29 +1756,50 @@ pub fn rotation_to_gate_type(rotation_type: RotationType, angle: Angle64) -> Opt
 
     match rotation_type {
         RotationType::RZ => {
-            if angle == quarter { Some(GateType::SZ) }
-            else if angle == neg_quarter { Some(GateType::SZdg) }
-            else if angle == half { Some(GateType::Z) }
-            else if angle == eighth { Some(GateType::T) }
-            else if angle == neg_eighth { Some(GateType::Tdg) }
-            else { None }
+            if angle == quarter {
+                Some(GateType::SZ)
+            } else if angle == neg_quarter {
+                Some(GateType::SZdg)
+            } else if angle == half {
+                Some(GateType::Z)
+            } else if angle == eighth {
+                Some(GateType::T)
+            } else if angle == neg_eighth {
+                Some(GateType::Tdg)
+            } else {
+                None
+            }
         }
         RotationType::RX => {
-            if angle == quarter { Some(GateType::SX) }
-            else if angle == neg_quarter { Some(GateType::SXdg) }
-            else if angle == half { Some(GateType::X) }
-            else { None }
+            if angle == quarter {
+                Some(GateType::SX)
+            } else if angle == neg_quarter {
+                Some(GateType::SXdg)
+            } else if angle == half {
+                Some(GateType::X)
+            } else {
+                None
+            }
         }
         RotationType::RY => {
-            if angle == quarter { Some(GateType::SY) }
-            else if angle == neg_quarter { Some(GateType::SYdg) }
-            else if angle == half { Some(GateType::Y) }
-            else { None }
+            if angle == quarter {
+                Some(GateType::SY)
+            } else if angle == neg_quarter {
+                Some(GateType::SYdg)
+            } else if angle == half {
+                Some(GateType::Y)
+            } else {
+                None
+            }
         }
         RotationType::RZZ => {
-            if angle == quarter { Some(GateType::SZZ) }
-            else if angle == neg_quarter { Some(GateType::SZZdg) }
-            else { None }
+            if angle == quarter {
+                Some(GateType::SZZ)
+            } else if angle == neg_quarter {
+                Some(GateType::SZZdg)
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -1604,20 +1816,31 @@ trait GateTypeExt {
 
 impl GateTypeExt for GateType {
     fn is_clifford(&self) -> bool {
-        use GateType::*;
+        use GateType::{CX, CY, CZ, H, I, SWAP, SX, SXdg, SY, SYdg, SZ, SZZ, SZZdg, SZdg, X, Y, Z};
         matches!(
             self,
-            I | X | Y | Z | H | SX | SXdg | SY | SYdg | SZ | SZdg |
-            CX | CY | CZ | SWAP | SZZ | SZZdg
+            I | X
+                | Y
+                | Z
+                | H
+                | SX
+                | SXdg
+                | SY
+                | SYdg
+                | SZ
+                | SZdg
+                | CX
+                | CY
+                | CZ
+                | SWAP
+                | SZZ
+                | SZZdg
         )
     }
 
     fn is_self_adjoint(&self) -> bool {
-        use GateType::*;
-        matches!(
-            self,
-            I | X | Y | Z | H | CX | CY | CZ | SWAP
-        )
+        use GateType::{CX, CY, CZ, H, I, SWAP, X, Y, Z};
+        matches!(self, I | X | Y | Z | H | CX | CY | CZ | SWAP)
     }
 }
 
@@ -1633,7 +1856,7 @@ fn is_multiple_of_quarter_turn(angle: Angle64) -> bool {
     if quarter_fraction == 0 {
         return true; // Edge case: if quarter is 0, everything is a multiple
     }
-    angle.fraction() % quarter_fraction == 0
+    angle.fraction().is_multiple_of(quarter_fraction)
 }
 
 /// Negate an angle (for adjoint operations).
@@ -1641,7 +1864,7 @@ fn negate_angle(angle: Angle64) -> Angle64 {
     Angle64::ZERO - angle
 }
 
-/// Convert an angle to a QuarterPhase if it's a multiple of π/2.
+/// Convert an angle to a `QuarterPhase` if it's a multiple of π/2.
 ///
 /// Returns None if the angle is not a multiple of π/2.
 fn angle_to_quarter_phase(angle: Angle64) -> Option<QuarterPhase> {
@@ -1681,9 +1904,9 @@ pub fn RX(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RXs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
-    qubits.into().apply(|q| {
-        Operator::rotation(RotationType::RX, angle, smallvec::smallvec![q])
-    })
+    qubits
+        .into()
+        .apply(|q| Operator::rotation(RotationType::RX, angle, smallvec::smallvec![q]))
 }
 
 /// Rotation around Y axis by the given angle.
@@ -1701,9 +1924,9 @@ pub fn RY(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RYs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
-    qubits.into().apply(|q| {
-        Operator::rotation(RotationType::RY, angle, smallvec::smallvec![q])
-    })
+    qubits
+        .into()
+        .apply(|q| Operator::rotation(RotationType::RY, angle, smallvec::smallvec![q]))
 }
 
 /// Rotation around Z axis by the given angle.
@@ -1721,9 +1944,9 @@ pub fn RZ(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RZs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
-    qubits.into().apply(|q| {
-        Operator::rotation(RotationType::RZ, angle, smallvec::smallvec![q])
-    })
+    qubits
+        .into()
+        .apply(|q| Operator::rotation(RotationType::RZ, angle, smallvec::smallvec![q]))
 }
 
 // ============================================================================
@@ -1736,7 +1959,11 @@ pub fn RZs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RXX(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::rotation(RotationType::RXX, angle, smallvec::smallvec![q0.into().0, q1.into().0])
+    Operator::rotation(
+        RotationType::RXX,
+        angle,
+        smallvec::smallvec![q0.into().0, q1.into().0],
+    )
 }
 
 /// RXX rotations on multiple qubit pairs.
@@ -1745,9 +1972,9 @@ pub fn RXX(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RXXs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
-    pairs.into().apply(|q0, q1| {
-        Operator::rotation(RotationType::RXX, angle, smallvec::smallvec![q0, q1])
-    })
+    pairs
+        .into()
+        .apply(|q0, q1| Operator::rotation(RotationType::RXX, angle, smallvec::smallvec![q0, q1]))
 }
 
 /// Two-qubit YY rotation by the given angle.
@@ -1756,7 +1983,11 @@ pub fn RXXs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RYY(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::rotation(RotationType::RYY, angle, smallvec::smallvec![q0.into().0, q1.into().0])
+    Operator::rotation(
+        RotationType::RYY,
+        angle,
+        smallvec::smallvec![q0.into().0, q1.into().0],
+    )
 }
 
 /// RYY rotations on multiple qubit pairs.
@@ -1765,9 +1996,9 @@ pub fn RYY(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RYYs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
-    pairs.into().apply(|q0, q1| {
-        Operator::rotation(RotationType::RYY, angle, smallvec::smallvec![q0, q1])
-    })
+    pairs
+        .into()
+        .apply(|q0, q1| Operator::rotation(RotationType::RYY, angle, smallvec::smallvec![q0, q1]))
 }
 
 /// Two-qubit ZZ rotation by the given angle.
@@ -1776,7 +2007,11 @@ pub fn RYYs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RZZ(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::rotation(RotationType::RZZ, angle, smallvec::smallvec![q0.into().0, q1.into().0])
+    Operator::rotation(
+        RotationType::RZZ,
+        angle,
+        smallvec::smallvec![q0.into().0, q1.into().0],
+    )
 }
 
 /// RZZ rotations on multiple qubit pairs.
@@ -1785,9 +2020,9 @@ pub fn RZZ(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RZZs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
-    pairs.into().apply(|q0, q1| {
-        Operator::rotation(RotationType::RZZ, angle, smallvec::smallvec![q0, q1])
-    })
+    pairs
+        .into()
+        .apply(|q0, q1| Operator::rotation(RotationType::RZZ, angle, smallvec::smallvec![q0, q1]))
 }
 
 // ============================================================================
@@ -1797,14 +2032,14 @@ pub fn RZZs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
 /// Identity gate on a single qubit.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Id(qubit: impl Into<QubitId>) -> Operator {
+pub fn I(qubit: impl Into<QubitId>) -> Operator {
     RZ(Angle64::ZERO, qubit.into().0)
 }
 
 /// Identity gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Ids(qubits: impl Into<Qubits>) -> Operator {
+pub fn Is(qubits: impl Into<Qubits>) -> Operator {
     qubits.into().apply(|q| RZ(Angle64::ZERO, q))
 }
 
@@ -1950,11 +2185,10 @@ pub fn Ts(qubits: impl Into<Qubits>) -> Operator {
 #[allow(non_snake_case)]
 pub fn H(qubit: impl Into<QubitId>) -> Operator {
     let q = qubit.into().0;
-    // H = RZ(π) * RY(π/2) = Z * SY
-    Operator::Compose(vec![
-        RZ(Angle64::HALF_TURN, q),
-        RY(Angle64::QUARTER_TURN, q),
-    ])
+    Operator::Gate {
+        gate_type: GateType::H,
+        qubits: smallvec::smallvec![q],
+    }
 }
 
 /// Hadamard gates on multiple qubits.
@@ -1979,7 +2213,10 @@ pub fn Hs(qubits: impl Into<Qubits>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CX(control: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
-    Operator::gate(GateType::CX, smallvec::smallvec![control.into().0, target.into().0])
+    Operator::gate(
+        GateType::CX,
+        smallvec::smallvec![control.into().0, target.into().0],
+    )
 }
 
 /// CX gates on multiple qubit pairs.
@@ -1988,9 +2225,9 @@ pub fn CX(control: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CXs(pairs: impl Into<QubitPairs>) -> Operator {
-    pairs.into().apply(|ctrl, tgt| {
-        Operator::gate(GateType::CX, smallvec::smallvec![ctrl, tgt])
-    })
+    pairs
+        .into()
+        .apply(|ctrl, tgt| Operator::gate(GateType::CX, smallvec::smallvec![ctrl, tgt]))
 }
 
 /// Controlled-Y gate.
@@ -1999,7 +2236,10 @@ pub fn CXs(pairs: impl Into<QubitPairs>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CY(control: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
-    Operator::gate(GateType::CY, smallvec::smallvec![control.into().0, target.into().0])
+    Operator::gate(
+        GateType::CY,
+        smallvec::smallvec![control.into().0, target.into().0],
+    )
 }
 
 /// CY gates on multiple qubit pairs.
@@ -2008,9 +2248,9 @@ pub fn CY(control: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CYs(pairs: impl Into<QubitPairs>) -> Operator {
-    pairs.into().apply(|ctrl, tgt| {
-        Operator::gate(GateType::CY, smallvec::smallvec![ctrl, tgt])
-    })
+    pairs
+        .into()
+        .apply(|ctrl, tgt| Operator::gate(GateType::CY, smallvec::smallvec![ctrl, tgt]))
 }
 
 /// Controlled-Z gate.
@@ -2028,9 +2268,9 @@ pub fn CZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CZs(pairs: impl Into<QubitPairs>) -> Operator {
-    pairs.into().apply(|q0, q1| {
-        Operator::gate(GateType::CZ, smallvec::smallvec![q0, q1])
-    })
+    pairs
+        .into()
+        .apply(|q0, q1| Operator::gate(GateType::CZ, smallvec::smallvec![q0, q1]))
 }
 
 /// SWAP gate.
@@ -2039,7 +2279,10 @@ pub fn CZs(pairs: impl Into<QubitPairs>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::gate(GateType::SWAP, smallvec::smallvec![q0.into().0, q1.into().0])
+    Operator::gate(
+        GateType::SWAP,
+        smallvec::smallvec![q0.into().0, q1.into().0],
+    )
 }
 
 /// SWAP gates on multiple qubit pairs.
@@ -2048,9 +2291,9 @@ pub fn SWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SWAPs(pairs: impl Into<QubitPairs>) -> Operator {
-    pairs.into().apply(|q0, q1| {
-        Operator::gate(GateType::SWAP, smallvec::smallvec![q0, q1])
-    })
+    pairs
+        .into()
+        .apply(|q0, q1| Operator::gate(GateType::SWAP, smallvec::smallvec![q0, q1]))
 }
 
 /// SZZ gate: RZZ(π/2)
@@ -2059,7 +2302,11 @@ pub fn SWAPs(pairs: impl Into<QubitPairs>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SZZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::rotation(RotationType::RZZ, Angle64::QUARTER_TURN, smallvec::smallvec![q0.into().0, q1.into().0])
+    Operator::rotation(
+        RotationType::RZZ,
+        Angle64::QUARTER_TURN,
+        smallvec::smallvec![q0.into().0, q1.into().0],
+    )
 }
 
 /// SZZ gates on multiple qubit pairs.
@@ -2069,7 +2316,11 @@ pub fn SZZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
 #[allow(non_snake_case)]
 pub fn SZZs(pairs: impl Into<QubitPairs>) -> Operator {
     pairs.into().apply(|q0, q1| {
-        Operator::rotation(RotationType::RZZ, Angle64::QUARTER_TURN, smallvec::smallvec![q0, q1])
+        Operator::rotation(
+            RotationType::RZZ,
+            Angle64::QUARTER_TURN,
+            smallvec::smallvec![q0, q1],
+        )
     })
 }
 
@@ -2081,7 +2332,10 @@ pub fn SZZs(pairs: impl Into<QubitPairs>) -> Operator {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CCX(c0: impl Into<QubitId>, c1: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
-    Operator::gate(GateType::CCX, smallvec::smallvec![c0.into().0, c1.into().0, target.into().0])
+    Operator::gate(
+        GateType::CCX,
+        smallvec::smallvec![c0.into().0, c1.into().0, target.into().0],
+    )
 }
 
 // ============================================================================
@@ -2095,9 +2349,7 @@ impl BitAnd for Operator {
     fn bitand(self, rhs: Operator) -> Operator {
         match (self, rhs) {
             // Pauli & Pauli: use PauliString tensor product
-            (Operator::Pauli(a), Operator::Pauli(b)) => {
-                Operator::Pauli(a & b)
-            }
+            (Operator::Pauli(a), Operator::Pauli(b)) => Operator::Pauli(a & b),
             // Flatten nested tensors
             (Operator::Tensor(mut parts), Operator::Tensor(rhs_parts)) => {
                 parts.extend(rhs_parts);
@@ -2125,9 +2377,7 @@ impl Mul for Operator {
         // So we store as [B, A] in the Compose vec (application order)
         match (self, rhs) {
             // Pauli * Pauli: use PauliString algebra
-            (Operator::Pauli(a), Operator::Pauli(b)) => {
-                Operator::Pauli(a * b)
-            }
+            (Operator::Pauli(a), Operator::Pauli(b)) => Operator::Pauli(a * b),
             // Flatten nested compositions
             (Operator::Compose(lhs_parts), Operator::Compose(rhs_parts)) => {
                 // rhs applied first, then lhs
@@ -2182,11 +2432,15 @@ impl Operator {
                     diagram.add_single_gate(q, name);
                 }
             }
-            Self::Rotation { rotation_type, angle, qubits } => {
+            Self::Rotation {
+                rotation_type,
+                angle,
+                qubits,
+            } => {
                 let name = if let Some(gate_type) = rotation_to_gate_type(*rotation_type, *angle) {
-                    format!("{:?}", gate_type)
+                    format!("{gate_type:?}")
                 } else {
-                    format!("{:?}", rotation_type)
+                    format!("{rotation_type:?}")
                 };
 
                 if qubits.len() == 1 {
@@ -2195,30 +2449,28 @@ impl Operator {
                     diagram.add_two_qubit_gate(qubits[0], qubits[1], &name);
                 }
             }
-            Self::Gate { gate_type, qubits } => {
-                match gate_type {
-                    GateType::CX => {
-                        diagram.add_controlled_gate(qubits[0], qubits[1], "X");
-                    }
-                    GateType::CY => {
-                        diagram.add_controlled_gate(qubits[0], qubits[1], "Y");
-                    }
-                    GateType::CZ => {
-                        diagram.add_controlled_gate(qubits[0], qubits[1], "Z");
-                    }
-                    GateType::SWAP => {
-                        diagram.add_swap(qubits[0], qubits[1]);
-                    }
-                    GateType::CCX => {
-                        diagram.add_toffoli(qubits[0], qubits[1], qubits[2]);
-                    }
-                    _ => {
-                        if qubits.len() == 1 {
-                            diagram.add_single_gate(qubits[0], &format!("{:?}", gate_type));
-                        }
+            Self::Gate { gate_type, qubits } => match gate_type {
+                GateType::CX => {
+                    diagram.add_controlled_gate(qubits[0], qubits[1], "X");
+                }
+                GateType::CY => {
+                    diagram.add_controlled_gate(qubits[0], qubits[1], "Y");
+                }
+                GateType::CZ => {
+                    diagram.add_controlled_gate(qubits[0], qubits[1], "Z");
+                }
+                GateType::SWAP => {
+                    diagram.add_swap(qubits[0], qubits[1]);
+                }
+                GateType::CCX => {
+                    diagram.add_toffoli(qubits[0], qubits[1], qubits[2]);
+                }
+                _ => {
+                    if qubits.len() == 1 {
+                        diagram.add_single_gate(qubits[0], &format!("{gate_type:?}"));
                     }
                 }
-            }
+            },
             Self::Tensor(parts) => {
                 // Tensor products can be drawn simultaneously
                 for part in parts {
@@ -2254,14 +2506,15 @@ impl CircuitDiagram {
     fn new(num_qubits: usize) -> Self {
         Self {
             num_qubits,
-            columns: vec![vec!["".to_string(); num_qubits * 2 - 1]],
+            columns: vec![vec![String::new(); num_qubits * 2 - 1]],
             current_col: 0,
         }
     }
 
     fn ensure_column(&mut self) {
         if self.current_col >= self.columns.len() {
-            self.columns.push(vec!["".to_string(); self.num_qubits * 2 - 1]);
+            self.columns
+                .push(vec![String::new(); self.num_qubits * 2 - 1]);
         }
     }
 
@@ -2273,7 +2526,7 @@ impl CircuitDiagram {
         self.ensure_column();
         let row = qubit * 2;
         if row < self.columns[self.current_col].len() {
-            self.columns[self.current_col][row] = format!("[{}]", name);
+            self.columns[self.current_col][row] = format!("[{name}]");
         }
     }
 
@@ -2286,7 +2539,7 @@ impl CircuitDiagram {
             self.columns[self.current_col][ctrl_row] = "●".to_string();
         }
         if targ_row < self.columns[self.current_col].len() {
-            self.columns[self.current_col][targ_row] = format!("[{}]", target_name);
+            self.columns[self.current_col][targ_row] = format!("[{target_name}]");
         }
 
         // Draw vertical line
@@ -2355,10 +2608,10 @@ impl CircuitDiagram {
         let row1 = q1 * 2;
 
         if row0 < self.columns[self.current_col].len() {
-            self.columns[self.current_col][row0] = format!("[{}]", name);
+            self.columns[self.current_col][row0] = format!("[{name}]");
         }
         if row1 < self.columns[self.current_col].len() {
-            self.columns[self.current_col][row1] = format!("[{}]", name);
+            self.columns[self.current_col][row1] = format!("[{name}]");
         }
 
         // Draw vertical line
@@ -2371,9 +2624,7 @@ impl CircuitDiagram {
     }
 
     fn render(&self) -> String {
-        let lines: Vec<String> = (0..self.num_qubits)
-            .map(|q| format!("q{}: ", q))
-            .collect();
+        let lines: Vec<String> = (0..self.num_qubits).map(|q| format!("q{q}: ")).collect();
 
         // Add spacing lines between qubits
         let mut all_lines: Vec<String> = Vec::new();
@@ -2387,7 +2638,12 @@ impl CircuitDiagram {
         // Process each column
         for col in &self.columns {
             // Find max width in this column
-            let max_width = col.iter().map(|s| s.chars().count()).max().unwrap_or(0).max(3);
+            let max_width = col
+                .iter()
+                .map(|s| s.chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(3);
 
             for (row, cell) in col.iter().enumerate() {
                 if row < all_lines.len() {
@@ -2423,7 +2679,7 @@ impl CircuitDiagram {
         // Add trailing wire
         for (idx, line) in all_lines.iter_mut().enumerate() {
             if idx % 2 == 0 {
-                line.push_str("─");
+                line.push('─');
             }
         }
 
@@ -2466,7 +2722,7 @@ mod tests {
             assert_eq!(ps.get(0), crate::Pauli::X);
             assert_eq!(ps.get(1), crate::Pauli::Z);
         } else {
-            panic!("Expected Pauli, got {:?}", op);
+            panic!("Expected Pauli, got {op:?}");
         }
 
         // Mixed tensor (Pauli with non-Pauli) produces Tensor
@@ -2477,7 +2733,7 @@ mod tests {
     #[test]
     fn test_composition() {
         let circuit = T(0) * H(0);
-        assert!(!circuit.is_clifford());  // T is not Clifford
+        assert!(!circuit.is_clifford()); // T is not Clifford
 
         let cliff_circuit = SZ(0) * H(0);
         assert!(cliff_circuit.is_clifford());
@@ -2539,8 +2795,7 @@ mod tests {
     fn test_diagram_single_qubit() {
         let h = H(0);
         let diagram = h.to_diagram(1);
-        assert!(diagram.contains("[Z]"));
-        assert!(diagram.contains("[SY]"));
+        assert!(diagram.contains("[H]"));
     }
 
     #[test]
@@ -2556,24 +2811,21 @@ mod tests {
         // Build a circuit: H(0), CX(0,1), T(1)
         let circuit = T(1) * CX(0, 1) * H(0);
         let diagram = circuit.to_diagram(2);
-        println!("Circuit diagram:\n{}", diagram);
+        println!("Circuit diagram:\n{diagram}");
 
         // Also test a 3-qubit circuit
         let circuit3 = CCX(0, 1, 2) * H(0) * H(1);
         let diagram3 = circuit3.to_diagram(3);
-        println!("\n3-qubit circuit:\n{}", diagram3);
+        println!("\n3-qubit circuit:\n{diagram3}");
     }
 
     #[test]
     fn test_composition_order() {
         // A * B means apply B first, then A
-        // H is composed of RZ(π) * RY(π/2), so H first means RZ then RY
-        // Then SZ = RZ(π/2) is applied last
-        let circuit = SZ(0) * H(0);  // H first, then SZ
+        // Test composition with rotations
+        let circuit = SZ(0) * SY(0) * SX(0); // Apply SX, then SY, then SZ
 
         if let Operator::Compose(parts) = circuit {
-            // H expands to [RZ(π), RY(π/2)], then SZ added, giving 3 parts
-            // Order: RZ(π), RY(π/2), RZ(π/2) (application order)
             assert_eq!(parts.len(), 3);
             // All should be rotations
             assert!(matches!(&parts[0], Operator::Rotation { .. }));
@@ -2590,7 +2842,7 @@ mod tests {
 
     #[test]
     fn test_simplify_identity() {
-        let id = Id(0);
+        let id = I(0);
         assert!(id.is_identity());
     }
 
@@ -2613,11 +2865,16 @@ mod tests {
         let simplified = circuit.simplify();
 
         // Should merge into a single rotation
-        if let Operator::Rotation { angle, rotation_type, .. } = simplified {
+        if let Operator::Rotation {
+            angle,
+            rotation_type,
+            ..
+        } = simplified
+        {
             assert_eq!(rotation_type, RotationType::RZ);
             assert_eq!(angle, Angle64::HALF_TURN); // π
         } else {
-            panic!("Expected single Rotation, got {:?}", simplified);
+            panic!("Expected single Rotation, got {simplified:?}");
         }
     }
 
@@ -2663,18 +2920,15 @@ mod tests {
     }
 
     #[test]
-    fn test_simplify_tensor_removes_identity() {
-        // X & Id = X (identity gets filtered out)
-        let circuit = X(0) & Id(1);
+    fn test_simplify_tensor_preserves_identity() {
+        // X(0) & I(1) should preserve the identity to maintain Hilbert space dimension
+        let circuit = X(0) & I(1);
         let simplified = circuit.simplify();
 
-        // Should just be Pauli(X) - the identity gets filtered
-        if let Operator::Pauli(ps) = simplified {
-            assert_eq!(ps.get(0), crate::Pauli::X);
-            assert_eq!(ps.weight(), 1);
-        } else {
-            panic!("Expected single Pauli, got {:?}", simplified);
-        }
+        // Should still be a tensor with both parts (preserves 2-qubit space)
+        let qubits = simplified.qubits();
+        assert!(qubits.contains(&0));
+        assert!(qubits.contains(&1));
     }
 
     #[test]
@@ -2703,7 +2957,7 @@ mod tests {
 
     #[test]
     fn test_to_clifford_rep_identity() {
-        let id = Id(0);
+        let id = I(0);
         let cliff = id.to_clifford_rep(1).unwrap();
 
         // Identity should transform X -> X, Z -> Z
@@ -2780,7 +3034,7 @@ mod tests {
             // Inner should be Pauli(X)
             assert!(matches!(*inner, Operator::Pauli(_)));
         } else {
-            panic!("Expected Phase variant, got {:?}", op);
+            panic!("Expected Phase variant, got {op:?}");
         }
     }
 
@@ -2826,7 +3080,7 @@ mod tests {
             assert_eq!(ps1.phase(), QuarterPhase::PlusI);
             assert_eq!(ps2.phase(), QuarterPhase::PlusI);
         } else {
-            panic!("Expected Pauli variants, got {:?} and {:?}", op1, op2);
+            panic!("Expected Pauli variants, got {op1:?} and {op2:?}");
         }
     }
 
@@ -2901,7 +3155,7 @@ mod tests {
             assert_eq!(ps1.phase(), QuarterPhase::PlusI);
             assert_eq!(ps2.phase(), QuarterPhase::PlusI);
         } else {
-            panic!("Expected Pauli variants, got {:?} and {:?}", op1, op2);
+            panic!("Expected Pauli variants, got {op1:?} and {op2:?}");
         }
     }
 
@@ -2975,7 +3229,7 @@ mod tests {
             assert_eq!(ps1.phase(), QuarterPhase::PlusI);
             assert_eq!(ps2.phase(), QuarterPhase::PlusI);
         } else {
-            panic!("Expected Pauli variants, got {:?} and {:?}", op1, op2);
+            panic!("Expected Pauli variants, got {op1:?} and {op2:?}");
         }
     }
 
@@ -3012,6 +3266,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::similar_names)]
     fn test_try_to_pauli_rotation() {
         // RX(π) = X
         let rx_pi = RX(Angle64::HALF_TURN, 0);
@@ -3081,7 +3336,7 @@ mod tests {
             assert!(matches!(&parts[1], Operator::Rotation { .. }));
             assert!(matches!(&parts[2], Operator::Rotation { .. }));
         } else {
-            panic!("Expected Tensor variant, got {:?}", multi);
+            panic!("Expected Tensor variant, got {multi:?}");
         }
     }
 
@@ -3096,7 +3351,7 @@ mod tests {
             assert!(matches!(&parts[0], Operator::Compose(_)));
             assert!(matches!(&parts[1], Operator::Compose(_)));
         } else {
-            panic!("Expected Tensor variant, got {:?}", multi);
+            panic!("Expected Tensor variant, got {multi:?}");
         }
     }
 
@@ -3109,6 +3364,627 @@ mod tests {
 
         assert!(matches!(x, Operator::Pauli(_)));
         assert!(matches!(t, Operator::Rotation { .. }));
-        assert!(matches!(h, Operator::Compose(_)));
+        assert!(matches!(
+            h,
+            Operator::Gate {
+                gate_type: GateType::H,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_range_syntax() {
+        // Range syntax: Xs(0..3) = X(0) & X(1) & X(2)
+        let multi_range = Xs(0..3);
+        let tensor = X(0) & X(1) & X(2);
+
+        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&multi_range, &tensor) {
+            assert_eq!(ps1, ps2);
+        } else {
+            panic!("Expected Pauli variants");
+        }
+    }
+
+    #[test]
+    fn test_range_inclusive_syntax() {
+        // RangeInclusive syntax: Zs(1..=3) = Z(1) & Z(2) & Z(3)
+        let multi_range = Zs(1..=3);
+        let tensor = Z(1) & Z(2) & Z(3);
+
+        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&multi_range, &tensor) {
+            assert_eq!(ps1, ps2);
+        } else {
+            panic!("Expected Pauli variants");
+        }
+    }
+
+    #[test]
+    fn test_identity_range_syntax() {
+        // Is(0..=2) should create identity operators on qubits 0, 1, 2
+        let identities = Is(0..=2);
+
+        if let Operator::Tensor(parts) = identities {
+            assert_eq!(parts.len(), 3);
+            for part in &parts {
+                assert!(part.is_identity());
+            }
+        } else {
+            panic!("Expected Tensor variant, got {identities:?}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "empty range not allowed")]
+    fn test_empty_range_panics() {
+        let _ = Xs(0..0);
+    }
+
+    #[test]
+    #[should_panic(expected = "empty range not allowed")]
+    #[allow(clippy::reversed_empty_ranges)] // Intentionally testing empty range
+    fn test_empty_range_inclusive_panics() {
+        // 1..=0 is empty
+        let _ = Zs(1..=0);
+    }
+
+    #[test]
+    fn test_single_element_range() {
+        // Xs(0..1) should be equivalent to X(0)
+        let from_range = Xs(0..1);
+        let direct = X(0);
+
+        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&from_range, &direct) {
+            assert_eq!(ps1, ps2);
+        } else {
+            panic!("Expected Pauli variants");
+        }
+    }
+
+    #[test]
+    fn test_single_element_range_inclusive() {
+        // Ts(2..=2) should be equivalent to T(2)
+        let from_range = Ts(2..=2);
+        let direct = T(2);
+
+        // Both should be Rotation variants
+        if let (
+            Operator::Rotation {
+                angle: a1,
+                rotation_type: r1,
+                ..
+            },
+            Operator::Rotation {
+                angle: a2,
+                rotation_type: r2,
+                ..
+            },
+        ) = (&from_range, &direct)
+        {
+            assert_eq!(a1, a2);
+            assert_eq!(r1, r2);
+        } else {
+            panic!("Expected Rotation variants, got {from_range:?} and {direct:?}");
+        }
+    }
+
+    // ========================================================================
+    // Conjugation tests
+    // ========================================================================
+    // Two conjugation conventions:
+    //   A.conj(U)   = U * A * U†  (stabilizer update: S →USU† when applying U)
+    //   A.conjdg(U) = U† * A * U  (Heisenberg picture: A → U†AU)
+
+    #[test]
+    fn test_conj_pauli_by_pauli() {
+        // X.conj(Z) = Z * X * Z† = Z * X * Z = -X (since Z is self-adjoint)
+        // ZX = -XZ, so ZXZ = -XZZ = -X
+        let x = X(0);
+        let z = Z(0);
+        let result = x.conj(&z);
+
+        // conj returns a Compose, simplify to get the Pauli
+        let simplified = result.simplify();
+        if let Operator::Pauli(ps) = simplified {
+            assert_eq!(ps.get(0), crate::Pauli::X);
+            assert_eq!(ps.phase(), QuarterPhase::MinusOne);
+        } else {
+            panic!("Expected Pauli variant, got {simplified:?}");
+        }
+    }
+
+    #[test]
+    fn test_conjdg_pauli_by_pauli() {
+        // X.conjdg(Z) = Z† * X * Z = Z * X * Z = -X (since Z is self-adjoint)
+        // Same result as conj for self-adjoint gates
+        let x = X(0);
+        let z = Z(0);
+        let result = x.conjdg(&z);
+
+        let simplified = result.simplify();
+        if let Operator::Pauli(ps) = simplified {
+            assert_eq!(ps.get(0), crate::Pauli::X);
+            assert_eq!(ps.phase(), QuarterPhase::MinusOne);
+        } else {
+            panic!("Expected Pauli variant, got {simplified:?}");
+        }
+    }
+
+    #[test]
+    fn test_conj_produces_compose() {
+        // A.conj(B) = B * A * B† produces a Compose
+        let x = X(0);
+        let h = H(0);
+        let result = x.conj(&h);
+
+        // Result is Compose(H, X, H†)
+        assert!(matches!(result, Operator::Compose(_)));
+    }
+
+    #[test]
+    fn test_conj_z_by_z() {
+        // Z.conj(Z) = Z * Z * Z† = Z * Z * Z = Z (since Z² = I, Z³ = Z)
+        let z = Z(0);
+        let result = z.conj(&z);
+
+        let simplified = result.simplify();
+        if let Operator::Pauli(ps) = simplified {
+            assert_eq!(ps.get(0), crate::Pauli::Z);
+            assert_eq!(ps.phase(), QuarterPhase::PlusOne);
+        } else {
+            panic!("Expected Pauli variant, got {simplified:?}");
+        }
+    }
+
+    #[test]
+    fn test_conj_structure_sz_gate() {
+        // X.conj(SZ) = SZ * X * SZ† should produce Compose with SZ first, X middle, SZ† last
+        let x = X(0);
+        let sz = SZ(0);
+        let result = x.conj(&sz);
+
+        // Verify structure: Compose([SZ, X, SZ†])
+        if let Operator::Compose(parts) = result {
+            assert_eq!(parts.len(), 3);
+            // First element is SZ (positive angle)
+            assert!(matches!(
+                &parts[0],
+                Operator::Rotation {
+                    rotation_type: RotationType::RZ,
+                    ..
+                }
+            ));
+            // Middle element is X
+            assert!(matches!(&parts[1], Operator::Pauli(_)));
+            // Last element is SZ† (negative angle)
+            assert!(matches!(
+                &parts[2],
+                Operator::Rotation {
+                    rotation_type: RotationType::RZ,
+                    ..
+                }
+            ));
+        } else {
+            panic!("Expected Compose variant, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn test_conjdg_structure_sz_gate() {
+        // X.conjdg(SZ) = SZ† * X * SZ should produce Compose with SZ† first, X middle, SZ last
+        let x = X(0);
+        let sz = SZ(0);
+        let result = x.conjdg(&sz);
+
+        // Verify structure: Compose([SZ†, X, SZ])
+        if let Operator::Compose(parts) = result {
+            assert_eq!(parts.len(), 3);
+            // First element is SZ† (negative angle)
+            assert!(matches!(
+                &parts[0],
+                Operator::Rotation {
+                    rotation_type: RotationType::RZ,
+                    ..
+                }
+            ));
+            // Middle element is X
+            assert!(matches!(&parts[1], Operator::Pauli(_)));
+            // Last element is SZ (positive angle)
+            assert!(matches!(
+                &parts[2],
+                Operator::Rotation {
+                    rotation_type: RotationType::RZ,
+                    ..
+                }
+            ));
+        } else {
+            panic!("Expected Compose variant, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn test_conj_conjdg_inverse_relationship() {
+        // For any operator A and gate U:
+        // A.conj(U).conjdg(U) should give back A (up to simplification)
+        // Because (UAU†).conjdg(U) = U†(UAU†)U = A
+        let x = X(0);
+        let sz = SZ(0);
+
+        let forward = x.clone().conj(&sz); // SZ X SZ†
+        let back = forward.conjdg(&sz); // SZ† (SZ X SZ†) SZ = X
+
+        let simplified = back.simplify();
+        if let Operator::Pauli(ps) = simplified {
+            assert_eq!(ps.get(0), crate::Pauli::X);
+            assert_eq!(ps.phase(), QuarterPhase::PlusOne);
+        } else {
+            panic!("Expected Pauli variant, got {simplified:?}");
+        }
+    }
+
+    // ========================================================================
+    // Weight tests
+    // ========================================================================
+
+    #[test]
+    fn test_weight_single_pauli() {
+        assert_eq!(X(0).weight(), 1);
+        assert_eq!(Y(1).weight(), 1);
+        assert_eq!(Z(2).weight(), 1);
+    }
+
+    #[test]
+    fn test_weight_identity() {
+        // weight() returns number of qubits acted on
+        // I(0) = RZ(0, 0) acts on qubit 0
+        assert_eq!(I(0).weight(), 1);
+    }
+
+    #[test]
+    fn test_weight_tensor_product() {
+        let op = X(0) & Y(1) & Z(2);
+        assert_eq!(op.weight(), 3);
+    }
+
+    #[test]
+    fn test_weight_tensor_with_identity() {
+        // Id tensored still counts as acting on that qubit
+        let op = X(0) & I(1) & Z(2);
+        assert_eq!(op.weight(), 3);
+    }
+
+    #[test]
+    fn test_weight_rotation() {
+        // Rotations have weight equal to the number of qubits they act on
+        assert_eq!(RX(Angle64::QUARTER_TURN, 0).weight(), 1);
+        assert_eq!(RZZ(Angle64::QUARTER_TURN, 0, 1).weight(), 2);
+    }
+
+    #[test]
+    fn test_weight_gate() {
+        assert_eq!(H(0).weight(), 1);
+        assert_eq!(CX(0, 1).weight(), 2);
+        assert_eq!(CCX(0, 1, 2).weight(), 3);
+    }
+
+    // ========================================================================
+    // is_hermitian tests
+    // ========================================================================
+
+    #[test]
+    fn test_is_hermitian_paulis() {
+        // All Paulis are Hermitian
+        assert!(X(0).is_hermitian());
+        assert!(Y(0).is_hermitian());
+        assert!(Z(0).is_hermitian());
+        assert!(I(0).is_hermitian());
+    }
+
+    #[test]
+    fn test_is_hermitian_pauli_tensor() {
+        // Tensor products of Paulis are Hermitian
+        let op = X(0) & Y(1) & Z(2);
+        assert!(op.is_hermitian());
+    }
+
+    #[test]
+    fn test_is_hermitian_hadamard() {
+        // H is Hermitian (H = H†)
+        assert!(H(0).is_hermitian());
+    }
+
+    #[test]
+    fn test_is_hermitian_rotation_not() {
+        // General rotations are not Hermitian (unless angle is 0 or π)
+        assert!(!RZ(Angle64::QUARTER_TURN, 0).is_hermitian());
+        assert!(!T(0).is_hermitian());
+        assert!(!SZ(0).is_hermitian());
+    }
+
+    #[test]
+    fn test_is_hermitian_rotation_half_turn() {
+        // Half-turn rotations are Hermitian (up to global phase)
+        // RX(π) = -iX, which is Hermitian
+        assert!(RX(Angle64::HALF_TURN, 0).is_hermitian());
+        assert!(RY(Angle64::HALF_TURN, 0).is_hermitian());
+        assert!(RZ(Angle64::HALF_TURN, 0).is_hermitian());
+    }
+
+    // ========================================================================
+    // pow tests
+    // ========================================================================
+
+    #[test]
+    fn test_pow_zero() {
+        // X^0 = I
+        let x = X(0);
+        let result = x.pow(0);
+        assert!(result.is_identity());
+    }
+
+    #[test]
+    fn test_pow_one() {
+        // X^1 = X
+        let x = X(0);
+        let result = x.pow(1);
+        if let Operator::Pauli(ps) = result {
+            assert_eq!(ps.get(0), crate::Pauli::X);
+        } else {
+            panic!("Expected Pauli");
+        }
+    }
+
+    #[test]
+    fn test_pow_two_pauli() {
+        // X^2 = I after simplification
+        let x = X(0);
+        let result = x.pow(2).simplify();
+        assert!(result.is_identity());
+    }
+
+    #[test]
+    fn test_pow_creates_compose() {
+        // pow(n) creates a Compose of n copies without simplification
+        let t = T(0);
+        let result = t.pow(3);
+        assert!(matches!(result, Operator::Compose(_)));
+    }
+
+    #[test]
+    fn test_pow_rotation_simplify() {
+        // T^2 = S (RZ(π/4)^2 = RZ(π/2)) after simplification
+        let t = T(0);
+        let result = t.pow(2).simplify();
+
+        if let Operator::Rotation {
+            angle,
+            rotation_type,
+            ..
+        } = result
+        {
+            assert_eq!(rotation_type, RotationType::RZ);
+            assert_eq!(angle, Angle64::QUARTER_TURN);
+        } else {
+            panic!("Expected Rotation, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn test_pow_four_t_simplify() {
+        // T^4 = Z (RZ(π/4)^4 = RZ(π)) after simplification
+        let t = T(0);
+        let result = t.pow(4).simplify();
+
+        if let Operator::Rotation { angle, .. } = result {
+            assert_eq!(angle, Angle64::HALF_TURN);
+        } else {
+            panic!("Expected Rotation, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn test_pow_eight_t_simplify() {
+        // T^8 = I (RZ(π/4)^8 = RZ(2π) = I) after simplification
+        let t = T(0);
+        let result = t.pow(8).simplify();
+        assert!(result.is_identity());
+    }
+
+    // ========================================================================
+    // commutes tests
+    // ========================================================================
+
+    #[test]
+    fn test_commutes_same_pauli() {
+        // X commutes with X
+        let x1 = X(0);
+        let x2 = X(0);
+        assert_eq!(x1.commutes(&x2), Commutativity::Commutes);
+    }
+
+    #[test]
+    fn test_commutes_different_paulis_same_qubit() {
+        // X and Z anticommute on same qubit
+        let x = X(0);
+        let z = Z(0);
+        assert_eq!(x.commutes(&z), Commutativity::AntiCommutes);
+
+        // X and Y anticommute
+        let y = Y(0);
+        assert_eq!(x.commutes(&y), Commutativity::AntiCommutes);
+
+        // Y and Z anticommute
+        assert_eq!(y.commutes(&z), Commutativity::AntiCommutes);
+    }
+
+    #[test]
+    fn test_commutes_different_qubits() {
+        // Operators on different qubits always commute
+        let x0 = X(0);
+        let z1 = Z(1);
+        assert_eq!(x0.commutes(&z1), Commutativity::Commutes);
+    }
+
+    #[test]
+    fn test_commutes_non_pauli_unknown() {
+        // Non-Pauli operators return Unknown
+        // I(0) is RZ(0, 0), not a Pauli variant
+        let id = I(0);
+        let x = X(0);
+        assert_eq!(id.commutes(&x), Commutativity::Unknown);
+
+        let h = H(0);
+        assert_eq!(h.commutes(&x), Commutativity::Unknown);
+    }
+
+    #[test]
+    fn test_commutes_pauli_strings() {
+        // XY and YX: overlap on both qubits, both anticommute -> commute
+        let xy = X(0) & Y(1);
+        let yx = Y(0) & X(1);
+        assert_eq!(xy.commutes(&yx), Commutativity::Commutes);
+
+        // XY and ZZ: both overlap, X-Z and Y-Z both anticommute -> commute
+        let zz = Z(0) & Z(1);
+        assert_eq!(xy.commutes(&zz), Commutativity::Commutes);
+
+        // XZ and Y: only qubit 0 overlaps, X-Y anticommute
+        let xz = X(0) & Z(1);
+        let y = Y(0);
+        assert_eq!(xz.commutes(&y), Commutativity::AntiCommutes);
+    }
+
+    // ========================================================================
+    // decompose tests
+    // ========================================================================
+
+    #[test]
+    fn test_decompose_single_pauli() {
+        let x = X(0);
+        let gates = x.decompose();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::X);
+    }
+
+    #[test]
+    fn test_decompose_pauli_tensor() {
+        let op = X(0) & Y(1) & Z(2);
+        let gates = op.decompose();
+        assert_eq!(gates.len(), 3);
+
+        let gate_types: Vec<_> = gates.iter().map(|g| g.gate_type).collect();
+        assert!(gate_types.contains(&GateType::X));
+        assert!(gate_types.contains(&GateType::Y));
+        assert!(gate_types.contains(&GateType::Z));
+    }
+
+    #[test]
+    fn test_decompose_identity() {
+        // I(0) = RZ(0, 0), so it decomposes to an RZ gate with angle 0
+        let id = I(0);
+        let gates = id.decompose();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::RZ);
+        assert_eq!(gates[0].angles[0], Angle64::ZERO);
+    }
+
+    #[test]
+    fn test_decompose_pauli_identity_empty() {
+        // A true Pauli identity (from PauliString) decomposes to empty
+        let ps = PauliString::identity();
+        let op = Operator::Pauli(ps);
+        let gates = op.decompose();
+        assert!(gates.is_empty());
+    }
+
+    #[test]
+    fn test_decompose_rotation() {
+        let t = T(0);
+        let gates = t.decompose();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::RZ);
+        assert_eq!(gates[0].angles.len(), 1);
+    }
+
+    #[test]
+    fn test_decompose_gate() {
+        let cx = CX(0, 1);
+        let gates = cx.decompose();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::CX);
+    }
+
+    #[test]
+    fn test_decompose_composition() {
+        let circuit = SZ(0) * H(0) * X(0); // X, then H, then S
+        let gates = circuit.decompose();
+        assert_eq!(gates.len(), 3);
+    }
+
+    #[test]
+    fn test_decompose_adjoint() {
+        let t = T(0);
+        let t_dg = t.dg();
+        let gates = t_dg.decompose();
+
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::RZ);
+        // Angle should be negated
+        let expected_angle = Angle64::ZERO - (Angle64::HALF_TURN / 4);
+        assert_eq!(gates[0].angles[0], expected_angle);
+    }
+
+    #[test]
+    fn test_decompose_adjoint_named_gate() {
+        // S† should decompose to SZdg
+        let s = SZ(0);
+        let s_dg = s.dg();
+        let gates = s_dg.decompose();
+
+        // S is a rotation, S† negates the angle
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::RZ);
+    }
+
+    // ========================================================================
+    // as_pauli_string / into_pauli_string tests
+    // ========================================================================
+
+    #[test]
+    fn test_as_pauli_string_pauli() {
+        let x = X(0);
+        let ps = x.as_pauli_string();
+        assert!(ps.is_some());
+        let ps = ps.unwrap();
+        assert_eq!(ps.get(0), crate::Pauli::X);
+    }
+
+    #[test]
+    fn test_as_pauli_string_non_pauli() {
+        let h = H(0);
+        assert!(h.as_pauli_string().is_none());
+
+        let t = T(0);
+        assert!(t.as_pauli_string().is_none());
+    }
+
+    #[test]
+    fn test_into_pauli_string_pauli() {
+        let xy = X(0) & Y(1);
+        let ps = xy.into_pauli_string();
+        assert!(ps.is_some());
+        let ps = ps.unwrap();
+        assert_eq!(ps.get(0), crate::Pauli::X);
+        assert_eq!(ps.get(1), crate::Pauli::Y);
+    }
+
+    #[test]
+    fn test_into_pauli_string_with_phase() {
+        let op = i * X(0);
+        let ps = op.into_pauli_string();
+        assert!(ps.is_some());
+        let ps = ps.unwrap();
+        assert_eq!(ps.get(0), crate::Pauli::X);
+        assert_eq!(ps.phase(), QuarterPhase::PlusI);
     }
 }

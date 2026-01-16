@@ -175,6 +175,254 @@ where
         .sqrt()
 }
 
+// ============================================================================
+// Matrix exponential and logarithm
+// ============================================================================
+
+use nalgebra::DMatrix;
+
+/// Computes the matrix exponential exp(M) for a complex square matrix.
+///
+/// Uses the scaling and squaring method with Padé approximation.
+///
+/// # Arguments
+/// * `m` - A square complex matrix
+///
+/// # Returns
+/// The matrix exponential exp(M)
+///
+/// # Example
+/// ```
+/// use nalgebra::DMatrix;
+/// use num_complex::Complex64;
+/// use pecos_num::linalg::matrix_exp;
+///
+/// // exp(0) = I
+/// let zero = DMatrix::from_element(2, 2, Complex64::new(0.0, 0.0));
+/// let result = matrix_exp(&zero);
+/// assert!((result[(0, 0)] - Complex64::new(1.0, 0.0)).norm() < 1e-10);
+/// ```
+///
+/// # Panics
+/// Panics if the matrix is not square.
+#[must_use]
+pub fn matrix_exp(m: &DMatrix<Complex64>) -> DMatrix<Complex64> {
+    assert!(m.is_square(), "Matrix must be square for exponential");
+    let n = m.nrows();
+
+    if n == 0 {
+        return DMatrix::from_element(0, 0, Complex64::new(0.0, 0.0));
+    }
+
+    // Scaling: find s such that ||M / 2^s|| < 1
+    let norm = matrix_1_norm(m);
+    #[allow(clippy::cast_possible_truncation)] // Scaling factor s is always small
+    let s = (norm.log2().ceil() as i32).max(0);
+    let scale = 2.0_f64.powi(s);
+
+    // Scale the matrix
+    let a = m / Complex64::new(scale, 0.0);
+
+    // Padé approximation of order (6, 6)
+    // exp(A) ≈ N(A) / D(A) where N and D are polynomials
+    let exp_scaled = pade_approximation(&a, 6);
+
+    // Squaring: compute exp(M) = (exp(M/2^s))^(2^s)
+    let mut result = exp_scaled;
+    for _ in 0..s {
+        result = &result * &result;
+    }
+
+    result
+}
+
+/// Computes the matrix logarithm log(M) for a complex square matrix.
+///
+/// Uses the inverse scaling and squaring method with Padé approximation.
+///
+/// # Arguments
+/// * `m` - A square complex matrix (should be close to identity for best results)
+///
+/// # Returns
+/// * `Some(log(M))` if the computation succeeds
+/// * `None` if the matrix is singular or the computation fails
+///
+/// # Example
+/// ```
+/// use nalgebra::DMatrix;
+/// use num_complex::Complex64;
+/// use pecos_num::linalg::matrix_log;
+///
+/// // log(I) = 0
+/// let eye = DMatrix::identity(2, 2);
+/// let eye_complex: DMatrix<Complex64> = eye.map(|x| Complex64::new(x, 0.0));
+/// let result = matrix_log(&eye_complex);
+/// assert!(result.is_some());
+/// let log_i = result.unwrap();
+/// assert!(log_i[(0, 0)].norm() < 1e-10);
+/// ```
+///
+/// # Panics
+/// Panics if the matrix is not square.
+#[must_use]
+pub fn matrix_log(m: &DMatrix<Complex64>) -> Option<DMatrix<Complex64>> {
+    assert!(m.is_square(), "Matrix must be square for logarithm");
+    let n = m.nrows();
+
+    if n == 0 {
+        return Some(DMatrix::from_element(0, 0, Complex64::new(0.0, 0.0)));
+    }
+
+    // Inverse scaling: compute M^(1/2^s) until close to identity
+    let mut a = m.clone();
+    let mut s = 0;
+
+    // Take square roots until ||A - I|| is small
+    let identity = DMatrix::<Complex64>::identity(n, n);
+    while matrix_1_norm(&(&a - &identity)) > 0.5 && s < 50 {
+        a = matrix_sqrt(&a)?;
+        s += 1;
+    }
+
+    // Padé approximation for log(A) where A is close to I
+    // log(A) ≈ (A - I) * P((A - I)) / Q((A - I)) for A near I
+    let a_minus_i = &a - &identity;
+    let log_scaled = pade_log_approximation(&a_minus_i, 6);
+
+    // Scaling: log(M) = 2^s * log(M^(1/2^s))
+    let scale = Complex64::new(2.0_f64.powi(s), 0.0);
+    Some(log_scaled * scale)
+}
+
+/// Computes the principal square root of a complex matrix.
+///
+/// Uses the Denman-Beavers iteration.
+fn matrix_sqrt(m: &DMatrix<Complex64>) -> Option<DMatrix<Complex64>> {
+    let n = m.nrows();
+    let identity = DMatrix::<Complex64>::identity(n, n);
+
+    let mut y = m.clone();
+    let mut z = identity.clone();
+
+    for _ in 0..50 {
+        let y_inv = y.clone().try_inverse()?;
+        let z_inv = z.clone().try_inverse()?;
+
+        let y_new = (&y + &z_inv) * Complex64::new(0.5, 0.0);
+        let z_new = (&z + &y_inv) * Complex64::new(0.5, 0.0);
+
+        // Check convergence
+        let diff = matrix_1_norm(&(&y_new - &y));
+        y = y_new;
+        z = z_new;
+
+        if diff < 1e-14 {
+            return Some(y);
+        }
+    }
+
+    Some(y) // Return best approximation
+}
+
+/// Computes the 1-norm (maximum column sum) of a complex matrix.
+fn matrix_1_norm(m: &DMatrix<Complex64>) -> f64 {
+    let mut max_col_sum: f64 = 0.0;
+    for j in 0..m.ncols() {
+        let col_sum: f64 = (0..m.nrows()).map(|i| m[(i, j)].norm()).sum();
+        max_col_sum = max_col_sum.max(col_sum);
+    }
+    max_col_sum
+}
+
+/// Padé approximation for matrix exponential.
+///
+/// Computes exp(A) using a (p,p) Padé approximant.
+fn pade_approximation(a: &DMatrix<Complex64>, p: usize) -> DMatrix<Complex64> {
+    let n = a.nrows();
+    let identity = DMatrix::<Complex64>::identity(n, n);
+
+    // Compute powers of A
+    let mut a_powers = vec![identity.clone()];
+    let mut current = a.clone();
+    for _ in 1..=p {
+        a_powers.push(current.clone());
+        current = &current * a;
+    }
+
+    // Padé coefficients for (p,p) approximant
+    let coeffs = pade_coefficients(p);
+
+    // N(A) = sum(c_k * A^k) for even k
+    // D(A) = sum(c_k * (-A)^k) for even k = sum((-1)^k * c_k * A^k)
+    let mut n_matrix = DMatrix::from_element(n, n, Complex64::new(0.0, 0.0));
+    let mut d_matrix = DMatrix::from_element(n, n, Complex64::new(0.0, 0.0));
+
+    for (k, &coeff) in coeffs.iter().enumerate() {
+        let c = Complex64::new(coeff, 0.0);
+        n_matrix += &a_powers[k] * c;
+        let sign = if k % 2 == 0 { 1.0 } else { -1.0 };
+        d_matrix += &a_powers[k] * Complex64::new(sign * coeff, 0.0);
+    }
+
+    // exp(A) ≈ D(A)^(-1) * N(A)
+    match d_matrix.try_inverse() {
+        Some(d_inv) => d_inv * n_matrix,
+        None => n_matrix, // Fallback if D is singular
+    }
+}
+
+/// Padé approximation for matrix logarithm (for A near identity).
+///
+/// Computes log(I + X) where X is small.
+fn pade_log_approximation(x: &DMatrix<Complex64>, p: usize) -> DMatrix<Complex64> {
+    let n = x.nrows();
+
+    // For small X, log(I + X) ≈ X - X²/2 + X³/3 - ...
+    // Use Padé approximant for better convergence
+
+    // Compute powers of X
+    let mut x_powers = vec![DMatrix::<Complex64>::identity(n, n)];
+    let mut current = x.clone();
+    for _ in 1..=p {
+        x_powers.push(current.clone());
+        current = &current * x;
+    }
+
+    // Simple series approximation for log(I + X)
+    let mut result = DMatrix::from_element(n, n, Complex64::new(0.0, 0.0));
+    #[allow(clippy::needless_range_loop)] // k is used both as index and in coefficient computation
+    for k in 1..=p {
+        let sign = if k % 2 == 1 { 1.0 } else { -1.0 };
+        #[allow(clippy::cast_precision_loss)] // k is small (p ~ 20), precision loss negligible
+        let coeff = Complex64::new(sign / (k as f64), 0.0);
+        result += &x_powers[k] * coeff;
+    }
+
+    result
+}
+
+/// Returns Padé coefficients for (p,p) approximant of exp(x).
+#[allow(clippy::cast_precision_loss)] // Factorials for small p (~ 6) fit precisely in f64
+fn pade_coefficients(p: usize) -> Vec<f64> {
+    // Coefficients c_k = (2p - k)! * p! / ((2p)! * k! * (p - k)!)
+    let mut coeffs = vec![0.0; p + 1];
+    let two_p_factorial = factorial(2 * p);
+
+    #[allow(clippy::needless_range_loop)] // k is used both as index and in factorial computation
+    for k in 0..=p {
+        let numerator = factorial(2 * p - k) * factorial(p);
+        let denominator = two_p_factorial * factorial(k) * factorial(p - k);
+        coeffs[k] = (numerator as f64) / (denominator as f64);
+    }
+
+    coeffs
+}
+
+/// Compute factorial.
+fn factorial(n: usize) -> u64 {
+    (1..=n as u64).product()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

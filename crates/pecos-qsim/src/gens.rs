@@ -10,7 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_core::{BitSet, IndexSet, Pauli, PauliOperator, PauliString, Phase, QuarterPhase, QubitId, VecSet};
+use pecos_core::{
+    BitSet, IndexSet, Pauli, PauliOperator, PauliString, Phase, QuarterPhase, QubitId, VecSet,
+};
 
 /// Classification of a Pauli operator relative to a stabilizer state.
 ///
@@ -611,11 +613,7 @@ impl<S: IndexSet> GensGeneric<S> {
     /// Checks if a `PauliString` is in the stabilizer group.
     ///
     /// Convenience method that extracts X and Z positions from a `PauliString`.
-    pub fn is_pauli_string_in_group(
-        &self,
-        destabs: &GensGeneric<S>,
-        pauli: &PauliString,
-    ) -> bool {
+    pub fn is_pauli_string_in_group(&self, destabs: &GensGeneric<S>, pauli: &PauliString) -> bool {
         self.classify_pauli_string(destabs, pauli) == PauliClassification::Stabilizer
     }
 
@@ -883,8 +881,7 @@ impl<S: IndexSet> GensGeneric<S> {
         J: IntoIterator<Item = usize> + Clone,
     {
         // Find the stabilizers that build this operator
-        let mut build_stabs =
-            self.find_stabilizers_for_pauli(destabs, x_positions, z_positions)?;
+        let mut build_stabs = self.find_stabilizers_for_pauli(destabs, x_positions, z_positions)?;
 
         // Remove protected generators from consideration
         let mut available = build_stabs.clone();
@@ -1089,14 +1086,14 @@ mod tests {
         let (stabs, destabs) = setup_two_qubit_z_state();
 
         // Z0 should be built from stabilizer 0
-        let result = stabs.find_stabilizers_for_pauli(&destabs, std::iter::empty(), [0].into_iter());
+        let result = stabs.find_stabilizers_for_pauli(&destabs, std::iter::empty(), [0]);
         assert!(result.is_some());
         let stab_set = result.unwrap();
         assert!(stab_set.contains(0));
         assert!(!stab_set.contains(1));
 
         // Z0*Z1 should be built from stabilizers 0 and 1
-        let result = stabs.find_stabilizers_for_pauli(&destabs, std::iter::empty(), [0, 1].into_iter());
+        let result = stabs.find_stabilizers_for_pauli(&destabs, std::iter::empty(), [0, 1]);
         assert!(result.is_some());
         let stab_set = result.unwrap();
         assert!(stab_set.contains(0));
@@ -1137,17 +1134,17 @@ mod tests {
         let (stabs, _destabs) = setup_two_qubit_z_state();
 
         // X0 anticommutes with Z0 (stabilizer 0)
-        let anticom = stabs.find_anticommuting_generators([0].into_iter(), std::iter::empty());
+        let anticom = stabs.find_anticommuting_generators([0], std::iter::empty());
         assert!(anticom.contains(0));
         assert!(!anticom.contains(1));
 
         // X1 anticommutes with Z1 (stabilizer 1)
-        let anticom = stabs.find_anticommuting_generators([1].into_iter(), std::iter::empty());
+        let anticom = stabs.find_anticommuting_generators([1], std::iter::empty());
         assert!(!anticom.contains(0));
         assert!(anticom.contains(1));
 
         // X0X1 anticommutes with both
-        let anticom = stabs.find_anticommuting_generators([0, 1].into_iter(), std::iter::empty());
+        let anticom = stabs.find_anticommuting_generators([0, 1], std::iter::empty());
         // Actually, X0X1 anticommutes with Z0 and Z1 individually, but the XOR gives empty
         // because each anticommutes once (odd), but together it's even per stabilizer
         // No wait - X0X1 anticommutes with Z0 (due to X0) and with Z1 (due to X1)

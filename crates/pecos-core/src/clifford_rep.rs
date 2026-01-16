@@ -13,7 +13,7 @@
 //! Clifford gate representation via Heisenberg picture (generator propagation).
 //!
 //! A Clifford gate is fully specified by how it transforms the Pauli generators.
-//! For n qubits, we track 2n generators (X_i and Z_i for each qubit i).
+//! For n qubits, we track 2n generators (`X_i` and `Z_i` for each qubit i).
 //!
 //! # Example
 //!
@@ -34,22 +34,22 @@ use crate::{Pauli, PauliString};
 
 /// Clifford gate representation via generator propagation (Heisenberg picture).
 ///
-/// Stores how each input generator (X_i, Z_i) maps to an output PauliString.
+/// Stores how each input generator (`X_i`, `Z_i`) maps to an output `PauliString`.
 /// This representation allows efficient composition and Pauli transformation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CliffordRep {
     /// Number of qubits this Clifford acts on
     num_qubits: usize,
-    /// How X_i transforms: x_images[i] = image of X on qubit i
+    /// How `X_i` transforms: `x_images`[i] = image of X on qubit i
     x_images: Vec<PauliString>,
-    /// How Z_i transforms: z_images[i] = image of Z on qubit i
+    /// How `Z_i` transforms: `z_images`[i] = image of Z on qubit i
     z_images: Vec<PauliString>,
 }
 
 impl CliffordRep {
     /// Creates a new Clifford representation for the given number of qubits.
     ///
-    /// Initially the identity: X_i -> X_i, Z_i -> Z_i.
+    /// Initially the identity: `X_i` -> `X_i`, `Z_i` -> `Z_i`.
     #[must_use]
     pub fn identity(num_qubits: usize) -> Self {
         let x_images: Vec<PauliString> = (0..num_qubits).map(PauliString::x).collect();
@@ -93,6 +93,10 @@ impl CliffordRep {
     ///
     /// This means: apply other first, then self.
     /// In terms of generator images: (A * B)(P) = A(B(P))
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` and `other` have different numbers of qubits.
     #[must_use]
     pub fn compose(&self, other: &CliffordRep) -> CliffordRep {
         assert_eq!(self.num_qubits, other.num_qubits);
@@ -109,12 +113,12 @@ impl CliffordRep {
         result
     }
 
-    /// Applies this Clifford transformation to a PauliString.
+    /// Applies this Clifford transformation to a `PauliString`.
     ///
     /// For each single-qubit Pauli in the input:
-    /// - X_q -> x_images[q]
-    /// - Z_q -> z_images[q]
-    /// - Y_q = iXZ -> i * x_images[q] * z_images[q]
+    /// - `X_q` -> `x_images`[q]
+    /// - `Z_q` -> `z_images`[q]
+    /// - `Y_q` = iXZ -> i * `x_images`[q] * `z_images`[q]
     ///
     /// The result is the product of all transformed single-qubit terms.
     #[must_use]
@@ -179,7 +183,7 @@ impl CliffordRep {
 
     /// Returns the inverse of this Clifford.
     ///
-    /// For the inverse, we need to find what maps TO X_q and Z_q.
+    /// For the inverse, we need to find what maps TO `X_q` and `Z_q`.
     /// This is more complex - we solve the linear system.
     #[must_use]
     pub fn inverse(&self) -> CliffordRep {
@@ -310,8 +314,8 @@ impl CliffordRep {
 
     /// CNOT (CX) gate: control -> target
     ///
-    /// CX: X_c -> X_c X_t, Z_c -> Z_c
-    ///     X_t -> X_t,     Z_t -> Z_c Z_t
+    /// CX: `X_c` -> `X_c` `X_t`, `Z_c` -> `Z_c`
+    ///     `X_t` -> `X_t`,     `Z_t` -> `Z_c` `Z_t`
     #[must_use]
     pub fn cx(control: usize, target: usize) -> Self {
         let num_qubits = control.max(target) + 1;
@@ -328,8 +332,8 @@ impl CliffordRep {
 
     /// CZ gate: controlled-Z
     ///
-    /// CZ: X_0 -> X_0 Z_1, Z_0 -> Z_0
-    ///     X_1 -> Z_0 X_1, Z_1 -> Z_1
+    /// CZ: `X_0` -> `X_0` `Z_1`, `Z_0` -> `Z_0`
+    ///     `X_1` -> `Z_0` `X_1`, `Z_1` -> `Z_1`
     #[must_use]
     pub fn cz(q0: usize, q1: usize) -> Self {
         let num_qubits = q0.max(q1) + 1;
@@ -346,8 +350,8 @@ impl CliffordRep {
 
     /// SWAP gate
     ///
-    /// SWAP: X_0 -> X_1, Z_0 -> Z_1
-    ///       X_1 -> X_0, Z_1 -> Z_0
+    /// SWAP: `X_0` -> `X_1`, `Z_0` -> `Z_1`
+    ///       `X_1` -> `X_0`, `Z_1` -> `Z_0`
     #[must_use]
     pub fn swap(q0: usize, q1: usize) -> Self {
         let num_qubits = q0.max(q1) + 1;
@@ -442,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::similar_names)]
     fn test_cx_propagation() {
         let cx = CliffordRep::cx(0, 1);
 
@@ -473,6 +478,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::similar_names)]
     fn test_cz_symmetric() {
         let cz = CliffordRep::cz(0, 1);
 

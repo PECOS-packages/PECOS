@@ -65,6 +65,7 @@
 
 mod circuit;
 mod dag_circuit;
+pub mod operator_matrix;
 mod tick_circuit;
 
 #[cfg(feature = "hugr")]
@@ -80,6 +81,9 @@ pub use tick_circuit::{
 pub use pecos_core::gate_type::GateType;
 pub use pecos_core::{Gate, Nanoseconds, QubitId};
 pub use pecos_num::dag::DagWouldCycleError;
+
+// Re-export operator matrix trait for convenient method-style matrix conversion
+pub use operator_matrix::ToMatrix;
 
 // Re-export HUGR types when the feature is enabled
 #[cfg(feature = "hugr")]

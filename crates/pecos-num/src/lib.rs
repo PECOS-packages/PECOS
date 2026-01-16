@@ -52,6 +52,7 @@ pub use curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
 pub use dag::{DAG, DAGHasCycleError, DagWouldCycleError};
 pub use digraph::DiGraph;
 pub use graph::Graph;
+pub use linalg::{matrix_exp, matrix_log};
 pub use optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 pub use polynomial::{Poly1d, PolynomialError, polyfit};
 pub use stats::mean;

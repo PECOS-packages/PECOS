@@ -136,11 +136,7 @@ impl StabilizerCheck {
     /// Returns an error if the Pauli string length doesn't match the qubit count,
     /// or if the Pauli string is empty or contains invalid characters.
     #[allow(clippy::missing_panics_doc)] // Panic unreachable due to empty check
-    pub fn from_string(
-        index: usize,
-        pauli_str: &str,
-        qubits: &[usize],
-    ) -> Result<Self, String> {
+    pub fn from_string(index: usize, pauli_str: &str, qubits: &[usize]) -> Result<Self, String> {
         if pauli_str.is_empty() {
             return Err("Pauli string cannot be empty".to_string());
         }

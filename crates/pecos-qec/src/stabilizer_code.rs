@@ -65,6 +65,8 @@ pub struct StabilizerCode {
     num_qubits: usize,
     /// Stabilizer generators.
     stabilizers: Vec<PauliString>,
+    /// Destabilizers (operators that anticommute with exactly one stabilizer each).
+    destabilizers: Vec<PauliString>,
     /// Logical Z operators (one per logical qubit).
     logical_zs: Vec<PauliString>,
     /// Logical X operators (one per logical qubit).
@@ -181,6 +183,41 @@ impl StabilizerCode {
         Ok(Self {
             num_qubits,
             stabilizers,
+            destabilizers: Vec::new(),
+            logical_zs,
+            logical_xs,
+            distance: None,
+        })
+    }
+
+    /// Creates a new stabilizer code with destabilizers.
+    ///
+    /// # Parameters
+    /// - `num_qubits`: Number of physical data qubits
+    /// - `stabilizers`: The stabilizer generators
+    /// - `destabilizers`: Destabilizers (one per stabilizer, anticommuting with exactly that stabilizer)
+    /// - `logical_zs`: Logical Z operators (one per logical qubit)
+    /// - `logical_xs`: Logical X operators (one per logical qubit)
+    ///
+    /// # Errors
+    /// Returns an error if the logical X and Z vectors have different lengths.
+    pub fn with_destabilizers(
+        num_qubits: usize,
+        stabilizers: Vec<PauliString>,
+        destabilizers: Vec<PauliString>,
+        logical_zs: Vec<PauliString>,
+        logical_xs: Vec<PauliString>,
+    ) -> Result<Self> {
+        if logical_zs.len() != logical_xs.len() {
+            return Err(StabilizerCodeError::InvalidCode(
+                "Number of logical X and Z operators must match".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            num_qubits,
+            stabilizers,
+            destabilizers,
             logical_zs,
             logical_xs,
             distance: None,
@@ -195,10 +232,38 @@ impl StabilizerCode {
         Self {
             num_qubits,
             stabilizers,
+            destabilizers: Vec::new(),
             logical_zs: Vec::new(),
             logical_xs: Vec::new(),
             distance: None,
         }
+    }
+
+    /// Creates a builder for constructing a stabilizer code.
+    ///
+    /// This provides a fluent API similar to Python's `VerifyStabilizers`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_qec::StabilizerCode;
+    /// use pecos_core::{Xs, Zs};
+    ///
+    /// // Build a 3-qubit bit flip code
+    /// let code = StabilizerCode::builder(3)
+    ///     .check(Zs([0, 1]))
+    ///     .check(Zs([1, 2]))
+    ///     .logical_z(Zs([0, 1, 2]))
+    ///     .logical_x(Xs([0, 1, 2]))
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(code.num_qubits(), 3);
+    /// assert_eq!(code.num_logical_qubits(), 1);
+    /// ```
+    #[must_use]
+    pub fn builder(num_qubits: usize) -> StabilizerCodeBuilder {
+        StabilizerCodeBuilder::new(num_qubits)
     }
 
     /// Returns the number of physical qubits.
@@ -230,6 +295,16 @@ impl StabilizerCode {
     #[must_use]
     pub fn stabilizers(&self) -> &[PauliString] {
         &self.stabilizers
+    }
+
+    /// Returns a reference to the destabilizers.
+    ///
+    /// Destabilizers are operators that anticommute with exactly one stabilizer each.
+    /// The i-th destabilizer anticommutes with the i-th stabilizer and commutes with all others.
+    #[inline]
+    #[must_use]
+    pub fn destabilizers(&self) -> &[PauliString] {
+        &self.destabilizers
     }
 
     /// Returns a reference to the logical Z operators.
@@ -571,6 +646,105 @@ impl StabilizerCode {
             logical: self.build_logical_index(),
         }
     }
+
+    // ========================================================================
+    // Distance calculation
+    // ========================================================================
+
+    /// Calculates the code distance by exhaustive search.
+    ///
+    /// The distance is the minimum weight of any logical operator.
+    /// This method tries all Pauli errors starting from weight 1, returning
+    /// the first weight at which a logical error is found.
+    ///
+    /// # Warning
+    ///
+    /// This is an exponential-time algorithm. For a code on `n` qubits,
+    /// checking weight `w` requires examining `O(n^w * 3^w)` operators.
+    /// Practical for codes with `n < 20` or so.
+    ///
+    /// # Returns
+    ///
+    /// A [`crate::DistanceResult`] containing the distance and the first logical error found.
+    /// Returns `None` if no logical error exists (stabilizer state).
+    #[must_use]
+    pub fn calculate_distance(&mut self) -> Option<crate::DistanceResult> {
+        self.calculate_distance_with_options(&crate::DistanceSearchConfig::default())
+    }
+
+    /// Calculates the code distance with configurable options.
+    ///
+    /// # Options
+    ///
+    /// - `css_only`: If true, only check X-only and Z-only errors (faster for CSS codes)
+    /// - `max_weight`: Maximum weight to check (default: `num_qubits`)
+    /// - `verbose`: If true, print progress messages
+    ///
+    /// # Returns
+    ///
+    /// A [`crate::DistanceResult`] containing the distance and the first logical error found.
+    /// Returns `None` if no logical error exists up to `max_weight`.
+    #[must_use]
+    pub fn calculate_distance_with_options(
+        &mut self,
+        config: &crate::DistanceSearchConfig,
+    ) -> Option<crate::DistanceResult> {
+        let result = crate::calculate_distance(self, config);
+        if let Some(ref r) = result {
+            self.distance = Some(r.distance);
+        }
+        result
+    }
+
+    // ========================================================================
+    // Logical operator discovery
+    // ========================================================================
+
+    /// Discovers logical operators using stabilizer simulation.
+    ///
+    /// This uses the stabilizer simulator to automatically find logical X and Z
+    /// operators for the code based solely on the stabilizer generators.
+    /// Any existing logical operators will be replaced.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_qec::StabilizerCode;
+    /// use pecos_core::{Zs, PauliOperator};
+    ///
+    /// // Create code with just stabilizers (3-qubit bit flip code)
+    /// let mut code = StabilizerCode::from_stabilizers(3, vec![
+    ///     Zs([0, 1]).try_to_pauli_string().unwrap(),  // ZZI
+    ///     Zs([1, 2]).try_to_pauli_string().unwrap(),  // IZZ
+    /// ]);
+    ///
+    /// // Discover logical operators
+    /// code.discover_logicals().unwrap();
+    ///
+    /// assert_eq!(code.logical_zs().len(), 1);
+    /// assert_eq!(code.logical_xs().len(), 1);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The stabilizers don't all commute
+    /// - The stabilizers are linearly dependent
+    /// - Discovery fails for any other reason
+    pub fn discover_logicals(&mut self) -> std::result::Result<(), crate::LogicalDiscoveryError> {
+        let result = crate::discover_logical_operators(self.num_qubits, &self.stabilizers)?;
+        self.logical_zs = result.logical_zs;
+        self.logical_xs = result.logical_xs;
+        self.destabilizers = result.destabilizers;
+        Ok(())
+    }
+
+    /// Returns whether logical operators have been defined for this code.
+    #[inline]
+    #[must_use]
+    pub fn has_logicals(&self) -> bool {
+        !self.logical_zs.is_empty() && !self.logical_xs.is_empty()
+    }
 }
 
 /// Precomputed column index for stabilizer generators.
@@ -583,6 +757,17 @@ pub struct StabilizerIndex(ColumnIndex);
 /// Use [`StabilizerCode::build_logical_index`] to create one.
 pub struct LogicalIndex(ColumnIndex);
 
+impl LogicalIndex {
+    /// Find indices of logical operators that anticommute with the given Pauli.
+    ///
+    /// Returns a set of indices into the combined logical operators array,
+    /// where indices 0..k are logical Zs and k..2k are logical Xs.
+    #[must_use]
+    pub fn find_anticommuting(&self, pauli: &PauliString) -> std::collections::BTreeSet<usize> {
+        self.0.find_anticommuting(pauli)
+    }
+}
+
 /// Both stabilizer and logical indices for a code.
 ///
 /// Use [`StabilizerCode::build_indices`] to create one.
@@ -591,6 +776,204 @@ pub struct CodeIndices {
     pub stabilizer: StabilizerIndex,
     /// Index for logical operators.
     pub logical: LogicalIndex,
+}
+
+// ============================================================================
+// Builder
+// ============================================================================
+
+/// Builder for constructing stabilizer codes with a fluent API.
+///
+/// This provides an ergonomic way to define stabilizer codes, similar to
+/// Python's `VerifyStabilizers` class.
+///
+/// # Example
+///
+/// ```
+/// use pecos_qec::StabilizerCodeBuilder;
+/// use pecos_core::{Xs, Zs};
+///
+/// // Build the Steane [[7, 1, 3]] code
+/// let code = StabilizerCodeBuilder::new(7)
+///     // X-type stabilizers
+///     .check(Xs([0, 2, 4, 6]))
+///     .check(Xs([1, 2, 5, 6]))
+///     .check(Xs([3, 4, 5, 6]))
+///     // Z-type stabilizers
+///     .check(Zs([0, 2, 4, 6]))
+///     .check(Zs([1, 2, 5, 6]))
+///     .check(Zs([3, 4, 5, 6]))
+///     // Logical operators
+///     .logical_z(Zs(0..=6))
+///     .logical_x(Xs(0..=6))
+///     .build()
+///     .unwrap();
+///
+/// assert!(code.verify().is_ok());
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct StabilizerCodeBuilder {
+    num_qubits: usize,
+    stabilizers: Vec<PauliString>,
+    logical_zs: Vec<PauliString>,
+    logical_xs: Vec<PauliString>,
+}
+
+impl StabilizerCodeBuilder {
+    /// Creates a new builder for a code with the specified number of qubits.
+    #[must_use]
+    pub fn new(num_qubits: usize) -> Self {
+        Self {
+            num_qubits,
+            stabilizers: Vec::new(),
+            logical_zs: Vec::new(),
+            logical_xs: Vec::new(),
+        }
+    }
+
+    /// Adds a stabilizer from a `PauliString` directly.
+    #[must_use]
+    pub fn stabilizer_pauli(mut self, pauli: PauliString) -> Self {
+        self.stabilizers.push(pauli);
+        self
+    }
+
+    /// Adds a stabilizer from an `Operator`.
+    ///
+    /// The operator must be convertible to a `PauliString` (i.e., a Pauli operator
+    /// or tensor product of Pauli operators).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_qec::StabilizerCodeBuilder;
+    /// use pecos_core::{Xs, Zs};
+    ///
+    /// let code = StabilizerCodeBuilder::new(4)
+    ///     .check(Zs(0..=1))           // ZZ on qubits 0,1
+    ///     .check(Xs(0..=1) & Zs(2..=3)) // XXZZ
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operator cannot be converted to a `PauliString`.
+    #[must_use]
+    pub fn check(mut self, op: pecos_core::Operator) -> Self {
+        let ps = op
+            .try_to_pauli_string()
+            .expect("Operator must be convertible to PauliString");
+        self.stabilizers.push(ps);
+        self
+    }
+
+    /// Adds a logical Z operator from a `PauliString` directly.
+    #[must_use]
+    pub fn logical_z_pauli(mut self, pauli: PauliString) -> Self {
+        self.logical_zs.push(pauli);
+        self
+    }
+
+    /// Adds a logical Z operator from an `Operator`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operator cannot be converted to a `PauliString`.
+    #[must_use]
+    pub fn logical_z(mut self, op: pecos_core::Operator) -> Self {
+        let ps = op
+            .try_to_pauli_string()
+            .expect("Operator must be convertible to PauliString");
+        self.logical_zs.push(ps);
+        self
+    }
+
+    /// Adds a logical X operator from a `PauliString` directly.
+    #[must_use]
+    pub fn logical_x_pauli(mut self, pauli: PauliString) -> Self {
+        self.logical_xs.push(pauli);
+        self
+    }
+
+    /// Adds a logical X operator from an `Operator`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operator cannot be converted to a `PauliString`.
+    #[must_use]
+    pub fn logical_x(mut self, op: pecos_core::Operator) -> Self {
+        let ps = op
+            .try_to_pauli_string()
+            .expect("Operator must be convertible to PauliString");
+        self.logical_xs.push(ps);
+        self
+    }
+
+    /// Builds the stabilizer code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the number of logical X and Z operators don't match.
+    pub fn build(self) -> Result<StabilizerCode> {
+        StabilizerCode::new(
+            self.num_qubits,
+            self.stabilizers,
+            self.logical_zs,
+            self.logical_xs,
+        )
+    }
+
+    /// Builds the stabilizer code and verifies it.
+    ///
+    /// This is a convenience method that calls `build()` followed by `verify()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the code fails to build or verification fails.
+    pub fn build_verified(self) -> Result<StabilizerCode> {
+        let code = self.build()?;
+        code.verify()?;
+        Ok(code)
+    }
+
+    /// Builds the stabilizer code and automatically discovers logical operators.
+    ///
+    /// This is useful when you only have the stabilizer generators and want
+    /// the logical operators to be computed automatically using stabilizer
+    /// simulation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_qec::StabilizerCodeBuilder;
+    /// use pecos_core::Zs;
+    ///
+    /// // Build a 3-qubit bit flip code with auto-discovered logicals
+    /// let code = StabilizerCodeBuilder::new(3)
+    ///     .check(Zs([0, 1]))  // ZZI
+    ///     .check(Zs([1, 2]))  // IZZ
+    ///     .build_with_discovered_logicals()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(code.num_logical_qubits(), 1);
+    /// assert_eq!(code.logical_zs().len(), 1);
+    /// assert_eq!(code.logical_xs().len(), 1);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The stabilizers don't all commute
+    /// - The stabilizers are linearly dependent
+    /// - Discovery fails for any other reason
+    pub fn build_with_discovered_logicals(
+        self,
+    ) -> std::result::Result<StabilizerCode, crate::LogicalDiscoveryError> {
+        let mut code = StabilizerCode::from_stabilizers(self.num_qubits, self.stabilizers);
+        code.discover_logicals()?;
+        Ok(code)
+    }
 }
 
 #[cfg(test)]
@@ -819,5 +1202,353 @@ mod tests {
         // Z errors should have no syndrome
         let z0 = pauli_string(&[(Pauli::Z, 0)]);
         assert!(code.syndrome_indexed(&z0, &index).is_empty());
+    }
+
+    // ========================================================================
+    // Distance calculation tests
+    // ========================================================================
+
+    #[test]
+    fn test_distance_three_qubit_bit_flip() {
+        // 3-qubit bit flip code: [[3, 1, 1]]
+        // Distance should be 1 because single X errors commute with stabilizers
+        // but the logical X (XXX) has distance 3... wait, single X errors are detectable.
+        // Actually for bit flip code, Z errors are undetectable.
+        // Single Z commutes with ZZ stabilizers and anticommutes with logical X (XXX).
+        let stab1 = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1)]);
+        let stab2 = pauli_string(&[(Pauli::Z, 1), (Pauli::Z, 2)]);
+        let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
+        let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
+
+        let mut code =
+            StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+
+        let result = code.calculate_distance();
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Single Z error is a logical error (commutes with stabilizers, anticommutes with logical X)
+        assert_eq!(result.distance, 1);
+        assert_eq!(code.distance(), Some(1));
+    }
+
+    #[test]
+    fn test_distance_steane_code() {
+        // Steane [[7, 1, 3]] code
+        // X-type stabilizers
+        let sx1 = pauli_string(&[(Pauli::X, 0), (Pauli::X, 2), (Pauli::X, 4), (Pauli::X, 6)]);
+        let sx2 = pauli_string(&[(Pauli::X, 1), (Pauli::X, 2), (Pauli::X, 5), (Pauli::X, 6)]);
+        let sx3 = pauli_string(&[(Pauli::X, 3), (Pauli::X, 4), (Pauli::X, 5), (Pauli::X, 6)]);
+        // Z-type stabilizers
+        let sz1 = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 2), (Pauli::Z, 4), (Pauli::Z, 6)]);
+        let sz2 = pauli_string(&[(Pauli::Z, 1), (Pauli::Z, 2), (Pauli::Z, 5), (Pauli::Z, 6)]);
+        let sz3 = pauli_string(&[(Pauli::Z, 3), (Pauli::Z, 4), (Pauli::Z, 5), (Pauli::Z, 6)]);
+        // Logical operators
+        let logical_z = pauli_string(&[
+            (Pauli::Z, 0),
+            (Pauli::Z, 1),
+            (Pauli::Z, 2),
+            (Pauli::Z, 3),
+            (Pauli::Z, 4),
+            (Pauli::Z, 5),
+            (Pauli::Z, 6),
+        ]);
+        let logical_x = pauli_string(&[
+            (Pauli::X, 0),
+            (Pauli::X, 1),
+            (Pauli::X, 2),
+            (Pauli::X, 3),
+            (Pauli::X, 4),
+            (Pauli::X, 5),
+            (Pauli::X, 6),
+        ]);
+
+        let mut code = StabilizerCode::new(
+            7,
+            vec![sx1, sx2, sx3, sz1, sz2, sz3],
+            vec![logical_z],
+            vec![logical_x],
+        )
+        .unwrap();
+
+        let result = code.calculate_distance();
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        assert_eq!(result.distance, 3);
+        assert_eq!(code.code_parameters(), "[[7, 1, 3]]");
+    }
+
+    #[test]
+    fn test_distance_css_mode() {
+        // Test CSS mode optimization with Steane code
+        let sx1 = pauli_string(&[(Pauli::X, 0), (Pauli::X, 2), (Pauli::X, 4), (Pauli::X, 6)]);
+        let sx2 = pauli_string(&[(Pauli::X, 1), (Pauli::X, 2), (Pauli::X, 5), (Pauli::X, 6)]);
+        let sx3 = pauli_string(&[(Pauli::X, 3), (Pauli::X, 4), (Pauli::X, 5), (Pauli::X, 6)]);
+        let sz1 = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 2), (Pauli::Z, 4), (Pauli::Z, 6)]);
+        let sz2 = pauli_string(&[(Pauli::Z, 1), (Pauli::Z, 2), (Pauli::Z, 5), (Pauli::Z, 6)]);
+        let sz3 = pauli_string(&[(Pauli::Z, 3), (Pauli::Z, 4), (Pauli::Z, 5), (Pauli::Z, 6)]);
+        let logical_z = pauli_string(&[
+            (Pauli::Z, 0),
+            (Pauli::Z, 1),
+            (Pauli::Z, 2),
+            (Pauli::Z, 3),
+            (Pauli::Z, 4),
+            (Pauli::Z, 5),
+            (Pauli::Z, 6),
+        ]);
+        let logical_x = pauli_string(&[
+            (Pauli::X, 0),
+            (Pauli::X, 1),
+            (Pauli::X, 2),
+            (Pauli::X, 3),
+            (Pauli::X, 4),
+            (Pauli::X, 5),
+            (Pauli::X, 6),
+        ]);
+
+        let mut code = StabilizerCode::new(
+            7,
+            vec![sx1, sx2, sx3, sz1, sz2, sz3],
+            vec![logical_z],
+            vec![logical_x],
+        )
+        .unwrap();
+
+        // CSS mode should find the same distance for CSS codes
+        let config = crate::DistanceSearchConfig::css();
+        let result = code.calculate_distance_with_options(&config);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().distance, 3);
+    }
+
+    #[test]
+    fn test_distance_five_qubit_code() {
+        // [[5, 1, 3]] perfect code
+        // Stabilizers: XZZXI, IXZZX, XIXZZ, ZXIXZ
+        let s1 = pauli_string(&[
+            (Pauli::X, 0),
+            (Pauli::Z, 1),
+            (Pauli::Z, 2),
+            (Pauli::X, 3),
+        ]);
+        let s2 = pauli_string(&[
+            (Pauli::X, 1),
+            (Pauli::Z, 2),
+            (Pauli::Z, 3),
+            (Pauli::X, 4),
+        ]);
+        let s3 = pauli_string(&[
+            (Pauli::X, 0),
+            (Pauli::X, 2),
+            (Pauli::Z, 3),
+            (Pauli::Z, 4),
+        ]);
+        let s4 = pauli_string(&[
+            (Pauli::Z, 0),
+            (Pauli::X, 1),
+            (Pauli::X, 3),
+            (Pauli::Z, 4),
+        ]);
+        // Logical operators
+        let logical_z = pauli_string(&[
+            (Pauli::Z, 0),
+            (Pauli::Z, 1),
+            (Pauli::Z, 2),
+            (Pauli::Z, 3),
+            (Pauli::Z, 4),
+        ]);
+        let logical_x = pauli_string(&[
+            (Pauli::X, 0),
+            (Pauli::X, 1),
+            (Pauli::X, 2),
+            (Pauli::X, 3),
+            (Pauli::X, 4),
+        ]);
+
+        let mut code = StabilizerCode::new(
+            5,
+            vec![s1, s2, s3, s4],
+            vec![logical_z],
+            vec![logical_x],
+        )
+        .unwrap();
+
+        let result = code.calculate_distance();
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        assert_eq!(result.distance, 3);
+        assert_eq!(code.code_parameters(), "[[5, 1, 3]]");
+    }
+
+    // ========================================================================
+    // Builder tests
+    // ========================================================================
+
+    #[test]
+    fn test_builder_three_qubit_bit_flip() {
+        use pecos_core::{Xs, Zs};
+
+        // Build a 3-qubit bit flip code using the builder
+        let code = StabilizerCode::builder(3)
+            .check(Zs([0, 1]))
+            .check(Zs([1, 2]))
+            .logical_z(Zs([0, 1, 2]))
+            .logical_x(Xs([0, 1, 2]))
+            .build()
+            .unwrap();
+
+        assert_eq!(code.num_qubits(), 3);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(code.num_stabilizers(), 2);
+        assert!(code.verify().is_ok());
+    }
+
+    #[test]
+    fn test_builder_steane_code() {
+        use pecos_core::{Xs, Zs};
+
+        // Build the Steane [[7, 1, 3]] code using the builder
+        let code = StabilizerCodeBuilder::new(7)
+            // X-type stabilizers
+            .check(Xs([0, 2, 4, 6]))
+            .check(Xs([1, 2, 5, 6]))
+            .check(Xs([3, 4, 5, 6]))
+            // Z-type stabilizers
+            .check(Zs([0, 2, 4, 6]))
+            .check(Zs([1, 2, 5, 6]))
+            .check(Zs([3, 4, 5, 6]))
+            // Logical operators
+            .logical_z(Zs(0..=6))
+            .logical_x(Xs(0..=6))
+            .build_verified()
+            .unwrap();
+
+        assert_eq!(code.num_qubits(), 7);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(code.num_stabilizers(), 6);
+    }
+
+    #[test]
+    fn test_builder_weight_two_stabilizer() {
+        use pecos_core::Zs;
+
+        // Test that weight-2 stabilizer is handled correctly
+        let code = StabilizerCode::builder(3)
+            .check(Zs([0, 2])) // Only Z on qubits 0 and 2
+            .build()
+            .unwrap();
+
+        let stab = &code.stabilizers()[0];
+        assert_eq!(stab.weight(), 2);
+    }
+
+    #[test]
+    fn test_builder_with_operators() {
+        use pecos_core::{Xs, Zs};
+
+        // Build a 3-qubit bit flip code using operators
+        let code = StabilizerCode::builder(3)
+            .check(Zs(0..=1))
+            .check(Zs(1..=2))
+            .logical_z(Zs(0..=2))
+            .logical_x(Xs(0..=2))
+            .build()
+            .unwrap();
+
+        assert_eq!(code.num_qubits(), 3);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(code.num_stabilizers(), 2);
+        assert!(code.verify().is_ok());
+    }
+
+    #[test]
+    fn test_builder_with_mixed_operators() {
+        use pecos_core::{Xs, Zs};
+
+        // Build using tensor product of Paulis
+        let code = StabilizerCode::builder(4)
+            .check(Xs(0..=1) & Zs(2..=3)) // XXZZ
+            .build()
+            .unwrap();
+
+        let stab = &code.stabilizers()[0];
+        assert_eq!(stab.weight(), 4);
+    }
+
+    #[test]
+    fn test_builder_steane_with_operators() {
+        use pecos_core::{Xs, Zs};
+
+        // Build Steane code using operators
+        let code = StabilizerCodeBuilder::new(7)
+            // X-type stabilizers (using specific qubit sets matching the Hamming code)
+            .check(Xs([0, 2, 4, 6]))
+            .check(Xs([1, 2, 5, 6]))
+            .check(Xs([3, 4, 5, 6]))
+            // Z-type stabilizers
+            .check(Zs([0, 2, 4, 6]))
+            .check(Zs([1, 2, 5, 6]))
+            .check(Zs([3, 4, 5, 6]))
+            // Logical operators
+            .logical_z(Zs(0..=6))
+            .logical_x(Xs(0..=6))
+            .build_verified()
+            .unwrap();
+
+        assert_eq!(code.num_qubits(), 7);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert!(code.verify().is_ok());
+    }
+
+    #[test]
+    fn test_discover_logicals() {
+        use pecos_core::Zs;
+
+        // Create a code with just stabilizers (3-qubit bit flip code)
+        let mut code = StabilizerCode::from_stabilizers(
+            3,
+            vec![
+                Zs([0, 1]).try_to_pauli_string().unwrap(), // ZZI
+                Zs([1, 2]).try_to_pauli_string().unwrap(), // IZZ
+            ],
+        );
+
+        assert!(!code.has_logicals());
+
+        // Discover logical operators
+        code.discover_logicals().unwrap();
+
+        assert!(code.has_logicals());
+        assert_eq!(code.logical_zs().len(), 1);
+        assert_eq!(code.logical_xs().len(), 1);
+
+        // Verify the discovered logicals are valid
+        assert!(code.verify().is_ok());
+    }
+
+    #[test]
+    fn test_build_with_discovered_logicals() {
+        use pecos_core::{Xs, Zs};
+
+        // Build Steane code with auto-discovered logicals
+        let code = StabilizerCodeBuilder::new(7)
+            .check(Xs([0, 2, 4, 6]))
+            .check(Xs([1, 2, 5, 6]))
+            .check(Xs([3, 4, 5, 6]))
+            .check(Zs([0, 2, 4, 6]))
+            .check(Zs([1, 2, 5, 6]))
+            .check(Zs([3, 4, 5, 6]))
+            .build_with_discovered_logicals()
+            .unwrap();
+
+        assert_eq!(code.num_qubits(), 7);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(code.logical_zs().len(), 1);
+        assert_eq!(code.logical_xs().len(), 1);
+
+        // Verify the discovered logicals are valid
+        assert!(code.verify().is_ok());
     }
 }

@@ -793,6 +793,114 @@ impl Operator {
         }
     }
 
+    /// Attempts to convert this operator to a `PauliString`.
+    ///
+    /// This handles more cases than `into_pauli_string()`:
+    /// - `Pauli(ps)` → returns `ps` directly
+    /// - `Tensor([Pauli(a), Pauli(b), ...])` → merges into a single `PauliString`
+    /// - `Phase { phase, inner: Pauli(ps) }` → applies phase to `ps`
+    /// - Named Pauli gates (`X`, `Y`, `Z`) → corresponding single-qubit `PauliString`
+    /// - Half-turn rotations (`RX(π)`, `RY(π)`, `RZ(π)`) → corresponding `PauliString`
+    ///
+    /// Returns `None` if the operator cannot be represented as a `PauliString`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_core::{Xs, Zs, PauliOperator};
+    ///
+    /// // Tensor of Paulis on disjoint qubits
+    /// let op = Xs(0..2) & Zs(2..4);
+    /// let ps = op.try_to_pauli_string().unwrap();
+    /// assert_eq!(ps.weight(), 4); // X on 0,1 and Z on 2,3
+    /// ```
+    #[must_use]
+    pub fn try_to_pauli_string(self) -> Option<PauliString> {
+        match self {
+            Self::Pauli(ps) => Some(ps),
+
+            Self::Tensor(parts) => {
+                // Try to convert all parts to PauliStrings and merge
+                let mut result = PauliString::new();
+                for part in parts {
+                    let ps = part.try_to_pauli_string()?;
+                    // Merge: combine the Pauli operators
+                    // For disjoint qubits, this is just concatenation
+                    // For overlapping qubits, we multiply the Paulis
+                    result = result * ps;
+                }
+                Some(result)
+            }
+
+            Self::Phase { phase, inner } => {
+                let mut ps = inner.try_to_pauli_string()?;
+                // Apply the global phase to the PauliString phase
+                // phase is Angle64, we need to convert to QuarterPhase if possible
+                // For now, only handle quarter-turn phases exactly
+                let quarter_phase = if phase == Angle64::ZERO {
+                    QuarterPhase::PlusOne
+                } else if phase == Angle64::QUARTER_TURN {
+                    QuarterPhase::PlusI
+                } else if phase == Angle64::HALF_TURN {
+                    QuarterPhase::MinusOne
+                } else if phase == Angle64::THREE_QUARTERS_TURN {
+                    QuarterPhase::MinusI
+                } else {
+                    // Non-quarter-turn phase, can't represent exactly
+                    return None;
+                };
+                let new_phase = ps.phase().multiply(&quarter_phase);
+                ps.set_phase(new_phase);
+                Some(ps)
+            }
+
+            Self::Gate { gate_type, qubits } => {
+                let qubit = qubits.first().copied()?;
+                match gate_type {
+                    GateType::X => Some(PauliString::x(qubit)),
+                    GateType::Y => Some(PauliString::y(qubit)),
+                    GateType::Z => Some(PauliString::z(qubit)),
+                    GateType::I => Some(PauliString::identity()),
+                    _ => None,
+                }
+            }
+
+            Self::Rotation {
+                rotation_type,
+                angle,
+                qubits,
+            } => {
+                // Only half-turn rotations are Pauli operators
+                let half = Angle64::HALF_TURN;
+                let neg_half = negate_angle(half);
+                if angle != half && angle != neg_half {
+                    return None;
+                }
+                let qubit = qubits.first().copied()?;
+                match rotation_type {
+                    RotationType::RX => Some(PauliString::x(qubit)),
+                    RotationType::RY => Some(PauliString::y(qubit)),
+                    RotationType::RZ => Some(PauliString::z(qubit)),
+                    _ => None,
+                }
+            }
+
+            Self::Adjoint(inner) => {
+                // Paulis are Hermitian (self-adjoint), but phase conjugates
+                let mut ps = inner.try_to_pauli_string()?;
+                let conj_phase = ps.phase().conjugate();
+                ps.set_phase(conj_phase);
+                Some(ps)
+            }
+
+            Self::Compose(_) => {
+                // Composition of Paulis requires multiplication
+                // This is more complex; skip for now
+                None
+            }
+        }
+    }
+
     /// Checks if this operator is equivalent to a Pauli operator.
     ///
     /// Returns true for:

@@ -13,6 +13,7 @@ readme = "README.md"
 
 [dependencies]
 pecos-core = { path = "../pecos-core" }
+pecos-qsim = { path = "../pecos-qsim" }
 thiserror.workspace = true
 
 [lints]

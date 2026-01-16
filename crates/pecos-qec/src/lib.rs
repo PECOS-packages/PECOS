@@ -30,13 +30,17 @@
 
 pub mod distance;
 pub mod geometry;
+pub mod logical_discovery;
 pub mod stabilizer_code;
 pub mod surface;
 
 pub use distance::{
-    DistanceResult, DistanceSearchConfig, WeightedPauliIterator, calculate_distance,
-    find_min_weight_logicals,
+    DistanceResult, DistanceSearchConfig, LogicalOperatorInfo, WeightedPauliIterator,
+    calculate_distance, find_min_weight_logicals, find_min_weight_logicals_with_info,
 };
 pub use geometry::{CheckSchedule, LogicalOperator, PauliOp, StabilizerCheck, StabilizerColor};
-pub use stabilizer_code::{StabilizerCode, StabilizerCodeError};
+pub use logical_discovery::{
+    LogicalDiscoveryError, LogicalDiscoveryResult, discover_logical_operators,
+};
+pub use stabilizer_code::{StabilizerCode, StabilizerCodeBuilder, StabilizerCodeError};
 pub use surface::{SurfaceCode, SurfaceCodeBuilder};

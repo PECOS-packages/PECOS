@@ -58,3 +58,6 @@ pub use pauli::pauli_string::{ParsePauliStringError, PauliString};
 pub use pauli::{Pauli, PauliOperator};
 pub use phase::Phase;
 pub use rng::choices::Choices;
+
+// Operator algebra
+pub use operator::{Operator, I, Is, X, Xs, Y, Ys, Z, Zs};

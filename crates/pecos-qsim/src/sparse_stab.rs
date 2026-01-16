@@ -327,6 +327,51 @@ where
         &self.stabs.signs_minus
     }
 
+    /// Returns an immutable reference to the stabilizer generators.
+    ///
+    /// This is useful for operations like classifying Pauli strings or
+    /// extracting generator information.
+    #[inline]
+    pub fn stabs(&self) -> &GensGeneric<S> {
+        &self.stabs
+    }
+
+    /// Returns a mutable reference to the stabilizer generators.
+    ///
+    /// Use with caution - modifying stabilizers directly can break
+    /// the stabilizer/destabilizer relationship invariants.
+    #[inline]
+    pub fn stabs_mut(&mut self) -> &mut GensGeneric<S> {
+        &mut self.stabs
+    }
+
+    /// Returns an immutable reference to the destabilizer generators.
+    #[inline]
+    pub fn destabs(&self) -> &GensGeneric<S> {
+        &self.destabs
+    }
+
+    /// Returns a mutable reference to the destabilizer generators.
+    ///
+    /// Use with caution - modifying destabilizers directly can break
+    /// the stabilizer/destabilizer relationship invariants.
+    #[inline]
+    pub fn destabs_mut(&mut self) -> &mut GensGeneric<S> {
+        &mut self.destabs
+    }
+
+    /// Returns mutable references to both stabilizer and destabilizer generators.
+    ///
+    /// This is useful for operations like `refactor` that need mutable access
+    /// to both generators simultaneously.
+    ///
+    /// Use with caution - modifying generators directly can break
+    /// the stabilizer/destabilizer relationship invariants.
+    #[inline]
+    pub fn stabs_and_destabs_mut(&mut self) -> (&mut GensGeneric<S>, &mut GensGeneric<S>) {
+        (&mut self.stabs, &mut self.destabs)
+    }
+
     #[inline]
     fn deterministic_meas(&mut self, q: usize) -> MeasurementResult {
         // Use optimized intersection_count to avoid iterator creation overhead

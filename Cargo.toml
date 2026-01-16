@@ -85,6 +85,9 @@ thiserror = "2"
 # Small vector optimization
 smallvec = "1"
 
+# Iterator utilities
+itertools = "0.14"
+
 # Numerical computing
 levenberg-marquardt = "0.15"
 nalgebra = "0.34"

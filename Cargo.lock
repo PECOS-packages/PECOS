@@ -3355,8 +3355,12 @@ dependencies = [
 name = "pecos-qec"
 version = "0.1.1"
 dependencies = [
+ "ndarray 0.17.1",
  "pecos-core",
+ "pecos-decoder-core",
  "pecos-qsim",
+ "pecos-quantum",
+ "smallvec",
  "thiserror 2.0.17",
 ]
 

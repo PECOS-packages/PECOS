@@ -72,7 +72,9 @@ mod tick_circuit;
 pub mod hugr_convert;
 
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
-pub use dag_circuit::{Attribute, DagCircuit, MeasureHandle, PrepHandle};
+pub use dag_circuit::{
+    Attribute, DagCircuit, DagTraversalIndex, MeasureHandle, PrepHandle, TraversalWorkBuffers,
+};
 pub use tick_circuit::{
     QubitConflictError, Tick, TickCircuit, TickHandle, TickMeasureHandle, TickPrepHandle,
 };

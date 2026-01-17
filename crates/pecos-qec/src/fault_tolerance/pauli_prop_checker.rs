@@ -45,7 +45,7 @@
 //! println!("Total faults: {}", results.len());
 //! ```
 
-use super::backward_propagator::{apply_gate, Direction};
+use super::propagator::{apply_gate, Direction};
 use super::{
     FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, PauliFaultIterator,
     SpacetimeLocation,

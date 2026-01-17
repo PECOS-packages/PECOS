@@ -119,29 +119,29 @@
 //!
 //! # Submodules
 //!
-//! - [`backward_propagator`]: Backward Pauli propagation for efficient fault analysis
+//! - [`propagator`]: Pauli propagation infrastructure and fault analysis
 //! - [`circuit_runner`]: Full stabilizer simulation with fault injection
 //! - [`decoder_integration`]: Integration with decoders for correction testing
 //! - [`gadget_checker`]: Gadget-level analysis with input/output qubits
 //! - [`pauli_prop_checker`]: Efficient Pauli propagation analysis
 //! - [`stabilizer_flip_checker`]: Code-level stabilizer flip analysis
 
-pub mod backward_propagator;
 pub mod circuit_runner;
 pub mod decoder_integration;
 pub mod gadget_checker;
 pub mod pauli_prop_checker;
+pub mod propagator;
 pub mod stabilizer_flip_checker;
 
 use pecos_core::gate_type::GateType;
 use pecos_core::QubitId;
 use std::collections::BTreeSet;
 
-pub use backward_propagator::{
+pub use propagator::{
     apply_gate, propagate_backward_from_node, propagate_backward_from_tick,
     propagate_fault_backward, propagate_observable_backward, propagate_sparse_dag,
     propagate_through_circuit, propagate_through_dag, propagate_tick_range,
-    BackwardPropagator, DagBackwardPropagator, DagFaultInfluenceMap, DagFaultInfluenceMapVec,
+    BackwardPropagator, DagFaultAnalyzer, DagFaultInfluenceMap, DagFaultInfluenceMapSoA,
     DagPropagator, DagSpacetimeLocation, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
     InfluenceBasedChecker, LogicalId, MeasurementId,
 };

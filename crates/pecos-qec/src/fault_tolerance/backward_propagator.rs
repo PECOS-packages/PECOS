@@ -1642,6 +1642,81 @@ impl Default for DagFaultInfluenceMap {
     }
 }
 
+/// Vec-based fault influence map for faster small circuit performance.
+///
+/// Unlike `DagFaultInfluenceMap` which uses a BTreeMap for influences,
+/// this struct stores influences in a Vec indexed by location index.
+/// This provides O(1) access instead of O(log n) BTreeMap lookups,
+/// which is significantly faster for small circuits.
+#[derive(Debug, Clone)]
+pub struct DagFaultInfluenceMapVec {
+    /// Influences indexed by location index.
+    pub influences: Vec<FaultInfluence>,
+
+    /// Locations indexed by location index (for reference).
+    pub locations: Vec<DagSpacetimeLocation>,
+
+    /// All detectors in the circuit.
+    pub detectors: Vec<DetectorId>,
+
+    /// All logical observables being tracked.
+    pub logicals: Vec<LogicalId>,
+
+    /// All measurements in the circuit (node, qubit, basis).
+    pub measurements: Vec<(usize, usize, u8)>,
+}
+
+impl DagFaultInfluenceMapVec {
+    /// Creates a new influence map with the given locations.
+    #[must_use]
+    pub fn with_locations(locations: Vec<DagSpacetimeLocation>) -> Self {
+        let len = locations.len();
+        Self {
+            influences: vec![FaultInfluence::default(); len],
+            locations,
+            detectors: Vec::new(),
+            logicals: Vec::new(),
+            measurements: Vec::new(),
+        }
+    }
+
+    /// Returns the influence of a fault at the given location index.
+    #[inline]
+    #[must_use]
+    pub fn get_influence(&self, loc_idx: usize) -> Option<&FaultInfluence> {
+        self.influences.get(loc_idx)
+    }
+
+    /// Returns the influence of a fault at the given location index (mutable).
+    #[inline]
+    #[must_use]
+    pub fn get_influence_mut(&mut self, loc_idx: usize) -> Option<&mut FaultInfluence> {
+        self.influences.get_mut(loc_idx)
+    }
+
+    /// Classifies a fault at the given location index.
+    ///
+    /// Returns (has_syndrome, causes_logical_error).
+    #[inline]
+    #[must_use]
+    pub fn classify_fault(&self, loc_idx: usize, pauli: u8) -> (bool, bool) {
+        if let Some(influence) = self.influences.get(loc_idx) {
+            let has_syndrome = !influence.detector_flips[pauli as usize].is_empty();
+            let causes_logical = !influence.logical_flips[pauli as usize].is_empty();
+            (has_syndrome, causes_logical)
+        } else {
+            (false, false)
+        }
+    }
+
+    /// Returns the location at the given index.
+    #[inline]
+    #[must_use]
+    pub fn get_location(&self, loc_idx: usize) -> Option<&DagSpacetimeLocation> {
+        self.locations.get(loc_idx)
+    }
+}
+
 /// Propagates Paulis backward through a DAG circuit using sparse traversal.
 ///
 /// This is significantly faster than `BackwardPropagator` for circuits with
@@ -1803,9 +1878,23 @@ impl DagBackwardPropagator {
     ///
     /// This performs backward propagation from all measurements and
     /// creates a lookup table for fault classification.
+    ///
+    /// Note: This also builds reverse maps (detector -> faults). For faster
+    /// performance when reverse maps aren't needed, use `build_influence_map_fast`.
     #[must_use]
     pub fn build_influence_map(&self) -> DagFaultInfluenceMap {
         self.build_influence_map_with_logicals(&[])
+    }
+
+    /// Builds the fault influence map without reverse maps (faster).
+    ///
+    /// This skips building the expensive reverse maps (detector_to_faults,
+    /// logical_to_faults) which can significantly improve performance for
+    /// small circuits. Use this when you only need to query fault influences
+    /// by location, not by detector.
+    #[must_use]
+    pub fn build_influence_map_fast(&self) -> DagFaultInfluenceMap {
+        self.build_influence_map_impl(&[], false)
     }
 
     /// Builds the fault influence map with logical operator tracking.
@@ -1817,6 +1906,21 @@ impl DagBackwardPropagator {
     pub fn build_influence_map_with_logicals(
         &self,
         logicals: &[(&[usize], &[usize])],
+    ) -> DagFaultInfluenceMap {
+        self.build_influence_map_impl(logicals, true)
+    }
+
+    /// Builds the fault influence map with optional reverse maps.
+    ///
+    /// # Arguments
+    ///
+    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs.
+    /// * `build_reverse` - Whether to build reverse maps (detector -> faults).
+    #[must_use]
+    pub fn build_influence_map_impl(
+        &self,
+        logicals: &[(&[usize], &[usize])],
+        build_reverse: bool,
     ) -> DagFaultInfluenceMap {
         let mut map = DagFaultInfluenceMap::new();
 
@@ -1848,9 +1952,23 @@ impl DagBackwardPropagator {
                 .insert(loc.clone(), FaultInfluence::default());
         }
 
+        // Pre-allocate work arrays to reuse across propagations
+        let mut visited = vec![false; self.max_node + 1];
+        let mut active_qubits = vec![false; self.max_qubit + 1];
+        let mut heap: BinaryHeap<(usize, usize)> = BinaryHeap::with_capacity(64);
+
         // Backward propagate from each measurement
-        for &(node, qubit, basis) in &measurements {
-            self.propagate_from_measurement(node, qubit, basis, &mut map);
+        for (detector_idx, &(node, qubit, basis)) in measurements.iter().enumerate() {
+            self.propagate_from_measurement_indexed(
+                node,
+                qubit,
+                basis,
+                detector_idx,
+                &mut map,
+                &mut visited,
+                &mut active_qubits,
+                &mut heap,
+            );
         }
 
         // Backward propagate from each logical operator
@@ -1859,13 +1977,210 @@ impl DagBackwardPropagator {
                 logical_qubit: i,
                 observable: 0,
             };
-            self.propagate_from_logical(x_pos, z_pos, &logical_id, &mut map);
+            self.propagate_from_logical_reuse(
+                x_pos,
+                z_pos,
+                &logical_id,
+                &mut map,
+                &mut visited,
+                &mut active_qubits,
+                &mut heap,
+            );
         }
 
-        // Build reverse maps
-        self.build_reverse_maps(&mut map);
+        // Build reverse maps only if requested
+        if build_reverse {
+            self.build_reverse_maps(&mut map);
+        }
 
         map
+    }
+
+    /// Builds the fault influence map using Vec-based storage (fastest).
+    ///
+    /// This uses a Vec indexed by location index instead of a BTreeMap,
+    /// providing O(1) access instead of O(log n) lookups. This is the
+    /// fastest option and is recommended for all circuit sizes.
+    #[must_use]
+    pub fn build_influence_map_vec(&self) -> DagFaultInfluenceMapVec {
+        let mut map = DagFaultInfluenceMapVec::with_locations(self.locations.clone());
+
+        // Extract all measurements from the circuit
+        let measurements = self.extract_measurements();
+        map.measurements = measurements.clone();
+
+        // Create simple detectors (one per measurement)
+        for &(node, qubit, basis) in &measurements {
+            let measurement_id = MeasurementId {
+                tick: node,
+                qubit,
+                basis,
+            };
+            map.detectors.push(DetectorId::single(measurement_id));
+        }
+
+        // Pre-allocate work arrays to reuse across propagations
+        let mut visited = vec![false; self.max_node + 1];
+        let mut active_qubits = vec![false; self.max_qubit + 1];
+        let mut heap: BinaryHeap<(usize, usize)> = BinaryHeap::with_capacity(64);
+
+        // Backward propagate from each measurement
+        for (detector_idx, &(node, qubit, basis)) in measurements.iter().enumerate() {
+            self.propagate_from_measurement_vec(
+                node,
+                qubit,
+                basis,
+                detector_idx,
+                &mut map,
+                &mut visited,
+                &mut active_qubits,
+                &mut heap,
+            );
+        }
+
+        map
+    }
+
+    /// Propagates backward from a measurement using Vec-based influence storage.
+    fn propagate_from_measurement_vec(
+        &self,
+        meas_node: usize,
+        meas_qubit: usize,
+        basis: u8,
+        detector_idx: usize,
+        map: &mut DagFaultInfluenceMapVec,
+        visited: &mut [bool],
+        active_qubits: &mut [bool],
+        heap: &mut BinaryHeap<(usize, usize)>,
+    ) {
+        // Clear work arrays
+        visited.fill(false);
+        active_qubits.fill(false);
+        heap.clear();
+
+        // Start with the observable being measured
+        let mut prop = PauliProp::new();
+        if basis == 0 {
+            prop.add_z(meas_qubit);
+        } else {
+            prop.add_x(meas_qubit);
+        }
+
+        // Get measurement position (O(1) lookup)
+        let meas_topo_pos = self.topo_positions[meas_node];
+
+        // Check fault at measurement node (before=true only)
+        self.record_influences_vec(meas_node, &prop, detector_idx, map, true);
+
+        // Initialize: add gates on the measurement qubit
+        if meas_qubit <= self.max_qubit {
+            active_qubits[meas_qubit] = true;
+            for &(topo_pos, node) in &self.qubit_gates_backward[meas_qubit] {
+                if topo_pos < meas_topo_pos && !visited[node] {
+                    visited[node] = true;
+                    heap.push((topo_pos, node));
+                }
+            }
+        }
+
+        // Process gates in reverse topo order - only gates on active wires
+        while let Some((_, node)) = heap.pop() {
+            if let Some(gate) = &self.gates[node] {
+                let mut was_active = [false; 8];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    if j < was_active.len() && q.index() <= self.max_qubit {
+                        was_active[j] = active_qubits[q.index()];
+                    }
+                }
+
+                // Check before=false locations
+                self.record_influences_vec(node, &prop, detector_idx, map, false);
+
+                // Apply gate backward
+                apply_gate(&mut prop, gate, Direction::Backward);
+
+                // Check before=true locations
+                self.record_influences_vec(node, &prop, detector_idx, map, true);
+
+                // Check if Pauli spread to new qubits
+                let node_topo_pos = self.topo_positions[node];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    let idx = q.index();
+                    if idx <= self.max_qubit {
+                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
+                        let was = j < was_active.len() && was_active[j];
+
+                        if now_active && !was {
+                            active_qubits[idx] = true;
+                            for &(topo_pos, new_node) in &self.qubit_gates_backward[idx] {
+                                if topo_pos < node_topo_pos && !visited[new_node] {
+                                    visited[new_node] = true;
+                                    heap.push((topo_pos, new_node));
+                                }
+                            }
+                        } else if !now_active && was {
+                            active_qubits[idx] = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Records influences using Vec-based storage (O(1) indexed access).
+    #[inline]
+    fn record_influences_vec(
+        &self,
+        node: usize,
+        prop: &PauliProp,
+        detector_idx: usize,
+        map: &mut DagFaultInfluenceMapVec,
+        only_before: bool,
+    ) {
+        // Use pre-computed index for O(1) lookup
+        for &(loc_idx, before) in &self.node_locations[node] {
+            if before != only_before {
+                continue;
+            }
+
+            let loc = &self.locations[loc_idx];
+
+            for qubit in loc.qubits.iter() {
+                let q = qubit.index();
+                let obs_x = prop.contains_x(q);
+                let obs_z = prop.contains_z(q);
+
+                // Direct Vec access - no BTreeMap lookup
+                let influence = &mut map.influences[loc_idx];
+
+                // X fault anticommutes with Z or Y observable
+                if obs_z {
+                    let detector = &map.detectors[detector_idx];
+                    influence.detector_flips[1].push(detector.clone());
+                    influence
+                        .measurement_flips[1]
+                        .extend(detector.measurements.iter().copied());
+                }
+
+                // Z fault anticommutes with X or Y observable
+                if obs_x {
+                    let detector = &map.detectors[detector_idx];
+                    influence.detector_flips[3].push(detector.clone());
+                    influence
+                        .measurement_flips[3]
+                        .extend(detector.measurements.iter().copied());
+                }
+
+                // Y fault anticommutes with X, Z, or Y observable
+                if obs_x || obs_z {
+                    let detector = &map.detectors[detector_idx];
+                    influence.detector_flips[2].push(detector.clone());
+                    influence
+                        .measurement_flips[2]
+                        .extend(detector.measurements.iter().copied());
+                }
+            }
+        }
     }
 
     /// Extracts all measurements from the circuit.
@@ -1892,6 +2207,7 @@ impl DagBackwardPropagator {
     ///
     /// Only visits gates on the wires (qubits) we're propagating through.
     /// Uses a max-heap to process gates in reverse topo order efficiently.
+    #[allow(dead_code)]
     fn propagate_from_measurement(
         &self,
         meas_node: usize,
@@ -1986,10 +2302,193 @@ impl DagBackwardPropagator {
         }
     }
 
+    /// Propagates backward from a measurement using detector index.
+    /// This avoids creating DetectorId on each call - uses the pre-existing one from map.detectors.
+    fn propagate_from_measurement_indexed(
+        &self,
+        meas_node: usize,
+        meas_qubit: usize,
+        basis: u8,
+        detector_idx: usize,
+        map: &mut DagFaultInfluenceMap,
+        visited: &mut [bool],
+        active_qubits: &mut [bool],
+        heap: &mut BinaryHeap<(usize, usize)>,
+    ) {
+        // Clear work arrays
+        visited.fill(false);
+        active_qubits.fill(false);
+        heap.clear();
+
+        // Start with the observable being measured
+        let mut prop = PauliProp::new();
+        if basis == 0 {
+            prop.add_z(meas_qubit);
+        } else {
+            prop.add_x(meas_qubit);
+        }
+
+        // Get measurement position (O(1) lookup)
+        let meas_topo_pos = self.topo_positions[meas_node];
+
+        // Check fault at measurement node (before=true only)
+        self.record_influences_at_node_indexed(meas_node, &prop, detector_idx, None, map, true);
+
+        // Initialize: add gates on the measurement qubit
+        if meas_qubit <= self.max_qubit {
+            active_qubits[meas_qubit] = true;
+            for &(topo_pos, node) in &self.qubit_gates_backward[meas_qubit] {
+                if topo_pos < meas_topo_pos && !visited[node] {
+                    visited[node] = true;
+                    heap.push((topo_pos, node));
+                }
+            }
+        }
+
+        // Process gates in reverse topo order - only gates on active wires
+        while let Some((_, node)) = heap.pop() {
+            if let Some(gate) = &self.gates[node] {
+                let mut was_active = [false; 8];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    if j < was_active.len() && q.index() <= self.max_qubit {
+                        was_active[j] = active_qubits[q.index()];
+                    }
+                }
+
+                // Check before=false locations
+                self.record_influences_at_node_indexed(node, &prop, detector_idx, None, map, false);
+
+                // Apply gate backward
+                apply_gate(&mut prop, gate, Direction::Backward);
+
+                // Check before=true locations
+                self.record_influences_at_node_indexed(node, &prop, detector_idx, None, map, true);
+
+                // Check if Pauli spread to new qubits
+                let node_topo_pos = self.topo_positions[node];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    let idx = q.index();
+                    if idx <= self.max_qubit {
+                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
+                        let was = j < was_active.len() && was_active[j];
+
+                        if now_active && !was {
+                            active_qubits[idx] = true;
+                            for &(topo_pos, new_node) in &self.qubit_gates_backward[idx] {
+                                if topo_pos < node_topo_pos && !visited[new_node] {
+                                    visited[new_node] = true;
+                                    heap.push((topo_pos, new_node));
+                                }
+                            }
+                        } else if !now_active && was {
+                            active_qubits[idx] = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Propagates backward from a measurement, reusing pre-allocated work arrays.
+    #[allow(dead_code)]
+    fn propagate_from_measurement_reuse(
+        &self,
+        meas_node: usize,
+        meas_qubit: usize,
+        basis: u8,
+        map: &mut DagFaultInfluenceMap,
+        visited: &mut [bool],
+        active_qubits: &mut [bool],
+        heap: &mut BinaryHeap<(usize, usize)>,
+    ) {
+        // Clear work arrays (faster than reallocating)
+        visited.fill(false);
+        active_qubits.fill(false);
+        heap.clear();
+
+        // Start with the observable being measured
+        let mut prop = PauliProp::new();
+        if basis == 0 {
+            prop.add_z(meas_qubit);
+        } else {
+            prop.add_x(meas_qubit);
+        }
+
+        let measurement_id = MeasurementId {
+            tick: meas_node,
+            qubit: meas_qubit,
+            basis,
+        };
+        let detector = DetectorId::single(measurement_id);
+
+        // Get measurement position (O(1) lookup)
+        let meas_topo_pos = self.topo_positions[meas_node];
+
+        // Check fault at measurement node (before=true only)
+        self.record_influences_at_node_fast(meas_node, &prop, &detector, None, map, true);
+
+        // Initialize: add gates on the measurement qubit
+        if meas_qubit <= self.max_qubit {
+            active_qubits[meas_qubit] = true;
+            for &(topo_pos, node) in &self.qubit_gates_backward[meas_qubit] {
+                if topo_pos < meas_topo_pos && !visited[node] {
+                    visited[node] = true;
+                    heap.push((topo_pos, node));
+                }
+            }
+        }
+
+        // Process gates in reverse topo order - only gates on active wires
+        while let Some((_, node)) = heap.pop() {
+            if let Some(gate) = &self.gates[node] {
+                // Track which qubits were active before
+                let mut was_active = [false; 8];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    if j < was_active.len() && q.index() <= self.max_qubit {
+                        was_active[j] = active_qubits[q.index()];
+                    }
+                }
+
+                // Check before=false locations (after this gate executes)
+                self.record_influences_at_node_fast(node, &prop, &detector, None, map, false);
+
+                // Apply gate backward
+                apply_gate(&mut prop, gate, Direction::Backward);
+
+                // Check before=true locations (before this gate executes)
+                self.record_influences_at_node_fast(node, &prop, &detector, None, map, true);
+
+                // Check if Pauli spread to new qubits
+                let node_topo_pos = self.topo_positions[node];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    let idx = q.index();
+                    if idx <= self.max_qubit {
+                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
+                        let was = j < was_active.len() && was_active[j];
+
+                        if now_active && !was {
+                            // Pauli spread to this qubit - add its gates to heap
+                            active_qubits[idx] = true;
+                            for &(topo_pos, new_node) in &self.qubit_gates_backward[idx] {
+                                if topo_pos < node_topo_pos && !visited[new_node] {
+                                    visited[new_node] = true;
+                                    heap.push((topo_pos, new_node));
+                                }
+                            }
+                        } else if !now_active && was {
+                            active_qubits[idx] = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Propagates backward from a logical operator using truly sparse traversal.
     ///
     /// Only visits gates on the wires we're propagating through.
     /// Uses a max-heap to process gates in reverse topo order efficiently.
+    #[allow(dead_code)]
     fn propagate_from_logical(
         &self,
         x_positions: &[usize],
@@ -2103,8 +2602,180 @@ impl DagBackwardPropagator {
         }
     }
 
+    /// Propagates backward from a logical operator, reusing pre-allocated work arrays.
+    fn propagate_from_logical_reuse(
+        &self,
+        x_positions: &[usize],
+        z_positions: &[usize],
+        logical_id: &LogicalId,
+        map: &mut DagFaultInfluenceMap,
+        visited: &mut [bool],
+        active_qubits: &mut [bool],
+        heap: &mut BinaryHeap<(usize, usize)>,
+    ) {
+        // Clear work arrays
+        visited.fill(false);
+        active_qubits.fill(false);
+        heap.clear();
+
+        let mut prop = PauliProp::new();
+        for &q in x_positions {
+            prop.add_x(q);
+        }
+        for &q in z_positions {
+            prop.add_z(q);
+        }
+
+        let dummy_detector = DetectorId::single(MeasurementId {
+            tick: 0,
+            qubit: 0,
+            basis: 0,
+        });
+
+        // Initialize from logical operator support
+        for &q in x_positions {
+            if q <= self.max_qubit && !active_qubits[q] {
+                active_qubits[q] = true;
+                for &(topo_pos, node) in &self.qubit_gates_backward[q] {
+                    if !visited[node] {
+                        visited[node] = true;
+                        heap.push((topo_pos, node));
+                    }
+                }
+            }
+        }
+        for &q in z_positions {
+            if q <= self.max_qubit && !active_qubits[q] {
+                active_qubits[q] = true;
+                for &(topo_pos, node) in &self.qubit_gates_backward[q] {
+                    if !visited[node] {
+                        visited[node] = true;
+                        heap.push((topo_pos, node));
+                    }
+                }
+            }
+        }
+
+        // Process gates in reverse topo order
+        while let Some((_, node)) = heap.pop() {
+            if let Some(gate) = &self.gates[node] {
+                let mut was_active = [false; 8];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    if j < was_active.len() && q.index() <= self.max_qubit {
+                        was_active[j] = active_qubits[q.index()];
+                    }
+                }
+
+                self.record_influences_at_node_fast(
+                    node,
+                    &prop,
+                    &dummy_detector,
+                    Some(logical_id),
+                    map,
+                    false,
+                );
+
+                apply_gate(&mut prop, gate, Direction::Backward);
+
+                self.record_influences_at_node_fast(
+                    node,
+                    &prop,
+                    &dummy_detector,
+                    Some(logical_id),
+                    map,
+                    true,
+                );
+
+                let node_topo_pos = self.topo_positions[node];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    let idx = q.index();
+                    if idx <= self.max_qubit {
+                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
+                        let was = j < was_active.len() && was_active[j];
+
+                        if now_active && !was {
+                            active_qubits[idx] = true;
+                            for &(topo_pos, new_node) in &self.qubit_gates_backward[idx] {
+                                if topo_pos < node_topo_pos && !visited[new_node] {
+                                    visited[new_node] = true;
+                                    heap.push((topo_pos, new_node));
+                                }
+                            }
+                        } else if !now_active && was {
+                            active_qubits[idx] = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Records influences using detector index instead of DetectorId reference.
+    /// Looks up the detector from map.detectors only when needed.
+    #[inline]
+    fn record_influences_at_node_indexed(
+        &self,
+        node: usize,
+        prop: &PauliProp,
+        detector_idx: usize,
+        logical: Option<&LogicalId>,
+        map: &mut DagFaultInfluenceMap,
+        only_before: bool,
+    ) {
+        // Use pre-computed index for O(1) lookup
+        for &(loc_idx, before) in &self.node_locations[node] {
+            if before != only_before {
+                continue;
+            }
+
+            let loc = &self.locations[loc_idx];
+
+            for qubit in loc.qubits.iter() {
+                let q = qubit.index();
+                let obs_x = prop.contains_x(q);
+                let obs_z = prop.contains_z(q);
+
+                if let Some(influence) = map.influences.get_mut(loc) {
+                    // X fault anticommutes with Z or Y observable
+                    if obs_z {
+                        if let Some(log) = logical {
+                            influence.logical_flips[1].push(*log);
+                        } else {
+                            let detector = &map.detectors[detector_idx];
+                            influence.detector_flips[1].push(detector.clone());
+                            influence.measurement_flips[1].extend(detector.measurements.iter().copied());
+                        }
+                    }
+
+                    // Z fault anticommutes with X or Y observable
+                    if obs_x {
+                        if let Some(log) = logical {
+                            influence.logical_flips[3].push(*log);
+                        } else {
+                            let detector = &map.detectors[detector_idx];
+                            influence.detector_flips[3].push(detector.clone());
+                            influence.measurement_flips[3].extend(detector.measurements.iter().copied());
+                        }
+                    }
+
+                    // Y fault anticommutes with X, Z, or Y observable
+                    if obs_x || obs_z {
+                        if let Some(log) = logical {
+                            influence.logical_flips[2].push(*log);
+                        } else {
+                            let detector = &map.detectors[detector_idx];
+                            influence.detector_flips[2].push(detector.clone());
+                            influence.measurement_flips[2].extend(detector.measurements.iter().copied());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Records influences using pre-computed node-to-locations index (O(1) lookup).
     #[inline]
+    #[allow(dead_code)]
     fn record_influences_at_node_fast(
         &self,
         node: usize,
@@ -4395,44 +5066,90 @@ mod tests {
         }
     }
 
-    /// Build a syndrome extraction-like circuit.
-    fn build_syndrome_extraction_circuit(data_qubits: usize, ancilla_qubits: usize) -> (TickCircuit, DagCircuit) {
+    /// Build a syndrome extraction-like circuit with multiple rounds.
+    /// Uses realistic 2D surface code connectivity where each ancilla touches
+    /// 4 neighboring data qubits in a grid pattern.
+    fn build_syndrome_extraction_circuit_multi(
+        data_qubits: usize,
+        ancilla_qubits: usize,
+        rounds: usize,
+    ) -> (TickCircuit, DagCircuit) {
         use pecos_quantum::{DagCircuit, TickCircuit};
 
         let mut tick = TickCircuit::new();
         let mut dag = DagCircuit::new();
 
         let total = data_qubits + ancilla_qubits;
-
-        // Prep ancillas
         let ancilla_list: Vec<usize> = (data_qubits..total).collect();
-        tick.tick().pz(&ancilla_list);
-        for &a in &ancilla_list {
-            dag.pz(a);
+
+        // Compute grid size for 2D connectivity
+        // For d x d data qubits, we have roughly (d-1)^2 ancillas
+        let grid_size = (data_qubits as f64).sqrt().ceil() as usize;
+
+        // Build connectivity map: each ancilla touches 4 neighboring data qubits
+        // in a 2D grid pattern (like a rotated surface code)
+        let mut ancilla_neighbors: Vec<Vec<usize>> = Vec::with_capacity(ancilla_qubits);
+        for a_idx in 0..ancilla_qubits {
+            let row = a_idx / (grid_size - 1).max(1);
+            let col = a_idx % (grid_size - 1).max(1);
+
+            let mut neighbors = Vec::with_capacity(4);
+            // Four neighboring data qubits in a plaquette pattern
+            let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)];
+            for (dr, dc) in offsets {
+                let d_row = row + dr;
+                let d_col = col + dc;
+                if d_row < grid_size && d_col < grid_size {
+                    let d_idx = d_row * grid_size + d_col;
+                    if d_idx < data_qubits {
+                        neighbors.push(d_idx);
+                    }
+                }
+            }
+            ancilla_neighbors.push(neighbors);
         }
 
-        // CNOT rounds - each ancilla interacts with ~4 data qubits
-        for round in 0..4 {
-            let cx_pairs: Vec<(usize, usize)> = (data_qubits..total)
-                .enumerate()
-                .map(|(i, a)| {
-                    let d = (i + round) % data_qubits;
-                    (d, a)
-                })
-                .collect();
-            tick.tick().cx(&cx_pairs);
-            for (d, a) in cx_pairs {
-                dag.cx(d, a);
+        for _ in 0..rounds {
+            // Prep ancillas
+            tick.tick().pz(&ancilla_list);
+            for &a in &ancilla_list {
+                dag.pz(a);
+            }
+
+            // CNOT rounds - apply CNOTs in 4 time steps to avoid collisions
+            for cnot_round in 0..4 {
+                let cx_pairs: Vec<(usize, usize)> = ancilla_neighbors
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(a_idx, neighbors)| {
+                        neighbors.get(cnot_round).map(|&d| (d, data_qubits + a_idx))
+                    })
+                    .collect();
+
+                if !cx_pairs.is_empty() {
+                    tick.tick().cx(&cx_pairs);
+                    for (d, a) in cx_pairs {
+                        dag.cx(d, a);
+                    }
+                }
+            }
+
+            // Measure ancillas
+            tick.tick().mz(&ancilla_list);
+            for &a in &ancilla_list {
+                dag.mz(a);
             }
         }
 
-        // Measure ancillas
-        tick.tick().mz(&ancilla_list);
-        for &a in &ancilla_list {
-            dag.mz(a);
-        }
-
         (tick, dag)
+    }
+
+    /// Build a syndrome extraction-like circuit (single round for backwards compatibility).
+    fn build_syndrome_extraction_circuit(
+        data_qubits: usize,
+        ancilla_qubits: usize,
+    ) -> (TickCircuit, DagCircuit) {
+        build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, 1)
     }
 
     // =========================================================================
@@ -4485,6 +5202,47 @@ mod tests {
             "DAG Influence map has {} fault locations",
             map.influences.len()
         );
+    }
+
+    #[test]
+    fn test_dag_backward_propagator_vec_equivalence() {
+        use super::DagBackwardPropagator;
+
+        let dag = simple_dag_syndrome_circuit();
+        let propagator = DagBackwardPropagator::new(&dag);
+
+        // Build both map types
+        let btree_map = propagator.build_influence_map_fast();
+        let vec_map = propagator.build_influence_map_vec();
+
+        // Same number of locations
+        assert_eq!(btree_map.influences.len(), vec_map.influences.len());
+
+        // Same detectors
+        assert_eq!(btree_map.detectors.len(), vec_map.detectors.len());
+        assert_eq!(btree_map.measurements.len(), vec_map.measurements.len());
+
+        // Compare influences for each location
+        for (loc, btree_influence) in &btree_map.influences {
+            // Find the corresponding location in the vec map
+            let vec_idx = vec_map
+                .locations
+                .iter()
+                .position(|l| l == loc)
+                .expect("Location should exist in vec map");
+            let vec_influence = &vec_map.influences[vec_idx];
+
+            // Compare detector flips
+            for pauli in 0..4 {
+                assert_eq!(
+                    btree_influence.detector_flips[pauli].len(),
+                    vec_influence.detector_flips[pauli].len(),
+                    "Mismatch in detector_flips[{}] for location {:?}",
+                    pauli,
+                    loc
+                );
+            }
+        }
     }
 
     #[test]
@@ -4576,7 +5334,7 @@ mod tests {
             }
             let tick_time = start.elapsed();
 
-            // Benchmark DAG BackwardPropagator
+            // Benchmark DAG BackwardPropagator (full)
             let start = Instant::now();
             for _ in 0..iterations {
                 let propagator = DagBackwardPropagator::new(&dag);
@@ -4584,8 +5342,26 @@ mod tests {
             }
             let dag_time = start.elapsed();
 
+            // Benchmark DAG BackwardPropagator (fast, no reverse maps)
+            let start = Instant::now();
+            for _ in 0..iterations {
+                let propagator = DagBackwardPropagator::new(&dag);
+                let _map = propagator.build_influence_map_fast();
+            }
+            let dag_fast_time = start.elapsed();
+
+            // Benchmark DAG BackwardPropagator (Vec-based, fastest)
+            let start = Instant::now();
+            for _ in 0..iterations {
+                let propagator = DagBackwardPropagator::new(&dag);
+                let _map = propagator.build_influence_map_vec();
+            }
+            let dag_vec_time = start.elapsed();
+
             let tick_per_iter = tick_time.as_micros() as f64 / iterations as f64;
             let dag_per_iter = dag_time.as_micros() as f64 / iterations as f64;
+            let dag_fast_per_iter = dag_fast_time.as_micros() as f64 / iterations as f64;
+            let dag_vec_per_iter = dag_vec_time.as_micros() as f64 / iterations as f64;
 
             println!("  TickCircuit BackwardPropagator: {:>8.1} us/iter", tick_per_iter);
             println!(
@@ -4593,6 +5369,176 @@ mod tests {
                 dag_per_iter,
                 dag_per_iter / tick_per_iter
             );
+            println!(
+                "  DAG BackwardPropagator (fast):  {:>8.1} us/iter ({:.2}x)",
+                dag_fast_per_iter,
+                dag_fast_per_iter / tick_per_iter
+            );
+            println!(
+                "  DAG BackwardPropagator (vec):   {:>8.1} us/iter ({:.2}x)",
+                dag_vec_per_iter,
+                dag_vec_per_iter / tick_per_iter
+            );
+            println!();
+        }
+    }
+
+    /// Profile where time is spent in DAG propagator for small circuits
+    #[test]
+    #[ignore]
+    fn profile_dag_phases() {
+        use super::DagBackwardPropagator;
+        use std::time::Instant;
+
+        println!("\n========================================");
+        println!("DAG Propagator Phase Profiling");
+        println!("========================================\n");
+
+        // Test small circuit (d=3)
+        let (_, dag) = build_syndrome_extraction_circuit(9, 8);
+        let iterations = 1000;
+
+        // Phase 1: Constructor
+        let start = Instant::now();
+        let mut propagators = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            propagators.push(DagBackwardPropagator::new(&dag));
+        }
+        let construct_time = start.elapsed();
+        println!(
+            "d=3: Construction: {:>6.1} us/iter",
+            construct_time.as_micros() as f64 / iterations as f64
+        );
+
+        // Phase 2: build_influence_map (reusing propagator)
+        let propagator = &propagators[0];
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _map = propagator.build_influence_map();
+        }
+        let map_time = start.elapsed();
+        println!(
+            "d=3: build_influence_map: {:>6.1} us/iter",
+            map_time.as_micros() as f64 / iterations as f64
+        );
+
+        // Phase 3: build_influence_map_fast (no reverse maps)
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _map = propagator.build_influence_map_fast();
+        }
+        let map_fast_time = start.elapsed();
+        println!(
+            "d=3: build_influence_map_fast: {:>6.1} us/iter",
+            map_fast_time.as_micros() as f64 / iterations as f64
+        );
+
+        // Total
+        println!(
+            "d=3: Total (new + map): {:>6.1} us/iter",
+            (construct_time.as_micros() + map_time.as_micros()) as f64 / iterations as f64
+        );
+        println!(
+            "d=3: Total (new + map_fast): {:>6.1} us/iter",
+            (construct_time.as_micros() + map_fast_time.as_micros()) as f64 / iterations as f64
+        );
+
+        // Compare with d=5
+        println!();
+        let (_, dag5) = build_syndrome_extraction_circuit(25, 24);
+        let iterations = 500;
+
+        let start = Instant::now();
+        let mut propagators5 = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            propagators5.push(DagBackwardPropagator::new(&dag5));
+        }
+        let construct_time5 = start.elapsed();
+        println!(
+            "d=5: Construction: {:>6.1} us/iter",
+            construct_time5.as_micros() as f64 / iterations as f64
+        );
+
+        let propagator5 = &propagators5[0];
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _map = propagator5.build_influence_map();
+        }
+        let map_time5 = start.elapsed();
+        println!(
+            "d=5: build_influence_map: {:>6.1} us/iter",
+            map_time5.as_micros() as f64 / iterations as f64
+        );
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _map = propagator5.build_influence_map_fast();
+        }
+        let map_fast_time5 = start.elapsed();
+        println!(
+            "d=5: build_influence_map_fast: {:>6.1} us/iter",
+            map_fast_time5.as_micros() as f64 / iterations as f64
+        );
+
+        println!(
+            "d=5: Total (new + map): {:>6.1} us/iter",
+            (construct_time5.as_micros() + map_time5.as_micros()) as f64 / iterations as f64
+        );
+        println!(
+            "d=5: Total (new + map_fast): {:>6.1} us/iter",
+            (construct_time5.as_micros() + map_fast_time5.as_micros()) as f64 / iterations as f64
+        );
+    }
+
+    /// Benchmark with multiple syndrome extraction rounds (more realistic)
+    #[test]
+    #[ignore] // Run manually with --ignored flag
+    fn benchmark_multi_round() {
+        use super::{BackwardPropagator, DagBackwardPropagator};
+        use std::time::Instant;
+
+        println!("\n========================================");
+        println!("Multi-Round Syndrome Extraction Benchmark");
+        println!("========================================\n");
+
+        // Test different code sizes with multiple rounds
+        let configs = [
+            (25, 24, "d=5"),   // 5x5
+            (49, 48, "d=7"),   // 7x7
+            (121, 120, "d=11"), // 11x11
+        ];
+
+        for (data_qubits, ancilla_qubits, label) in configs {
+            println!("=== {} ({} data + {} ancilla) ===", label, data_qubits, ancilla_qubits);
+
+            for rounds in [1, 2, 4, 8] {
+                let (tick, dag) = build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
+                let iterations = if data_qubits > 100 { 5 } else { 20 };
+
+                // Benchmark TickCircuit BackwardPropagator
+                let start = Instant::now();
+                for _ in 0..iterations {
+                    let propagator = BackwardPropagator::new(&tick);
+                    let _map = propagator.build_influence_map();
+                }
+                let tick_time = start.elapsed();
+
+                // Benchmark DAG BackwardPropagator
+                let start = Instant::now();
+                for _ in 0..iterations {
+                    let propagator = DagBackwardPropagator::new(&dag);
+                    let _map = propagator.build_influence_map();
+                }
+                let dag_time = start.elapsed();
+
+                let tick_per_iter = tick_time.as_micros() as f64 / iterations as f64;
+                let dag_per_iter = dag_time.as_micros() as f64 / iterations as f64;
+
+                println!(
+                    "  {} rounds: Tick {:>8.1}us, DAG {:>8.1}us ({:.2}x)",
+                    rounds, tick_per_iter, dag_per_iter, dag_per_iter / tick_per_iter
+                );
+            }
             println!();
         }
     }

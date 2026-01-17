@@ -141,8 +141,8 @@ pub use backward_propagator::{
     apply_gate, propagate_backward_from_node, propagate_backward_from_tick,
     propagate_fault_backward, propagate_observable_backward, propagate_sparse_dag,
     propagate_through_circuit, propagate_through_dag, propagate_tick_range,
-    BackwardPropagator, DagBackwardPropagator, DagFaultInfluenceMap, DagPropagator,
-    DagSpacetimeLocation, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
+    BackwardPropagator, DagBackwardPropagator, DagFaultInfluenceMap, DagFaultInfluenceMapVec,
+    DagPropagator, DagSpacetimeLocation, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
     InfluenceBasedChecker, LogicalId, MeasurementId,
 };
 pub use circuit_runner::{

@@ -49,81 +49,39 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let distance = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(3);
     let iterations = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
-    let mode = args.get(3).map_or("soa", std::string::String::as_str);
+    let reuse = args.get(3).map_or(false, |s| s == "reuse");
 
     let data_qubits = distance * distance;
     let ancilla_qubits = data_qubits - 1;
 
     println!(
-        "Profiling d={distance} ({data_qubits} data + {ancilla_qubits} ancilla) for {iterations} iterations (mode={mode})"
+        "Profiling d={distance} ({data_qubits} data + {ancilla_qubits} ancilla) for {iterations} iterations"
     );
 
     let dag = build_syndrome_circuit(data_qubits, ancilla_qubits);
 
-    match mode {
-        "btree" => {
-            // Original BTreeMap-based implementation
-            for _ in 0..iterations {
-                let propagator = DagFaultAnalyzer::new(&dag);
-                let _map = propagator.build_influence_map();
-            }
-        }
-        "soa" => {
-            // Optimized SoA (Struct of Arrays) implementation
-            for _ in 0..iterations {
-                let propagator = DagFaultAnalyzer::new(&dag);
-                let _map = propagator.build_influence_map_soa();
-            }
-        }
-        "compare" => {
-            // Compare btree vs soa performance
-            let propagator = DagFaultAnalyzer::new(&dag);
-
-            // Warm up
-            let _ = propagator.build_influence_map();
-            let _ = propagator.build_influence_map_soa();
-
-            // Benchmark btree
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let _map = propagator.build_influence_map();
-            }
-            let btree_time = start.elapsed();
-
-            // Benchmark soa
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let _map = propagator.build_influence_map_soa();
-            }
-            let soa_time = start.elapsed();
-
-            // Memory comparison
-            let btree_map = propagator.build_influence_map();
-            let soa_map = propagator.build_influence_map_soa();
-            let soa_stats = soa_map.memory_stats();
-
-            let btree_us = btree_time.as_micros() as f64 / f64::from(iterations);
-            let soa_us = soa_time.as_micros() as f64 / f64::from(iterations);
-
-            println!("\n=== Performance Comparison ===");
-            println!("BTree: {btree_us:>8.2} us/iter (baseline)");
-            println!("SoA:   {:>8.2} us/iter ({:.2}x)", soa_us, soa_us / btree_us);
-
-            println!("\n=== Memory Statistics ===");
-            println!("Locations: {}", btree_map.influences.len());
-            println!("Detectors: {}", btree_map.detectors.len());
-            println!("SoA total bytes: {}", soa_stats.total_bytes);
-
-            return;
-        }
+    if reuse {
         // Reuse mode: create propagator once, build map multiple times
-        "reuse" | _ => {
+        let propagator = DagFaultAnalyzer::new(&dag);
+        for _ in 0..iterations {
+            let _map = propagator.build_influence_map();
+        }
+    } else {
+        // Default: create new propagator each iteration
+        for _ in 0..iterations {
             let propagator = DagFaultAnalyzer::new(&dag);
-            for _ in 0..iterations {
-                let _map = propagator.build_influence_map_soa();
-            }
+            let _map = propagator.build_influence_map();
         }
     }
 
+    // Print some stats at the end
+    let propagator = DagFaultAnalyzer::new(&dag);
+    let map = propagator.build_influence_map();
+    let stats = map.memory_stats();
+
+    println!("\n=== Statistics ===");
+    println!("Locations: {}", map.locations.len());
+    println!("Detectors: {}", map.detectors.len());
+    println!("Total bytes: {}", stats.total_bytes);
     println!("Done");
 }

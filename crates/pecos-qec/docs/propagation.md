@@ -159,43 +159,31 @@ For multi-qubit operators, anticommutation is determined by the product of per-q
 
 The backward propagator produces a **fault influence map** relating fault locations to detectors/logicals.
 
-### DagFaultInfluenceMap (BTreeMap-based)
-
-The reference implementation using `BTreeMap<DagSpacetimeLocation, FaultInfluence>`:
-
-```rust
-let map = propagator.build_influence_map();
-
-for (location, influence) in &map.influences {
-    // influence.detector_flips[1] = detectors flipped by X fault
-    // influence.detector_flips[2] = detectors flipped by Y fault
-    // influence.detector_flips[3] = detectors flipped by Z fault
-}
-```
-
-Properties:
-- Locations sorted by spacetime order
-- Good for debugging and inspection
-- Higher memory overhead per entry
-
-### DagFaultInfluenceMapSoA (Struct of Arrays)
+### DagFaultInfluenceMap
 
 Cache-optimized format using CSR (Compressed Sparse Row) arrays:
 
 ```rust
-let map = propagator.build_influence_map_soa();
+let map = propagator.build_influence_map();
 
 // Fast classification without allocations
 let (has_syndrome, has_logical) = map.classify_fault(loc_idx, pauli);
 
 // Get detector indices for a specific fault
 let detectors = map.get_detector_indices(loc_idx, pauli);
+
+// Iterate over locations
+for (loc_idx, loc) in map.locations.iter().enumerate() {
+    if map.influences.has_detector_flips(loc_idx, Pauli::X) {
+        // X fault at this location flips some detector
+    }
+}
 ```
 
 Properties:
-- 5-10x faster for enumeration workloads
-- Cache-friendly memory layout
+- Cache-friendly CSR memory layout
 - Compact storage with minimal overhead
+- Efficient for enumeration workloads
 
 ## Example: Syndrome Extraction
 

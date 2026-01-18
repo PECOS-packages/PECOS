@@ -158,12 +158,11 @@ pub use pauli_prop_checker::{
     has_syndrome, propagate_fault, propagate_faults,
 };
 pub use propagator::{
-    DagFaultAnalyzer, DagFaultInfluenceMap, DagFaultInfluenceMapSoA, DagPropagator,
-    DagSpacetimeLocation, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
-    InfluenceBasedChecker, LogicalId, MeasurementId, TickFaultAnalyzer, apply_gate,
-    propagate_backward_from_node, propagate_backward_from_tick, propagate_fault_backward,
-    propagate_observable_backward, propagate_sparse_dag, propagate_through_circuit,
-    propagate_through_dag, propagate_tick_range,
+    DagFaultAnalyzer, DagFaultInfluenceMap, DagPropagator, DagSpacetimeLocation, DetectorId,
+    Direction, FaultInfluence, FaultInfluenceMap, InfluenceBasedChecker, LogicalId, MeasurementId,
+    TickFaultAnalyzer, apply_gate, propagate_backward_from_node, propagate_backward_from_tick,
+    propagate_fault_backward, propagate_observable_backward, propagate_sparse_dag,
+    propagate_through_circuit, propagate_through_dag, propagate_tick_range,
 };
 pub use stabilizer_flip_checker::{
     ErrorClass, StabilizerFlipAnalysis, StabilizerFlipChecker, StabilizerFlips,

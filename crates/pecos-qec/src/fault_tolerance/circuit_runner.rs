@@ -15,12 +15,14 @@
 //! This module provides integration between the fault tolerance checking framework
 //! and `TickCircuit` / `pecos-qsim` simulators.
 
-use super::pauli_prop_checker::{classify_fault, propagate_faults, CircuitIO, FaultClass};
-use super::{FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, SpacetimeLocation};
-use pecos_core::gate_type::GateType;
+use super::pauli_prop_checker::{CircuitIO, FaultClass, classify_fault, propagate_faults};
+use super::{
+    FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, SpacetimeLocation,
+};
 use pecos_core::QubitId;
-use pecos_quantum::TickCircuit;
+use pecos_core::gate_type::GateType;
 use pecos_qsim::CliffordGateable;
+use pecos_quantum::TickCircuit;
 
 /// Extracts all spacetime locations from a `TickCircuit`.
 ///
@@ -59,7 +61,8 @@ pub fn extract_spacetime_locations(
     for (tick_idx, tick) in circuit.iter_ticks() {
         for (gate_idx, gate) in tick.gates().iter().enumerate() {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-            let is_measurement = matches!(gate.gate_type, GateType::Measure | GateType::MeasureFree);
+            let is_measurement =
+                matches!(gate.gate_type, GateType::Measure | GateType::MeasureFree);
 
             locations.push(SpacetimeLocation::new(
                 tick_idx,
@@ -812,7 +815,10 @@ mod tests {
     fn test_fault_checker_with_bell_state() {
         let circuit = bell_state_circuit();
 
-        let config = FaultCheckConfig::new().with_weight(1).all_paulis().stop_on_first(false);
+        let config = FaultCheckConfig::new()
+            .with_weight(1)
+            .all_paulis()
+            .stop_on_first(false);
 
         let checker = FaultChecker::new(&circuit).with_config(config);
 
@@ -899,13 +905,19 @@ mod tests {
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
         // Test X-only mode
-        let config_x = FaultCheckConfig::new().with_weight(1).x_only().stop_on_first(false);
+        let config_x = FaultCheckConfig::new()
+            .with_weight(1)
+            .x_only()
+            .stop_on_first(false);
 
         let checker_x = FaultChecker::new(&circuit).with_config(config_x);
         let result_x = checker_x.check(|_sim: &SparseStab| false, || SparseStab::new(5));
 
         // Test Z-only mode
-        let config_z = FaultCheckConfig::new().with_weight(1).z_only().stop_on_first(false);
+        let config_z = FaultCheckConfig::new()
+            .with_weight(1)
+            .z_only()
+            .stop_on_first(false);
 
         let checker_z = FaultChecker::new(&circuit).with_config(config_z);
         let result_z = checker_z.check(|_sim: &SparseStab| false, || SparseStab::new(5));
@@ -1135,7 +1147,10 @@ mod tests {
         let checker = FaultChecker::new(&circuit);
 
         assert!(checker.has_input_qubits(), "Final measurement has inputs");
-        assert!(!checker.has_output_qubits(), "Final measurement has no outputs");
+        assert!(
+            !checker.has_output_qubits(),
+            "Final measurement has no outputs"
+        );
 
         assert_eq!(checker.input_qubits().len(), 3);
         assert!(checker.output_qubits().is_empty());
@@ -1156,27 +1171,69 @@ mod tests {
 
         // Data qubits should be detected as inputs (used in CX but not prepared)
         assert!(checker.has_input_qubits());
-        assert!(checker.input_qubits().contains(&0), "Data qubit 0 should be input");
-        assert!(checker.input_qubits().contains(&1), "Data qubit 1 should be input");
-        assert!(checker.input_qubits().contains(&2), "Data qubit 2 should be input");
-        assert!(!checker.input_qubits().contains(&3), "Ancilla 3 should not be input");
-        assert!(!checker.input_qubits().contains(&4), "Ancilla 4 should not be input");
+        assert!(
+            checker.input_qubits().contains(&0),
+            "Data qubit 0 should be input"
+        );
+        assert!(
+            checker.input_qubits().contains(&1),
+            "Data qubit 1 should be input"
+        );
+        assert!(
+            checker.input_qubits().contains(&2),
+            "Data qubit 2 should be input"
+        );
+        assert!(
+            !checker.input_qubits().contains(&3),
+            "Ancilla 3 should not be input"
+        );
+        assert!(
+            !checker.input_qubits().contains(&4),
+            "Ancilla 4 should not be input"
+        );
 
         // Data qubits should be detected as outputs (used but not measured)
         assert!(checker.has_output_qubits());
-        assert!(checker.output_qubits().contains(&0), "Data qubit 0 should be output");
-        assert!(checker.output_qubits().contains(&1), "Data qubit 1 should be output");
-        assert!(checker.output_qubits().contains(&2), "Data qubit 2 should be output");
-        assert!(!checker.output_qubits().contains(&3), "Ancilla 3 should not be output");
-        assert!(!checker.output_qubits().contains(&4), "Ancilla 4 should not be output");
+        assert!(
+            checker.output_qubits().contains(&0),
+            "Data qubit 0 should be output"
+        );
+        assert!(
+            checker.output_qubits().contains(&1),
+            "Data qubit 1 should be output"
+        );
+        assert!(
+            checker.output_qubits().contains(&2),
+            "Data qubit 2 should be output"
+        );
+        assert!(
+            !checker.output_qubits().contains(&3),
+            "Ancilla 3 should not be output"
+        );
+        assert!(
+            !checker.output_qubits().contains(&4),
+            "Ancilla 4 should not be output"
+        );
 
         // Ancillas should be detected as prepared
-        assert!(checker.ancilla_qubits().contains(&3), "Ancilla 3 should be prepared");
-        assert!(checker.ancilla_qubits().contains(&4), "Ancilla 4 should be prepared");
+        assert!(
+            checker.ancilla_qubits().contains(&3),
+            "Ancilla 3 should be prepared"
+        );
+        assert!(
+            checker.ancilla_qubits().contains(&4),
+            "Ancilla 4 should be prepared"
+        );
 
         // Ancillas should be detected as measured
-        assert!(checker.measured_qubits().contains(&3), "Ancilla 3 should be measured");
-        assert!(checker.measured_qubits().contains(&4), "Ancilla 4 should be measured");
+        assert!(
+            checker.measured_qubits().contains(&3),
+            "Ancilla 3 should be measured"
+        );
+        assert!(
+            checker.measured_qubits().contains(&4),
+            "Ancilla 4 should be measured"
+        );
 
         println!("3-qubit code syndrome extraction:");
         println!("  Input qubits: {:?}", checker.input_qubits());
@@ -1196,30 +1253,62 @@ mod tests {
         // All 7 data qubits should be inputs
         assert!(checker.has_input_qubits());
         for q in 0..7 {
-            assert!(checker.input_qubits().contains(&q), "Data qubit {} should be input", q);
+            assert!(
+                checker.input_qubits().contains(&q),
+                "Data qubit {} should be input",
+                q
+            );
         }
 
         // All 7 data qubits should be outputs
         assert!(checker.has_output_qubits());
         for q in 0..7 {
-            assert!(checker.output_qubits().contains(&q), "Data qubit {} should be output", q);
+            assert!(
+                checker.output_qubits().contains(&q),
+                "Data qubit {} should be output",
+                q
+            );
         }
 
         // Ancillas 7,8,9 should be prepared
         for q in 7..10 {
-            assert!(checker.ancilla_qubits().contains(&q), "Ancilla {} should be prepared", q);
+            assert!(
+                checker.ancilla_qubits().contains(&q),
+                "Ancilla {} should be prepared",
+                q
+            );
         }
 
         // Ancillas 7,8,9 should be measured
         for q in 7..10 {
-            assert!(checker.measured_qubits().contains(&q), "Ancilla {} should be measured", q);
+            assert!(
+                checker.measured_qubits().contains(&q),
+                "Ancilla {} should be measured",
+                q
+            );
         }
 
         // Verify counts
-        assert_eq!(checker.input_qubits().len(), 7, "Should have 7 input qubits");
-        assert_eq!(checker.output_qubits().len(), 7, "Should have 7 output qubits");
-        assert_eq!(checker.ancilla_qubits().len(), 3, "Should have 3 ancilla qubits");
-        assert_eq!(checker.measured_qubits().len(), 3, "Should have 3 measured qubits");
+        assert_eq!(
+            checker.input_qubits().len(),
+            7,
+            "Should have 7 input qubits"
+        );
+        assert_eq!(
+            checker.output_qubits().len(),
+            7,
+            "Should have 7 output qubits"
+        );
+        assert_eq!(
+            checker.ancilla_qubits().len(),
+            3,
+            "Should have 3 ancilla qubits"
+        );
+        assert_eq!(
+            checker.measured_qubits().len(),
+            3,
+            "Should have 3 measured qubits"
+        );
 
         println!("Steane code X-syndrome extraction:");
         println!("  Input qubits: {:?}", checker.input_qubits());
@@ -1257,14 +1346,28 @@ mod tests {
         let checker = FaultChecker::new(&circuit);
 
         // No input qubits (all are prepared within the gadget)
-        assert!(!checker.has_input_qubits(), "State prep should have no inputs");
+        assert!(
+            !checker.has_input_qubits(),
+            "State prep should have no inputs"
+        );
         assert!(checker.input_qubits().is_empty());
 
         // All 7 qubits should be outputs
-        assert!(checker.has_output_qubits(), "State prep should have outputs");
-        assert_eq!(checker.output_qubits().len(), 7, "Should have 7 output qubits");
+        assert!(
+            checker.has_output_qubits(),
+            "State prep should have outputs"
+        );
+        assert_eq!(
+            checker.output_qubits().len(),
+            7,
+            "Should have 7 output qubits"
+        );
         for q in 0..7 {
-            assert!(checker.output_qubits().contains(&q), "Qubit {} should be output", q);
+            assert!(
+                checker.output_qubits().contains(&q),
+                "Qubit {} should be output",
+                q
+            );
         }
 
         // All qubits are ancillas (prepared)
@@ -1299,11 +1402,21 @@ mod tests {
         let checker = FaultChecker::new(&circuit);
 
         // All 7 qubits should be inputs (used but not prepared)
-        assert!(checker.has_input_qubits(), "Final measurement should have inputs");
-        assert_eq!(checker.input_qubits().len(), 7, "Should have 7 input qubits");
+        assert!(
+            checker.has_input_qubits(),
+            "Final measurement should have inputs"
+        );
+        assert_eq!(
+            checker.input_qubits().len(),
+            7,
+            "Should have 7 input qubits"
+        );
 
         // No output qubits (all are measured)
-        assert!(!checker.has_output_qubits(), "Final measurement should have no outputs");
+        assert!(
+            !checker.has_output_qubits(),
+            "Final measurement should have no outputs"
+        );
         assert!(checker.output_qubits().is_empty());
 
         // No ancillas (nothing is prepared)
@@ -1347,11 +1460,17 @@ mod tests {
         let checker = FaultChecker::new(&circuit);
 
         // No input qubits (all are prepared)
-        assert!(!checker.has_input_qubits(), "Complete QEC should have no inputs");
+        assert!(
+            !checker.has_input_qubits(),
+            "Complete QEC should have no inputs"
+        );
         assert!(checker.input_qubits().is_empty());
 
         // No output qubits (all are measured)
-        assert!(!checker.has_output_qubits(), "Complete QEC should have no outputs");
+        assert!(
+            !checker.has_output_qubits(),
+            "Complete QEC should have no outputs"
+        );
         assert!(checker.output_qubits().is_empty());
 
         // All 5 qubits should be ancillas (prepared)
@@ -1362,7 +1481,10 @@ mod tests {
 
         println!("Complete 3-qubit QEC round:");
         println!("  Circuit type: {}", checker.circuit_type());
-        assert_eq!(checker.circuit_type(), "self-contained (state prep + final measurement)");
+        assert_eq!(
+            checker.circuit_type(),
+            "self-contained (state prep + final measurement)"
+        );
     }
 
     /// Build a logical CNOT gadget between two 3-qubit codes.
@@ -1400,7 +1522,10 @@ mod tests {
 
         println!("Logical CNOT gadget:");
         println!("  Circuit type: {}", checker.circuit_type());
-        assert_eq!(checker.circuit_type(), "pass-through gadget (has inputs and outputs)");
+        assert_eq!(
+            checker.circuit_type(),
+            "pass-through gadget (has inputs and outputs)"
+        );
     }
 
     /// Build a flag-based syndrome extraction circuit.
@@ -1465,7 +1590,10 @@ mod tests {
         // Use the three-qubit bit-flip syndrome extraction circuit
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
-        let config = FaultCheckConfig::new().with_weight(1).all_paulis().stop_on_first(false);
+        let config = FaultCheckConfig::new()
+            .with_weight(1)
+            .all_paulis()
+            .stop_on_first(false);
 
         let checker = FaultChecker::new(&circuit).with_config(config);
 
@@ -1497,7 +1625,10 @@ mod tests {
             analysis.undetectable_stabilizers
         );
         println!("  Detectable errors: {}", analysis.detectable_errors);
-        println!("  Detection rate: {:.2}%", analysis.detection_rate() * 100.0);
+        println!(
+            "  Detection rate: {:.2}%",
+            analysis.detection_rate() * 100.0
+        );
     }
 
     #[test]
@@ -1505,7 +1636,10 @@ mod tests {
         // Use the three-qubit bit-flip syndrome extraction circuit
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
-        let config = FaultCheckConfig::new().with_weight(1).all_paulis().stop_on_first(false);
+        let config = FaultCheckConfig::new()
+            .with_weight(1)
+            .all_paulis()
+            .stop_on_first(false);
 
         let checker = FaultChecker::new(&circuit).with_config(config);
 
@@ -1530,7 +1664,10 @@ mod tests {
     fn test_check_undetectable_errors() {
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
-        let config = FaultCheckConfig::new().with_weight(1).all_paulis().stop_on_first(false);
+        let config = FaultCheckConfig::new()
+            .with_weight(1)
+            .all_paulis()
+            .stop_on_first(false);
 
         let checker = FaultChecker::new(&circuit).with_config(config);
 
@@ -1552,7 +1689,10 @@ mod tests {
     fn test_check_output_weight_expansion() {
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
-        let config = FaultCheckConfig::new().with_weight(1).all_paulis().stop_on_first(false);
+        let config = FaultCheckConfig::new()
+            .with_weight(1)
+            .all_paulis()
+            .stop_on_first(false);
 
         let checker = FaultChecker::new(&circuit).with_config(config);
 
@@ -1575,7 +1715,10 @@ mod tests {
     fn test_analyze_fault_categories_with_collection() {
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
-        let config = FaultCheckConfig::new().with_weight(1).all_paulis().stop_on_first(false);
+        let config = FaultCheckConfig::new()
+            .with_weight(1)
+            .all_paulis()
+            .stop_on_first(false);
 
         let checker = FaultChecker::new(&circuit).with_config(config);
 
@@ -1587,7 +1730,10 @@ mod tests {
         let analysis = checker.analyze_fault_categories(z_ancillas, x_ancillas, logicals, true);
 
         // Verify that failures are collected
-        assert_eq!(analysis.failures.len(), analysis.undetectable_logical_errors);
+        assert_eq!(
+            analysis.failures.len(),
+            analysis.undetectable_logical_errors
+        );
 
         // Verify each collected failure has the right classification
         for (fault_config, classification) in &analysis.failures {
@@ -1601,17 +1747,17 @@ mod tests {
             );
         }
 
-        println!(
-            "Collected {} failure details",
-            analysis.failures.len()
-        );
+        println!("Collected {} failure details", analysis.failures.len());
     }
 
     #[test]
     fn test_fault_category_analysis_methods() {
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
-        let config = FaultCheckConfig::new().with_weight(1).all_paulis().stop_on_first(false);
+        let config = FaultCheckConfig::new()
+            .with_weight(1)
+            .all_paulis()
+            .stop_on_first(false);
 
         let checker = FaultChecker::new(&circuit).with_config(config);
 
@@ -1641,7 +1787,10 @@ mod tests {
         // Test check_with_simulator which combines Pauli propagation with full simulation
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
-        let config = FaultCheckConfig::new().with_weight(1).all_paulis().stop_on_first(false);
+        let config = FaultCheckConfig::new()
+            .with_weight(1)
+            .all_paulis()
+            .stop_on_first(false);
 
         let checker = FaultChecker::new(&circuit).with_config(config);
 

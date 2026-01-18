@@ -996,7 +996,7 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::z(qubits))
     }
 
-    /// Apply Identity gate(s) to one or more qubits.
+    /// Apply identity gate(s) to one or more qubits.
     ///
     /// # Examples
     ///
@@ -1004,10 +1004,10 @@ impl<'a> TickHandle<'a> {
     /// use pecos_quantum::TickCircuit;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().i(&[0]);           // Single qubit
-    /// circuit.tick().i(&[1, 2, 3]);     // Multiple qubits
+    /// circuit.tick().iden(&[0]);           // Single qubit
+    /// circuit.tick().iden(&[1, 2, 3]);     // Multiple qubits
     /// ```
-    pub fn i(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+    pub fn iden(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
         self.add_gate(Gate::i(qubits))
     }
 
@@ -1270,6 +1270,49 @@ impl<'a> TickHandle<'a> {
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
         self.add_gate(Gate::rzz(theta.into(), pairs))
+    }
+
+    /// Apply CRZ (controlled-RZ) gate(s) to one or more qubit pairs.
+    ///
+    /// The first qubit in each pair is the control, the second is the target.
+    pub fn crz(
+        &mut self,
+        theta: impl Into<Angle64>,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        let angle = theta.into();
+        for &(c, t) in pairs {
+            self.add_gate(Gate::with_angles(
+                GateType::CRZ,
+                vec![angle],
+                vec![c.into(), t.into()],
+            ));
+        }
+        self
+    }
+
+    // =========================================================================
+    // Three-qubit gates
+    // =========================================================================
+
+    /// Apply CCX (Toffoli) gate(s).
+    ///
+    /// Each triple is (control1, control2, target).
+    pub fn ccx(
+        &mut self,
+        triples: &[(
+            impl Into<QubitId> + Copy,
+            impl Into<QubitId> + Copy,
+            impl Into<QubitId> + Copy,
+        )],
+    ) -> &mut Self {
+        for &(c1, c2, t) in triples {
+            self.add_gate(Gate::simple(
+                GateType::CCX,
+                vec![c1.into(), c2.into(), t.into()],
+            ));
+        }
+        self
     }
 
     // =========================================================================

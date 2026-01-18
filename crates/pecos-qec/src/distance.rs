@@ -372,8 +372,11 @@ pub fn find_min_weight_logicals_with_info(
                 }
 
                 // Determine which logical operators this is equivalent to
-                let equivalent_logicals =
-                    classify_logical_equivalence_indexed(&log_index, code.num_logical_qubits(), &pauli);
+                let equivalent_logicals = classify_logical_equivalence_indexed(
+                    &log_index,
+                    code.num_logical_qubits(),
+                    &pauli,
+                );
 
                 results.push(LogicalOperatorInfo {
                     operator: pauli,

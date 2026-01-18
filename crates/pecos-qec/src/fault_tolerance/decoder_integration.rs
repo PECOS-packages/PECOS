@@ -57,8 +57,8 @@
 //! ```
 
 use super::{
-    anticommutes_with_logical, propagate_faults, FaultCheckConfig, FaultConfiguration,
-    PauliFaultIterator, SpacetimeLocation,
+    FaultCheckConfig, FaultConfiguration, PauliFaultIterator, SpacetimeLocation,
+    anticommutes_with_logical, propagate_faults,
 };
 use ndarray::{Array1, ArrayView1};
 use pecos_decoder_core::{Decoder, DecodingResultTrait};
@@ -321,8 +321,7 @@ pub struct ErrorCorrectionChecker<'a> {
 impl<'a> ErrorCorrectionChecker<'a> {
     /// Creates a new error correction checker.
     pub fn new(circuit: &'a pecos_quantum::TickCircuit) -> Self {
-        let locations =
-            super::circuit_runner::extract_spacetime_locations(circuit, false);
+        let locations = super::circuit_runner::extract_spacetime_locations(circuit, false);
         Self {
             circuit,
             ec_config: ErrorCorrectionConfig::new(),
@@ -402,11 +401,7 @@ impl<'a> ErrorCorrectionChecker<'a> {
         let mut details = Vec::new();
 
         let max_weight = fault_config.max_weight;
-        let fault_iter = PauliFaultIterator::new(
-            self.locations.clone(),
-            max_weight,
-            fault_config,
-        );
+        let fault_iter = PauliFaultIterator::new(self.locations.clone(), max_weight, fault_config);
 
         for fault in fault_iter {
             total_tested += 1;

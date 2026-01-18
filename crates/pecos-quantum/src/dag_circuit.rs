@@ -121,7 +121,7 @@ impl DagTraversalIndex {
         self.max_qubit
     }
 
-    /// Returns the number of qubits (max_qubit + 1).
+    /// Returns the number of qubits (`max_qubit` + 1).
     #[inline]
     #[must_use]
     pub fn num_qubits(&self) -> usize {
@@ -182,9 +182,7 @@ impl DagTraversalIndex {
         let gates = &self.qubit_gates[qubit];
 
         // Binary search for this node's position in the qubit's gate list
-        let idx = gates
-            .binary_search_by_key(&topo_pos, |&(tp, _)| tp)
-            .ok()?;
+        let idx = gates.binary_search_by_key(&topo_pos, |&(tp, _)| tp).ok()?;
 
         // Return predecessor if it exists
         if idx > 0 {
@@ -231,9 +229,7 @@ impl DagTraversalIndex {
         let gates = &self.qubit_gates[qubit];
 
         // Binary search for this node's position in the qubit's gate list
-        let idx = gates
-            .binary_search_by_key(&topo_pos, |&(tp, _)| tp)
-            .ok()?;
+        let idx = gates.binary_search_by_key(&topo_pos, |&(tp, _)| tp).ok()?;
 
         // Return successor if it exists
         if idx + 1 < gates.len() {
@@ -1018,6 +1014,11 @@ impl DagCircuit {
         self
     }
 
+    /// Alias for `identity` - apply the identity gate.
+    pub fn iden(&mut self, q: impl Into<QubitId>) -> &mut Self {
+        self.identity(q)
+    }
+
     /// Apply an X (Pauli-X) gate.
     pub fn x(&mut self, q: impl Into<QubitId>) -> &mut Self {
         self.add_gate_auto_wire(Gate::x(&[q.into()]));
@@ -1051,6 +1052,34 @@ impl DagCircuit {
     /// Apply the SZ-dagger (S-dagger) gate.
     pub fn szdg(&mut self, q: impl Into<QubitId>) -> &mut Self {
         self.add_gate_auto_wire(Gate::simple(GateType::SZdg, vec![q.into()]));
+        self
+    }
+
+    /// Apply the SX (sqrt(X)) gate.
+    ///
+    /// This is a native gate on IBM quantum hardware. Two SX gates equal an X gate.
+    pub fn sx(&mut self, q: impl Into<QubitId>) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(GateType::SX, vec![q.into()]));
+        self
+    }
+
+    /// Apply the SX-dagger (sqrt(X) inverse) gate.
+    pub fn sxdg(&mut self, q: impl Into<QubitId>) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(GateType::SXdg, vec![q.into()]));
+        self
+    }
+
+    /// Apply the SY (sqrt(Y)) gate.
+    ///
+    /// Two SY gates equal a Y gate.
+    pub fn sy(&mut self, q: impl Into<QubitId>) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(GateType::SY, vec![q.into()]));
+        self
+    }
+
+    /// Apply the SY-dagger (sqrt(Y) inverse) gate.
+    pub fn sydg(&mut self, q: impl Into<QubitId>) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(GateType::SYdg, vec![q.into()]));
         self
     }
 
@@ -1130,20 +1159,44 @@ impl DagCircuit {
     // -------------------- Two-qubit gates --------------------
 
     /// Apply a CX (CNOT) gate.
-    pub fn cx(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
-        let c = q1.into();
-        let t = q2.into();
+    ///
+    /// The first qubit is the control, the second is the target.
+    /// Flips the target qubit if the control is |1>.
+    pub fn cx(&mut self, control: impl Into<QubitId>, target: impl Into<QubitId>) -> &mut Self {
+        let c = control.into();
+        let t = target.into();
         self.add_gate_auto_wire(Gate::cx(&[(c, t)]));
         self
     }
 
+    /// Apply a CY (controlled-Y) gate.
+    ///
+    /// The first qubit is the control, the second is the target.
+    pub fn cy(&mut self, control: impl Into<QubitId>, target: impl Into<QubitId>) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(
+            GateType::CY,
+            vec![control.into(), target.into()],
+        ));
+        self
+    }
+
+    /// Apply a CZ (controlled-Z) gate.
+    ///
+    /// Applies a phase flip when both qubits are |1>. This gate is symmetric.
+    pub fn cz(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(GateType::CZ, vec![q1.into(), q2.into()]));
+        self
+    }
+
     /// Apply an SZZ (sqrt(ZZ)) gate.
+    ///
+    /// Native entangling gate on some trapped-ion systems.
     pub fn szz(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
         self.add_gate_auto_wire(Gate::simple(GateType::SZZ, vec![q1.into(), q2.into()]));
         self
     }
 
-    /// Apply an SZZ-dagger gate.
+    /// Apply an SZZ-dagger (sqrt(ZZ) inverse) gate.
     pub fn szzdg(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
         self.add_gate_auto_wire(Gate::simple(GateType::SZZdg, vec![q1.into(), q2.into()]));
         self
@@ -1151,7 +1204,7 @@ impl DagCircuit {
 
     /// Apply an RZZ (ZZ rotation) gate.
     ///
-    /// The angle can be an `Angle64` or an `f64` (interpreted as radians).
+    /// Implements exp(-i * theta/2 * Z*Z). The angle can be `Angle64` or `f64` (radians).
     pub fn rzz(
         &mut self,
         theta: impl Into<Angle64>,
@@ -1162,6 +1215,84 @@ impl DagCircuit {
             GateType::RZZ,
             vec![theta.into()],
             vec![q1.into(), q2.into()],
+        ));
+        self
+    }
+
+    /// Apply an RXX (XX rotation) gate.
+    ///
+    /// Implements exp(-i * theta/2 * X*X). Native gate on trapped-ion systems.
+    /// The angle can be `Angle64` or `f64` (radians).
+    pub fn rxx(
+        &mut self,
+        theta: impl Into<Angle64>,
+        q1: impl Into<QubitId>,
+        q2: impl Into<QubitId>,
+    ) -> &mut Self {
+        self.add_gate_auto_wire(Gate::with_angles(
+            GateType::RXX,
+            vec![theta.into()],
+            vec![q1.into(), q2.into()],
+        ));
+        self
+    }
+
+    /// Apply an RYY (YY rotation) gate.
+    ///
+    /// Implements exp(-i * theta/2 * Y*Y). The angle can be `Angle64` or `f64` (radians).
+    pub fn ryy(
+        &mut self,
+        theta: impl Into<Angle64>,
+        q1: impl Into<QubitId>,
+        q2: impl Into<QubitId>,
+    ) -> &mut Self {
+        self.add_gate_auto_wire(Gate::with_angles(
+            GateType::RYY,
+            vec![theta.into()],
+            vec![q1.into(), q2.into()],
+        ));
+        self
+    }
+
+    /// Apply a SWAP gate.
+    ///
+    /// Exchanges the states of two qubits.
+    pub fn swap(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(GateType::SWAP, vec![q1.into(), q2.into()]));
+        self
+    }
+
+    /// Apply a CRZ (controlled-RZ) gate.
+    ///
+    /// The angle can be an `Angle64` or an `f64` (interpreted as radians).
+    pub fn crz(
+        &mut self,
+        theta: impl Into<Angle64>,
+        control: impl Into<QubitId>,
+        target: impl Into<QubitId>,
+    ) -> &mut Self {
+        self.add_gate_auto_wire(Gate::with_angles(
+            GateType::CRZ,
+            vec![theta.into()],
+            vec![control.into(), target.into()],
+        ));
+        self
+    }
+
+    // -------------------- Three-qubit gates --------------------
+
+    /// Apply a CCX (Toffoli) gate.
+    ///
+    /// The first two qubits are controls, the third is the target.
+    pub fn ccx(
+        &mut self,
+        c1: impl Into<QubitId>,
+        c2: impl Into<QubitId>,
+        target: impl Into<QubitId>,
+    ) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(
+            GateType::CCX,
+            vec![c1.into(), c2.into(), target.into()],
         ));
         self
     }

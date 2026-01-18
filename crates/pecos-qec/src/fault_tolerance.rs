@@ -133,24 +133,16 @@ pub mod pauli_prop_checker;
 pub mod propagator;
 pub mod stabilizer_flip_checker;
 
-use pecos_core::gate_type::GateType;
 use pecos_core::QubitId;
+use pecos_core::gate_type::GateType;
 use std::collections::BTreeSet;
 
-pub use propagator::{
-    apply_gate, propagate_backward_from_node, propagate_backward_from_tick,
-    propagate_fault_backward, propagate_observable_backward, propagate_sparse_dag,
-    propagate_through_circuit, propagate_through_dag, propagate_tick_range,
-    BackwardPropagator, DagFaultAnalyzer, DagFaultInfluenceMap, DagFaultInfluenceMapSoA,
-    DagPropagator, DagSpacetimeLocation, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
-    InfluenceBasedChecker, LogicalId, MeasurementId,
-};
 pub use circuit_runner::{
-    extract_spacetime_locations, run_circuit_with_faults, FaultCategoryAnalysis, FaultChecker,
+    FaultCategoryAnalysis, FaultChecker, extract_spacetime_locations, run_circuit_with_faults,
 };
 pub use decoder_integration::{
-    apply_recovery, extract_syndrome, run_correction_cycle, CorrectionResult,
-    ErrorCorrectionChecker, ErrorCorrectionConfig, ErrorCorrectionResult, LookupTableDecoder,
+    CorrectionResult, ErrorCorrectionChecker, ErrorCorrectionConfig, ErrorCorrectionResult,
+    LookupTableDecoder, apply_recovery, extract_syndrome, run_correction_cycle,
 };
 pub use gadget_checker::{
     GadgetAnalysis, GadgetChecker, GadgetConfig, GadgetDecoderAnalysis, GadgetFaultClass,
@@ -158,12 +150,20 @@ pub use gadget_checker::{
     GadgetSyndromeAnalysis,
 };
 pub use pauli_prop_checker::{
-    anticommutes_with_logical, classify_fault, compute_stabilizer_syndromes, detect_ancilla_qubits,
-    detect_input_qubits, detect_output_qubits, extract_measurement_rounds, extract_output_error,
-    get_syndrome_flips, has_syndrome, propagate_fault, propagate_faults, DecoderAnalysis,
-    FaultClass, FaultToleranceAnalysis, FaultToleranceFailure, FollowUpConfig, MeasurementRound,
-    PauliPropChecker, PropagationResult, SyndromeAnalysis, SyndromeClass, SyndromeHistory,
-    SyndromeHistoryAnalysis, SyndromeHistoryResult,
+    DecoderAnalysis, FaultClass, FaultToleranceAnalysis, FaultToleranceFailure, FollowUpConfig,
+    MeasurementRound, PauliPropChecker, PropagationResult, SyndromeAnalysis, SyndromeClass,
+    SyndromeHistory, SyndromeHistoryAnalysis, SyndromeHistoryResult, anticommutes_with_logical,
+    classify_fault, compute_stabilizer_syndromes, detect_ancilla_qubits, detect_input_qubits,
+    detect_output_qubits, extract_measurement_rounds, extract_output_error, get_syndrome_flips,
+    has_syndrome, propagate_fault, propagate_faults,
+};
+pub use propagator::{
+    DagFaultAnalyzer, DagFaultInfluenceMap, DagFaultInfluenceMapSoA, DagPropagator,
+    DagSpacetimeLocation, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
+    InfluenceBasedChecker, LogicalId, MeasurementId, TickFaultAnalyzer, apply_gate,
+    propagate_backward_from_node, propagate_backward_from_tick, propagate_fault_backward,
+    propagate_observable_backward, propagate_sparse_dag, propagate_through_circuit,
+    propagate_through_dag, propagate_tick_range,
 };
 pub use stabilizer_flip_checker::{
     ErrorClass, StabilizerFlipAnalysis, StabilizerFlipChecker, StabilizerFlips,
@@ -303,8 +303,9 @@ impl FaultConfiguration {
     /// Groups faults by tick for error injection.
     ///
     /// Returns a map from tick index to (before_faults, after_faults).
-    pub fn by_tick(&self) -> std::collections::BTreeMap<usize, (Vec<&PauliFault>, Vec<&PauliFault>)>
-    {
+    pub fn by_tick(
+        &self,
+    ) -> std::collections::BTreeMap<usize, (Vec<&PauliFault>, Vec<&PauliFault>)> {
         let mut result = std::collections::BTreeMap::new();
         for fault in &self.faults {
             let entry = result
@@ -553,10 +554,7 @@ impl PauliFaultIterator {
             .zip(&self.pauli_indices)
             .map(|(&loc_idx, pauli_idx)| {
                 let location = self.locations[loc_idx].clone();
-                let paulis: Vec<u8> = pauli_idx
-                    .iter()
-                    .map(|&idx| self.pauli_types[idx])
-                    .collect();
+                let paulis: Vec<u8> = pauli_idx.iter().map(|&idx| self.pauli_types[idx]).collect();
                 PauliFault::new(location, paulis)
             })
             .collect();
@@ -645,13 +643,7 @@ mod tests {
 
     #[test]
     fn test_spacetime_location() {
-        let loc = SpacetimeLocation::new(
-            0,
-            vec![QubitId(0), QubitId(1)],
-            false,
-            GateType::CX,
-            0,
-        );
+        let loc = SpacetimeLocation::new(0, vec![QubitId(0), QubitId(1)], false, GateType::CX, 0);
         assert_eq!(loc.tick, 0);
         assert_eq!(loc.num_qubits(), 2);
         assert!(!loc.is_measurement());

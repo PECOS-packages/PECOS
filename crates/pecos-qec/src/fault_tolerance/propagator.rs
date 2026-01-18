@@ -42,7 +42,7 @@
 //!
 //! ```
 //! use pecos_qec::fault_tolerance::propagator::{
-//!     BackwardPropagator, FaultInfluenceMap,
+//!     TickFaultAnalyzer, FaultInfluenceMap,
 //! };
 //! use pecos_quantum::TickCircuit;
 //!
@@ -54,20 +54,26 @@
 //! circuit.tick().mz(&[2]);           // Measure ancilla
 //!
 //! // Build the fault influence map
-//! let propagator = BackwardPropagator::new(&circuit);
+//! let propagator = TickFaultAnalyzer::new(&circuit);
 //! let influence_map = propagator.build_influence_map();
 //!
 //! // Now we can query: which measurements does a fault at location L flip?
 //! // This is O(1) lookup instead of O(circuit_depth) propagation
 //! ```
 
-use super::{extract_spacetime_locations, PauliFault, SpacetimeLocation};
+use super::{PauliFault, SpacetimeLocation, extract_spacetime_locations};
 use pecos_core::gate_type::GateType;
-use pecos_core::QubitId;
-use pecos_quantum::TickCircuit;
 use pecos_qsim::{CliffordGateable, PauliProp};
+use pecos_quantum::TickCircuit;
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, BinaryHeap};
+
+// DAG-specific types are in a submodule
+pub mod dag;
+pub use dag::{
+    BucketRecorder, CsrArray, DagFaultAnalyzer, DagFaultInfluenceMap, DagFaultInfluenceMapSoA,
+    DagSpacetimeLocation, FaultLocations, InfluencesSoA, InfluencesSoAStats, SoARecorderBuilder,
+};
 
 // ============================================================================
 // Entity IDs (Type-Safe Indices)
@@ -394,7 +400,11 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
 /// * `circuit` - The circuit to propagate through
 /// * `prop` - The PauliProp to propagate (modified in place)
 /// * `direction` - Forward or Backward propagation
-pub fn propagate_through_circuit(circuit: &TickCircuit, prop: &mut PauliProp, direction: Direction) {
+pub fn propagate_through_circuit(
+    circuit: &TickCircuit,
+    prop: &mut PauliProp,
+    direction: Direction,
+) {
     match direction {
         Direction::Forward => {
             for tick in circuit.ticks() {
@@ -547,7 +557,14 @@ pub trait InfluenceRecorder {
     /// * `obs_x` - Whether the current observable has X on this qubit
     /// * `obs_z` - Whether the current observable has Z on this qubit
     /// * `detector_idx` - The detector being propagated from
-    fn record(&mut self, loc_idx: usize, qubit: usize, obs_x: bool, obs_z: bool, detector_idx: usize);
+    fn record(
+        &mut self,
+        loc_idx: usize,
+        qubit: usize,
+        obs_x: bool,
+        obs_z: bool,
+        detector_idx: usize,
+    );
 }
 
 /// Context for a single backward propagation pass.
@@ -669,7 +686,14 @@ pub struct NullRecorder;
 
 impl InfluenceRecorder for NullRecorder {
     #[inline]
-    fn record(&mut self, _loc_idx: usize, _qubit: usize, _obs_x: bool, _obs_z: bool, _detector_idx: usize) {
+    fn record(
+        &mut self,
+        _loc_idx: usize,
+        _qubit: usize,
+        _obs_x: bool,
+        _obs_z: bool,
+        _detector_idx: usize,
+    ) {
         // Discard all influences
     }
 }
@@ -685,7 +709,14 @@ pub struct CountingRecorder {
 
 impl InfluenceRecorder for CountingRecorder {
     #[inline]
-    fn record(&mut self, _loc_idx: usize, _qubit: usize, obs_x: bool, obs_z: bool, _detector_idx: usize) {
+    fn record(
+        &mut self,
+        _loc_idx: usize,
+        _qubit: usize,
+        obs_x: bool,
+        obs_z: bool,
+        _detector_idx: usize,
+    ) {
         self.count += 1;
         if obs_z {
             self.by_pauli[1] += 1; // X fault
@@ -696,255 +727,6 @@ impl InfluenceRecorder for CountingRecorder {
         if obs_x || obs_z {
             self.by_pauli[2] += 1; // Y fault
         }
-    }
-}
-
-// ============================================================================
-// SoA Fault Data Structures
-// ============================================================================
-
-/// Fault locations in Struct-of-Arrays (SoA) layout for cache-efficient access.
-///
-/// Each array is indexed by location ID. This layout is more cache-friendly
-/// than an array of structs when iterating over specific fields.
-#[derive(Debug, Clone, Default)]
-pub struct FaultLocations {
-    /// Node index for each location.
-    pub nodes: Vec<usize>,
-    /// Qubit indices for each location (most locations have 1-2 qubits).
-    pub qubits: Vec<SmallVec<[usize; 2]>>,
-    /// Whether fault occurs before (true) or after (false) the gate.
-    pub before: Vec<bool>,
-    /// Gate type at each location.
-    pub gate_types: Vec<GateType>,
-    /// Reverse index: node -> list of location IDs at that node.
-    pub node_to_locations: Vec<SmallVec<[usize; 4]>>,
-}
-
-impl FaultLocations {
-    /// Creates a new empty FaultLocations.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates FaultLocations with capacity for the given number of locations and nodes.
-    #[must_use]
-    pub fn with_capacity(num_locations: usize, max_node: usize) -> Self {
-        Self {
-            nodes: Vec::with_capacity(num_locations),
-            qubits: Vec::with_capacity(num_locations),
-            before: Vec::with_capacity(num_locations),
-            gate_types: Vec::with_capacity(num_locations),
-            node_to_locations: vec![SmallVec::new(); max_node + 1],
-        }
-    }
-
-    /// Returns the number of fault locations.
-    #[inline]
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// Returns true if there are no fault locations.
-    #[inline]
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    /// Adds a fault location and returns its ID.
-    pub fn push(&mut self, node: usize, qubits: SmallVec<[usize; 2]>, before: bool, gate_type: GateType) -> usize {
-        let loc_id = self.nodes.len();
-        self.nodes.push(node);
-        self.qubits.push(qubits);
-        self.before.push(before);
-        self.gate_types.push(gate_type);
-
-        // Update reverse index
-        if node < self.node_to_locations.len() {
-            self.node_to_locations[node].push(loc_id);
-        }
-
-        loc_id
-    }
-
-    /// Returns locations at the given node.
-    #[inline]
-    #[must_use]
-    pub fn locations_at_node(&self, node: usize) -> &[usize] {
-        if node < self.node_to_locations.len() {
-            &self.node_to_locations[node]
-        } else {
-            &[]
-        }
-    }
-
-    /// Returns the before flag for a location.
-    #[inline]
-    #[must_use]
-    pub fn is_before(&self, loc_id: usize) -> bool {
-        self.before[loc_id]
-    }
-
-    /// Returns the qubits for a location.
-    #[inline]
-    #[must_use]
-    pub fn qubits(&self, loc_id: usize) -> &[usize] {
-        &self.qubits[loc_id]
-    }
-
-    /// Converts to a Vec of DagSpacetimeLocation for backward compatibility.
-    #[must_use]
-    pub fn to_dag_spacetime_locations(&self) -> Vec<DagSpacetimeLocation> {
-        (0..self.len())
-            .map(|i| DagSpacetimeLocation {
-                node: self.nodes[i],
-                qubits: self.qubits[i].iter().map(|&q| QubitId::from(q)).collect(),
-                before: self.before[i],
-                gate_type: self.gate_types[i],
-            })
-            .collect()
-    }
-}
-
-/// Fault influences in Struct-of-Arrays (SoA) layout.
-///
-/// Each array is indexed by location ID. For each Pauli type (X=1, Z=2, Y=3),
-/// stores which detectors/logicals are flipped.
-#[derive(Debug, Clone, Default)]
-pub struct FaultInfluences {
-    /// Detector indices flipped by X error at each location.
-    pub detectors_x: Vec<SmallVec<[usize; 4]>>,
-    /// Detector indices flipped by Z error at each location.
-    pub detectors_z: Vec<SmallVec<[usize; 4]>>,
-    /// Detector indices flipped by Y error at each location.
-    pub detectors_y: Vec<SmallVec<[usize; 4]>>,
-    /// Logical indices flipped by X error at each location.
-    pub logicals_x: Vec<SmallVec<[usize; 4]>>,
-    /// Logical indices flipped by Z error at each location.
-    pub logicals_z: Vec<SmallVec<[usize; 4]>>,
-    /// Logical indices flipped by Y error at each location.
-    pub logicals_y: Vec<SmallVec<[usize; 4]>>,
-}
-
-impl FaultInfluences {
-    /// Creates a new empty FaultInfluences.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates FaultInfluences with capacity for the given number of locations.
-    #[must_use]
-    pub fn with_capacity(num_locations: usize) -> Self {
-        Self {
-            detectors_x: Vec::with_capacity(num_locations),
-            detectors_z: Vec::with_capacity(num_locations),
-            detectors_y: Vec::with_capacity(num_locations),
-            logicals_x: Vec::with_capacity(num_locations),
-            logicals_z: Vec::with_capacity(num_locations),
-            logicals_y: Vec::with_capacity(num_locations),
-        }
-    }
-
-    /// Returns the number of locations.
-    #[inline]
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.detectors_x.len()
-    }
-
-    /// Returns true if there are no influences.
-    #[inline]
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.detectors_x.is_empty()
-    }
-
-    /// Adds influence data for a location.
-    pub fn push(
-        &mut self,
-        detectors_x: SmallVec<[usize; 4]>,
-        detectors_z: SmallVec<[usize; 4]>,
-        detectors_y: SmallVec<[usize; 4]>,
-        logicals_x: SmallVec<[usize; 4]>,
-        logicals_z: SmallVec<[usize; 4]>,
-        logicals_y: SmallVec<[usize; 4]>,
-    ) {
-        self.detectors_x.push(detectors_x);
-        self.detectors_z.push(detectors_z);
-        self.detectors_y.push(detectors_y);
-        self.logicals_x.push(logicals_x);
-        self.logicals_z.push(logicals_z);
-        self.logicals_y.push(logicals_y);
-    }
-
-    /// Adds empty influence data for a location (no effects).
-    pub fn push_empty(&mut self) {
-        self.detectors_x.push(SmallVec::new());
-        self.detectors_z.push(SmallVec::new());
-        self.detectors_y.push(SmallVec::new());
-        self.logicals_x.push(SmallVec::new());
-        self.logicals_z.push(SmallVec::new());
-        self.logicals_y.push(SmallVec::new());
-    }
-
-    /// Gets detector indices for a specific Pauli type (1=X, 2=Z, 3=Y).
-    #[inline]
-    #[must_use]
-    pub fn detectors(&self, loc_id: usize, pauli: u8) -> &[usize] {
-        match pauli {
-            1 => &self.detectors_x[loc_id],
-            2 => &self.detectors_z[loc_id],
-            3 => &self.detectors_y[loc_id],
-            _ => &[],
-        }
-    }
-
-    /// Gets logical indices for a specific Pauli type (1=X, 2=Z, 3=Y).
-    #[inline]
-    #[must_use]
-    pub fn logicals(&self, loc_id: usize, pauli: u8) -> &[usize] {
-        match pauli {
-            1 => &self.logicals_x[loc_id],
-            2 => &self.logicals_z[loc_id],
-            3 => &self.logicals_y[loc_id],
-            _ => &[],
-        }
-    }
-}
-
-/// Combined fault analysis result with SoA data layout.
-#[derive(Debug, Clone)]
-pub struct FaultAnalysis {
-    /// Fault locations (SoA).
-    pub locations: FaultLocations,
-    /// Fault influences (SoA).
-    pub influences: FaultInfluences,
-    /// Detector metadata: (node, qubit, basis) for each detector.
-    pub detectors: Vec<(usize, usize, u8)>,
-    /// Number of logical observables.
-    pub num_logicals: usize,
-}
-
-impl FaultAnalysis {
-    /// Creates a new empty FaultAnalysis.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            locations: FaultLocations::new(),
-            influences: FaultInfluences::new(),
-            detectors: Vec::new(),
-            num_logicals: 0,
-        }
-    }
-}
-
-impl Default for FaultAnalysis {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -1093,19 +875,21 @@ impl<'a> DagPropagator<'a> {
     /// assert!(fwd.contains(&(mz0, 0)));
     /// assert!(fwd.contains(&(mz1, 1)));
     /// ```
-    pub fn neighbors(&self, node: usize, direction: Direction) -> impl Iterator<Item = (usize, usize)> + '_ {
-        self.gate(node)
-            .into_iter()
-            .flat_map(move |gate| {
-                gate.qubits.iter().filter_map(move |qubit| {
-                    let q = qubit.index();
-                    let neighbor = match direction {
-                        Direction::Forward => self.index.successor_on_qubit(node, q),
-                        Direction::Backward => self.index.predecessor_on_qubit(node, q),
-                    };
-                    neighbor.map(|n| (n, q))
-                })
+    pub fn neighbors(
+        &self,
+        node: usize,
+        direction: Direction,
+    ) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.gate(node).into_iter().flat_map(move |gate| {
+            gate.qubits.iter().filter_map(move |qubit| {
+                let q = qubit.index();
+                let neighbor = match direction {
+                    Direction::Forward => self.index.successor_on_qubit(node, q),
+                    Direction::Backward => self.index.predecessor_on_qubit(node, q),
+                };
+                neighbor.map(|n| (n, q))
             })
+        })
     }
 
     /// Propagates a PauliProp through the circuit using sparse traversal.
@@ -1172,8 +956,7 @@ impl<'a> DagPropagator<'a> {
                     for (i, q) in gate.qubits.iter().enumerate() {
                         if i < was_active_flags.len() {
                             let idx = q.index();
-                            was_active_flags[i] =
-                                idx < active_qubits.len() && active_qubits[idx];
+                            was_active_flags[i] = idx < active_qubits.len() && active_qubits[idx];
                         }
                     }
 
@@ -1476,7 +1259,10 @@ pub fn propagate_through_dag(dag: &DagCircuit, prop: &mut PauliProp, direction: 
 pub fn propagate_backward_from_node(dag: &DagCircuit, prop: &mut PauliProp, start_node: usize) {
     // Get topological order and filter to nodes before start_node
     let topo_order = dag.topological_order();
-    let start_pos = topo_order.iter().position(|&n| n == start_node).unwrap_or(0);
+    let start_pos = topo_order
+        .iter()
+        .position(|&n| n == start_node)
+        .unwrap_or(0);
 
     // Only process nodes before (and including) start_node
     let relevant_nodes: Vec<usize> = topo_order[..=start_pos].iter().copied().rev().collect();
@@ -1532,7 +1318,11 @@ pub fn propagate_backward_from_node(dag: &DagCircuit, prop: &mut PauliProp, star
 /// assert!(prop.contains_x(0));
 /// assert!(!prop.contains_z(0));
 /// ```
-pub fn propagate_backward_from_tick(circuit: &TickCircuit, prop: &mut PauliProp, start_tick: usize) {
+pub fn propagate_backward_from_tick(
+    circuit: &TickCircuit,
+    prop: &mut PauliProp,
+    start_tick: usize,
+) {
     propagate_tick_range(circuit, prop, 0, start_tick, Direction::Backward);
 }
 
@@ -1753,13 +1543,17 @@ impl FaultInfluence {
     /// Returns all detectors flipped by a specific Pauli type.
     #[inline]
     pub fn detectors_for_pauli(&self, pauli: u8) -> &[DetectorId] {
-        self.detector_flips.get(pauli as usize).map_or(&[], |v| v.as_slice())
+        self.detector_flips
+            .get(pauli as usize)
+            .map_or(&[], |v| v.as_slice())
     }
 
     /// Returns all logicals flipped by a specific Pauli type.
     #[inline]
     pub fn logicals_for_pauli(&self, pauli: u8) -> &[LogicalId] {
-        self.logical_flips.get(pauli as usize).map_or(&[], |v| v.as_slice())
+        self.logical_flips
+            .get(pauli as usize)
+            .map_or(&[], |v| v.as_slice())
     }
 }
 
@@ -1845,16 +1639,14 @@ impl FaultInfluenceMap {
                     // Y = XZ: a Y fault flips a detector if EITHER the X component
                     // OR the Z component would flip it. Count contributions from both.
                     // X component flips detectors sensitive to Z
-                    if let Some(detectors) =
-                        influence.per_qubit_detector_flips.get(&(qubit_idx, 1))
+                    if let Some(detectors) = influence.per_qubit_detector_flips.get(&(qubit_idx, 1))
                     {
                         for detector in detectors {
                             *detector_flip_counts.entry(detector).or_insert(0) += 1;
                         }
                     }
                     // Z component flips detectors sensitive to X
-                    if let Some(detectors) =
-                        influence.per_qubit_detector_flips.get(&(qubit_idx, 3))
+                    if let Some(detectors) = influence.per_qubit_detector_flips.get(&(qubit_idx, 3))
                     {
                         for detector in detectors {
                             *detector_flip_counts.entry(detector).or_insert(0) += 1;
@@ -1909,7 +1701,7 @@ impl Default for FaultInfluenceMap {
 // ============================================================================
 
 /// Propagates Paulis backward through a circuit to build influence maps.
-pub struct BackwardPropagator<'a> {
+pub struct TickFaultAnalyzer<'a> {
     circuit: &'a TickCircuit,
     /// Fault locations extracted from the circuit.
     locations: Vec<SpacetimeLocation>,
@@ -1917,7 +1709,7 @@ pub struct BackwardPropagator<'a> {
     tick_locations: Vec<Vec<(usize, bool)>>,
 }
 
-impl<'a> BackwardPropagator<'a> {
+impl<'a> TickFaultAnalyzer<'a> {
     /// Creates a new backward propagator for the given circuit.
     pub fn new(circuit: &'a TickCircuit) -> Self {
         let locations = extract_spacetime_locations(circuit, false);
@@ -1979,7 +1771,8 @@ impl<'a> BackwardPropagator<'a> {
 
         // Initialize influence for each fault location
         for loc in &self.locations {
-            map.influences.insert(loc.clone(), FaultInfluence::default());
+            map.influences
+                .insert(loc.clone(), FaultInfluence::default());
         }
 
         // Backward propagate from each measurement
@@ -2069,12 +1862,7 @@ impl<'a> BackwardPropagator<'a> {
             // Check before=false locations (faults that happen after gates at this tick)
             // These see the sensitivity at the state "after tick t gates executed"
             self.record_influences_at_tick_filtered(
-                tick_idx,
-                &prop,
-                &detector,
-                None,
-                map,
-                false, // only before=false locations
+                tick_idx, &prop, &detector, None, map, false, // only before=false locations
             );
 
             // Apply gates at this tick backward
@@ -2090,12 +1878,7 @@ impl<'a> BackwardPropagator<'a> {
             // Check before=true locations (faults that happen before gates at this tick)
             // These see the sensitivity at the state "before tick t gates executed"
             self.record_influences_at_tick_filtered(
-                tick_idx,
-                &prop,
-                &detector,
-                None,
-                map,
-                true, // only before=true locations
+                tick_idx, &prop, &detector, None, map, true, // only before=true locations
             );
         }
     }
@@ -2215,7 +1998,8 @@ impl<'a> BackwardPropagator<'a> {
                             influence.logical_flips[1].push(*log);
                         } else {
                             influence.detector_flips[1].push(detector.clone());
-                            influence.measurement_flips[1].extend(detector.measurements.iter().copied());
+                            influence.measurement_flips[1]
+                                .extend(detector.measurements.iter().copied());
                             // Also record per-qubit influence for multi-qubit fault handling
                             influence
                                 .per_qubit_detector_flips
@@ -2233,7 +2017,8 @@ impl<'a> BackwardPropagator<'a> {
                             influence.logical_flips[3].push(*log);
                         } else {
                             influence.detector_flips[3].push(detector.clone());
-                            influence.measurement_flips[3].extend(detector.measurements.iter().copied());
+                            influence.measurement_flips[3]
+                                .extend(detector.measurements.iter().copied());
                             // Also record per-qubit influence
                             influence
                                 .per_qubit_detector_flips
@@ -2251,7 +2036,8 @@ impl<'a> BackwardPropagator<'a> {
                             influence.logical_flips[2].push(*log);
                         } else {
                             influence.detector_flips[2].push(detector.clone());
-                            influence.measurement_flips[2].extend(detector.measurements.iter().copied());
+                            influence.measurement_flips[2]
+                                .extend(detector.measurements.iter().copied());
                             // Also record per-qubit influence
                             influence
                                 .per_qubit_detector_flips
@@ -2264,69 +2050,6 @@ impl<'a> BackwardPropagator<'a> {
             }
         }
     }
-
-    /// Records which fault locations at a tick would contribute to the propagated Pauli.
-    /// (Legacy function that doesn't filter by before flag)
-    ///
-    /// The `prop` contains the back-propagated OBSERVABLE. Uses anticommutation checking.
-    #[allow(dead_code)]
-    fn record_influences_at_tick(
-        &self,
-        tick_idx: usize,
-        prop: &PauliProp,
-        detector: &DetectorId,
-        logical: Option<&LogicalId>,
-        map: &mut FaultInfluenceMap,
-    ) {
-        // Find fault locations at this tick
-        for loc in &self.locations {
-            if loc.tick != tick_idx {
-                continue;
-            }
-
-            // Check each qubit in the fault location
-            for qubit in &loc.qubits {
-                let q = qubit.index();
-
-                // Check what observable is at this position
-                let obs_x = prop.contains_x(q);
-                let obs_z = prop.contains_z(q);
-
-                if let Some(influence) = map.influences.get_mut(loc) {
-                    // X fault anticommutes with Z or Y observable
-                    if obs_z {
-                        if let Some(log) = logical {
-                            influence.logical_flips[1].push(*log);
-                        } else {
-                            influence.detector_flips[1].push(detector.clone());
-                            influence.measurement_flips[1].extend(detector.measurements.iter().copied());
-                        }
-                    }
-
-                    // Z fault anticommutes with X or Y observable
-                    if obs_x {
-                        if let Some(log) = logical {
-                            influence.logical_flips[3].push(*log);
-                        } else {
-                            influence.detector_flips[3].push(detector.clone());
-                            influence.measurement_flips[3].extend(detector.measurements.iter().copied());
-                        }
-                    }
-
-                    // Y fault anticommutes with X, Z, or Y observable
-                    if obs_x || obs_z {
-                        if let Some(log) = logical {
-                            influence.logical_flips[2].push(*log);
-                        } else {
-                            influence.detector_flips[2].push(detector.clone());
-                            influence.measurement_flips[2].extend(detector.measurements.iter().copied());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// Applies a gate backward to a PauliProp.
     ///
     /// For Clifford gates, backward propagation follows specific rules:
@@ -2496,1741 +2219,6 @@ impl<'a> BackwardPropagator<'a> {
 }
 
 // ============================================================================
-// DAG-Based Backward Propagator (Sparse)
-// ============================================================================
-
-/// A spacetime location in a DAG circuit, identified by node index.
-///
-/// Unlike `SpacetimeLocation` which uses tick indices, this uses DAG node indices
-/// for more efficient sparse propagation.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DagSpacetimeLocation {
-    /// The node index in the DAG.
-    pub node: usize,
-    /// The qubit(s) involved in the gate at this location.
-    pub qubits: Vec<QubitId>,
-    /// Whether the error occurs before (true) or after (false) the gate.
-    pub before: bool,
-    /// The type of gate at this location.
-    pub gate_type: GateType,
-}
-
-/// Pre-computed map from DAG fault locations to their influences.
-#[derive(Debug, Clone)]
-pub struct DagFaultInfluenceMap {
-    /// For each spacetime location, what it influences.
-    pub influences: BTreeMap<DagSpacetimeLocation, FaultInfluence>,
-
-    /// All detectors in the circuit.
-    pub detectors: Vec<DetectorId>,
-
-    /// All logical observables being tracked.
-    pub logicals: Vec<LogicalId>,
-
-    /// All measurements in the circuit (node, qubit, basis).
-    pub measurements: Vec<(usize, usize, u8)>,
-
-    /// Reverse map: for each detector, which fault locations flip it.
-    pub detector_to_faults: BTreeMap<DetectorId, Vec<(DagSpacetimeLocation, u8)>>,
-
-    /// Reverse map: for each logical, which fault locations flip it.
-    pub logical_to_faults: BTreeMap<LogicalId, Vec<(DagSpacetimeLocation, u8)>>,
-}
-
-impl DagFaultInfluenceMap {
-    /// Creates an empty influence map.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            influences: BTreeMap::new(),
-            detectors: Vec::new(),
-            logicals: Vec::new(),
-            measurements: Vec::new(),
-            detector_to_faults: BTreeMap::new(),
-            logical_to_faults: BTreeMap::new(),
-        }
-    }
-
-    /// Returns the influence of a fault at the given location.
-    #[must_use]
-    pub fn get_influence(&self, location: &DagSpacetimeLocation) -> Option<&FaultInfluence> {
-        self.influences.get(location)
-    }
-
-    /// Classifies a fault at the given location.
-    ///
-    /// Returns (has_syndrome, causes_logical_error).
-    #[must_use]
-    pub fn classify_fault(&self, location: &DagSpacetimeLocation, pauli: u8) -> (bool, bool) {
-        if let Some(influence) = self.influences.get(location) {
-            let has_syndrome = !influence.detector_flips[pauli as usize].is_empty();
-            let causes_logical = !influence.logical_flips[pauli as usize].is_empty();
-            (has_syndrome, causes_logical)
-        } else {
-            (false, false)
-        }
-    }
-}
-
-impl Default for DagFaultInfluenceMap {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ============================================================================
-// True SoA Influence Storage (Maximum Cache Efficiency)
-// ============================================================================
-
-/// CSR (Compressed Sparse Row) style array for cache-efficient storage.
-///
-/// This layout stores variable-length rows in a flat array with an offset array.
-/// For row `i`, the data is at `data[offsets[i]..offsets[i+1]]`.
-///
-/// Benefits:
-/// - Single contiguous allocation for all data
-/// - Cache-friendly sequential access
-/// - O(1) access to any row's data slice
-#[derive(Debug, Clone, Default)]
-pub struct CsrArray {
-    /// Offset for each row. Length = num_rows + 1.
-    /// Row i's data is at `data[offsets[i]..offsets[i+1]]`.
-    pub offsets: Vec<u32>,
-    /// Flat data array containing all values.
-    pub data: Vec<u32>,
-}
-
-impl CsrArray {
-    /// Creates a new empty CSR array with capacity for the given number of rows.
-    #[must_use]
-    pub fn with_row_capacity(num_rows: usize) -> Self {
-        let mut offsets = Vec::with_capacity(num_rows + 1);
-        offsets.push(0);
-        Self {
-            offsets,
-            data: Vec::new(),
-        }
-    }
-
-    /// Creates a new CSR array with capacity for rows and estimated data.
-    #[must_use]
-    pub fn with_capacity(num_rows: usize, estimated_data: usize) -> Self {
-        let mut offsets = Vec::with_capacity(num_rows + 1);
-        offsets.push(0);
-        Self {
-            offsets,
-            data: Vec::with_capacity(estimated_data),
-        }
-    }
-
-    /// Returns the number of rows.
-    #[inline]
-    #[must_use]
-    pub fn num_rows(&self) -> usize {
-        self.offsets.len().saturating_sub(1)
-    }
-
-    /// Returns the data slice for the given row.
-    #[inline]
-    #[must_use]
-    pub fn row(&self, row_idx: usize) -> &[u32] {
-        if row_idx + 1 < self.offsets.len() {
-            let start = self.offsets[row_idx] as usize;
-            let end = self.offsets[row_idx + 1] as usize;
-            &self.data[start..end]
-        } else {
-            &[]
-        }
-    }
-
-    /// Returns true if the row is empty.
-    #[inline]
-    #[must_use]
-    pub fn row_is_empty(&self, row_idx: usize) -> bool {
-        if row_idx + 1 < self.offsets.len() {
-            self.offsets[row_idx] == self.offsets[row_idx + 1]
-        } else {
-            true
-        }
-    }
-
-    /// Returns the number of elements in the given row.
-    #[inline]
-    #[must_use]
-    pub fn row_len(&self, row_idx: usize) -> usize {
-        if row_idx + 1 < self.offsets.len() {
-            (self.offsets[row_idx + 1] - self.offsets[row_idx]) as usize
-        } else {
-            0
-        }
-    }
-
-    /// Finalizes the current row and starts a new one.
-    /// Call this after adding all data for the current row.
-    #[inline]
-    pub fn finish_row(&mut self) {
-        self.offsets.push(self.data.len() as u32);
-    }
-
-    /// Adds a value to the current row (before calling `finish_row`).
-    #[inline]
-    pub fn push(&mut self, value: u32) {
-        self.data.push(value);
-    }
-
-    /// Adds multiple values to the current row.
-    #[inline]
-    pub fn extend(&mut self, values: impl IntoIterator<Item = u32>) {
-        self.data.extend(values);
-    }
-
-    /// Returns the total number of elements across all rows.
-    #[inline]
-    #[must_use]
-    pub fn total_elements(&self) -> usize {
-        self.data.len()
-    }
-}
-
-/// True SoA (Struct of Arrays) influence storage using CSR layout.
-///
-/// This is the most cache-efficient representation, storing all influences
-/// in flat arrays with CSR-style indexing. Each Pauli type (X, Y, Z) has
-/// its own CSR array for maximum locality.
-///
-/// # Memory Layout
-///
-/// For N locations and M total detector influences:
-/// - Traditional AoS: N * (SmallVec overhead + potential heap allocs)
-/// - True SoA: 3 * (N+1) * 4 bytes (offsets) + M * 4 bytes (data)
-///
-/// The SoA layout is more compact and has better cache behavior when
-/// iterating over all influences for a specific Pauli type.
-#[derive(Debug, Clone, Default)]
-pub struct InfluencesSoA {
-    /// Number of fault locations.
-    pub num_locations: usize,
-
-    /// Detector indices flipped by X faults (Pauli=1).
-    /// Row i contains detector indices for location i.
-    pub detectors_x: CsrArray,
-
-    /// Detector indices flipped by Y faults (Pauli=2).
-    pub detectors_y: CsrArray,
-
-    /// Detector indices flipped by Z faults (Pauli=3).
-    pub detectors_z: CsrArray,
-
-    /// Logical indices flipped by X faults.
-    pub logicals_x: CsrArray,
-
-    /// Logical indices flipped by Y faults.
-    pub logicals_y: CsrArray,
-
-    /// Logical indices flipped by Z faults.
-    pub logicals_z: CsrArray,
-}
-
-impl InfluencesSoA {
-    /// Creates a new SoA structure with capacity for the given number of locations.
-    #[must_use]
-    pub fn with_capacity(num_locations: usize) -> Self {
-        // Estimate: average 2 detector influences per location per Pauli type
-        let estimated_data = num_locations * 2;
-        Self {
-            num_locations: 0,
-            detectors_x: CsrArray::with_capacity(num_locations, estimated_data),
-            detectors_y: CsrArray::with_capacity(num_locations, estimated_data),
-            detectors_z: CsrArray::with_capacity(num_locations, estimated_data),
-            logicals_x: CsrArray::with_capacity(num_locations, estimated_data / 4),
-            logicals_y: CsrArray::with_capacity(num_locations, estimated_data / 4),
-            logicals_z: CsrArray::with_capacity(num_locations, estimated_data / 4),
-        }
-    }
-
-    /// Returns the detector indices for a location and Pauli type.
-    #[inline]
-    #[must_use]
-    pub fn detectors(&self, loc_idx: usize, pauli: Pauli) -> &[u32] {
-        match pauli {
-            Pauli::I => &[],
-            Pauli::X => self.detectors_x.row(loc_idx),
-            Pauli::Y => self.detectors_y.row(loc_idx),
-            Pauli::Z => self.detectors_z.row(loc_idx),
-        }
-    }
-
-    /// Returns the logical indices for a location and Pauli type.
-    #[inline]
-    #[must_use]
-    pub fn logicals(&self, loc_idx: usize, pauli: Pauli) -> &[u32] {
-        match pauli {
-            Pauli::I => &[],
-            Pauli::X => self.logicals_x.row(loc_idx),
-            Pauli::Y => self.logicals_y.row(loc_idx),
-            Pauli::Z => self.logicals_z.row(loc_idx),
-        }
-    }
-
-    /// Returns whether the location has any detector flips for the given Pauli.
-    #[inline]
-    #[must_use]
-    pub fn has_detector_flips(&self, loc_idx: usize, pauli: Pauli) -> bool {
-        match pauli {
-            Pauli::I => false,
-            Pauli::X => !self.detectors_x.row_is_empty(loc_idx),
-            Pauli::Y => !self.detectors_y.row_is_empty(loc_idx),
-            Pauli::Z => !self.detectors_z.row_is_empty(loc_idx),
-        }
-    }
-
-    /// Returns whether the location has any logical flips for the given Pauli.
-    #[inline]
-    #[must_use]
-    pub fn has_logical_flips(&self, loc_idx: usize, pauli: Pauli) -> bool {
-        match pauli {
-            Pauli::I => false,
-            Pauli::X => !self.logicals_x.row_is_empty(loc_idx),
-            Pauli::Y => !self.logicals_y.row_is_empty(loc_idx),
-            Pauli::Z => !self.logicals_z.row_is_empty(loc_idx),
-        }
-    }
-
-    /// Classifies a fault at the given location.
-    ///
-    /// Returns (has_syndrome, causes_logical_error).
-    #[inline]
-    #[must_use]
-    pub fn classify(&self, loc_idx: usize, pauli: Pauli) -> (bool, bool) {
-        (
-            self.has_detector_flips(loc_idx, pauli),
-            self.has_logical_flips(loc_idx, pauli),
-        )
-    }
-
-    /// Finalizes a location row across all CSR arrays.
-    pub fn finish_location(&mut self) {
-        self.detectors_x.finish_row();
-        self.detectors_y.finish_row();
-        self.detectors_z.finish_row();
-        self.logicals_x.finish_row();
-        self.logicals_y.finish_row();
-        self.logicals_z.finish_row();
-        self.num_locations += 1;
-    }
-
-    /// Returns memory statistics for this structure.
-    #[must_use]
-    pub fn memory_stats(&self) -> InfluencesSoAStats {
-        let offset_bytes = (self.detectors_x.offsets.len()
-            + self.detectors_y.offsets.len()
-            + self.detectors_z.offsets.len()
-            + self.logicals_x.offsets.len()
-            + self.logicals_y.offsets.len()
-            + self.logicals_z.offsets.len())
-            * std::mem::size_of::<u32>();
-
-        let data_bytes = (self.detectors_x.data.len()
-            + self.detectors_y.data.len()
-            + self.detectors_z.data.len()
-            + self.logicals_x.data.len()
-            + self.logicals_y.data.len()
-            + self.logicals_z.data.len())
-            * std::mem::size_of::<u32>();
-
-        InfluencesSoAStats {
-            num_locations: self.num_locations,
-            total_detector_entries: self.detectors_x.total_elements()
-                + self.detectors_y.total_elements()
-                + self.detectors_z.total_elements(),
-            total_logical_entries: self.logicals_x.total_elements()
-                + self.logicals_y.total_elements()
-                + self.logicals_z.total_elements(),
-            offset_bytes,
-            data_bytes,
-            total_bytes: offset_bytes + data_bytes,
-        }
-    }
-}
-
-/// Memory statistics for `InfluencesSoA`.
-#[derive(Debug, Clone, Copy)]
-pub struct InfluencesSoAStats {
-    /// Number of fault locations.
-    pub num_locations: usize,
-    /// Total detector entries across all Pauli types.
-    pub total_detector_entries: usize,
-    /// Total logical entries across all Pauli types.
-    pub total_logical_entries: usize,
-    /// Bytes used for offset arrays.
-    pub offset_bytes: usize,
-    /// Bytes used for data arrays.
-    pub data_bytes: usize,
-    /// Total bytes used.
-    pub total_bytes: usize,
-}
-
-/// True SoA fault influence map using CSR-style storage.
-///
-/// This is the most memory-efficient and cache-friendly representation.
-/// Use this when processing large circuits or when memory is constrained.
-#[derive(Debug, Clone, Default)]
-pub struct DagFaultInfluenceMapSoA {
-    /// Influences in true SoA layout.
-    pub influences: InfluencesSoA,
-
-    /// Locations indexed by location index.
-    pub locations: Vec<DagSpacetimeLocation>,
-
-    /// All detectors in the circuit.
-    pub detectors: Vec<DetectorId>,
-
-    /// All measurements in the circuit (node, qubit, basis).
-    pub measurements: Vec<(usize, usize, u8)>,
-}
-
-impl DagFaultInfluenceMapSoA {
-    /// Creates a new SoA map with capacity for the given number of locations.
-    #[must_use]
-    pub fn with_capacity(num_locations: usize) -> Self {
-        Self {
-            influences: InfluencesSoA::with_capacity(num_locations),
-            locations: Vec::with_capacity(num_locations),
-            detectors: Vec::new(),
-            measurements: Vec::new(),
-        }
-    }
-
-    /// Classifies a fault at the given location index.
-    ///
-    /// Returns (has_syndrome, causes_logical_error).
-    #[inline]
-    #[must_use]
-    pub fn classify_fault(&self, loc_idx: usize, pauli: u8) -> (bool, bool) {
-        self.influences.classify(loc_idx, Pauli::from_u8(pauli))
-    }
-
-    /// Returns the detector indices flipped by a fault.
-    #[inline]
-    #[must_use]
-    pub fn get_detector_indices(&self, loc_idx: usize, pauli: u8) -> &[u32] {
-        self.influences.detectors(loc_idx, Pauli::from_u8(pauli))
-    }
-
-    /// Returns the logical indices flipped by a fault.
-    #[inline]
-    #[must_use]
-    pub fn get_logical_indices(&self, loc_idx: usize, pauli: u8) -> &[u32] {
-        self.influences.logicals(loc_idx, Pauli::from_u8(pauli))
-    }
-
-    /// Returns the location at the given index.
-    #[inline]
-    #[must_use]
-    pub fn get_location(&self, loc_idx: usize) -> Option<&DagSpacetimeLocation> {
-        self.locations.get(loc_idx)
-    }
-
-    /// Returns the detector at the given index.
-    #[inline]
-    #[must_use]
-    pub fn get_detector(&self, detector_idx: usize) -> Option<&DetectorId> {
-        self.detectors.get(detector_idx)
-    }
-
-    /// Returns memory statistics.
-    #[must_use]
-    pub fn memory_stats(&self) -> InfluencesSoAStats {
-        self.influences.memory_stats()
-    }
-}
-
-/// Recorder that writes to a true SoA influence map.
-///
-/// This recorder builds the SoA structure incrementally. Unlike other recorders,
-/// it requires locations to be processed in order and finalized one at a time.
-pub struct SoARecorderBuilder {
-    /// The SoA structure being built.
-    influences: InfluencesSoA,
-    /// Current location being built.
-    current_location: usize,
-    /// Pending detector indices for current location (X, Y, Z).
-    pending_x: Vec<u32>,
-    pending_y: Vec<u32>,
-    pending_z: Vec<u32>,
-}
-
-impl SoARecorderBuilder {
-    /// Creates a new SoA recorder builder.
-    #[must_use]
-    pub fn new(num_locations: usize) -> Self {
-        Self {
-            influences: InfluencesSoA::with_capacity(num_locations),
-            current_location: 0,
-            pending_x: Vec::with_capacity(8),
-            pending_y: Vec::with_capacity(8),
-            pending_z: Vec::with_capacity(8),
-        }
-    }
-
-    /// Flushes pending data for the current location and advances to the next.
-    pub fn finish_location(&mut self) {
-        // Flush pending data to CSR arrays
-        self.influences.detectors_x.extend(self.pending_x.drain(..));
-        self.influences.detectors_y.extend(self.pending_y.drain(..));
-        self.influences.detectors_z.extend(self.pending_z.drain(..));
-
-        // Finalize the row
-        self.influences.finish_location();
-        self.current_location += 1;
-    }
-
-    /// Finishes building and returns the SoA structure.
-    #[must_use]
-    pub fn finish(mut self) -> InfluencesSoA {
-        // Flush any remaining pending data
-        if !self.pending_x.is_empty() || !self.pending_y.is_empty() || !self.pending_z.is_empty() {
-            self.finish_location();
-        }
-        self.influences
-    }
-
-    /// Records a detector influence for the current location.
-    #[inline]
-    pub fn record_detector(&mut self, pauli: Pauli, detector_idx: u32) {
-        match pauli {
-            Pauli::I => {}
-            Pauli::X => self.pending_x.push(detector_idx),
-            Pauli::Y => self.pending_y.push(detector_idx),
-            Pauli::Z => self.pending_z.push(detector_idx),
-        }
-    }
-}
-
-/// Bucket-based recorder that accumulates influences per location for O(n) CSR construction.
-///
-/// Unlike a sorting approach, this uses per-location buckets (SmallVecs) to collect
-/// detector indices, then flattens to CSR format. This is O(n) in the number of
-/// influences, avoiding the O(n log n) sort overhead.
-pub struct BucketRecorder {
-    /// Per-location detector indices for X faults.
-    x_buckets: Vec<SmallVec<[u32; 4]>>,
-    /// Per-location detector indices for Y faults.
-    y_buckets: Vec<SmallVec<[u32; 4]>>,
-    /// Per-location detector indices for Z faults.
-    z_buckets: Vec<SmallVec<[u32; 4]>>,
-}
-
-impl BucketRecorder {
-    /// Creates a new bucket recorder for the given number of locations.
-    #[must_use]
-    pub fn new(num_locations: usize) -> Self {
-        Self {
-            x_buckets: vec![SmallVec::new(); num_locations],
-            y_buckets: vec![SmallVec::new(); num_locations],
-            z_buckets: vec![SmallVec::new(); num_locations],
-        }
-    }
-
-    /// Converts buckets to SoA format in O(n) time.
-    #[must_use]
-    pub fn into_soa(self) -> InfluencesSoA {
-        let num_locations = self.x_buckets.len();
-        let mut soa = InfluencesSoA::with_capacity(num_locations);
-
-        // Flatten buckets into CSR arrays
-        for i in 0..num_locations {
-            soa.detectors_x.extend(self.x_buckets[i].iter().copied());
-            soa.detectors_y.extend(self.y_buckets[i].iter().copied());
-            soa.detectors_z.extend(self.z_buckets[i].iter().copied());
-            soa.finish_location();
-        }
-
-        soa
-    }
-}
-
-impl InfluenceRecorder for BucketRecorder {
-    #[inline]
-    fn record(&mut self, loc_idx: usize, _qubit: usize, obs_x: bool, obs_z: bool, detector_idx: usize) {
-        let det = detector_idx as u32;
-
-        // X fault anticommutes with Z observable
-        if obs_z {
-            self.x_buckets[loc_idx].push(det);
-        }
-        // Z fault anticommutes with X observable
-        if obs_x {
-            self.z_buckets[loc_idx].push(det);
-        }
-        // Y fault anticommutes with X or Z observable
-        if obs_x || obs_z {
-            self.y_buckets[loc_idx].push(det);
-        }
-    }
-}
-
-/// Propagates Paulis backward through a DAG circuit using sparse traversal.
-///
-/// This is significantly faster than `BackwardPropagator` for circuits with
-/// local connectivity (like surface codes) because it only visits gates that
-/// touch qubits with non-trivial Paulis.
-///
-/// # Example
-///
-/// ```
-/// use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
-/// use pecos_quantum::DagCircuit;
-///
-/// // Build a simple syndrome extraction circuit
-/// let mut dag = DagCircuit::new();
-/// dag.pz(2);           // Prep ancilla
-/// dag.cx(0, 2);        // CNOT data -> ancilla
-/// dag.cx(1, 2);        // CNOT data -> ancilla
-/// dag.mz(2);           // Measure ancilla
-///
-/// // Build the fault influence map using sparse propagation
-/// let propagator = DagFaultAnalyzer::new(&dag);
-/// let influence_map = propagator.build_influence_map();
-/// ```
-pub struct DagFaultAnalyzer<'a> {
-    /// Base propagator for traversal infrastructure.
-    propagator: DagPropagator<'a>,
-    /// All fault locations in SoA layout.
-    locations: FaultLocations,
-}
-
-impl<'a> DagFaultAnalyzer<'a> {
-    /// Creates a new DAG backward propagator for the given circuit.
-    ///
-    /// Pre-computes indices for efficient sparse traversal.
-    #[must_use]
-    pub fn new(dag: &'a DagCircuit) -> Self {
-        let propagator = DagPropagator::new(dag);
-
-        // Extract locations using SoA layout
-        let locations = Self::extract_locations(&propagator, dag);
-
-        Self {
-            propagator,
-            locations,
-        }
-    }
-
-    /// Returns the underlying propagator.
-    #[inline]
-    #[must_use]
-    pub fn propagator(&self) -> &DagPropagator<'a> {
-        &self.propagator
-    }
-
-    /// Returns the maximum node index.
-    #[inline]
-    #[must_use]
-    pub fn max_node(&self) -> usize {
-        self.propagator.max_node()
-    }
-
-    /// Returns the maximum qubit index.
-    #[inline]
-    #[must_use]
-    pub fn max_qubit(&self) -> usize {
-        self.propagator.max_qubit()
-    }
-
-    /// Extracts fault locations from the circuit using the propagator.
-    fn extract_locations(propagator: &DagPropagator<'_>, dag: &DagCircuit) -> FaultLocations {
-        let topo_order = dag.topological_order();
-
-        // Estimate capacity: roughly 2 locations per gate
-        let estimated_locations = topo_order.len() * 2;
-        let mut locations = FaultLocations::with_capacity(estimated_locations, propagator.max_node());
-
-        for &node in &topo_order {
-            if let Some(gate) = propagator.gate(node) {
-                let is_measurement = matches!(
-                    gate.gate_type,
-                    GateType::Measure | GateType::MeasureFree
-                );
-                let is_prep = matches!(gate.gate_type, GateType::Prep | GateType::QAlloc);
-
-                // Convert QubitId to usize
-                let qubits: SmallVec<[usize; 2]> = gate.qubits.iter().map(|q| q.index()).collect();
-
-                if is_measurement {
-                    // Measurements only have before=true locations
-                    locations.push(node, qubits, true, gate.gate_type);
-                } else if is_prep {
-                    // Preps only have before=false locations
-                    locations.push(node, qubits, false, gate.gate_type);
-                } else {
-                    // Regular gates have both before and after locations
-                    locations.push(node, qubits.clone(), true, gate.gate_type);
-                    locations.push(node, qubits, false, gate.gate_type);
-                }
-            }
-        }
-
-        locations
-    }
-
-    /// Builds the complete fault influence map.
-    ///
-    /// This performs backward propagation from all measurements and
-    /// creates a lookup table for fault classification.
-    ///
-    /// Note: This also builds reverse maps (detector -> faults). For performance-critical
-    /// code, use `build_influence_map_soa` instead.
-    #[must_use]
-    pub fn build_influence_map(&self) -> DagFaultInfluenceMap {
-        self.build_influence_map_with_logicals(&[])
-    }
-
-    /// Builds the fault influence map with logical operator tracking.
-    ///
-    /// # Arguments
-    ///
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs.
-    #[must_use]
-    pub fn build_influence_map_with_logicals(
-        &self,
-        logicals: &[(&[usize], &[usize])],
-    ) -> DagFaultInfluenceMap {
-        self.build_influence_map_impl(logicals, true)
-    }
-
-    /// Builds the fault influence map with optional reverse maps.
-    ///
-    /// # Arguments
-    ///
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs.
-    /// * `build_reverse` - Whether to build reverse maps (detector -> faults).
-    #[must_use]
-    pub fn build_influence_map_impl(
-        &self,
-        logicals: &[(&[usize], &[usize])],
-        build_reverse: bool,
-    ) -> DagFaultInfluenceMap {
-        let mut map = DagFaultInfluenceMap::new();
-
-        // Extract all measurements from the circuit
-        let measurements = self.extract_measurements();
-        map.measurements = measurements.clone();
-
-        // Create simple detectors (one per measurement)
-        for &(node, qubit, basis) in &measurements {
-            let measurement_id = MeasurementId {
-                tick: node, // Use node as "tick" for compatibility
-                qubit,
-                basis,
-            };
-            map.detectors.push(DetectorId::single(measurement_id));
-        }
-
-        // Create logical IDs
-        for (i, _) in logicals.iter().enumerate() {
-            map.logicals.push(LogicalId {
-                logical_qubit: i,
-                observable: 0, // Z observable
-            });
-        }
-
-        // Initialize influence for each fault location
-        // Convert SoA back to AoS for the output map
-        for loc in self.locations.to_dag_spacetime_locations() {
-            map.influences
-                .insert(loc, FaultInfluence::default());
-        }
-
-        // Pre-allocate work arrays to reuse across propagations
-        let mut visited = vec![false; self.propagator.max_node() + 1];
-        let mut active_qubits = vec![false; self.propagator.max_qubit() + 1];
-        let mut heap: BinaryHeap<(usize, usize)> = BinaryHeap::with_capacity(64);
-
-        // Backward propagate from each measurement
-        for (detector_idx, &(node, qubit, basis)) in measurements.iter().enumerate() {
-            self.propagate_from_measurement_indexed(
-                node,
-                qubit,
-                basis,
-                detector_idx,
-                &mut map,
-                &mut visited,
-                &mut active_qubits,
-                &mut heap,
-            );
-        }
-
-        // Backward propagate from each logical operator
-        for (i, (x_pos, z_pos)) in logicals.iter().enumerate() {
-            let logical_id = LogicalId {
-                logical_qubit: i,
-                observable: 0,
-            };
-            self.propagate_from_logical_reuse(
-                x_pos,
-                z_pos,
-                &logical_id,
-                &mut map,
-                &mut visited,
-                &mut active_qubits,
-                &mut heap,
-            );
-        }
-
-        // Build reverse maps only if requested
-        if build_reverse {
-            self.build_reverse_maps(&mut map);
-        }
-
-        map
-    }
-
-    /// Builds the fault influence map using true SoA storage (fastest and most memory-efficient).
-    ///
-    /// This uses CSR (Compressed Sparse Row) layout for maximum cache efficiency
-    /// and minimal memory overhead. Best for large circuits or memory-constrained
-    /// environments.
-    ///
-    /// # Example
-    /// ```
-    /// use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
-    /// use pecos_quantum::DagCircuit;
-    ///
-    /// let mut dag = DagCircuit::new();
-    /// dag.pz(2);
-    /// dag.cx(0, 2);
-    /// dag.mz(2);
-    ///
-    /// let propagator = DagFaultAnalyzer::new(&dag);
-    /// let map = propagator.build_influence_map_soa();
-    ///
-    /// // Check memory usage
-    /// let stats = map.memory_stats();
-    /// println!("Total bytes: {}", stats.total_bytes);
-    /// ```
-    #[must_use]
-    pub fn build_influence_map_soa(&self) -> DagFaultInfluenceMapSoA {
-        self.build_influence_map_soa_direct()
-    }
-
-    /// Builds the fault influence map directly into SoA format.
-    ///
-    /// Uses a bucket-based recorder that collects influences per location in O(n),
-    /// then flattens to CSR format.
-    #[must_use]
-    pub fn build_influence_map_soa_direct(&self) -> DagFaultInfluenceMapSoA {
-        let num_locations = self.locations.len();
-        let mut map = DagFaultInfluenceMapSoA::with_capacity(num_locations);
-
-        // Copy locations
-        map.locations = self.locations.to_dag_spacetime_locations();
-
-        // Extract measurements and create detectors
-        let measurements = self.extract_measurements();
-        map.measurements = measurements.clone();
-
-        for &(node, qubit, basis) in &measurements {
-            let measurement_id = MeasurementId {
-                tick: node,
-                qubit,
-                basis,
-            };
-            map.detectors.push(DetectorId::single(measurement_id));
-        }
-
-        // Use bucket recorder for O(n) construction
-        let mut recorder = BucketRecorder::new(num_locations);
-
-        // Propagate using the generic method with bucket recorder
-        self.propagate_all(&mut recorder);
-
-        // Convert buckets to SoA format (O(n) flattening)
-        map.influences = recorder.into_soa();
-
-        map
-    }
-
-    /// Extracts all measurements from the circuit.
-    fn extract_measurements(&self) -> Vec<(usize, usize, u8)> {
-        let mut measurements = Vec::new();
-
-        for &node in self.propagator.topo_order() {
-            if let Some(gate) = self.propagator.gate(node) {
-                let basis = match gate.gate_type {
-                    GateType::Measure | GateType::MeasureFree => 0, // Z-basis
-                    _ => continue,
-                };
-
-                for qubit in &gate.qubits {
-                    measurements.push((node, qubit.index(), basis));
-                }
-            }
-        }
-
-        measurements
-    }
-
-    // =========================================================================
-    // Generic Propagation with Composable Recorder (DOD/ECS)
-    // =========================================================================
-
-    /// Propagates backward from a measurement using a generic recorder.
-    ///
-    /// This is the core propagation method that separates traversal logic from
-    /// recording logic, following DOD/ECS principles.
-    ///
-    /// # Type Parameters
-    /// * `R` - The recorder type implementing `InfluenceRecorder`
-    ///
-    /// # Arguments
-    /// * `meas_node` - The measurement node
-    /// * `meas_qubit` - The measured qubit
-    /// * `basis` - Measurement basis (0=Z, 1=X)
-    /// * `detector_idx` - Index of the detector being propagated from
-    /// * `recorder` - The recorder for recording influences
-    /// * `visited` - Work buffer for visited nodes (reusable)
-    /// * `active_qubits` - Work buffer for active qubits (reusable)
-    /// * `heap` - Work heap for traversal (reusable)
-    pub fn propagate_from_measurement_generic<R: InfluenceRecorder>(
-        &self,
-        meas_node: usize,
-        meas_qubit: usize,
-        basis: u8,
-        detector_idx: usize,
-        recorder: &mut R,
-        visited: &mut [bool],
-        active_qubits: &mut [bool],
-        heap: &mut BinaryHeap<(usize, usize)>,
-    ) {
-        // Clear work arrays
-        visited.fill(false);
-        active_qubits.fill(false);
-        heap.clear();
-
-        // Start with the observable being measured
-        let mut prop = PauliProp::new();
-        if basis == 0 {
-            prop.add_z(meas_qubit);
-        } else {
-            prop.add_x(meas_qubit);
-        }
-
-        // Get measurement position (O(1) lookup)
-        let meas_topo_pos = self.propagator.topo_position(meas_node);
-
-        // Check fault at measurement node (before=true only)
-        self.record_at_node_generic(meas_node, &prop, detector_idx, recorder, true);
-
-        // Initialize: add gates on the measurement qubit
-        if meas_qubit <= self.max_qubit() {
-            active_qubits[meas_qubit] = true;
-            for (topo_pos, node) in self.propagator.qubit_gates_backward(meas_qubit) {
-                if topo_pos < meas_topo_pos && !visited[node] {
-                    visited[node] = true;
-                    heap.push((topo_pos, node));
-                }
-            }
-        }
-
-        // Process gates in reverse topo order - only gates on active wires
-        while let Some((_, node)) = heap.pop() {
-            if let Some(gate) = self.propagator.gate(node) {
-                let mut was_active = [false; 8];
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    if j < was_active.len() && q.index() <= self.max_qubit() {
-                        was_active[j] = active_qubits[q.index()];
-                    }
-                }
-
-                // Check before=false locations
-                self.record_at_node_generic(node, &prop, detector_idx, recorder, false);
-
-                // Apply gate backward
-                apply_gate(&mut prop, gate, Direction::Backward);
-
-                // Check before=true locations
-                self.record_at_node_generic(node, &prop, detector_idx, recorder, true);
-
-                // Check if Pauli spread to new qubits
-                let node_topo_pos = self.propagator.topo_position(node);
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    let idx = q.index();
-                    if idx <= self.max_qubit() {
-                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
-                        let was = j < was_active.len() && was_active[j];
-
-                        if now_active && !was {
-                            active_qubits[idx] = true;
-                            for (topo_pos, new_node) in self.propagator.qubit_gates_backward(idx) {
-                                if topo_pos < node_topo_pos && !visited[new_node] {
-                                    visited[new_node] = true;
-                                    heap.push((topo_pos, new_node));
-                                }
-                            }
-                        } else if !now_active && was {
-                            active_qubits[idx] = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Records influences at a node using a generic recorder.
-    #[inline]
-    fn record_at_node_generic<R: InfluenceRecorder>(
-        &self,
-        node: usize,
-        prop: &PauliProp,
-        detector_idx: usize,
-        recorder: &mut R,
-        only_before: bool,
-    ) {
-        for &loc_idx in self.locations.locations_at_node(node) {
-            if self.locations.is_before(loc_idx) != only_before {
-                continue;
-            }
-
-            for &q in self.locations.qubits(loc_idx) {
-                let obs_x = prop.contains_x(q);
-                let obs_z = prop.contains_z(q);
-
-                // Delegate to the recorder
-                if obs_x || obs_z {
-                    recorder.record(loc_idx, q, obs_x, obs_z, detector_idx);
-                }
-            }
-        }
-    }
-
-    /// Builds a fault influence map using a custom recorder.
-    ///
-    /// This is the most flexible method, allowing custom recording strategies.
-    ///
-    /// # Example
-    /// ```
-    /// use pecos_qec::fault_tolerance::propagator::{
-    ///     DagFaultAnalyzer, CountingRecorder,
-    /// };
-    /// use pecos_quantum::DagCircuit;
-    ///
-    /// let mut dag = DagCircuit::new();
-    /// dag.pz(2);
-    /// dag.cx(0, 2);
-    /// dag.mz(2);
-    ///
-    /// let propagator = DagFaultAnalyzer::new(&dag);
-    ///
-    /// // Use a counting recorder to count influences
-    /// let mut recorder = CountingRecorder::default();
-    /// propagator.propagate_all(&mut recorder);
-    /// println!("Total influences: {}", recorder.count);
-    /// ```
-    pub fn propagate_all<R: InfluenceRecorder>(&self, recorder: &mut R) {
-        let measurements = self.extract_measurements();
-
-        // Pre-allocate work arrays
-        let mut visited = vec![false; self.propagator.max_node() + 1];
-        let mut active_qubits = vec![false; self.propagator.max_qubit() + 1];
-        let mut heap: BinaryHeap<(usize, usize)> = BinaryHeap::with_capacity(64);
-
-        for (detector_idx, &(node, qubit, basis)) in measurements.iter().enumerate() {
-            self.propagate_from_measurement_generic(
-                node,
-                qubit,
-                basis,
-                detector_idx,
-                recorder,
-                &mut visited,
-                &mut active_qubits,
-                &mut heap,
-            );
-        }
-    }
-
-    /// Propagates backward from a measurement using truly sparse traversal.
-    ///
-    /// Only visits gates on the wires (qubits) we're propagating through.
-    /// Uses a max-heap to process gates in reverse topo order efficiently.
-    #[allow(dead_code)]
-    fn propagate_from_measurement(
-        &self,
-        meas_node: usize,
-        meas_qubit: usize,
-        basis: u8,
-        map: &mut DagFaultInfluenceMap,
-    ) {
-        // Start with the observable being measured
-        let mut prop = PauliProp::new();
-        if basis == 0 {
-            prop.add_z(meas_qubit);
-        } else {
-            prop.add_x(meas_qubit);
-        }
-
-        let measurement_id = MeasurementId {
-            tick: meas_node,
-            qubit: meas_qubit,
-            basis,
-        };
-        let detector = DetectorId::single(measurement_id);
-
-        // Get measurement position (O(1) lookup)
-        let meas_topo_pos = self.propagator.topo_position(meas_node);
-
-        // Check fault at measurement node (before=true only)
-        self.record_influences_at_node_fast(meas_node, &prop, &detector, None, map, true);
-
-        // Track visited nodes (queued or processed) and active qubits
-        let mut visited = vec![false; self.propagator.max_node() + 1];
-        let mut active_qubits = vec![false; self.propagator.max_qubit() + 1];
-
-        // Max-heap: (topo_pos, node) - highest topo_pos comes first (reverse order)
-        // Pre-allocate with estimated capacity (average gates per qubit * expected active qubits)
-        let mut heap: BinaryHeap<(usize, usize)> = BinaryHeap::with_capacity(32);
-
-        // Initialize: add gates on the measurement qubit
-        if meas_qubit <= self.max_qubit() {
-            active_qubits[meas_qubit] = true;
-            for (topo_pos, node) in self.propagator.qubit_gates_backward(meas_qubit) {
-                if topo_pos < meas_topo_pos && !visited[node] {
-                    visited[node] = true;
-                    heap.push((topo_pos, node));
-                }
-            }
-        }
-
-        // Process gates in reverse topo order - only gates on active wires
-        while let Some((_, node)) = heap.pop() {
-
-            if let Some(gate) = self.propagator.gate(node) {
-                // Track which qubits were active before
-                let mut was_active = [false; 8];
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    if j < was_active.len() && q.index() <= self.max_qubit() {
-                        was_active[j] = active_qubits[q.index()];
-                    }
-                }
-
-                // Check before=false locations (after this gate executes)
-                self.record_influences_at_node_fast(node, &prop, &detector, None, map, false);
-
-                // Apply gate backward
-                apply_gate(&mut prop, gate, Direction::Backward);
-
-                // Check before=true locations (before this gate executes)
-                self.record_influences_at_node_fast(node, &prop, &detector, None, map, true);
-
-                // Check if Pauli spread to new qubits
-                let node_topo_pos = self.propagator.topo_position(node);
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    let idx = q.index();
-                    if idx <= self.max_qubit() {
-                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
-                        let was = j < was_active.len() && was_active[j];
-
-                        if now_active && !was {
-                            // Pauli spread to this qubit - add its gates to heap
-                            active_qubits[idx] = true;
-                            for (topo_pos, new_node) in self.propagator.qubit_gates_backward(idx) {
-                                if topo_pos < node_topo_pos && !visited[new_node] {
-                                    visited[new_node] = true;
-                                    heap.push((topo_pos, new_node));
-                                }
-                            }
-                        } else if !now_active && was {
-                            active_qubits[idx] = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Propagates backward from a measurement using detector index.
-    /// This avoids creating DetectorId on each call - uses the pre-existing one from map.detectors.
-    fn propagate_from_measurement_indexed(
-        &self,
-        meas_node: usize,
-        meas_qubit: usize,
-        basis: u8,
-        detector_idx: usize,
-        map: &mut DagFaultInfluenceMap,
-        visited: &mut [bool],
-        active_qubits: &mut [bool],
-        heap: &mut BinaryHeap<(usize, usize)>,
-    ) {
-        // Clear work arrays
-        visited.fill(false);
-        active_qubits.fill(false);
-        heap.clear();
-
-        // Start with the observable being measured
-        let mut prop = PauliProp::new();
-        if basis == 0 {
-            prop.add_z(meas_qubit);
-        } else {
-            prop.add_x(meas_qubit);
-        }
-
-        // Get measurement position (O(1) lookup)
-        let meas_topo_pos = self.propagator.topo_position(meas_node);
-
-        // Check fault at measurement node (before=true only)
-        self.record_influences_at_node_indexed(meas_node, &prop, detector_idx, None, map, true);
-
-        // Initialize: add gates on the measurement qubit
-        if meas_qubit <= self.max_qubit() {
-            active_qubits[meas_qubit] = true;
-            for (topo_pos, node) in self.propagator.qubit_gates_backward(meas_qubit) {
-                if topo_pos < meas_topo_pos && !visited[node] {
-                    visited[node] = true;
-                    heap.push((topo_pos, node));
-                }
-            }
-        }
-
-        // Process gates in reverse topo order - only gates on active wires
-        while let Some((_, node)) = heap.pop() {
-            if let Some(gate) = self.propagator.gate(node) {
-                let mut was_active = [false; 8];
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    if j < was_active.len() && q.index() <= self.max_qubit() {
-                        was_active[j] = active_qubits[q.index()];
-                    }
-                }
-
-                // Check before=false locations
-                self.record_influences_at_node_indexed(node, &prop, detector_idx, None, map, false);
-
-                // Apply gate backward
-                apply_gate(&mut prop, gate, Direction::Backward);
-
-                // Check before=true locations
-                self.record_influences_at_node_indexed(node, &prop, detector_idx, None, map, true);
-
-                // Check if Pauli spread to new qubits
-                let node_topo_pos = self.propagator.topo_position(node);
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    let idx = q.index();
-                    if idx <= self.max_qubit() {
-                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
-                        let was = j < was_active.len() && was_active[j];
-
-                        if now_active && !was {
-                            active_qubits[idx] = true;
-                            for (topo_pos, new_node) in self.propagator.qubit_gates_backward(idx) {
-                                if topo_pos < node_topo_pos && !visited[new_node] {
-                                    visited[new_node] = true;
-                                    heap.push((topo_pos, new_node));
-                                }
-                            }
-                        } else if !now_active && was {
-                            active_qubits[idx] = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Propagates backward from a measurement, reusing pre-allocated work arrays.
-    #[allow(dead_code)]
-    fn propagate_from_measurement_reuse(
-        &self,
-        meas_node: usize,
-        meas_qubit: usize,
-        basis: u8,
-        map: &mut DagFaultInfluenceMap,
-        visited: &mut [bool],
-        active_qubits: &mut [bool],
-        heap: &mut BinaryHeap<(usize, usize)>,
-    ) {
-        // Clear work arrays (faster than reallocating)
-        visited.fill(false);
-        active_qubits.fill(false);
-        heap.clear();
-
-        // Start with the observable being measured
-        let mut prop = PauliProp::new();
-        if basis == 0 {
-            prop.add_z(meas_qubit);
-        } else {
-            prop.add_x(meas_qubit);
-        }
-
-        let measurement_id = MeasurementId {
-            tick: meas_node,
-            qubit: meas_qubit,
-            basis,
-        };
-        let detector = DetectorId::single(measurement_id);
-
-        // Get measurement position (O(1) lookup)
-        let meas_topo_pos = self.propagator.topo_position(meas_node);
-
-        // Check fault at measurement node (before=true only)
-        self.record_influences_at_node_fast(meas_node, &prop, &detector, None, map, true);
-
-        // Initialize: add gates on the measurement qubit
-        if meas_qubit <= self.max_qubit() {
-            active_qubits[meas_qubit] = true;
-            for (topo_pos, node) in self.propagator.qubit_gates_backward(meas_qubit) {
-                if topo_pos < meas_topo_pos && !visited[node] {
-                    visited[node] = true;
-                    heap.push((topo_pos, node));
-                }
-            }
-        }
-
-        // Process gates in reverse topo order - only gates on active wires
-        while let Some((_, node)) = heap.pop() {
-            if let Some(gate) = self.propagator.gate(node) {
-                // Track which qubits were active before
-                let mut was_active = [false; 8];
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    if j < was_active.len() && q.index() <= self.max_qubit() {
-                        was_active[j] = active_qubits[q.index()];
-                    }
-                }
-
-                // Check before=false locations (after this gate executes)
-                self.record_influences_at_node_fast(node, &prop, &detector, None, map, false);
-
-                // Apply gate backward
-                apply_gate(&mut prop, gate, Direction::Backward);
-
-                // Check before=true locations (before this gate executes)
-                self.record_influences_at_node_fast(node, &prop, &detector, None, map, true);
-
-                // Check if Pauli spread to new qubits
-                let node_topo_pos = self.propagator.topo_position(node);
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    let idx = q.index();
-                    if idx <= self.max_qubit() {
-                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
-                        let was = j < was_active.len() && was_active[j];
-
-                        if now_active && !was {
-                            // Pauli spread to this qubit - add its gates to heap
-                            active_qubits[idx] = true;
-                            for (topo_pos, new_node) in self.propagator.qubit_gates_backward(idx) {
-                                if topo_pos < node_topo_pos && !visited[new_node] {
-                                    visited[new_node] = true;
-                                    heap.push((topo_pos, new_node));
-                                }
-                            }
-                        } else if !now_active && was {
-                            active_qubits[idx] = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Propagates backward from a logical operator using truly sparse traversal.
-    ///
-    /// Only visits gates on the wires we're propagating through.
-    /// Uses a max-heap to process gates in reverse topo order efficiently.
-    #[allow(dead_code)]
-    fn propagate_from_logical(
-        &self,
-        x_positions: &[usize],
-        z_positions: &[usize],
-        logical_id: &LogicalId,
-        map: &mut DagFaultInfluenceMap,
-    ) {
-        let mut prop = PauliProp::new();
-        for &q in x_positions {
-            prop.add_x(q);
-        }
-        for &q in z_positions {
-            prop.add_z(q);
-        }
-
-        let dummy_detector = DetectorId::single(MeasurementId {
-            tick: 0,
-            qubit: 0,
-            basis: 0,
-        });
-
-        // Track visited nodes (queued or processed) and active qubits
-        let mut visited = vec![false; self.propagator.max_node() + 1];
-        let mut active_qubits = vec![false; self.propagator.max_qubit() + 1];
-
-        // Max-heap: (topo_pos, node) - highest topo_pos comes first (reverse order)
-        // Pre-allocate with estimated capacity
-        let mut heap: BinaryHeap<(usize, usize)> = BinaryHeap::with_capacity(64);
-
-        // Initialize from logical operator support - add all gates on these qubits
-        for &q in x_positions {
-            if q <= self.max_qubit() && !active_qubits[q] {
-                active_qubits[q] = true;
-                for (topo_pos, node) in self.propagator.qubit_gates_backward(q) {
-                    if !visited[node] {
-                        visited[node] = true;
-                        heap.push((topo_pos, node));
-                    }
-                }
-            }
-        }
-        for &q in z_positions {
-            if q <= self.max_qubit() && !active_qubits[q] {
-                active_qubits[q] = true;
-                for (topo_pos, node) in self.propagator.qubit_gates_backward(q) {
-                    if !visited[node] {
-                        visited[node] = true;
-                        heap.push((topo_pos, node));
-                    }
-                }
-            }
-        }
-
-        // Process gates in reverse topo order - only gates on active wires
-        while let Some((_, node)) = heap.pop() {
-            if let Some(gate) = self.propagator.gate(node) {
-                // Track which qubits were active before
-                let mut was_active = [false; 8];
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    if j < was_active.len() && q.index() <= self.max_qubit() {
-                        was_active[j] = active_qubits[q.index()];
-                    }
-                }
-
-                // Check before=false locations (after this gate executes)
-                self.record_influences_at_node_fast(
-                    node,
-                    &prop,
-                    &dummy_detector,
-                    Some(logical_id),
-                    map,
-                    false,
-                );
-
-                // Apply gate backward
-                apply_gate(&mut prop, gate, Direction::Backward);
-
-                // Check before=true locations (before this gate executes)
-                self.record_influences_at_node_fast(
-                    node,
-                    &prop,
-                    &dummy_detector,
-                    Some(logical_id),
-                    map,
-                    true,
-                );
-
-                // Check if Pauli spread to new qubits
-                let node_topo_pos = self.propagator.topo_position(node);
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    let idx = q.index();
-                    if idx <= self.max_qubit() {
-                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
-                        let was = j < was_active.len() && was_active[j];
-
-                        if now_active && !was {
-                            // Pauli spread to this qubit - add its gates to heap
-                            active_qubits[idx] = true;
-                            for (topo_pos, new_node) in self.propagator.qubit_gates_backward(idx) {
-                                if topo_pos < node_topo_pos && !visited[new_node] {
-                                    visited[new_node] = true;
-                                    heap.push((topo_pos, new_node));
-                                }
-                            }
-                        } else if !now_active && was {
-                            active_qubits[idx] = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Propagates backward from a logical operator, reusing pre-allocated work arrays.
-    fn propagate_from_logical_reuse(
-        &self,
-        x_positions: &[usize],
-        z_positions: &[usize],
-        logical_id: &LogicalId,
-        map: &mut DagFaultInfluenceMap,
-        visited: &mut [bool],
-        active_qubits: &mut [bool],
-        heap: &mut BinaryHeap<(usize, usize)>,
-    ) {
-        // Clear work arrays
-        visited.fill(false);
-        active_qubits.fill(false);
-        heap.clear();
-
-        let mut prop = PauliProp::new();
-        for &q in x_positions {
-            prop.add_x(q);
-        }
-        for &q in z_positions {
-            prop.add_z(q);
-        }
-
-        let dummy_detector = DetectorId::single(MeasurementId {
-            tick: 0,
-            qubit: 0,
-            basis: 0,
-        });
-
-        // Initialize from logical operator support
-        for &q in x_positions {
-            if q <= self.max_qubit() && !active_qubits[q] {
-                active_qubits[q] = true;
-                for (topo_pos, node) in self.propagator.qubit_gates_backward(q) {
-                    if !visited[node] {
-                        visited[node] = true;
-                        heap.push((topo_pos, node));
-                    }
-                }
-            }
-        }
-        for &q in z_positions {
-            if q <= self.max_qubit() && !active_qubits[q] {
-                active_qubits[q] = true;
-                for (topo_pos, node) in self.propagator.qubit_gates_backward(q) {
-                    if !visited[node] {
-                        visited[node] = true;
-                        heap.push((topo_pos, node));
-                    }
-                }
-            }
-        }
-
-        // Process gates in reverse topo order
-        while let Some((_, node)) = heap.pop() {
-            if let Some(gate) = self.propagator.gate(node) {
-                let mut was_active = [false; 8];
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    if j < was_active.len() && q.index() <= self.max_qubit() {
-                        was_active[j] = active_qubits[q.index()];
-                    }
-                }
-
-                self.record_influences_at_node_fast(
-                    node,
-                    &prop,
-                    &dummy_detector,
-                    Some(logical_id),
-                    map,
-                    false,
-                );
-
-                apply_gate(&mut prop, gate, Direction::Backward);
-
-                self.record_influences_at_node_fast(
-                    node,
-                    &prop,
-                    &dummy_detector,
-                    Some(logical_id),
-                    map,
-                    true,
-                );
-
-                let node_topo_pos = self.propagator.topo_position(node);
-                for (j, q) in gate.qubits.iter().enumerate() {
-                    let idx = q.index();
-                    if idx <= self.max_qubit() {
-                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
-                        let was = j < was_active.len() && was_active[j];
-
-                        if now_active && !was {
-                            active_qubits[idx] = true;
-                            for (topo_pos, new_node) in self.propagator.qubit_gates_backward(idx) {
-                                if topo_pos < node_topo_pos && !visited[new_node] {
-                                    visited[new_node] = true;
-                                    heap.push((topo_pos, new_node));
-                                }
-                            }
-                        } else if !now_active && was {
-                            active_qubits[idx] = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Records influences using detector index instead of DetectorId reference.
-    /// Looks up the detector from map.detectors only when needed.
-    #[inline]
-    fn record_influences_at_node_indexed(
-        &self,
-        node: usize,
-        prop: &PauliProp,
-        detector_idx: usize,
-        logical: Option<&LogicalId>,
-        map: &mut DagFaultInfluenceMap,
-        only_before: bool,
-    ) {
-        // Use pre-computed index for O(1) lookup
-        for &loc_idx in self.locations.locations_at_node(node) {
-            let before = self.locations.is_before(loc_idx);
-            if before != only_before {
-                continue;
-            }
-
-            // Build location key for BTreeMap lookup
-            let loc = DagSpacetimeLocation {
-                node: self.locations.nodes[loc_idx],
-                qubits: self.locations.qubits[loc_idx].iter().map(|&q| QubitId::from(q)).collect(),
-                before,
-                gate_type: self.locations.gate_types[loc_idx],
-            };
-
-            for &q in self.locations.qubits(loc_idx) {
-                let obs_x = prop.contains_x(q);
-                let obs_z = prop.contains_z(q);
-
-                if let Some(influence) = map.influences.get_mut(&loc) {
-                    // X fault anticommutes with Z or Y observable
-                    if obs_z {
-                        if let Some(log) = logical {
-                            influence.logical_flips[1].push(*log);
-                        } else {
-                            let detector = &map.detectors[detector_idx];
-                            influence.detector_flips[1].push(detector.clone());
-                            influence.measurement_flips[1].extend(detector.measurements.iter().copied());
-                        }
-                    }
-
-                    // Z fault anticommutes with X or Y observable
-                    if obs_x {
-                        if let Some(log) = logical {
-                            influence.logical_flips[3].push(*log);
-                        } else {
-                            let detector = &map.detectors[detector_idx];
-                            influence.detector_flips[3].push(detector.clone());
-                            influence.measurement_flips[3].extend(detector.measurements.iter().copied());
-                        }
-                    }
-
-                    // Y fault anticommutes with X, Z, or Y observable
-                    if obs_x || obs_z {
-                        if let Some(log) = logical {
-                            influence.logical_flips[2].push(*log);
-                        } else {
-                            let detector = &map.detectors[detector_idx];
-                            influence.detector_flips[2].push(detector.clone());
-                            influence.measurement_flips[2].extend(detector.measurements.iter().copied());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Records influences using pre-computed node-to-locations index (O(1) lookup).
-    #[inline]
-    #[allow(dead_code)]
-    fn record_influences_at_node_fast(
-        &self,
-        node: usize,
-        prop: &PauliProp,
-        detector: &DetectorId,
-        logical: Option<&LogicalId>,
-        map: &mut DagFaultInfluenceMap,
-        only_before: bool,
-    ) {
-        // Use pre-computed index for O(1) lookup
-        for &loc_idx in self.locations.locations_at_node(node) {
-            let before = self.locations.is_before(loc_idx);
-            if before != only_before {
-                continue;
-            }
-
-            // Build location key for BTreeMap lookup
-            let loc = DagSpacetimeLocation {
-                node: self.locations.nodes[loc_idx],
-                qubits: self.locations.qubits[loc_idx].iter().map(|&q| QubitId::from(q)).collect(),
-                before,
-                gate_type: self.locations.gate_types[loc_idx],
-            };
-
-            for (qubit_idx, &q) in self.locations.qubits(loc_idx).iter().enumerate() {
-                let obs_x = prop.contains_x(q);
-                let obs_z = prop.contains_z(q);
-
-                if let Some(influence) = map.influences.get_mut(&loc) {
-                    // X fault anticommutes with Z or Y observable
-                    if obs_z {
-                        if let Some(log) = logical {
-                            influence.logical_flips[1].push(*log);
-                        } else {
-                            influence.detector_flips[1].push(detector.clone());
-                            influence.measurement_flips[1].extend(detector.measurements.iter().copied());
-                            influence
-                                .per_qubit_detector_flips
-                                .entry((qubit_idx, 1))
-                                .or_default()
-                                .push(detector.clone());
-                        }
-                    }
-
-                    // Z fault anticommutes with X or Y observable
-                    if obs_x {
-                        if let Some(log) = logical {
-                            influence.logical_flips[3].push(*log);
-                        } else {
-                            influence.detector_flips[3].push(detector.clone());
-                            influence.measurement_flips[3].extend(detector.measurements.iter().copied());
-                            influence
-                                .per_qubit_detector_flips
-                                .entry((qubit_idx, 3))
-                                .or_default()
-                                .push(detector.clone());
-                        }
-                    }
-
-                    // Y fault anticommutes with X, Z, or Y observable
-                    if obs_x || obs_z {
-                        if let Some(log) = logical {
-                            influence.logical_flips[2].push(*log);
-                        } else {
-                            influence.detector_flips[2].push(detector.clone());
-                            influence.measurement_flips[2].extend(detector.measurements.iter().copied());
-                            influence
-                                .per_qubit_detector_flips
-                                .entry((qubit_idx, 2))
-                                .or_default()
-                                .push(detector.clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Builds reverse maps (detector -> faults, logical -> faults).
-    fn build_reverse_maps(&self, map: &mut DagFaultInfluenceMap) {
-        for (loc, influence) in &map.influences {
-            for (pauli, detectors) in influence.detector_flips.iter().enumerate() {
-                for detector in detectors {
-                    map.detector_to_faults
-                        .entry(detector.clone())
-                        .or_default()
-                        .push((loc.clone(), pauli as u8));
-                }
-            }
-
-            for (pauli, logicals) in influence.logical_flips.iter().enumerate() {
-                for logical in logicals {
-                    map.logical_to_faults
-                        .entry(*logical)
-                        .or_default()
-                        .push((loc.clone(), pauli as u8));
-                }
-            }
-        }
-    }
-}
-
-// ============================================================================
 // Integration with Fault Checking
 // ============================================================================
 
@@ -4281,11 +2269,7 @@ impl<'a> InfluenceBasedChecker<'a> {
     }
 
     /// Returns all detectors flipped by the given fault.
-    pub fn detectors_flipped(
-        &self,
-        location: &SpacetimeLocation,
-        pauli: u8,
-    ) -> Vec<&DetectorId> {
+    pub fn detectors_flipped(&self, location: &SpacetimeLocation, pauli: u8) -> Vec<&DetectorId> {
         self.influence_map
             .get_influence(location)
             .map_or(Vec::new(), |inf| {
@@ -4294,11 +2278,7 @@ impl<'a> InfluenceBasedChecker<'a> {
     }
 
     /// Checks if a fault causes an undetectable logical error.
-    pub fn is_undetectable_logical_error(
-        &self,
-        location: &SpacetimeLocation,
-        pauli: u8,
-    ) -> bool {
+    pub fn is_undetectable_logical_error(&self, location: &SpacetimeLocation, pauli: u8) -> bool {
         let (has_syndrome, has_logical) = self.classify(location, pauli);
         !has_syndrome && has_logical
     }
@@ -4326,7 +2306,7 @@ mod tests {
     #[test]
     fn test_extract_measurements() {
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let measurements = propagator.extract_measurements();
 
         assert_eq!(measurements.len(), 1);
@@ -4338,7 +2318,7 @@ mod tests {
     #[test]
     fn test_build_influence_map() {
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         // Should have fault locations
@@ -4350,14 +2330,17 @@ mod tests {
         // Should have one measurement
         assert_eq!(map.measurements.len(), 1);
 
-        println!("Influence map has {} fault locations", map.num_fault_locations());
+        println!(
+            "Influence map has {} fault locations",
+            map.num_fault_locations()
+        );
         println!("Detectors: {:?}", map.detectors);
     }
 
     #[test]
     fn test_x_error_flips_z_measurement() {
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         // An X error on data qubit 0 before the first CNOT should flip the measurement
@@ -4370,21 +2353,21 @@ mod tests {
                 // Check if X error here flips the detector
                 if !influence.detectors_for_pauli(1).is_empty() {
                     found_x_flip = true;
-                    println!(
-                        "X error at {:?} flips detector",
-                        loc
-                    );
+                    println!("X error at {:?} flips detector", loc);
                 }
             }
         }
 
-        assert!(found_x_flip, "Should find X errors that flip the measurement");
+        assert!(
+            found_x_flip,
+            "Should find X errors that flip the measurement"
+        );
     }
 
     #[test]
     fn test_z_error_no_syndrome() {
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         // A Z error on data qubits should NOT flip the Z-measurement
@@ -4396,11 +2379,7 @@ mod tests {
                 // Z errors on data qubits shouldn't flip Z-measurement
                 let z_flips = influence.detectors_for_pauli(3);
                 // This may or may not be empty depending on exact location
-                println!(
-                    "Z error at {:?} flips {} detectors",
-                    loc,
-                    z_flips.len()
-                );
+                println!("Z error at {:?} flips {} detectors", loc, z_flips.len());
             }
         }
     }
@@ -4408,7 +2387,7 @@ mod tests {
     #[test]
     fn test_influence_based_checker() {
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         let checker = InfluenceBasedChecker::new(&map);
@@ -4428,7 +2407,7 @@ mod tests {
     #[test]
     fn test_with_logical_operator() {
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
 
         // Logical Z = Z0 Z1 (the stabilizer being measured)
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1])];
@@ -4443,10 +2422,7 @@ mod tests {
             for (pauli, logicals) in influence.logical_flips.iter().enumerate() {
                 if !logicals.is_empty() {
                     found_logical_flip = true;
-                    println!(
-                        "Pauli {} at {:?} flips logical",
-                        pauli, loc
-                    );
+                    println!("Pauli {} at {:?} flips logical", pauli, loc);
                 }
             }
         }
@@ -4458,14 +2434,15 @@ mod tests {
     #[test]
     fn test_reverse_map() {
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         // Check reverse map
         for (detector, faults) in &map.detector_to_faults {
             println!(
                 "Detector {:?} is flipped by {} fault locations",
-                detector, faults.len()
+                detector,
+                faults.len()
             );
             assert!(!faults.is_empty());
         }
@@ -4493,7 +2470,7 @@ mod tests {
     #[test]
     fn test_two_round_measurements() {
         let circuit = two_round_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let measurements = propagator.extract_measurements();
 
         // Should have two measurements (one per round)
@@ -4504,14 +2481,17 @@ mod tests {
         let map = propagator.build_influence_map();
         assert_eq!(map.detectors.len(), 2);
 
-        println!("Two-round circuit has {} fault locations", map.num_fault_locations());
+        println!(
+            "Two-round circuit has {} fault locations",
+            map.num_fault_locations()
+        );
     }
 
     #[test]
     fn test_y_error_handling() {
         // Y = iXZ, so Y error should flip Z-measurement (via X component)
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         // Find a CX gate location and check Y error behavior
@@ -4542,7 +2522,7 @@ mod tests {
     fn test_two_qubit_gate_fault_location() {
         // Test that faults on 2-qubit gates affect both qubits correctly
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         // Find CX gate locations (should have 2 qubits)
@@ -4566,7 +2546,7 @@ mod tests {
     #[test]
     fn test_undetectable_logical_error_detection() {
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
 
         // Logical X = X0 (anticommutes with Z0 Z1)
         let logicals: &[(&[usize], &[usize])] = &[(&[0], &[])];
@@ -4608,7 +2588,7 @@ mod tests {
         // However, errors on DATA qubits persist and CAN affect later measurements
         // (since data qubits are not reset by the prep).
         let circuit = two_round_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         // The second measurement (tick 7) should NOT be affected by faults
@@ -4673,7 +2653,7 @@ mod tests {
     fn test_h_gate_backward_propagation() {
         // Test that H gates correctly transform Paulis backward
         let circuit = x_stabilizer_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         // In X-stabilizer circuit, Z errors on data qubits should flip the measurement
@@ -4694,12 +2674,12 @@ mod tests {
     #[test]
     fn test_backward_vs_forward_consistency() {
         // Verify backward propagation gives consistent results with forward propagation
-        use super::super::{PauliFault, propagate_fault, has_syndrome, anticommutes_with_logical};
+        use super::super::{PauliFault, anticommutes_with_logical, has_syndrome, propagate_fault};
 
         let circuit = simple_syndrome_circuit();
 
         // Build backward influence map
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1])]; // Z logical
         let map = propagator.build_influence_map_with_logicals(logicals);
         let backward_checker = InfluenceBasedChecker::new(&map);
@@ -4744,7 +2724,7 @@ mod tests {
     #[test]
     fn test_empty_circuit() {
         let circuit = TickCircuit::new();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         assert_eq!(map.num_fault_locations(), 0);
@@ -4759,7 +2739,7 @@ mod tests {
         circuit.tick().cx(&[(0, 1)]);
         // No measurements
 
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         assert!(map.num_fault_locations() > 0); // Should have fault locations
@@ -4886,14 +2866,14 @@ mod tests {
     #[test]
     fn test_h_gate_propagation() {
         // Minimal test: prep, H, measure
-        use super::super::{PauliFault, propagate_fault, has_syndrome};
+        use super::super::{PauliFault, has_syndrome, propagate_fault};
 
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0]); // tick 0: prep
         circuit.tick().h(&[0]); // tick 1: H
         circuit.tick().mz(&[0]); // tick 2: measure
 
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
         let backward_checker = InfluenceBasedChecker::new(&map);
 
@@ -4915,11 +2895,22 @@ mod tests {
                 let prop = propagate_fault(&circuit, &fault);
                 let fwd_syn = has_syndrome(&prop, z_ancillas, x_ancillas);
 
-                let status = if back_syn == fwd_syn { "OK" } else { "MISMATCH" };
+                let status = if back_syn == fwd_syn {
+                    "OK"
+                } else {
+                    "MISMATCH"
+                };
                 println!(
                     "{} tick={} q={:?} before={} {:?} {}: back={} fwd={} prop={}",
-                    status, loc.tick, loc.qubits.iter().map(|q| q.index()).collect::<Vec<_>>(),
-                    loc.before, loc.gate_type, p_name, back_syn, fwd_syn, prop
+                    status,
+                    loc.tick,
+                    loc.qubits.iter().map(|q| q.index()).collect::<Vec<_>>(),
+                    loc.before,
+                    loc.gate_type,
+                    p_name,
+                    back_syn,
+                    fwd_syn,
+                    prop
                 );
             }
         }
@@ -4929,7 +2920,7 @@ mod tests {
     fn test_backward_vs_forward_random_circuits() {
         // Test backward propagation matches forward on random Clifford circuits
         // Focus on single-qubit locations where semantics are clear
-        use super::super::{PauliFault, propagate_fault, has_syndrome};
+        use super::super::{PauliFault, has_syndrome, propagate_fault};
 
         let num_tests = 10;
         let mut total_checked = 0;
@@ -4938,7 +2929,7 @@ mod tests {
 
         for seed in 0..num_tests {
             let circuit = random_clifford_circuit(4, 5, seed);
-            let propagator = BackwardPropagator::new(&circuit);
+            let propagator = TickFaultAnalyzer::new(&circuit);
             let map = propagator.build_influence_map();
             let backward_checker = InfluenceBasedChecker::new(&map);
 
@@ -4967,7 +2958,14 @@ mod tests {
                     if back_syn == fwd_syn {
                         total_consistent += 1;
                     } else {
-                        mismatches.push((seed, loc.clone(), pauli, back_syn, fwd_syn, prop.clone()));
+                        mismatches.push((
+                            seed,
+                            loc.clone(),
+                            pauli,
+                            back_syn,
+                            fwd_syn,
+                            prop.clone(),
+                        ));
                     }
                 }
             }
@@ -4978,7 +2976,15 @@ mod tests {
             let p_name = if *pauli == 1 { "X" } else { "Z" };
             println!(
                 "MISMATCH seed={} tick={} q={} before={} {:?} {}: back={} fwd={} prop={}",
-                seed, loc.tick, loc.qubits[0].index(), loc.before, loc.gate_type, p_name, back, fwd, prop
+                seed,
+                loc.tick,
+                loc.qubits[0].index(),
+                loc.before,
+                loc.gate_type,
+                p_name,
+                back,
+                fwd,
+                prop
             );
         }
 
@@ -5001,10 +3007,10 @@ mod tests {
     #[test]
     fn test_backward_vs_forward_all_paulis() {
         // Exhaustively test all Pauli types on simple circuit
-        use super::super::{PauliFault, propagate_fault, has_syndrome, anticommutes_with_logical};
+        use super::super::{PauliFault, anticommutes_with_logical, has_syndrome, propagate_fault};
 
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1])];
         let map = propagator.build_influence_map_with_logicals(logicals);
         let backward_checker = InfluenceBasedChecker::new(&map);
@@ -5054,7 +3060,7 @@ mod tests {
     fn test_tree_structure_analysis() {
         // Analyze the "tree" structure - how many faults affect each detector
         let circuit = simple_syndrome_circuit();
-        let propagator = BackwardPropagator::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit);
         let map = propagator.build_influence_map();
 
         println!("=== Tree Structure Analysis ===");
@@ -5071,7 +3077,8 @@ mod tests {
             );
 
             // Group by Pauli type
-            let mut by_pauli: std::collections::BTreeMap<u8, usize> = std::collections::BTreeMap::new();
+            let mut by_pauli: std::collections::BTreeMap<u8, usize> =
+                std::collections::BTreeMap::new();
             for (_loc, pauli) in faults {
                 *by_pauli.entry(*pauli).or_insert(0) += 1;
             }
@@ -5089,7 +3096,7 @@ mod tests {
         // Check for "shared structure" - faults that affect multiple detectors
         // (In this simple circuit there's only one detector, so this won't show much)
         let two_round = two_round_syndrome_circuit();
-        let prop2 = BackwardPropagator::new(&two_round);
+        let prop2 = TickFaultAnalyzer::new(&two_round);
         let map2 = prop2.build_influence_map();
 
         println!("\n=== Two-Round Circuit ===");
@@ -5125,7 +3132,7 @@ mod tests {
         // Tests ALL fault locations including multi-qubit gates, using the
         // `classify_uniform` method which properly handles cancellation effects
         // when the same Pauli is applied to all qubits.
-        use super::super::{PauliFault, propagate_fault, has_syndrome};
+        use super::super::{PauliFault, has_syndrome, propagate_fault};
 
         // Test configurations: (num_qubits, num_ticks, num_seeds)
         let configs = [
@@ -5146,7 +3153,7 @@ mod tests {
 
             for seed in 0..num_seeds {
                 let circuit = random_clifford_circuit(num_qubits, num_ticks, seed as u64);
-                let propagator = BackwardPropagator::new(&circuit);
+                let propagator = TickFaultAnalyzer::new(&circuit);
                 let map = propagator.build_influence_map();
                 let backward_checker = InfluenceBasedChecker::new(&map);
 
@@ -5177,7 +3184,13 @@ mod tests {
             }
 
             let rate = 100.0 * config_consistent as f64 / config_checked as f64;
-            config_results.push((num_qubits, num_ticks, config_checked, config_consistent, rate));
+            config_results.push((
+                num_qubits,
+                num_ticks,
+                config_checked,
+                config_consistent,
+                rate,
+            ));
         }
 
         // Print results per configuration
@@ -5210,7 +3223,7 @@ mod tests {
         // PauliProp tracks whether an error FLIPS a measurement, not the absolute value.
         // To compare with stabilizer sim, we need to run the sim both with and without
         // the error to see if the error changed the measurement outcome.
-        use super::super::{PauliFault, propagate_fault, has_syndrome};
+        use super::super::{PauliFault, has_syndrome, propagate_fault};
 
         let configs = [
             (3, 8, 5),  // 3 qubits, 8 ticks, 5 seeds
@@ -5224,7 +3237,7 @@ mod tests {
         for (num_qubits, num_ticks, num_seeds) in configs {
             for seed in 0..num_seeds {
                 let circuit = random_clifford_circuit(num_qubits, num_ticks, seed as u64);
-                let propagator = BackwardPropagator::new(&circuit);
+                let propagator = TickFaultAnalyzer::new(&circuit);
                 let map = propagator.build_influence_map();
                 let backward_checker = InfluenceBasedChecker::new(&map);
 
@@ -5309,8 +3322,8 @@ mod tests {
 
     /// Helper: simulate circuit without any faults to get baseline measurement
     fn simulate_circuit(circuit: &TickCircuit, z_ancillas: &[usize]) -> bool {
-        use pecos_qsim::{CliffordGateable, SparseStab};
         use pecos_core::QubitId;
+        use pecos_qsim::{CliffordGateable, SparseStab};
 
         let mut max_qubit = 0;
         for tick in circuit.ticks() {
@@ -5379,8 +3392,8 @@ mod tests {
         fault_pauli: u8,
         z_ancillas: &[usize],
     ) -> bool {
-        use pecos_qsim::{CliffordGateable, SparseStab};
         use pecos_core::QubitId;
+        use pecos_qsim::{CliffordGateable, SparseStab};
 
         let mut max_qubit = 0;
         for tick in circuit.ticks() {
@@ -5472,7 +3485,7 @@ mod tests {
     fn test_backward_vs_forward_deep_circuits() {
         // Test with deeper circuits to stress-test the backward propagation
         // Tests all fault locations using classify_uniform.
-        use super::super::{PauliFault, propagate_fault, has_syndrome};
+        use super::super::{PauliFault, has_syndrome, propagate_fault};
 
         let depths = [50, 100];
         let num_qubits = 4;
@@ -5483,7 +3496,7 @@ mod tests {
         for depth in depths {
             for seed in 0..3 {
                 let circuit = random_clifford_circuit(num_qubits, depth, seed as u64);
-                let propagator = BackwardPropagator::new(&circuit);
+                let propagator = TickFaultAnalyzer::new(&circuit);
                 let map = propagator.build_influence_map();
                 let backward_checker = InfluenceBasedChecker::new(&map);
 
@@ -5530,12 +3543,9 @@ mod tests {
     #[test]
     fn test_backward_vs_forward_with_logicals() {
         // Test that logical operator tracking also matches between backward and forward
-        use super::super::{PauliFault, propagate_fault, anticommutes_with_logical};
+        use super::super::{PauliFault, anticommutes_with_logical, propagate_fault};
 
-        let configs = [
-            (4, 10, 5),
-            (6, 15, 3),
-        ];
+        let configs = [(4, 10, 5), (6, 15, 3)];
 
         let mut total_checked = 0;
         let mut total_consistent = 0;
@@ -5557,7 +3567,7 @@ mod tests {
                 let logical_z: (&[usize], &[usize]) = (&[], &data_qubits);
                 let logicals: &[(&[usize], &[usize])] = &[logical_z];
 
-                let propagator = BackwardPropagator::new(&circuit);
+                let propagator = TickFaultAnalyzer::new(&circuit);
                 let map = propagator.build_influence_map_with_logicals(logicals);
                 let backward_checker = InfluenceBasedChecker::new(&map);
 
@@ -5571,7 +3581,8 @@ mod tests {
 
                         let fault = PauliFault::new(loc.clone(), vec![pauli]);
                         let prop = propagate_fault(&circuit, &fault);
-                        let fwd_log = anticommutes_with_logical(&prop, logicals[0].0, logicals[0].1);
+                        let fwd_log =
+                            anticommutes_with_logical(&prop, logicals[0].0, logicals[0].1);
 
                         total_checked += 1;
                         if back_log == fwd_log {
@@ -5599,8 +3610,8 @@ mod tests {
     fn test_propagate_fault_backward_basic() {
         use super::propagate_fault_backward;
         use crate::fault_tolerance::{PauliFault, SpacetimeLocation};
-        use pecos_core::gate_type::GateType;
         use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
         use pecos_quantum::TickCircuit;
 
         // Build a simple circuit without prep: H -> CX -> MZ
@@ -5611,13 +3622,8 @@ mod tests {
         circuit.tick().mz(&[0, 1]);
 
         // Create an X fault after the CX gate on qubit 0
-        let location = SpacetimeLocation::new(
-            1,
-            vec![QubitId(0), QubitId(1)],
-            false,
-            GateType::CX,
-            0,
-        );
+        let location =
+            SpacetimeLocation::new(1, vec![QubitId(0), QubitId(1)], false, GateType::CX, 0);
         let fault = PauliFault::new(location, vec![1, 0]); // X on control, I on target
 
         // Propagate backward
@@ -5645,15 +3651,21 @@ mod tests {
 
         // Z on target propagates backward through CX to ZZ
         // (Z_target -> Z_control * Z_target)
-        assert!(prop.contains_z(0), "Z on target should spread to control backward through CX");
-        assert!(prop.contains_z(1), "Z on target should remain on target backward through CX");
+        assert!(
+            prop.contains_z(0),
+            "Z on target should spread to control backward through CX"
+        );
+        assert!(
+            prop.contains_z(1),
+            "Z on target should remain on target backward through CX"
+        );
     }
 
     #[test]
     fn test_propagate_backward_from_tick() {
         use super::propagate_backward_from_tick;
-        use pecos_quantum::TickCircuit;
         use pecos_qsim::PauliProp;
+        use pecos_quantum::TickCircuit;
 
         // Build a circuit without prep: H -> CX -> H
         let mut circuit = TickCircuit::new();
@@ -5679,8 +3691,8 @@ mod tests {
     fn test_propagate_backward_with_prep_transparent() {
         use super::propagate_fault_backward;
         use crate::fault_tolerance::{PauliFault, SpacetimeLocation};
-        use pecos_core::gate_type::GateType;
         use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
         use pecos_quantum::TickCircuit;
 
         // Build a circuit with prep at the start
@@ -5690,13 +3702,7 @@ mod tests {
         circuit.tick().mz(&[0]);
 
         // Create a Z fault after H
-        let location = SpacetimeLocation::new(
-            1,
-            vec![QubitId(0)],
-            false,
-            GateType::H,
-            0,
-        );
+        let location = SpacetimeLocation::new(1, vec![QubitId(0)], false, GateType::H, 0);
         let fault = PauliFault::new(location, vec![3]); // Z fault
 
         // Propagate backward
@@ -5711,11 +3717,11 @@ mod tests {
     }
 
     #[test]
-    fn test_standalone_vs_backward_propagator() {
-        use super::{propagate_fault_backward, BackwardPropagator};
+    fn test_standalone_vs_tick_fault_analyzer() {
+        use super::{TickFaultAnalyzer, propagate_fault_backward};
         use crate::fault_tolerance::{PauliFault, SpacetimeLocation};
-        use pecos_core::gate_type::GateType;
         use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
         use pecos_quantum::TickCircuit;
 
         // Build a circuit with a measurement (no prep to keep Pauli)
@@ -5725,20 +3731,14 @@ mod tests {
         circuit.tick().mz(&[0]);
 
         // Create a fault before the measurement
-        let location = SpacetimeLocation::new(
-            2,
-            vec![QubitId(0)],
-            true,
-            GateType::Measure,
-            0,
-        );
+        let location = SpacetimeLocation::new(2, vec![QubitId(0)], true, GateType::Measure, 0);
         let fault = PauliFault::new(location.clone(), vec![1]); // X fault
 
         // Use standalone function
         let prop_standalone = propagate_fault_backward(&circuit, &fault);
 
-        // Use BackwardPropagator for comparison
-        let backward_prop = BackwardPropagator::new(&circuit);
+        // Use TickFaultAnalyzer for comparison
+        let backward_prop = TickFaultAnalyzer::new(&circuit);
         let influence_map = backward_prop.build_influence_map();
 
         // Fault should propagate to some Pauli at the start
@@ -5758,9 +3758,9 @@ mod tests {
 
     #[test]
     fn test_unified_propagator_sz_forward() {
-        use super::{apply_gate, Direction};
-        use pecos_core::gate_type::GateType;
+        use super::{Direction, apply_gate};
         use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
         use pecos_qsim::PauliProp;
 
         // Test forward propagation through SZ gate
@@ -5771,16 +3771,28 @@ mod tests {
         prop.add_x(0);
         let gate = pecos_core::Gate::simple(GateType::SZ, vec![QubitId(0)]);
         apply_gate(&mut prop, &gate, Direction::Forward);
-        assert!(prop.contains_x(0), "X should still have X component after SZ");
-        assert!(prop.contains_z(0), "X should gain Z component after SZ (X -> Y = XZ)");
+        assert!(
+            prop.contains_x(0),
+            "X should still have X component after SZ"
+        );
+        assert!(
+            prop.contains_z(0),
+            "X should gain Z component after SZ (X -> Y = XZ)"
+        );
 
         // Test Y -> X (Y = XZ, after SZ becomes X)
         let mut prop = PauliProp::new();
         prop.add_x(0);
         prop.add_z(0); // Y = XZ
         apply_gate(&mut prop, &gate, Direction::Forward);
-        assert!(prop.contains_x(0), "Y should still have X component after SZ");
-        assert!(!prop.contains_z(0), "Y should lose Z component after SZ (Y -> X)");
+        assert!(
+            prop.contains_x(0),
+            "Y should still have X component after SZ"
+        );
+        assert!(
+            !prop.contains_z(0),
+            "Y should lose Z component after SZ (Y -> X)"
+        );
 
         // Test Z -> Z
         let mut prop = PauliProp::new();
@@ -5792,9 +3804,9 @@ mod tests {
 
     #[test]
     fn test_unified_propagator_sz_backward() {
-        use super::{apply_gate, Direction};
-        use pecos_core::gate_type::GateType;
+        use super::{Direction, apply_gate};
         use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
         use pecos_qsim::PauliProp;
 
         // Test backward propagation through SZ gate (applies SZdg)
@@ -5806,16 +3818,28 @@ mod tests {
         prop.add_x(0);
         let gate = pecos_core::Gate::simple(GateType::SZ, vec![QubitId(0)]);
         apply_gate(&mut prop, &gate, Direction::Backward);
-        assert!(prop.contains_x(0), "X should still have X component after SZ backward");
-        assert!(prop.contains_z(0), "X should gain Z component after SZ backward (X -> Y)");
+        assert!(
+            prop.contains_x(0),
+            "X should still have X component after SZ backward"
+        );
+        assert!(
+            prop.contains_z(0),
+            "X should gain Z component after SZ backward (X -> Y)"
+        );
 
         // Test Y -> X
         let mut prop = PauliProp::new();
         prop.add_x(0);
         prop.add_z(0); // Y = XZ
         apply_gate(&mut prop, &gate, Direction::Backward);
-        assert!(prop.contains_x(0), "Y should still have X component after SZ backward");
-        assert!(!prop.contains_z(0), "Y should lose Z component after SZ backward (Y -> X)");
+        assert!(
+            prop.contains_x(0),
+            "Y should still have X component after SZ backward"
+        );
+        assert!(
+            !prop.contains_z(0),
+            "Y should lose Z component after SZ backward (Y -> X)"
+        );
 
         // Test Z -> Z
         let mut prop = PauliProp::new();
@@ -5827,9 +3851,9 @@ mod tests {
 
     #[test]
     fn test_unified_propagator_szdg_both_directions() {
-        use super::{apply_gate, Direction};
-        use pecos_core::gate_type::GateType;
+        use super::{Direction, apply_gate};
         use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
         use pecos_qsim::PauliProp;
 
         let gate = pecos_core::Gate::simple(GateType::SZdg, vec![QubitId(0)]);
@@ -5839,20 +3863,26 @@ mod tests {
         let mut prop = PauliProp::new();
         prop.add_x(0);
         apply_gate(&mut prop, &gate, Direction::Forward);
-        assert!(prop.contains_x(0) && prop.contains_z(0), "X -> Y through SZdg forward");
+        assert!(
+            prop.contains_x(0) && prop.contains_z(0),
+            "X -> Y through SZdg forward"
+        );
 
         // Backward through SZdg should use sz() (the adjoint)
         let mut prop = PauliProp::new();
         prop.add_x(0);
         apply_gate(&mut prop, &gate, Direction::Backward);
-        assert!(prop.contains_x(0) && prop.contains_z(0), "X -> Y through SZdg backward (uses SZ)");
+        assert!(
+            prop.contains_x(0) && prop.contains_z(0),
+            "X -> Y through SZdg backward (uses SZ)"
+        );
     }
 
     #[test]
     fn test_unified_propagator_sz_circuit_roundtrip() {
-        use super::{propagate_through_circuit, Direction};
-        use pecos_quantum::TickCircuit;
+        use super::{Direction, propagate_through_circuit};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::TickCircuit;
 
         // Build circuit: SZ -> H -> SZ
         let mut circuit = TickCircuit::new();
@@ -5880,17 +3910,14 @@ mod tests {
             prop.contains_z(0)
         );
 
-        println!(
-            "Forward result: X={}, Z={}",
-            forward_x, forward_z
-        );
+        println!("Forward result: X={}, Z={}", forward_x, forward_z);
     }
 
     #[test]
     fn test_unified_propagator_sz_forward_backward_equivalence() {
-        use super::{apply_gate, Direction};
-        use pecos_core::gate_type::GateType;
+        use super::{Direction, apply_gate};
         use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
         use pecos_qsim::PauliProp;
 
         // For phase-free Pauli tracking, SZ and SZdg produce the same transformation
@@ -5909,11 +3936,13 @@ mod tests {
         apply_gate(&mut prop2, &szdg_gate, Direction::Backward);
 
         assert_eq!(
-            prop1.contains_x(0), prop2.contains_x(0),
+            prop1.contains_x(0),
+            prop2.contains_x(0),
             "Forward SZ and Backward SZdg should match for X component"
         );
         assert_eq!(
-            prop1.contains_z(0), prop2.contains_z(0),
+            prop1.contains_z(0),
+            prop2.contains_z(0),
             "Forward SZ and Backward SZdg should match for Z component"
         );
 
@@ -5927,11 +3956,13 @@ mod tests {
         apply_gate(&mut prop4, &szdg_gate, Direction::Forward);
 
         assert_eq!(
-            prop3.contains_x(0), prop4.contains_x(0),
+            prop3.contains_x(0),
+            prop4.contains_x(0),
             "Backward SZ and Forward SZdg should match for X component"
         );
         assert_eq!(
-            prop3.contains_z(0), prop4.contains_z(0),
+            prop3.contains_z(0),
+            prop4.contains_z(0),
             "Backward SZ and Forward SZdg should match for Z component"
         );
     }
@@ -5942,9 +3973,9 @@ mod tests {
 
     #[test]
     fn test_dag_propagate_forward_simple() {
-        use super::{propagate_through_dag, Direction};
-        use pecos_quantum::DagCircuit;
+        use super::{Direction, propagate_through_dag};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::DagCircuit;
 
         // Build a simple DAG circuit: H on qubit 0
         let mut dag = DagCircuit::new();
@@ -5961,9 +3992,9 @@ mod tests {
 
     #[test]
     fn test_dag_propagate_backward_simple() {
-        use super::{propagate_through_dag, Direction};
-        use pecos_quantum::DagCircuit;
+        use super::{Direction, propagate_through_dag};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::DagCircuit;
 
         // Build a simple DAG circuit: H on qubit 0
         let mut dag = DagCircuit::new();
@@ -5980,9 +4011,9 @@ mod tests {
 
     #[test]
     fn test_dag_sparse_vs_full_equivalence() {
-        use super::{propagate_sparse_dag, propagate_through_dag, Direction};
-        use pecos_quantum::DagCircuit;
+        use super::{Direction, propagate_sparse_dag, propagate_through_dag};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::DagCircuit;
 
         // Build a circuit with gates on multiple qubits
         let mut dag = DagCircuit::new();
@@ -6008,42 +4039,48 @@ mod tests {
 
         // Results should be identical
         assert_eq!(
-            prop_full.contains_x(0), prop_sparse.contains_x(0),
+            prop_full.contains_x(0),
+            prop_sparse.contains_x(0),
             "X on qubit 0 should match"
         );
         assert_eq!(
-            prop_full.contains_z(0), prop_sparse.contains_z(0),
+            prop_full.contains_z(0),
+            prop_sparse.contains_z(0),
             "Z on qubit 0 should match"
         );
         assert_eq!(
-            prop_full.contains_x(1), prop_sparse.contains_x(1),
+            prop_full.contains_x(1),
+            prop_sparse.contains_x(1),
             "X on qubit 1 should match"
         );
         assert_eq!(
-            prop_full.contains_z(1), prop_sparse.contains_z(1),
+            prop_full.contains_z(1),
+            prop_sparse.contains_z(1),
             "Z on qubit 1 should match"
         );
         assert_eq!(
-            prop_full.contains_x(2), prop_sparse.contains_x(2),
+            prop_full.contains_x(2),
+            prop_sparse.contains_x(2),
             "X on qubit 2 should match"
         );
         assert_eq!(
-            prop_full.contains_z(2), prop_sparse.contains_z(2),
+            prop_full.contains_z(2),
+            prop_sparse.contains_z(2),
             "Z on qubit 2 should match"
         );
     }
 
     #[test]
     fn test_dag_sparse_spreading() {
-        use super::{propagate_sparse_dag, Direction};
-        use pecos_quantum::DagCircuit;
+        use super::{Direction, propagate_sparse_dag};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::DagCircuit;
 
         // Build a circuit where X spreads through CX gates
         let mut dag = DagCircuit::new();
-        dag.cx(0, 1);  // X on control spreads to target
-        dag.cx(1, 2);  // X on 1 spreads to 2
-        dag.cx(2, 3);  // X on 2 spreads to 3
+        dag.cx(0, 1); // X on control spreads to target
+        dag.cx(1, 2); // X on 1 spreads to 2
+        dag.cx(2, 3); // X on 2 spreads to 3
 
         // Start with X on qubit 0
         let mut prop = PauliProp::new();
@@ -6060,15 +4097,15 @@ mod tests {
 
     #[test]
     fn test_dag_sparse_backward_spreading() {
-        use super::{propagate_sparse_dag, Direction};
-        use pecos_quantum::DagCircuit;
+        use super::{Direction, propagate_sparse_dag};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::DagCircuit;
 
         // Build a circuit with CX gates
         // Backward: Z on target of CX spreads to control
         let mut dag = DagCircuit::new();
-        dag.cx(0, 1);  // control=0, target=1
-        dag.cx(1, 2);  // control=1, target=2
+        dag.cx(0, 1); // control=0, target=1
+        dag.cx(1, 2); // control=1, target=2
 
         // Start with Z on qubit 2 (target of last CX)
         // CX backward: Z on target -> Z on both control and target
@@ -6087,9 +4124,9 @@ mod tests {
 
     #[test]
     fn test_dag_sparse_isolated_qubits() {
-        use super::{propagate_sparse_dag, Direction};
-        use pecos_quantum::DagCircuit;
+        use super::{Direction, propagate_sparse_dag};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::DagCircuit;
 
         // Build a circuit with isolated qubit groups
         // Group 1: qubits 0, 1
@@ -6097,8 +4134,8 @@ mod tests {
         let mut dag = DagCircuit::new();
         dag.h(0);
         dag.h(2);
-        dag.cx(0, 1);  // Only connects 0 and 1
-        dag.cx(2, 3);  // Only connects 2 and 3
+        dag.cx(0, 1); // Only connects 0 and 1
+        dag.cx(2, 3); // Only connects 2 and 3
         dag.h(0);
         dag.h(2);
 
@@ -6122,9 +4159,9 @@ mod tests {
 
     #[test]
     fn test_dag_vs_tick_circuit_equivalence() {
-        use super::{propagate_sparse_dag, propagate_through_circuit, Direction};
-        use pecos_quantum::{DagCircuit, TickCircuit};
+        use super::{Direction, propagate_sparse_dag, propagate_through_circuit};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::{DagCircuit, TickCircuit};
 
         // Build equivalent circuits in both representations
         let mut tick = TickCircuit::new();
@@ -6151,28 +4188,32 @@ mod tests {
 
         // Results should match
         assert_eq!(
-            prop_tick.contains_x(0), prop_dag.contains_x(0),
+            prop_tick.contains_x(0),
+            prop_dag.contains_x(0),
             "X on qubit 0 should match between TickCircuit and DagCircuit"
         );
         assert_eq!(
-            prop_tick.contains_z(0), prop_dag.contains_z(0),
+            prop_tick.contains_z(0),
+            prop_dag.contains_z(0),
             "Z on qubit 0 should match"
         );
         assert_eq!(
-            prop_tick.contains_x(1), prop_dag.contains_x(1),
+            prop_tick.contains_x(1),
+            prop_dag.contains_x(1),
             "X on qubit 1 should match"
         );
         assert_eq!(
-            prop_tick.contains_z(1), prop_dag.contains_z(1),
+            prop_tick.contains_z(1),
+            prop_dag.contains_z(1),
             "Z on qubit 1 should match"
         );
     }
 
     #[test]
     fn test_dag_roundtrip() {
-        use super::{propagate_through_dag, Direction};
-        use pecos_quantum::DagCircuit;
+        use super::{Direction, propagate_through_dag};
         use pecos_qsim::PauliProp;
+        use pecos_quantum::DagCircuit;
 
         // Build a circuit
         let mut dag = DagCircuit::new();
@@ -6188,7 +4229,10 @@ mod tests {
         propagate_through_dag(&dag, &mut prop, Direction::Forward);
         propagate_through_dag(&dag, &mut prop, Direction::Backward);
 
-        assert!(prop.contains_x(0), "X should return to qubit 0 after roundtrip");
+        assert!(
+            prop.contains_x(0),
+            "X should return to qubit 0 after roundtrip"
+        );
         assert!(!prop.contains_z(0), "No Z on qubit 0 after roundtrip");
         assert!(!prop.contains_x(1), "No X on qubit 1 after roundtrip");
         assert!(!prop.contains_z(1), "No Z on qubit 1 after roundtrip");
@@ -6204,7 +4248,7 @@ mod tests {
     #[test]
     #[ignore] // Run manually with --ignored flag
     fn benchmark_propagation_methods() {
-        use super::{propagate_through_circuit, DagPropagator, Direction};
+        use super::{DagPropagator, Direction, propagate_through_circuit};
         use pecos_qsim::PauliProp;
         use std::time::Instant;
 
@@ -6214,14 +4258,17 @@ mod tests {
 
         // Test configurations: (num_qubits, circuit_depth, num_iterations)
         let configs = [
-            (10, 50, 1000),   // Small circuit
-            (50, 100, 500),   // Medium circuit
-            (100, 200, 200),  // Large circuit
-            (200, 500, 50),   // Very large circuit
+            (10, 50, 1000),  // Small circuit
+            (50, 100, 500),  // Medium circuit
+            (100, 200, 200), // Large circuit
+            (200, 500, 50),  // Very large circuit
         ];
 
         for (num_qubits, depth, iterations) in configs {
-            println!("--- {} qubits, depth {}, {} iterations ---", num_qubits, depth, iterations);
+            println!(
+                "--- {} qubits, depth {}, {} iterations ---",
+                num_qubits, depth, iterations
+            );
 
             // Build equivalent circuits
             let (tick_circuit, dag_circuit) = build_test_circuits(num_qubits, depth);
@@ -6230,7 +4277,10 @@ mod tests {
             let start = Instant::now();
             let dag_propagator = DagPropagator::new(&dag_circuit);
             let index_build_time = start.elapsed();
-            println!("  (Index build time: {:.1} us)", index_build_time.as_micros());
+            println!(
+                "  (Index build time: {:.1} us)",
+                index_build_time.as_micros()
+            );
 
             // Benchmark 1: TickCircuit full traversal
             let start = Instant::now();
@@ -6274,18 +4324,26 @@ mod tests {
             let tick_per_iter = tick_time.as_micros() as f64 / iterations as f64;
             let dag_full_per_iter = dag_full_time.as_micros() as f64 / iterations as f64;
             let dag_sparse_1q_per_iter = dag_sparse_1q_time.as_micros() as f64 / iterations as f64;
-            let dag_sparse_half_per_iter = dag_sparse_half_time.as_micros() as f64 / iterations as f64;
+            let dag_sparse_half_per_iter =
+                dag_sparse_half_time.as_micros() as f64 / iterations as f64;
 
             println!("  TickCircuit (full):      {:>8.1} us/iter", tick_per_iter);
-            println!("  DagPropagator (full):    {:>8.1} us/iter ({:.2}x vs Tick)",
-                dag_full_per_iter, dag_full_per_iter / tick_per_iter);
-            println!("  DagPropagator sparse 1q: {:>8.1} us/iter ({:.2}x vs Tick)",
+            println!(
+                "  DagPropagator (full):    {:>8.1} us/iter ({:.2}x vs Tick)",
+                dag_full_per_iter,
+                dag_full_per_iter / tick_per_iter
+            );
+            println!(
+                "  DagPropagator sparse 1q: {:>8.1} us/iter ({:.2}x vs Tick)",
                 dag_sparse_1q_per_iter,
-                dag_sparse_1q_per_iter / tick_per_iter);
-            println!("  DagPropagator sparse {}q:{:>8.1} us/iter ({:.2}x vs Tick)",
+                dag_sparse_1q_per_iter / tick_per_iter
+            );
+            println!(
+                "  DagPropagator sparse {}q:{:>8.1} us/iter ({:.2}x vs Tick)",
                 num_qubits / 2,
                 dag_sparse_half_per_iter,
-                dag_sparse_half_per_iter / tick_per_iter);
+                dag_sparse_half_per_iter / tick_per_iter
+            );
             println!();
         }
 
@@ -6314,8 +4372,11 @@ mod tests {
         let tick_per = tick_back_time.as_micros() as f64 / iterations as f64;
         let sparse_per = dag_sparse_back_time.as_micros() as f64 / iterations as f64;
         println!("  TickCircuit backward:       {:>8.1} us/iter", tick_per);
-        println!("  DagPropagator sparse back:  {:>8.1} us/iter ({:.2}x vs Tick)",
-            sparse_per, sparse_per / tick_per);
+        println!(
+            "  DagPropagator sparse back:  {:>8.1} us/iter ({:.2}x vs Tick)",
+            sparse_per,
+            sparse_per / tick_per
+        );
 
         println!("\n========================================\n");
     }
@@ -6348,10 +4409,8 @@ mod tests {
 
             // Layer of two-qubit gates (every other layer)
             if d % 2 == 1 && num_qubits >= 2 {
-                let cx_pairs: Vec<(usize, usize)> = (0..num_qubits - 1)
-                    .step_by(2)
-                    .map(|q| (q, q + 1))
-                    .collect();
+                let cx_pairs: Vec<(usize, usize)> =
+                    (0..num_qubits - 1).step_by(2).map(|q| (q, q + 1)).collect();
                 tick.tick().cx(&cx_pairs);
                 for (c, t) in cx_pairs {
                     dag.cx(c, t);
@@ -6366,7 +4425,7 @@ mod tests {
     #[test]
     #[ignore]
     fn benchmark_syndrome_extraction_pattern() {
-        use super::{propagate_through_circuit, DagPropagator, Direction};
+        use super::{DagPropagator, Direction, propagate_through_circuit};
         use pecos_qsim::PauliProp;
         use std::time::Instant;
 
@@ -6377,14 +4436,17 @@ mod tests {
         // Simulate a surface code-like pattern
         // data qubits + ancilla qubits, ancillas only interact with neighbors
         let configs = [
-            (9, 8, 1000),     // 3x3 data + 8 ancillas (small surface code)
-            (25, 24, 500),    // 5x5 data + 24 ancillas
-            (49, 48, 200),    // 7x7 data + 48 ancillas
-            (121, 120, 100),  // 11x11 data + 120 ancillas (larger)
+            (9, 8, 1000),    // 3x3 data + 8 ancillas (small surface code)
+            (25, 24, 500),   // 5x5 data + 24 ancillas
+            (49, 48, 200),   // 7x7 data + 48 ancillas
+            (121, 120, 100), // 11x11 data + 120 ancillas (larger)
         ];
 
         for (data_qubits, ancilla_qubits, iterations) in configs {
-            println!("--- {} data + {} ancilla qubits ---", data_qubits, ancilla_qubits);
+            println!(
+                "--- {} data + {} ancilla qubits ---",
+                data_qubits, ancilla_qubits
+            );
 
             // Build syndrome extraction circuits
             let (tick, dag) = build_syndrome_extraction_circuit(data_qubits, ancilla_qubits);
@@ -6418,8 +4480,11 @@ mod tests {
             let sparse_per_iter = sparse_time.as_micros() as f64 / iterations as f64;
 
             println!("  TickCircuit:          {:>8.1} us/iter", tick_per_iter);
-            println!("  DagPropagator sparse: {:>8.1} us/iter ({:.2}x vs Tick)",
-                sparse_per_iter, sparse_per_iter / tick_per_iter);
+            println!(
+                "  DagPropagator sparse: {:>8.1} us/iter ({:.2}x vs Tick)",
+                sparse_per_iter,
+                sparse_per_iter / tick_per_iter
+            );
             println!();
         }
     }
@@ -6526,7 +4591,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dag_backward_propagator_extract_measurements() {
+    fn test_dag_fault_analyzer_extract_measurements() {
         use super::DagFaultAnalyzer;
 
         let dag = simple_dag_syndrome_circuit();
@@ -6540,7 +4605,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dag_backward_propagator_build_influence_map() {
+    fn test_dag_fault_analyzer_build_influence_map() {
         use super::DagFaultAnalyzer;
 
         let dag = simple_dag_syndrome_circuit();
@@ -6563,7 +4628,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dag_backward_propagator_soa_equivalence() {
+    fn test_dag_fault_analyzer_soa_equivalence() {
         use super::DagFaultAnalyzer;
 
         let dag = simple_dag_syndrome_circuit();
@@ -6655,7 +4720,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dag_backward_propagator_soa_equivalence_larger() {
+    fn test_dag_fault_analyzer_soa_equivalence_larger() {
         use super::DagFaultAnalyzer;
 
         // Test on larger circuits to ensure correctness at scale
@@ -6730,7 +4795,8 @@ mod tests {
         ];
 
         for (data_qubits, ancilla_qubits, rounds) in configs {
-            let (_, dag) = build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
+            let (_, dag) =
+                build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
             let propagator = DagFaultAnalyzer::new(&dag);
 
             // Build both map types
@@ -6774,7 +4840,8 @@ mod tests {
             }
 
             assert_eq!(
-                mismatches, 0,
+                mismatches,
+                0,
                 "Found {} mismatches for d={}, rounds={}",
                 mismatches,
                 (data_qubits as f64).sqrt() as usize,
@@ -6791,7 +4858,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dag_backward_propagator_x_error_flips_z_measurement() {
+    fn test_dag_fault_analyzer_x_error_flips_z_measurement() {
         use super::DagFaultAnalyzer;
 
         let dag = simple_dag_syndrome_circuit();
@@ -6819,7 +4886,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dag_backward_propagator_z_error_no_flip() {
+    fn test_dag_fault_analyzer_z_error_no_flip() {
         use super::DagFaultAnalyzer;
 
         let dag = simple_dag_syndrome_circuit();
@@ -6843,11 +4910,11 @@ mod tests {
         }
     }
 
-    /// Benchmark comparing TickCircuit BackwardPropagator vs DAG version
+    /// Benchmark comparing TickCircuit TickFaultAnalyzer vs DAG version
     #[test]
     #[ignore] // Run manually with --ignored flag
-    fn benchmark_dag_backward_propagator() {
-        use super::{BackwardPropagator, DagFaultAnalyzer};
+    fn benchmark_dag_fault_analyzer() {
+        use super::{DagFaultAnalyzer, TickFaultAnalyzer};
         use std::time::Instant;
 
         println!("\n========================================");
@@ -6871,15 +4938,15 @@ mod tests {
             // Build equivalent circuits
             let (tick, dag) = build_syndrome_extraction_circuit(data_qubits, ancilla_qubits);
 
-            // Benchmark TickCircuit BackwardPropagator
+            // Benchmark TickCircuit TickFaultAnalyzer
             let start = Instant::now();
             for _ in 0..iterations {
-                let propagator = BackwardPropagator::new(&tick);
+                let propagator = TickFaultAnalyzer::new(&tick);
                 let _map = propagator.build_influence_map();
             }
             let tick_time = start.elapsed();
 
-            // Benchmark DAG BackwardPropagator (full)
+            // Benchmark DAG TickFaultAnalyzer (full)
             let start = Instant::now();
             for _ in 0..iterations {
                 let propagator = DagFaultAnalyzer::new(&dag);
@@ -6887,7 +4954,7 @@ mod tests {
             }
             let dag_time = start.elapsed();
 
-            // Benchmark DAG BackwardPropagator (SoA, index-only)
+            // Benchmark DAG TickFaultAnalyzer (SoA, index-only)
             let start = Instant::now();
             for _ in 0..iterations {
                 let propagator = DagFaultAnalyzer::new(&dag);
@@ -6899,14 +4966,17 @@ mod tests {
             let dag_per_iter = dag_time.as_micros() as f64 / iterations as f64;
             let dag_soa_per_iter = dag_soa_time.as_micros() as f64 / iterations as f64;
 
-            println!("  TickCircuit BackwardPropagator:   {:>8.1} us/iter", tick_per_iter);
             println!(
-                "  DAG BackwardPropagator:           {:>8.1} us/iter ({:.2}x)",
+                "  TickCircuit TickFaultAnalyzer:   {:>8.1} us/iter",
+                tick_per_iter
+            );
+            println!(
+                "  DAG TickFaultAnalyzer:           {:>8.1} us/iter ({:.2}x)",
                 dag_per_iter,
                 dag_per_iter / tick_per_iter
             );
             println!(
-                "  DAG BackwardPropagator (soa):     {:>8.1} us/iter ({:.2}x)",
+                "  DAG TickFaultAnalyzer (soa):     {:>8.1} us/iter ({:.2}x)",
                 dag_soa_per_iter,
                 dag_soa_per_iter / tick_per_iter
             );
@@ -7025,7 +5095,7 @@ mod tests {
     #[test]
     #[ignore] // Run manually with --ignored flag
     fn benchmark_multi_round() {
-        use super::{BackwardPropagator, DagFaultAnalyzer};
+        use super::{DagFaultAnalyzer, TickFaultAnalyzer};
         use std::time::Instant;
 
         println!("\n========================================");
@@ -7034,28 +5104,38 @@ mod tests {
 
         // Test different code sizes with multiple rounds
         let configs = [
-            (9, 8, "d=3"),     // 3x3
-            (25, 24, "d=5"),   // 5x5
-            (49, 48, "d=7"),   // 7x7
+            (9, 8, "d=3"),      // 3x3
+            (25, 24, "d=5"),    // 5x5
+            (49, 48, "d=7"),    // 7x7
             (121, 120, "d=11"), // 11x11
         ];
 
         for (data_qubits, ancilla_qubits, label) in configs {
-            println!("=== {} ({} data + {} ancilla) ===", label, data_qubits, ancilla_qubits);
+            println!(
+                "=== {} ({} data + {} ancilla) ===",
+                label, data_qubits, ancilla_qubits
+            );
 
             for rounds in [1, 2, 4, 8] {
-                let (tick, dag) = build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
-                let iterations = if data_qubits > 100 { 5 } else if data_qubits > 30 { 10 } else { 20 };
+                let (tick, dag) =
+                    build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
+                let iterations = if data_qubits > 100 {
+                    5
+                } else if data_qubits > 30 {
+                    10
+                } else {
+                    20
+                };
 
-                // Benchmark TickCircuit BackwardPropagator
+                // Benchmark TickCircuit TickFaultAnalyzer
                 let start = Instant::now();
                 for _ in 0..iterations {
-                    let propagator = BackwardPropagator::new(&tick);
+                    let propagator = TickFaultAnalyzer::new(&tick);
                     let _map = propagator.build_influence_map();
                 }
                 let tick_time = start.elapsed();
 
-                // Benchmark DAG BackwardPropagator (SoA, index-only)
+                // Benchmark DAG TickFaultAnalyzer (SoA, index-only)
                 let start = Instant::now();
                 for _ in 0..iterations {
                     let propagator = DagFaultAnalyzer::new(&dag);
@@ -7068,7 +5148,10 @@ mod tests {
 
                 println!(
                     "  {} rounds: Tick {:>9.1}us, DAG(soa) {:>9.1}us ({:.2}x)",
-                    rounds, tick_per_iter, dag_soa_per_iter, dag_soa_per_iter / tick_per_iter
+                    rounds,
+                    tick_per_iter,
+                    dag_soa_per_iter,
+                    dag_soa_per_iter / tick_per_iter
                 );
             }
             println!();
@@ -7087,17 +5170,17 @@ mod tests {
         println!("Nodes Visited Per Measurement Analysis");
         println!("========================================\n");
 
-        let configs = [
-            (9, 8, "d=3"),
-            (25, 24, "d=5"),
-            (49, 48, "d=7"),
-        ];
+        let configs = [(9, 8, "d=3"), (25, 24, "d=5"), (49, 48, "d=7")];
 
         for (data_qubits, ancilla_qubits, label) in configs {
-            println!("=== {} ({} data + {} ancilla) ===", label, data_qubits, ancilla_qubits);
+            println!(
+                "=== {} ({} data + {} ancilla) ===",
+                label, data_qubits, ancilla_qubits
+            );
 
             for rounds in [1, 2, 4, 8] {
-                let (_, dag) = build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
+                let (_, dag) =
+                    build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
                 let propagator = DagFaultAnalyzer::new(&dag);
 
                 let measurements = propagator.extract_measurements();
@@ -7131,7 +5214,9 @@ mod tests {
                     // Initialize
                     if meas_qubit <= propagator.max_qubit() {
                         active_qubits[meas_qubit] = true;
-                        for (topo_pos, node) in propagator.propagator().qubit_gates_backward(meas_qubit) {
+                        for (topo_pos, node) in
+                            propagator.propagator().qubit_gates_backward(meas_qubit)
+                        {
                             if topo_pos < meas_topo_pos && !visited[node] {
                                 visited[node] = true;
                                 heap.push((topo_pos, node));
@@ -7161,7 +5246,9 @@ mod tests {
 
                                     if now_active && !was {
                                         active_qubits[idx] = true;
-                                        for (topo_pos, new_node) in propagator.propagator().qubit_gates_backward(idx) {
+                                        for (topo_pos, new_node) in
+                                            propagator.propagator().qubit_gates_backward(idx)
+                                        {
                                             if topo_pos < node_topo_pos && !visited[new_node] {
                                                 visited[new_node] = true;
                                                 heap.push((topo_pos, new_node));
@@ -7191,8 +5278,13 @@ mod tests {
 
                 println!(
                     "  {} rounds: {} meas, avg {:.1} nodes/meas (min {}, max {}), gates/round {}, expected ~{}",
-                    rounds, num_measurements, avg_nodes, min_nodes_visited, max_nodes_visited,
-                    gates_per_round, expected_plateau
+                    rounds,
+                    num_measurements,
+                    avg_nodes,
+                    min_nodes_visited,
+                    max_nodes_visited,
+                    gates_per_round,
+                    expected_plateau
                 );
             }
             println!();
@@ -7211,17 +5303,17 @@ mod tests {
         println!("Qubit Spread Analysis");
         println!("========================================\n");
 
-        let configs = [
-            (9, 8, "d=3"),
-            (25, 24, "d=5"),
-            (49, 48, "d=7"),
-        ];
+        let configs = [(9, 8, "d=3"), (25, 24, "d=5"), (49, 48, "d=7")];
 
         for (data_qubits, ancilla_qubits, label) in configs {
-            println!("=== {} ({} data + {} ancilla) ===", label, data_qubits, ancilla_qubits);
+            println!(
+                "=== {} ({} data + {} ancilla) ===",
+                label, data_qubits, ancilla_qubits
+            );
 
             for rounds in [1, 2, 4, 8] {
-                let (_, dag) = build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
+                let (_, dag) =
+                    build_syndrome_extraction_circuit_multi(data_qubits, ancilla_qubits, rounds);
                 let propagator = DagFaultAnalyzer::new(&dag);
 
                 let measurements = propagator.extract_measurements();
@@ -7251,7 +5343,9 @@ mod tests {
 
                     if meas_qubit <= propagator.max_qubit() {
                         active_qubits[meas_qubit] = true;
-                        for (topo_pos, node) in propagator.propagator().qubit_gates_backward(meas_qubit) {
+                        for (topo_pos, node) in
+                            propagator.propagator().qubit_gates_backward(meas_qubit)
+                        {
                             if topo_pos < meas_topo_pos && !visited[node] {
                                 visited[node] = true;
                                 heap.push((topo_pos, node));
@@ -7280,7 +5374,9 @@ mod tests {
                                     if now_active && !was {
                                         qubits_touched += 1;
                                         active_qubits[idx] = true;
-                                        for (topo_pos, new_node) in propagator.propagator().qubit_gates_backward(idx) {
+                                        for (topo_pos, new_node) in
+                                            propagator.propagator().qubit_gates_backward(idx)
+                                        {
                                             if topo_pos < node_topo_pos && !visited[new_node] {
                                                 visited[new_node] = true;
                                                 heap.push((topo_pos, new_node));
@@ -7398,7 +5494,10 @@ mod tests {
         println!("Data bytes: {}", stats.data_bytes);
         println!("Total bytes: {}", stats.total_bytes);
 
-        println!("\nSoA equivalence verified for {} locations", soa.locations.len());
+        println!(
+            "\nSoA equivalence verified for {} locations",
+            soa.locations.len()
+        );
     }
 
     #[test]

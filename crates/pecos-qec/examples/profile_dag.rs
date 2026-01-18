@@ -49,14 +49,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let distance = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(3);
     let iterations = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
-    let mode = args.get(3).map(|s| s.as_str()).unwrap_or("soa");
+    let mode = args.get(3).map_or("soa", std::string::String::as_str);
 
     let data_qubits = distance * distance;
     let ancilla_qubits = data_qubits - 1;
 
     println!(
-        "Profiling d={} ({} data + {} ancilla) for {} iterations (mode={})",
-        distance, data_qubits, ancilla_qubits, iterations, mode
+        "Profiling d={distance} ({data_qubits} data + {ancilla_qubits} ancilla) for {iterations} iterations (mode={mode})"
     );
 
     let dag = build_syndrome_circuit(data_qubits, ancilla_qubits);
@@ -103,16 +102,12 @@ fn main() {
             let soa_map = propagator.build_influence_map_soa();
             let soa_stats = soa_map.memory_stats();
 
-            let btree_us = btree_time.as_micros() as f64 / iterations as f64;
-            let soa_us = soa_time.as_micros() as f64 / iterations as f64;
+            let btree_us = btree_time.as_micros() as f64 / f64::from(iterations);
+            let soa_us = soa_time.as_micros() as f64 / f64::from(iterations);
 
             println!("\n=== Performance Comparison ===");
-            println!("BTree: {:>8.2} us/iter (baseline)", btree_us);
-            println!(
-                "SoA:   {:>8.2} us/iter ({:.2}x)",
-                soa_us,
-                soa_us / btree_us
-            );
+            println!("BTree: {btree_us:>8.2} us/iter (baseline)");
+            println!("SoA:   {:>8.2} us/iter ({:.2}x)", soa_us, soa_us / btree_us);
 
             println!("\n=== Memory Statistics ===");
             println!("Locations: {}", btree_map.influences.len());

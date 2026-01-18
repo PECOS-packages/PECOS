@@ -1326,30 +1326,10 @@ mod tests {
     fn test_distance_five_qubit_code() {
         // [[5, 1, 3]] perfect code
         // Stabilizers: XZZXI, IXZZX, XIXZZ, ZXIXZ
-        let s1 = pauli_string(&[
-            (Pauli::X, 0),
-            (Pauli::Z, 1),
-            (Pauli::Z, 2),
-            (Pauli::X, 3),
-        ]);
-        let s2 = pauli_string(&[
-            (Pauli::X, 1),
-            (Pauli::Z, 2),
-            (Pauli::Z, 3),
-            (Pauli::X, 4),
-        ]);
-        let s3 = pauli_string(&[
-            (Pauli::X, 0),
-            (Pauli::X, 2),
-            (Pauli::Z, 3),
-            (Pauli::Z, 4),
-        ]);
-        let s4 = pauli_string(&[
-            (Pauli::Z, 0),
-            (Pauli::X, 1),
-            (Pauli::X, 3),
-            (Pauli::Z, 4),
-        ]);
+        let s1 = pauli_string(&[(Pauli::X, 0), (Pauli::Z, 1), (Pauli::Z, 2), (Pauli::X, 3)]);
+        let s2 = pauli_string(&[(Pauli::X, 1), (Pauli::Z, 2), (Pauli::Z, 3), (Pauli::X, 4)]);
+        let s3 = pauli_string(&[(Pauli::X, 0), (Pauli::X, 2), (Pauli::Z, 3), (Pauli::Z, 4)]);
+        let s4 = pauli_string(&[(Pauli::Z, 0), (Pauli::X, 1), (Pauli::X, 3), (Pauli::Z, 4)]);
         // Logical operators
         let logical_z = pauli_string(&[
             (Pauli::Z, 0),
@@ -1366,13 +1346,8 @@ mod tests {
             (Pauli::X, 4),
         ]);
 
-        let mut code = StabilizerCode::new(
-            5,
-            vec![s1, s2, s3, s4],
-            vec![logical_z],
-            vec![logical_x],
-        )
-        .unwrap();
+        let mut code =
+            StabilizerCode::new(5, vec![s1, s2, s3, s4], vec![logical_z], vec![logical_x]).unwrap();
 
         let result = code.calculate_distance();
         assert!(result.is_some());

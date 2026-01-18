@@ -45,15 +45,15 @@
 //! println!("Total faults: {}", results.len());
 //! ```
 
-use super::propagator::{apply_gate, Direction};
+use super::propagator::{Direction, apply_gate};
 use super::{
     FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, PauliFaultIterator,
     SpacetimeLocation,
 };
-use pecos_core::gate_type::GateType;
 use pecos_core::QubitId;
-use pecos_quantum::TickCircuit;
+use pecos_core::gate_type::GateType;
 use pecos_qsim::{CliffordGateable, PauliProp};
+use pecos_quantum::TickCircuit;
 use std::collections::HashSet;
 
 /// Detects which qubits in a circuit are "input qubits" (used but never prepared).
@@ -89,10 +89,7 @@ pub fn detect_input_qubits(circuit: &TickCircuit) -> Vec<usize> {
     }
 
     // Input qubits are those used but never prepared
-    let mut input_qubits: Vec<usize> = all_qubits
-        .difference(&prepared_qubits)
-        .copied()
-        .collect();
+    let mut input_qubits: Vec<usize> = all_qubits.difference(&prepared_qubits).copied().collect();
     input_qubits.sort_unstable();
     input_qubits
 }
@@ -159,10 +156,7 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
     }
 
     // Output qubits are those used but never measured
-    let mut output_qubits: Vec<usize> = all_qubits
-        .difference(&measured_qubits)
-        .copied()
-        .collect();
+    let mut output_qubits: Vec<usize> = all_qubits.difference(&measured_qubits).copied().collect();
     output_qubits.sort_unstable();
     output_qubits
 }
@@ -211,14 +205,8 @@ impl CircuitIO {
             }
         }
 
-        let input_qubits: Vec<usize> = all_qubits
-            .difference(&prepared_qubits)
-            .copied()
-            .collect();
-        let output_qubits: Vec<usize> = all_qubits
-            .difference(&measured_qubits)
-            .copied()
-            .collect();
+        let input_qubits: Vec<usize> = all_qubits.difference(&prepared_qubits).copied().collect();
+        let output_qubits: Vec<usize> = all_qubits.difference(&measured_qubits).copied().collect();
 
         let mut io = Self {
             input_qubits,
@@ -353,7 +341,11 @@ pub fn propagate_faults(circuit: &TickCircuit, faults: &FaultConfiguration) -> P
 /// Checks if a propagated Pauli error anticommutes with a logical operator.
 ///
 /// Returns true if the error anticommutes (causes a logical error).
-pub fn anticommutes_with_logical(prop: &PauliProp, logical_xs: &[usize], logical_zs: &[usize]) -> bool {
+pub fn anticommutes_with_logical(
+    prop: &PauliProp,
+    logical_xs: &[usize],
+    logical_zs: &[usize],
+) -> bool {
     // Count anticommutations:
     // - X in prop anticommutes with Z in logical
     // - Z in prop anticommutes with X in logical
@@ -700,7 +692,10 @@ impl FaultToleranceFailure {
                     count
                 )
             }
-            FaultToleranceFailure::AmbiguousSyndromes { count, affected_faults } => {
+            FaultToleranceFailure::AmbiguousSyndromes {
+                count,
+                affected_faults,
+            } => {
                 format!(
                     "{} ambiguous syndrome(s) affecting {} fault(s): same syndrome, different logical outcomes",
                     count, affected_faults
@@ -1002,11 +997,7 @@ pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound
 /// Propagates a fault through a circuit up to a specific tick and extracts syndrome.
 ///
 /// This simulates what the syndrome would be if we stopped propagation at `until_tick`.
-fn propagate_until_tick(
-    circuit: &TickCircuit,
-    fault: &PauliFault,
-    until_tick: usize,
-) -> PauliProp {
+fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: usize) -> PauliProp {
     let mut prop = PauliProp::new();
 
     // Initialize with fault
@@ -1332,8 +1323,7 @@ impl<'a> PauliPropChecker<'a> {
 
     /// Sets whether to include initial qubit locations.
     pub fn with_initial_locations(mut self, include: bool) -> Self {
-        self.locations =
-            super::circuit_runner::extract_spacetime_locations(self.circuit, include);
+        self.locations = super::circuit_runner::extract_spacetime_locations(self.circuit, include);
         self
     }
 
@@ -2000,7 +1990,12 @@ impl<'a> PauliPropChecker<'a> {
 
         // If no input qubits, fall back to standard analysis
         if self.io.input_qubits.is_empty() {
-            return self.analyze_fault_tolerance(z_ancillas, x_ancillas, logicals, collect_failures);
+            return self.analyze_fault_tolerance(
+                z_ancillas,
+                x_ancillas,
+                logicals,
+                collect_failures,
+            );
         }
 
         let mut total_tested = 0;
@@ -2014,7 +2009,8 @@ impl<'a> PauliPropChecker<'a> {
             let max_r = t - s;
 
             // Generate input fault combinations of weight s
-            let input_fault_combos = generate_pauli_combinations(&self.io.input_qubits, s, &self.config);
+            let input_fault_combos =
+                generate_pauli_combinations(&self.io.input_qubits, s, &self.config);
 
             for input_fault in &input_fault_combos {
                 // Helper to test a single (input_fault, internal_faults) combination
@@ -2130,11 +2126,8 @@ impl<'a> PauliPropChecker<'a> {
                         ..self.config.clone()
                     };
 
-                    let fault_iter = PauliFaultIterator::new(
-                        self.locations.clone(),
-                        max_r,
-                        internal_config,
-                    );
+                    let fault_iter =
+                        PauliFaultIterator::new(self.locations.clone(), max_r, internal_config);
 
                     for internal_fault in fault_iter {
                         process_result(&internal_fault.faults);
@@ -2361,7 +2354,11 @@ impl<'a> PauliPropChecker<'a> {
 ///
 /// Returns a vector of vectors, where each inner vector has length equal to qubits.len()
 /// and contains Pauli indices (0=I, 1=X, 2=Y, 3=Z).
-fn generate_pauli_combinations(qubits: &[usize], weight: usize, config: &FaultCheckConfig) -> Vec<Vec<u8>> {
+fn generate_pauli_combinations(
+    qubits: &[usize],
+    weight: usize,
+    config: &FaultCheckConfig,
+) -> Vec<Vec<u8>> {
     if weight == 0 {
         // Weight 0 = identity on all qubits
         return vec![vec![0; qubits.len()]];
@@ -2952,10 +2949,7 @@ mod tests {
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0])];
 
         let is_ft = checker.is_fault_tolerant(z_ancillas, x_ancillas, logicals);
-        println!(
-            "Simple circuit is 1-fault tolerant for X errors: {}",
-            is_ft
-        );
+        println!("Simple circuit is 1-fault tolerant for X errors: {}", is_ft);
     }
 
     #[test]
@@ -3019,11 +3013,17 @@ mod tests {
             two_checker.analyze_fault_tolerance(z_ancillas, x_ancillas, logicals, false);
 
         println!("Single round analysis:");
-        println!("  Undetectable logical errors: {}", single_analysis.undetectable_logical_errors);
+        println!(
+            "  Undetectable logical errors: {}",
+            single_analysis.undetectable_logical_errors
+        );
         println!("  Detectable errors: {}", single_analysis.detectable_errors);
 
         println!("Two round analysis:");
-        println!("  Undetectable logical errors: {}", two_analysis.undetectable_logical_errors);
+        println!(
+            "  Undetectable logical errors: {}",
+            two_analysis.undetectable_logical_errors
+        );
         println!("  Detectable errors: {}", two_analysis.detectable_errors);
 
         // With two rounds, errors that escaped detection in round 1
@@ -3073,7 +3073,10 @@ mod tests {
         assert!(!prop.contains_x(4), "No X on ancilla 4");
 
         // No syndrome (no X on Z-measurement qubits)
-        assert!(!has_syndrome(&prop, &[3, 4], &[]), "Should have no syndrome");
+        assert!(
+            !has_syndrome(&prop, &[3, 4], &[]),
+            "Should have no syndrome"
+        );
 
         // But anticommutes with logical Z = Z0Z1Z2
         let causes_logical = anticommutes_with_logical(&prop, &[], &[0, 1, 2]);
@@ -3131,7 +3134,10 @@ mod tests {
         let analysis = checker.analyze_decoder_requirements(z_ancillas, x_ancillas, logicals);
 
         println!("Decoder Analysis for 3-qubit code:");
-        println!("  Correctable syndromes: {}", analysis.correctable_syndromes);
+        println!(
+            "  Correctable syndromes: {}",
+            analysis.correctable_syndromes
+        );
         println!(
             "  Detected uncorrectable syndromes: {}",
             analysis.detected_uncorrectable_syndromes
@@ -3220,11 +3226,17 @@ mod tests {
         let analysis = checker.analyze_decoder_requirements(z_ancillas, x_ancillas, logicals);
 
         println!("Single-round circuit (NOT fault tolerant):");
-        println!("  Undetectable logical errors: {}", analysis.undetectable_logical_errors);
+        println!(
+            "  Undetectable logical errors: {}",
+            analysis.undetectable_logical_errors
+        );
         println!("  Is FT: {}", analysis.is_ft());
 
         // Single round has undetectable logical errors (X on data after CX)
-        assert!(!analysis.is_ft(), "Single round should NOT be fault tolerant");
+        assert!(
+            !analysis.is_ft(),
+            "Single round should NOT be fault tolerant"
+        );
     }
 
     #[test]
@@ -3268,7 +3280,10 @@ mod tests {
 
         println!("\nTwo-round syndrome extraction:");
         println!("  Total faults: {}", analysis.total_faults());
-        println!("  Undetectable logical errors: {}", analysis.undetectable_logical_errors);
+        println!(
+            "  Undetectable logical errors: {}",
+            analysis.undetectable_logical_errors
+        );
         println!("  Is FT (by single-shot analysis): {}", analysis.is_ft());
 
         // Two-round still has undetectable errors at the END of round 2.
@@ -3317,10 +3332,19 @@ mod tests {
         println!("\nSyndrome history analysis:");
         println!("  Measurement rounds found: {}", result.rounds.len());
         println!("  Total faults: {}", result.total_faults);
-        println!("  Never-detected logical errors: {}", result.never_detected_logical_errors);
-        println!("  Never-detected stabilizers: {}", result.never_detected_stabilizers);
+        println!(
+            "  Never-detected logical errors: {}",
+            result.never_detected_logical_errors
+        );
+        println!(
+            "  Never-detected stabilizers: {}",
+            result.never_detected_stabilizers
+        );
         println!("  Correctable faults: {}", result.correctable_faults);
-        println!("  Detected uncorrectable: {}", result.detected_uncorrectable_faults);
+        println!(
+            "  Detected uncorrectable: {}",
+            result.detected_uncorrectable_faults
+        );
         println!("  Ambiguous faults: {}", result.ambiguous_faults);
         println!("  Unique syndrome histories: {}", result.histories.len());
         println!("  Is FT: {}", result.is_ft());
@@ -3330,10 +3354,7 @@ mod tests {
 
         // With syndrome history, we can detect more faults than single-shot analysis
         // A fault in round 1 that escapes round 1 might still be caught in round 2
-        assert!(
-            result.total_faults > 0,
-            "Should have analyzed some faults"
-        );
+        assert!(result.total_faults > 0, "Should have analyzed some faults");
     }
 
     #[test]
@@ -3391,26 +3412,35 @@ mod tests {
 
         // Define logical such that single X on data doesn't flip it:
         // Use the trivial logical (always commutes) for this test
-        let logicals: &[(&[usize], &[usize])] = &[];  // No logical operators to check
+        let logicals: &[(&[usize], &[usize])] = &[]; // No logical operators to check
 
-        let analysis = checker.analyze_decoder_requirements(
-            z_measurement_qubits,
-            x_ancillas,
-            logicals,
-        );
+        let analysis =
+            checker.analyze_decoder_requirements(z_measurement_qubits, x_ancillas, logicals);
 
         println!("\nCircuit with final data measurement:");
         println!("  Total faults: {}", analysis.total_faults());
-        println!("  Correctable syndromes: {}", analysis.correctable_syndromes);
-        println!("  Undetectable logical errors: {}", analysis.undetectable_logical_errors);
-        println!("  Undetectable stabilizers: {}", analysis.undetectable_stabilizers);
+        println!(
+            "  Correctable syndromes: {}",
+            analysis.correctable_syndromes
+        );
+        println!(
+            "  Undetectable logical errors: {}",
+            analysis.undetectable_logical_errors
+        );
+        println!(
+            "  Undetectable stabilizers: {}",
+            analysis.undetectable_stabilizers
+        );
         println!("  Is FT: {}", analysis.is_ft());
 
         // With no logical operators defined, all faults are either:
         // - Detected (syndrome on some measurement)
         // - Or stabilizer-equivalent (no effect)
         // So this should be "fault tolerant" by our definition.
-        assert!(analysis.is_ft(), "Should be FT when all errors are detected");
+        assert!(
+            analysis.is_ft(),
+            "Should be FT when all errors are detected"
+        );
 
         match analysis.is_fault_tolerant() {
             Ok(()) => println!("\n  VERDICT: Fault tolerant!"),
@@ -3449,8 +3479,14 @@ mod tests {
 
         println!("\nSimple prep-measure circuit:");
         println!("  Total faults: {}", analysis.total_faults());
-        println!("  Undetectable logical errors: {}", analysis.undetectable_logical_errors);
-        println!("  Undetectable stabilizers: {}", analysis.undetectable_stabilizers);
+        println!(
+            "  Undetectable logical errors: {}",
+            analysis.undetectable_logical_errors
+        );
+        println!(
+            "  Undetectable stabilizers: {}",
+            analysis.undetectable_stabilizers
+        );
 
         // X fault on the single qubit during prep/measure:
         // - If before MZ: flips measurement (detected), and is a logical X error
@@ -3616,8 +3652,7 @@ mod tests {
         let x_ancillas: &[usize] = &[];
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1, 2])];
 
-        let analysis =
-            checker.analyze_with_input_faults(z_ancillas, x_ancillas, logicals, false);
+        let analysis = checker.analyze_with_input_faults(z_ancillas, x_ancillas, logicals, false);
 
         // Should test more cases than internal-only
         // For t=1: s=0,r=1 (internal only) + s=1,r=0 (input only)
@@ -3651,17 +3686,13 @@ mod tests {
         let x_ancillas: &[usize] = &[];
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1])];
 
-        let analysis =
-            checker.analyze_with_input_faults(z_ancillas, x_ancillas, logicals, false);
+        let analysis = checker.analyze_with_input_faults(z_ancillas, x_ancillas, logicals, false);
 
         // For t=1 with 2 input qubits and some internal locations:
         // s=0, r=1: enumerate internal faults
         // s=1, r=0: enumerate 2 input faults (X on q0, X on q1)
         // Total should be internal_count + 2
-        println!(
-            "s+r<=1 enumeration: {} total tested",
-            analysis.total_tested
-        );
+        println!("s+r<=1 enumeration: {} total tested", analysis.total_tested);
 
         // With input faults, we test more combinations
         let regular = checker.analyze_fault_tolerance(z_ancillas, x_ancillas, logicals, false);
@@ -3812,7 +3843,8 @@ mod tests {
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1, 2])];
         let no_follow_up = FollowUpConfig::new();
 
-        let analysis = checker.analyze_with_follow_up(z_ancillas, x_ancillas, logicals, &no_follow_up);
+        let analysis =
+            checker.analyze_with_follow_up(z_ancillas, x_ancillas, logicals, &no_follow_up);
 
         // Just verify we get some results
         assert!(analysis.total_faults() > 0);
@@ -3968,7 +4000,10 @@ mod tests {
         // Helper methods
         assert!(checker.has_input_qubits());
         assert!(checker.has_output_qubits());
-        assert_eq!(checker.circuit_type(), "pass-through gadget (has inputs and outputs)");
+        assert_eq!(
+            checker.circuit_type(),
+            "pass-through gadget (has inputs and outputs)"
+        );
     }
 
     #[test]
@@ -3982,11 +4017,17 @@ mod tests {
 
         let checker = PauliPropChecker::new(&circuit);
 
-        assert!(checker.input_qubits().is_empty(), "State prep has no inputs");
+        assert!(
+            checker.input_qubits().is_empty(),
+            "State prep has no inputs"
+        );
         assert!(checker.output_qubits().is_empty(), "All qubits measured");
         assert!(!checker.has_input_qubits());
         assert!(!checker.has_output_qubits());
-        assert_eq!(checker.circuit_type(), "self-contained (state prep + final measurement)");
+        assert_eq!(
+            checker.circuit_type(),
+            "self-contained (state prep + final measurement)"
+        );
     }
 
     #[test]
@@ -4000,11 +4041,17 @@ mod tests {
 
         let checker = PauliPropChecker::new(&circuit);
 
-        assert!(checker.input_qubits().is_empty(), "State prep has no inputs");
+        assert!(
+            checker.input_qubits().is_empty(),
+            "State prep has no inputs"
+        );
         assert_eq!(checker.output_qubits().len(), 3, "All qubits are outputs");
         assert!(!checker.has_input_qubits());
         assert!(checker.has_output_qubits());
-        assert_eq!(checker.circuit_type(), "state preparation (no inputs, has outputs)");
+        assert_eq!(
+            checker.circuit_type(),
+            "state preparation (no inputs, has outputs)"
+        );
     }
 
     #[test]
@@ -4017,10 +4064,16 @@ mod tests {
         let checker = PauliPropChecker::new(&circuit);
 
         assert_eq!(checker.input_qubits().len(), 3, "All qubits are inputs");
-        assert!(checker.output_qubits().is_empty(), "No outputs after measurement");
+        assert!(
+            checker.output_qubits().is_empty(),
+            "No outputs after measurement"
+        );
         assert!(checker.has_input_qubits());
         assert!(!checker.has_output_qubits());
-        assert_eq!(checker.circuit_type(), "final measurement (has inputs, no outputs)");
+        assert_eq!(
+            checker.circuit_type(),
+            "final measurement (has inputs, no outputs)"
+        );
     }
 
     #[test]
@@ -4096,7 +4149,8 @@ mod tests {
             // Fault config should have faults (either input or internal)
             // Note: input faults are represented as PauliFaults at tick 0
             assert!(
-                !fault_config.faults.is_empty() || analysis_with_collect.undetectable_logical_errors > 0,
+                !fault_config.faults.is_empty()
+                    || analysis_with_collect.undetectable_logical_errors > 0,
                 "Failure should have associated faults or be from input-only fault"
             );
 

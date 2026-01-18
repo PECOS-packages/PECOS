@@ -60,4 +60,4 @@ pub use phase::Phase;
 pub use rng::choices::Choices;
 
 // Operator algebra
-pub use operator::{Operator, I, Is, X, Xs, Y, Ys, Z, Zs};
+pub use operator::{I, Is, Operator, X, Xs, Y, Ys, Z, Zs};

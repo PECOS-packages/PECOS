@@ -323,7 +323,6 @@ fn restrict_to_data_qubits(ps: &PauliString, n: usize) -> PauliString {
     PauliString::with_phase_and_paulis(ps.phase(), paulis)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,30 +415,10 @@ mod tests {
     fn test_discover_five_qubit_code() {
         // [[5, 1, 3]] perfect code
         // Stabilizers: XZZXI, IXZZX, XIXZZ, ZXIXZ
-        let s1 = pauli_string(&[
-            (Pauli::X, 0),
-            (Pauli::Z, 1),
-            (Pauli::Z, 2),
-            (Pauli::X, 3),
-        ]);
-        let s2 = pauli_string(&[
-            (Pauli::X, 1),
-            (Pauli::Z, 2),
-            (Pauli::Z, 3),
-            (Pauli::X, 4),
-        ]);
-        let s3 = pauli_string(&[
-            (Pauli::X, 0),
-            (Pauli::X, 2),
-            (Pauli::Z, 3),
-            (Pauli::Z, 4),
-        ]);
-        let s4 = pauli_string(&[
-            (Pauli::Z, 0),
-            (Pauli::X, 1),
-            (Pauli::X, 3),
-            (Pauli::Z, 4),
-        ]);
+        let s1 = pauli_string(&[(Pauli::X, 0), (Pauli::Z, 1), (Pauli::Z, 2), (Pauli::X, 3)]);
+        let s2 = pauli_string(&[(Pauli::X, 1), (Pauli::Z, 2), (Pauli::Z, 3), (Pauli::X, 4)]);
+        let s3 = pauli_string(&[(Pauli::X, 0), (Pauli::X, 2), (Pauli::Z, 3), (Pauli::Z, 4)]);
+        let s4 = pauli_string(&[(Pauli::Z, 0), (Pauli::X, 1), (Pauli::X, 3), (Pauli::Z, 4)]);
 
         let stabilizers = vec![s1, s2, s3, s4];
         let result = discover_logical_operators(5, &stabilizers).unwrap();

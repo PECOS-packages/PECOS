@@ -459,7 +459,9 @@ impl<'a> StabilizerFlipChecker<'a> {
         // Find ambiguous syndromes (both correctable and uncorrectable)
         for (syndrome, (no_logical, has_logical)) in syndrome_outcomes {
             if no_logical > 0 && has_logical > 0 {
-                analysis.ambiguous_syndromes.insert(syndrome, (no_logical, has_logical));
+                analysis
+                    .ambiguous_syndromes
+                    .insert(syndrome, (no_logical, has_logical));
             }
         }
 
@@ -743,9 +745,15 @@ mod tests {
         println!("Weight-1 analysis (all Pauli types):");
         println!("  Total errors: {}", analysis.total_errors);
         println!("  Stabilizer errors: {}", analysis.stabilizer_errors);
-        println!("  Detectable (no logical): {}", analysis.detectable_no_logical);
+        println!(
+            "  Detectable (no logical): {}",
+            analysis.detectable_no_logical
+        );
         println!("  Undetectable logical: {}", analysis.undetectable_logical);
-        println!("  Detectable with logical: {}", analysis.detectable_with_logical);
+        println!(
+            "  Detectable with logical: {}",
+            analysis.detectable_with_logical
+        );
 
         // 3 qubits * 3 Pauli types = 9 weight-1 errors
         assert_eq!(analysis.total_errors, 9);
@@ -867,8 +875,8 @@ mod tests {
             .check(X(1) & Z(2) & Z(3) & X(4)) // IXZZX
             .check(X(0) & X(2) & Z(3) & Z(4)) // XIXZZ
             .check(Z(0) & X(1) & X(3) & Z(4)) // ZXIXZ
-            .logical_x(Xs([0, 1, 2, 3, 4]))   // XXXXX
-            .logical_z(Zs([0, 1, 2, 3, 4]))   // ZZZZZ
+            .logical_x(Xs([0, 1, 2, 3, 4])) // XXXXX
+            .logical_z(Zs([0, 1, 2, 3, 4])) // ZZZZZ
             .build()
             .unwrap()
     }
@@ -894,10 +902,7 @@ mod tests {
             analysis.undetectable_logical, 0,
             "No undetectable logical errors at weight 1"
         );
-        assert!(
-            analysis.is_fault_tolerant(),
-            "5-qubit code should be 1-FT"
-        );
+        assert!(analysis.is_fault_tolerant(), "5-qubit code should be 1-FT");
     }
 
     #[test]
@@ -1011,7 +1016,10 @@ mod tests {
         let flips = checker.compute_flips(&y0);
 
         // Y0 anti-commutes with Z0Z1 (due to X component)
-        assert!(flips.stabilizers.contains(&0), "Y0 should flip stabilizer 0");
+        assert!(
+            flips.stabilizers.contains(&0),
+            "Y0 should flip stabilizer 0"
+        );
 
         // Y0 also anti-commutes with X0 logical (due to Z component)
         assert!(flips.logical_xs.contains(&0), "Y0 should flip logical X");
@@ -1135,16 +1143,10 @@ mod tests {
 
         // For X errors only: distance is 3
         let w2 = checker.analyze_weight_with_types(2, true, false, false);
-        assert!(
-            w2.is_fault_tolerant(),
-            "X-only weight 2 should be FT"
-        );
+        assert!(w2.is_fault_tolerant(), "X-only weight 2 should be FT");
 
         let w3 = checker.analyze_weight_with_types(3, true, false, false);
-        assert!(
-            !w3.is_fault_tolerant(),
-            "X-only weight 3 should NOT be FT"
-        );
+        assert!(!w3.is_fault_tolerant(), "X-only weight 3 should NOT be FT");
     }
 
     // ========================================================================

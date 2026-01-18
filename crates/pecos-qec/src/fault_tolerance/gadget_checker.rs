@@ -56,17 +56,17 @@
 //! println!("Is 1-FT: {}", analysis.is_fault_tolerant());
 //! ```
 
-use super::{
-    extract_spacetime_locations, propagate_faults, FaultCheckConfig, FaultConfiguration,
-    PauliFaultIterator, SpacetimeLocation,
-};
 use super::pauli_prop_checker::{
-    compute_stabilizer_syndromes, extract_measurement_rounds, extract_output_error, CircuitIO,
-    MeasurementRound, SyndromeClass,
+    CircuitIO, MeasurementRound, SyndromeClass, compute_stabilizer_syndromes,
+    extract_measurement_rounds, extract_output_error,
+};
+use super::{
+    FaultCheckConfig, FaultConfiguration, PauliFaultIterator, SpacetimeLocation,
+    extract_spacetime_locations, propagate_faults,
 };
 use pecos_core::QubitId;
-use pecos_quantum::TickCircuit;
 use pecos_qsim::{CliffordGateable, PauliProp};
+use pecos_quantum::TickCircuit;
 use std::collections::{BTreeSet, HashMap};
 
 /// Configuration for gadget-level fault tolerance checking.
@@ -672,13 +672,17 @@ impl<'a> GadgetChecker<'a> {
 
     /// Adds a logical Z operator.
     pub fn with_logical_z(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
-        self.config.logical_zs.push((x_positions.to_vec(), z_positions.to_vec()));
+        self.config
+            .logical_zs
+            .push((x_positions.to_vec(), z_positions.to_vec()));
         self
     }
 
     /// Adds a logical X operator.
     pub fn with_logical_x(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
-        self.config.logical_xs.push((x_positions.to_vec(), z_positions.to_vec()));
+        self.config
+            .logical_xs
+            .push((x_positions.to_vec(), z_positions.to_vec()));
         self
     }
 
@@ -695,7 +699,11 @@ impl<'a> GadgetChecker<'a> {
     /// # Arguments
     /// * `max_weight` - Maximum total fault weight (input + internal)
     /// * `collect_failures` - Whether to store detailed failure information
-    pub fn analyze_with_options(&self, max_weight: usize, collect_failures: bool) -> GadgetAnalysis {
+    pub fn analyze_with_options(
+        &self,
+        max_weight: usize,
+        collect_failures: bool,
+    ) -> GadgetAnalysis {
         let mut analysis = GadgetAnalysis {
             max_weight,
             total_tested: 0,
@@ -1403,7 +1411,8 @@ impl<'a> GadgetChecker<'a> {
             self.build_syndrome_key(&result.z_syndrome_flips, &result.x_syndrome_flips);
 
         // Extract output error and compute follow-up syndrome
-        let output_error = extract_output_error(&result.propagated_error, &self.config.output_qubits);
+        let output_error =
+            extract_output_error(&result.propagated_error, &self.config.output_qubits);
 
         // Convert stabilizers to the expected format
         let stabilizer_refs: Vec<(&[usize], &[usize])> = follow_up
@@ -1580,7 +1589,9 @@ impl<'a> GadgetChecker<'a> {
             self.compute_syndrome_history(input_faults, internal_faults, internal_weight, rounds);
 
         // Check if any round had a syndrome
-        let ever_detected = history.iter().any(|round_syn| round_syn.iter().any(|&s| s != 0));
+        let ever_detected = history
+            .iter()
+            .any(|round_syn| round_syn.iter().any(|&s| s != 0));
 
         // Check logical error (using final state)
         let result = self.analyze_single_combination(
@@ -1632,7 +1643,11 @@ impl<'a> GadgetChecker<'a> {
         for round in rounds {
             // Skip rounds before the fault could affect them
             if round.tick < earliest_fault_tick && input_faults.is_empty() {
-                history.push(vec![0; self.config.z_ancillas.len() + self.config.x_ancillas.len()]);
+                history.push(vec![
+                    0;
+                    self.config.z_ancillas.len()
+                        + self.config.x_ancillas.len()
+                ]);
                 continue;
             }
 
@@ -2008,9 +2023,7 @@ mod tests {
 
         println!("Syndrome extraction gadget analysis:");
         println!("  Total tested: {}", analysis.total_tested);
-        println!(
-            "  (includes input faults + internal faults with sum <= 1)"
-        );
+        println!("  (includes input faults + internal faults with sum <= 1)");
         println!("  Harmless: {}", analysis.harmless);
         println!("  Correctable: {}", analysis.correctable);
         println!("  Undetected logical: {}", analysis.undetected_logical);
@@ -2121,8 +2134,10 @@ mod tests {
             analysis_t1.total_tested
         );
 
-        println!("t=1: {} tested, t=2: {} tested",
-            analysis_t1.total_tested, analysis_t2.total_tested);
+        println!(
+            "t=1: {} tested, t=2: {} tested",
+            analysis_t1.total_tested, analysis_t2.total_tested
+        );
     }
 
     #[test]
@@ -2158,8 +2173,7 @@ mod tests {
 
         println!(
             "With input: {} tested, Without input: {} tested",
-            analysis_with.total_tested,
-            analysis_without.total_tested
+            analysis_with.total_tested, analysis_without.total_tested
         );
     }
 
@@ -2239,8 +2253,7 @@ mod tests {
     fn test_no_input_qubits_skips_input_faults() {
         // A gadget with no input qubits should not enumerate any input faults
         let circuit = build_state_prep_circuit();
-        let config = GadgetConfig::state_preparation()
-            .with_output_qubits(&[0, 1, 2]);
+        let config = GadgetConfig::state_preparation().with_output_qubits(&[0, 1, 2]);
         // Note: no input qubits specified
 
         let checker = GadgetChecker::new(&circuit, config);
@@ -2263,7 +2276,7 @@ mod tests {
         // Explicitly verify the (s, r) breakdown for t=2
         let circuit = build_syndrome_extraction_circuit();
         let config = GadgetConfig::syndrome_extraction()
-            .with_input_qubits(&[0, 1, 2])  // 3 input qubits
+            .with_input_qubits(&[0, 1, 2]) // 3 input qubits
             .with_output_qubits(&[0, 1, 2])
             .with_z_ancillas(&[3, 4]);
 
@@ -2285,8 +2298,10 @@ mod tests {
         // s=1: 9 patterns
         // s=2: 27 patterns
 
-        println!("Input fault patterns: w0={}, w1={}, w2={}",
-            input_w0, input_w1, input_w2);
+        println!(
+            "Input fault patterns: w0={}, w1={}, w2={}",
+            input_w0, input_w1, input_w2
+        );
     }
 
     #[test]
@@ -2374,11 +2389,13 @@ mod tests {
         // No prep - qubits come from previous stage
         circuit.tick().mz(&[0, 1, 2]); // Measure all
 
-        let checker = GadgetChecker::from_circuit(&circuit)
-            .with_z_ancillas(&[0, 1, 2]);
+        let checker = GadgetChecker::from_circuit(&circuit).with_z_ancillas(&[0, 1, 2]);
 
         assert!(checker.has_input_qubits(), "Final measurement has inputs");
-        assert!(!checker.has_output_qubits(), "Final measurement has no outputs");
+        assert!(
+            !checker.has_output_qubits(),
+            "Final measurement has no outputs"
+        );
 
         assert_eq!(checker.input_qubits().len(), 3);
         assert!(checker.output_qubits().is_empty());
@@ -2418,7 +2435,9 @@ mod tests {
             .map(|s| s.correctable_count + s.uncorrectable_count)
             .sum();
         assert_eq!(
-            syndrome_total + analysis.undetectable_logical_errors + analysis.undetectable_stabilizers,
+            syndrome_total
+                + analysis.undetectable_logical_errors
+                + analysis.undetectable_stabilizers,
             analysis.total_tested
         );
 
@@ -2432,11 +2451,23 @@ mod tests {
 
         println!("Decoder requirements analysis:");
         println!("  Total tested: {}", analysis.total_tested);
-        println!("  Correctable syndromes: {}", analysis.correctable_syndromes);
-        println!("  Detected uncorrectable: {}", analysis.detected_uncorrectable_syndromes);
+        println!(
+            "  Correctable syndromes: {}",
+            analysis.correctable_syndromes
+        );
+        println!(
+            "  Detected uncorrectable: {}",
+            analysis.detected_uncorrectable_syndromes
+        );
         println!("  Ambiguous syndromes: {}", analysis.ambiguous_syndromes);
-        println!("  Undetectable logical: {}", analysis.undetectable_logical_errors);
-        println!("  Undetectable stabilizer: {}", analysis.undetectable_stabilizers);
+        println!(
+            "  Undetectable logical: {}",
+            analysis.undetectable_logical_errors
+        );
+        println!(
+            "  Undetectable stabilizer: {}",
+            analysis.undetectable_stabilizers
+        );
     }
 
     #[test]
@@ -2515,10 +2546,19 @@ mod tests {
         println!("Syndrome history analysis:");
         println!("  Rounds detected: {}", analysis.rounds.len());
         println!("  Total tested: {}", analysis.total_tested);
-        println!("  Correctable histories: {}", analysis.correctable_histories);
-        println!("  Uncorrectable histories: {}", analysis.uncorrectable_histories);
+        println!(
+            "  Correctable histories: {}",
+            analysis.correctable_histories
+        );
+        println!(
+            "  Uncorrectable histories: {}",
+            analysis.uncorrectable_histories
+        );
         println!("  Ambiguous histories: {}", analysis.ambiguous_histories);
-        println!("  Never detected logical: {}", analysis.never_detected_logical_errors);
+        println!(
+            "  Never detected logical: {}",
+            analysis.never_detected_logical_errors
+        );
         println!("  Is FT: {}", analysis.is_fault_tolerant());
     }
 

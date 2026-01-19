@@ -144,6 +144,19 @@ impl<E: Element> VecSet<E> {
         }
     }
 
+    /// Take the contents of this set, leaving it empty but with capacity preserved.
+    ///
+    /// Unlike `std::mem::take`, this preserves the allocated capacity of the source
+    /// set, which is important for performance when the set will be reused.
+    #[inline]
+    pub fn take_clearing(&mut self) -> Self {
+        // Drain elements into a new set, leaving self empty with capacity
+        let taken_elements: SetBuffer<E> = self.elements.drain(..).collect();
+        Self {
+            elements: taken_elements,
+        }
+    }
+
     /// Count elements in the intersection of `self` and `other`.
     /// Equivalent to: `self.intersection(other).count()`
     /// but avoids iterator struct creation overhead.
@@ -312,6 +325,11 @@ impl crate::index_set::IndexSet for VecSet<usize> {
     #[inline]
     fn xor_symmetric_difference_into(&self, other: &Self, target: &mut Self) {
         Self::xor_symmetric_difference_into(self, other, target);
+    }
+
+    #[inline]
+    fn take_clearing(&mut self) -> Self {
+        Self::take_clearing(self)
     }
 }
 
@@ -515,5 +533,23 @@ mod tests {
         let mut result: Vec<_> = set_a.elements.to_vec();
         result.sort_unstable();
         assert_eq!(result, vec![1, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn test_take_clearing() {
+        let mut set = VecSet::<u32>::from([1, 2, 3, 4, 5]);
+        let original_capacity = set.capacity();
+
+        let taken = set.take_clearing();
+
+        // Taken set should have the original elements
+        assert_eq!(taken.elements.as_slice(), &[1, 2, 3, 4, 5]);
+
+        // Original set should be empty
+        assert!(set.is_empty());
+
+        // Original set should preserve capacity (for heap-allocated sets)
+        // For SmallVec with inline storage, capacity is always at least VECSET_INLINE_CAPACITY
+        assert!(set.capacity() >= original_capacity.min(8));
     }
 }

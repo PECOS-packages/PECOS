@@ -50,6 +50,89 @@ pub trait ForcedMeasurement {
 }
 
 // ============================================================================
+// Stabilizer Simulator Marker Trait
+// ============================================================================
+
+/// Marker trait for stabilizer simulators that support full Clifford simulation.
+///
+/// Implementing this trait indicates that a simulator:
+/// - Implements all Clifford gates via [`CliffordGateable`]
+/// - Supports basic simulator operations via [`QuantumSimulator`]
+/// - Supports forced measurements for testing via [`ForcedMeasurement`]
+/// - Can be cloned for probability testing
+/// - Can be constructed with a seed for reproducible tests
+///
+/// Simulators implementing this trait can use the [`stabilizer_test_suite!`] macro
+/// to automatically generate a comprehensive test suite.
+///
+/// # Example
+///
+/// ```ignore
+/// use pecos_qsim::stabilizer_test_utils::{StabilizerSimulator, stabilizer_test_suite};
+///
+/// // In your test module:
+/// stabilizer_test_suite!(MyStabilizerSim, 8);
+/// ```
+pub trait StabilizerSimulator:
+    CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone + Sized
+{
+    /// Create a new simulator with the given number of qubits and RNG seed.
+    fn with_seed(num_qubits: usize, seed: u64) -> Self;
+}
+
+/// Generates a comprehensive test suite for a stabilizer simulator.
+///
+/// This macro creates test functions that verify correct implementation of
+/// all Clifford gates, measurement behavior, and probability distributions.
+///
+/// # Arguments
+///
+/// * `$sim_type` - The type implementing [`StabilizerSimulator`]
+/// * `$num_qubits` - Number of qubits to use for testing (default: 8)
+///
+/// # Example
+///
+/// ```ignore
+/// use pecos_qsim::stabilizer_test_utils::stabilizer_test_suite;
+/// use pecos_qsim::SparseStab;
+///
+/// // Generate tests with default 8 qubits
+/// stabilizer_test_suite!(SparseStab);
+///
+/// // Or specify a custom qubit count
+/// stabilizer_test_suite!(SparseStab, 4);
+/// ```
+///
+/// # Generated Tests
+///
+/// The macro generates the following tests:
+/// - `test_<type>_basic_suite` - Basic gate and measurement tests
+/// - `test_<type>_full_suite` - Full suite including probability verification and random circuits
+#[macro_export]
+macro_rules! stabilizer_test_suite {
+    ($sim_type:ty) => {
+        $crate::stabilizer_test_suite!($sim_type, 8);
+    };
+    ($sim_type:ty, $num_qubits:expr) => {
+        paste::paste! {
+            #[test]
+            fn [<test_ $sim_type:snake _basic_suite>]() {
+                use $crate::stabilizer_test_utils::{run_basic_stabilizer_test_suite, StabilizerSimulator};
+                let mut sim = <$sim_type>::with_seed($num_qubits, 42);
+                run_basic_stabilizer_test_suite(&mut sim, $num_qubits);
+            }
+
+            #[test]
+            fn [<test_ $sim_type:snake _full_suite>]() {
+                use $crate::stabilizer_test_utils::{run_full_stabilizer_test_suite, StabilizerSimulator};
+                let mut sim = <$sim_type>::with_seed($num_qubits, 42);
+                run_full_stabilizer_test_suite(&mut sim, $num_qubits);
+            }
+        }
+    };
+}
+
+// ============================================================================
 // Gate Identity Tests
 // ============================================================================
 
@@ -2198,16 +2281,49 @@ pub fn run_basic_stabilizer_test_suite<S: CliffordGateable + QuantumSimulator>(
 ///
 /// This requires the simulator to implement Clone and `ForcedMeasurement`
 /// for the probability comparison tests.
+///
+/// The suite includes:
+/// - Basic gate tests (X, H, Z, S, Sdg)
+/// - Gate identity tests (H^2=I, S^4=I, X^2=I, etc.)
+/// - Specific gate tests (SX, `SXdg`, SY, `SYdg`, CY, CZ, SWAP)
+/// - Measurement idempotence tests
+/// - Gate decomposition tests
+/// - Commutation relation tests
+/// - Entanglement tests (Bell, GHZ states)
+/// - Probability comparison against `DensityMatrix`
+/// - Mid-circuit measurement tests
+/// - Reset tests
+/// - Random circuit tests
 pub fn run_full_stabilizer_test_suite<
     S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone,
 >(
     sim: &mut S,
     num_qubits: usize,
 ) {
-    // Run basic tests first
+    // ========== Basic Tests ==========
     run_basic_stabilizer_test_suite(sim, num_qubits);
 
-    // Probability comparison against DensityMatrix
+    // ========== Specific Gate Tests ==========
+    // Tests for SX, SXdg, SY, SYdg, CY, CZ, SWAP
+    verify_all_specific_gates(sim);
+
+    // ========== Measurement Idempotence Tests ==========
+    verify_all_measurement_idempotence(sim);
+
+    // ========== Gate Decomposition Tests ==========
+    if num_qubits >= 2 {
+        verify_all_gate_decompositions(sim, num_qubits);
+    }
+
+    // ========== Commutation Relation Tests ==========
+    if num_qubits >= 2 {
+        verify_all_commutation_relations(sim);
+    }
+    if num_qubits >= 4 {
+        verify_all_commutation_relations_extended(sim, num_qubits);
+    }
+
+    // ========== Probability Comparison Tests ==========
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Test initial state
@@ -2246,7 +2362,25 @@ pub fn run_full_stabilizer_test_suite<
         verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
     }
 
-    // Random circuit tests - 10 circuits with 20 gates each
+    // ========== Mid-Circuit Measurement Tests ==========
+    verify_mid_circuit_measurement(sim, num_qubits, 42);
+
+    // ========== Reset Tests ==========
+    verify_reset_mid_circuit(sim, num_qubits, 42);
+
+    // ========== Measurement Order Independence ==========
+    if num_qubits >= 2 {
+        verify_measurement_order_independence(sim, num_qubits, 42);
+    }
+
+    // ========== Edge Case Tests ==========
+    verify_empty_circuit(sim, num_qubits);
+    verify_single_qubit_only_circuit(sim, num_qubits, 42);
+    if num_qubits >= 2 {
+        verify_two_qubit_only_circuit(sim, num_qubits, 42);
+    }
+
+    // ========== Random Circuit Tests ==========
     verify_random_circuits(sim, num_qubits, 20, 10, 12345);
 }
 

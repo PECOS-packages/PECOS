@@ -3412,6 +3412,7 @@ name = "pecos-qsim"
 version = "0.1.1"
 dependencies = [
  "num-complex",
+ "paste",
  "pecos-core",
  "pecos-quantum",
  "pecos-quest",
@@ -3430,6 +3431,7 @@ dependencies = [
  "num-complex",
  "pecos-core",
  "pecos-num",
+ "smallvec",
  "tket",
 ]
 

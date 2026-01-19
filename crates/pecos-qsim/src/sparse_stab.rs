@@ -13,7 +13,7 @@
 use crate::{CliffordGateable, GensGeneric, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
-use pecos_core::{BitSet, IndexSet, QubitId, RngManageable, VecSet};
+use pecos_core::{BitSet, IndexSet, QubitId, RngManageable, SortedVecSet, VecSet};
 use pecos_rng::rng_ext::RngProbabilityExt;
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 
@@ -104,9 +104,9 @@ pub struct SparseStabGeneric<
     R: RngCore + SeedableRng + Rng + Debug = PecosRng,
 > {
     pub(crate) num_qubits: usize,
-    stabs: GensGeneric<S>,
-    destabs: GensGeneric<S>,
-    rng: R,
+    pub(crate) stabs: GensGeneric<S>,
+    pub(crate) destabs: GensGeneric<S>,
+    pub(crate) rng: R,
 }
 
 /// Default sparse stabilizer simulator using `BitSet` for O(1) toggle operations.
@@ -115,8 +115,27 @@ pub type SparseStab<R = PecosRng> = SparseStabGeneric<BitSet, R>;
 /// Sparse stabilizer simulator using `BitSet` (same as `SparseStab`).
 pub type SparseStabBitSet<R = PecosRng> = SparseStabGeneric<BitSet, R>;
 
-/// Sparse stabilizer simulator using `VecSet` for lower overhead on small circuits.
-pub type SparseStabVecSet<R = PecosRng> = SparseStabGeneric<VecSet<usize>, R>;
+/// Sparse stabilizer simulator using `SortedVecSet` for O(n+m) XOR operations.
+///
+/// This is the recommended Vec-based simulator. It keeps elements sorted,
+/// enabling merge-based XOR operations that are O(n+m) instead of O(n*m).
+///
+/// Performance characteristics:
+/// - O(n) toggle operations (maintains sorted order)
+/// - O(n+m) XOR operations (merge algorithm)
+/// - Best Vec-based option for d >= 5
+///
+/// For best overall performance, use `SparseStab` (BitSet-based) instead.
+pub type SparseStabVecSet<R = PecosRng> = SparseStabGeneric<SortedVecSet, R>;
+
+/// Alias for `SparseStabVecSet`.
+pub type SparseStabSortedVecSet<R = PecosRng> = SparseStabVecSet<R>;
+
+/// Sparse stabilizer simulator using unsorted `VecSet`.
+///
+/// This variant has O(1) toggle but O(n*m) XOR. Faster than `SparseStabVecSet`
+/// only for very small circuits (distance < 5).
+pub type SparseStabUnsortedVecSet<R = PecosRng> = SparseStabGeneric<VecSet<usize>, R>;
 
 /// Constructors for `SparseStab` with the default set and RNG types.
 ///
@@ -168,9 +187,9 @@ impl SparseStabGeneric<BitSet, PecosRng> {
     }
 }
 
-/// Constructors for `SparseStabVecSet` with the default RNG type.
-impl SparseStabGeneric<VecSet<usize>, PecosRng> {
-    /// Create a new VecSet-based stabilizer simulator with the default RNG.
+/// Constructors for `SparseStabSortedVecSet` with the default RNG type.
+impl SparseStabGeneric<SortedVecSet, PecosRng> {
+    /// Create a new SortedVecSet-based stabilizer simulator with the default RNG.
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
@@ -178,7 +197,26 @@ impl SparseStabGeneric<VecSet<usize>, PecosRng> {
         Self::with_rng(num_qubits, rng)
     }
 
-    /// Create a new VecSet-based stabilizer simulator with a specific seed.
+    /// Create a new SortedVecSet-based stabilizer simulator with a specific seed.
+    #[inline]
+    #[must_use]
+    pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        let rng = PecosRng::seed_from_u64(seed);
+        Self::with_rng(num_qubits, rng)
+    }
+}
+
+/// Constructors for `SparseStabUnsortedVecSet` with the default RNG type.
+impl SparseStabGeneric<VecSet<usize>, PecosRng> {
+    /// Create a new unsorted VecSet-based stabilizer simulator with the default RNG.
+    #[inline]
+    #[must_use]
+    pub fn new(num_qubits: usize) -> Self {
+        let rng = PecosRng::from_os_rng();
+        Self::with_rng(num_qubits, rng)
+    }
+
+    /// Create a new unsorted VecSet-based stabilizer simulator with a specific seed.
     #[inline]
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
@@ -420,10 +458,10 @@ where
         let id = removed_id.expect("Critical error: removed_id was None");
 
         anticom_stabs_col.remove(id);
-        // Use take instead of clone: the original rows are cleared later anyway (and take leaves them empty).
-        // We'll iterate over these copies in the column update loop below.
-        let removed_row_x = std::mem::take(&mut self.stabs.row_x[id]);
-        let removed_row_z = std::mem::take(&mut self.stabs.row_z[id]);
+        // Use take_clearing: takes the row contents but preserves capacity for reuse.
+        // This enables toggle_unchecked in CX gate since rows will have capacity.
+        let removed_row_x = self.stabs.row_x[id].take_clearing();
+        let removed_row_z = self.stabs.row_z[id].take_clearing();
 
         if self.stabs.signs_minus.contains(id) {
             self.stabs.signs_minus.xor_assign(&anticom_stabs_col);
@@ -683,46 +721,27 @@ where
             let q2 = pair[1].index();
 
             for g in &mut [&mut self.stabs, &mut self.destabs] {
-                let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
-
-                // Handle col_x
-                {
-                    let (_left, right) = g.col_x.split_at_mut(qu_min);
-                    let (mid, right) = right.split_at_mut(qu_max - qu_min);
-                    let col_x_min = &mut mid[0];
-                    let col_x_max = &mut right[0];
-
-                    let (col_x_qu1, col_x_qu2) = if q1 < q2 {
-                        (col_x_min, col_x_max)
-                    } else {
-                        (col_x_max, col_x_min)
-                    };
-
-                    // Use single-element toggle instead of creating a temporary set
-                    for i in col_x_qu1.iter() {
-                        g.row_x[i].toggle(q2);
+                // SAFETY: q1 != q2 is guaranteed by the debug_assert at the start of cx.
+                // We need mutable access to two different column entries simultaneously.
+                // Using unsafe to avoid the split_at_mut overhead.
+                unsafe {
+                    // Handle col_x: toggle q2 in row_x[i] for each i in col_x[q1], then XOR columns
+                    let col_x_q1 = g.col_x.get_unchecked(q1);
+                    for i in col_x_q1.iter() {
+                        g.row_x.get_unchecked_mut(i).toggle(q2);
                     }
-                    col_x_qu2.xor_assign(col_x_qu1);
-                }
+                    let col_x_q1 = g.col_x.get_unchecked(q1) as *const S;
+                    let col_x_q2 = g.col_x.get_unchecked_mut(q2);
+                    col_x_q2.xor_assign(&*col_x_q1);
 
-                // Handle col_z
-                {
-                    let (_left, right) = g.col_z.split_at_mut(qu_min);
-                    let (mid, right) = right.split_at_mut(qu_max - qu_min);
-                    let col_z_min = &mut mid[0];
-                    let col_z_max = &mut right[0];
-
-                    let (col_z_qu1, col_z_qu2) = if q1 < q2 {
-                        (col_z_min, col_z_max)
-                    } else {
-                        (col_z_max, col_z_min)
-                    };
-
-                    // Use single-element toggle instead of creating a temporary set
-                    for i in col_z_qu2.iter() {
-                        g.row_z[i].toggle(q1);
+                    // Handle col_z: toggle q1 in row_z[i] for each i in col_z[q2], then XOR columns
+                    let col_z_q2 = g.col_z.get_unchecked(q2);
+                    for i in col_z_q2.iter() {
+                        g.row_z.get_unchecked_mut(i).toggle(q1);
                     }
-                    col_z_qu1.xor_assign(col_z_qu2);
+                    let col_z_q2 = g.col_z.get_unchecked(q2) as *const S;
+                    let col_z_q1 = g.col_z.get_unchecked_mut(q1);
+                    col_z_q1.xor_assign(&*col_z_q2);
                 }
             }
         }
@@ -1415,7 +1434,7 @@ where
 // ForcedMeasurement trait implementations for probability comparison tests
 // ============================================================================
 
-use crate::stabilizer_test_utils::ForcedMeasurement;
+use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 
 impl<S, R> ForcedMeasurement for SparseStabGeneric<S, R>
 where
@@ -1433,6 +1452,34 @@ where
 {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         SparseStabHybrid::mz_forced(self, qubit, forced_outcome)
+    }
+}
+
+// ============================================================================
+// StabilizerSimulator implementations
+// ============================================================================
+
+impl StabilizerSimulator for SparseStabGeneric<BitSet, PecosRng> {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        Self::with_seed(num_qubits, seed)
+    }
+}
+
+impl StabilizerSimulator for SparseStabGeneric<SortedVecSet, PecosRng> {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        Self::with_seed(num_qubits, seed)
+    }
+}
+
+impl StabilizerSimulator for SparseStabGeneric<VecSet<usize>, PecosRng> {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        Self::with_seed(num_qubits, seed)
+    }
+}
+
+impl StabilizerSimulator for SparseStabHybrid<PecosRng> {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        Self::with_seed(num_qubits, seed)
     }
 }
 

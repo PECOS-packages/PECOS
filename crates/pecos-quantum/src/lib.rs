@@ -67,6 +67,7 @@ mod circuit;
 mod dag_circuit;
 pub mod operator_matrix;
 mod tick_circuit;
+pub mod tick_circuit_soa;
 
 #[cfg(feature = "hugr")]
 pub mod hugr_convert;
@@ -77,6 +78,10 @@ pub use dag_circuit::{
 };
 pub use tick_circuit::{
     QubitConflictError, Tick, TickCircuit, TickHandle, TickMeasureHandle, TickPrepHandle,
+};
+pub use tick_circuit_soa::{
+    CircuitIndexes, GateBatch, GateId, GateStorage, MetadataStorage, TickBatches, TickCircuitSoA,
+    TickCircuitSoABuilder, TickGateGroups,
 };
 
 // Re-export commonly used types from dependencies

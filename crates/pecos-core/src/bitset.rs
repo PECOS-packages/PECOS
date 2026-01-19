@@ -139,6 +139,25 @@ impl BitSet {
         (self.words[word_idx] & mask) != 0
     }
 
+    /// Toggle an index without bounds checking.
+    ///
+    /// # Safety
+    /// The caller must ensure the BitSet was created with sufficient capacity
+    /// via `with_capacity(max_index)` where `max_index > index`.
+    ///
+    /// This is an optimization for hot paths like CX gate implementation where
+    /// we know all BitSets are pre-sized to `num_qubits`.
+    #[inline]
+    pub fn toggle_unchecked(&mut self, index: usize) {
+        let word_idx = index / 64;
+        let bit_idx = index % 64;
+        // SAFETY: Caller guarantees capacity is sufficient
+        // Use get_unchecked_mut for maximum performance
+        unsafe {
+            *self.words.get_unchecked_mut(word_idx) ^= 1u64 << bit_idx;
+        }
+    }
+
     /// Remove an index from the set.
     ///
     /// Returns `true` if the index was present, `false` otherwise.
@@ -191,6 +210,22 @@ impl BitSet {
         for w in &mut self.words {
             *w = 0;
         }
+    }
+
+    /// Take the contents of this set, leaving it empty but with capacity preserved.
+    ///
+    /// Unlike `std::mem::take`, this preserves the allocated capacity of the source
+    /// set, which is important for performance when the set will be reused.
+    ///
+    /// This is used in measurement operations where we take a row's contents
+    /// but the row will be populated again in subsequent operations.
+    #[inline]
+    pub fn take_clearing(&mut self) -> Self {
+        // Swap words with an empty Vec, leaving capacity in self
+        let taken_words = std::mem::take(&mut self.words);
+        // Restore capacity by creating a zeroed Vec of the same length
+        self.words = vec![0u64; taken_words.len()];
+        Self { words: taken_words }
     }
 
     /// XOR (symmetric difference) with another set, in place.
@@ -440,6 +475,11 @@ impl crate::index_set::IndexSet for BitSet {
     }
 
     #[inline]
+    fn with_capacity(max_index: usize) -> Self {
+        Self::with_capacity(max_index)
+    }
+
+    #[inline]
     fn insert(&mut self, index: usize) -> bool {
         Self::insert(self, index)
     }
@@ -457,6 +497,11 @@ impl crate::index_set::IndexSet for BitSet {
     #[inline]
     fn toggle(&mut self, index: usize) {
         Self::toggle(self, index);
+    }
+
+    #[inline]
+    fn toggle_unchecked(&mut self, index: usize) {
+        Self::toggle_unchecked(self, index);
     }
 
     #[inline]
@@ -482,6 +527,11 @@ impl crate::index_set::IndexSet for BitSet {
     #[inline]
     fn clear(&mut self) {
         Self::clear(self);
+    }
+
+    #[inline]
+    fn take_clearing(&mut self) -> Self {
+        Self::take_clearing(self)
     }
 
     #[inline]

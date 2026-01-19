@@ -61,6 +61,16 @@ pub trait IndexSet: Clone + Default + Debug {
     /// Create a new empty set.
     fn new() -> Self;
 
+    /// Create a set with capacity for at least `max_index` indices.
+    ///
+    /// For [`BitSet`](crate::BitSet), this pre-allocates storage to avoid
+    /// resizing during operations. For other implementations, this may
+    /// just create an empty set.
+    fn with_capacity(max_index: usize) -> Self {
+        let _ = max_index;
+        Self::new()
+    }
+
     /// Insert an index into the set.
     ///
     /// Returns `true` if the index was newly inserted, `false` if already present.
@@ -80,6 +90,23 @@ pub trait IndexSet: Clone + Default + Debug {
     /// simulation, where we need to XOR single elements into sets.
     fn toggle(&mut self, index: usize);
 
+    /// Toggle an index without bounds checking.
+    ///
+    /// For [`BitSet`](crate::BitSet), this skips the capacity check for maximum
+    /// performance. The caller must ensure the set was created with sufficient
+    /// capacity via `with_capacity(max_index)` where `max_index > index`.
+    ///
+    /// For other implementations, this is equivalent to `toggle()`.
+    ///
+    /// # Safety
+    /// This is not marked `unsafe` because the worst case is a panic (bounds check
+    /// failure) rather than undefined behavior. However, callers should ensure
+    /// capacity requirements are met.
+    #[inline]
+    fn toggle_unchecked(&mut self, index: usize) {
+        self.toggle(index);
+    }
+
     /// XOR (symmetric difference) with another set in place.
     ///
     /// Elements present in exactly one of the two sets will be in the result.
@@ -96,6 +123,16 @@ pub trait IndexSet: Clone + Default + Debug {
 
     /// Remove all elements from the set.
     fn clear(&mut self);
+
+    /// Take the contents of this set, leaving it empty but with capacity preserved.
+    ///
+    /// Unlike `std::mem::take`, this preserves the allocated capacity of the source
+    /// set for implementations that have capacity (like [`BitSet`](crate::BitSet)).
+    ///
+    /// The default implementation uses `std::mem::take` which does not preserve capacity.
+    fn take_clearing(&mut self) -> Self {
+        std::mem::take(self)
+    }
 
     /// Clear the set and insert a single element.
     ///

@@ -29,6 +29,7 @@ pub mod prelude;
 pub mod qubit_id;
 pub mod rng;
 pub mod sets;
+pub mod sorted_vec_set;
 
 pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
 pub use bit::{Bit, Bits};
@@ -44,6 +45,7 @@ pub use qubit_id::{QubitId, QubitIdSet, qid, qid2, qids, qids2};
 pub use rng::{RngManageable, derive_seed};
 pub use sets::set::Set;
 pub use sets::vec_set::VecSet;
+pub use sorted_vec_set::SortedVecSet;
 
 // Utility functions for random number generation
 pub use rng::{choose_weighted, coin_flip, gen_bools};

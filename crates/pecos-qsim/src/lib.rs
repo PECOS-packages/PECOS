@@ -11,10 +11,16 @@
 // the License.
 
 pub mod arbitrary_rotation_gateable;
+pub mod batched_ops;
+pub mod circuit_executor;
 pub mod clifford_gateable;
+pub mod compiled_surface_code;
 pub mod coin_toss;
+pub mod dense_stab;
+pub mod dense_stab_variants;
 pub mod density_matrix;
 pub mod gens;
+pub mod gpu_stab;
 pub mod measurement_sampler;
 pub mod pauli_prop;
 // pub mod paulis;
@@ -22,6 +28,7 @@ pub mod prelude;
 pub mod quantum_simulator;
 pub mod sign_algebra;
 pub mod sparse_stab;
+pub mod stab;
 pub mod stabilizer_tableau;
 pub mod stabilizer_test_utils;
 pub mod state_vec;
@@ -30,10 +37,16 @@ pub mod symbolic_sparse_stab;
 pub mod symbolic_sparse_stab_bitset;
 
 pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
+pub use batched_ops::{BatchedOps, CommandBuffer, RawOps};
+pub use circuit_executor::{CircuitExecutor, GateSystem, GateSystemRegistry, execute_batched};
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
+pub use compiled_surface_code::{CompiledRunner, CompiledSurfaceCode, ExecutionStats};
 pub use coin_toss::CoinToss;
+pub use dense_stab::DenseStab;
+pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly};
 pub use density_matrix::DensityMatrix;
 pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClassification};
+pub use gpu_stab::GpuStab;
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
@@ -44,8 +57,10 @@ pub use pecos_core::{VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{
-    SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabVecSet,
+    SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabSortedVecSet,
+    SparseStabUnsortedVecSet, SparseStabVecSet,
 };
+pub use stab::Stab;
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 pub use state_vec::StateVec;
 pub use symbolic_gens::{
@@ -55,3 +70,6 @@ pub use symbolic_sparse_stab::{
     MeasurementHistory, SymbolicMeasurementResult, SymbolicSparseStabVecSet,
 };
 pub use symbolic_sparse_stab_bitset::SymbolicSparseStab;
+
+// Re-export stabilizer testing utilities
+pub use stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};

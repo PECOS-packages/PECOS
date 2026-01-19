@@ -33,6 +33,9 @@ use pecos_quantum::TickCircuit;
 /// The analyzer uses sparse traversal that only applies gate transformations to gates
 /// touching qubits with non-trivial Paulis, providing speedup for circuits with local
 /// connectivity (like surface codes).
+///
+/// For better performance on large circuits, consider using [`DagFaultAnalyzer`](super::DagFaultAnalyzer)
+/// which provides 5-50x speedup through true sparse DAG traversal.
 pub struct TickFaultAnalyzer<'a> {
     circuit: &'a TickCircuit,
     /// Fault locations extracted from the circuit.

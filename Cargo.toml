@@ -113,6 +113,7 @@ pollster = "0.4"
 
 # Testing
 approx = "0.5"
+paste = "1"
 
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
 # MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c

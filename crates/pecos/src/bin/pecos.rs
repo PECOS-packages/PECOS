@@ -3,8 +3,8 @@ use env_logger::Env;
 
 mod cli;
 use cli::{
-    CudaCommands, DepsCommands, FeaturesCommands, GoCommands, GpuCommands, JuliaCommands,
-    LlvmCommands, PythonCommands, RustCommands, SeleneCommands,
+    CudaCommands, CuQuantumCommands, DepsCommands, FeaturesCommands, GoCommands, GpuCommands,
+    JuliaCommands, LlvmCommands, PythonCommands, RustCommands, SeleneCommands,
 };
 
 // Runtime-only imports
@@ -19,6 +19,10 @@ use pecos::{
     DepolarizingNoise, GeneralNoiseModelBuilder, qasm_engine, sim_builder, sparse_stabilizer,
     state_vector,
 };
+#[cfg(feature = "runtime")]
+use pecos_build::cuquantum::{find_cuquantum, get_cuquantum_version};
+#[cfg(feature = "runtime")]
+use pecos_build::cuda::find_cuda;
 #[cfg(feature = "runtime")]
 use pecos_build::llvm::{find_llvm_14, get_llvm_version};
 #[cfg(feature = "runtime")]
@@ -82,6 +86,12 @@ enum Commands {
     Cuda {
         #[command(subcommand)]
         command: CudaCommands,
+    },
+    /// cuQuantum SDK management (install, check, configure)
+    #[command(name = "cuquantum", visible_alias = "cuq")]
+    CuQuantum {
+        #[command(subcommand)]
+        command: CuQuantumCommands,
     },
     /// GPU (wgpu) availability check
     Gpu {
@@ -599,6 +609,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Rust { command } => cli::run_rust(command)?,
         Commands::Python { command } => cli::run_python(command)?,
         Commands::Cuda { command } => cli::run_cuda(command.clone())?,
+        Commands::CuQuantum { command } => cli::run_cuquantum(command.clone())?,
         Commands::Gpu { command } => cli::run_gpu(command)?,
         Commands::Julia { command } => cli::run_julia(command)?,
         Commands::Go { command } => cli::run_go(command)?,
@@ -856,7 +867,35 @@ fn run_doctor() {
         warnings.push("LLVM 14 not found. To install: pecos llvm install");
     }
 
-    // Check 7: Test basic circuit execution
+    // Check 7: CUDA installation
+    if let Some(cuda_path) = find_cuda() {
+        let version = pecos_build::cuda::get_cuda_version(&cuda_path)
+            .unwrap_or_else(|_| "unknown".into());
+        print_check(
+            "CUDA",
+            true,
+            &format!("{version} at {}", cuda_path.display()),
+        );
+    } else {
+        print_check("CUDA", false, "not found (optional, run 'pecos cuda install')");
+        // CUDA is optional, so just a suggestion not a warning
+    }
+
+    // Check 8: cuQuantum installation
+    if let Some(cuquantum_path) = find_cuquantum() {
+        let version = get_cuquantum_version(&cuquantum_path)
+            .unwrap_or_else(|_| "unknown".into());
+        print_check(
+            "cuQuantum",
+            true,
+            &format!("{version} at {}", cuquantum_path.display()),
+        );
+    } else {
+        print_check("cuQuantum", false, "not found (optional, run 'pecos cuquantum install')");
+        // cuQuantum is optional, so just a suggestion not a warning
+    }
+
+    // Check 9: Test basic circuit execution
     print!("  ");
     let test_result = test_basic_execution();
     match test_result {

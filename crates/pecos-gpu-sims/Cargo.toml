@@ -28,6 +28,9 @@ pecos-rng.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
+paste.workspace = true
+pecos-qec.workspace = true
+pecos-quantum.workspace = true
 
 [lints]
 workspace = true

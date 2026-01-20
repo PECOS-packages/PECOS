@@ -44,7 +44,7 @@ from pecos.simulators.sparsesim import (
 )
 from pecos.simulators.statevec import StateVec
 
-# Attempt to import optional cuquantum and cupy packages
+# Attempt to import optional cuquantum and cupy packages (Python cuQuantum bindings)
 try:
     import cupy
     import cuquantum
@@ -60,6 +60,20 @@ try:
 except ImportError:
     CuStateVec = None
     MPS = None
+
+# Attempt to import Rust cuQuantum bindings (pecos-rslib-cuda)
+try:
+    from pecos_rslib_cuda import is_cuquantum_available
+
+    if is_cuquantum_available():
+        from pecos.simulators.cuda_statevec import CudaStateVec
+        from pecos.simulators.cuda_stabilizer import CudaStabilizer
+    else:
+        CudaStateVec = None
+        CudaStabilizer = None
+except ImportError:
+    CudaStateVec = None
+    CudaStabilizer = None
 
 __all__ = [
     "MPS",
@@ -77,6 +91,9 @@ __all__ = [
     "SparseSimCpp",
     "SparseSimPy",
     "StateVec",
+    # CUDA simulators (Rust cuQuantum bindings)
+    "CudaStateVec",
+    "CudaStabilizer",
     # Submodules
     "sim_class_types",
 ]

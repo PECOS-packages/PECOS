@@ -471,6 +471,22 @@ impl InfluencesSoA {
             total_bytes: offset_bytes + data_bytes,
         }
     }
+
+    /// Returns the maximum logical index found in the influence map, if any.
+    ///
+    /// This is useful for determining the number of logical operators tracked.
+    #[must_use]
+    pub fn max_logical_index(&self) -> Option<usize> {
+        let max_x = self.logicals_x.data.iter().max();
+        let max_y = self.logicals_y.data.iter().max();
+        let max_z = self.logicals_z.data.iter().max();
+
+        [max_x, max_y, max_z]
+            .into_iter()
+            .flatten()
+            .max()
+            .map(|&v| v as usize)
+    }
 }
 
 /// Memory statistics for `InfluencesSoA`.
@@ -562,6 +578,63 @@ impl DagFaultInfluenceMap {
     #[must_use]
     pub fn memory_stats(&self) -> InfluencesSoAStats {
         self.influences.memory_stats()
+    }
+
+    /// Export CSR data for GPU use.
+    ///
+    /// Returns all CSR arrays needed to construct a GPU influence sampler:
+    /// (num_locations, num_detectors, num_logicals,
+    ///  detector_offsets_x, detector_data_x,
+    ///  detector_offsets_y, detector_data_y,
+    ///  detector_offsets_z, detector_data_z,
+    ///  logical_offsets_x, logical_data_x,
+    ///  logical_offsets_y, logical_data_y,
+    ///  logical_offsets_z, logical_data_z)
+    #[allow(clippy::type_complexity)]
+    pub fn export_csr(
+        &self,
+    ) -> (
+        u32,
+        u32,
+        u32,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+        Vec<u32>,
+    ) {
+        let num_locations = self.locations.len() as u32;
+        let num_detectors = self.detectors.len() as u32;
+        let num_logicals = self
+            .influences
+            .max_logical_index()
+            .map(|i| i as u32 + 1)
+            .unwrap_or(0);
+
+        (
+            num_locations,
+            num_detectors,
+            num_logicals,
+            self.influences.detectors_x.offsets.clone(),
+            self.influences.detectors_x.data.clone(),
+            self.influences.detectors_y.offsets.clone(),
+            self.influences.detectors_y.data.clone(),
+            self.influences.detectors_z.offsets.clone(),
+            self.influences.detectors_z.data.clone(),
+            self.influences.logicals_x.offsets.clone(),
+            self.influences.logicals_x.data.clone(),
+            self.influences.logicals_y.offsets.clone(),
+            self.influences.logicals_y.data.clone(),
+            self.influences.logicals_z.offsets.clone(),
+            self.influences.logicals_z.data.clone(),
+        )
     }
 }
 

@@ -111,3 +111,12 @@ version = "1d81f0b385b6a9de49ae361d08bd6b5dbcec1773"
 url = "https://github.com/quantumlib/tesseract-decoder/archive/1d81f0b385b6a9de49ae361d08bd6b5dbcec1773.tar.gz"
 sha256 = "0b5d8bfa63bab68ab4882510a96d7e238d598d2ba0e669a8903af142ce276892"
 description = "Tesseract decoder"
+
+# cuQuantum is handled specially via pecos-build/src/cuquantum.rs
+# It downloads pre-built binaries from NVIDIA rather than building from source
+[dependencies.cuquantum]
+version = "25.03.0"
+# URL varies by platform, handled by cuquantum::installer
+url = "https://developer.download.nvidia.com/compute/cuquantum/redist/"
+description = "NVIDIA cuQuantum SDK for GPU-accelerated quantum simulation"
+requires_cuda = true

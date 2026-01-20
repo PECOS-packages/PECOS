@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "python/pecos-rslib",
+  "python/pecos-rslib-cuda",
   "python/selene-plugins/pecos-selene-sparsestab",
   "python/selene-plugins/pecos-selene-statevec",
   "python/selene-plugins/pecos-selene-quest",
@@ -144,6 +145,7 @@ pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
 pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
 pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
+pecos-cuquantum = { version = "0.1.1", path = "crates/pecos-cuquantum" }
 
 # Decoder crates
 pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }

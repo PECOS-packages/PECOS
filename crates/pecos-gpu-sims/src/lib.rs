@@ -15,7 +15,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```
 //! use pecos_gpu_sims::GpuStateVec;
 //! use pecos_qsim::CliffordGateable;
 //! use pecos_core::{qid, qid2};
@@ -26,20 +26,37 @@
 //! let result = sim.measure(0);  // Measure qubit 0
 //! ```
 
+pub mod circuit_compiler;
+mod clifford_fusion;
 mod gpu;
+mod gpu_influence_sampler;
+mod gpu_noisy_sampler;
+mod gpu_pauli_prop;
 mod gpu_sampler;
 mod gpu_stab;
+mod gpu_stab_multi;
 pub mod prelude;
 
 #[cfg(test)]
 mod gpu_sampler_validation;
 
+pub use circuit_compiler::{CompiledCircuit, Gate as CompiledGate, GateType};
 pub use gpu::{GpuError, GpuStateVec};
+pub use gpu_influence_sampler::{GpuInfluenceMapData, GpuInfluenceSampler, GpuSamplingResult};
+pub use gpu_noisy_sampler::{
+    BiasedDepolarizingNoiseSampler, CircuitBuilder, CircuitOp, DepolarizingNoiseSampler,
+    GpuNoisySampler, NoiseSampler, Pauli, ShotResult,
+};
+pub use gpu_pauli_prop::GpuPauliProp;
 pub use gpu_sampler::{GpuMeasurementSampler, GpuSampleResult};
 pub use gpu_stab::GpuStab;
+pub use gpu_stab_multi::GpuStabMulti;
 
 /// Default GPU stabilizer simulator using `StdRng`
 pub type DefaultGpuStab = GpuStab<rand::rngs::StdRng>;
+
+/// Default multi-shot GPU stabilizer simulator using `StdRng`
+pub type DefaultGpuStabMulti = GpuStabMulti<rand::rngs::StdRng>;
 
 use std::f64::consts::FRAC_1_SQRT_2;
 

@@ -14,7 +14,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```
 //! use pecos_gpu_sims::prelude::*;
 //!
 //! let mut sim = GpuStateVec::new(4).unwrap();

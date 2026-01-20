@@ -1,0 +1,29 @@
+[package]
+name = "pecos-rslib-cuda"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "CUDA/cuQuantum Python bindings for PECOS quantum simulators."
+publish = false
+
+[lib]
+name = "pecos_rslib_cuda"
+crate-type = ["cdylib", "rlib"]
+doctest = false
+test = false
+
+[dependencies]
+pecos-cuquantum = { workspace = true }
+pecos-core = { workspace = true }
+pecos-qsim = { workspace = true }
+
+pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
+log.workspace = true
+
+[lints]
+workspace = true

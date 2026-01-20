@@ -54,6 +54,7 @@
 //! so crates.io users automatically get the correct versions.
 
 pub mod cuda;
+pub mod cuquantum;
 pub mod deps;
 pub mod download;
 pub mod errors;

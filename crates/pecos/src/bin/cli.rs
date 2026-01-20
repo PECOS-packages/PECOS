@@ -8,6 +8,7 @@
 #![allow(clippy::fn_params_excessive_bools)]
 
 pub mod cuda_cmd;
+pub mod cuquantum_cmd;
 pub mod docs_cmd;
 pub mod features_cmd;
 pub mod go_cmd;
@@ -158,6 +159,55 @@ pub enum CudaCommands {
         /// Path to CUDA installation (uses detected path if not specified)
         path: Option<String>,
     },
+}
+
+// ============================================================================
+// cuQuantum Commands
+// ============================================================================
+
+#[derive(Subcommand, Clone)]
+pub enum CuQuantumCommands {
+    /// Download and install cuQuantum SDK to ~/.pecos/cuquantum/
+    ///
+    /// Requires accepting NVIDIA's license terms.
+    /// See: https://docs.nvidia.com/cuda/cuquantum/latest/license.html
+    Install {
+        /// Force reinstall even if already present
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Check if cuQuantum is available (local or system)
+    Check {
+        /// Suppress output (exit code only)
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Find cuQuantum installation path
+    Find {
+        /// Print export command for shell evaluation
+        #[arg(long)]
+        export: bool,
+    },
+
+    /// Show cuQuantum version information
+    Version,
+
+    /// Remove local cuQuantum installation (~/.pecos/cuquantum/)
+    Uninstall,
+
+    /// Validate cuQuantum installation integrity
+    Validate {
+        /// Path to cuQuantum installation (uses detected path if not specified)
+        path: Option<String>,
+    },
+
+    /// Configure .cargo/config.toml with cuQuantum path
+    ///
+    /// Automatically detects cuQuantum installation and updates
+    /// .cargo/config.toml with CUQUANTUM_ROOT.
+    Configure,
 }
 
 // ============================================================================
@@ -417,6 +467,11 @@ pub fn run_python(command: &PythonCommands) -> pecos_build::Result<()> {
 /// Run a CUDA subcommand
 pub fn run_cuda(command: CudaCommands) -> pecos_build::Result<()> {
     cuda_cmd::run(command)
+}
+
+/// Run a cuQuantum subcommand
+pub fn run_cuquantum(command: CuQuantumCommands) -> pecos_build::Result<()> {
+    cuquantum_cmd::run(command)
 }
 
 /// Run a GPU subcommand

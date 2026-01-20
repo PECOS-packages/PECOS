@@ -1,0 +1,37 @@
+[package]
+name = "pecos-cuquantum"
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.85"
+authors = ["PECOS Developers"]
+description = "Safe Rust wrapper for NVIDIA cuQuantum quantum simulation SDK"
+license = "Apache-2.0"
+repository = "https://github.com/PECOS-packages/PECOS"
+keywords = ["quantum", "simulation", "cuda", "nvidia", "gpu"]
+categories = ["science", "simulation"]
+
+[dependencies]
+pecos-cuquantum-sys = { path = "../pecos-cuquantum-sys" }
+pecos-build = { path = "../pecos-build" }
+pecos-core = { path = "../pecos-core" }
+pecos-qsim = { path = "../pecos-qsim" }
+thiserror = "2.0"
+fastrand = "2.3"
+
+[dev-dependencies]
+# For testing, we don't actually need CUDA - tests use stub mode
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[features]
+default = []
+# Enable this feature when cuQuantum is installed and you want to run integration tests
+integration-tests = []
+
+[package.metadata.docs.rs]
+# Don't try to build docs on docs.rs (no CUDA/cuQuantum available)
+targets = []
+
+[[bench]]
+name = "cuquantum_benchmark"
+harness = false
+required-features = ["integration-tests"]

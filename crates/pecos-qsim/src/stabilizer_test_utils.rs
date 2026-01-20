@@ -192,6 +192,193 @@ pub fn verify_s_squared_is_z<S: CliffordGateable + QuantumSimulator>(sim: &mut S
     );
 }
 
+/// Verify that SZ followed by SZdg is identity.
+///
+/// SZ * SZdg = I, so applying both should leave state unchanged.
+pub fn verify_sz_szdg_is_identity<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
+    // Test on |0> state
+    sim.reset();
+    sim.sz(&[QubitId::new(0)]);
+    sim.szdg(&[QubitId::new(0)]);
+
+    let result = sim.mz(&[QubitId::new(0)]);
+    assert!(
+        result[0].is_deterministic,
+        "SZ SZdg |0> should be deterministic"
+    );
+    assert!(!result[0].outcome, "SZ SZdg |0> should measure 0");
+
+    // Test on |+> state (phase matters here)
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.sz(&[QubitId::new(0)]);
+    sim.szdg(&[QubitId::new(0)]);
+    sim.h(&[QubitId::new(0)]); // Back to |0> if SZ SZdg = I
+
+    let result = sim.mz(&[QubitId::new(0)]);
+    assert!(
+        result[0].is_deterministic,
+        "H SZ SZdg H |0> should be deterministic"
+    );
+    assert!(!result[0].outcome, "H SZ SZdg H |0> should measure 0");
+}
+
+/// Verify that SZdg followed by SZ is identity.
+///
+/// SZdg * SZ = I, so applying both should leave state unchanged.
+pub fn verify_szdg_sz_is_identity<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
+    // Test on |+> state (phase matters here)
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.szdg(&[QubitId::new(0)]);
+    sim.sz(&[QubitId::new(0)]);
+    sim.h(&[QubitId::new(0)]); // Back to |0> if SZdg SZ = I
+
+    let result = sim.mz(&[QubitId::new(0)]);
+    assert!(
+        result[0].is_deterministic,
+        "H SZdg SZ H |0> should be deterministic"
+    );
+    assert!(!result[0].outcome, "H SZdg SZ H |0> should measure 0");
+}
+
+/// Verify SZ maps |+> to |+Y> (Y eigenstate with eigenvalue +1).
+///
+/// |+Y> measured in Y basis should give deterministic 0.
+/// Y-basis measurement: SZdg H Mz H SZ
+pub fn verify_sz_maps_plus_to_plus_y<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.sz(&[QubitId::new(0)]); // |+Y>
+
+    // Measure in Y basis: SZdg H Mz H SZ
+    sim.szdg(&[QubitId::new(0)]);
+    sim.h(&[QubitId::new(0)]);
+    let result = sim.mz(&[QubitId::new(0)]);
+
+    assert!(
+        result[0].is_deterministic,
+        "SZ|+> measured in Y basis should be deterministic"
+    );
+    assert!(
+        !result[0].outcome,
+        "SZ|+> = |+Y> should measure 0 in Y basis"
+    );
+}
+
+/// Verify SZdg maps |+> to |-Y> (Y eigenstate with eigenvalue -1).
+///
+/// |-Y> measured in Y basis should give deterministic 1.
+pub fn verify_szdg_maps_plus_to_minus_y<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.szdg(&[QubitId::new(0)]); // |-Y>
+
+    // Measure in Y basis: SZdg H Mz H SZ
+    sim.szdg(&[QubitId::new(0)]);
+    sim.h(&[QubitId::new(0)]);
+    let result = sim.mz(&[QubitId::new(0)]);
+
+    assert!(
+        result[0].is_deterministic,
+        "SZdg|+> measured in Y basis should be deterministic"
+    );
+    assert!(
+        result[0].outcome,
+        "SZdg|+> = |-Y> should measure 1 in Y basis"
+    );
+}
+
+/// Verify SZ and SZdg are inverses via phase tracking.
+///
+/// This test specifically checks that the phase is correctly tracked:
+/// - SZ: X -> Y (i.e., X -> iXZ in stabilizer notation)
+/// - SZdg: X -> -Y (i.e., X -> -iXZ in stabilizer notation)
+pub fn verify_sz_szdg_phase_consistency<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
+    // Test 1: |+> -> SZ -> |+Y> -> SZdg -> |+>
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.sz(&[QubitId::new(0)]); // |+Y>
+    sim.szdg(&[QubitId::new(0)]); // |+>
+    sim.h(&[QubitId::new(0)]); // |0>
+
+    let result = sim.mz(&[QubitId::new(0)]);
+    assert!(
+        result[0].is_deterministic,
+        "H SZ SZdg H |0> should be deterministic"
+    );
+    assert!(!result[0].outcome, "H SZ SZdg H |0> should measure 0");
+
+    // Test 2: |+> -> SZdg -> |-Y> -> SZ -> |+>
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.szdg(&[QubitId::new(0)]); // |-Y>
+    sim.sz(&[QubitId::new(0)]); // |+>
+    sim.h(&[QubitId::new(0)]); // |0>
+
+    let result = sim.mz(&[QubitId::new(0)]);
+    assert!(
+        result[0].is_deterministic,
+        "H SZdg SZ H |0> should be deterministic"
+    );
+    assert!(!result[0].outcome, "H SZdg SZ H |0> should measure 0");
+
+    // Test 3: SZ^2 SZdg^2 = Z Z = I on |+>
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.sz(&[QubitId::new(0)]);
+    sim.sz(&[QubitId::new(0)]); // Z|+> = |->
+    sim.szdg(&[QubitId::new(0)]);
+    sim.szdg(&[QubitId::new(0)]); // Z|-> = |+>
+    sim.h(&[QubitId::new(0)]); // |0>
+
+    let result = sim.mz(&[QubitId::new(0)]);
+    assert!(
+        result[0].is_deterministic,
+        "H SZ^2 SZdg^2 H |0> should be deterministic"
+    );
+    assert!(!result[0].outcome, "H SZ^2 SZdg^2 H |0> should measure 0");
+}
+
+/// Verify SZdg^4 = I (SZdg to the fourth power is identity).
+pub fn verify_szdg_fourth_is_identity<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
+    sim.reset();
+    sim.h(&[QubitId::new(0)]);
+    sim.szdg(&[QubitId::new(0)]);
+    sim.szdg(&[QubitId::new(0)]);
+    sim.szdg(&[QubitId::new(0)]);
+    sim.szdg(&[QubitId::new(0)]);
+    sim.h(&[QubitId::new(0)]);
+
+    let result = sim.mz(&[QubitId::new(0)]);
+    assert!(
+        result[0].is_deterministic,
+        "H SZdg^4 H |0> should be deterministic"
+    );
+    assert!(!result[0].outcome, "H SZdg^4 H |0> should measure 0");
+}
+
+/// Verify SZdg^2 = Z.
+pub fn verify_szdg_squared_is_z<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
+    // SZdg^2 on |+>
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.szdg(&[QubitId::new(0)]);
+    sim.szdg(&[QubitId::new(0)]);
+    let result1 = sim.mz(&[QubitId::new(0)]);
+
+    // Z on |+> (should be equivalent)
+    sim.reset();
+    sim.h(&[QubitId::new(0)]); // |+>
+    sim.z(&[QubitId::new(0)]);
+    let result2 = sim.mz(&[QubitId::new(0)]);
+
+    assert_eq!(
+        result1[0].is_deterministic, result2[0].is_deterministic,
+        "SZdg^2 and Z should have same determinism"
+    );
+}
+
 /// Verify that CX^2 = I (CNOT squared is identity).
 pub fn verify_cx_squared_is_identity<S: CliffordGateable + QuantumSimulator>(sim: &mut S) {
     sim.reset();
@@ -247,6 +434,13 @@ pub fn verify_all_gate_identities<S: CliffordGateable + QuantumSimulator>(sim: &
     verify_h_squared_is_identity(sim);
     verify_s_fourth_is_identity(sim);
     verify_s_squared_is_z(sim);
+    verify_sz_szdg_is_identity(sim);
+    verify_szdg_sz_is_identity(sim);
+    verify_szdg_fourth_is_identity(sim);
+    verify_szdg_squared_is_z(sim);
+    verify_sz_szdg_phase_consistency(sim);
+    verify_sz_maps_plus_to_plus_y(sim);
+    verify_szdg_maps_plus_to_minus_y(sim);
     verify_cx_squared_is_identity(sim);
     verify_x_squared_is_identity(sim);
     verify_y_squared_is_identity(sim);

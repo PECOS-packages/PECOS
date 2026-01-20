@@ -1,0 +1,120 @@
+# CUDA Build Check - Verifies CUDA-related crates compile correctly
+# Note: Full runtime testing requires cuQuantum SDK which is not available in CI
+# For actual GPU testing, use a self-hosted runner with CUDA and cuQuantum installed
+
+name: CUDA Build Check
+
+env:
+  RUSTFLAGS: -C debuginfo=0
+  RUST_BACKTRACE: 1
+
+on:
+  push:
+    branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'crates/pecos-cuquantum/**'
+      - 'crates/pecos-cuquantum-sys/**'
+      - 'python/pecos-rslib-cuda/**'
+      - '.github/workflows/cuda-build-check.yml'
+  pull_request:
+    branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'crates/pecos-cuquantum/**'
+      - 'crates/pecos-cuquantum-sys/**'
+      - 'python/pecos-rslib-cuda/**'
+      - '.github/workflows/cuda-build-check.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cuda-build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
+          df -h
+
+      - name: Install Rust
+        run: |
+          curl https://sh.rustup.rs -sSf | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.cargo/bin:$PATH"
+
+      - name: Set up Rust
+        run: rustup override set stable && rustup update
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.29
+        id: cuda-toolkit
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
+
+      - name: Check pecos-cuquantum-sys compiles (stub mode)
+        run: |
+          echo "Building pecos-cuquantum-sys (will use stubs since cuQuantum SDK is not installed)..."
+          cargo check -p pecos-cuquantum-sys
+
+      - name: Check pecos-cuquantum compiles (stub mode)
+        run: |
+          echo "Building pecos-cuquantum (will use stubs since cuQuantum SDK is not installed)..."
+          cargo check -p pecos-cuquantum
+
+      - name: Check pecos-rslib-cuda compiles (stub mode)
+        run: |
+          echo "Building pecos-rslib-cuda Python bindings..."
+          cargo check -p pecos-rslib-cuda
+
+      - name: Run clippy on CUDA crates
+        run: |
+          echo "Running clippy on CUDA crates..."
+          cargo clippy -p pecos-cuquantum-sys -p pecos-cuquantum -p pecos-rslib-cuda -- -D warnings
+
+      - name: Verify stub mode detection
+        run: |
+          echo "Verifying that build correctly detects stub mode..."
+          # The crates should compile but is_cuquantum_available() should return false
+          cargo build -p pecos-cuquantum --release
+          # Note: We can't actually run the binary to test is_cuquantum_available()
+          # because it requires the cuQuantum runtime, but the build succeeding
+          # in stub mode means the detection is working
+
+  # Documentation for setting up GPU testing
+  cuda-testing-info:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CUDA Testing Requirements
+        run: |
+          echo "=============================================="
+          echo "CUDA GPU Testing Requirements"
+          echo "=============================================="
+          echo ""
+          echo "Full runtime tests for pecos-rslib-cuda require:"
+          echo "  1. NVIDIA GPU with CUDA support"
+          echo "  2. CUDA Toolkit 12.x installed"
+          echo "  3. cuQuantum SDK installed"
+          echo ""
+          echo "To run GPU tests locally:"
+          echo "  1. Install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads"
+          echo "  2. Install cuQuantum SDK: https://developer.nvidia.com/cuquantum-sdk"
+          echo "  3. Run: cargo test -p pecos-cuquantum --features cuda"
+          echo "  4. Build Python package: maturin develop -m python/pecos-rslib-cuda/Cargo.toml"
+          echo ""
+          echo "For self-hosted CI runners with GPU support:"
+          echo "  - Use runners labeled with 'cuda' or 'gpu'"
+          echo "  - Ensure cuQuantum SDK is pre-installed"
+          echo "  - Run: cargo test -p pecos-cuquantum"
+          echo "=============================================="

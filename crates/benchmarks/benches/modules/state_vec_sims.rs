@@ -14,6 +14,7 @@
 //!
 //! Compares performance of:
 //! - `GpuStateVec` (GPU via wgpu/Vulkan/Metal/DX12)
+//! - `CuStateVec` (GPU via NVIDIA cuQuantum/CUDA)
 //! - `QuestStateVec` (`QuEST` - CPU or CUDA)
 //! - `QulacsStateVec` (Qulacs - CPU)
 //! - `StateVec` (pecos-qsim pure Rust CPU)
@@ -21,6 +22,7 @@
 //! Run with specific features:
 //! ```
 //! cargo bench -p benchmarks --features gpu-sims        # GpuStateVec only
+//! cargo bench -p benchmarks --features cuquantum       # CuStateVec (NVIDIA CUDA)
 //! cargo bench -p benchmarks --features quest-cuda      # QuEST with CUDA
 //! cargo bench -p benchmarks --features all-sims        # All simulators
 //! ```
@@ -32,6 +34,9 @@ use std::hint::black_box;
 
 #[cfg(feature = "gpu-sims")]
 use pecos_gpu_sims::GpuStateVec;
+
+#[cfg(feature = "cuquantum")]
+use pecos_cuquantum::CuStateVec;
 
 #[cfg(all(feature = "quest", not(feature = "quest-cuda")))]
 use pecos_quest::QuestStateVec;
@@ -72,6 +77,7 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
     group.sample_size(20);
 
     // Test configurations: (num_qubits, num_layers)
+    // Note: 26+ qubits exceeds wgpu's max_buffer_binding_size limit (128 MB default)
     let configs = [
         (10, 20),
         (14, 20),
@@ -79,7 +85,6 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
         (20, 20),
         (22, 10), // Fewer layers for larger qubit counts
         (24, 5),  // Large qubit count - GPU should dominate here
-        (26, 3),  // Very large - 512 MB state vector
     ];
 
     for (num_qubits, num_layers) in configs {
@@ -99,14 +104,14 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
             },
         );
 
-        // Benchmark GpuStateVec (GPU)
+        // Benchmark GpuStateVec (wgpu GPU)
         #[cfg(feature = "gpu-sims")]
         {
             // Safe: num_qubits comes from configs array with small values (10-22)
             #[allow(clippy::cast_possible_truncation)]
             if let Ok(mut sim) = GpuStateVec::new(num_qubits as u32) {
                 group.bench_with_input(
-                    BenchmarkId::new("GpuStateVec_GPU", &label),
+                    BenchmarkId::new("GpuStateVec_wgpu", &label),
                     &(num_qubits, num_layers),
                     |b, &(nq, nl)| {
                         b.iter(|| {
@@ -116,6 +121,29 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
                         });
                     },
                 );
+            }
+        }
+
+        // Benchmark CuStateVec (NVIDIA cuQuantum/CUDA)
+        #[cfg(feature = "cuquantum")]
+        {
+            match CuStateVec::new(num_qubits) {
+                Ok(mut sim) => {
+                    group.bench_with_input(
+                        BenchmarkId::new("CuStateVec_CUDA", &label),
+                        &(num_qubits, num_layers),
+                        |b, &(nq, nl)| {
+                            b.iter(|| {
+                                sim.reset();
+                                benchmark_circuit(&mut sim, nq, nl);
+                                black_box(());
+                            });
+                        },
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to create CuStateVec({num_qubits}): {e}");
+                }
             }
         }
 

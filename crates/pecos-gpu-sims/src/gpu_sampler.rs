@@ -6,14 +6,17 @@
 //!
 //! # Usage
 //!
-//! ```no_run
+//! ```
 //! use pecos_qsim::SymbolicSparseStab;
 //! use pecos_qsim::measurement_sampler::MeasurementKind;
 //! use pecos_gpu_sims::GpuMeasurementSampler;
 //!
 //! // Run symbolic simulation
-//! let mut sim = SymbolicSparseStab::new(100);
-//! // ... apply gates and measurements ...
+//! let mut sim = SymbolicSparseStab::new(4);
+//! sim.h(0);
+//! sim.cx(0, 1);
+//! sim.mz(0);
+//! sim.mz(1);
 //!
 //! // Convert measurement history to MeasurementKind for GPU sampler
 //! let measurements = MeasurementKind::from_history(sim.measurement_history());
@@ -21,15 +24,15 @@
 //! // Create GPU sampler from measurement kinds
 //! let sampler = GpuMeasurementSampler::new(&measurements).unwrap();
 //!
-//! // Sample 1 million shots (returns full shot data)
-//! let results = sampler.sample(1_000_000);
+//! // Sample 1000 shots (returns full shot data)
+//! let results = sampler.sample(1000);
 //!
 //! // Sample with noise (1% error rate)
-//! let noisy_results = sampler.sample_noisy(1_000_000, 0.01);
+//! let noisy_results = sampler.sample_noisy(1000, 0.01);
 //!
 //! // Or use sample_counts for faster statistics-only sampling
 //! // (only works for Fixed/Random measurements, returns Vec<u32> of counts)
-//! if let Ok(counts) = sampler.sample_counts(1_000_000) {
+//! if let Ok(counts) = sampler.sample_counts(1000) {
 //!     // counts[i] = number of 1s in measurement i across all shots
 //! }
 //! ```

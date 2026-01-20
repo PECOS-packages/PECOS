@@ -126,9 +126,10 @@ fn process_gate_queue(
                 let orig_destab_x = destab_x[row_offset];
                 let orig_destab_z = destab_z[row_offset];
                 destab_z[row_offset] = orig_destab_z ^ orig_destab_x;
-                // S: when X is set, add i phase
-                let had_xz = orig_stab_x & orig_stab_z;
-                local_sign_minus ^= had_xz;
+                // S: when X is set with existing i phase, toggle minus (i*i = -1)
+                // Then toggle i phase for all with X
+                let toggle_minus_mask = orig_stab_x & local_sign_i;
+                local_sign_minus ^= toggle_minus_mask;
                 local_sign_i ^= orig_stab_x;
             }
             case GATE_SDG: {
@@ -139,9 +140,9 @@ fn process_gate_queue(
                 let orig_destab_x = destab_x[row_offset];
                 let orig_destab_z = destab_z[row_offset];
                 destab_z[row_offset] = orig_destab_z ^ orig_destab_x;
-                // S†: use cached sign_i value
+                // S†: Sdg multiplies phase by -i when X=1: flip sign_minus when sign_i was 0
                 let had_i = local_sign_i;
-                local_sign_minus ^= (orig_stab_x & had_i);
+                local_sign_minus ^= (orig_stab_x & ~had_i);
                 local_sign_i ^= orig_stab_x;
             }
             case GATE_X: {
@@ -166,21 +167,12 @@ fn process_gate_queue(
             case GATE_CX: {
                 let ctrl_offset = ctrl_qubit * params.gen_words + word_idx;
                 let tgt_offset = tgt_qubit * params.gen_words + word_idx;
-                // Read before update
-                let ctrl_x = stab_x[ctrl_offset];
-                let tgt_z = stab_z[tgt_offset];
                 // CX: X_tgt ^= X_ctrl, Z_ctrl ^= Z_tgt
-                stab_x[tgt_offset] = stab_x[tgt_offset] ^ ctrl_x;
-                stab_z[ctrl_offset] = stab_z[ctrl_offset] ^ tgt_z;
-                let ctrl_destab_x = destab_x[ctrl_offset];
-                let tgt_destab_z = destab_z[tgt_offset];
-                destab_x[tgt_offset] = destab_x[tgt_offset] ^ ctrl_destab_x;
-                destab_z[ctrl_offset] = destab_z[ctrl_offset] ^ tgt_destab_z;
-                // Sign update
-                let ctrl_z_new = stab_z[ctrl_offset];
-                let tgt_x_new = stab_x[tgt_offset];
-                let same = ~(ctrl_z_new ^ tgt_x_new);
-                local_sign_minus ^= (ctrl_x & tgt_z & same);
+                stab_x[tgt_offset] = stab_x[tgt_offset] ^ stab_x[ctrl_offset];
+                stab_z[ctrl_offset] = stab_z[ctrl_offset] ^ stab_z[tgt_offset];
+                destab_x[tgt_offset] = destab_x[tgt_offset] ^ destab_x[ctrl_offset];
+                destab_z[ctrl_offset] = destab_z[ctrl_offset] ^ destab_z[tgt_offset];
+                // CX does NOT require sign updates
             }
             case GATE_CZ: {
                 let a_offset = ctrl_qubit * params.gen_words + word_idx;
@@ -194,11 +186,8 @@ fn process_gate_queue(
                 let b_destab_x = destab_x[b_offset];
                 destab_z[a_offset] = destab_z[a_offset] ^ b_destab_x;
                 destab_z[b_offset] = destab_z[b_offset] ^ a_destab_x;
-                // Sign update
-                let az_new = stab_z[a_offset];
-                let bz_new = stab_z[b_offset];
-                let same = ~(az_new ^ bz_new);
-                local_sign_minus ^= (a_x & b_x & same);
+                // Sign update: CZ flips sign when both qubits have X
+                local_sign_minus ^= (a_x & b_x);
             }
             case GATE_SWAP: {
                 let a_offset = ctrl_qubit * params.gen_words + word_idx;

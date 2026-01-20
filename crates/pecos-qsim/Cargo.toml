@@ -11,6 +11,10 @@ categories.workspace = true
 description = "Quantum simulator traits and implementations for PECOS"
 readme = "README.md"
 
+[features]
+default = []
+parallel = ["rayon"]
+
 [dependencies]
 pecos-core.workspace = true
 pecos-quantum.workspace = true
@@ -18,6 +22,7 @@ pecos-rng.workspace = true
 num-complex.workspace = true
 smallvec.workspace = true
 wide.workspace = true
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 rand.workspace = true

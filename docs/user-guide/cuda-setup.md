@@ -1,18 +1,31 @@
 # CUDA Setup Guide for GPU Simulators
 
-This guide provides detailed instructions for setting up NVIDIA CUDA support to use GPU-accelerated quantum simulators in PECOS, specifically **CuStateVec** and **MPS** (Matrix Product State).
+This guide provides detailed instructions for setting up NVIDIA CUDA support to use GPU-accelerated quantum simulators in PECOS.
 
 ## Overview
 
-PECOS supports GPU-accelerated quantum simulation through NVIDIA's cuQuantum SDK:
+PECOS supports GPU-accelerated quantum simulation through two approaches:
 
+### Python cuQuantum Bindings (via cupy/cuquantum-python)
 - **CuStateVec**: GPU-accelerated state vector simulator
 - **MPS**: Matrix Product State simulator using cuTensorNet
 
-Both simulators require:
+### Rust cuQuantum Bindings (via pecos-rslib-cuda)
+- **CudaStateVec**: GPU-accelerated state vector simulator (Rust bindings)
+- **CudaStabilizer**: GPU-accelerated stabilizer simulator (Clifford-only, scales to 1000s of qubits)
+- **CuTensorNet**: Tensor network handle for contractions
+- **CuDensityMat**: Density matrix simulator for open quantum systems
+
+The Rust bindings provide:
+- Direct integration with PECOS's quantum-pecos framework
+- Comprehensive gate coverage (Clifford + arbitrary rotations)
+- Seed-based reproducibility
+- No Python package dependencies beyond pecos-rslib-cuda
+
+Both approaches require:
 - NVIDIA GPU hardware
 - CUDA Toolkit (system-level installation)
-- Python packages (cuQuantum, CuPy, pytket-cutensornet)
+- cuQuantum SDK (for Rust bindings) or Python packages (for Python bindings)
 
 ## System Requirements
 
@@ -300,18 +313,20 @@ pip install quantum-pecos
 
 ## Comparison: CPU vs GPU Simulators
 
-| Simulator | Hardware | Qubits | Speed | Installation |
-|-----------|----------|--------|-------|--------------|
-| StateVec (CPU) | Any | ~25 | Baseline | Easy |
-| Qulacs (CPU) | Any | ~28 | 2-3x faster | Easy |
-| CuStateVec (GPU) | NVIDIA GPU | ~30 | 10-50x faster | Complex |
-| MPS (GPU) | NVIDIA GPU | 50+ | Varies | Complex |
+| Simulator | Hardware | Qubits | Gates | Speed | Installation |
+|-----------|----------|--------|-------|-------|--------------|
+| StateVec (CPU) | Any | ~25 | All | Baseline | Easy |
+| Qulacs (CPU) | Any | ~28 | All | 2-3x faster | Easy |
+| CuStateVec (Python) | NVIDIA GPU | ~30 | All | 10-50x faster | Medium |
+| CudaStateVec (Rust) | NVIDIA GPU | ~30 | All | 10-50x faster | Complex |
+| CudaStabilizer (Rust) | NVIDIA GPU | 1000s | Clifford only | Very fast | Complex |
+| MPS (GPU) | NVIDIA GPU | 50+ | All | Varies | Medium |
 
 ## GPU Simulators: Python vs Rust
 
-PECOS provides GPU acceleration through two different backends:
+PECOS provides GPU acceleration through multiple backends:
 
-### Python GPU Simulators (Recommended)
+### Python GPU Simulators (cupy/cuquantum-python)
 
 **Status**: Fully Working
 
@@ -320,7 +335,21 @@ PECOS provides GPU acceleration through two different backends:
 - **CUDA Version**: Supports CUDA 12 and CUDA 13
 - **Setup**: Install Python packages as described above
 
-These are the **primary GPU simulators** that users should use. They provide excellent performance and are fully compatible with modern CUDA versions.
+### Rust GPU Simulators (pecos-rslib-cuda)
+
+**Status**: Fully Working
+
+- **CudaStateVec**: GPU-accelerated state vector simulator (~30 qubits)
+- **CudaStabilizer**: GPU-accelerated stabilizer simulator (Clifford-only, 1000s of qubits)
+- **CuTensorNet**: Tensor network handle for advanced contractions
+- **CuDensityMat**: Density matrix simulator for noisy/open quantum systems
+- **CUDA Version**: Requires CUDA 12+ and cuQuantum SDK
+- **Setup**: See "Rust cuQuantum Bindings Setup" section below
+
+The Rust bindings provide direct cuQuantum integration without Python package dependencies. They are particularly useful for:
+- Stabilizer simulations with many qubits (CudaStabilizer)
+- Integration with quantum-pecos's HybridEngine
+- Reproducible simulations with seed support
 
 ### Rust GPU Simulators (QuEST)
 
@@ -330,13 +359,88 @@ These are the **primary GPU simulators** that users should use. They provide exc
 - **CUDA Version**: Requires CUDA 11 or 12 (incompatible with CUDA 13)
 - **Issue**: QuEST uses deprecated `thrust::unary_function` and `thrust::binary_function` classes that were removed in modern CUDA/Thrust versions
 - **Workaround**: Automatically falls back to CPU-only QuEST build
-- **Impact**: Minimal - Python GPU simulators (CuStateVec/MPS) provide better performance
+- **Impact**: Minimal - use CudaStateVec or Python CuStateVec instead
 
-The Rust QuEST simulator is currently incompatible with CUDA 13 due to deprecated `thrust::unary_function` and `thrust::binary_function` classes. However, this does not affect the recommended Python GPU simulators (CuStateVec and MPS).
+The Rust QuEST simulator is currently incompatible with CUDA 13 due to deprecated thrust classes.
+
+## Rust cuQuantum Bindings Setup
+
+To use the Rust-based CUDA simulators (CudaStateVec, CudaStabilizer), you need:
+
+### Requirements
+
+1. **CUDA Toolkit 12+** (system installation)
+2. **cuQuantum SDK** (download from NVIDIA)
+
+### Installing cuQuantum SDK
+
+1. Download from [NVIDIA cuQuantum](https://developer.nvidia.com/cuquantum-sdk)
+2. Extract to a known location (e.g., `/opt/nvidia/cuquantum`)
+3. Set environment variables:
+   ```bash
+   export CUQUANTUM_ROOT=/opt/nvidia/cuquantum
+   export LD_LIBRARY_PATH=$CUQUANTUM_ROOT/lib:$LD_LIBRARY_PATH
+   ```
+
+### Building pecos-rslib-cuda
+
+```bash
+# From PECOS repository root
+cd python/pecos-rslib-cuda
+maturin develop --release
+```
+
+### Using Rust CUDA Simulators
+
+```python
+# Check availability
+from pecos_rslib_cuda import is_cuquantum_available
+print(f"cuQuantum available: {is_cuquantum_available()}")
+
+# State vector simulator (up to ~30 qubits)
+from pecos.simulators import CudaStateVec
+sim = CudaStateVec(10)
+sim.run_gate("H", [0])
+sim.run_gate("CX", [(0, 1)])
+results = sim.run_gate("Measure", [0, 1])
+
+# Stabilizer simulator (Clifford-only, scales to 1000s of qubits)
+from pecos.simulators import CudaStabilizer
+sim = CudaStabilizer(1000)
+sim.run_gate("H", [0])
+for i in range(100):
+    sim.run_gate("CX", [(i, i+1)])
+results = sim.run_gate("Measure", list(range(100)))
+
+# Using with QuantumSimulator
+from pecos.simulators.quantum_simulator import QuantumSimulator
+qsim = QuantumSimulator(backend="CudaStateVec")
+qsim.init(4)
+
+# Direct access to cuQuantum components
+from pecos_rslib_cuda import CuTensorNet, CuDensityMat
+print(f"cuTensorNet version: {CuTensorNet.version()}")
+print(f"cuDensityMat version: {CuDensityMat.version()}")
+```
+
+### Choosing Between Python and Rust Bindings
+
+| Feature | Python (cupy/cuquantum-python) | Rust (pecos-rslib-cuda) |
+|---------|-------------------------------|------------------------|
+| State Vector | CuStateVec | CudaStateVec |
+| Stabilizer | - | CudaStabilizer |
+| MPS/Tensor Network | MPS (pytket) | CuTensorNet (handle only) |
+| Density Matrix | - | CuDensityMat |
+| Setup Complexity | Easier (pip install) | Requires cuQuantum SDK |
+| Dependencies | cupy, cuquantum-python | None beyond pecos-rslib-cuda |
+| Seed Support | Varies | Full support |
+| HybridEngine Integration | Yes | Yes |
 
 ## Summary
 
 To use GPU simulators in PECOS:
+
+### Option A: Python cuQuantum Bindings (Easier Setup)
 
 1. **Verify NVIDIA GPU** (Compute Capability 7.0+)
 2. **Install CUDA Toolkit 13** (system-level)
@@ -355,6 +459,32 @@ To use GPU simulators in PECOS:
    sim = MPS(2)  # Should work!
    ```
 
-For most users, **CUDA 13 with uv/pip** is recommended over Conda for better integration with PECOS's development workflow.
+### Option B: Rust cuQuantum Bindings (More Features)
 
-**Note**: If you see warnings about QuEST GPU compilation failing, this is expected with CUDA 13 and does not affect Python GPU simulators.
+1. **Verify NVIDIA GPU** (Compute Capability 7.0+)
+2. **Install CUDA Toolkit 12+** (system-level)
+3. **Install cuQuantum SDK** from NVIDIA
+4. **Build pecos-rslib-cuda**:
+   ```bash
+   cd python/pecos-rslib-cuda
+   maturin develop --release
+   ```
+5. **Verify GPU simulators**:
+   ```python
+   from pecos_rslib_cuda import is_cuquantum_available
+   print(f"cuQuantum available: {is_cuquantum_available()}")
+
+   from pecos.simulators import CudaStateVec, CudaStabilizer
+
+   sim = CudaStateVec(4)  # State vector (~30 qubits max)
+   sim = CudaStabilizer(1000)  # Stabilizer (1000s of qubits, Clifford only)
+   ```
+
+### Choosing an Approach
+
+- **For most users**: Python cuQuantum bindings are easier to set up
+- **For stabilizer simulations**: Use CudaStabilizer (Rust) for 1000s of qubits
+- **For reproducibility**: Rust bindings have full seed support
+- **For density matrices**: Use CuDensityMat (Rust) for open quantum systems
+
+**Note**: If you see warnings about QuEST GPU compilation failing, this is expected with CUDA 13 and does not affect the cuQuantum-based simulators.

@@ -41,6 +41,10 @@ pub enum Error {
     #[error("CUDA error: {0}")]
     Cuda(String),
 
+    /// cuQuantum error
+    #[error("cuQuantum error: {0}")]
+    CuQuantum(String),
+
     /// Configuration error
     #[error("Configuration error: {0}")]
     Config(String),

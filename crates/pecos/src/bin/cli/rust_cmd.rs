@@ -27,6 +27,11 @@ fn is_cuda_available() -> bool {
     pecos_build::cuda::is_cuda_available()
 }
 
+/// Check if cuQuantum SDK is available
+fn is_cuquantum_available() -> bool {
+    pecos_build::cuquantum::is_cuquantum_available()
+}
+
 /// Check if a GPU (wgpu adapter) is available
 ///
 /// Runs the gpu-check binary from pecos-gpu-sims to detect GPU availability.
@@ -135,6 +140,7 @@ fn run_check(include_ffi: bool) -> Result<()> {
             "--all-features",
             "--exclude=pecos",
             "--exclude=pecos-quest",
+            "--exclude=pecos-cuquantum", // Requires cuQuantum SDK
             // pecos-selene-quest has cuda feature that enables pecos-quest/cuda
             "--exclude=pecos-selene-quest",
             // benchmarks depends on pecos, and --all-features enables pecos/cuda
@@ -300,6 +306,7 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             "--all-features",
             "--exclude=pecos",
             "--exclude=pecos-quest",
+            "--exclude=pecos-cuquantum", // Requires cuQuantum SDK
             // pecos-selene-quest has cuda feature that enables pecos-quest/cuda
             "--exclude=pecos-selene-quest",
             // benchmarks depends on pecos, and --all-features enables pecos/cuda
@@ -458,6 +465,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
         "--exclude",
         "pecos-quest",
         "--exclude",
+        "pecos-cuquantum", // Requires cuQuantum SDK, test separately if CUDA available
+        "--exclude",
         "pecos-decoders",
         "--exclude",
         "pecos-gpu-sims", // Always exclude from workspace test, test separately if GPU available
@@ -489,6 +498,22 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
         if !run_cargo_command(&args) {
             return Err(Error::Config("cargo test (pecos-quest) failed".to_string()));
         }
+    }
+
+    // Test cuQuantum if SDK is available (requires both CUDA and cuQuantum)
+    if is_cuquantum_available() {
+        println!("cuQuantum SDK detected - testing pecos-cuquantum");
+        let mut args = vec!["test", "-p", "pecos-cuquantum"];
+        if !release_flag.is_empty() {
+            args.push(release_flag);
+        }
+        if !run_cargo_command(&args) {
+            return Err(Error::Config(
+                "cargo test (pecos-cuquantum) failed".to_string(),
+            ));
+        }
+    } else {
+        println!("cuQuantum SDK not detected - skipping pecos-cuquantum");
     }
 
     // Test GPU simulator if GPU is available

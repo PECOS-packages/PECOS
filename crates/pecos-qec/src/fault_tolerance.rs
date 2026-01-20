@@ -129,6 +129,8 @@
 pub mod circuit_runner;
 pub mod decoder_integration;
 pub mod gadget_checker;
+pub mod influence_builder;
+pub mod noisy_sampler;
 pub mod pauli_prop_checker;
 pub mod propagator;
 pub mod stabilizer_flip_checker;
@@ -167,6 +169,7 @@ pub use propagator::{
 pub use stabilizer_flip_checker::{
     ErrorClass, StabilizerFlipAnalysis, StabilizerFlipChecker, StabilizerFlips,
 };
+pub use influence_builder::InfluenceBuilder;
 
 /// A spacetime location where a fault can occur.
 ///

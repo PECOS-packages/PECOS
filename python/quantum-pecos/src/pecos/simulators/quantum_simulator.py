@@ -49,6 +49,12 @@ except ImportError:
     QuestStateVec = None
     QuestDensityMatrix = None
 
+try:
+    from pecos.simulators import CudaStateVec, CudaStabilizer
+except ImportError:
+    CudaStateVec = None
+    CudaStabilizer = None
+
 
 class QuantumSimulator:
     """General-purpose quantum simulator with multiple backend support.
@@ -64,8 +70,9 @@ class QuantumSimulator:
         Args:
         ----
             backend: The simulation backend to use. Can be a string identifier
-                (e.g., 'stabilizer', 'state-vector', 'MPS', 'Qulacs', 'CuStateVec')
-                or a custom backend object. Defaults to None, which uses SparseSim.
+                (e.g., 'stabilizer', 'state-vector', 'MPS', 'Qulacs', 'CuStateVec',
+                'CudaStateVec', 'CudaStabilizer') or a custom backend object.
+                Defaults to None, which uses SparseSim.
             **params: Additional parameters passed to the underlying simulator backend.
 
         """
@@ -107,6 +114,10 @@ class QuantumSimulator:
                 self.state = QuestStateVec
             elif self.backend == "QuestDensityMatrix":
                 self.state = QuestDensityMatrix
+            elif self.backend == "CudaStateVec":
+                self.state = CudaStateVec
+            elif self.backend == "CudaStabilizer":
+                self.state = CudaStabilizer
             else:
                 msg = f"simulator `{self.backend}` not currently implemented!"
                 raise NotImplementedError(msg)

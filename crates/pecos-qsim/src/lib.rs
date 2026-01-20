@@ -21,6 +21,8 @@ pub mod dense_stab_variants;
 pub mod density_matrix;
 pub mod gens;
 pub mod gpu_stab;
+pub mod gpu_stab_opt;
+pub mod gpu_stab_parallel;
 pub mod measurement_sampler;
 pub mod pauli_prop;
 // pub mod paulis;
@@ -47,6 +49,8 @@ pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly}
 pub use density_matrix::DensityMatrix;
 pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClassification};
 pub use gpu_stab::GpuStab;
+pub use gpu_stab_opt::GpuStabOpt;
+pub use gpu_stab_parallel::GpuStabParallel;
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,

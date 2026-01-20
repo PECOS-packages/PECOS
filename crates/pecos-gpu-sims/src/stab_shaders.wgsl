@@ -9,7 +9,8 @@
 //   stab_z[qubit * gen_words + word_idx]   - Z bits for all stabilizers on this qubit
 //   destab_x[qubit * gen_words + word_idx] - X bits for all destabilizers on this qubit
 //   destab_z[qubit * gen_words + word_idx] - Z bits for all destabilizers on this qubit
-//   signs[gen_idx]                         - packed: bit 0 = minus, bit 1 = i phase
+//   sign_minus[word_idx] bit i             - minus sign for generator (word_idx * 32 + i)
+//   sign_i[word_idx] bit i                 - i phase for generator (word_idx * 32 + i)
 //
 // Each word contains bits for generators [word_idx*32, word_idx*32+32).
 
@@ -18,7 +19,8 @@
 @group(0) @binding(1) var<storage, read_write> stab_z: array<u32>;
 @group(0) @binding(2) var<storage, read_write> destab_x: array<u32>;
 @group(0) @binding(3) var<storage, read_write> destab_z: array<u32>;
-@group(0) @binding(4) var<storage, read_write> signs: array<u32>;
+@group(0) @binding(4) var<storage, read_write> sign_minus: array<u32>;
+@group(0) @binding(7) var<storage, read_write> sign_i: array<u32>;
 
 // Gate parameters
 struct StabParams {
@@ -102,17 +104,9 @@ fn apply_h(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Update signs for generators in THIS word only (no race condition)
     // Each thread handles generators [word_idx*32, min((word_idx+1)*32, num_gens))
     // H(XZ) = H(iY) = -iY = -XZ, so we get a minus sign when both X and Z were set
-    let start_gen = word_idx * 32u;
-    let end_gen = min(start_gen + 32u, params.num_gens);
-    for (var gen: u32 = start_gen; gen < end_gen; gen = gen + 1u) {
-        let bit_pos = gen % 32u;
-        // Use the ORIGINAL values we read from THIS word
-        let had_x = get_bit(orig_stab_x_word, bit_pos);
-        let had_z = get_bit(orig_stab_z_word, bit_pos);
-        if (had_x && had_z) {
-            signs[gen] = signs[gen] ^ SIGN_MINUS;
-        }
-    }
+    // With packed signs, we can compute a mask and XOR once
+    let mask = orig_stab_x_word & orig_stab_z_word;  // Generators with both X and Z
+    sign_minus[word_idx] = sign_minus[word_idx] ^ mask;
 }
 
 // =============================================================================
@@ -143,27 +137,13 @@ fn apply_s(@builtin(global_invocation_id) global_id: vec3<u32>) {
     destab_z[row_offset] = destab_z[row_offset] ^ destab_x_word;
 
     // Update signs for generators in THIS word only (no race condition)
-    let start_gen = word_idx * 32u;
-    let end_gen = min(start_gen + 32u, params.num_gens);
-    for (var gen: u32 = start_gen; gen < end_gen; gen = gen + 1u) {
-        let bit_pos = gen % 32u;
-        let had_x = get_bit(stab_x_word, bit_pos);
-
-        if (had_x) {
-            let current_sign = signs[gen];
-            let had_i = (current_sign & SIGN_I) != 0u;
-
-            var new_sign = current_sign;
-            // If had i phase and has X: i*i = -1, toggle minus
-            if (had_i) {
-                new_sign = new_sign ^ SIGN_MINUS;
-            }
-            // Toggle i phase for all with X
-            new_sign = new_sign ^ SIGN_I;
-
-            signs[gen] = new_sign;
-        }
-    }
+    // With packed signs: for generators with X, toggle i phase and handle i*i = -1
+    // Generators with both X and existing i phase get their minus sign toggled
+    let had_i_mask = sign_i[word_idx];
+    let toggle_minus_mask = stab_x_word & had_i_mask;  // X and had i -> toggle minus
+    sign_minus[word_idx] = sign_minus[word_idx] ^ toggle_minus_mask;
+    // Toggle i phase for all generators with X
+    sign_i[word_idx] = sign_i[word_idx] ^ stab_x_word;
 }
 
 // =============================================================================
@@ -225,17 +205,8 @@ fn apply_x(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let stab_z_word = stab_z[row_offset];
 
     // X gate doesn't change tableau bits, only signs
-    // Update signs for generators in THIS word only
-    let start_gen = word_idx * 32u;
-    let end_gen = min(start_gen + 32u, params.num_gens);
-    for (var gen: u32 = start_gen; gen < end_gen; gen = gen + 1u) {
-        let bit_pos = gen % 32u;
-        let had_z = get_bit(stab_z_word, bit_pos);
-
-        if (had_z) {
-            signs[gen] = signs[gen] ^ SIGN_MINUS;
-        }
-    }
+    // With packed signs: toggle minus for generators with Z on this qubit
+    sign_minus[word_idx] = sign_minus[word_idx] ^ stab_z_word;
 }
 
 // =============================================================================
@@ -258,17 +229,8 @@ fn apply_z(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let stab_x_word = stab_x[row_offset];
 
     // Z gate doesn't change tableau bits, only signs
-    // Update signs for generators in THIS word only
-    let start_gen = word_idx * 32u;
-    let end_gen = min(start_gen + 32u, params.num_gens);
-    for (var gen: u32 = start_gen; gen < end_gen; gen = gen + 1u) {
-        let bit_pos = gen % 32u;
-        let had_x = get_bit(stab_x_word, bit_pos);
-
-        if (had_x) {
-            signs[gen] = signs[gen] ^ SIGN_MINUS;
-        }
-    }
+    // With packed signs: toggle minus for generators with X on this qubit
+    sign_minus[word_idx] = sign_minus[word_idx] ^ stab_x_word;
 }
 
 // =============================================================================
@@ -292,19 +254,9 @@ fn apply_y(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let stab_z_word = stab_z[row_offset];
 
     // Y gate doesn't change tableau bits, only signs
-    // Update signs for generators in THIS word only
-    let start_gen = word_idx * 32u;
-    let end_gen = min(start_gen + 32u, params.num_gens);
-    for (var gen: u32 = start_gen; gen < end_gen; gen = gen + 1u) {
-        let bit_pos = gen % 32u;
-        let had_x = get_bit(stab_x_word, bit_pos);
-        let had_z = get_bit(stab_z_word, bit_pos);
-
-        // Toggle minus if exactly one of X or Z is set
-        if (had_x != had_z) {
-            signs[gen] = signs[gen] ^ SIGN_MINUS;
-        }
-    }
+    // With packed signs: toggle minus if exactly one of X or Z is set (XOR)
+    let xor_mask = stab_x_word ^ stab_z_word;  // Exactly one of X or Z
+    sign_minus[word_idx] = sign_minus[word_idx] ^ xor_mask;
 }
 
 // =============================================================================
@@ -348,18 +300,9 @@ fn apply_cz(@builtin(global_invocation_id) global_id: vec3<u32>) {
     destab_z[ctrl_offset] = destab_z[ctrl_offset] ^ tgt_x_destab;
 
     // CZ sign update: if both X_c and X_t are set for a generator, toggle minus
-    // Only process generators in THIS word (no race condition)
-    let start_gen = word_idx * 32u;
-    let end_gen = min(start_gen + 32u, params.num_gens);
-    for (var gen: u32 = start_gen; gen < end_gen; gen = gen + 1u) {
-        let bit_pos = gen % 32u;
-        let x_c = get_bit(ctrl_x_stab, bit_pos);
-        let x_t = get_bit(tgt_x_stab, bit_pos);
-
-        if (x_c && x_t) {
-            signs[gen] = signs[gen] ^ SIGN_MINUS;
-        }
-    }
+    // With packed signs: toggle minus for generators with both X_c and X_t
+    let both_x_mask = ctrl_x_stab & tgt_x_stab;  // Generators with X on both qubits
+    sign_minus[word_idx] = sign_minus[word_idx] ^ both_x_mask;
 }
 
 // =============================================================================
@@ -443,9 +386,11 @@ fn reset_state(@builtin(global_invocation_id) global_id: vec3<u32>) {
     destab_x[idx] = destab_x_val;
     destab_z[idx] = 0u;
 
-    // Reset signs (only first thread per qubit)
-    if (word_idx == 0u && qubit < params.num_gens) {
-        signs[qubit] = 0u;
+    // Reset signs (only first row of threads, one per word)
+    // With packed format, each word_idx thread clears its sign words
+    if (qubit == 0u && word_idx < params.gen_words) {
+        sign_minus[word_idx] = 0u;
+        sign_i[word_idx] = 0u;
     }
 }
 
@@ -596,9 +541,12 @@ fn measurement_xor_rows(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let chosen_gen = atomicLoad(&measurement_data[MEAS_CHOSEN_ROW]);
     let meas_qubit = atomicLoad(&measurement_data[MEAS_QUBIT]);
-    let chosen_sign = signs[chosen_gen];
     let chosen_word = chosen_gen / 32u;
     let chosen_bit = chosen_gen % 32u;
+
+    // Read chosen generator's sign from packed format
+    let chosen_has_minus = get_bit(sign_minus[chosen_word], chosen_bit);
+    let chosen_has_i = get_bit(sign_i[chosen_word], chosen_bit);
 
     // For generators in this word, find which ones anticommute (have X on measured qubit)
     let meas_offset = meas_qubit * params.gen_words + word_idx;
@@ -614,7 +562,19 @@ fn measurement_xor_rows(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;  // No anticommuting generators in this word (excluding chosen)
     }
 
-    // Process each anticommuting generator in this word
+    // Handle sign propagation from chosen generator (vectorized for all active generators)
+    if (chosen_has_minus) {
+        sign_minus[word_idx] = sign_minus[word_idx] ^ active_mask;
+    }
+    if (chosen_has_i) {
+        // If active gen has i and chosen has i: i*i = -1, toggle minus
+        let both_i_mask = active_mask & sign_i[word_idx];
+        sign_minus[word_idx] = sign_minus[word_idx] ^ both_i_mask;
+        // Toggle i for all active generators
+        sign_i[word_idx] = sign_i[word_idx] ^ active_mask;
+    }
+
+    // Process each anticommuting generator in this word for intersection counting
     let start_gen = word_idx * 32u;
     let end_gen = min(start_gen + 32u, params.num_gens);
 
@@ -623,17 +583,6 @@ fn measurement_xor_rows(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         if (!get_bit(active_mask, bit_pos)) {
             continue;  // This generator doesn't anticommute
-        }
-
-        // Handle sign propagation from chosen generator
-        if ((chosen_sign & SIGN_MINUS) != 0u) {
-            signs[gen_idx] = signs[gen_idx] ^ SIGN_MINUS;
-        }
-        if ((chosen_sign & SIGN_I) != 0u) {
-            if ((signs[gen_idx] & SIGN_I) != 0u) {
-                signs[gen_idx] = signs[gen_idx] ^ SIGN_MINUS;
-            }
-            signs[gen_idx] = signs[gen_idx] ^ SIGN_I;
         }
 
         // Count intersections for sign update (Z of chosen * X of current)
@@ -653,7 +602,7 @@ fn measurement_xor_rows(@builtin(global_invocation_id) global_id: vec3<u32>) {
             num_minuses = num_minuses + countOneBits(saved_row_z[w] & current_x_bits);
         }
         if ((num_minuses % 2u) != 0u) {
-            signs[gen_idx] = signs[gen_idx] ^ SIGN_MINUS;
+            sign_minus[word_idx] = toggle_bit(sign_minus[word_idx], bit_pos);
         }
     }
 
@@ -774,11 +723,14 @@ fn measurement_finalize() {
         }
     }
 
-    // Set sign based on outcome
+    // Set sign based on outcome (using packed format)
+    // Clear i phase for the new stabilizer
+    sign_i[wb.x] = clear_bit(sign_i[wb.x], wb.y);
+    // Set or clear minus sign based on outcome
     if (outcome != 0u) {
-        signs[chosen_gen] = SIGN_MINUS;  // |1> outcome
+        sign_minus[wb.x] = set_bit(sign_minus[wb.x], wb.y);  // |1> outcome
     } else {
-        signs[chosen_gen] = 0u;  // |0> outcome
+        sign_minus[wb.x] = clear_bit(sign_minus[wb.x], wb.y);  // |0> outcome
     }
 }
 
@@ -802,4 +754,181 @@ fn measurement_count_destab_x(@builtin(global_invocation_id) global_id: vec3<u32
     let has_x = get_bit(x_word, wb.y);
 
     atomicStore(&measurement_data[MEAS_WEIGHTS_OFFSET + gen_idx], select(0u, 1u, has_x));
+}
+
+// =============================================================================
+// Batched Find Anticommuting - Check multiple qubits in one dispatch
+// =============================================================================
+// For each qubit in the batch, find the first generator that anticommutes.
+// This allows measuring many qubits with a single GPU dispatch.
+//
+// Input:
+//   batch_qubits[0] = number of qubits to measure
+//   batch_qubits[1..N+1] = qubit indices to measure
+//
+// Output:
+//   batch_results[i] = first anticommuting generator for qubit i, or 0xFFFFFFFF if none
+
+@group(1) @binding(1) var<storage, read> batch_qubits: array<u32>;
+@group(1) @binding(2) var<storage, read_write> batch_results: array<atomic<u32>>;
+@group(1) @binding(3) var<storage, read> batch_random: array<u32>;
+
+// Optimized anticommuting detection - one thread per measured qubit
+// Instead of iterating over generators, scan words to find first anticommuting generator
+@compute @workgroup_size(256)
+fn find_anticommuting_batch(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let batch_idx = global_id.x;
+    let num_batch_qubits = batch_qubits[0];
+
+    if (batch_idx >= num_batch_qubits) {
+        return;
+    }
+
+    let qubit = batch_qubits[batch_idx + 1u];
+    let row_base = qubit * params.gen_words;
+
+    // Scan through words to find first anticommuting generator
+    // (first non-zero word, then first set bit in that word)
+    for (var w: u32 = 0u; w < params.gen_words; w = w + 1u) {
+        let x_word = stab_x[row_base + w];
+
+        if (x_word != 0u) {
+            // Found a word with anticommuting generators
+            let first_bit = countTrailingZeros(x_word);
+            let first_gen = w * 32u + first_bit;
+
+            // Only update if this generator is smaller than current result
+            atomicMin(&batch_results[batch_idx], first_gen);
+            return;  // Found the first, no need to continue
+        }
+    }
+    // If no anticommuting generator found, result stays at 0xFFFFFFFF (deterministic)
+}
+
+// =============================================================================
+// Compute All Measurement Outcomes on GPU
+// =============================================================================
+// Computes outcomes for all measurements in the batch:
+// - Deterministic measurements: compute from stabilizer tableau
+// - Non-deterministic measurements: use pre-generated random bit from batch_random
+//
+// Input:
+//   batch_qubits[0] = number of qubits
+//   batch_qubits[1..N+1] = qubit indices
+//   batch_results[i] = 0xFFFFFFFF if deterministic, else anticommuting generator index
+//   batch_random[i] = pre-generated random bit (0 or 1) for non-deterministic cases
+//
+// Output:
+//   batch_results[i] = outcome (0 or 1) for all qubits
+
+@compute @workgroup_size(256)
+fn compute_deterministic_outcomes(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let batch_idx = global_id.x;
+    let num_batch_qubits = batch_qubits[0];
+
+    if (batch_idx >= num_batch_qubits) {
+        return;
+    }
+
+    // Check if this qubit is deterministic (no anticommuting generator found)
+    let anticom_result = atomicLoad(&batch_results[batch_idx]);
+    if (anticom_result != 0xFFFFFFFFu) {
+        // Non-deterministic - use pre-generated random bit
+        let random_outcome = batch_random[batch_idx] & 1u;
+        atomicStore(&batch_results[batch_idx], random_outcome);
+        return;
+    }
+
+    let qubit = batch_qubits[batch_idx + 1u];
+
+    // Compute deterministic outcome using optimized algorithm
+    // Phase 1: Find all contributing generators (those with destab X on measured qubit)
+    // and count signs, stored as a bitmask per word
+    var num_minuses: u32 = 0u;
+    var num_is: u32 = 0u;
+
+    // First pass: collect contributing generators and count signs
+    // We process in word chunks for efficiency
+    for (var w: u32 = 0u; w < params.gen_words; w = w + 1u) {
+        let destab_offset = qubit * params.gen_words + w;
+        let contrib_mask = destab_x[destab_offset];  // Generators in this word that contribute
+
+        if (contrib_mask == 0u) {
+            continue;  // No contributing generators in this word
+        }
+
+        // Count sign contributions from these generators
+        num_minuses = num_minuses + countOneBits(contrib_mask & sign_minus[w]);
+        num_is = num_is + countOneBits(contrib_mask & sign_i[w]);
+    }
+
+    // Phase 2: Count pairwise phase contributions
+    // For each pair of contributing generators (prev, curr) where prev < curr,
+    // count qubits where X(prev) AND Z(curr)
+    //
+    // Optimization: Process by word pairs to reduce iteration overhead
+    for (var w_curr: u32 = 0u; w_curr < params.gen_words; w_curr = w_curr + 1u) {
+        let destab_offset_curr = qubit * params.gen_words + w_curr;
+        let contrib_curr = destab_x[destab_offset_curr];
+
+        if (contrib_curr == 0u) {
+            continue;
+        }
+
+        // Process each current generator in this word
+        var curr_mask = contrib_curr;
+        while (curr_mask != 0u) {
+            let curr_bit = countTrailingZeros(curr_mask);
+            let curr_gen = w_curr * 32u + curr_bit;
+            curr_mask = curr_mask & (curr_mask - 1u);  // Clear lowest set bit
+
+            // Count phase contributions from all previous contributing generators
+            for (var w_prev: u32 = 0u; w_prev <= w_curr; w_prev = w_prev + 1u) {
+                let destab_offset_prev = qubit * params.gen_words + w_prev;
+                var contrib_prev = destab_x[destab_offset_prev];
+
+                // For same word, only consider bits before curr_bit
+                if (w_prev == w_curr) {
+                    contrib_prev = contrib_prev & ((1u << curr_bit) - 1u);
+                }
+
+                if (contrib_prev == 0u) {
+                    continue;
+                }
+
+                // For each previous contributing generator
+                var prev_mask = contrib_prev;
+                while (prev_mask != 0u) {
+                    let prev_bit = countTrailingZeros(prev_mask);
+                    prev_mask = prev_mask & (prev_mask - 1u);
+
+                    // Count X(prev) AND Z(curr) across all qubits
+                    // Optimized: iterate over qubits in word chunks
+                    var intersection_count: u32 = 0u;
+                    for (var q: u32 = 0u; q < params.num_qubits; q = q + 1u) {
+                        let q_offset_prev = q * params.gen_words + w_prev;
+                        let q_offset_curr = q * params.gen_words + w_curr;
+
+                        let prev_has_x = get_bit(stab_x[q_offset_prev], prev_bit);
+                        let curr_has_z = get_bit(stab_z[q_offset_curr], curr_bit);
+
+                        if (prev_has_x && curr_has_z) {
+                            intersection_count = intersection_count + 1u;
+                        }
+                    }
+                    num_minuses = num_minuses + intersection_count;
+                }
+            }
+        }
+    }
+
+    // Handle i phase: add 1 to minuses if num_is % 4 != 0
+    // (matching CPU implementation)
+    if ((num_is & 3u) != 0u) {
+        num_minuses = num_minuses + 1u;
+    }
+
+    // Outcome is 1 if num_minuses is odd
+    let outcome = num_minuses & 1u;
+    atomicStore(&batch_results[batch_idx], outcome);
 }

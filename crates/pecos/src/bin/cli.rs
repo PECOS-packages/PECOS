@@ -68,6 +68,12 @@ pub enum RustCommands {
         #[arg(long)]
         check: bool,
     },
+
+    /// Run benchmarks with native CPU optimizations (AVX2, etc.)
+    Bench {
+        /// Benchmark filter pattern (e.g., "SoA Comparison", "DOD")
+        pattern: Option<String>,
+    },
 }
 
 // ============================================================================

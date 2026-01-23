@@ -199,9 +199,9 @@ fn test_compare_prepare_states() {
 }
 
 #[test]
-fn test_builtin_prepare_plus_state_difference() {
-    // This test demonstrates the difference between StateVec and DensityMatrix
-    // implementations of prepare_plus_state() and explains why it's expected
+fn test_builtin_prepare_plus_state_consistency() {
+    // This test verifies that all prepare_plus_state implementations produce
+    // correctly normalized states with equal probabilities for all basis states.
 
     let num_qubits = 2;
 
@@ -220,14 +220,9 @@ fn test_builtin_prepare_plus_state_difference() {
     let mut dm = DensityMatrix::new(num_qubits);
     dm.prepare_plus_state();
 
-    // NOTE: There's a difference in the implementations!
-    //
-    // StateVec's prepare_plus_state sets each amplitude to 1/2^n, which results in probabilities of (1/2^n)^2
-    // For a 2-qubit system, this gives amplitudes of 1/4 and probabilities of 1/16 for each basis state,
-    // which doesn't create a proper normalized state (sum of probabilities = 4 * 1/16 = 1/4, not 1)
-    //
-    // In contrast, applying Hadamard gates creates the correct tensor product of |+⟩ states,
-    // giving amplitudes of 1/√2^n and probabilities of 1/2^n for each basis state
+    // All implementations should produce the same result:
+    // The |+⟩^⊗n state with amplitudes 1/√2^n and probabilities 1/2^n for each basis state.
+    // For a 2-qubit system: amplitudes = 1/2, probabilities = 1/4
 
     // Check the actual probabilities
     for i in 0..(1 << num_qubits) {
@@ -235,14 +230,11 @@ fn test_builtin_prepare_plus_state_difference() {
         let p2 = sv2.probability(i);
         let p3 = dm.probability(i);
 
-        // StateVec's prepare_plus_state gives probabilities of (1/2^n)^2 = 1/16 for each state
+        // All methods should give the correct 1/2^n = 1/4 probability for each state
         assert!(
-            (p1 - 0.0625).abs() < 1e-10,
-            "StateVec direct: {p1} should be 0.0625"
+            (p1 - 0.25).abs() < 1e-10,
+            "StateVec direct: {p1} should be 0.25"
         );
-
-        // Both the manual Hadamard application and DensityMatrix's prepare_plus_state
-        // give the correct 1/2^n = 1/4 probability for each state
         assert!(
             (p2 - 0.25).abs() < 1e-10,
             "StateVec with H: {p2} should be 0.25"
@@ -252,9 +244,6 @@ fn test_builtin_prepare_plus_state_difference() {
             "DensityMatrix: {p3} should be 0.25"
         );
     }
-
-    // This test reveals a potential bug in StateVec's prepare_plus_state implementation,
-    // which should set amplitudes to 1/√2^n instead of 1/2^n to ensure proper normalization
 }
 
 #[test]

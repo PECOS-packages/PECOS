@@ -8,7 +8,9 @@ use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, SparseStab, StateVec,
+    StateVecAoS,
 };
+use pecos_rng::{PecosRng, SeedableRng};
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -53,58 +55,127 @@ impl Engine for Box<dyn QuantumEngine> {
     }
 }
 
-/// A quantum engine that uses a state vector simulator
-#[derive(Debug, Clone)]
-pub struct StateVecEngine {
-    simulator: StateVec,
+/// Trait for simulators that can be used with StateVectorEngine.
+///
+/// This trait combines all the requirements for a state vector simulator.
+pub trait StateVectorSimulator:
+    QuantumSimulator
+    + CliffordGateable
+    + ArbitraryRotationGateable
+    + RngManageable
+    + Clone
+    + Debug
+    + Send
+    + Sync
+where
+    <Self as RngManageable>::Rng: Clone,
+{
+    /// Returns the number of qubits in the simulator.
+    fn num_qubits(&self) -> usize;
+
+    /// Create a new simulator with the specified number of qubits.
+    fn create(num_qubits: usize) -> Self;
+
+    /// Create a new simulator with a specific seed.
+    fn create_with_seed(num_qubits: usize, seed: u64) -> Self;
+
+    /// Create a new simulator with a custom RNG.
+    fn create_with_rng(num_qubits: usize, rng: <Self as RngManageable>::Rng) -> Self;
 }
 
-impl StateVecEngine {
+impl StateVectorSimulator for StateVec {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits()
+    }
+
+    fn create(num_qubits: usize) -> Self {
+        StateVec::new(num_qubits)
+    }
+
+    fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
+        StateVec::with_seed(num_qubits, seed)
+    }
+
+    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
+        StateVec::with_rng(num_qubits, rng)
+    }
+}
+
+impl StateVectorSimulator for StateVecAoS {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits()
+    }
+
+    fn create(num_qubits: usize) -> Self {
+        StateVecAoS::new(num_qubits)
+    }
+
+    fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
+        StateVecAoS::with_seed(num_qubits, seed)
+    }
+
+    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
+        StateVecAoS::with_rng(num_qubits, rng)
+    }
+}
+
+/// A generic quantum engine that uses any state vector simulator.
+///
+/// This engine works with any simulator implementing `StateVectorSimulator`.
+#[derive(Debug, Clone)]
+pub struct StateVectorEngine<S: StateVectorSimulator>
+where
+    <S as RngManageable>::Rng: Clone,
+{
+    simulator: S,
+}
+
+impl<S: StateVectorSimulator> StateVectorEngine<S>
+where
+    <S as RngManageable>::Rng: Clone,
+{
     /// Create a new state vector engine with the specified number of qubits
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
         Self {
-            simulator: StateVec::new(num_qubits),
+            simulator: S::create(num_qubits),
         }
     }
 
     /// Create a new state vector engine with a specific seed
-    ///
-    /// # Arguments
-    /// * `num_qubits` - Number of qubits in the system
-    /// * `seed` - Seed value for the random number generator
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self {
-            simulator: StateVec::with_seed(num_qubits, seed),
+            simulator: S::create_with_seed(num_qubits, seed),
         }
     }
 
     /// Ensure the simulator has the correct number of qubits, recreating if necessary
-    ///
-    /// This method checks if the current simulator has enough qubits.
-    /// If not, it recreates the simulator with more qubits to prevent
-    /// memory corruption during quantum operations.
-    ///
-    /// Note: The simulator can only grow, never shrink, to preserve quantum state.
-    ///
-    /// # Arguments
-    /// * `required_qubits` - The minimum number of qubits required for the simulation
     pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
         if self.simulator.num_qubits() < required_qubits {
             debug!(
-                "StateVecEngine: Expanding simulator (was {} qubits, now {} qubits)",
+                "StateVectorEngine: Expanding simulator (was {} qubits, now {} qubits)",
                 self.simulator.num_qubits(),
                 required_qubits
             );
-            // Preserve the RNG state if possible
             let rng = self.simulator.rng().clone();
-            self.simulator = StateVec::with_rng(required_qubits, rng);
+            self.simulator = S::create_with_rng(required_qubits, rng);
         }
     }
 }
 
-impl Engine for StateVecEngine {
+/// Type alias for state vector engine using the optimized StateVec simulator.
+///
+/// StateVec uses:
+/// - SoA (Structure of Arrays) layout for better SIMD performance
+/// - Strided iteration for cache-efficient access patterns
+/// - Fused gate primitives for reduced memory bandwidth
+pub type StateVecEngine = StateVectorEngine<StateVec>;
+
+impl<S: StateVectorSimulator + 'static> Engine for StateVectorEngine<S>
+where
+    <S as RngManageable>::Rng: Clone,
+{
     type Input = ByteMessage;
     type Output = ByteMessage;
 
@@ -413,40 +484,31 @@ impl Engine for StateVecEngine {
     }
 }
 
-impl RngManageable for StateVecEngine {
-    type Rng = <StateVec as RngManageable>::Rng;
+impl<S: StateVectorSimulator> RngManageable for StateVectorEngine<S>
+where
+    <S as RngManageable>::Rng: Clone,
+{
+    type Rng = <S as RngManageable>::Rng;
 
     fn set_rng(&mut self, rng: Self::Rng) {
         self.simulator.set_rng(rng);
     }
 
-    /// Get a read-only reference to the internal random number generator
-    ///
-    /// This method delegates to the underlying simulator's RNG
-    ///
-    /// # Returns
-    /// A reference to the internal RNG
     fn rng(&self) -> &Self::Rng {
         self.simulator.rng()
     }
 
-    /// Get a mutable reference to the internal random number generator
-    ///
-    /// This method delegates to the underlying simulator's RNG
-    ///
-    /// # Returns
-    /// A mutable reference to the internal RNG
     fn rng_mut(&mut self) -> &mut Self::Rng {
         self.simulator.rng_mut()
     }
 }
 
-impl QuantumEngine for StateVecEngine {
+impl<S: StateVectorSimulator + 'static> QuantumEngine for StateVectorEngine<S>
+where
+    <S as RngManageable>::Rng: Clone,
+{
     fn set_seed(&mut self, seed: u64) {
-        // Create a new RNG with the given seed
-        let rng = <StateVec as RngManageable>::Rng::seed_from_u64(seed);
-
-        // Set the simulator's RNG
+        let rng = <S as RngManageable>::Rng::seed_from_u64(seed);
         self.simulator.set_rng(rng);
     }
 

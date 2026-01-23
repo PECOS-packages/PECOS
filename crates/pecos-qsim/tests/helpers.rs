@@ -12,8 +12,10 @@ use num_complex::Complex64;
 /// # Panics
 /// The function will panic if the states differ in norm or relative phase beyond a small numerical tolerance.
 #[allow(dead_code)]
-pub fn assert_states_equal(state1: &[Complex64], state2: &[Complex64]) {
+pub fn assert_states_equal(state1: impl AsRef<[Complex64]>, state2: impl AsRef<[Complex64]>) {
     const TOLERANCE: f64 = 1e-10;
+    let state1 = state1.as_ref();
+    let state2 = state2.as_ref();
 
     if state1[0].norm() < TOLERANCE && state2[0].norm() < TOLERANCE {
         // Both first components near zero, compare other components directly

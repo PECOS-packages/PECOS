@@ -269,6 +269,7 @@ name = "benchmarks"
 version = "0.1.1"
 dependencies = [
  "criterion 0.8.1",
+ "num-complex",
  "pecos",
  "pecos-core",
  "pecos-cuquantum",

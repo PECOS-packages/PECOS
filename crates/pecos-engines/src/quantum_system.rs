@@ -121,7 +121,9 @@ impl QuantumSystem {
     #[cfg(test)]
     fn is_engine_type(&self) -> bool {
         // Since QuantumEngine doesn't have as_any, we need to check the debug representation
-        format!("{:?}", self.quantum_engine).contains("StateVecEngine")
+        // StateVecEngine is now a type alias for StateVectorEngine<StateVec>
+        let debug_str = format!("{:?}", self.quantum_engine);
+        debug_str.contains("StateVectorEngine") || debug_str.contains("StateVecEngine")
     }
 }
 

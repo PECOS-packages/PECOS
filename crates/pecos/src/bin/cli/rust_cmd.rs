@@ -19,6 +19,7 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
             include_ffi,
         } => run_test(*release, *include_ffi),
         super::RustCommands::Fmt { check } => run_fmt(*check),
+        super::RustCommands::Bench { pattern } => run_bench(pattern.as_deref()),
     }
 }
 
@@ -578,5 +579,29 @@ fn run_fmt(check: bool) -> Result<()> {
     } else {
         println!("Rust code formatted successfully");
     }
+    Ok(())
+}
+
+/// Run cargo bench with native CPU optimizations (AVX2, etc.)
+fn run_bench(pattern: Option<&str>) -> Result<()> {
+    println!("Running benchmarks with native CPU optimizations...");
+
+    let mut cmd = Command::new("cargo");
+    cmd.args(["bench", "-p", "benchmarks"]);
+
+    if let Some(pat) = pattern {
+        cmd.args(["--", pat]);
+    }
+
+    // Set RUSTFLAGS for native CPU features
+    cmd.env("RUSTFLAGS", "-C target-cpu=native");
+
+    let status = cmd.status();
+    if !matches!(status, Ok(s) if s.success()) {
+        return Err(Error::Config("cargo bench failed".to_string()));
+    }
+
+    println!();
+    println!("Benchmarks completed successfully");
     Ok(())
 }

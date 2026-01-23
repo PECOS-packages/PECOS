@@ -34,6 +34,8 @@ pub mod stab;
 pub mod stabilizer_tableau;
 pub mod stabilizer_test_utils;
 pub mod state_vec;
+pub mod state_vec_aos;
+pub mod state_vec_soa;
 pub mod symbolic_gens;
 pub mod symbolic_sparse_stab;
 pub mod symbolic_sparse_stab_bitset;
@@ -67,6 +69,8 @@ pub use sparse_stab::{
 pub use stab::Stab;
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 pub use state_vec::StateVec;
+pub use state_vec_aos::StateVecAoS;
+pub use state_vec_soa::StateVecSoA;
 pub use symbolic_gens::{
     SymbolicGens, SymbolicGensBitSet, SymbolicGensGeneric, SymbolicGensVecSet,
 };

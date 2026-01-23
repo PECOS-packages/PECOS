@@ -32,6 +32,7 @@ pecos-qsim.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+num-complex.workspace = true
 pecos = { workspace = true, features = ["runtime"] }
 pecos-engines.workspace = true
 pecos-qec.workspace = true

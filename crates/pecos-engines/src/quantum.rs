@@ -150,6 +150,20 @@ where
         }
     }
 
+    /// Create a new state vector engine with parallel execution enabled/disabled
+    ///
+    /// # Arguments
+    /// * `num_qubits` - Number of qubits in the system
+    /// * `parallel` - Whether to enable parallel execution for large states
+    /// * `num_threads` - Number of threads for parallel execution (None = use Rayon's default)
+    #[must_use]
+    pub fn with_parallel(num_qubits: usize, parallel: bool, num_threads: Option<usize>) -> Self {
+        let mut simulator = StateVec::new(num_qubits);
+        simulator.set_parallel(parallel);
+        simulator.set_num_threads(num_threads);
+        Self { simulator }
+    }
+
     /// Ensure the simulator has the correct number of qubits, recreating if necessary
     pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
         if self.simulator.num_qubits() < required_qubits {

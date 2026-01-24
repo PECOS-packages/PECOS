@@ -6,8 +6,8 @@ use num_complex::Complex64;
 /// accounting for potential differences in global phase.
 ///
 /// # Arguments
-/// - `state1`: A reference to the first state vector.
-/// - `state2`: A reference to the second state vector.
+/// - `state1`: The first state vector (accepts slices or Vecs).
+/// - `state2`: The second state vector (accepts slices or Vecs).
 ///
 /// # Panics
 /// The function will panic if the states differ in norm or relative phase beyond a small numerical tolerance.

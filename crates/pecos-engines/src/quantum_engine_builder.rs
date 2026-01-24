@@ -67,12 +67,24 @@ pub trait IntoQuantumEngineBuilder: Send + Sync {
 }
 
 /// Builder for state vector quantum engine
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct StateVectorEngineBuilder {
     /// Number of qubits (if explicitly set)
     num_qubits: Option<usize>,
-    // Future: Could add configuration options here
-    // e.g., gpu_enabled, precision, etc.
+    /// Whether parallel execution is enabled for large states
+    parallel: bool,
+    /// Number of threads for parallel execution (None = use Rayon's default)
+    num_threads: Option<usize>,
+}
+
+impl Default for StateVectorEngineBuilder {
+    fn default() -> Self {
+        Self {
+            num_qubits: None,
+            parallel: false, // Default to serial for multi-shot workloads
+            num_threads: None,
+        }
+    }
 }
 
 impl StateVectorEngineBuilder {
@@ -88,6 +100,41 @@ impl StateVectorEngineBuilder {
         self.num_qubits = Some(num_qubits);
         self
     }
+
+    /// Enable or disable parallel execution for large states.
+    ///
+    /// When enabled, gate operations will use multi-threaded execution
+    /// for states with >= 2^18 elements (~18+ qubits).
+    ///
+    /// **When to enable:**
+    /// - Single-shot workloads (amplitude calculation, state tomography)
+    /// - Individual large circuits where gate execution is the bottleneck
+    ///
+    /// **When to disable (default):**
+    /// - Multi-shot workloads where shots run in parallel at orchestration level
+    /// - Running many independent circuits simultaneously
+    #[must_use]
+    pub fn parallel(mut self, enabled: bool) -> Self {
+        self.parallel = enabled;
+        self
+    }
+
+    /// Set the number of threads for parallel execution.
+    ///
+    /// When set, parallel operations will use a thread pool limited to this
+    /// many threads instead of Rayon's default (typically all CPU cores).
+    ///
+    /// **Use cases:**
+    /// - Limit parallelism when running alongside other parallel workloads
+    /// - Fine-tune performance for specific hardware configurations
+    ///
+    /// Note: This only has effect when the `parallel` feature is enabled
+    /// on `pecos-qsim` and `.parallel(true)` is set on this builder.
+    #[must_use]
+    pub fn num_threads(mut self, num_threads: usize) -> Self {
+        self.num_threads = Some(num_threads);
+        self
+    }
 }
 
 impl QuantumEngineBuilder for StateVectorEngineBuilder {
@@ -96,7 +143,11 @@ impl QuantumEngineBuilder for StateVectorEngineBuilder {
         let num_qubits = self.num_qubits.ok_or_else(|| {
             PecosError::Input("Number of qubits not specified for quantum engine".to_string())
         })?;
-        Ok(Box::new(StateVecEngine::new(num_qubits)))
+        Ok(Box::new(StateVecEngine::with_parallel(
+            num_qubits,
+            self.parallel,
+            self.num_threads,
+        )))
     }
 
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {

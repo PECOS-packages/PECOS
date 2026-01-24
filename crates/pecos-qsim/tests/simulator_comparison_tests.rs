@@ -15,7 +15,7 @@ fn assert_probs_equal(p1: f64, p2: f64) {
 }
 
 // Helper function to compare the results of multiple basis states between simulators
-fn compare_probabilities(sv: &StateVec, dm: &DensityMatrix, num_qubits: usize) {
+fn compare_probabilities(sv: &mut StateVec, dm: &DensityMatrix, num_qubits: usize) {
     for i in 0..(1 << num_qubits) {
         let sv_prob = sv.probability(i);
         let dm_prob = dm.probability(i);
@@ -27,10 +27,10 @@ fn compare_probabilities(sv: &StateVec, dm: &DensityMatrix, num_qubits: usize) {
 fn test_compare_initial_state() {
     // Test that both simulators start in the |0...0⟩ state
     let num_qubits = 2;
-    let sv = StateVec::new(num_qubits);
+    let mut sv = StateVec::new(num_qubits);
     let dm = DensityMatrix::new(num_qubits);
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn test_compare_x_gate() {
     sv.x(&qid(0));
     dm.x(&qid(0));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn test_compare_hadamard() {
     sv.h(&qid(0));
     dm.h(&qid(0));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn test_compare_multiple_gates() {
     sv.h(&qid(0)).cx(&qid2(0, 1));
     dm.h(&qid(0)).cx(&qid2(0, 1));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
@@ -86,13 +86,13 @@ fn test_compare_rotations() {
     sv.rx(PI / 4.0, &qid(0));
     dm.rx(PI / 4.0, &qid(0));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 
     // Apply another rotation
     sv.rz(PI / 3.0, &qid(0));
     dm.rz(PI / 3.0, &qid(0));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn test_compare_two_qubit_rotations() {
     sv.rzz(PI / 4.0, &qid2(0, 1));
     dm.rzz(PI / 4.0, &qid2(0, 1));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
@@ -124,13 +124,13 @@ fn test_compare_complex_circuit() {
     sv.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
     dm.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 
     // Apply more gates
     sv.x(&qid(0)).h(&qid(1)).rz(PI / 3.0, &qid(2));
     dm.x(&qid(0)).h(&qid(1)).rz(PI / 3.0, &qid(2));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn test_compare_measurements() {
     );
 
     // After measurement, both should be in the same state
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn test_compare_prepare_states() {
     sv.prepare_computational_basis(2); // Prepare |10⟩
     dm.prepare_computational_basis(2); // Prepare |10⟩
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 
     // Test plus state preparation
     // For plus state, we'll prepare it the same way in both simulators
@@ -195,13 +195,13 @@ fn test_compare_prepare_states() {
     }
 
     // Compare probabilities - we expect them to be identical since we applied the same operations
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 #[test]
 fn test_builtin_prepare_plus_state_consistency() {
-    // This test verifies that all prepare_plus_state implementations produce
-    // correctly normalized states with equal probabilities for all basis states.
+    // This test verifies that all methods of preparing the |+...+⟩ state
+    // produce the same correctly normalized result.
 
     let num_qubits = 2;
 
@@ -209,7 +209,7 @@ fn test_builtin_prepare_plus_state_consistency() {
     let mut sv1 = StateVec::new(num_qubits);
     sv1.prepare_plus_state();
 
-    // Method 2: Using Hadamard gates on StateVec (like DensityMatrix does)
+    // Method 2: Using Hadamard gates on StateVec
     let mut sv2 = StateVec::new(num_qubits);
     sv2.prepare_computational_basis(0);
     for i in 0..num_qubits {
@@ -220,28 +220,26 @@ fn test_builtin_prepare_plus_state_consistency() {
     let mut dm = DensityMatrix::new(num_qubits);
     dm.prepare_plus_state();
 
-    // All implementations should produce the same result:
-    // The |+⟩^⊗n state with amplitudes 1/√2^n and probabilities 1/2^n for each basis state.
-    // For a 2-qubit system: amplitudes = 1/2, probabilities = 1/4
+    // All methods should produce the correct |+...+⟩ state with uniform probabilities
+    // For n qubits, each basis state should have probability 1/2^n
+    let expected_prob = 1.0 / (1 << num_qubits) as f64; // 0.25 for 2 qubits
 
-    // Check the actual probabilities
     for i in 0..(1 << num_qubits) {
         let p1 = sv1.probability(i);
         let p2 = sv2.probability(i);
         let p3 = dm.probability(i);
 
-        // All methods should give the correct 1/2^n = 1/4 probability for each state
         assert!(
-            (p1 - 0.25).abs() < 1e-10,
-            "StateVec direct: {p1} should be 0.25"
+            (p1 - expected_prob).abs() < 1e-10,
+            "StateVec direct: {p1} should be {expected_prob}"
         );
         assert!(
-            (p2 - 0.25).abs() < 1e-10,
-            "StateVec with H: {p2} should be 0.25"
+            (p2 - expected_prob).abs() < 1e-10,
+            "StateVec with H: {p2} should be {expected_prob}"
         );
         assert!(
-            (p3 - 0.25).abs() < 1e-10,
-            "DensityMatrix: {p3} should be 0.25"
+            (p3 - expected_prob).abs() < 1e-10,
+            "DensityMatrix: {p3} should be {expected_prob}"
         );
     }
 }
@@ -262,7 +260,7 @@ fn test_compare_reset() {
     dm.reset();
 
     // Both should be in the |0...0⟩ state
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 // Test comparing pure states created by rotation gates
@@ -280,7 +278,7 @@ fn test_compare_pure_rotated_states() {
         .rz(PI / 6.0, &qid(0))
         .rx(PI / 4.0, &qid(0));
 
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }
 
 // Test comparing entangled states
@@ -295,20 +293,20 @@ fn test_compare_entangled_states() {
     // Bell state |Φ⁺⟩ = (|00⟩ + |11⟩)/√2
     sv.h(&qid(0)).cx(&qid2(0, 1));
     dm.h(&qid(0)).cx(&qid2(0, 1));
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 
     // Reset and create Bell state |Φ⁻⟩ = (|00⟩ - |11⟩)/√2
     sv.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
     dm.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 
     // Reset and create Bell state |Ψ⁺⟩ = (|01⟩ + |10⟩)/√2
     sv.reset().h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
     dm.reset().h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 
     // Reset and create Bell state |Ψ⁻⟩ = (|01⟩ - |10⟩)/√2
     sv.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
     dm.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
-    compare_probabilities(&sv, &dm, num_qubits);
+    compare_probabilities(&mut sv, &dm, num_qubits);
 }

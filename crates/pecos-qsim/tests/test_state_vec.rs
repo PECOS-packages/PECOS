@@ -980,11 +980,11 @@ mod detailed_sq_gate_cases {
     fn test_x_vs_r1xy() {
         let mut state = StateVec::new(1);
         state.x(&qid(0));
-        let state_after_x = state.clone();
+        let mut state_after_x = state.clone();
 
         state.reset();
         state.r1xy(PI, 0.0, &qid(0));
-        let state_after_r1xy = state.clone();
+        let mut state_after_r1xy = state.clone();
 
         assert_states_equal(state_after_x.state(), state_after_r1xy.state());
     }
@@ -993,11 +993,11 @@ mod detailed_sq_gate_cases {
     fn test_y_vs_r1xy() {
         let mut state = StateVec::new(1);
         state.y(&qid(0));
-        let state_after_y = state.clone();
+        let mut state_after_y = state.clone();
 
         state.reset();
         state.r1xy(PI, FRAC_PI_2, &qid(0));
-        let state_after_r1xy = state.clone();
+        let mut state_after_r1xy = state.clone();
 
         assert_states_equal(state_after_y.state(), state_after_r1xy.state());
     }
@@ -1006,11 +1006,11 @@ mod detailed_sq_gate_cases {
     fn test_h_vs_r1xy_rz() {
         let mut state = StateVec::new(1);
         state.h(&qid(0)); // Apply the H gate
-        let state_after_h = state.clone();
+        let mut state_after_h = state.clone();
 
         state.reset(); // Reset state to |0⟩
         state.r1xy(FRAC_PI_2, -FRAC_PI_2, &qid(0)).rz(PI, &qid(0));
-        let state_after_r1xy_rz = state.clone();
+        let mut state_after_r1xy_rz = state.clone();
 
         assert_states_equal(state_after_h.state(), state_after_r1xy_rz.state());
     }
@@ -1049,7 +1049,7 @@ mod detailed_sq_gate_cases {
     #[test]
     fn test_u_composition() {
         let mut q1 = StateVec::new(1);
-        let q2 = StateVec::new(1);
+        let mut q2 = StateVec::new(1);
 
         // Two U gates that should multiply to identity
         q1.u(PI / 3.0, PI / 4.0, PI / 6.0, &qid(0));

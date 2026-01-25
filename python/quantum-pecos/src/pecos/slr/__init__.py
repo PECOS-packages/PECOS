@@ -23,7 +23,7 @@ from pecos.slr.slr_converter import SlrConverter
 from pecos.slr.types import Array
 from pecos.slr.types import Bit as BitType
 from pecos.slr.types import Qubit as QubitType
-from pecos.slr.vars import Bit, CReg, QReg, Qubit, Vars
+from pecos.slr.vars import Bit, CReg, LoopVar, QReg, Qubit, Vars
 
 __all__ = [
     "SLR",
@@ -36,6 +36,7 @@ __all__ = [
     "Comment",
     "For",
     "If",
+    "LoopVar",
     "Main",
     "Parallel",
     "Permute",

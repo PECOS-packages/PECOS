@@ -1,20 +1,14 @@
 # Gate Reference
 
 ```hidden-python
-import pecos as pc
 from pecos.simulators import SparseSim
 
 # Create a stabilizer simulator with 5 qubits
 state = SparseSim(num_qubits=5)
 
-# Define qubit indices for examples
+# Qubit indices for examples
 q = 0
 q0, q1 = 0, 1
-
-# Define rotation angles for parameterized gate examples
-theta = pc.f64.pi / 4
-phi = pc.f64.pi / 8
-lam = pc.f64.pi / 6
 ```
 
 ```hidden-rust
@@ -81,6 +75,33 @@ PECOS supports two categories of quantum gates:
 | PNX, PNY, PNZ | Prepare in -X, -Y, -Z eigenstate |
 | MPX, MPY, MPZ | Measure and prepare in + eigenstate |
 | MPNX, MPNY, MPNZ | Measure and prepare in - eigenstate |
+
+## Setup
+
+The examples below use a simulator instance. Run this setup code first:
+
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos.simulators import SparseSim
+
+    # Create a stabilizer simulator with 5 qubits
+    state = SparseSim(num_qubits=5)
+
+    # Qubit indices for examples
+    q = 0
+    q0, q1 = 0, 1
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    ```rust
+    use pecos::prelude::*;
+
+    let mut sim = StdSparseStab::new(5);
+    let q: usize = 0;
+    let (q0, q1) = (0, 1);
+    ```
 
 ## Clifford Gates
 
@@ -666,9 +687,16 @@ G = 1/2 [[ 1,  1,  1, -1],
 ## Non-Clifford Gates
 
 ```hidden-python
-# Switch to StateVec simulator for non-Clifford gates
+import pecos as pc
 from pecos.simulators import StateVec
+
+# StateVec supports non-Clifford gates
 state = StateVec(num_qubits=5)
+q = 0
+q0, q1 = 0, 1
+theta = pc.f64.pi / 4
+phi = pc.f64.pi / 8
+lam = pc.f64.pi / 6
 ```
 
 ```hidden-rust
@@ -689,6 +717,31 @@ fn main() {
 ```
 
 Non-Clifford gates include arbitrary rotation gates that cannot be efficiently simulated with stabilizer methods. These require state vector or other universal simulators.
+
+**Setup for Non-Clifford Gates:**
+
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos.simulators import StateVec
+
+    # StateVec supports non-Clifford gates
+    state = StateVec(num_qubits=5)
+    q = 0
+    q0, q1 = 0, 1
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    ```rust
+    use pecos::prelude::*;
+    use std::f64::consts::PI;
+
+    let mut sim = StateVec::new(5);
+    let q: usize = 0;
+    let (q0, q1) = (0, 1);
+    let theta: f64 = PI / 4.0;
+    ```
 
 ### Single-Qubit Rotations
 
@@ -802,7 +855,6 @@ U(θ,φ,λ) = [[        cos(θ/2),      -e^(iλ)·sin(θ/2)],
 ```
 
 === ":fontawesome-brands-python: Python"
-    <!--skip-->
     ```python
     state.run_gate("U", {q}, angles=(theta, phi, lam))
     ```

@@ -67,6 +67,55 @@ fn main() {
 
 The PECOS Graph API provides a high-performance graph data structure with idiomatic APIs for both Rust and Python.
 
+## Setup
+
+The examples below use this pre-built graph with nodes, edges, and attributes:
+
+=== ":fontawesome-brands-python: Python"
+    ```python
+    from pecos.graph import Graph
+
+    # Create graph with nodes and edges
+    graph = Graph()
+    n0 = graph.add_node()
+    n1 = graph.add_node()
+    n2 = graph.add_node()
+    n3 = graph.add_node()
+    graph.add_edge(n0, n1)
+    graph.add_edge(n1, n2)
+    graph.add_edge(n0, n2)
+    graph.add_edge(n2, n3)
+
+    # Set edge weights
+    graph.set_weight(n0, n1, 1.0)
+    graph.set_weight(n1, n2, 2.0)
+    graph.set_weight(n0, n2, 5.0)
+
+    source_node = n0
+    edge_id = graph.find_edge(n0, n1)
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+    ```rust
+    use pecos::graph::{Graph, Attribute};
+
+    let mut graph = Graph::new();
+    let n0 = graph.add_node();
+    let n1 = graph.add_node();
+    let n2 = graph.add_node();
+    let n3 = graph.add_node();
+    graph.add_edge(n0, n1);
+    graph.add_edge(n1, n2);
+    graph.add_edge(n0, n2);
+    graph.add_edge(n2, n3);
+
+    graph.set_weight(n0, n1, 1.0);
+    graph.set_weight(n1, n2, 2.0);
+    graph.set_weight(n0, n2, 5.0);
+
+    let source_node = n0;
+    ```
+
 ## Design Principles
 
 - **Language-Idiomatic** - Dict-like in Python, BTreeMap in Rust

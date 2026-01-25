@@ -245,7 +245,7 @@ class QIRGenerator(Generator):
         self.entry_block = self._main_func.append_basic_block(name="entry")
         self.current_block = self.entry_block
         self._builder = ir.IRBuilder(self.entry_block)
-        self._builder.comment(f"// Generated using: PECOS version {pc.__version__}")
+        # Note: Avoid _builder.comment() as it generates // comments that fail LLVM parsing
 
         def icmp_signed_closure(op: str):
             return lambda left, right: self._builder.icmp_signed(op, left, right)

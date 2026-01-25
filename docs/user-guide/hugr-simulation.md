@@ -266,7 +266,6 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip: HUGR while loop interpreter has known performance issues-->
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
@@ -335,7 +334,23 @@ HUGR programs work with different quantum backends:
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip: illustrative snippet referencing undefined circuits-->
+    ```hidden-python
+    from guppylang import guppy
+    from guppylang.std.quantum import h, cx, measure, qubit
+
+    @guppy
+    def my_circuit() -> bool:
+        q = qubit()
+        h(q)
+        return measure(q)
+
+    @guppy
+    def clifford_circuit() -> bool:
+        q = qubit()
+        h(q)
+        return measure(q)
+    ```
+
     ```python
     from pecos import sim, Guppy
     from pecos_rslib import state_vector, sparse_stabilizer
@@ -452,13 +467,12 @@ Results from Guppy simulations work the same as QASM:
 
     # Convert to dictionary
     data = results.to_dict()
-    # For a Bell state returning tuple[bool, bool], results are per-measurement lists
-    # measurement_0 and measurement_1 will be correlated (both 0 or both 1)
+    # For a Bell state returning tuple[bool, bool], results are per-shot measurement pairs
+    # q0 and q1 will be correlated (both 0 or both 1)
 
-    # Count correlated outcomes by zipping measurement results
-    m0 = data["measurement_0"]
-    m1 = data["measurement_1"]
-    outcomes = list(zip(m0, m1))
+    # Count correlated outcomes using the measurements array
+    # Each entry is [m0, m1] for the two measurements
+    outcomes = [tuple(shot) for shot in data["measurements"]]
     print(Counter(outcomes))  # {(0, 0): ~500, (1, 1): ~500}
     ```
 

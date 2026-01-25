@@ -72,6 +72,24 @@ PECOS provides multiple quantum simulation backends optimized for different use 
                  └── Need mixed states? ──→ QuestDensityMatrix
 ```
 
+## Setup
+
+The examples below use this Bell state circuit:
+
+```python
+from pecos import sim, Qasm
+
+circuit = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0], q[1];
+measure q -> c;
+"""
+```
+
 ## Stabilizer Simulators
 
 Stabilizer simulators efficiently simulate **Clifford circuits** (H, S, CNOT, CZ, and similar gates). They scale polynomially with qubit count, making them ideal for quantum error correction.
@@ -274,13 +292,18 @@ Tracks how Pauli errors propagate through Clifford circuits—essential for QEC 
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    use pecos::prelude::*;
-    use pecos::qsim::PauliProp;
+    use pecos::qsim::{StdPauliProp, CliffordGateable};
 
-    // Track how Pauli errors propagate
-    let mut prop = PauliProp::new(5);
-    // ... apply gates ...
+    // Track how an X error on qubit 0 propagates
+    let mut prop = StdPauliProp::new();
+    prop.add_x(0);  // Track an X error on qubit 0
+
+    // Apply Hadamard - transforms X to Z
+    prop.h(0);
+
     // Check resulting error pattern
+    assert!(prop.contains_z(0));  // X transformed to Z
+    assert!(!prop.contains_x(0)); // No longer has X
     ```
 
 **Use cases:**
@@ -304,15 +327,14 @@ Returns random measurement results, ignoring all gates. Useful for testing.
 
 === ":fontawesome-brands-rust: Rust"
 
-    <!--skip: CoinToss not yet integrated with unified sim API-->
     ```rust
-    use pecos::prelude::*;
-    use pecos::qsim::CoinToss;
+    use pecos_engines::{QuantumEngineBuilder, coin_toss};
 
     // Test classical logic with random quantum outcomes
-    let results = sim(program)
-        .quantum(CoinToss::new)
-        .run(1000)?;
+    // CoinToss ignores all gates and returns random measurements
+    let mut builder = coin_toss().qubits(2);
+    let engine = builder.build()?;
+    // Engine is ready for processing quantum operations
     ```
 
 **Use cases:**

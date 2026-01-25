@@ -2909,10 +2909,12 @@ dependencies = [
  "pecos-engines",
  "pecos-quantum",
  "pecos-quest",
+ "pecos-wasm",
  "serde_json",
  "tempfile",
  "thiserror 2.0.17",
  "tket",
+ "wat",
 ]
 
 [[package]]
@@ -3183,6 +3185,7 @@ dependencies = [
  "parking_lot",
  "pecos",
  "pecos-experimental",
+ "pecos-qasm",
  "pyo3",
  "regex",
  "serde_json",

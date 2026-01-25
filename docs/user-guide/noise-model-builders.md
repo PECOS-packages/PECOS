@@ -2,16 +2,6 @@
 
 ```hidden-python
 from pecos import sim, Qasm, GeneralNoiseModelBuilder
-
-qasm = """
-OPENQASM 2.0;
-include "qelib1.inc";
-qreg q[2];
-creg c[2];
-h q[0];
-cx q[0], q[1];
-measure q -> c;
-"""
 ```
 
 PECOS provides builder classes for constructing quantum noise models with a fluent, method-chaining API. The `GeneralNoiseModelBuilder` is the most comprehensive builder, offering fine-grained control over various noise parameters.
@@ -22,6 +12,17 @@ The simplest way to add noise to your QASM simulations is using the `GeneralNois
 
 ```python
 from pecos import sim, Qasm, GeneralNoiseModelBuilder
+
+# Define a circuit
+qasm = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0], q[1];
+measure q -> c;
+"""
 
 # Create noise model with builder
 noise = (

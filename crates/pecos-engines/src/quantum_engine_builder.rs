@@ -16,7 +16,7 @@
 //! in a flexible, extensible way that allows different crates to implement
 //! their own quantum simulators.
 
-use crate::quantum::{QuantumEngine, SparseStabEngine, StateVecEngine};
+use crate::quantum::{CoinTossEngine, QuantumEngine, SparseStabEngine, StateVecEngine};
 use pecos_core::errors::PecosError;
 
 /// Trait for types that can build or configure a quantum engine
@@ -162,6 +162,65 @@ impl IntoQuantumEngineBuilder for SparseStabilizerEngineBuilder {
     }
 }
 
+/// Builder for coin toss quantum engine
+#[derive(Debug, Clone, Default)]
+pub struct CoinTossEngineBuilder {
+    /// Number of qubits (if explicitly set)
+    num_qubits: Option<usize>,
+    /// Probability of measuring |1⟩ (default 0.5)
+    prob: Option<f64>,
+}
+
+impl CoinTossEngineBuilder {
+    /// Create a new coin toss engine builder
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the number of qubits
+    #[must_use]
+    pub fn qubits(mut self, num_qubits: usize) -> Self {
+        self.num_qubits = Some(num_qubits);
+        self
+    }
+
+    /// Set the probability of measuring |1⟩
+    #[must_use]
+    pub fn prob(mut self, prob: f64) -> Self {
+        self.prob = Some(prob);
+        self
+    }
+}
+
+impl QuantumEngineBuilder for CoinTossEngineBuilder {
+    fn build(&mut self) -> Result<Box<dyn QuantumEngine>, PecosError> {
+        let num_qubits = self.num_qubits.ok_or_else(|| {
+            PecosError::Input("Number of qubits not specified for quantum engine".to_string())
+        })?;
+        let engine = if let Some(prob) = self.prob {
+            CoinTossEngine::with_prob(num_qubits, prob)
+        } else {
+            CoinTossEngine::new(num_qubits)
+        };
+        Ok(Box::new(engine))
+    }
+
+    fn set_qubits_if_needed(&mut self, num_qubits: usize) {
+        if self.num_qubits.is_none() {
+            self.num_qubits = Some(num_qubits);
+        }
+    }
+}
+
+impl IntoQuantumEngineBuilder for CoinTossEngineBuilder {
+    type Builder = Self;
+
+    fn into_quantum_engine_builder(self) -> Self::Builder {
+        self
+    }
+}
+
 // Removed IntoQuantumEngine implementation for enum - using builders only
 
 /// Create a state vector quantum engine builder
@@ -180,4 +239,13 @@ pub fn sparse_stabilizer() -> SparseStabilizerEngineBuilder {
 #[must_use]
 pub fn sparse_stab() -> SparseStabilizerEngineBuilder {
     sparse_stabilizer()
+}
+
+/// Create a coin toss quantum engine builder
+///
+/// Returns random measurement results with 50% probability, ignoring all gates.
+/// Useful for testing classical control logic without quantum overhead.
+#[must_use]
+pub fn coin_toss() -> CoinTossEngineBuilder {
+    CoinTossEngineBuilder::new()
 }

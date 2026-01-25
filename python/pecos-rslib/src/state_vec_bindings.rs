@@ -177,6 +177,37 @@ impl PyStateVec {
                 }
                 Ok(None)
             }
+            "U" => {
+                if let Some(params) = params {
+                    match params.get_item("angles") {
+                        Ok(Some(py_any)) => {
+                            // Extract as a sequence of f64 values
+                            if let Ok(angles) = py_any.extract::<Vec<f64>>() {
+                                if angles.len() >= 3 {
+                                    self.inner.u(angles[0], angles[1], angles[2], location);
+                                } else {
+                                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                        "U gate requires three angle parameters (theta, phi, lambda)",
+                                    ));
+                                }
+                            } else {
+                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    "Expected valid angle parameters for U gate",
+                                ));
+                            }
+                        }
+                        Ok(None) => {
+                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "Angle parameters missing for U gate",
+                            ));
+                        }
+                        Err(err) => {
+                            return Err(err);
+                        }
+                    }
+                }
+                Ok(None)
+            }
 
             "T" => {
                 self.inner.t(location);

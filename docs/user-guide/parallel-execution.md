@@ -1,24 +1,5 @@
 # Parallel Execution in PECOS
 
-```hidden-python
-from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter, If
-from pecos.slr.qeclib import qubit as qb
-
-# Define registers for examples
-q = QReg("q", 6)
-c = CReg("c", 6)
-
-# Define a sample program for examples
-prog = Main(
-    q,
-    c,
-    Parallel(
-        qb.H(q[0]),
-        qb.H(q[1]),
-    ),
-)
-```
-
 This guide explains how to express parallel quantum operations in PECOS using the `Parallel` block construct.
 
 ## Introduction
@@ -56,6 +37,9 @@ prog = Main(
 You can use nested blocks to group related operations:
 
 ```python
+from pecos.slr import Main, Parallel, Block, QReg, CReg
+from pecos.slr.qeclib import qubit as qb
+
 # Three Bell pairs prepared in parallel
 prog = Main(
     q := QReg("q", 6),
@@ -83,7 +67,15 @@ prog = Main(
 PECOS automatically optimizes `Parallel` blocks to maximize parallelism by default:
 
 ```python
-from pecos.slr import SlrConverter
+from pecos.slr import Main, Parallel, QReg, CReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
+
+# Define a program to demonstrate optimization
+prog = Main(
+    q := QReg("q", 2),
+    c := CReg("m", 2),
+    Parallel(qb.H(q[0]), qb.H(q[1])),
+)
 
 # Optimization is enabled by default
 qasm = SlrConverter(prog).qasm()
@@ -128,6 +120,11 @@ All Hadamard gates execute first in parallel, followed by all CNOT gates in para
 Operations that share qubits cannot be parallelized:
 
 ```python
+from pecos.slr import Parallel, QReg
+from pecos.slr.qeclib import qubit as qb
+
+q = QReg("q", 2)
+
 # These operations must execute sequentially
 Parallel(
     qb.H(q[0]),
@@ -140,6 +137,12 @@ Parallel(
 Parallel blocks containing conditional operations are not optimized:
 
 ```python
+from pecos.slr import Parallel, QReg, CReg, If
+from pecos.slr.qeclib import qubit as qb
+
+q = QReg("q", 2)
+c = CReg("c", 2)
+
 Parallel(
     qb.H(q[0]),
     If(c[0] == 1).Then(qb.X(q[1])),  # Control flow prevents optimization
@@ -156,7 +159,6 @@ Parallel(
 
 Here's a complete example showing parallel quantum phase estimation:
 
-<!--skip: CRZ gate not yet implemented-->
 ```python
 from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter
 from pecos.slr.qeclib import qubit as qb

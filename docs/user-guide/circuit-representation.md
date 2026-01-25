@@ -1,9 +1,5 @@
 # Circuit Representation
 
-```hidden-python
-from pecos.quantum import DagCircuit, TickCircuit, Gate
-```
-
 ```hidden-rust
 use pecos::quantum::{DagCircuit, TickCircuit, Attribute};
 use pecos::core::{Gate, QubitId};
@@ -273,6 +269,8 @@ Gates can have arbitrary metadata attached:
 
 === ":fontawesome-brands-python: Python"
     ```python
+    from pecos.quantum import DagCircuit
+
     circuit = DagCircuit()
     circuit.h(0).cx(0, 1).h(1).cx(1, 2).mz(0).mz(1).mz(2)
 
@@ -451,6 +449,8 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
 
 === ":fontawesome-brands-python: Python"
     ```python
+    from pecos.quantum import TickCircuit
+
     circuit = TickCircuit()
 
     # Add metadata to a tick

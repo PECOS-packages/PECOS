@@ -86,6 +86,7 @@ pub fn hugr_op_to_gate_type(op_name: &str) -> Option<GateType> {
         "CX" => Some(GateType::CX),
         "CY" => Some(GateType::CY),
         "CZ" => Some(GateType::CZ),
+        "CH" => Some(GateType::CH),
         "ZZMax" => Some(GateType::SZZ),
         "SWAP" => Some(GateType::SWAP),
         "CRz" => Some(GateType::CRZ),
@@ -123,6 +124,7 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
         GateType::CX => Some("CX"),
         GateType::CY => Some("CY"),
         GateType::CZ => Some("CZ"),
+        GateType::CH => Some("CH"),
         GateType::SZZ => Some("ZZMax"),
         GateType::SWAP => Some("SWAP"),
         GateType::CRZ => Some("CRz"),
@@ -377,7 +379,7 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
     let op_short = if op_name.len() > 80 {
         format!("{}...", &op_name[..80])
     } else {
-        op_name
+        op_name.clone()
     };
     log::trace!(
         "{}trace_back_for_const: node={:?}, op={}",
@@ -604,15 +606,17 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
         };
 
         // Determine number of qubit inputs/outputs based on gate type
+        // Use quantum_arity() for most gates, with special cases for alloc/free
         let (num_qubit_inputs, num_qubit_outputs) = match gate_type {
             // QAlloc: 0 inputs, 1 output (creates a qubit)
             GateType::QAlloc => (0, 1),
             // QFree/MeasureFree: 1 input, 0 qubit outputs (destroys/consumes qubit)
             GateType::QFree | GateType::MeasureFree => (1, 0),
-            // Two-qubit gates
-            GateType::CX | GateType::CY | GateType::CZ | GateType::SZZ => (2, 2),
-            // Single-qubit gates including Measure (default: 1 input, 1 output)
-            _ => (1, 1),
+            // All other gates: use quantum_arity for input/output counts
+            _ => {
+                let arity = gate_type.quantum_arity();
+                (arity, arity)
+            }
         };
 
         // Extract rotation parameters if this is a rotation gate

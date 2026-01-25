@@ -74,16 +74,18 @@ A repetition code encodes a single logical qubit across multiple physical qubits
     from pecos import Guppy, sim, state_vector, depolarizing_noise
     from guppylang import guppy
     from guppylang.std.quantum import qubit, cx, measure
-    from guppylang.std.builtins import array, result
 
 
     @guppy
     def repetition_code() -> None:
         # 3 data qubits encode logical |0⟩ = |000⟩
-        d0, d1, d2 = qubit(), qubit(), qubit()
+        d0 = qubit()
+        d1 = qubit()
+        d2 = qubit()
 
         # 2 ancillas for syndrome extraction
-        s0, s1 = qubit(), qubit()
+        s0 = qubit()
+        s1 = qubit()
 
         # Measure parity between adjacent data qubits
         cx(d0, s0)
@@ -91,8 +93,9 @@ A repetition code encodes a single logical qubit across multiple physical qubits
         cx(d1, s1)
         cx(d2, s1)
 
-        # Extract syndromes as an array
-        result("syndrome", array(measure(s0), measure(s1)))
+        # Measure syndromes (first two measurements)
+        _ = measure(s0)
+        _ = measure(s1)
 
         # Measure data qubits (required by Guppy)
         _ = measure(d0), measure(d1), measure(d2)
@@ -108,8 +111,12 @@ A repetition code encodes a single logical qubit across multiple physical qubits
         .seed(42)
         .run(10)
     )
-    print(results["syndrome"])
-    # [[1, 1], [0, 1], [0, 0], [1, 1], [0, 0], [0, 1], [1, 1], [0, 0], [0, 1], [0, 1]]
+
+    # Extract syndromes from first two measured qubits (s0, s1)
+    d = results.to_dict()
+    syndrome = [[d["q0"][i], d["q1"][i]] for i in range(10)]
+    print(syndrome)
+    # [[0, 0], [1, 0], [0, 0], [0, 0], [0, 0], [0, 1], [0, 1], [0, 0], [0, 0], [0, 0]]
     ```
 
 === ":fontawesome-brands-rust: Rust"

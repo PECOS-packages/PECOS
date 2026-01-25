@@ -7,7 +7,8 @@ use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
 use pecos_qsim::{
-    ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, StdSparseStab,
+    ArbitraryRotationGateable, CliffordGateable, CoinToss, QuantumSimulator, StateVec,
+    StdSparseStab,
 };
 use std::any::Any;
 use std::fmt::Debug;
@@ -235,6 +236,26 @@ impl Engine for StateVecEngine {
                         );
                         self.simulator
                             .cz(usize::from(qubits[0]), usize::from(qubits[1]));
+                    }
+                }
+                // CH = Ry(π/4)_target, CX(control, target), Ry(-π/4)_target
+                GateType::CH => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "CH gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        debug!(
+                            "Processing CH gate with control {:?} and target {:?}",
+                            qubits[0], qubits[1]
+                        );
+                        let control = usize::from(qubits[0]);
+                        let target = usize::from(qubits[1]);
+                        self.simulator.ry(std::f64::consts::FRAC_PI_4, target);
+                        self.simulator.cx(control, target);
+                        self.simulator.ry(-std::f64::consts::FRAC_PI_4, target);
                     }
                 }
                 GateType::RZZ => {
@@ -781,6 +802,117 @@ impl QuantumEngine for SparseStabEngine {
 
         // Set the simulator's RNG
         self.simulator.set_rng(rng);
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// A quantum engine that uses a coin toss simulator
+///
+/// This engine ignores all quantum gates and returns random measurement results.
+/// Useful for testing classical control logic without quantum overhead.
+#[derive(Debug, Clone)]
+pub struct CoinTossEngine {
+    simulator: CoinToss,
+}
+
+impl CoinTossEngine {
+    /// Create a new coin toss engine with the specified number of qubits
+    #[must_use]
+    pub fn new(num_qubits: usize) -> Self {
+        Self {
+            simulator: CoinToss::new(num_qubits),
+        }
+    }
+
+    /// Create a new coin toss engine with a specific seed
+    #[must_use]
+    pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        Self {
+            simulator: CoinToss::with_seed(num_qubits, Some(seed)),
+        }
+    }
+
+    /// Create a new coin toss engine with custom probability
+    #[must_use]
+    pub fn with_prob(num_qubits: usize, prob: f64) -> Self {
+        Self {
+            simulator: CoinToss::with_prob(num_qubits, prob),
+        }
+    }
+
+    /// Create a new coin toss engine with custom probability and seed
+    #[must_use]
+    pub fn with_prob_and_seed(num_qubits: usize, prob: f64, seed: u64) -> Self {
+        Self {
+            simulator: CoinToss::with_prob_and_seed(num_qubits, prob, Some(seed)),
+        }
+    }
+}
+
+impl Engine for CoinTossEngine {
+    type Input = ByteMessage;
+    type Output = ByteMessage;
+
+    fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
+        let batch = message.quantum_ops()?;
+        let mut measurements = Vec::new();
+
+        for cmd in &batch {
+            match cmd.gate_type {
+                // All gates are no-ops for CoinToss - only measurements matter
+                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+                    for q in &cmd.qubits {
+                        debug!("CoinToss: Processing measurement on qubit {q:?}");
+                        let meas_result = self.simulator.mz(**q);
+                        let outcome = u32::from(meas_result.outcome);
+                        measurements.push(outcome);
+                    }
+                }
+                // All other gates are ignored
+                _ => {}
+            }
+        }
+
+        // Create a message with the measurement results
+        let mut builder = ByteMessage::outcomes_builder();
+        let outcomes: Vec<usize> = measurements.iter().map(|&m| m as usize).collect();
+        builder.add_outcomes(&outcomes);
+
+        Ok(builder.build())
+    }
+
+    fn reset(&mut self) -> Result<(), PecosError> {
+        self.simulator.reset();
+        Ok(())
+    }
+}
+
+impl RngManageable for CoinTossEngine {
+    type Rng = <CoinToss as RngManageable>::Rng;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.simulator.set_rng(rng);
+    }
+
+    fn rng(&self) -> &Self::Rng {
+        self.simulator.rng()
+    }
+
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        self.simulator.rng_mut()
+    }
+}
+
+impl QuantumEngine for CoinTossEngine {
+    fn set_seed(&mut self, seed: u64) {
+        self.simulator.set_seed(seed);
     }
 
     fn as_any(&self) -> &dyn Any {

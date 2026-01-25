@@ -77,6 +77,7 @@ impl PyQasmEngineBuilder {
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
+                foreign_object: None,
             }),
         })
     }
@@ -243,6 +244,7 @@ pub struct PyQasmSimBuilder {
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
+    pub(crate) foreign_object: Option<Py<PyAny>>,
 }
 
 /// Python wrapper for built QASM simulation
@@ -416,6 +418,7 @@ impl PyHugrEngineBuilder {
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
+                foreign_object: None,
             }),
         })
     }
@@ -429,6 +432,7 @@ pub struct PyHugrSimBuilder {
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
+    pub(crate) foreign_object: Option<Py<PyAny>>,
 }
 
 /// Python wrapper for built HUGR simulation

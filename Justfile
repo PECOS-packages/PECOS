@@ -138,10 +138,15 @@ docs-build:
 docs port="8000":
     cargo run -p pecos --features cli -- docs --port {{port}}
 
-# Test all code examples in documentation (generates pytest files and runs them)
+# Test Python code examples in documentation (excludes slow tests and Rust tests)
 docs-test:
     uv run python scripts/docs/generate_doc_tests.py
-    uv run pytest python/quantum-pecos/tests/docs/generated -v
+    uv run pytest python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
+
+# Test all Python code examples including slow tests (transversal CNOT - takes >2 hours)
+docs-test-slow:
+    uv run python scripts/docs/generate_doc_tests.py
+    uv run pytest python/quantum-pecos/tests/docs/generated -v -k "not rust"
 
 # Generate doc tests without running them
 docs-test-generate:

@@ -294,7 +294,7 @@ where
                 sim.mz(q);
             }
 
-            // Unsupported gates
+            // Unsupported gates (non-Clifford)
             GateType::SX
             | GateType::SXdg
             | GateType::SY
@@ -313,6 +313,7 @@ where
             | GateType::SZZdg
             | GateType::SWAP
             | GateType::CRZ
+            | GateType::CH
             | GateType::CCX => {
                 return Err(HugrExecutionError::UnsupportedGate {
                     gate_type: gate.gate_type,

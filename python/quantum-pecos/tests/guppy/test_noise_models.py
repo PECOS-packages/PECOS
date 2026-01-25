@@ -35,10 +35,12 @@ class TestNoiseModels:
             .quantum(state_vector())
             .seed(42)
             .run(10)
+            .to_dict()
         )
 
         # Should always measure |1⟩
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        raw_measurements = results.get("measurements", [])
+        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
         assert all(r == 1 for r in measurements)
 
     def test_depolarizing_noise_effect(self) -> None:
@@ -67,9 +69,11 @@ class TestNoiseModels:
             .noise(noise)
             .seed(42)
             .run(100)
+            .to_dict()
         )
 
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        raw_measurements = results.get("measurements", [])
+        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
 
         # With 0.2 depolarizing on X gate, we should see some 0s
         zeros = sum(1 for r in measurements if r == 0)
@@ -104,9 +108,11 @@ class TestNoiseModels:
             .noise(noise)
             .seed(42)
             .run(100)
+            .to_dict()
         )
 
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        raw_measurements = results.get("measurements", [])
+        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
 
         # Should see some errors
         zeros = sum(1 for r in measurements if r == 0)
@@ -135,9 +141,11 @@ class TestNoiseModels:
             .noise(noise_builder)
             .seed(42)
             .run(100)
+            .to_dict()
         )
 
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        raw_measurements = results.get("measurements", [])
+        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
 
         # Should see some errors but not too many
         sum(1 for r in measurements if r == 0)
@@ -163,6 +171,7 @@ class TestNoiseModels:
             .quantum(state_vector())
             .seed(42)
             .run(100)
+            .to_dict()
         )
 
         # Run with depolarizing noise - chain all probability setters
@@ -181,17 +190,16 @@ class TestNoiseModels:
             .noise(noise)
             .seed(42)
             .run(100)
+            .to_dict()
         )
 
-        # Extract measurements
-        m1_clean = results_clean.get("measurement_0", [])
-        m2_clean = results_clean.get("measurement_1", [])
-        m1_noisy = results_noisy.get("measurement_0", [])
-        m2_noisy = results_noisy.get("measurement_1", [])
+        # Extract measurements - format is [[m0, m1], [m0, m1], ...]
+        clean_measurements = results_clean.get("measurements", [])
+        noisy_measurements = results_noisy.get("measurements", [])
 
         # Check correlations
-        clean_corr = sum(1 for i in range(100) if m1_clean[i] == m2_clean[i])
-        noisy_corr = sum(1 for i in range(100) if m1_noisy[i] == m2_noisy[i])
+        clean_corr = sum(1 for m in clean_measurements if m[0] == m[1])
+        noisy_corr = sum(1 for m in noisy_measurements if m[0] == m[1])
 
         # Clean Bell state should have perfect correlation
         assert clean_corr == 100, "Clean Bell state should be perfectly correlated"
@@ -227,6 +235,7 @@ def test_noise_model_builder_pattern() -> None:
         .noise(noise1)
         .seed(42)
         .run(10)
+        .to_dict()
     )
 
     # Different seed should give different results
@@ -246,10 +255,13 @@ def test_noise_model_builder_pattern() -> None:
         .noise(noise2)
         .seed(43)
         .run(10)
+        .to_dict()
     )
 
-    measurements1 = results1.get("measurements", results1.get("measurement_0", []))
-    measurements2 = results2.get("measurements", results2.get("measurement_0", []))
+    raw_measurements1 = results1.get("measurements", [])
+    raw_measurements2 = results2.get("measurements", [])
+    measurements1 = [m[-1] if isinstance(m, list) else m for m in raw_measurements1]
+    measurements2 = [m[-1] if isinstance(m, list) else m for m in raw_measurements2]
 
     # With different seeds in noise models, we might get different error patterns
     # But with only 10 shots, they might be the same. Just check they both run.
@@ -277,9 +289,11 @@ def test_noise_on_single_qubit_gates() -> None:
         .noise(noise)
         .seed(42)
         .run(100)
+        .to_dict()
     )
 
-    measurements = results.get("measurements", results.get("measurement_0", []))
+    raw_measurements = results.get("measurements", [])
+    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
 
     # H followed by X should give |1⟩ without noise
     # With noise, we should see some 0s
@@ -306,9 +320,11 @@ def test_measurement_noise() -> None:
         .noise(noise)
         .seed(42)
         .run(100)
+        .to_dict()
     )
 
-    measurements = results.get("measurements", results.get("measurement_0", []))
+    raw_measurements = results.get("measurements", [])
+    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
 
     # X gate gives |1⟩, but measurement errors should flip some
     zeros = sum(1 for r in measurements if r == 0)

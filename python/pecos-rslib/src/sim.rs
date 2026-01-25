@@ -7,6 +7,9 @@
 // Import from pecos metacrate prelude
 use pecos::prelude::*;
 
+// Import QASM WASM support
+use pecos_qasm::QasmEngineWasm;
+
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -16,6 +19,7 @@ use crate::engine_builders::{
     PyPhirJsonSimBuilder, PyQasm, PyQasmEngineBuilder, PyQasmSimBuilder, PyQis,
     PyQisControlSimBuilder, PyQisEngineBuilder,
 };
+use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
 
 /// Check if a Python object is a Guppy function
 fn is_guppy_function(py: Python, obj: &Py<PyAny>) -> PyResult<bool> {
@@ -84,6 +88,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
+                foreign_object: None,
             }),
         })
     } else if let Ok(qis_prog) = program.extract::<PyQis>(py) {
@@ -150,6 +155,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
+                foreign_object: None,
             }),
         })
     } else if let Ok(phir_prog) = program.extract::<PyPhirJson>(py) {
@@ -359,6 +365,29 @@ impl PySimBuilder {
         })
     }
 
+    /// Set foreign object for WASM function calls
+    ///
+    /// The foreign object provides external function implementations that can be
+    /// called from within HUGR or QASM programs (e.g., WASM modules).
+    fn foreign_object(&mut self, foreign_obj: Py<PyAny>) -> PyResult<Self> {
+        match &mut self.inner {
+            SimBuilderInner::Hugr(builder) => {
+                builder.foreign_object = Some(foreign_obj);
+            }
+            SimBuilderInner::Qasm(builder) => {
+                builder.foreign_object = Some(foreign_obj);
+            }
+            SimBuilderInner::QisControl(_) | SimBuilderInner::PhirJson(_) | SimBuilderInner::Empty => {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "foreign_object() is only supported for HUGR and QASM programs",
+                ));
+            }
+        }
+        Ok(PySimBuilder {
+            inner: self.inner.clone(),
+        })
+    }
+
     /// Enable verbose output (no-op for now, reserved for future use)
     fn verbose(&mut self, _verbose: bool) -> PyResult<Self> {
         // Currently a no-op - placeholder for future verbose output support
@@ -426,6 +455,21 @@ impl PySimBuilder {
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+
+                // Apply foreign object if present
+                let engine_builder = if let Some(ref fo_py) = builder.foreign_object {
+                    Python::attach(|py| -> PyResult<_> {
+                        let fo_bound = fo_py.bind(py);
+                        let wasm_obj: PyRef<'_, PyWasmForeignObject> =
+                            fo_bound.downcast::<PyWasmForeignObject>()?.borrow();
+                        // Get WASM bytes and create QasmEngineWasm
+                        let wasm_bytes = wasm_obj.inner.wasm_bytes().to_vec();
+                        let qasm_wasm = QasmEngineWasm::from_bytes(wasm_bytes);
+                        Ok(engine_builder.wasm(qasm_wasm))
+                    })?
+                } else {
+                    engine_builder
+                };
 
                 // Create the Rust SimBuilder
                 let mut sim_builder = engine_builder.to_sim();
@@ -607,6 +651,18 @@ impl PySimBuilder {
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
 
+                // Apply foreign object if present
+                let engine_builder = if let Some(ref fo_py) = builder.foreign_object {
+                    Python::attach(|py| -> PyResult<_> {
+                        let fo_bound = fo_py.bind(py);
+                        let wasm_obj: PyRef<'_, PyWasmForeignObject> =
+                            fo_bound.downcast::<PyWasmForeignObject>()?.borrow();
+                        Ok(engine_builder.foreign_object(wasm_obj.clone_boxed()))
+                    })?
+                } else {
+                    engine_builder
+                };
+
                 let mut sim_builder = engine_builder.to_sim();
 
                 if let Some(seed) = builder.seed {
@@ -694,6 +750,19 @@ impl PySimBuilder {
                     let engine_builder = builder_lock
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+
+                    // Apply foreign object if present
+                    let engine_builder = if let Some(ref fo_py) = builder.foreign_object {
+                        let fo_bound = fo_py.bind(py);
+                        let wasm_obj: PyRef<'_, PyWasmForeignObject> =
+                            fo_bound.downcast::<PyWasmForeignObject>()?.borrow();
+                        // Get WASM bytes and create QasmEngineWasm
+                        let wasm_bytes = wasm_obj.inner.wasm_bytes().to_vec();
+                        let qasm_wasm = QasmEngineWasm::from_bytes(wasm_bytes);
+                        engine_builder.wasm(qasm_wasm)
+                    } else {
+                        engine_builder
+                    };
 
                     // Create the Rust SimBuilder
                     let mut sim_builder = engine_builder.to_sim();
@@ -944,6 +1013,16 @@ impl PySimBuilder {
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
 
+                    // Apply foreign object if present
+                    let engine_builder = if let Some(ref fo_py) = builder.foreign_object {
+                        let fo_bound = fo_py.bind(py);
+                        let wasm_obj: PyRef<'_, PyWasmForeignObject> =
+                            fo_bound.downcast::<PyWasmForeignObject>()?.borrow();
+                        engine_builder.foreign_object(wasm_obj.clone_boxed())
+                    } else {
+                        engine_builder
+                    };
+
                     let mut sim_builder = engine_builder.to_sim();
 
                     if let Some(seed) = builder.seed {
@@ -1039,6 +1118,7 @@ impl Clone for SimBuilderInner {
                     .map(|obj| obj.clone_ref(py)),
                 noise_builder: builder.noise_builder.as_ref().map(|obj| obj.clone_ref(py)),
                 explicit_num_qubits: builder.explicit_num_qubits,
+                foreign_object: builder.foreign_object.as_ref().map(|obj| obj.clone_ref(py)),
             }),
             SimBuilderInner::QisControl(builder) => {
                 SimBuilderInner::QisControl(PyQisControlSimBuilder {
@@ -1076,6 +1156,7 @@ impl Clone for SimBuilderInner {
                     .map(|obj| obj.clone_ref(py)),
                 noise_builder: builder.noise_builder.as_ref().map(|obj| obj.clone_ref(py)),
                 explicit_num_qubits: builder.explicit_num_qubits,
+                foreign_object: builder.foreign_object.as_ref().map(|obj| obj.clone_ref(py)),
             }),
             SimBuilderInner::Empty => SimBuilderInner::Empty,
         })

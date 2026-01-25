@@ -340,8 +340,6 @@ WASM functions can be called from QASM programs using the foreign function synta
 
 === ":fontawesome-brands-python: Python"
 
-    <!--skip: SimBuilder.foreign_object() API not yet exposed in Python bindings-->
-
     ```python
     from pecos import sim, Qasm
     from pecos_rslib import WasmForeignObject
@@ -364,20 +362,37 @@ WASM functions can be called from QASM programs using the foreign function synta
         measure q -> c;
     """
 
-    # Create WASM foreign object
-    wasm = WasmForeignObject.from_file("math.wasm")
+    # Create WASM foreign object from WAT file
+    wasm = WasmForeignObject.from_file("math.wat")
 
     # Run simulation with foreign object
-    results = sim(Qasm(qasm_code)).foreign_object(wasm).run(100)
+    results = sim(Qasm(qasm_code)).foreign_object(wasm).run(10)
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
-    <!--skip: QASM foreign function calls not yet supported in Rust simulation pipeline-->
+    ```hidden-rust
+    use pecos::prelude::*;
+    use std::fs;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let wat = r#"(module
+          (func $init)
+          (func $add (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.add))
+          (memory (;0;) 1)
+          (export "init" (func $init))
+          (export "add" (func $add))
+          (export "memory" (memory 0))
+        )"#;
+        fs::write("math.wasm", wat)?;
+
+        // CODE
+        Ok(())
+    }
+    ```
 
     ```rust
     use pecos::prelude::*;
-    use pecos::wasm::WasmForeignObject;
 
     let qasm_code = r#"
         OPENQASM 2.0;
@@ -394,10 +409,11 @@ WASM functions can be called from QASM programs using the foreign function synta
         measure q -> c;
     "#;
 
-    let wasm = WasmForeignObject::new("math.wasm")?;
-
-    let results = sim(Qasm::from_string(qasm_code))
-        .foreign_object(Box::new(wasm))
+    // Build engine with WASM foreign functions
+    let results = qasm_engine()
+        .qasm(qasm_code)
+        .wasm("math.wasm")  // Load WASM module for foreign functions
+        .to_sim()
         .run(100)?;
     ```
 
@@ -522,14 +538,27 @@ You can limit the memory available to WASM modules:
 
 WASM foreign objects support Python pickling for distributed execution:
 
-<!--skip: Pickling requires proper module context not available in exec() test environment-->
+```hidden-python
+# Create a simple math.wat file for the pickling example
+math_wat = """
+(module
+  (func (export "add") (param i64 i64) (result i64)
+    local.get 0
+    local.get 1
+    i64.add)
+  (func (export "init"))
+)
+"""
+with open("math.wat", "w") as f:
+    f.write(math_wat)
+```
 
 ```python
 import pickle
 from pecos_rslib import WasmForeignObject
 
 # Create and configure
-wasm = WasmForeignObject.from_file("math.wasm", timeout=5.0)
+wasm = WasmForeignObject.from_file("math.wat", timeout=5.0)
 wasm.init()
 
 # Serialize
@@ -541,13 +570,32 @@ wasm_restored.init()
 
 # Use normally
 result = wasm_restored.exec("add", [1, 2])
+assert result == 3
 ```
 
 You can also use the explicit `to_dict()` and `from_dict()` methods:
 
-<!--skip: Serialization methods require wasm object from previous block-->
+```hidden-python
+# Create a simple math.wat file for the to_dict/from_dict example
+math_wat = """
+(module
+  (func (export "add") (param i64 i64) (result i64)
+    local.get 0
+    local.get 1
+    i64.add)
+  (func (export "init"))
+)
+"""
+with open("math.wat", "w") as f:
+    f.write(math_wat)
+```
 
 ```python
+from pecos_rslib import WasmForeignObject
+
+# Create WASM object
+wasm = WasmForeignObject.from_file("math.wat")
+
 # Serialize to dict
 state = wasm.to_dict()
 
@@ -632,9 +680,14 @@ for shot in range(1000):
 
 To completely reset a module (re-run `init`):
 
-<!--skip: Requires wasm object from previous block-->
-
 ```python
+from pecos_rslib import WasmForeignObject
+
+# Create WASM object
+wasm = WasmForeignObject.from_file("math.wat")
+wasm.init()
+
+# Later, to completely reset:
 wasm.new_instance()  # Creates a fresh WASM instance
 wasm.init()  # Re-initialize
 ```
@@ -642,8 +695,6 @@ wasm.init()  # Re-initialize
 ## Error Handling
 
 === ":fontawesome-brands-python: Python"
-
-    <!--skip: Error handling examples intentionally use non-existent files-->
 
     ```python
     from pecos_rslib import WasmForeignObject
@@ -660,32 +711,24 @@ wasm.init()  # Re-initialize
     except RuntimeError as e:
         print(f"Compilation error: {e}")
 
-    # Function not found
+    # Function not found - need a valid wasm first
+    wasm = WasmForeignObject.from_file("math.wasm")
+    wasm.init()
     try:
         wasm.exec("nonexistent_function", [])
     except RuntimeError as e:
         print(f"Execution error: {e}")
-
-    # Timeout
-    try:
-        wasm.exec("infinite_loop", [])
-    except RuntimeError as e:
-        print(f"Timeout: {e}")
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
-    <!--skip: Error handling examples intentionally use non-existent files-->
-
     ```rust
     use pecos::wasm::WasmForeignObject;
-    use pecos_core::errors::PecosError;
 
+    // File not found error - this intentionally fails
     match WasmForeignObject::new("nonexistent.wasm") {
-        Err(PecosError::Input(msg)) => println!("File error: {}", msg),
-        Err(PecosError::Processing(msg)) => println!("Compilation error: {}", msg),
-        Err(e) => println!("Other error: {}", e),
-        Ok(_) => println!("Success"),
+        Err(e) => println!("Expected error: {}", e),
+        Ok(_) => println!("Unexpected success"),
     }
     ```
 

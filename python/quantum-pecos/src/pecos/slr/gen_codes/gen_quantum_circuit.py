@@ -13,8 +13,11 @@
 
 from __future__ import annotations
 
+import copy
+
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.slr.gen_codes.generator import Generator
+from pecos.slr.vars import LoopVar, SymbolicElem
 
 
 class QuantumCircuitGenerator(Generator):
@@ -28,6 +31,7 @@ class QuantumCircuitGenerator(Generator):
         self.current_tick = {}  # Accumulate operations for current tick
         self.current_scope = None
         self.permutation_map = {}
+        self.loop_var_values = {}  # Maps LoopVar to current iteration value
 
     def get_circuit(self) -> QuantumCircuit:
         """Get the generated QuantumCircuit.
@@ -108,15 +112,20 @@ class QuantumCircuitGenerator(Generator):
         if block_name == "For":
             # For loops - unroll them properly
             self._flush_tick()
+            loop_var = block.var  # LoopVar object
             # Check if we can determine the iteration count
-            if hasattr(block, "iterable"):
+            if hasattr(block, "iterable") and block.iterable is not None:
                 # For(i, range(n)) or For(i, iterable)
                 if hasattr(block.iterable, "__iter__"):
                     # Unroll the loop for each iteration
                     iterations = list(block.iterable)
-                    for _ in iterations:
+                    for iter_val in iterations:
+                        self.loop_var_values[loop_var] = iter_val
                         for op in block.ops:
-                            self._handle_op(op)
+                            resolved_op = self._resolve_symbolic(op, loop_var, iter_val)
+                            self._handle_op(resolved_op)
+                    # Clean up loop variable
+                    del self.loop_var_values[loop_var]
                 else:
                     msg = f"Cannot unroll For loop with non-iterable: {block.iterable}"
                     raise ValueError(
@@ -137,9 +146,13 @@ class QuantumCircuitGenerator(Generator):
                     raise ValueError(
                         msg,
                     )
-                for _ in range(block.start, block.stop, step):
+                for iter_val in range(block.start, block.stop, step):
+                    self.loop_var_values[loop_var] = iter_val
                     for op in block.ops:
-                        self._handle_op(op)
+                        resolved_op = self._resolve_symbolic(op, loop_var, iter_val)
+                        self._handle_op(resolved_op)
+                # Clean up loop variable
+                del self.loop_var_values[loop_var]
             else:
                 msg = f"For loop missing required attributes (iterable or start/stop): {block}"
                 raise ValueError(
@@ -183,6 +196,57 @@ class QuantumCircuitGenerator(Generator):
 
         self.current_scope = previous_scope
         self.exit_block(block)
+
+    def _resolve_symbolic(self, op, loop_var: LoopVar, value: int):
+        """Resolve symbolic elements in an operation to concrete elements.
+
+        Creates a copy of the operation with any symbolic elements that reference
+        the given loop variable resolved to their concrete values.
+
+        Args:
+            op: The operation to resolve
+            loop_var: The loop variable to resolve
+            value: The concrete value to substitute
+
+        Returns:
+            A new operation with resolved elements, or the original if no
+            symbolic elements were found
+        """
+        # Check if op has qargs (quantum gate arguments)
+        if not hasattr(op, "qargs"):
+            return op
+
+        qargs = op.qargs
+        if qargs is None:
+            return op
+
+        # Check if any qargs are symbolic and need resolution
+        needs_resolution = False
+        if isinstance(qargs, (list, tuple)):
+            for arg in qargs:
+                if isinstance(arg, SymbolicElem) and arg.index_var is loop_var:
+                    needs_resolution = True
+                    break
+        elif isinstance(qargs, SymbolicElem) and qargs.index_var is loop_var:
+            needs_resolution = True
+
+        if not needs_resolution:
+            return op
+
+        # Create a copy and resolve the symbolic elements
+        resolved_op = copy.copy(op)
+        if isinstance(qargs, (list, tuple)):
+            resolved_qargs = []
+            for arg in qargs:
+                if isinstance(arg, SymbolicElem) and arg.index_var is loop_var:
+                    resolved_qargs.append(arg.resolve(value))
+                else:
+                    resolved_qargs.append(arg)
+            resolved_op.qargs = type(qargs)(resolved_qargs)
+        elif isinstance(qargs, SymbolicElem) and qargs.index_var is loop_var:
+            resolved_op.qargs = qargs.resolve(value)
+
+        return resolved_op
 
     def _handle_op(self, op, *, flush: bool = True):
         """Handle a single operation."""

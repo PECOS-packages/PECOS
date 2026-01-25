@@ -1,20 +1,5 @@
 # QASM Simulations
 
-```hidden-python
-from pecos import sim, Qasm, depolarizing_noise, biased_depolarizing_noise, GeneralNoiseModelBuilder
-from pecos_rslib import sparse_stabilizer, state_vector
-
-qasm_code = """
-    OPENQASM 2.0;
-    include "qelib1.inc";
-    qreg q[2];
-    creg c[2];
-    h q[0];
-    cx q[0], q[1];
-    measure q -> c;
-"""
-```
-
 ```hidden-rust
 use pecos::prelude::*;
 use pecos::quantum::{sparse_stabilizer, state_vector};
@@ -182,6 +167,16 @@ lets you build the experiment once and rerun it multiple times:
     ```python
     from pecos import sim, Qasm, depolarizing_noise
 
+    qasm_code = """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    """
+
     # Build once, run multiple times
     experiment = (
         sim(Qasm(qasm_code))
@@ -199,6 +194,16 @@ lets you build the experiment once and rerun it multiple times:
 
     ```rust
     use pecos::prelude::*;
+
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
 
     let program = Qasm::from_string(qasm_code);
 
@@ -319,6 +324,16 @@ PECOS provides different engines optimized for different types of circuits:
     from pecos import sim, Qasm
     from pecos_rslib import sparse_stabilizer, state_vector
 
+    qasm_code = """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    """
+
     # Sparse stabilizer (default, efficient for Clifford circuits)
     results = sim(Qasm(qasm_code)).quantum(sparse_stabilizer()).run(1000)
 
@@ -331,6 +346,18 @@ PECOS provides different engines optimized for different types of circuits:
     ```rust
     use pecos::prelude::*;
     use pecos::quantum::{sparse_stabilizer, state_vector};
+
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+
+    let program = Qasm::from_string(qasm_code);
 
     // Sparse stabilizer (default, efficient for Clifford circuits)
     let results = sim(program.clone())
@@ -352,6 +379,16 @@ Simulation results come back as measurement outcomes for each shot. These can be
     ```python
     from pecos import sim, Qasm
     from collections import Counter
+
+    qasm_code = """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    """
 
     results = sim(Qasm(qasm_code)).run(1000)
 
@@ -376,6 +413,17 @@ Simulation results come back as measurement outcomes for each shot. These can be
     ```rust
     use pecos::prelude::*;
 
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+
+    let program = Qasm::from_string(qasm_code);
     let results = sim(program).run(1000)?;
 
     // Results come as ShotVec
@@ -547,6 +595,16 @@ For many shots, you can use multiple CPU cores to speed up simulation:
     ```python
     from pecos import sim, Qasm
 
+    qasm_code = """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    """
+
     # Single-threaded (default)
     results = sim(Qasm(qasm_code)).run(100000)
 
@@ -561,6 +619,18 @@ For many shots, you can use multiple CPU cores to speed up simulation:
 
     ```rust
     use pecos::prelude::*;
+
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+
+    let program = Qasm::from_string(qasm_code);
 
     // Single threaded (default)
     let results = sim(program.clone()).workers(1).run(100000)?;

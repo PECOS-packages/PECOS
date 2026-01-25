@@ -60,12 +60,39 @@ class GuppyPipelineTest:
                 builder = sim(Guppy(func)).qubits(n_qubits).quantum(state_vector())
                 if seed is not None:
                     builder = builder.seed(seed)
-                result_dict = builder.run(shots)
+                result_obj = builder.run(shots)
+                result_dict = result_obj.to_dict()
 
                 # Format results to match expected structure
                 measurements = []
                 if "measurements" in result_dict:
-                    measurements = result_dict["measurements"]
+                    # measurements is a list of lists like [[1], [0, 1], ...]
+                    # For functions returning single bool, extract the last measurement per shot
+                    raw_measurements = result_dict["measurements"]
+                    if raw_measurements and isinstance(raw_measurements[0], list):
+                        # Check if function returns single bool or tuple
+                        import inspect
+                        actual_func = func
+                        if hasattr(func, "wrapped") and hasattr(func.wrapped, "python_func"):
+                            actual_func = func.wrapped.python_func
+                        try:
+                            sig = inspect.signature(actual_func)
+                            return_type = sig.return_annotation
+                            is_tuple_return = (
+                                hasattr(return_type, "__origin__")
+                                and return_type.__origin__ is tuple
+                            )
+                        except (ValueError, TypeError):
+                            is_tuple_return = False
+
+                        if is_tuple_return:
+                            # Return full measurement tuples
+                            measurements = [tuple(m) for m in raw_measurements]
+                        else:
+                            # For single bool return, take the last measurement from each shot
+                            measurements = [m[-1] if m else 0 for m in raw_measurements]
+                    else:
+                        measurements = raw_measurements
                 elif "measurement_0" in result_dict:
                     # Handle multiple measurements
                     num_shots = len(result_dict["measurement_0"])

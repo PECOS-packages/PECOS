@@ -9,15 +9,20 @@ from pecos_rslib import qasm_engine, qis_engine
 
 def _verify_bell_correlation(results: dict, label: str) -> None:
     """Verify Bell state measurement correlation with detailed diagnostics."""
-    assert (
-        "measurement_0" in results
-    ), f"{label}: measurement_0 not found in {list(results.keys())}"
-    assert (
-        "measurement_1" in results
-    ), f"{label}: measurement_1 not found in {list(results.keys())}"
+    # Handle both key formats: measurement_0/measurement_1 or q0/q1
+    if "measurement_0" in results:
+        m0_key, m1_key = "measurement_0", "measurement_1"
+    elif "q0" in results:
+        m0_key, m1_key = "q0", "q1"
+    else:
+        raise AssertionError(f"{label}: Expected measurement_0 or q0 in {list(results.keys())}")
 
-    m0_list = results["measurement_0"]
-    m1_list = results["measurement_1"]
+    assert (
+        m1_key in results
+    ), f"{label}: {m1_key} not found in {list(results.keys())}"
+
+    m0_list = results[m0_key]
+    m1_list = results[m1_key]
 
     # Verify lists have same length (crucial for correct shot alignment)
     assert len(m0_list) == len(m1_list), (
@@ -181,10 +186,14 @@ def test_engine_override_with_noise() -> None:
     )
 
     # With noise, we should see both 0 and 1 outcomes
-    assert (
-        "measurement_0" in results
-    ), f"measurement_0 not found in {list(results.keys())}"
-    values = results["measurement_0"]
+    # Handle both key formats: measurement_0 or q0
+    if "measurement_0" in results:
+        m_key = "measurement_0"
+    elif "q0" in results:
+        m_key = "q0"
+    else:
+        raise AssertionError(f"Expected measurement_0 or q0 in {list(results.keys())}")
+    values = results[m_key]
     # Values are integers (0 or 1), not strings
     zeros = sum(1 for v in values if v == 0)
     ones = sum(1 for v in values if v == 1)

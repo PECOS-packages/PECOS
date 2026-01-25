@@ -73,13 +73,11 @@ The generated program produces these result keys:
 | `synz` | Z syndrome per round |
 | `final` | Final data qubit measurements |
 
-```hidden-python
+```python
 from pecos import sim, state_vector
 from pecos.guppy import make_surface_code
-prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
-```
 
-```python
+prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
 results = sim(prog).qubits(17).quantum(state_vector()).run(10)
 data = results.to_dict()
 
@@ -140,6 +138,7 @@ Transversal CNOT applies `CX(ctrl[i], tgt[i])` for all data qubits between two c
 
 ### Generic CSS Transversal CNOT
 
+<!--mark.slow-->
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_css_transversal_cnot, get_transversal_num_qubits
@@ -162,6 +161,7 @@ results = sim(prog).qubits(num_qubits).quantum(state_vector()).seed(42).run(100)
 
 Test the logical CNOT by preparing `|1_L>|0_L>` and verifying it becomes `|1_L>|1_L>`:
 
+<!--mark.slow-->
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_css_transversal_cnot_with_x, get_transversal_num_qubits
@@ -186,6 +186,7 @@ final_tgt = data.get("final_tgt", [])
 
 For common cases, use the convenience functions:
 
+<!--mark.slow-->
 ```python
 from pecos.guppy import (
     # Color code transversal CNOT

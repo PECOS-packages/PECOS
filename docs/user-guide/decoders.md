@@ -112,15 +112,14 @@ The Rust API provides access to a broader set of decoders:
 
 The `MWPM2D` decoder implements Minimum Weight Perfect Matching for 2D topological codes.
 
-<!--skip-->
 ```python
-from pecos.decoders import MWPM2D
+import pecos as pc
 
-# Create decoder for a surface code
-decoder = MWPM2D()
+# Create a surface code first
+surface = pc.qeccs.Surface4444(distance=3)
 
-# Use with a QEC simulation
-# (typically integrated with PECOS QEC protocols)
+# Create decoder with the QECC
+decoder = pc.decoders.MWPM2D(surface)
 ```
 
 ### DummyDecoder

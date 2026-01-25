@@ -1009,7 +1009,7 @@ pub fn verify_swap_decomposition<
     dm1.x(&[QubitId::new(1)]);
     dm1.swap(&[QubitId::new(0), QubitId::new(1)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm1, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm1, num_qubits);
 
     // Apply decomposition: CX(0,1) CX(1,0) CX(0,1)
     sim.reset();
@@ -1026,7 +1026,7 @@ pub fn verify_swap_decomposition<
     dm2.cx(&[QubitId::new(1), QubitId::new(0)]);
     dm2.cx(&[QubitId::new(0), QubitId::new(1)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm2, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm2, num_qubits);
 }
 
 /// Verify CZ = H(target) CX H(target).
@@ -1047,7 +1047,7 @@ pub fn verify_cz_decomposition<
     dm1.h(&[QubitId::new(1)]);
     dm1.cz(&[QubitId::new(0), QubitId::new(1)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm1, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm1, num_qubits);
 
     // Apply decomposition: H(1) CX(0,1) H(1)
     sim.reset();
@@ -1064,7 +1064,7 @@ pub fn verify_cz_decomposition<
     dm2.cx(&[QubitId::new(0), QubitId::new(1)]);
     dm2.h(&[QubitId::new(1)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm2, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm2, num_qubits);
 }
 
 /// Verify CY = S(target) CX Sdg(target).
@@ -1083,7 +1083,7 @@ pub fn verify_cy_decomposition<
     dm1.h(&[QubitId::new(0)]);
     dm1.cy(&[QubitId::new(0), QubitId::new(1)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm1, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm1, num_qubits);
 
     // Apply decomposition: Sdg(1) CX(0,1) S(1)
     sim.reset();
@@ -1098,7 +1098,7 @@ pub fn verify_cy_decomposition<
     dm2.cx(&[QubitId::new(0), QubitId::new(1)]);
     dm2.sz(&[QubitId::new(1)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm2, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm2, num_qubits);
 }
 
 /// Verify X = H Z H.
@@ -1117,7 +1117,7 @@ pub fn verify_x_decomposition<
     dm1.h(&[QubitId::new(0)]);
     dm1.x(&[QubitId::new(0)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm1, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm1, num_qubits);
 
     // Apply decomposition: H Z H
     sim.reset();
@@ -1132,7 +1132,7 @@ pub fn verify_x_decomposition<
     dm2.z(&[QubitId::new(0)]);
     dm2.h(&[QubitId::new(0)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm2, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm2, num_qubits);
 }
 
 /// Verify Y = S X S^dag = S H Z H S^dag.
@@ -1151,7 +1151,7 @@ pub fn verify_y_decomposition<
     dm1.h(&[QubitId::new(0)]);
     dm1.y(&[QubitId::new(0)]);
 
-    verify_probabilities_match_density_matrix(sim, &dm1, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm1, num_qubits);
 
     // Apply decomposition: S X Sdg
     sim.reset();
@@ -1678,7 +1678,7 @@ pub fn verify_probabilities_match_density_matrix<
     S: CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone,
 >(
     sim: &S,
-    dm: &DensityMatrix,
+    dm: &mut DensityMatrix,
     num_qubits: usize,
 ) {
     const TOLERANCE: f64 = 1e-10;
@@ -1870,7 +1870,7 @@ pub fn verify_random_circuit_matches_density_matrix<
     apply_circuit(&mut dm, &circuit);
 
     // Compare probabilities
-    verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
 }
 
 /// Run multiple random circuit tests with different seeds.
@@ -2414,7 +2414,7 @@ pub fn verify_single_qubit_only_circuit<
     let mut dm = DensityMatrix::new(num_qubits);
     apply_circuit(&mut dm, &circuit);
 
-    verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
 }
 
 /// Verify two-qubit-only circuits match `DensityMatrix`.
@@ -2436,7 +2436,7 @@ pub fn verify_two_qubit_only_circuit<
     let mut dm = DensityMatrix::new(num_qubits);
     apply_circuit(&mut dm, &circuit);
 
-    verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
 }
 
 // ============================================================================
@@ -2523,14 +2523,14 @@ pub fn run_full_stabilizer_test_suite<
     // Test initial state
     sim.reset();
     dm.reset();
-    verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
 
     // Test after H on first qubit
     sim.reset();
     dm.reset();
     sim.h(&[QubitId::new(0)]);
     dm.h(&[QubitId::new(0)]);
-    verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
+    verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
 
     // Test Bell state (if 2+ qubits)
     if num_qubits >= 2 {
@@ -2540,7 +2540,7 @@ pub fn run_full_stabilizer_test_suite<
         sim.cx(&[QubitId::new(0), QubitId::new(1)]);
         dm.h(&[QubitId::new(0)]);
         dm.cx(&[QubitId::new(0), QubitId::new(1)]);
-        verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
+        verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
     }
 
     // Test GHZ state (if 3+ qubits)
@@ -2553,7 +2553,7 @@ pub fn run_full_stabilizer_test_suite<
             sim.cx(&[QubitId::new(i), QubitId::new(i + 1)]);
             dm.cx(&[QubitId::new(i), QubitId::new(i + 1)]);
         }
-        verify_probabilities_match_density_matrix(sim, &dm, num_qubits);
+        verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
     }
 
     // ========== Mid-Circuit Measurement Tests ==========

@@ -8,7 +8,7 @@ use std::f64::consts::PI;
 #[test]
 fn test_new_density_matrix() {
     // Create a new 1-qubit density matrix
-    let dm = DensityMatrix::new(1);
+    let mut dm = DensityMatrix::new(1);
 
     // Check that it represents |0⟩⟨0|
     assert!((dm.probability(0) - 1.0).abs() < 1e-10);

@@ -297,7 +297,7 @@ where
     ///
     /// # Examples
     /// ```
-    /// use pecos_qsim::state_vec::StateVecAoS;
+    /// use pecos_qsim::StateVecAoS;
     /// use std::f64::consts::FRAC_1_SQRT_2;
     /// use num_complex::Complex64;
     /// let mut q = StateVecAoS::new(1);

@@ -194,10 +194,24 @@ where
     /// ```
     #[inline]
     #[must_use]
-    pub fn get_density_matrix(&self) -> Vec<Vec<Complex64>> {
-        let n = self.num_physical_qubits;
-        let dim = 1 << n;
+    pub fn get_density_matrix(&mut self) -> Vec<Vec<Complex64>> {
         let sv = self.state_vector.state();
+        Self::density_matrix_from_state_vec(&sv, self.num_physical_qubits)
+    }
+
+    /// Get the density matrix without flushing pending gates.
+    ///
+    /// This method is used for Display since Display requires &self.
+    /// WARNING: May return stale data if gates are pending.
+    fn get_density_matrix_no_flush(&self) -> Vec<Vec<Complex64>> {
+        let sv = self.state_vector.state_no_flush();
+        Self::density_matrix_from_state_vec(&sv, self.num_physical_qubits)
+    }
+
+    /// Helper to compute density matrix from a state vector.
+    fn density_matrix_from_state_vec(sv: &[Complex64], num_physical_qubits: usize) -> Vec<Vec<Complex64>> {
+        let n = num_physical_qubits;
+        let dim = 1 << n;
 
         // Initialize density matrix with zeros
         let mut rho = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
@@ -251,14 +265,26 @@ where
     /// ```
     #[inline]
     #[must_use]
-    pub fn density_matrix_to_string(&self, precision: usize, threshold: f64) -> String {
+    pub fn density_matrix_to_string(&mut self, precision: usize, threshold: f64) -> String {
         let rho = self.get_density_matrix();
+        Self::format_density_matrix(&rho, precision, threshold)
+    }
+
+    /// Format density matrix to string without flushing pending gates.
+    /// Used by Display since Display requires &self.
+    fn density_matrix_to_string_no_flush(&self, precision: usize, threshold: f64) -> String {
+        let rho = self.get_density_matrix_no_flush();
+        Self::format_density_matrix(&rho, precision, threshold)
+    }
+
+    /// Helper to format a density matrix to string.
+    fn format_density_matrix(rho: &[Vec<Complex64>], precision: usize, threshold: f64) -> String {
         let dim = rho.len();
 
         let mut result = String::with_capacity(dim * dim * (precision + 8));
         result.push_str("Density matrix (ρ):\n");
 
-        for rho_row in &rho {
+        for rho_row in rho {
             result.push('[');
             for (col, val) in rho_row.iter().enumerate() {
                 // Apply threshold to small values
@@ -327,7 +353,7 @@ where
     /// ```
     #[inline]
     #[must_use]
-    pub fn get_flattened_density_matrix(&self) -> Vec<Complex64> {
+    pub fn get_flattened_density_matrix(&mut self) -> Vec<Complex64> {
         self.get_density_matrix().into_iter().flatten().collect()
     }
 
@@ -343,7 +369,7 @@ where
     /// Code will panic if `basis_state` >= `2^num_qubits` (i.e., if the basis state index is too large for the number of qubits)
     #[inline]
     #[must_use]
-    pub fn probability(&self, basis_state: usize) -> f64 {
+    pub fn probability(&mut self, basis_state: usize) -> f64 {
         assert!(basis_state < 1 << self.num_physical_qubits);
 
         // In the Choi representation, the diagonal elements of the density matrix
@@ -351,13 +377,16 @@ where
         let n = self.num_physical_qubits;
         let basis_mask = (1 << n) - 1;
 
+        // Get state once and cache it
+        let sv = self.state_vector.state();
+
         // Calculate probability by summing appropriate elements
         let mut prob = 0.0;
         for i in 0..(1 << n) {
             // Map to the corresponding index in the state vector
             // For the element ρ_{basis_state,basis_state} in density matrix
             let state_idx = ((basis_state & basis_mask) << n) | (i & basis_mask);
-            prob += self.state_vector.state()[state_idx].norm_sqr();
+            prob += sv[state_idx].norm_sqr();
         }
 
         prob
@@ -372,7 +401,7 @@ where
     /// * `f64` - The purity of the quantum state
     #[inline]
     #[must_use]
-    pub fn purity(&self) -> f64 {
+    pub fn purity(&mut self) -> f64 {
         // Purity = Tr(rho^2) = sum_{i,j} |rho[i][j]|^2
         self.get_density_matrix()
             .iter()
@@ -389,7 +418,7 @@ where
     /// * `bool` - True if the state is pure, false otherwise
     #[inline]
     #[must_use]
-    pub fn is_pure(&self) -> bool {
+    pub fn is_pure(&mut self) -> bool {
         const TOLERANCE: f64 = 1e-10;
         (self.purity() - 1.0).abs() < TOLERANCE
     }
@@ -419,7 +448,8 @@ where
         new_state[idx] = Complex64::new(1.0, 0.0);
 
         // Update the state vector
-        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        *self.state_vector_mut() = new_sv;
 
         self
     }
@@ -471,7 +501,8 @@ where
         }
 
         // Update the state vector
-        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        *self.state_vector_mut() = new_sv;
 
         self
     }
@@ -580,7 +611,8 @@ where
             }
         }
 
-        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        *self.state_vector_mut() = new_sv;
     }
 
     /// Apply a amplitude damping noise channel to a qubit
@@ -608,11 +640,11 @@ where
         // E_0 = |0⟩⟨0| + sqrt(1 - gamma) |1⟩⟨1|
         // E_1 = sqrt(gamma) |0⟩⟨1|
 
-        // Create a copy of the current state
-        let original_state = self.clone();
+        // Get the current state vector values
+        let n = self.num_physical_qubits;
+        let original_sv = self.state_vector.state();
 
         // Reset state first
-        let n = self.num_physical_qubits;
         let sv_size = 1 << (2 * n);
         let mut new_state = vec![num_complex::Complex64::new(0.0, 0.0); sv_size];
 
@@ -638,27 +670,24 @@ where
                     let j_with_0 = j & !qubit_mask;
 
                     // Apply damping
-                    new_state[idx_i_j] +=
-                        (1.0 - gamma) * original_state.state_vector().state()[idx_i_j];
-                    new_state[(i_with_0 << n) | j_with_0] +=
-                        gamma * original_state.state_vector().state()[idx_i_j];
+                    new_state[idx_i_j] += (1.0 - gamma) * original_sv[idx_i_j];
+                    new_state[(i_with_0 << n) | j_with_0] += gamma * original_sv[idx_i_j];
                 } else if i_has_1 && !j_has_1 {
                     // Case |1⟩⟨0| -> sqrt(1-gamma)|1⟩⟨0|
-                    new_state[idx_i_j] +=
-                        (1.0 - gamma).sqrt() * original_state.state_vector().state()[idx_i_j];
+                    new_state[idx_i_j] += (1.0 - gamma).sqrt() * original_sv[idx_i_j];
                 } else if !i_has_1 && j_has_1 {
                     // Case |0⟩⟨1| -> sqrt(1-gamma)|0⟩⟨1|
-                    new_state[idx_i_j] +=
-                        (1.0 - gamma).sqrt() * original_state.state_vector().state()[idx_i_j];
+                    new_state[idx_i_j] += (1.0 - gamma).sqrt() * original_sv[idx_i_j];
                 } else {
                     // Case |0⟩⟨0| -> |0⟩⟨0| + damping from |1⟩ states (added above)
-                    new_state[idx_i_j] += original_state.state_vector().state()[idx_i_j];
+                    new_state[idx_i_j] += original_sv[idx_i_j];
                 }
             }
         }
 
         // Update the state vector
-        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        *self.state_vector_mut() = new_sv;
 
         self
     }
@@ -689,11 +718,11 @@ where
         // E_0 = |0⟩⟨0| + sqrt(1 - lambda) |1⟩⟨1|
         // E_1 = sqrt(lambda) |1⟩⟨1|
 
-        // Create a copy of the current state
-        let original_state = self.clone();
+        // Get the current state vector values
+        let n = self.num_physical_qubits;
+        let original_sv = self.state_vector.state();
 
         // Reset state first
-        let n = self.num_physical_qubits;
         let sv_size = 1 << (2 * n);
         let mut new_state = vec![num_complex::Complex64::new(0.0, 0.0); sv_size];
 
@@ -715,17 +744,17 @@ where
 
                 if i_has_1 == j_has_1 {
                     // Diagonal elements are preserved
-                    new_state[idx_i_j] += original_state.state_vector().state()[idx_i_j];
+                    new_state[idx_i_j] += original_sv[idx_i_j];
                 } else {
                     // Off-diagonal elements involving the qubit get damped
-                    new_state[idx_i_j] +=
-                        (1.0 - lambda).sqrt() * original_state.state_vector().state()[idx_i_j];
+                    new_state[idx_i_j] += (1.0 - lambda).sqrt() * original_sv[idx_i_j];
                 }
             }
         }
 
         // Update the state vector
-        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        *self.state_vector_mut() = new_sv;
 
         self
     }
@@ -860,7 +889,7 @@ where
     /// println!("{}", state);
     /// ```
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.density_matrix_to_string(4, 1e-10))
+        write!(f, "{}", self.density_matrix_to_string_no_flush(4, 1e-10))
     }
 }
 
@@ -1066,8 +1095,8 @@ where
             }
 
             // Update the state vector
-            *self.state_vector_mut() =
-                StateVec::from_state(new_state, self.state_vector.rng().clone());
+            let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+            *self.state_vector_mut() = new_sv;
 
             results.push(MeasurementResult {
                 outcome,
@@ -1200,7 +1229,7 @@ mod tests {
     #[test]
     fn test_new_density_matrix() {
         // Create a new 1-qubit density matrix
-        let dm = DensityMatrix::new(1);
+        let mut dm = DensityMatrix::new(1);
 
         // Check that it represents |0⟩⟨0|
         assert!((dm.probability(0) - 1.0).abs() < 1e-10);

@@ -22,1236 +22,8 @@ use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
-use std::cell::RefCell;
 use std::fmt::Debug;
 use wide::f64x4;
-
-// =============================================================================
-// SIMD Gate Implementation Macros
-// =============================================================================
-//
-// These macros generate SIMD-optimized single-qubit gate implementations.
-// They handle the boilerplate of scalar fallback for small steps and SIMD
-// processing for step >= 4.
-
-/// Macro for phase gates that only modify the |1⟩ component.
-/// Supported phases: i, neg_i, neg_one
-macro_rules! apply_phase_gate_simd {
-    // SZ: multiply |1⟩ by i: (re, im) -> (-im, re)
-    ($self:expr, $q:expr, i) => {{
-        let step = 1 << $q;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re, im) = ($self.real[p], $self.imag[p]);
-                    $self.real[p] = -im;
-                    $self.imag[p] = re;
-                }
-            }
-        } else {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re = f64x4::from(&$self.real[p..p + 4]);
-                    let im = f64x4::from(&$self.imag[p..p + 4]);
-                    let nr: [f64; 4] = (-im).into();
-                    let ni: [f64; 4] = re.into();
-                    $self.real[p..p + 4].copy_from_slice(&nr);
-                    $self.imag[p..p + 4].copy_from_slice(&ni);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // SZDG: multiply |1⟩ by -i: (re, im) -> (im, -re)
-    ($self:expr, $q:expr, neg_i) => {{
-        let step = 1 << $q;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re, im) = ($self.real[p], $self.imag[p]);
-                    $self.real[p] = im;
-                    $self.imag[p] = -re;
-                }
-            }
-        } else {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re = f64x4::from(&$self.real[p..p + 4]);
-                    let im = f64x4::from(&$self.imag[p..p + 4]);
-                    let nr: [f64; 4] = im.into();
-                    let ni: [f64; 4] = (-re).into();
-                    $self.real[p..p + 4].copy_from_slice(&nr);
-                    $self.imag[p..p + 4].copy_from_slice(&ni);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // Z: multiply |1⟩ by -1: (re, im) -> (-re, -im)
-    ($self:expr, $q:expr, neg_one) => {{
-        let step = 1 << $q;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    $self.real[p] = -$self.real[p];
-                    $self.imag[p] = -$self.imag[p];
-                }
-            }
-        } else {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re = f64x4::from(&$self.real[p..p + 4]);
-                    let im = f64x4::from(&$self.imag[p..p + 4]);
-                    let nr: [f64; 4] = (-re).into();
-                    let ni: [f64; 4] = (-im).into();
-                    $self.real[p..p + 4].copy_from_slice(&nr);
-                    $self.imag[p..p + 4].copy_from_slice(&ni);
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for full 2x2 gates with real coefficients.
-/// Used for: H, and gates where matrix entries are all real.
-///
-/// Matrix form: [[c00, c01], [c10, c11]]
-/// new_a = c00 * a + c01 * b
-/// new_b = c10 * a + c11 * b
-macro_rules! apply_real_2x2_gate_simd {
-    ($self:expr, $q:expr, $c00:expr, $c01:expr, $c10:expr, $c11:expr) => {{
-        let step = 1 << $q;
-        let (c00, c01, c10, c11) = ($c00, $c01, $c10, $c11);
-
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let paired_j = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[paired_j], $self.imag[paired_j]);
-
-                    $self.real[j] = c00 * re_a + c01 * re_b;
-                    $self.imag[j] = c00 * im_a + c01 * im_b;
-                    $self.real[paired_j] = c10 * re_a + c11 * re_b;
-                    $self.imag[paired_j] = c10 * im_a + c11 * im_b;
-                }
-            }
-        } else {
-            let c00_vec = f64x4::splat(c00);
-            let c01_vec = f64x4::splat(c01);
-            let c10_vec = f64x4::splat(c10);
-            let c11_vec = f64x4::splat(c11);
-
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let paired_j = j + step;
-
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[paired_j..paired_j + 4]);
-                    let im_b = f64x4::from(&$self.imag[paired_j..paired_j + 4]);
-
-                    let new_re_a: [f64; 4] = (c00_vec * re_a + c01_vec * re_b).into();
-                    let new_im_a: [f64; 4] = (c00_vec * im_a + c01_vec * im_b).into();
-                    let new_re_b: [f64; 4] = (c10_vec * re_a + c11_vec * re_b).into();
-                    let new_im_b: [f64; 4] = (c10_vec * im_a + c11_vec * im_b).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[paired_j..paired_j + 4].copy_from_slice(&new_re_b);
-                    $self.imag[paired_j..paired_j + 4].copy_from_slice(&new_im_b);
-
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for swap gate (X gate).
-/// Swaps |0⟩ ↔ |1⟩ components.
-macro_rules! apply_swap_gate_simd {
-    ($self:expr, $q:expr) => {{
-        let step = 1 << $q;
-
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let paired_j = j + step;
-                    $self.real.swap(j, paired_j);
-                    $self.imag.swap(j, paired_j);
-                }
-            }
-        } else {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let paired_j = j + step;
-
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[paired_j..paired_j + 4]);
-                    let im_b = f64x4::from(&$self.imag[paired_j..paired_j + 4]);
-
-                    let arr_re_a: [f64; 4] = re_b.into();
-                    let arr_im_a: [f64; 4] = im_b.into();
-                    let arr_re_b: [f64; 4] = re_a.into();
-                    let arr_im_b: [f64; 4] = im_a.into();
-
-                    $self.real[j..j + 4].copy_from_slice(&arr_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&arr_im_a);
-                    $self.real[paired_j..paired_j + 4].copy_from_slice(&arr_re_b);
-                    $self.imag[paired_j..paired_j + 4].copy_from_slice(&arr_im_b);
-
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for Y gate: swap with ±i factors.
-/// |0⟩ → i|1⟩, |1⟩ → -i|0⟩
-macro_rules! apply_y_gate_simd {
-    ($self:expr, $q:expr) => {{
-        let step = 1 << $q;
-
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let paired_j = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[paired_j], $self.imag[paired_j]);
-
-                    // |0⟩ → i|1⟩ means new_b gets i * old_a = (-im_a, re_a)
-                    // |1⟩ → -i|0⟩ means new_a gets -i * old_b = (im_b, -re_b)
-                    $self.real[j] = im_b;
-                    $self.imag[j] = -re_b;
-                    $self.real[paired_j] = -im_a;
-                    $self.imag[paired_j] = re_a;
-                }
-            }
-        } else {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let paired_j = j + step;
-
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[paired_j..paired_j + 4]);
-                    let im_b = f64x4::from(&$self.imag[paired_j..paired_j + 4]);
-
-                    // new_a = -i * b = (im_b, -re_b)
-                    // new_b = i * a = (-im_a, re_a)
-                    let new_re_a: [f64; 4] = im_b.into();
-                    let new_im_a: [f64; 4] = (-re_b).into();
-                    let new_re_b: [f64; 4] = (-im_a).into();
-                    let new_im_b: [f64; 4] = re_a.into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[paired_j..paired_j + 4].copy_from_slice(&new_re_b);
-                    $self.imag[paired_j..paired_j + 4].copy_from_slice(&new_im_b);
-
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for SX/SXDG/SY/SYDG gates with linear combinations.
-/// These gates have the form: output = 0.5 * (±re_a ± im_a ± re_b ± im_b)
-macro_rules! apply_sqrt_gate_simd {
-    // SX: matrix (1/2)[[1+i, 1-i], [1-i, 1+i]]
-    ($self:expr, $q:expr, sx) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a - im_a + re_b + im_b);
-                    $self.imag[j] = half * (re_a + im_a - re_b + im_b);
-                    $self.real[p] = half * (re_a + im_a + re_b - im_b);
-                    $self.imag[p] = half * (-re_a + im_a + re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a - im_a + re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (re_a + im_a - re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a + im_a + re_b - im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (-re_a + im_a + re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // SXDG: matrix (1/2)[[1-i, 1+i], [1+i, 1-i]]
-    ($self:expr, $q:expr, sxdg) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a + im_a + re_b - im_b);
-                    $self.imag[j] = half * (-re_a + im_a + re_b + im_b);
-                    $self.real[p] = half * (re_a - im_a + re_b + im_b);
-                    $self.imag[p] = half * (re_a + im_a - re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a + im_a + re_b - im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (-re_a + im_a + re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a - im_a + re_b + im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a + im_a - re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // SY: matrix (1/2)[[1+i, -(1+i)], [1+i, 1+i]]
-    ($self:expr, $q:expr, sy) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a - im_a - re_b + im_b);
-                    $self.imag[j] = half * (re_a + im_a - re_b - im_b);
-                    $self.real[p] = half * (re_a - im_a + re_b - im_b);
-                    $self.imag[p] = half * (re_a + im_a + re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a - im_a - re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (re_a + im_a - re_b - im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a - im_a + re_b - im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a + im_a + re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // SYDG: matrix (1/2)[[1-i, 1-i], [-(1-i), 1-i]]
-    ($self:expr, $q:expr, sydg) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a + im_a + re_b + im_b);
-                    $self.imag[j] = half * (-re_a + im_a - re_b + im_b);
-                    $self.real[p] = half * (-re_a - im_a + re_b + im_b);
-                    $self.imag[p] = half * (re_a - im_a - re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a + im_a + re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (-re_a + im_a - re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (-re_a - im_a + re_b + im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a - im_a - re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // F: matrix (1/2)[[1+i, 1-i], [1+i, -1+i]]
-    ($self:expr, $q:expr, f) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a - im_a + re_b + im_b);
-                    $self.imag[j] = half * (re_a + im_a - re_b + im_b);
-                    $self.real[p] = half * (re_a - im_a - re_b - im_b);
-                    $self.imag[p] = half * (re_a + im_a + re_b - im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a - im_a + re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (re_a + im_a - re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a - im_a - re_b - im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a + im_a + re_b - im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // FDG: matrix (1/2)[[1-i, 1-i], [1+i, -1-i]]
-    ($self:expr, $q:expr, fdg) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a + im_a + re_b + im_b);
-                    $self.imag[j] = half * (-re_a + im_a - re_b + im_b);
-                    $self.real[p] = half * (re_a - im_a - re_b + im_b);
-                    $self.imag[p] = half * (re_a + im_a - re_b - im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a + im_a + re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (-re_a + im_a - re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a - im_a - re_b + im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a + im_a - re_b - im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // H2: matrix (1/2)[[1+i, -(1+i)], [-(1+i), -(1+i)]]
-    ($self:expr, $q:expr, h2) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a - im_a - re_b + im_b);
-                    $self.imag[j] = half * (re_a + im_a - re_b - im_b);
-                    $self.real[p] = half * (-re_a + im_a - re_b + im_b);
-                    $self.imag[p] = half * (-re_a - im_a - re_b - im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a - im_a - re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (re_a + im_a - re_b - im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (-re_a + im_a - re_b + im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (-re_a - im_a - re_b - im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // H5: matrix (1/2)[[1+i, 1-i], [-(1-i), -(1+i)]]
-    ($self:expr, $q:expr, h5) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a - im_a + re_b + im_b);
-                    $self.imag[j] = half * (re_a + im_a - re_b + im_b);
-                    $self.real[p] = half * (-re_a - im_a - re_b + im_b);
-                    $self.imag[p] = half * (re_a - im_a - re_b - im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a - im_a + re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (re_a + im_a - re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (-re_a - im_a - re_b + im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a - im_a - re_b - im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // H6: matrix (1/2)[[-1-i, 1-i], [-1+i, 1+i]]
-    ($self:expr, $q:expr, h6) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (-re_a + im_a + re_b + im_b);
-                    $self.imag[j] = half * (-re_a - im_a - re_b + im_b);
-                    $self.real[p] = half * (-re_a - im_a + re_b - im_b);
-                    $self.imag[p] = half * (re_a - im_a + re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (-re_a + im_a + re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (-re_a - im_a - re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (-re_a - im_a + re_b - im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a - im_a + re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // F2: matrix (1/2)[[1-i, -1+i], [1+i, 1+i]]
-    ($self:expr, $q:expr, f2) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a + im_a - re_b - im_b);
-                    $self.imag[j] = half * (-re_a + im_a + re_b - im_b);
-                    $self.real[p] = half * (re_a - im_a + re_b - im_b);
-                    $self.imag[p] = half * (re_a + im_a + re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a + im_a - re_b - im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (-re_a + im_a + re_b - im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a - im_a + re_b - im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a + im_a + re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // F2DG: matrix (1/2)[[1+i, 1-i], [-1-i, 1-i]]
-    ($self:expr, $q:expr, f2dg) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a - im_a + re_b + im_b);
-                    $self.imag[j] = half * (re_a + im_a - re_b + im_b);
-                    $self.real[p] = half * (-re_a + im_a + re_b + im_b);
-                    $self.imag[p] = half * (-re_a - im_a - re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a - im_a + re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (re_a + im_a - re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (-re_a + im_a + re_b + im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (-re_a - im_a - re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // F3: matrix (1/2)[[1-i, 1+i], [-1+i, 1+i]]
-    ($self:expr, $q:expr, f3) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a + im_a + re_b - im_b);
-                    $self.imag[j] = half * (-re_a + im_a + re_b + im_b);
-                    $self.real[p] = half * (-re_a - im_a + re_b - im_b);
-                    $self.imag[p] = half * (re_a - im_a + re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a + im_a + re_b - im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (-re_a + im_a + re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (-re_a - im_a + re_b - im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (re_a - im_a + re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // F3DG: matrix (1/2)[[1+i, -1-i], [1-i, 1-i]]
-    ($self:expr, $q:expr, f3dg) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a - im_a - re_b + im_b);
-                    $self.imag[j] = half * (re_a + im_a - re_b - im_b);
-                    $self.real[p] = half * (re_a + im_a + re_b + im_b);
-                    $self.imag[p] = half * (-re_a + im_a - re_b + im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a - im_a - re_b + im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (re_a + im_a - re_b - im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a + im_a + re_b + im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (-re_a + im_a - re_b + im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // F4: matrix (1/2)[[1+i, 1+i], [1-i, -1+i]]
-    ($self:expr, $q:expr, f4) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a - im_a + re_b - im_b);
-                    $self.imag[j] = half * (re_a + im_a + re_b + im_b);
-                    $self.real[p] = half * (re_a + im_a - re_b - im_b);
-                    $self.imag[p] = half * (-re_a + im_a + re_b - im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a - im_a + re_b - im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (re_a + im_a + re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a + im_a - re_b - im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (-re_a + im_a + re_b - im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // F4DG: matrix (1/2)[[1-i, 1+i], [1-i, -1-i]]
-    ($self:expr, $q:expr, f4dg) => {{
-        let step = 1 << $q;
-        let half = 0.5_f64;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = half * (re_a + im_a + re_b - im_b);
-                    $self.imag[j] = half * (-re_a + im_a + re_b + im_b);
-                    $self.real[p] = half * (re_a + im_a - re_b + im_b);
-                    $self.imag[p] = half * (-re_a + im_a - re_b - im_b);
-                }
-            }
-        } else {
-            let half_v = f64x4::splat(half);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (half_v * (re_a + im_a + re_b - im_b)).into();
-                    let new_im_a: [f64; 4] = (half_v * (-re_a + im_a + re_b + im_b)).into();
-                    let new_re_b: [f64; 4] = (half_v * (re_a + im_a - re_b + im_b)).into();
-                    let new_im_b: [f64; 4] = (half_v * (-re_a + im_a - re_b - im_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // HS (S*H): matrix 1/√2 [[1, 1], [i, -i]]
-    // new_a = (a + b)/√2, new_b = i*(a - b)/√2
-    ($self:expr, $q:expr, hs) => {{
-        let step = 1 << $q;
-        let k = std::f64::consts::FRAC_1_SQRT_2;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = k * (re_a + re_b);
-                    $self.imag[j] = k * (im_a + im_b);
-                    $self.real[p] = k * (-im_a + im_b);
-                    $self.imag[p] = k * (re_a - re_b);
-                }
-            }
-        } else {
-            let k_v = f64x4::splat(k);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (k_v * (re_a + re_b)).into();
-                    let new_im_a: [f64; 4] = (k_v * (im_a + im_b)).into();
-                    let new_re_b: [f64; 4] = (k_v * (-im_a + im_b)).into();
-                    let new_im_b: [f64; 4] = (k_v * (re_a - re_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // SH (H*S): matrix 1/√2 [[1, i], [1, -i]]
-    // new_a = (a + i*b)/√2, new_b = (a - i*b)/√2
-    ($self:expr, $q:expr, sh) => {{
-        let step = 1 << $q;
-        let k = std::f64::consts::FRAC_1_SQRT_2;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = k * (re_a - im_b);
-                    $self.imag[j] = k * (im_a + re_b);
-                    $self.real[p] = k * (re_a + im_b);
-                    $self.imag[p] = k * (im_a - re_b);
-                }
-            }
-        } else {
-            let k_v = f64x4::splat(k);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (k_v * (re_a - im_b)).into();
-                    let new_im_a: [f64; 4] = (k_v * (im_a + re_b)).into();
-                    let new_re_b: [f64; 4] = (k_v * (re_a + im_b)).into();
-                    let new_im_b: [f64; 4] = (k_v * (im_a - re_b)).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for H3/H4 gates - swap with phase multiplication.
-macro_rules! apply_swap_phase_gate_simd {
-    // H3: [[0, 1], [i, 0]] - new_a = b, new_b = i*a
-    ($self:expr, $q:expr, h3) => {{
-        let step = 1 << $q;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    // new_a = b
-                    // new_b = i*a = (-im_a, re_a)
-                    $self.real[j] = re_b;
-                    $self.imag[j] = im_b;
-                    $self.real[p] = -im_a;
-                    $self.imag[p] = re_a;
-                }
-            }
-        } else {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    // new_a = b, new_b = i*a
-                    let new_re_a: [f64; 4] = re_b.into();
-                    let new_im_a: [f64; 4] = im_b.into();
-                    let new_re_b: [f64; 4] = (-im_a).into();
-                    let new_im_b: [f64; 4] = re_a.into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-    // H4: [[0, i], [1, 0]] - new_a = i*b, new_b = a
-    ($self:expr, $q:expr, h4) => {{
-        let step = 1 << $q;
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    // new_a = i*b = (-im_b, re_b)
-                    // new_b = a
-                    $self.real[j] = -im_b;
-                    $self.imag[j] = re_b;
-                    $self.real[p] = re_a;
-                    $self.imag[p] = im_a;
-                }
-            }
-        } else {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    // new_a = i*b, new_b = a
-                    let new_re_a: [f64; 4] = (-im_b).into();
-                    let new_im_a: [f64; 4] = re_b.into();
-                    let new_re_b: [f64; 4] = re_a.into();
-                    let new_im_b: [f64; 4] = im_a.into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for RX gate with precomputed cos/sin.
-/// RX: [[cos, -i*sin], [-i*sin, cos]]
-macro_rules! apply_rx_simd {
-    ($self:expr, $q:expr, $cos:expr, $sin:expr) => {{
-        let step = 1 << $q;
-        let (cos, sin) = ($cos, $sin);
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = cos * re_a + sin * im_b;
-                    $self.imag[j] = cos * im_a - sin * re_b;
-                    $self.real[p] = sin * im_a + cos * re_b;
-                    $self.imag[p] = -sin * re_a + cos * im_b;
-                }
-            }
-        } else {
-            let cos_v = f64x4::splat(cos);
-            let sin_v = f64x4::splat(sin);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (cos_v * re_a + sin_v * im_b).into();
-                    let new_im_a: [f64; 4] = (cos_v * im_a - sin_v * re_b).into();
-                    let new_re_b: [f64; 4] = (sin_v * im_a + cos_v * re_b).into();
-                    let new_im_b: [f64; 4] = (cos_v * im_b - sin_v * re_a).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for RY gate with precomputed cos/sin.
-/// RY: [[cos, -sin], [sin, cos]]
-macro_rules! apply_ry_simd {
-    ($self:expr, $q:expr, $cos:expr, $sin:expr) => {{
-        let step = 1 << $q;
-        let (cos, sin) = ($cos, $sin);
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = cos * re_a - sin * re_b;
-                    $self.imag[j] = cos * im_a - sin * im_b;
-                    $self.real[p] = sin * re_a + cos * re_b;
-                    $self.imag[p] = sin * im_a + cos * im_b;
-                }
-            }
-        } else {
-            let cos_v = f64x4::splat(cos);
-            let sin_v = f64x4::splat(sin);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (cos_v * re_a - sin_v * re_b).into();
-                    let new_im_a: [f64; 4] = (cos_v * im_a - sin_v * im_b).into();
-                    let new_re_b: [f64; 4] = (sin_v * re_a + cos_v * re_b).into();
-                    let new_im_b: [f64; 4] = (sin_v * im_a + cos_v * im_b).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for RZ gate with precomputed cos/sin for both phases.
-/// RZ: [[e^{-iθ/2}, 0], [0, e^{iθ/2}]]
-macro_rules! apply_rz_simd {
-    ($self:expr, $q:expr, $cos_neg:expr, $sin_neg:expr, $cos_pos:expr, $sin_pos:expr) => {{
-        let step = 1 << $q;
-        let (cos_neg, sin_neg, cos_pos, sin_pos) = ($cos_neg, $sin_neg, $cos_pos, $sin_pos);
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = cos_neg * re_a - sin_neg * im_a;
-                    $self.imag[j] = sin_neg * re_a + cos_neg * im_a;
-                    $self.real[p] = cos_pos * re_b - sin_pos * im_b;
-                    $self.imag[p] = sin_pos * re_b + cos_pos * im_b;
-                }
-            }
-        } else {
-            let cos_neg_v = f64x4::splat(cos_neg);
-            let sin_neg_v = f64x4::splat(sin_neg);
-            let cos_pos_v = f64x4::splat(cos_pos);
-            let sin_pos_v = f64x4::splat(sin_pos);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (cos_neg_v * re_a - sin_neg_v * im_a).into();
-                    let new_im_a: [f64; 4] = (sin_neg_v * re_a + cos_neg_v * im_a).into();
-                    let new_re_b: [f64; 4] = (cos_pos_v * re_b - sin_pos_v * im_b).into();
-                    let new_im_b: [f64; 4] = (sin_pos_v * re_b + cos_pos_v * im_b).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
-
-/// Macro for R1XY gate with precomputed coefficients.
-/// R1XY: [[cos, r01], [r10, cos]] where r01, r10 are complex
-macro_rules! apply_r1xy_simd {
-    ($self:expr, $q:expr, $cos:expr, $r01_re:expr, $r01_im:expr, $r10_re:expr, $r10_im:expr) => {{
-        let step = 1 << $q;
-        let (cos, r01_re, r01_im, r10_re, r10_im) = ($cos, $r01_re, $r01_im, $r10_re, $r10_im);
-        if step < 4 {
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                for j in i..(i + step) {
-                    let p = j + step;
-                    let (re_a, im_a) = ($self.real[j], $self.imag[j]);
-                    let (re_b, im_b) = ($self.real[p], $self.imag[p]);
-                    $self.real[j] = cos * re_a + r01_re * re_b - r01_im * im_b;
-                    $self.imag[j] = cos * im_a + r01_re * im_b + r01_im * re_b;
-                    $self.real[p] = r10_re * re_a - r10_im * im_a + cos * re_b;
-                    $self.imag[p] = r10_re * im_a + r10_im * re_a + cos * im_b;
-                }
-            }
-        } else {
-            let cos_v = f64x4::splat(cos);
-            let r01_re_v = f64x4::splat(r01_re);
-            let r01_im_v = f64x4::splat(r01_im);
-            let r10_re_v = f64x4::splat(r10_re);
-            let r10_im_v = f64x4::splat(r10_im);
-            for i in (0..$self.real.len()).step_by(step * 2) {
-                let mut j = i;
-                while j + 4 <= i + step {
-                    let p = j + step;
-                    let re_a = f64x4::from(&$self.real[j..j + 4]);
-                    let im_a = f64x4::from(&$self.imag[j..j + 4]);
-                    let re_b = f64x4::from(&$self.real[p..p + 4]);
-                    let im_b = f64x4::from(&$self.imag[p..p + 4]);
-
-                    let new_re_a: [f64; 4] = (cos_v * re_a + r01_re_v * re_b - r01_im_v * im_b).into();
-                    let new_im_a: [f64; 4] = (cos_v * im_a + r01_re_v * im_b + r01_im_v * re_b).into();
-                    let new_re_b: [f64; 4] = (r10_re_v * re_a - r10_im_v * im_a + cos_v * re_b).into();
-                    let new_im_b: [f64; 4] = (r10_re_v * im_a + r10_im_v * re_a + cos_v * im_b).into();
-
-                    $self.real[j..j + 4].copy_from_slice(&new_re_a);
-                    $self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                    $self.real[p..p + 4].copy_from_slice(&new_re_b);
-                    $self.imag[p..p + 4].copy_from_slice(&new_im_b);
-                    j += 4;
-                }
-            }
-        }
-    }};
-}
 
 // =============================================================================
 // Gate Fusion Support
@@ -1260,7 +32,7 @@ macro_rules! apply_r1xy_simd {
 /// 2x2 complex matrix for gate fusion.
 /// Stored as [[a, b], [c, d]] where each element is (real, imag).
 #[derive(Clone, Copy, Debug)]
-struct Complex2x2 {
+pub(crate) struct Complex2x2 {
     a_re: f64,
     a_im: f64,
     b_re: f64,
@@ -1272,18 +44,6 @@ struct Complex2x2 {
 }
 
 impl Complex2x2 {
-    /// Identity matrix
-    const IDENTITY: Self = Self {
-        a_re: 1.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: 0.0,
-        c_re: 0.0,
-        c_im: 0.0,
-        d_re: 1.0,
-        d_im: 0.0,
-    };
-
     /// Check if this is the identity matrix (no-op)
     #[inline]
     fn is_identity(&self) -> bool {
@@ -1609,7 +369,7 @@ mod gate_matrices {
 }
 
 /// Optimized state vector simulator with SoA layout.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct StateVecSoA<R = PecosRng>
 where
     R: Rng,
@@ -1627,10 +387,24 @@ where
     /// Scratch buffer for imaginary components (used by two_qubit_unitary)
     scratch_imag: Vec<f64>,
     /// Gate fusion: accumulated matrix per qubit (None = identity/no pending gates)
-    /// Using Vec instead of HashMap for cache-friendly access
     pending_gates: Vec<Option<Complex2x2>>,
     /// Whether gate fusion is enabled (default: true)
     fusion_enabled: bool,
+}
+
+impl<R: Rng + Clone> Clone for StateVecSoA<R> {
+    fn clone(&self) -> Self {
+        Self {
+            real: self.real.clone(),
+            imag: self.imag.clone(),
+            num_qubits: self.num_qubits,
+            rng: self.rng.clone(),
+            scratch_real: self.scratch_real.clone(),
+            scratch_imag: self.scratch_imag.clone(),
+            pending_gates: self.pending_gates.clone(),
+            fusion_enabled: self.fusion_enabled,
+        }
+    }
 }
 
 // Constructors that use the default PecosRng
@@ -1861,14 +635,16 @@ where
     /// Returns a reference to the real components.
     #[inline]
     #[must_use]
-    pub fn real(&self) -> &[f64] {
+    pub fn real(&mut self) -> &[f64] {
+        self.flush();
         &self.real
     }
 
     /// Returns a reference to the imaginary components.
     #[inline]
     #[must_use]
-    pub fn imag(&self) -> &[f64] {
+    pub fn imag(&mut self) -> &[f64] {
+        self.flush();
         &self.imag
     }
 
@@ -1976,17 +752,29 @@ where
     /// Returns the state vector as a Vec of Complex64.
     ///
     /// This creates a new vector by combining the real and imaginary arrays.
-    /// Alias for `to_complex_vec` for API compatibility.
+    /// This method auto-flushes any pending gates before returning the state.
     #[must_use]
     pub fn state(&mut self) -> Vec<Complex64> {
-        self.to_complex_vec()
+        self.flush();
+        self.real
+            .iter()
+            .zip(self.imag.iter())
+            .map(|(&re, &im)| Complex64::new(re, im))
+            .collect()
     }
 
-    /// Returns a reference to the random number generator.
-    #[inline]
+    /// Returns the state vector as a Vec of Complex64 without flushing pending gates.
+    ///
+    /// WARNING: If gate fusion is enabled and gates are pending, this returns stale data.
+    /// Use `state()` instead unless you're sure no gates are pending (e.g., after
+    /// construction, reset, or with fusion disabled via `set_fusion(false)`).
     #[must_use]
-    pub fn rng(&self) -> &R {
-        &self.rng
+    pub fn state_no_flush(&self) -> Vec<Complex64> {
+        self.real
+            .iter()
+            .zip(self.imag.iter())
+            .map(|(&re, &im)| Complex64::new(re, im))
+            .collect()
     }
 
     /// Prepare all qubits in the |+⟩ state, creating an equal superposition of all basis states.
@@ -2115,8 +903,8 @@ where
         // Process groups of 4 basis states that share the same "frame" bits
         for outer in (0..size).step_by(step_hi * 2) {
             for mid in (0..step_hi).step_by(step_lo * 2) {
-                for inner in 0..step_lo {
-                    let base = outer + mid + inner;
+                for inner_idx in 0..step_lo {
+                    let base = outer + mid + inner_idx;
 
                     // The 4 indices in (lo_bit, hi_bit) order
                     let indices = [
@@ -2157,113 +945,7 @@ where
         self
     }
 
-    /// Apply a single-qubit gate using a closure that transforms (re_0, im_0, re_1, im_1).
-    #[inline]
-    fn apply_single_qubit<F>(&mut self, q: usize, mut f: F)
-    where
-        F: FnMut(f64, f64, f64, f64) -> (f64, f64, f64, f64),
-    {
-        let step = 1 << q;
-        for i in (0..self.real.len()).step_by(step * 2) {
-            for j in i..(i + step) {
-                let paired_j = j + step;
-                let (new_re_j, new_im_j, new_re_p, new_im_p) = f(
-                    self.real[j],
-                    self.imag[j],
-                    self.real[paired_j],
-                    self.imag[paired_j],
-                );
-                self.real[j] = new_re_j;
-                self.imag[j] = new_im_j;
-                self.real[paired_j] = new_re_p;
-                self.imag[paired_j] = new_im_p;
-            }
-        }
-    }
-
-    // =========================================================================
-    // SIMD-optimized single-qubit gate implementations using macros
-    // =========================================================================
-
-    /// Apply Hadamard gate with SIMD: H = 1/√2 [[1, 1], [1, -1]]
-    #[inline]
-    fn apply_h_simd(&mut self, q: usize) {
-        let k = std::f64::consts::FRAC_1_SQRT_2;
-        apply_real_2x2_gate_simd!(self, q, k, k, k, -k);
-    }
-
-    /// Apply SZ gate with SIMD: |1⟩ → i|1⟩
-    #[inline]
-    fn apply_sz_simd(&mut self, q: usize) {
-        // i * (re, im) = (-im, re)
-        apply_phase_gate_simd!(self, q, i);
-    }
-
-    /// Apply SZDG gate with SIMD: |1⟩ → -i|1⟩
-    #[inline]
-    fn apply_szdg_simd(&mut self, q: usize) {
-        // -i * (re, im) = (im, -re)
-        apply_phase_gate_simd!(self, q, neg_i);
-    }
-
-    /// Apply X gate with SIMD: swap |0⟩ ↔ |1⟩
-    #[inline]
-    fn apply_x_simd(&mut self, q: usize) {
-        apply_swap_gate_simd!(self, q);
-    }
-
-    /// Apply Y gate with SIMD: |0⟩ → i|1⟩, |1⟩ → -i|0⟩
-    #[inline]
-    fn apply_y_simd(&mut self, q: usize) {
-        apply_y_gate_simd!(self, q);
-    }
-
-    /// Apply Z gate with SIMD: |1⟩ → -|1⟩
-    #[inline]
-    fn apply_z_simd(&mut self, q: usize) {
-        // -1 * (re, im) = (-re, -im)
-        apply_phase_gate_simd!(self, q, neg_one);
-    }
-
-    /// Apply SX gate with SIMD
-    #[inline]
-    fn apply_sx_simd(&mut self, q: usize) {
-        apply_sqrt_gate_simd!(self, q, sx);
-    }
-
-    /// Apply SXDG gate with SIMD
-    #[inline]
-    fn apply_sxdg_simd(&mut self, q: usize) {
-        apply_sqrt_gate_simd!(self, q, sxdg);
-    }
-
-    /// Apply SY gate with SIMD
-    #[inline]
-    fn apply_sy_simd(&mut self, q: usize) {
-        apply_sqrt_gate_simd!(self, q, sy);
-    }
-
-    /// Apply SYDG gate with SIMD
-    #[inline]
-    fn apply_sydg_simd(&mut self, q: usize) {
-        apply_sqrt_gate_simd!(self, q, sydg);
-    }
-
-    /// Apply F gate with SIMD
-    #[inline]
-    fn apply_f_simd(&mut self, q: usize) {
-        apply_sqrt_gate_simd!(self, q, f);
-    }
-
-    /// Apply FDG gate with SIMD
-    #[inline]
-    fn apply_fdg_simd(&mut self, q: usize) {
-        apply_sqrt_gate_simd!(self, q, fdg);
-    }
-
-    /// Compute the probability of measuring |1⟩ for a qubit using SIMD.
-    ///
-    /// This sums |amplitude|^2 for all basis states where the given qubit is |1⟩.
+    /// Internal helper for computing probability of |1⟩.
     #[inline]
     fn probability_one(&self, qubit: usize) -> f64 {
         let step = 1 << qubit;
@@ -2520,7 +1202,8 @@ where
             let target = pair[1].index();
 
             // Flush pending gates on both qubits before two-qubit operation
-            self.flush_two_qubit(control, target);
+            self.flush_qubit(control);
+            self.flush_qubit(target);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if control < target {
@@ -2596,7 +1279,8 @@ where
             let q2 = pair[1].index();
 
             // Flush pending gates on both qubits before two-qubit operation
-            self.flush_two_qubit(q1, q2);
+            self.flush_qubit(q1);
+            self.flush_qubit(q2);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -2652,7 +1336,8 @@ where
             let q2 = pair[1].index();
 
             // Flush pending gates on both qubits before two-qubit operation
-            self.flush_two_qubit(q1, q2);
+            self.flush_qubit(q1);
+            self.flush_qubit(q2);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -3805,8 +2490,14 @@ where
     fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
+        // RX = [[cos, -i*sin], [-i*sin, cos]]
+        let m = Complex2x2 {
+            a_re: cos, a_im: 0.0, b_re: 0.0, b_im: -sin,
+            c_re: 0.0, c_im: -sin, d_re: cos, d_im: 0.0,
+        };
         for &q in qubits {
-            apply_rx_simd!(self, q.index(), cos, sin);
+            self.flush_qubit(q.index());
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -3815,20 +2506,31 @@ where
     fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
+        // RY = [[cos, -sin], [sin, cos]]
+        let m = Complex2x2 {
+            a_re: cos, a_im: 0.0, b_re: -sin, b_im: 0.0,
+            c_re: sin, c_im: 0.0, d_re: cos, d_im: 0.0,
+        };
         for &q in qubits {
-            apply_ry_simd!(self, q.index(), cos, sin);
+            self.flush_qubit(q.index());
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
 
     #[inline]
     fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
-        let cos_neg = (-theta / 2.0).cos();
-        let sin_neg = (-theta / 2.0).sin();
-        let cos_pos = (theta / 2.0).cos();
-        let sin_pos = (theta / 2.0).sin();
+        let half = theta / 2.0;
+        let cos = half.cos();
+        let sin = half.sin();
+        // RZ = [[e^(-iθ/2), 0], [0, e^(iθ/2)]] = [[cos - i*sin, 0], [0, cos + i*sin]]
+        let m = Complex2x2 {
+            a_re: cos, a_im: -sin, b_re: 0.0, b_im: 0.0,
+            c_re: 0.0, c_im: 0.0, d_re: cos, d_im: sin,
+        };
         for &q in qubits {
-            apply_rz_simd!(self, q.index(), cos_neg, sin_neg, cos_pos, sin_pos);
+            self.flush_qubit(q.index());
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -3840,12 +2542,15 @@ where
         // R1XY: [[cos, r01], [r10, cos]]
         // r01 = -i*sin*e^(-iφ) = -sin*sinφ - i*sin*cosφ
         // r10 = -i*sin*e^(iφ)  = sin*sinφ - i*sin*cosφ
-        let r01_re = -sin * phi.sin();
-        let r01_im = -sin * phi.cos();
-        let r10_re = sin * phi.sin();
-        let r10_im = -sin * phi.cos();
+        let m = Complex2x2 {
+            a_re: cos, a_im: 0.0,
+            b_re: -sin * phi.sin(), b_im: -sin * phi.cos(),
+            c_re: sin * phi.sin(), c_im: -sin * phi.cos(),
+            d_re: cos, d_im: 0.0,
+        };
         for &q in qubits {
-            apply_r1xy_simd!(self, q.index(), cos, r01_re, r01_im, r10_re, r10_im);
+            self.flush_qubit(q.index());
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -3935,8 +2640,8 @@ where
 
             for outer in (0..self.real.len()).step_by(step_hi * 2) {
                 for mid in (0..step_hi).step_by(step_lo * 2) {
-                    for inner in 0..step_lo {
-                        let base = outer + mid + inner;
+                    for inner_idx in 0..step_lo {
+                        let base = outer + mid + inner_idx;
                         let i00 = base;
                         let i01 = base + step_lo;
                         let i10 = base + step_hi;
@@ -3997,8 +2702,8 @@ where
 
             for outer in (0..self.real.len()).step_by(step_hi * 2) {
                 for mid in (0..step_hi).step_by(step_lo * 2) {
-                    for inner in 0..step_lo {
-                        let base = outer + mid + inner;
+                    for inner_idx in 0..step_lo {
+                        let base = outer + mid + inner_idx;
                         let i00 = base;
                         let i01 = base + step_lo;
                         let i10 = base + step_hi;
@@ -4092,14 +2797,22 @@ where
                 }
             } else {
                 // Scalar fallback for small step
-                self.apply_single_qubit(q, |re_a, im_a, re_b, im_b| {
-                    (
-                        u00_re * re_a + u01_re * re_b - u01_im * im_b,
-                        u00_re * im_a + u01_re * im_b + u01_im * re_b,
-                        u10_re * re_a - u10_im * im_a + u11_re * re_b - u11_im * im_b,
-                        u10_re * im_a + u10_im * re_a + u11_re * im_b + u11_im * re_b,
-                    )
-                });
+                for i in (0..self.real.len()).step_by(step * 2) {
+                    for j in i..(i + step) {
+                        let p = j + step;
+                        let re_a = self.real[j];
+                        let im_a = self.imag[j];
+                        let re_b = self.real[p];
+                        let im_b = self.imag[p];
+
+                        self.real[j] = u00_re * re_a + u01_re * re_b - u01_im * im_b;
+                        self.imag[j] = u00_re * im_a + u01_re * im_b + u01_im * re_b;
+                        self.real[p] =
+                            u10_re * re_a - u10_im * im_a + u11_re * re_b - u11_im * im_b;
+                        self.imag[p] =
+                            u10_re * im_a + u10_im * re_a + u11_re * im_b + u11_im * re_b;
+                    }
+                }
             }
         }
         self
@@ -4112,7 +2825,7 @@ where
 
 impl<R> RngManageable for StateVecSoA<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + RngCore + SeedableRng + Debug,
 {
     type Rng = R;
 
@@ -4151,9 +2864,13 @@ where
     #[inline]
     pub fn hz(&mut self, qubits: &[QubitId]) -> &mut Self {
         let k = std::f64::consts::FRAC_1_SQRT_2;
+        let m = Complex2x2 {
+            a_re: k, a_im: 0.0, b_re: k, b_im: 0.0,
+            c_re: -k, c_im: 0.0, d_re: k, d_im: 0.0,
+        };
         for &q in qubits {
             self.flush_qubit(q.index());
-            apply_real_2x2_gate_simd!(self, q.index(), k, k, -k, k);
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -4164,9 +2881,13 @@ where
     #[inline]
     pub fn zh(&mut self, qubits: &[QubitId]) -> &mut Self {
         let k = std::f64::consts::FRAC_1_SQRT_2;
+        let m = Complex2x2 {
+            a_re: k, a_im: 0.0, b_re: -k, b_im: 0.0,
+            c_re: k, c_im: 0.0, d_re: k, d_im: 0.0,
+        };
         for &q in qubits {
             self.flush_qubit(q.index());
-            apply_real_2x2_gate_simd!(self, q.index(), k, -k, k, k);
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -4176,10 +2897,14 @@ where
     /// Matrix: S*H = 1/√2 [[1, 1], [i, -i]] (rightmost applied first)
     #[inline]
     pub fn hs(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // S*H: new |0⟩ = (a + b)/√2, new |1⟩ = i*(a - b)/√2
+        let k = std::f64::consts::FRAC_1_SQRT_2;
+        let m = Complex2x2 {
+            a_re: k, a_im: 0.0, b_re: k, b_im: 0.0,
+            c_re: 0.0, c_im: k, d_re: 0.0, d_im: -k,
+        };
         for &q in qubits {
             self.flush_qubit(q.index());
-            apply_sqrt_gate_simd!(self, q.index(), hs);
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -4189,10 +2914,14 @@ where
     /// Matrix: H*S = 1/√2 [[1, i], [1, -i]] (rightmost applied first)
     #[inline]
     pub fn sh(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // H*S: new |0⟩ = (a + i*b)/√2, new |1⟩ = (a - i*b)/√2
+        let k = std::f64::consts::FRAC_1_SQRT_2;
+        let m = Complex2x2 {
+            a_re: k, a_im: 0.0, b_re: 0.0, b_im: k,
+            c_re: k, c_im: 0.0, d_re: 0.0, d_im: -k,
+        };
         for &q in qubits {
             self.flush_qubit(q.index());
-            apply_sqrt_gate_simd!(self, q.index(), sh);
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -4203,10 +2932,14 @@ where
     #[inline]
     pub fn hx(&mut self, qubits: &[QubitId]) -> &mut Self {
         let k = std::f64::consts::FRAC_1_SQRT_2;
+        // Same as zh
+        let m = Complex2x2 {
+            a_re: k, a_im: 0.0, b_re: -k, b_im: 0.0,
+            c_re: k, c_im: 0.0, d_re: k, d_im: 0.0,
+        };
         for &q in qubits {
             self.flush_qubit(q.index());
-            // Same as zh
-            apply_real_2x2_gate_simd!(self, q.index(), k, -k, k, k);
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -4217,10 +2950,14 @@ where
     #[inline]
     pub fn xh(&mut self, qubits: &[QubitId]) -> &mut Self {
         let k = std::f64::consts::FRAC_1_SQRT_2;
+        // Same as hz
+        let m = Complex2x2 {
+            a_re: k, a_im: 0.0, b_re: k, b_im: 0.0,
+            c_re: -k, c_im: 0.0, d_re: k, d_im: 0.0,
+        };
         for &q in qubits {
             self.flush_qubit(q.index());
-            // Same as hz
-            apply_real_2x2_gate_simd!(self, q.index(), k, k, -k, k);
+            self.apply_fused_matrix(q.index(), &m);
         }
         self
     }
@@ -4273,14 +3010,14 @@ mod tests {
 
     #[test]
     fn test_new_state() {
-        let opt: StateVecSoA = StateVecSoA::new(3);
+        let mut opt: StateVecSoA = StateVecSoA::new(3);
         assert_eq!(opt.num_qubits(), 3);
-        assert_eq!(opt.real.len(), 8);
-        assert_eq!(opt.real[0], 1.0);
-        assert_eq!(opt.imag[0], 0.0);
+        assert_eq!(opt.real().len(), 8);
+        assert_eq!(opt.real()[0], 1.0);
+        assert_eq!(opt.imag()[0], 0.0);
         for i in 1..8 {
-            assert_eq!(opt.real[i], 0.0);
-            assert_eq!(opt.imag[i], 0.0);
+            assert_eq!(opt.real()[i], 0.0);
+            assert_eq!(opt.imag()[i], 0.0);
         }
     }
 
@@ -4472,10 +3209,10 @@ mod tests {
         opt.cx(&[QubitId(0), QubitId(1)]);
         opt.reset();
 
-        assert_eq!(opt.real[0], 1.0);
-        for i in 1..opt.real.len() {
-            assert_eq!(opt.real[i], 0.0);
-            assert_eq!(opt.imag[i], 0.0);
+        assert_eq!(opt.real()[0], 1.0);
+        for i in 1..opt.real().len() {
+            assert_eq!(opt.real()[i], 0.0);
+            assert_eq!(opt.imag()[i], 0.0);
         }
     }
 
@@ -4483,8 +3220,12 @@ mod tests {
     fn opts_match(a: &mut StateVecSoA, b: &mut StateVecSoA, tolerance: f64) -> bool {
         a.flush();
         b.flush();
-        a.real.iter().zip(&b.real).all(|(x, y)| (x - y).abs() < tolerance)
-            && a.imag.iter().zip(&b.imag).all(|(x, y)| (x - y).abs() < tolerance)
+        let a_real = a.real().to_vec();
+        let a_imag = a.imag().to_vec();
+        let b_real = b.real().to_vec();
+        let b_imag = b.imag().to_vec();
+        a_real.iter().zip(&b_real).all(|(x, y)| (x - y).abs() < tolerance)
+            && a_imag.iter().zip(&b_imag).all(|(x, y)| (x - y).abs() < tolerance)
     }
 
     fn assert_opts_match(a: &mut StateVecSoA, b: &mut StateVecSoA, context: &str) {
@@ -4942,10 +3683,11 @@ mod tests {
         let mut opt: StateVecSoA = StateVecSoA::new(2);
         opt.h(&[QubitId(0)]).sz(&[QubitId(0)]).cx(&[QubitId(0), QubitId(1)]);
 
-        let norm: f64 = opt
-            .real
+        let real_copy = opt.real().to_vec();
+        let imag_copy = opt.imag().to_vec();
+        let norm: f64 = real_copy
             .iter()
-            .zip(&opt.imag)
+            .zip(&imag_copy)
             .map(|(r, i)| r * r + i * i)
             .sum();
         assert!((norm - 1.0).abs() < 1e-10, "State should be normalized");
@@ -4955,19 +3697,22 @@ mod tests {
     fn test_unitarity() {
         let mut opt: StateVecSoA = StateVecSoA::new(1);
         opt.h(&[QubitId(0)]);
-        let initial_real = opt.real.clone();
-        let initial_imag = opt.imag.clone();
+        let initial_real = opt.real().to_vec();
+        let initial_imag = opt.imag().to_vec();
 
         // H^2 = I
         opt.h(&[QubitId(0)]).h(&[QubitId(0)]);
 
-        for i in 0..opt.real.len() {
+        let final_real = opt.real().to_vec();
+        let final_imag = opt.imag().to_vec();
+
+        for i in 0..final_real.len() {
             assert!(
-                (opt.real[i] - initial_real[i]).abs() < 1e-10,
+                (final_real[i] - initial_real[i]).abs() < 1e-10,
                 "H^2 should equal I (real part)"
             );
             assert!(
-                (opt.imag[i] - initial_imag[i]).abs() < 1e-10,
+                (final_imag[i] - initial_imag[i]).abs() < 1e-10,
                 "H^2 should equal I (imag part)"
             );
         }
@@ -5296,3 +4041,5 @@ mod tests {
         assert_opts_match(&mut opt, &mut opt2, "roundtrip complex state");
     }
 }
+
+

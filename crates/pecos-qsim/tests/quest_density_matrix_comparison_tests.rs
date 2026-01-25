@@ -26,7 +26,7 @@ fn assert_close(a: f64, b: f64, msg: &str) {
 
 /// Compare probabilities for all computational basis states between simulators
 fn compare_probabilities(
-    dm: &DensityMatrix,
+    dm: &mut DensityMatrix,
     qdm: &QuestDensityMatrix<PecosRng>,
     num_qubits: usize,
 ) {
@@ -38,7 +38,7 @@ fn compare_probabilities(
 }
 
 /// Compare purity between simulators
-fn compare_purity(dm: &DensityMatrix, qdm: &QuestDensityMatrix<PecosRng>) {
+fn compare_purity(dm: &mut DensityMatrix, qdm: &QuestDensityMatrix<PecosRng>) {
     let dm_purity = dm.purity();
     let qdm_purity = qdm.purity();
     assert_close(dm_purity, qdm_purity, "purity");
@@ -47,11 +47,11 @@ fn compare_purity(dm: &DensityMatrix, qdm: &QuestDensityMatrix<PecosRng>) {
 #[test]
 fn test_initial_state() {
     let num_qubits = 2;
-    let dm = DensityMatrix::new(num_qubits);
+    let mut dm = DensityMatrix::new(num_qubits);
     let qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -65,13 +65,13 @@ fn test_x_gate() {
     dm.x(&qid(0));
     qdm.x(&qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 
     dm.x(&qid(1));
     qdm.x(&qid(1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -84,8 +84,8 @@ fn test_y_gate() {
     dm.y(&qid(0));
     qdm.y(&qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn test_z_gate() {
     dm.z(&qid(0));
     qdm.z(&qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 
     // Create superposition first, then apply Z
     dm.h(&qid(0));
@@ -108,7 +108,7 @@ fn test_z_gate() {
     dm.z(&qid(0));
     qdm.z(&qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -121,13 +121,13 @@ fn test_hadamard_gate() {
     dm.h(&qid(0));
     qdm.h(&qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 
     dm.h(&qid(1));
     qdm.h(&qid(1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -144,8 +144,8 @@ fn test_s_gate() {
     dm.sz(&qid(0));
     qdm.sz(&qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn test_sdg_gate() {
     dm.szdg(&qid(0));
     qdm.szdg(&qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -178,8 +178,8 @@ fn test_cx_gate() {
     dm.cx(&qid2(0, 1));
     qdm.cx(&qid2(0, 1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn test_cz_gate() {
     dm.cz(&qid2(0, 1));
     qdm.cz(&qid2(0, 1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn test_cy_gate() {
     dm.cy(&qid2(0, 1));
     qdm.cy(&qid2(0, 1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn test_swap_gate() {
     dm.swap(&qid2(0, 1));
     qdm.swap(&qid2(0, 1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -245,8 +245,8 @@ fn test_rx_gate() {
     dm.rx(PI / 4.0, &qid(0));
     qdm.rx(PI / 4.0, &qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn test_ry_gate() {
     dm.ry(PI / 3.0, &qid(0));
     qdm.ry(PI / 3.0, &qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -283,13 +283,13 @@ fn test_ry_in_entangled_system() {
     qdm.h(&qid(2));
     qdm.cx(&qid2(1, 2));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 
     // Now apply RY
     dm.ry(PI / 5.0, &qid(0));
     qdm.ry(PI / 5.0, &qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -306,7 +306,7 @@ fn test_rz_gate() {
     dm.rz(PI / 6.0, &qid(0));
     qdm.rz(PI / 6.0, &qid(0));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -325,7 +325,7 @@ fn test_rzz_gate() {
     dm.rzz(PI / 4.0, &qid2(0, 1));
     qdm.rzz(PI / 4.0, &qid2(0, 1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -341,8 +341,8 @@ fn test_bell_state() {
     qdm.h(&qid(0));
     qdm.cx(&qid2(0, 1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 
     // Should be a pure state
     assert_close(dm.purity(), 1.0, "Bell state purity");
@@ -363,8 +363,8 @@ fn test_ghz_state() {
     qdm.cx(&qid2(0, 1));
     qdm.cx(&qid2(1, 2));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -391,8 +391,8 @@ fn test_complex_circuit() {
     qdm.rx(PI / 3.0, &qid(2));
     qdm.cz(&qid2(0, 1));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -412,7 +412,7 @@ fn test_reset() {
     dm.reset();
     qdm.reset();
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -436,7 +436,7 @@ fn test_measurement_deterministic() {
         "determinism mismatch"
     );
 
-    compare_probabilities(&dm, &qdm, num_qubits);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
 }
 
 #[test]
@@ -488,17 +488,17 @@ fn test_purity_pure_state() {
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
     // Various pure states should all have purity 1
-    compare_purity(&dm, &qdm);
+    compare_purity(&mut dm, &qdm);
     assert_close(dm.purity(), 1.0, "initial purity");
 
     dm.h(&qid(0));
     qdm.h(&qid(0));
-    compare_purity(&dm, &qdm);
+    compare_purity(&mut dm, &qdm);
     assert_close(dm.purity(), 1.0, "superposition purity");
 
     dm.cx(&qid2(0, 1));
     qdm.cx(&qid2(0, 1));
-    compare_purity(&dm, &qdm);
+    compare_purity(&mut dm, &qdm);
     assert_close(dm.purity(), 1.0, "entangled purity");
 }
 
@@ -524,7 +524,7 @@ fn test_rotation_angles() {
         dm.rx(theta, &qid(0));
         qdm.rx(theta, &qid(0));
 
-        compare_probabilities(&dm, &qdm, num_qubits);
+        compare_probabilities(&mut dm, &qdm, num_qubits);
     }
 }
 
@@ -552,8 +552,8 @@ fn test_larger_system_4_qubits() {
     qdm.rx(PI / 3.0, &qid(0));
     qdm.ry(PI / 4.0, &qid(3));
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -680,8 +680,8 @@ fn test_random_circuit_comparison() {
         }
     }
 
-    compare_probabilities(&dm, &qdm, num_qubits);
-    compare_purity(&dm, &qdm);
+    compare_probabilities(&mut dm, &qdm, num_qubits);
+    compare_purity(&mut dm, &qdm);
 }
 
 #[test]
@@ -743,6 +743,6 @@ fn test_all_single_qubit_gates() {
             _ => {}
         }
 
-        compare_probabilities(&dm, &qdm, num_qubits);
+        compare_probabilities(&mut dm, &qdm, num_qubits);
     }
 }

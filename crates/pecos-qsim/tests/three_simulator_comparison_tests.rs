@@ -17,7 +17,7 @@ fn assert_probs_equal(p1: f64, p2: f64) {
 // Helper function to compare probabilities for all three simulators
 fn compare_all_probabilities(
     sv: &mut StateVec,
-    dm: &DensityMatrix,
+    dm: &mut DensityMatrix,
     stab: &SparseStab,
     num_qubits: usize,
 ) {
@@ -72,7 +72,7 @@ where
     circuit_fn(&mut sv, &mut dm, &mut stab);
 
     // Compare the resulting states
-    compare_all_probabilities(&mut sv, &dm, &stab, num_qubits);
+    compare_all_probabilities(&mut sv, &mut dm, &stab, num_qubits);
 }
 
 // Helper function to compare a general circuit between StateVec and DensityMatrix
@@ -99,10 +99,10 @@ where
 fn test_initial_state_consistency() {
     for num_qubits in 1..=5 {
         let mut sv = StateVec::new(num_qubits);
-        let dm = DensityMatrix::new(num_qubits);
+        let mut dm = DensityMatrix::new(num_qubits);
         let stab = SparseStab::new(num_qubits);
 
-        compare_all_probabilities(&mut sv, &dm, &stab, num_qubits);
+        compare_all_probabilities(&mut sv, &mut dm, &stab, num_qubits);
     }
 }
 
@@ -267,7 +267,7 @@ fn test_measurement_consistency() {
     assert_eq!(dm_result.is_deterministic, stab_result.is_deterministic);
 
     // After measurement, states should be consistent
-    compare_all_probabilities(&mut sv, &dm, &stab, num_qubits);
+    compare_all_probabilities(&mut sv, &mut dm, &stab, num_qubits);
 
     // Test X-basis measurement (H→Z→H)
     let mut sv = StateVec::with_seed(num_qubits, seed);
@@ -293,7 +293,7 @@ fn test_measurement_consistency() {
     assert_eq!(dm_result.is_deterministic, stab_result.is_deterministic);
 
     // After measurement, all states should still be consistent
-    compare_all_probabilities(&mut sv, &dm, &stab, num_qubits);
+    compare_all_probabilities(&mut sv, &mut dm, &stab, num_qubits);
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn test_prepare_computational_basis_consistency() {
             dm.prepare_computational_basis(i);
 
             // Compare the states
-            compare_all_probabilities(&mut sv, &dm, &stab, num_qubits);
+            compare_all_probabilities(&mut sv, &mut dm, &stab, num_qubits);
         }
     }
 }
@@ -404,7 +404,7 @@ fn test_prepare_plus_states_consistency() {
         }
 
         // Compare the states
-        compare_all_probabilities(&mut sv, &dm, &stab, num_qubits);
+        compare_all_probabilities(&mut sv, &mut dm, &stab, num_qubits);
     }
 }
 
@@ -433,6 +433,6 @@ fn test_reset_consistency() {
         stab.reset();
 
         // Compare the states
-        compare_all_probabilities(&mut sv, &dm, &stab, num_qubits);
+        compare_all_probabilities(&mut sv, &mut dm, &stab, num_qubits);
     }
 }

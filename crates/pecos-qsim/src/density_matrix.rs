@@ -59,7 +59,7 @@ impl DensityMatrix {
     /// use pecos_qsim::DensityMatrix;
     ///
     /// // Initialize a 3-qubit density matrix in the |000⟩⟨000| state
-    /// let density_matrix = DensityMatrix::new(3);
+    /// let mut density_matrix = DensityMatrix::new(3);
     ///
     /// // Confirm the state is |000⟩⟨000|
     /// let prob = density_matrix.probability(0);

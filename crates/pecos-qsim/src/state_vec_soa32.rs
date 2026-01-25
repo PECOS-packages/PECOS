@@ -335,6 +335,459 @@ where
     }
 
     // =========================================================================
+    // Specialized Gate Implementations (used when fusion is disabled)
+    // =========================================================================
+
+    /// Specialized Z gate: negate amplitudes where qubit bit is 1.
+    #[inline]
+    fn apply_z_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 8 {
+            let neg_one = f32x8::splat(-1.0);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i + step;
+                while j + 8 <= i + step * 2 {
+                    let re = f32x8::from(&self.real[j..j + 8]);
+                    let im = f32x8::from(&self.imag[j..j + 8]);
+                    let neg_re: [f32; 8] = (re * neg_one).into();
+                    let neg_im: [f32; 8] = (im * neg_one).into();
+                    self.real[j..j + 8].copy_from_slice(&neg_re);
+                    self.imag[j..j + 8].copy_from_slice(&neg_im);
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in (i + step)..(i + step * 2) {
+                    self.real[j] = -self.real[j];
+                    self.imag[j] = -self.imag[j];
+                }
+            }
+        }
+    }
+
+    /// Specialized X gate: swap amplitude pairs.
+    #[inline]
+    fn apply_x_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        for i in (0..n).step_by(step * 2) {
+            let (left_re, right_re) = self.real[i..i + step * 2].split_at_mut(step);
+            left_re.swap_with_slice(right_re);
+
+            let (left_im, right_im) = self.imag[i..i + step * 2].split_at_mut(step);
+            left_im.swap_with_slice(right_im);
+        }
+    }
+
+    /// Specialized Y gate: swap with phase factors.
+    #[inline]
+    fn apply_y_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 8 {
+            for i in (0..n).step_by(step * 2) {
+                let mut j = 0;
+                while j + 8 <= step {
+                    let idx0 = i + j;
+                    let idx1 = i + j + step;
+
+                    let re0 = f32x8::from(&self.real[idx0..idx0 + 8]);
+                    let im0 = f32x8::from(&self.imag[idx0..idx0 + 8]);
+                    let re1 = f32x8::from(&self.real[idx1..idx1 + 8]);
+                    let im1 = f32x8::from(&self.imag[idx1..idx1 + 8]);
+
+                    let new_re0: [f32; 8] = im1.into();
+                    let new_im0: [f32; 8] = (-re1).into();
+                    let new_re1: [f32; 8] = (-im0).into();
+                    let new_im1: [f32; 8] = re0.into();
+
+                    self.real[idx0..idx0 + 8].copy_from_slice(&new_re0);
+                    self.imag[idx0..idx0 + 8].copy_from_slice(&new_im0);
+                    self.real[idx1..idx1 + 8].copy_from_slice(&new_re1);
+                    self.imag[idx1..idx1 + 8].copy_from_slice(&new_im1);
+
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in 0..step {
+                    let idx0 = i + j;
+                    let idx1 = i + j + step;
+
+                    let re0 = self.real[idx0];
+                    let im0 = self.imag[idx0];
+                    let re1 = self.real[idx1];
+                    let im1 = self.imag[idx1];
+
+                    self.real[idx0] = im1;
+                    self.imag[idx0] = -re1;
+                    self.real[idx1] = -im0;
+                    self.imag[idx1] = re0;
+                }
+            }
+        }
+    }
+
+    /// Specialized SZ gate: multiply by i where qubit bit is 1.
+    #[inline]
+    fn apply_sz_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 8 {
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i + step;
+                while j + 8 <= i + step * 2 {
+                    let re = f32x8::from(&self.real[j..j + 8]);
+                    let im = f32x8::from(&self.imag[j..j + 8]);
+                    let new_re: [f32; 8] = (-im).into();
+                    let new_im: [f32; 8] = re.into();
+                    self.real[j..j + 8].copy_from_slice(&new_re);
+                    self.imag[j..j + 8].copy_from_slice(&new_im);
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in (i + step)..(i + step * 2) {
+                    let re = self.real[j];
+                    let im = self.imag[j];
+                    self.real[j] = -im;
+                    self.imag[j] = re;
+                }
+            }
+        }
+    }
+
+    /// Specialized SZDG gate: multiply by -i where qubit bit is 1.
+    #[inline]
+    fn apply_szdg_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 8 {
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i + step;
+                while j + 8 <= i + step * 2 {
+                    let re = f32x8::from(&self.real[j..j + 8]);
+                    let im = f32x8::from(&self.imag[j..j + 8]);
+                    let new_re: [f32; 8] = im.into();
+                    let new_im: [f32; 8] = (-re).into();
+                    self.real[j..j + 8].copy_from_slice(&new_re);
+                    self.imag[j..j + 8].copy_from_slice(&new_im);
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in (i + step)..(i + step * 2) {
+                    let re = self.real[j];
+                    let im = self.imag[j];
+                    self.real[j] = im;
+                    self.imag[j] = -re;
+                }
+            }
+        }
+    }
+
+    /// Specialized H gate using SIMD.
+    #[inline]
+    fn apply_h_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+        let inv_sqrt2: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+        if step >= 8 {
+            let factor = f32x8::splat(inv_sqrt2);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 8 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f32x8::from(&self.real[j..j + 8]);
+                    let a_im = f32x8::from(&self.imag[j..j + 8]);
+                    let b_re = f32x8::from(&self.real[paired_j..paired_j + 8]);
+                    let b_im = f32x8::from(&self.imag[paired_j..paired_j + 8]);
+
+                    let new_a_re: [f32; 8] = ((a_re + b_re) * factor).into();
+                    let new_a_im: [f32; 8] = ((a_im + b_im) * factor).into();
+                    let new_b_re: [f32; 8] = ((a_re - b_re) * factor).into();
+                    let new_b_im: [f32; 8] = ((a_im - b_im) * factor).into();
+
+                    self.real[j..j + 8].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 8].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 8].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 8].copy_from_slice(&new_b_im);
+
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    self.real[j] = (a_re + b_re) * inv_sqrt2;
+                    self.imag[j] = (a_im + b_im) * inv_sqrt2;
+                    self.real[paired_j] = (a_re - b_re) * inv_sqrt2;
+                    self.imag[paired_j] = (a_im - b_im) * inv_sqrt2;
+                }
+            }
+        }
+    }
+
+    /// Specialized SX gate.
+    #[inline]
+    fn apply_sx_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 8 {
+            let half = f32x8::splat(0.5);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 8 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f32x8::from(&self.real[j..j + 8]);
+                    let a_im = f32x8::from(&self.imag[j..j + 8]);
+                    let b_re = f32x8::from(&self.real[paired_j..paired_j + 8]);
+                    let b_im = f32x8::from(&self.imag[paired_j..paired_j + 8]);
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    let new_a_re: [f32; 8] = ((sum_re - diff_im) * half).into();
+                    let new_a_im: [f32; 8] = ((sum_im + diff_re) * half).into();
+                    let new_b_re: [f32; 8] = ((sum_re + diff_im) * half).into();
+                    let new_b_im: [f32; 8] = ((sum_im - diff_re) * half).into();
+
+                    self.real[j..j + 8].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 8].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 8].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 8].copy_from_slice(&new_b_im);
+
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    self.real[j] = (sum_re - diff_im) * 0.5;
+                    self.imag[j] = (sum_im + diff_re) * 0.5;
+                    self.real[paired_j] = (sum_re + diff_im) * 0.5;
+                    self.imag[paired_j] = (sum_im - diff_re) * 0.5;
+                }
+            }
+        }
+    }
+
+    /// Specialized SXDG gate.
+    #[inline]
+    fn apply_sxdg_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 8 {
+            let half = f32x8::splat(0.5);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 8 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f32x8::from(&self.real[j..j + 8]);
+                    let a_im = f32x8::from(&self.imag[j..j + 8]);
+                    let b_re = f32x8::from(&self.real[paired_j..paired_j + 8]);
+                    let b_im = f32x8::from(&self.imag[paired_j..paired_j + 8]);
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    let new_a_re: [f32; 8] = ((sum_re + diff_im) * half).into();
+                    let new_a_im: [f32; 8] = ((sum_im - diff_re) * half).into();
+                    let new_b_re: [f32; 8] = ((sum_re - diff_im) * half).into();
+                    let new_b_im: [f32; 8] = ((sum_im + diff_re) * half).into();
+
+                    self.real[j..j + 8].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 8].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 8].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 8].copy_from_slice(&new_b_im);
+
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    self.real[j] = (sum_re + diff_im) * 0.5;
+                    self.imag[j] = (sum_im - diff_re) * 0.5;
+                    self.real[paired_j] = (sum_re - diff_im) * 0.5;
+                    self.imag[paired_j] = (sum_im + diff_re) * 0.5;
+                }
+            }
+        }
+    }
+
+    /// Specialized SY gate.
+    #[inline]
+    fn apply_sy_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 8 {
+            let half = f32x8::splat(0.5);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 8 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f32x8::from(&self.real[j..j + 8]);
+                    let a_im = f32x8::from(&self.imag[j..j + 8]);
+                    let b_re = f32x8::from(&self.real[paired_j..paired_j + 8]);
+                    let b_im = f32x8::from(&self.imag[paired_j..paired_j + 8]);
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    let new_a_re: [f32; 8] = ((sum_re + diff_re) * half).into();
+                    let new_a_im: [f32; 8] = ((sum_im + diff_im) * half).into();
+                    let new_b_re: [f32; 8] = ((sum_re - diff_re) * half).into();
+                    let new_b_im: [f32; 8] = ((sum_im - diff_im) * half).into();
+
+                    self.real[j..j + 8].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 8].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 8].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 8].copy_from_slice(&new_b_im);
+
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    self.real[j] = (sum_re + diff_re) * 0.5;
+                    self.imag[j] = (sum_im + diff_im) * 0.5;
+                    self.real[paired_j] = (sum_re - diff_re) * 0.5;
+                    self.imag[paired_j] = (sum_im - diff_im) * 0.5;
+                }
+            }
+        }
+    }
+
+    /// Specialized SYDG gate.
+    #[inline]
+    fn apply_sydg_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 8 {
+            let half = f32x8::splat(0.5);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 8 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f32x8::from(&self.real[j..j + 8]);
+                    let a_im = f32x8::from(&self.imag[j..j + 8]);
+                    let b_re = f32x8::from(&self.real[paired_j..paired_j + 8]);
+                    let b_im = f32x8::from(&self.imag[paired_j..paired_j + 8]);
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    let new_a_re: [f32; 8] = ((sum_re - diff_re) * half).into();
+                    let new_a_im: [f32; 8] = ((sum_im - diff_im) * half).into();
+                    let new_b_re: [f32; 8] = ((sum_re + diff_re) * half).into();
+                    let new_b_im: [f32; 8] = ((sum_im + diff_im) * half).into();
+
+                    self.real[j..j + 8].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 8].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 8].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 8].copy_from_slice(&new_b_im);
+
+                    j += 8;
+                }
+            }
+        } else {
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    self.real[j] = (sum_re - diff_re) * 0.5;
+                    self.imag[j] = (sum_im - diff_im) * 0.5;
+                    self.real[paired_j] = (sum_re + diff_re) * 0.5;
+                    self.imag[paired_j] = (sum_im + diff_im) * 0.5;
+                }
+            }
+        }
+    }
+
+    // =========================================================================
     // State Access
     // =========================================================================
 
@@ -451,7 +904,11 @@ where
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::H);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::H);
+            } else {
+                self.apply_h_gate(q.index());
+            }
         }
         self
     }
@@ -459,7 +916,11 @@ where
     #[inline]
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::X);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::X);
+            } else {
+                self.apply_x_gate(q.index());
+            }
         }
         self
     }
@@ -467,7 +928,11 @@ where
     #[inline]
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::Y);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::Y);
+            } else {
+                self.apply_y_gate(q.index());
+            }
         }
         self
     }
@@ -475,7 +940,11 @@ where
     #[inline]
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::Z);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::Z);
+            } else {
+                self.apply_z_gate(q.index());
+            }
         }
         self
     }
@@ -483,7 +952,11 @@ where
     #[inline]
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::SZ);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::SZ);
+            } else {
+                self.apply_sz_gate(q.index());
+            }
         }
         self
     }
@@ -491,7 +964,11 @@ where
     #[inline]
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::SZDG);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::SZDG);
+            } else {
+                self.apply_szdg_gate(q.index());
+            }
         }
         self
     }
@@ -499,7 +976,11 @@ where
     #[inline]
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::SX);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::SX);
+            } else {
+                self.apply_sx_gate(q.index());
+            }
         }
         self
     }
@@ -507,7 +988,11 @@ where
     #[inline]
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::SXDG);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::SXDG);
+            } else {
+                self.apply_sxdg_gate(q.index());
+            }
         }
         self
     }
@@ -515,7 +1000,11 @@ where
     #[inline]
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::SY);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::SY);
+            } else {
+                self.apply_sy_gate(q.index());
+            }
         }
         self
     }
@@ -523,7 +1012,11 @@ where
     #[inline]
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices_32::SYDG);
+            if self.fusion_enabled {
+                self.queue_gate(q.index(), &gate_matrices_32::SYDG);
+            } else {
+                self.apply_sydg_gate(q.index());
+            }
         }
         self
     }

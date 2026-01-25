@@ -36,6 +36,8 @@ pub mod state_vec;
 pub mod state_vec_aos;
 pub mod state_vec_soa;
 pub mod state_vec_soa32;
+pub mod state_vec_sparse_aos;
+pub mod state_vec_sparse_soa;
 pub mod symbolic_gens;
 pub mod symbolic_sparse_stab;
 pub mod symbolic_sparse_stab_bitset;
@@ -74,6 +76,10 @@ pub use state_vec::StateVec as StateVecOld;
 pub use state_vec_aos::StateVecAoS;
 pub use state_vec_soa::StateVecSoA;
 pub use state_vec_soa32::StateVecSoA32;
+pub use state_vec_sparse_aos::SparseStateVecAoS;
+pub use state_vec_sparse_soa::SparseStateVecSoA;
+// Alias for backwards compatibility and common usage
+pub use state_vec_sparse_aos::SparseStateVecAoS as SparseStateVec;
 pub use symbolic_gens::{
     SymbolicGens, SymbolicGensBitSet, SymbolicGensGeneric, SymbolicGensVecSet,
 };

@@ -568,7 +568,7 @@ impl PyStateVec {
     /// Provides direct access to the current state vector as a Python property
     #[getter]
     #[allow(clippy::items_after_statements)] // Use statements for type imports are clearer when near usage
-    fn vector(&self, py: Python<'_>) -> PyResult<Py<Array>> {
+    fn vector(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
         // Convert the state vector to a 1D complex ndarray
         use ndarray::Array1;
         let state = self.inner.state();
@@ -593,7 +593,7 @@ impl PyStateVec {
     /// 1. Uses Rust's built-in `reverse_bits()` (often a single CPU instruction)
     /// 2. Avoids Python string formatting and parsing
     /// 3. Performs all indexing operations in contiguous Rust memory
-    fn vector_big_endian(&self, py: Python<'_>) -> PyResult<Py<Array>> {
+    fn vector_big_endian(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
         use crate::pecos_array::ArrayData;
         use ndarray::Array1;
 

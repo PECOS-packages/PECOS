@@ -23,6 +23,7 @@ mod modules {
     // TODO: pub mod pauli_ops;
     pub mod rng;
     pub mod set_ops;
+    pub mod sparse_state_vec;
     pub mod stabilizer_sims;
     pub mod state_vec_sims;
     pub mod surface_code;
@@ -32,7 +33,7 @@ mod modules {
 use modules::gpu_influence_sampler;
 use modules::{
     allocation_overhead, dod_statevec, measurement_sampling, noise_models, rng, set_ops,
-    stabilizer_sims, state_vec_sims, surface_code,
+    sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
@@ -44,6 +45,7 @@ fn all_benchmarks(c: &mut Criterion) {
     noise_models::benchmarks(c);
     rng::benchmarks(c);
     set_ops::benchmarks(c);
+    sparse_state_vec::benchmarks(c);
     stabilizer_sims::benchmarks(c);
     state_vec_sims::benchmarks(c);
     surface_code::benchmarks(c);

@@ -25,6 +25,29 @@ use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 use std::fmt::Debug;
 use wide::f64x4;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+/// Wrapper for raw pointer to allow Send+Sync for parallel iteration.
+/// SAFETY: This is only safe when the parallel access pattern guarantees
+/// non-overlapping memory regions for each thread.
+#[cfg(feature = "parallel")]
+#[derive(Clone, Copy)]
+struct SendPtr(*mut f64);
+
+#[cfg(feature = "parallel")]
+impl SendPtr {
+    #[inline]
+    fn ptr(self) -> *mut f64 {
+        self.0
+    }
+}
+
+#[cfg(feature = "parallel")]
+unsafe impl Send for SendPtr {}
+#[cfg(feature = "parallel")]
+unsafe impl Sync for SendPtr {}
+
 // =============================================================================
 // Gate Fusion Support
 // =============================================================================
@@ -211,27 +234,27 @@ mod gate_matrices {
         d_im: -0.5,
     };
 
-    /// F gate: (1/2)[[1+i, 1+i], [-1+i, 1-i]]
+    /// F gate = SZ * SX: (1/2)[[1+i, 1-i], [1+i, -1+i]]
     pub const F: Complex2x2 = Complex2x2 {
         a_re: 0.5,
         a_im: 0.5,
         b_re: 0.5,
-        b_im: 0.5,
-        c_re: -0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: -0.5,
-    };
-
-    /// FDG gate: (1/2)[[1-i, -1-i], [1+i, 1-i]]
-    pub const FDG: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: -0.5,
         b_im: -0.5,
         c_re: 0.5,
         c_im: 0.5,
-        d_re: 0.5,
+        d_re: -0.5,
+        d_im: 0.5,
+    };
+
+    /// FDG gate = SXDG * SZDG: (1/2)[[1-i, 1-i], [1+i, -1-i]]
+    pub const FDG: Complex2x2 = Complex2x2 {
+        a_re: 0.5,
+        a_im: -0.5,
+        b_re: 0.5,
+        b_im: -0.5,
+        c_re: 0.5,
+        c_im: 0.5,
+        d_re: -0.5,
         d_im: -0.5,
     };
 
@@ -382,14 +405,20 @@ where
     num_qubits: usize,
     /// Random number generator for measurements
     rng: R,
-    /// Scratch buffer for real components (used by two_qubit_unitary)
+    /// Scratch buffer for real components (lazily allocated, used by two_qubit_unitary)
     scratch_real: Vec<f64>,
-    /// Scratch buffer for imaginary components (used by two_qubit_unitary)
+    /// Scratch buffer for imaginary components (lazily allocated, used by two_qubit_unitary)
     scratch_imag: Vec<f64>,
     /// Gate fusion: accumulated matrix per qubit (None = identity/no pending gates)
     pending_gates: Vec<Option<Complex2x2>>,
     /// Whether gate fusion is enabled (default: true)
     fusion_enabled: bool,
+    /// Whether parallel execution is enabled (default: false).
+    /// When enabled and state vector is large enough (14+ qubits), gate operations
+    /// are parallelized across multiple threads using rayon.
+    parallel_enabled: bool,
+    /// Number of threads for parallel execution (None = use all available).
+    num_threads: Option<usize>,
 }
 
 impl<R: Rng + Clone> Clone for StateVecSoA<R> {
@@ -399,10 +428,13 @@ impl<R: Rng + Clone> Clone for StateVecSoA<R> {
             imag: self.imag.clone(),
             num_qubits: self.num_qubits,
             rng: self.rng.clone(),
-            scratch_real: self.scratch_real.clone(),
-            scratch_imag: self.scratch_imag.clone(),
+            // Don't clone scratch buffers - they're lazily allocated as needed
+            scratch_real: Vec::new(),
+            scratch_imag: Vec::new(),
             pending_gates: self.pending_gates.clone(),
             fusion_enabled: self.fusion_enabled,
+            parallel_enabled: self.parallel_enabled,
+            num_threads: self.num_threads,
         }
     }
 }
@@ -450,10 +482,12 @@ where
             imag,
             num_qubits,
             rng,
-            scratch_real: vec![0.0; size],
-            scratch_imag: vec![0.0; size],
+            scratch_real: Vec::new(),
+            scratch_imag: Vec::new(),
             pending_gates: vec![None; num_qubits],
-            fusion_enabled: true,
+            fusion_enabled: false,
+            parallel_enabled: false,
+            num_threads: None,
         }
     }
 
@@ -463,12 +497,14 @@ where
 
     /// Enable or disable gate fusion.
     ///
-    /// When enabled (default), consecutive single-qubit gates on the same qubit
-    /// are accumulated into a single fused matrix and applied together, reducing
-    /// memory passes. This can provide significant speedups (up to 10x for many
-    /// gates on the same qubit).
+    /// When enabled, consecutive single-qubit gates on the same qubit are
+    /// accumulated into a single fused matrix and applied together, reducing
+    /// memory passes. This can provide significant speedups (up to 10x) for
+    /// circuits with many consecutive single-qubit gates on the same qubit.
     ///
-    /// When disabled, gates are applied immediately as they are called.
+    /// When disabled (default), gates are applied immediately. This is better
+    /// for typical circuits with frequent two-qubit gates, which cause flushes
+    /// that negate fusion benefits.
     #[inline]
     pub fn set_fusion(&mut self, enabled: bool) {
         if !enabled && self.fusion_enabled {
@@ -487,20 +523,85 @@ where
 
     /// Enable or disable parallel execution for large state vectors.
     ///
-    /// Note: Parallel execution is not yet implemented for the fused gate path.
-    /// This method is provided for API compatibility.
+    /// When enabled, gate operations are parallelized across multiple threads
+    /// using rayon for state vectors with 14+ qubits (16K+ amplitudes).
+    /// For smaller state vectors, parallelism overhead exceeds benefits.
+    ///
+    /// **Default: disabled.** This is appropriate for most use cases since:
+    /// - `MonteCarloEngine` already parallelizes at the shot level
+    /// - Single-shot scenarios with amplitude inspection benefit from parallelism
+    ///
+    /// Requires the `parallel` feature to be enabled at compile time.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut sim = StateVec::new(20);
+    /// sim.set_parallel(true);
+    /// ```
     #[inline]
-    pub fn set_parallel(&mut self, _enabled: bool) {
-        // TODO: Implement parallel execution for fused gates
+    pub fn set_parallel(&mut self, enabled: bool) -> &mut Self {
+        self.parallel_enabled = enabled;
+        self
     }
+
+    /// Enable parallel execution (builder pattern).
+    ///
+    /// This is equivalent to `set_parallel(true)` but provides a more fluent API.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut sim = StateVec::new(20);
+    /// sim.parallel(true).num_threads(Some(4));
+    /// ```
+    #[inline]
+    pub fn parallel(&mut self, enabled: bool) -> &mut Self {
+        self.set_parallel(enabled)
+    }
+
+    /// Returns whether parallel execution is enabled.
+    #[inline]
+    #[must_use]
+    pub fn parallel_enabled(&self) -> bool {
+        self.parallel_enabled
+    }
+
+    /// Minimum number of qubits for parallel execution to be beneficial.
+    /// Below this threshold, parallelism overhead exceeds benefits.
+    #[cfg(feature = "parallel")]
+    const PARALLEL_THRESHOLD_QUBITS: usize = 14;
 
     /// Set the number of threads for parallel execution.
     ///
-    /// Note: Parallel execution is not yet implemented for the fused gate path.
-    /// This method is provided for API compatibility.
+    /// - `None` (default): Use all available threads (rayon's default behavior)
+    /// - `Some(n)`: Use exactly `n` threads for parallel operations
+    ///
+    /// This creates a custom thread pool when parallel operations are executed.
+    /// Only takes effect when parallel execution is enabled via `set_parallel(true)`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut sim = StateVec::new(20);
+    /// sim.parallel(true).num_threads(Some(4));  // Use 4 threads
+    /// ```
     #[inline]
-    pub fn set_num_threads(&mut self, _num_threads: Option<usize>) {
-        // TODO: Implement thread control for fused gates
+    pub fn set_num_threads(&mut self, num_threads: Option<usize>) -> &mut Self {
+        self.num_threads = num_threads;
+        self
+    }
+
+    /// Set the number of threads for parallel execution (builder pattern).
+    ///
+    /// Alias for `set_num_threads` for fluent API.
+    #[inline]
+    pub fn num_threads(&mut self, num_threads: Option<usize>) -> &mut Self {
+        self.set_num_threads(num_threads)
+    }
+
+    /// Returns the configured number of threads for parallel execution.
+    #[inline]
+    #[must_use]
+    pub fn get_num_threads(&self) -> Option<usize> {
+        self.num_threads
     }
 
     /// Queue a single-qubit gate for fusion.
@@ -555,9 +656,29 @@ where
     }
 
     /// Apply a fused 2x2 complex matrix to a single qubit using SIMD.
+    /// When parallel execution is enabled and the state vector is large enough,
+    /// this operation is parallelized across multiple threads.
     fn apply_fused_matrix(&mut self, q: usize, m: &Complex2x2) {
         let step = 1 << q;
         let n = self.real.len();
+
+        // Check if we should use parallel execution.
+        // Conditions:
+        // 1. Parallel feature enabled at compile time
+        // 2. parallel_enabled flag set at runtime
+        // 3. State vector is large enough (>= threshold qubits)
+        // 4. Step is large enough for SIMD (>= 4)
+        // 5. There are enough blocks to parallelize (>= 4 blocks)
+        //    This ensures we don't pay thread overhead for single-block operations.
+        #[cfg(feature = "parallel")]
+        if self.parallel_enabled
+            && self.num_qubits >= Self::PARALLEL_THRESHOLD_QUBITS
+            && step >= 4
+            && (n / (step * 2)) >= 4
+        {
+            self.apply_fused_matrix_parallel(q, m);
+            return;
+        }
 
         if step < 4 {
             // Scalar fallback for small steps
@@ -628,6 +749,757 @@ where
 
                     j += 4;
                 }
+            }
+        }
+    }
+
+    /// Parallel version of apply_fused_matrix using rayon.
+    /// Each block of size `step * 2` is processed independently.
+    /// Uses a custom thread pool if `num_threads` is set, otherwise uses rayon's global pool.
+    #[cfg(feature = "parallel")]
+    fn apply_fused_matrix_parallel(&mut self, q: usize, m: &Complex2x2) {
+        let step = 1 << q;
+        let n = self.real.len();
+        let block_size = step * 2;
+        let num_blocks = n / block_size;
+
+        // Wrap raw pointers in SendPtr for parallel access
+        // SAFETY: Each parallel iteration accesses a disjoint block of indices.
+        // Block i accesses indices [i*block_size .. (i+1)*block_size], which are non-overlapping.
+        let real_ptr = SendPtr(self.real.as_mut_ptr());
+        let imag_ptr = SendPtr(self.imag.as_mut_ptr());
+
+        // Create the parallel work closure
+        let work = || {
+            (0..num_blocks).into_par_iter().for_each(|block_idx| {
+                let block_start = block_idx * block_size;
+
+                // SIMD constants
+                let a_re = f64x4::splat(m.a_re);
+                let a_im = f64x4::splat(m.a_im);
+                let b_re = f64x4::splat(m.b_re);
+                let b_im = f64x4::splat(m.b_im);
+                let c_re = f64x4::splat(m.c_re);
+                let c_im = f64x4::splat(m.c_im);
+                let d_re = f64x4::splat(m.d_re);
+                let d_im = f64x4::splat(m.d_im);
+
+                // Get raw pointers from SendPtr wrappers
+                let rp = real_ptr.ptr();
+                let ip = imag_ptr.ptr();
+
+                let mut j = block_start;
+                while j + 4 <= block_start + step {
+                    let paired_j = j + step;
+
+                    // SAFETY: j and paired_j are within bounds and each block is disjoint
+                    unsafe {
+                        let alpha_re_v = f64x4::from(std::slice::from_raw_parts(rp.add(j), 4));
+                        let alpha_im_v = f64x4::from(std::slice::from_raw_parts(ip.add(j), 4));
+                        let beta_re_v =
+                            f64x4::from(std::slice::from_raw_parts(rp.add(paired_j), 4));
+                        let beta_im_v =
+                            f64x4::from(std::slice::from_raw_parts(ip.add(paired_j), 4));
+
+                        // new_alpha = a * alpha + b * beta
+                        let new_alpha_re = (a_re * alpha_re_v - a_im * alpha_im_v)
+                            + (b_re * beta_re_v - b_im * beta_im_v);
+                        let new_alpha_im = (a_re * alpha_im_v + a_im * alpha_re_v)
+                            + (b_re * beta_im_v + b_im * beta_re_v);
+
+                        // new_beta = c * alpha + d * beta
+                        let new_beta_re = (c_re * alpha_re_v - c_im * alpha_im_v)
+                            + (d_re * beta_re_v - d_im * beta_im_v);
+                        let new_beta_im = (c_re * alpha_im_v + c_im * alpha_re_v)
+                            + (d_re * beta_im_v + d_im * beta_re_v);
+
+                        let arr_alpha_re: [f64; 4] = new_alpha_re.into();
+                        let arr_alpha_im: [f64; 4] = new_alpha_im.into();
+                        let arr_beta_re: [f64; 4] = new_beta_re.into();
+                        let arr_beta_im: [f64; 4] = new_beta_im.into();
+
+                        std::ptr::copy_nonoverlapping(arr_alpha_re.as_ptr(), rp.add(j), 4);
+                        std::ptr::copy_nonoverlapping(arr_alpha_im.as_ptr(), ip.add(j), 4);
+                        std::ptr::copy_nonoverlapping(arr_beta_re.as_ptr(), rp.add(paired_j), 4);
+                        std::ptr::copy_nonoverlapping(arr_beta_im.as_ptr(), ip.add(paired_j), 4);
+                    }
+
+                    j += 4;
+                }
+            });
+        };
+
+        // Execute with custom thread pool if num_threads is specified
+        if let Some(num_threads) = self.num_threads {
+            // Build a custom thread pool with the specified number of threads
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .expect("Failed to build thread pool");
+            pool.install(work);
+        } else {
+            // Use rayon's global thread pool (all available threads)
+            work();
+        }
+    }
+
+    // =========================================================================
+    // Specialized Gate Implementations (used when fusion is disabled)
+    // =========================================================================
+
+    /// Specialized Z gate: negate amplitudes where qubit bit is 1.
+    /// Z|0⟩ = |0⟩, Z|1⟩ = -|1⟩
+    #[inline]
+    fn apply_z_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 4 {
+            // SIMD path: negate 4 elements at a time
+            let neg_one = f64x4::splat(-1.0);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i + step;
+                while j + 4 <= i + step * 2 {
+                    let re = f64x4::from(&self.real[j..j + 4]);
+                    let im = f64x4::from(&self.imag[j..j + 4]);
+                    let neg_re: [f64; 4] = (re * neg_one).into();
+                    let neg_im: [f64; 4] = (im * neg_one).into();
+                    self.real[j..j + 4].copy_from_slice(&neg_re);
+                    self.imag[j..j + 4].copy_from_slice(&neg_im);
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in (i + step)..(i + step * 2) {
+                    self.real[j] = -self.real[j];
+                    self.imag[j] = -self.imag[j];
+                }
+            }
+        }
+    }
+
+    /// Specialized X gate: swap amplitude pairs.
+    /// X|0⟩ = |1⟩, X|1⟩ = |0⟩
+    #[inline]
+    fn apply_x_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        // Use slice swap for better performance
+        for i in (0..n).step_by(step * 2) {
+            let (left_re, right_re) = self.real[i..i + step * 2].split_at_mut(step);
+            left_re.swap_with_slice(right_re);
+
+            let (left_im, right_im) = self.imag[i..i + step * 2].split_at_mut(step);
+            left_im.swap_with_slice(right_im);
+        }
+    }
+
+    /// Specialized Y gate: swap with phase factors.
+    /// Y|0⟩ = i|1⟩, Y|1⟩ = -i|0⟩
+    #[inline]
+    fn apply_y_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 4 {
+            // SIMD path
+            for i in (0..n).step_by(step * 2) {
+                let mut j = 0;
+                while j + 4 <= step {
+                    let idx0 = i + j;
+                    let idx1 = i + j + step;
+
+                    let re0 = f64x4::from(&self.real[idx0..idx0 + 4]);
+                    let im0 = f64x4::from(&self.imag[idx0..idx0 + 4]);
+                    let re1 = f64x4::from(&self.real[idx1..idx1 + 4]);
+                    let im1 = f64x4::from(&self.imag[idx1..idx1 + 4]);
+
+                    // New |0⟩ = -i * old|1⟩: (re1, im1) * -i = (im1, -re1)
+                    // New |1⟩ = i * old|0⟩: (re0, im0) * i = (-im0, re0)
+                    let new_re0: [f64; 4] = im1.into();
+                    let new_im0: [f64; 4] = (-re1).into();
+                    let new_re1: [f64; 4] = (-im0).into();
+                    let new_im1: [f64; 4] = re0.into();
+
+                    self.real[idx0..idx0 + 4].copy_from_slice(&new_re0);
+                    self.imag[idx0..idx0 + 4].copy_from_slice(&new_im0);
+                    self.real[idx1..idx1 + 4].copy_from_slice(&new_re1);
+                    self.imag[idx1..idx1 + 4].copy_from_slice(&new_im1);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in 0..step {
+                    let idx0 = i + j;
+                    let idx1 = i + j + step;
+
+                    let re0 = self.real[idx0];
+                    let im0 = self.imag[idx0];
+                    let re1 = self.real[idx1];
+                    let im1 = self.imag[idx1];
+
+                    // New |0⟩ = -i * old|1⟩
+                    self.real[idx0] = im1;
+                    self.imag[idx0] = -re1;
+                    // New |1⟩ = i * old|0⟩
+                    self.real[idx1] = -im0;
+                    self.imag[idx1] = re0;
+                }
+            }
+        }
+    }
+
+    /// Specialized SZ (S) gate: multiply by i where qubit bit is 1.
+    /// S|0⟩ = |0⟩, S|1⟩ = i|1⟩
+    #[inline]
+    fn apply_sz_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        // Multiply by i: (re, im) -> (-im, re)
+        if step >= 4 {
+            // SIMD path
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i + step;
+                while j + 4 <= i + step * 2 {
+                    let re = f64x4::from(&self.real[j..j + 4]);
+                    let im = f64x4::from(&self.imag[j..j + 4]);
+                    let new_re: [f64; 4] = (-im).into();
+                    let new_im: [f64; 4] = re.into();
+                    self.real[j..j + 4].copy_from_slice(&new_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_im);
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in (i + step)..(i + step * 2) {
+                    let re = self.real[j];
+                    let im = self.imag[j];
+                    self.real[j] = -im;
+                    self.imag[j] = re;
+                }
+            }
+        }
+    }
+
+    /// Specialized SZDG (S†) gate: multiply by -i where qubit bit is 1.
+    /// S†|0⟩ = |0⟩, S†|1⟩ = -i|1⟩
+    #[inline]
+    fn apply_szdg_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        // Multiply by -i: (re, im) -> (im, -re)
+        if step >= 4 {
+            // SIMD path
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i + step;
+                while j + 4 <= i + step * 2 {
+                    let re = f64x4::from(&self.real[j..j + 4]);
+                    let im = f64x4::from(&self.imag[j..j + 4]);
+                    let new_re: [f64; 4] = im.into();
+                    let new_im: [f64; 4] = (-re).into();
+                    self.real[j..j + 4].copy_from_slice(&new_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_im);
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in (i + step)..(i + step * 2) {
+                    let re = self.real[j];
+                    let im = self.imag[j];
+                    self.real[j] = im;
+                    self.imag[j] = -re;
+                }
+            }
+        }
+    }
+
+    /// Specialized H gate using SIMD.
+    /// H|0⟩ = (|0⟩ + |1⟩)/√2, H|1⟩ = (|0⟩ - |1⟩)/√2
+    #[inline]
+    fn apply_h_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+        let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+
+        if step >= 4 {
+            // SIMD path
+            let factor = f64x4::splat(inv_sqrt2);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 4 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f64x4::from(&self.real[j..j + 4]);
+                    let a_im = f64x4::from(&self.imag[j..j + 4]);
+                    let b_re = f64x4::from(&self.real[paired_j..paired_j + 4]);
+                    let b_im = f64x4::from(&self.imag[paired_j..paired_j + 4]);
+
+                    // new_a = (a + b) / sqrt(2)
+                    // new_b = (a - b) / sqrt(2)
+                    let new_a_re: [f64; 4] = ((a_re + b_re) * factor).into();
+                    let new_a_im: [f64; 4] = ((a_im + b_im) * factor).into();
+                    let new_b_re: [f64; 4] = ((a_re - b_re) * factor).into();
+                    let new_b_im: [f64; 4] = ((a_im - b_im) * factor).into();
+
+                    self.real[j..j + 4].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 4].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 4].copy_from_slice(&new_b_im);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    self.real[j] = (a_re + b_re) * inv_sqrt2;
+                    self.imag[j] = (a_im + b_im) * inv_sqrt2;
+                    self.real[paired_j] = (a_re - b_re) * inv_sqrt2;
+                    self.imag[paired_j] = (a_im - b_im) * inv_sqrt2;
+                }
+            }
+        }
+    }
+
+    /// Specialized SX gate: (1+i)/2 on diagonal, (1-i)/2 off-diagonal
+    #[inline]
+    fn apply_sx_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        // SX = (1/2) * [[1+i, 1-i], [1-i, 1+i]]
+        if step >= 4 {
+            // SIMD path
+            let half = f64x4::splat(0.5);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 4 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f64x4::from(&self.real[j..j + 4]);
+                    let a_im = f64x4::from(&self.imag[j..j + 4]);
+                    let b_re = f64x4::from(&self.real[paired_j..paired_j + 4]);
+                    let b_im = f64x4::from(&self.imag[paired_j..paired_j + 4]);
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    let new_a_re: [f64; 4] = ((sum_re - diff_im) * half).into();
+                    let new_a_im: [f64; 4] = ((sum_im + diff_re) * half).into();
+                    let new_b_re: [f64; 4] = ((sum_re + diff_im) * half).into();
+                    let new_b_im: [f64; 4] = ((sum_im - diff_re) * half).into();
+
+                    self.real[j..j + 4].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 4].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 4].copy_from_slice(&new_b_im);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    self.real[j] = (sum_re - diff_im) * 0.5;
+                    self.imag[j] = (sum_im + diff_re) * 0.5;
+                    self.real[paired_j] = (sum_re + diff_im) * 0.5;
+                    self.imag[paired_j] = (sum_im - diff_re) * 0.5;
+                }
+            }
+        }
+    }
+
+    /// Specialized SXDG gate: (1-i)/2 on diagonal, (1+i)/2 off-diagonal
+    #[inline]
+    fn apply_sxdg_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        // SXDG = (1/2) * [[1-i, 1+i], [1+i, 1-i]]
+        if step >= 4 {
+            // SIMD path
+            let half = f64x4::splat(0.5);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 4 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f64x4::from(&self.real[j..j + 4]);
+                    let a_im = f64x4::from(&self.imag[j..j + 4]);
+                    let b_re = f64x4::from(&self.real[paired_j..paired_j + 4]);
+                    let b_im = f64x4::from(&self.imag[paired_j..paired_j + 4]);
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    // SXDG is conjugate of SX: swap signs on i terms
+                    let new_a_re: [f64; 4] = ((sum_re + diff_im) * half).into();
+                    let new_a_im: [f64; 4] = ((sum_im - diff_re) * half).into();
+                    let new_b_re: [f64; 4] = ((sum_re - diff_im) * half).into();
+                    let new_b_im: [f64; 4] = ((sum_im + diff_re) * half).into();
+
+                    self.real[j..j + 4].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 4].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 4].copy_from_slice(&new_b_im);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let diff_re = a_re - b_re;
+                    let diff_im = a_im - b_im;
+
+                    // SXDG is conjugate of SX: swap signs on i terms
+                    self.real[j] = (sum_re + diff_im) * 0.5;
+                    self.imag[j] = (sum_im - diff_re) * 0.5;
+                    self.real[paired_j] = (sum_re - diff_im) * 0.5;
+                    self.imag[paired_j] = (sum_im + diff_re) * 0.5;
+                }
+            }
+        }
+    }
+
+    /// Specialized SY gate: (1/2)[[1+i, -1-i], [1+i, 1+i]]
+    #[inline]
+    fn apply_sy_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 4 {
+            // SIMD path
+            let half = f64x4::splat(0.5);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 4 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f64x4::from(&self.real[j..j + 4]);
+                    let a_im = f64x4::from(&self.imag[j..j + 4]);
+                    let b_re = f64x4::from(&self.real[paired_j..paired_j + 4]);
+                    let b_im = f64x4::from(&self.imag[paired_j..paired_j + 4]);
+
+                    // new_a = (1+i)/2 * a + (-1-i)/2 * b
+                    let new_a_re: [f64; 4] = ((a_re - a_im - b_re + b_im) * half).into();
+                    let new_a_im: [f64; 4] = ((a_re + a_im - b_re - b_im) * half).into();
+
+                    // new_b = (1+i)/2 * (a + b)
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let new_b_re: [f64; 4] = ((sum_re - sum_im) * half).into();
+                    let new_b_im: [f64; 4] = ((sum_re + sum_im) * half).into();
+
+                    self.real[j..j + 4].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 4].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 4].copy_from_slice(&new_b_im);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    let new_a_re = (a_re - a_im - b_re + b_im) * 0.5;
+                    let new_a_im = (a_re + a_im - b_re - b_im) * 0.5;
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let new_b_re = (sum_re - sum_im) * 0.5;
+                    let new_b_im = (sum_re + sum_im) * 0.5;
+
+                    self.real[j] = new_a_re;
+                    self.imag[j] = new_a_im;
+                    self.real[paired_j] = new_b_re;
+                    self.imag[paired_j] = new_b_im;
+                }
+            }
+        }
+    }
+
+    /// Specialized SYDG gate: (1/2)[[1-i, 1-i], [-1+i, 1-i]]
+    #[inline]
+    fn apply_sydg_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        if step >= 4 {
+            // SIMD path
+            let half = f64x4::splat(0.5);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 4 <= i + step {
+                    let paired_j = j + step;
+
+                    let a_re = f64x4::from(&self.real[j..j + 4]);
+                    let a_im = f64x4::from(&self.imag[j..j + 4]);
+                    let b_re = f64x4::from(&self.real[paired_j..paired_j + 4]);
+                    let b_im = f64x4::from(&self.imag[paired_j..paired_j + 4]);
+
+                    // new_a = (1-i)/2 * (a + b)
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let new_a_re: [f64; 4] = ((sum_re + sum_im) * half).into();
+                    let new_a_im: [f64; 4] = ((sum_im - sum_re) * half).into();
+
+                    // new_b = (-1+i)/2 * a + (1-i)/2 * b
+                    let new_b_re: [f64; 4] = ((-a_re - a_im + b_re + b_im) * half).into();
+                    let new_b_im: [f64; 4] = ((a_re - a_im - b_re + b_im) * half).into();
+
+                    self.real[j..j + 4].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 4].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 4].copy_from_slice(&new_b_im);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    let sum_re = a_re + b_re;
+                    let sum_im = a_im + b_im;
+                    let new_a_re = (sum_re + sum_im) * 0.5;
+                    let new_a_im = (-sum_re + sum_im) * 0.5;
+
+                    let new_b_re = (-a_re - a_im + b_re + b_im) * 0.5;
+                    let new_b_im = (a_re - a_im - b_re + b_im) * 0.5;
+
+                    self.real[j] = new_a_re;
+                    self.imag[j] = new_a_im;
+                    self.real[paired_j] = new_b_re;
+                    self.imag[paired_j] = new_b_im;
+                }
+            }
+        }
+    }
+
+    /// Specialized H3 gate: [[0, 1], [i, 0]] - swap with i on lower
+    #[inline]
+    fn apply_h3_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        for i in (0..n).step_by(step * 2) {
+            for j in i..(i + step) {
+                let paired_j = j + step;
+
+                let a_re = self.real[j];
+                let a_im = self.imag[j];
+                let b_re = self.real[paired_j];
+                let b_im = self.imag[paired_j];
+
+                // new_a = b
+                // new_b = i * a = (-a_im, a_re)
+                self.real[j] = b_re;
+                self.imag[j] = b_im;
+                self.real[paired_j] = -a_im;
+                self.imag[paired_j] = a_re;
+            }
+        }
+    }
+
+    /// Specialized H4 gate: [[0, i], [1, 0]] - swap with i on upper
+    #[inline]
+    fn apply_h4_gate(&mut self, q: usize) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        for i in (0..n).step_by(step * 2) {
+            for j in i..(i + step) {
+                let paired_j = j + step;
+
+                let a_re = self.real[j];
+                let a_im = self.imag[j];
+                let b_re = self.real[paired_j];
+                let b_im = self.imag[paired_j];
+
+                // new_a = i * b = (-b_im, b_re)
+                // new_b = a
+                self.real[j] = -b_im;
+                self.imag[j] = b_re;
+                self.real[paired_j] = a_re;
+                self.imag[paired_j] = a_im;
+            }
+        }
+    }
+
+    /// Apply a general 2x2 unitary matrix (for gates without special structure)
+    #[inline]
+    fn apply_general_gate(&mut self, q: usize, m: &Complex2x2) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        for i in (0..n).step_by(step * 2) {
+            for j in i..(i + step) {
+                let paired_j = j + step;
+
+                let a_re = self.real[j];
+                let a_im = self.imag[j];
+                let b_re = self.real[paired_j];
+                let b_im = self.imag[paired_j];
+
+                // new_a = m.a * a + m.b * b
+                self.real[j] = (m.a_re * a_re - m.a_im * a_im) + (m.b_re * b_re - m.b_im * b_im);
+                self.imag[j] = (m.a_re * a_im + m.a_im * a_re) + (m.b_re * b_im + m.b_im * b_re);
+
+                // new_b = m.c * a + m.d * b
+                self.real[paired_j] = (m.c_re * a_re - m.c_im * a_im) + (m.d_re * b_re - m.d_im * b_im);
+                self.imag[paired_j] = (m.c_re * a_im + m.c_im * a_re) + (m.d_re * b_im + m.d_im * b_re);
+            }
+        }
+    }
+
+    /// Specialized RZ gate: diagonal rotation [[e^(-i*theta/2), 0], [0, e^(i*theta/2)]]
+    #[inline]
+    fn apply_rz_gate(&mut self, q: usize, theta: f64) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        let half_theta = theta * 0.5;
+        let cos_t = half_theta.cos();
+        let sin_t = half_theta.sin();
+
+        // |0⟩ component: multiply by e^(-i*theta/2) = cos - i*sin
+        // |1⟩ component: multiply by e^(i*theta/2) = cos + i*sin
+        for i in (0..n).step_by(step * 2) {
+            for j in i..(i + step) {
+                let paired_j = j + step;
+
+                // |0⟩: (re, im) * (cos, -sin) = (re*cos + im*sin, im*cos - re*sin)
+                let a_re = self.real[j];
+                let a_im = self.imag[j];
+                self.real[j] = a_re * cos_t + a_im * sin_t;
+                self.imag[j] = a_im * cos_t - a_re * sin_t;
+
+                // |1⟩: (re, im) * (cos, sin) = (re*cos - im*sin, im*cos + re*sin)
+                let b_re = self.real[paired_j];
+                let b_im = self.imag[paired_j];
+                self.real[paired_j] = b_re * cos_t - b_im * sin_t;
+                self.imag[paired_j] = b_im * cos_t + b_re * sin_t;
+            }
+        }
+    }
+
+    /// Specialized RX gate: [[cos(t/2), -i*sin(t/2)], [-i*sin(t/2), cos(t/2)]]
+    #[inline]
+    fn apply_rx_gate(&mut self, q: usize, theta: f64) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        let half_theta = theta * 0.5;
+        let cos_t = half_theta.cos();
+        let sin_t = half_theta.sin();
+
+        for i in (0..n).step_by(step * 2) {
+            for j in i..(i + step) {
+                let paired_j = j + step;
+
+                let a_re = self.real[j];
+                let a_im = self.imag[j];
+                let b_re = self.real[paired_j];
+                let b_im = self.imag[paired_j];
+
+                // new_a = cos*a - i*sin*b = (cos*a_re + sin*b_im, cos*a_im - sin*b_re)
+                // new_b = -i*sin*a + cos*b = (sin*a_im + cos*b_re, -sin*a_re + cos*b_im)
+                self.real[j] = cos_t * a_re + sin_t * b_im;
+                self.imag[j] = cos_t * a_im - sin_t * b_re;
+                self.real[paired_j] = sin_t * a_im + cos_t * b_re;
+                self.imag[paired_j] = -sin_t * a_re + cos_t * b_im;
+            }
+        }
+    }
+
+    /// Specialized RY gate: [[cos(t/2), -sin(t/2)], [sin(t/2), cos(t/2)]]
+    #[inline]
+    fn apply_ry_gate(&mut self, q: usize, theta: f64) {
+        let step = 1 << q;
+        let n = self.real.len();
+
+        let half_theta = theta * 0.5;
+        let cos_t = half_theta.cos();
+        let sin_t = half_theta.sin();
+
+        for i in (0..n).step_by(step * 2) {
+            for j in i..(i + step) {
+                let paired_j = j + step;
+
+                let a_re = self.real[j];
+                let a_im = self.imag[j];
+                let b_re = self.real[paired_j];
+                let b_im = self.imag[paired_j];
+
+                // new_a = cos*a - sin*b
+                // new_b = sin*a + cos*b
+                self.real[j] = cos_t * a_re - sin_t * b_re;
+                self.imag[j] = cos_t * a_im - sin_t * b_im;
+                self.real[paired_j] = sin_t * a_re + cos_t * b_re;
+                self.imag[paired_j] = sin_t * a_im + cos_t * b_im;
             }
         }
     }
@@ -734,10 +1606,12 @@ where
             imag,
             num_qubits,
             rng,
-            scratch_real: vec![0.0; size],
-            scratch_imag: vec![0.0; size],
+            scratch_real: Vec::new(),
+            scratch_imag: Vec::new(),
             pending_gates: vec![None; num_qubits],
-            fusion_enabled: true,
+            fusion_enabled: false,
+            parallel_enabled: false,
+            num_threads: None,
         }
     }
 
@@ -866,6 +1740,12 @@ where
         self.flush_two_qubit(qubit1, qubit2);
 
         let size = self.real.len();
+
+        // Lazily allocate scratch buffers on first use
+        if self.scratch_real.len() < size {
+            self.scratch_real = vec![0.0; size];
+            self.scratch_imag = vec![0.0; size];
+        }
 
         // Ensure consistent ordering for strided iteration
         let (lo, hi) = if qubit1 < qubit2 {
@@ -1008,184 +1888,322 @@ where
 {
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::H);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::H);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_h_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::H2);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::H2);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::H2);
+            }
         }
         self
     }
 
     #[inline]
     fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::H3);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::H3);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_h3_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::H4);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::H4);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_h4_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::H5);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::H5);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::H5);
+            }
         }
         self
     }
 
     #[inline]
     fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::H6);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::H6);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::H6);
+            }
         }
         self
     }
 
     #[inline]
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::X);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::X);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_x_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::Y);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::Y);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_y_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::Z);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::Z);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_z_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::SZ);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::SZ);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_sz_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::SZDG);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::SZDG);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_szdg_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::SX);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::SX);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_sx_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::SXDG);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::SXDG);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_sxdg_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::SY);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::SY);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_sy_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::SYDG);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::SYDG);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_sydg_gate(q.index());
+            }
         }
         self
     }
 
     #[inline]
     fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::F);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::F);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::F);
+            }
         }
         self
     }
 
     #[inline]
     fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::FDG);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::FDG);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::FDG);
+            }
         }
         self
     }
 
     #[inline]
     fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::F2);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::F2);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::F2);
+            }
         }
         self
     }
 
     #[inline]
     fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::F2DG);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::F2DG);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::F2DG);
+            }
         }
         self
     }
 
     #[inline]
     fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::F3);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::F3);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::F3);
+            }
         }
         self
     }
 
     #[inline]
     fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::F3DG);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::F3DG);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::F3DG);
+            }
         }
         self
     }
 
     #[inline]
     fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::F4);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::F4);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::F4);
+            }
         }
         self
     }
 
     #[inline]
     fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.queue_gate(q.index(), &gate_matrices::F4DG);
+        if self.fusion_enabled {
+            for &q in qubits {
+                self.queue_gate(q.index(), &gate_matrices::F4DG);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_general_gate(q.index(), &gate_matrices::F4DG);
+            }
         }
         self
     }
@@ -2480,6 +3498,78 @@ where
         }
         results
     }
+
+    /// Optimized measure-and-prepare-Z: always prepares |0⟩ state.
+    ///
+    /// This is more efficient than the default implementation because it:
+    /// 1. Always collapses to |0⟩ regardless of measurement outcome
+    /// 2. Avoids the conditional X correction step
+    #[inline]
+    fn mpz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.flush();
+
+        let mut results = Vec::with_capacity(qubits.len());
+        for &q in qubits {
+            let q_idx = q.index();
+            let step = 1 << q_idx;
+
+            // Calculate probability of measuring |1⟩
+            let prob_one = self.probability_one(q_idx);
+
+            // Sample outcome (for the measurement result)
+            let outcome = self.rng.random::<f64>() < prob_one;
+            let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
+
+            // Always prepare |0⟩: zero the |1⟩ amplitudes and normalize |0⟩
+            let norm_factor = 1.0 / (1.0 - prob_one).sqrt();
+
+            if step < 4 {
+                // Scalar path
+                for i in (0..self.real.len()).step_by(step * 2) {
+                    // Normalize |0⟩ states
+                    for j in i..(i + step) {
+                        self.real[j] *= norm_factor;
+                        self.imag[j] *= norm_factor;
+                    }
+                    // Zero |1⟩ states
+                    for j in (i + step)..(i + 2 * step) {
+                        self.real[j] = 0.0;
+                        self.imag[j] = 0.0;
+                    }
+                }
+            } else {
+                // SIMD path
+                let norm_vec = f64x4::splat(norm_factor);
+
+                for i in (0..self.real.len()).step_by(step * 2) {
+                    // Normalize |0⟩ states
+                    let mut j = i;
+                    while j + 4 <= i + step {
+                        let re = f64x4::from(&self.real[j..j + 4]);
+                        let im = f64x4::from(&self.imag[j..j + 4]);
+                        let scaled_re: [f64; 4] = (norm_vec * re).into();
+                        let scaled_im: [f64; 4] = (norm_vec * im).into();
+                        self.real[j..j + 4].copy_from_slice(&scaled_re);
+                        self.imag[j..j + 4].copy_from_slice(&scaled_im);
+                        j += 4;
+                    }
+                    // Zero |1⟩ states
+                    let mut j = i + step;
+                    while j + 4 <= i + 2 * step {
+                        self.real[j..j + 4].copy_from_slice(&[0.0; 4]);
+                        self.imag[j..j + 4].copy_from_slice(&[0.0; 4]);
+                        j += 4;
+                    }
+                }
+            }
+
+            results.push(MeasurementResult {
+                outcome,
+                is_deterministic,
+            });
+        }
+        results
+    }
 }
 
 impl<R> ArbitraryRotationGateable for StateVecSoA<R>
@@ -2488,49 +3578,64 @@ where
 {
     #[inline]
     fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
-        let cos = (theta / 2.0).cos();
-        let sin = (theta / 2.0).sin();
-        // RX = [[cos, -i*sin], [-i*sin, cos]]
-        let m = Complex2x2 {
-            a_re: cos, a_im: 0.0, b_re: 0.0, b_im: -sin,
-            c_re: 0.0, c_im: -sin, d_re: cos, d_im: 0.0,
-        };
-        for &q in qubits {
-            self.flush_qubit(q.index());
-            self.apply_fused_matrix(q.index(), &m);
+        if self.fusion_enabled {
+            let cos = (theta / 2.0).cos();
+            let sin = (theta / 2.0).sin();
+            let m = Complex2x2 {
+                a_re: cos, a_im: 0.0, b_re: 0.0, b_im: -sin,
+                c_re: 0.0, c_im: -sin, d_re: cos, d_im: 0.0,
+            };
+            for &q in qubits {
+                self.flush_qubit(q.index());
+                self.apply_fused_matrix(q.index(), &m);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_rx_gate(q.index(), theta);
+            }
         }
         self
     }
 
     #[inline]
     fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
-        let cos = (theta / 2.0).cos();
-        let sin = (theta / 2.0).sin();
-        // RY = [[cos, -sin], [sin, cos]]
-        let m = Complex2x2 {
-            a_re: cos, a_im: 0.0, b_re: -sin, b_im: 0.0,
-            c_re: sin, c_im: 0.0, d_re: cos, d_im: 0.0,
-        };
-        for &q in qubits {
-            self.flush_qubit(q.index());
-            self.apply_fused_matrix(q.index(), &m);
+        if self.fusion_enabled {
+            let cos = (theta / 2.0).cos();
+            let sin = (theta / 2.0).sin();
+            let m = Complex2x2 {
+                a_re: cos, a_im: 0.0, b_re: -sin, b_im: 0.0,
+                c_re: sin, c_im: 0.0, d_re: cos, d_im: 0.0,
+            };
+            for &q in qubits {
+                self.flush_qubit(q.index());
+                self.apply_fused_matrix(q.index(), &m);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_ry_gate(q.index(), theta);
+            }
         }
         self
     }
 
     #[inline]
     fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
-        let half = theta / 2.0;
-        let cos = half.cos();
-        let sin = half.sin();
-        // RZ = [[e^(-iθ/2), 0], [0, e^(iθ/2)]] = [[cos - i*sin, 0], [0, cos + i*sin]]
-        let m = Complex2x2 {
-            a_re: cos, a_im: -sin, b_re: 0.0, b_im: 0.0,
-            c_re: 0.0, c_im: 0.0, d_re: cos, d_im: sin,
-        };
-        for &q in qubits {
-            self.flush_qubit(q.index());
-            self.apply_fused_matrix(q.index(), &m);
+        if self.fusion_enabled {
+            let half = theta / 2.0;
+            let cos = half.cos();
+            let sin = half.sin();
+            let m = Complex2x2 {
+                a_re: cos, a_im: -sin, b_re: 0.0, b_im: 0.0,
+                c_re: 0.0, c_im: 0.0, d_re: cos, d_im: sin,
+            };
+            for &q in qubits {
+                self.flush_qubit(q.index());
+                self.apply_fused_matrix(q.index(), &m);
+            }
+        } else {
+            for &q in qubits {
+                self.apply_rz_gate(q.index(), theta);
+            }
         }
         self
     }
@@ -4039,6 +5144,97 @@ mod tests {
         let mut opt2: StateVecSoA = StateVecSoA::from_complex_state(complex_state, PecosRng::from_os_rng());
 
         assert_opts_match(&mut opt, &mut opt2, "roundtrip complex state");
+    }
+
+    /// Test that parallel execution produces the same results as sequential.
+    /// This test is only run when the `parallel` feature is enabled.
+    #[test]
+    #[cfg(feature = "parallel")]
+    fn test_parallel_execution_correctness() {
+        // Use 16 qubits to exceed the parallel threshold (14)
+        let num_qubits = 16;
+
+        // Create two simulators: one sequential, one parallel
+        let mut seq = StateVecSoA::with_seed(num_qubits, 12345);
+        let mut par = StateVecSoA::with_seed(num_qubits, 12345);
+        par.set_parallel(true);
+
+        // Apply a variety of gates
+        for q in 0..num_qubits {
+            seq.h(&[QubitId(q)]);
+            par.h(&[QubitId(q)]);
+        }
+        for q in 0..num_qubits {
+            seq.sz(&[QubitId(q)]);
+            par.sz(&[QubitId(q)]);
+        }
+        for q in 0..num_qubits {
+            seq.sx(&[QubitId(q)]);
+            par.sx(&[QubitId(q)]);
+        }
+
+        // Compare states
+        let seq_state = seq.state();
+        let par_state = par.state();
+
+        for (i, (s, p)) in seq_state.iter().zip(par_state.iter()).enumerate() {
+            let diff = (*s - *p).norm();
+            assert!(
+                diff < 1e-10,
+                "State mismatch at index {i}: seq={s}, par={p}, diff={diff}"
+            );
+        }
+    }
+
+    /// Test that parallel execution with custom thread count produces correct results.
+    #[test]
+    #[cfg(feature = "parallel")]
+    fn test_parallel_with_custom_threads() {
+        let num_qubits = 16;
+
+        // Create two simulators: one with default threads, one with limited threads
+        let mut default_threads = StateVecSoA::with_seed(num_qubits, 12345);
+        default_threads.parallel(true);
+
+        let mut limited_threads = StateVecSoA::with_seed(num_qubits, 12345);
+        limited_threads.parallel(true).num_threads(Some(2));
+
+        // Apply gates
+        for q in 0..num_qubits {
+            default_threads.h(&[QubitId(q)]);
+            limited_threads.h(&[QubitId(q)]);
+        }
+
+        // Compare states - they should be identical
+        let state1 = default_threads.state();
+        let state2 = limited_threads.state();
+
+        for (i, (s1, s2)) in state1.iter().zip(state2.iter()).enumerate() {
+            let diff = (*s1 - *s2).norm();
+            assert!(
+                diff < 1e-10,
+                "State mismatch at index {i}: default={s1}, limited={s2}, diff={diff}"
+            );
+        }
+    }
+
+    /// Test the builder-style API for parallel configuration.
+    #[test]
+    #[cfg(feature = "parallel")]
+    fn test_parallel_builder_api() {
+        let mut sim = StateVecSoA::new(10);
+
+        // Test chaining
+        sim.parallel(true).num_threads(Some(4));
+
+        assert!(sim.parallel_enabled());
+        assert_eq!(sim.get_num_threads(), Some(4));
+
+        // Test changing settings
+        sim.parallel(false).num_threads(None);
+
+        assert!(!sim.parallel_enabled());
+        assert_eq!(sim.get_num_threads(), None);
     }
 }
 

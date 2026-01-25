@@ -67,6 +67,247 @@ where
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     bench_state_vec_scaling(c);
+    bench_individual_gates(c);
+    #[cfg(feature = "parallel")]
+    bench_parallel_execution(c);
+}
+
+/// Benchmark individual gate performance on StateVec.
+/// Tests gates commonly used in QEC circuits: H, SZ, SX, CX, SZZ, SXX, and prep.
+fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
+    let mut group = c.benchmark_group("Individual Gates");
+    group.sample_size(50);
+
+    let num_qubits = 18;
+    let gates_per_iter = 100;
+
+    // Single-qubit gates
+    group.bench_function("H_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.h(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("SZ_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.sz(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("SX_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.sx(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("X_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.x(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("Y_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.y(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("Z_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.z(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    // Two-qubit gates
+    group.bench_function("CX_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits - 1 {
+                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("CZ_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits - 1 {
+                    sim.cz(&[QubitId(q), QubitId(q + 1)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("SZZ_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits - 1 {
+                    sim.szz(&[QubitId(q), QubitId(q + 1)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("SXX_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits - 1 {
+                    sim.sxx(&[QubitId(q), QubitId(q + 1)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    // Prep operation (measure + prepare |0⟩)
+    group.bench_function("pz_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        // Put in superposition first so prep has work to do
+        for q in 0..num_qubits {
+            sim.h(&[QubitId(q)]);
+        }
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.pz(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    // Measurement
+    group.bench_function("mz_18q", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        b.iter(|| {
+            // Reset to known state, apply H, then measure
+            sim.reset();
+            for q in 0..num_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            for q in 0..num_qubits {
+                black_box(sim.mz(&[QubitId(q)]));
+            }
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark parallel vs sequential execution for large state vectors.
+/// Only runs when the `parallel` feature is enabled on pecos-qsim.
+#[cfg(feature = "parallel")]
+fn bench_parallel_execution<M: Measurement>(c: &mut Criterion<M>) {
+    let mut group = c.benchmark_group("Parallel Execution");
+    group.sample_size(20);
+
+    // Test with 18 qubits - above the parallel threshold (14)
+    let num_qubits = 18;
+    let gates_per_iter = 50;
+
+    // Sequential H gates
+    group.bench_function("H_18q_sequential", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        sim.set_parallel(false);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.h(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    // Parallel H gates
+    group.bench_function("H_18q_parallel", |b| {
+        let mut sim = StateVec::new(num_qubits);
+        sim.set_parallel(true);
+        b.iter(|| {
+            for _ in 0..gates_per_iter {
+                for q in 0..num_qubits {
+                    sim.h(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    // Test with 20 qubits for even more parallelism benefit
+    let num_qubits_large = 20;
+    let gates_per_iter_large = 20;
+
+    group.bench_function("H_20q_sequential", |b| {
+        let mut sim = StateVec::new(num_qubits_large);
+        sim.set_parallel(false);
+        b.iter(|| {
+            for _ in 0..gates_per_iter_large {
+                for q in 0..num_qubits_large {
+                    sim.h(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.bench_function("H_20q_parallel", |b| {
+        let mut sim = StateVec::new(num_qubits_large);
+        sim.set_parallel(true);
+        b.iter(|| {
+            for _ in 0..gates_per_iter_large {
+                for q in 0..num_qubits_large {
+                    sim.h(&[QubitId(q)]);
+                }
+            }
+            black_box(());
+        });
+    });
+
+    group.finish();
 }
 
 /// Benchmark state vector simulators across different qubit counts.

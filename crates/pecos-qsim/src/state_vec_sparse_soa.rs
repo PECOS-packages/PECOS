@@ -68,6 +68,18 @@ where
     /// Number of valid amplitudes in active buffer
     len: usize,
 
+    // ===== SCRATCH DATA - reused across gate operations =====
+    /// Positions of amplitudes with target bit=0 (reused across gates)
+    scratch_low: Vec<u32>,
+    /// Positions of amplitudes with target bit=1 (reused across gates)
+    scratch_high: Vec<u32>,
+
+    // ===== MERGE BUFFERS - for sorted-merge gate output =====
+    /// Temporary storage for one sorted stream during merge
+    merge_idx: Vec<usize>,
+    merge_re: Vec<f64>,
+    merge_im: Vec<f64>,
+
     // ===== COLD DATA - rarely accessed =====
     /// Number of qubits
     num_qubits: usize,
@@ -119,6 +131,11 @@ impl<R: Rng> SparseStateVecSoA<R> {
             imag_b: Vec::with_capacity(cap),
             active_a: true,
             len: 1,
+            scratch_low: Vec::new(),
+            scratch_high: Vec::new(),
+            merge_idx: Vec::new(),
+            merge_re: Vec::new(),
+            merge_im: Vec::new(),
             num_qubits,
             rng,
             epsilon: 0.0,
@@ -190,9 +207,12 @@ impl<R: Rng> SparseStateVecSoA<R> {
     // Single-qubit gate application
     // =========================================================================
 
-    /// Apply single-qubit gate using binary search.
+    /// Apply single-qubit gate using two-pointer merge with sorted output.
     ///
-    /// Uses direct field access to avoid borrow conflicts and eliminate temp allocations.
+    /// For small states (<= 8 amplitudes), falls back to binary search which has
+    /// lower overhead. For larger states, the two-pointer merge produces two
+    /// sorted output streams (bit=0 and bit=1 results), which are merged in O(k)
+    /// instead of requiring an O(k log k) sort.
     #[inline]
     fn apply_single_qubit_gate(
         &mut self,
@@ -206,34 +226,325 @@ impl<R: Rng> SparseStateVecSoA<R> {
         let len = self.len;
         let epsilon = self.epsilon;
 
-        // Get pointers to source (active) and dest (inactive) buffers
-        let (src_indices, src_real, src_imag, dst_indices, dst_real, dst_imag) = if self.active_a {
-            (
-                &self.indices_a[..len],
-                &self.real_a[..len],
-                &self.imag_a[..len],
-                &mut self.indices_b,
-                &mut self.real_b,
-                &mut self.imag_b,
-            )
-        } else {
-            (
-                &self.indices_b[..len],
-                &self.real_b[..len],
-                &self.imag_b[..len],
-                &mut self.indices_a,
-                &mut self.real_a,
-                &mut self.imag_a,
-            )
-        };
+        if len <= 8 {
+            // Small state: binary search + sort (sort cost is negligible)
+            let (src_indices, src_real, src_imag, dst_indices, dst_real, dst_imag) =
+                if self.active_a {
+                    (
+                        &self.indices_a[..len], &self.real_a[..len], &self.imag_a[..len],
+                        &mut self.indices_b, &mut self.real_b, &mut self.imag_b,
+                    )
+                } else {
+                    (
+                        &self.indices_b[..len], &self.real_b[..len], &self.imag_b[..len],
+                        &mut self.indices_a, &mut self.real_a, &mut self.imag_a,
+                    )
+                };
 
-        // Clear and prepare destination
-        dst_indices.clear();
-        dst_real.clear();
-        dst_imag.clear();
-        dst_indices.reserve(len * 2);
-        dst_real.reserve(len * 2);
-        dst_imag.reserve(len * 2);
+            dst_indices.clear();
+            dst_real.clear();
+            dst_imag.clear();
+            dst_indices.reserve(len * 2);
+            dst_real.reserve(len * 2);
+            dst_imag.reserve(len * 2);
+
+            Self::apply_gate_binary_search(
+                src_indices, src_real, src_imag,
+                dst_indices, dst_real, dst_imag,
+                mask, epsilon,
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+            );
+
+            self.len = dst_indices.len();
+            self.active_a = !self.active_a;
+            self.sort_active();
+        } else {
+            // Larger state: two-pointer with sorted-merge output.
+            // Produces two sorted streams and merges them in O(k),
+            // avoiding the O(k log k) sort.
+            self.apply_gate_sorted_merge(
+                mask, len, epsilon,
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+            );
+        }
+    }
+
+    /// Apply gate using two-pointer merge with sorted output.
+    ///
+    /// The two-pointer processes pairs in order of their low-partner index,
+    /// so bit=0 results and bit=1 results are each produced in sorted order.
+    /// We write them to separate buffers and merge in O(k).
+    ///
+    /// Buffer flow:
+    /// 1. Read from active buffer (source)
+    /// 2. Two-pointer writes bit=0 results → merge buffers, bit=1 results → inactive buffer
+    /// 3. Merge both sorted streams → active buffer (source is free after step 1)
+    #[allow(clippy::too_many_arguments)]
+    fn apply_gate_sorted_merge(
+        &mut self,
+        mask: usize, len: usize, epsilon: f64,
+        a_re: f64, a_im: f64, b_re: f64, b_im: f64,
+        c_re: f64, c_im: f64, d_re: f64, d_im: f64,
+    ) {
+        let active = self.active_a;
+
+        // Phase 1: Partition source indices into low (bit=0) and high (bit=1) positions
+        self.scratch_low.clear();
+        self.scratch_high.clear();
+        for i in 0..len {
+            let idx = if active { self.indices_a[i] } else { self.indices_b[i] };
+            if idx & mask == 0 {
+                self.scratch_low.push(i as u32);
+            } else {
+                self.scratch_high.push(i as u32);
+            }
+        }
+
+        // Phase 2: Two-pointer walk producing split sorted output
+        // bit=0 results → merge buffers (sorted by construction)
+        // bit=1 results → inactive buffer (sorted by construction)
+        self.merge_idx.clear();
+        self.merge_re.clear();
+        self.merge_im.clear();
+
+        if active {
+            self.indices_b.clear();
+            self.real_b.clear();
+            self.imag_b.clear();
+        } else {
+            self.indices_a.clear();
+            self.real_a.clear();
+            self.imag_a.clear();
+        }
+
+        let low_len = self.scratch_low.len();
+        let high_len = self.scratch_high.len();
+        let mut low_ptr = 0;
+        let mut high_ptr = 0;
+
+        loop {
+            let have_low = low_ptr < low_len;
+            let have_high = high_ptr < high_len;
+
+            if !have_low && !have_high {
+                break;
+            }
+
+            // Read source amplitudes using indexed access
+            let (low_idx, low_re, low_im) = if have_low {
+                let pos = self.scratch_low[low_ptr] as usize;
+                if active {
+                    (self.indices_a[pos], self.real_a[pos], self.imag_a[pos])
+                } else {
+                    (self.indices_b[pos], self.real_b[pos], self.imag_b[pos])
+                }
+            } else {
+                (usize::MAX, 0.0, 0.0)
+            };
+
+            let (high_idx, high_re, high_im) = if have_high {
+                let pos = self.scratch_high[high_ptr] as usize;
+                if active {
+                    (self.indices_a[pos], self.real_a[pos], self.imag_a[pos])
+                } else {
+                    (self.indices_b[pos], self.real_b[pos], self.imag_b[pos])
+                }
+            } else {
+                (usize::MAX, 0.0, 0.0)
+            };
+
+            let high_partner = high_idx & !mask;
+
+            if low_idx == high_partner {
+                // Paired: apply full 2x2 gate matrix
+                let new_low_re = a_re * low_re - a_im * low_im + b_re * high_re - b_im * high_im;
+                let new_low_im = a_re * low_im + a_im * low_re + b_re * high_im + b_im * high_re;
+                let new_high_re = c_re * low_re - c_im * low_im + d_re * high_re - d_im * high_im;
+                let new_high_im = c_re * low_im + c_im * low_re + d_re * high_im + d_im * high_re;
+
+                let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
+                let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
+
+                if norm_low > epsilon {
+                    self.merge_idx.push(low_idx);
+                    self.merge_re.push(new_low_re);
+                    self.merge_im.push(new_low_im);
+                }
+                if norm_high > epsilon {
+                    if active {
+                        self.indices_b.push(high_idx);
+                        self.real_b.push(new_high_re);
+                        self.imag_b.push(new_high_im);
+                    } else {
+                        self.indices_a.push(high_idx);
+                        self.real_a.push(new_high_re);
+                        self.imag_a.push(new_high_im);
+                    }
+                }
+                low_ptr += 1;
+                high_ptr += 1;
+            } else if low_idx < high_partner {
+                // Unpaired low: pair with implicit zero high
+                let new_low_re = a_re * low_re - a_im * low_im;
+                let new_low_im = a_re * low_im + a_im * low_re;
+                let new_high_re = c_re * low_re - c_im * low_im;
+                let new_high_im = c_re * low_im + c_im * low_re;
+
+                let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
+                let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
+
+                if norm_low > epsilon {
+                    self.merge_idx.push(low_idx);
+                    self.merge_re.push(new_low_re);
+                    self.merge_im.push(new_low_im);
+                }
+                if norm_high > epsilon {
+                    let high_result_idx = low_idx | mask;
+                    if active {
+                        self.indices_b.push(high_result_idx);
+                        self.real_b.push(new_high_re);
+                        self.imag_b.push(new_high_im);
+                    } else {
+                        self.indices_a.push(high_result_idx);
+                        self.real_a.push(new_high_re);
+                        self.imag_a.push(new_high_im);
+                    }
+                }
+                low_ptr += 1;
+            } else {
+                // Unpaired high: pair with implicit zero low
+                let new_low_re = b_re * high_re - b_im * high_im;
+                let new_low_im = b_re * high_im + b_im * high_re;
+                let new_high_re = d_re * high_re - d_im * high_im;
+                let new_high_im = d_re * high_im + d_im * high_re;
+
+                let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
+                let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
+
+                if norm_low > epsilon {
+                    self.merge_idx.push(high_partner);
+                    self.merge_re.push(new_low_re);
+                    self.merge_im.push(new_low_im);
+                }
+                if norm_high > epsilon {
+                    if active {
+                        self.indices_b.push(high_idx);
+                        self.real_b.push(new_high_re);
+                        self.imag_b.push(new_high_im);
+                    } else {
+                        self.indices_a.push(high_idx);
+                        self.real_a.push(new_high_re);
+                        self.imag_a.push(new_high_im);
+                    }
+                }
+                high_ptr += 1;
+            }
+        }
+
+        // Phase 3: Merge the two sorted streams into the active buffer
+        // merge buffers = sorted bit=0 results
+        // inactive buffer = sorted bit=1 results
+        // active buffer = free (was source, now done reading)
+        self.merge_streams_into_active();
+    }
+
+    /// Merge bit=0 results (in merge buffers) with bit=1 results (in inactive buffer)
+    /// into the active buffer. Both input streams are sorted; output is sorted.
+    fn merge_streams_into_active(&mut self) {
+        let n0 = self.merge_idx.len();
+
+        if self.active_a {
+            let n1 = self.indices_b.len();
+            self.indices_a.clear();
+            self.real_a.clear();
+            self.imag_a.clear();
+            self.indices_a.reserve(n0 + n1);
+            self.real_a.reserve(n0 + n1);
+            self.imag_a.reserve(n0 + n1);
+
+            let mut i = 0;
+            let mut j = 0;
+            while i < n0 && j < n1 {
+                let m_idx = self.merge_idx[i];
+                let b_idx = self.indices_b[j];
+                if m_idx < b_idx {
+                    self.indices_a.push(m_idx);
+                    self.real_a.push(self.merge_re[i]);
+                    self.imag_a.push(self.merge_im[i]);
+                    i += 1;
+                } else {
+                    self.indices_a.push(b_idx);
+                    self.real_a.push(self.real_b[j]);
+                    self.imag_a.push(self.imag_b[j]);
+                    j += 1;
+                }
+            }
+            while i < n0 {
+                self.indices_a.push(self.merge_idx[i]);
+                self.real_a.push(self.merge_re[i]);
+                self.imag_a.push(self.merge_im[i]);
+                i += 1;
+            }
+            while j < n1 {
+                self.indices_a.push(self.indices_b[j]);
+                self.real_a.push(self.real_b[j]);
+                self.imag_a.push(self.imag_b[j]);
+                j += 1;
+            }
+            self.len = self.indices_a.len();
+        } else {
+            let n1 = self.indices_a.len();
+            self.indices_b.clear();
+            self.real_b.clear();
+            self.imag_b.clear();
+            self.indices_b.reserve(n0 + n1);
+            self.real_b.reserve(n0 + n1);
+            self.imag_b.reserve(n0 + n1);
+
+            let mut i = 0;
+            let mut j = 0;
+            while i < n0 && j < n1 {
+                let m_idx = self.merge_idx[i];
+                let a_idx = self.indices_a[j];
+                if m_idx < a_idx {
+                    self.indices_b.push(m_idx);
+                    self.real_b.push(self.merge_re[i]);
+                    self.imag_b.push(self.merge_im[i]);
+                    i += 1;
+                } else {
+                    self.indices_b.push(a_idx);
+                    self.real_b.push(self.real_a[j]);
+                    self.imag_b.push(self.imag_a[j]);
+                    j += 1;
+                }
+            }
+            while i < n0 {
+                self.indices_b.push(self.merge_idx[i]);
+                self.real_b.push(self.merge_re[i]);
+                self.imag_b.push(self.merge_im[i]);
+                i += 1;
+            }
+            while j < n1 {
+                self.indices_b.push(self.indices_a[j]);
+                self.real_b.push(self.real_a[j]);
+                self.imag_b.push(self.imag_a[j]);
+                j += 1;
+            }
+            self.len = self.indices_b.len();
+        }
+        // active_a stays the same (output is in the active buffer)
+    }
+
+    /// Binary search path for small states (<= 8 amplitudes).
+    #[inline]
+    fn apply_gate_binary_search(
+        src_indices: &[usize], src_real: &[f64], src_imag: &[f64],
+        dst_indices: &mut Vec<usize>, dst_real: &mut Vec<f64>, dst_imag: &mut Vec<f64>,
+        mask: usize, epsilon: f64,
+        a_re: f64, a_im: f64, b_re: f64, b_im: f64,
+        c_re: f64, c_im: f64, d_re: f64, d_im: f64,
+    ) {
+        let len = src_indices.len();
 
         // First pass: process all "low" indices (bit q=0)
         for i in 0..len {
@@ -245,14 +556,12 @@ impl<R: Rng> SparseStateVecSoA<R> {
             let (amp_re, amp_im) = (src_real[i], src_imag[i]);
             let paired_idx = idx | mask;
 
-            // Binary search for pair
             let (paired_re, paired_im) = src_indices[i + 1..]
                 .binary_search(&paired_idx)
                 .ok()
                 .map(|offset| (src_real[i + 1 + offset], src_imag[i + 1 + offset]))
                 .unwrap_or((0.0, 0.0));
 
-            // Apply gate
             let new_low_re = a_re * amp_re - a_im * amp_im + b_re * paired_re - b_im * paired_im;
             let new_low_im = a_re * amp_im + a_im * amp_re + b_re * paired_im + b_im * paired_re;
             let new_high_re = c_re * amp_re - c_im * amp_im + d_re * paired_re - d_im * paired_im;
@@ -306,14 +615,13 @@ impl<R: Rng> SparseStateVecSoA<R> {
                 dst_imag.push(new_high_im);
             }
         }
-
-        // Sort and update state
-        self.len = dst_indices.len();
-        self.active_a = !self.active_a;
-        self.sort_active();
     }
 
-    /// Sort the active buffer by index
+    /// Sort the active buffer by index.
+    ///
+    /// Builds a permutation sorted by index, then applies it in-place using
+    /// cycle sort. Marks visited positions by setting `perm[j] = j` to avoid
+    /// a separate visited-flags allocation.
     #[inline]
     fn sort_active(&mut self) {
         let len = self.len;
@@ -323,14 +631,14 @@ impl<R: Rng> SparseStateVecSoA<R> {
             (&mut self.indices_b[..len], &mut self.real_b[..len], &mut self.imag_b[..len])
         };
 
-        // Create permutation
+        // Create permutation sorted by index
         let mut perm: Vec<usize> = (0..len).collect();
         perm.sort_unstable_by_key(|&i| indices[i]);
 
-        // Apply permutation using cycle sort
-        let mut visited = vec![false; len];
+        // Apply permutation in-place using cycle sort.
+        // Mark visited by setting perm[j] = j (no separate visited vec needed).
         for i in 0..len {
-            if visited[i] || perm[i] == i {
+            if perm[i] == i {
                 continue;
             }
 
@@ -340,8 +648,8 @@ impl<R: Rng> SparseStateVecSoA<R> {
             let tmp_im = imag[i];
 
             loop {
-                visited[j] = true;
                 let k = perm[j];
+                perm[j] = j;
                 if k == i {
                     indices[j] = tmp_idx;
                     real[j] = tmp_re;
@@ -498,108 +806,77 @@ impl<R: Rng> SparseStateVecSoA<R> {
     // Two-qubit gates
     // =========================================================================
 
-    /// Apply CX (CNOT) gate.
+    /// Apply X gate in-place: flip bit q on all indices.
     ///
-    /// CX is a permutation: if control=1, flip target bit.
+    /// XOR all indices with mask, then re-sort. The in-place approach with
+    /// sort is faster than a merge-based approach because:
+    /// - XOR is a single contiguous-memory pass
+    /// - After XOR, data has 2 sorted runs; sort_active handles this efficiently
+    /// - Avoids the cache-unfriendly indirect reads of a merge approach
+    #[inline]
+    fn apply_x_inplace(&mut self, q: usize) {
+        let mask = 1usize << q;
+        let len = self.len;
+
+        let indices = if self.active_a {
+            &mut self.indices_a[..len]
+        } else {
+            &mut self.indices_b[..len]
+        };
+
+        for i in 0..len {
+            indices[i] ^= mask;
+        }
+
+        self.sort_active();
+    }
+
+    /// Apply CX (CNOT) gate in-place: if control=1, flip target bit.
+    ///
+    /// Modifies indices in the active buffer and re-sorts. Avoids copying
+    /// all three arrays to the destination buffer.
     #[inline]
     fn apply_cx_gate(&mut self, control: usize, target: usize) {
         let control_mask = 1usize << control;
         let target_mask = 1usize << target;
         let len = self.len;
 
-        // Get source and dest buffers
-        let (src_indices, src_real, src_imag, dst_indices, dst_real, dst_imag) = if self.active_a {
-            (
-                &self.indices_a[..len],
-                &self.real_a[..len],
-                &self.imag_a[..len],
-                &mut self.indices_b,
-                &mut self.real_b,
-                &mut self.imag_b,
-            )
+        let indices = if self.active_a {
+            &mut self.indices_a[..len]
         } else {
-            (
-                &self.indices_b[..len],
-                &self.real_b[..len],
-                &self.imag_b[..len],
-                &mut self.indices_a,
-                &mut self.real_a,
-                &mut self.imag_a,
-            )
+            &mut self.indices_b[..len]
         };
 
-        dst_indices.clear();
-        dst_real.clear();
-        dst_imag.clear();
-        dst_indices.reserve(len);
-        dst_real.reserve(len);
-        dst_imag.reserve(len);
-
         for i in 0..len {
-            let idx = src_indices[i];
-            let new_idx = if idx & control_mask != 0 {
-                idx ^ target_mask
-            } else {
-                idx
-            };
-            dst_indices.push(new_idx);
-            dst_real.push(src_real[i]);
-            dst_imag.push(src_imag[i]);
+            if indices[i] & control_mask != 0 {
+                indices[i] ^= target_mask;
+            }
         }
 
-        self.active_a = !self.active_a;
         self.sort_active();
     }
 
-    /// Apply SWAP gate.
+    /// Apply SWAP gate in-place: swap bits q1 and q2.
     #[inline]
     fn apply_swap_gate(&mut self, q1: usize, q2: usize) {
         let mask1 = 1usize << q1;
         let mask2 = 1usize << q2;
         let len = self.len;
 
-        let (src_indices, src_real, src_imag, dst_indices, dst_real, dst_imag) = if self.active_a {
-            (
-                &self.indices_a[..len],
-                &self.real_a[..len],
-                &self.imag_a[..len],
-                &mut self.indices_b,
-                &mut self.real_b,
-                &mut self.imag_b,
-            )
+        let indices = if self.active_a {
+            &mut self.indices_a[..len]
         } else {
-            (
-                &self.indices_b[..len],
-                &self.real_b[..len],
-                &self.imag_b[..len],
-                &mut self.indices_a,
-                &mut self.real_a,
-                &mut self.imag_a,
-            )
+            &mut self.indices_b[..len]
         };
 
-        dst_indices.clear();
-        dst_real.clear();
-        dst_imag.clear();
-        dst_indices.reserve(len);
-        dst_real.reserve(len);
-        dst_imag.reserve(len);
-
         for i in 0..len {
-            let idx = src_indices[i];
-            let bit1 = (idx & mask1) != 0;
-            let bit2 = (idx & mask2) != 0;
-            let new_idx = if bit1 != bit2 {
-                idx ^ (mask1 | mask2)
-            } else {
-                idx
-            };
-            dst_indices.push(new_idx);
-            dst_real.push(src_real[i]);
-            dst_imag.push(src_imag[i]);
+            let bit1 = (indices[i] & mask1) != 0;
+            let bit2 = (indices[i] & mask2) != 0;
+            if bit1 != bit2 {
+                indices[i] ^= mask1 | mask2;
+            }
         }
 
-        self.active_a = !self.active_a;
         self.sort_active();
     }
 
@@ -663,10 +940,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         for &q in qubits {
             self.apply_single_qubit_gate(
                 q.0,
-                inv_sqrt2, 0.0,   // a
-                inv_sqrt2, 0.0,   // b
-                inv_sqrt2, 0.0,   // c
-                -inv_sqrt2, 0.0,  // d
+                inv_sqrt2, 0.0,
+                inv_sqrt2, 0.0,
+                inv_sqrt2, 0.0,
+                -inv_sqrt2, 0.0,
             );
         }
         self
@@ -674,13 +951,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_single_qubit_gate(
-                q.0,
-                0.0, 0.0,  // a
-                1.0, 0.0,  // b
-                1.0, 0.0,  // c
-                0.0, 0.0,  // d
-            );
+            self.apply_x_inplace(q.0);
         }
         self
     }
@@ -832,48 +1103,31 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 is_deterministic,
             });
 
-            // Collapse: keep only consistent amplitudes
+            // Collapse in-place: keep only consistent amplitudes.
+            // Since we're filtering a sorted sequence, the result stays sorted.
             let keep_value = if outcome { mask } else { 0 };
 
-            // Get source and dest buffers
-            let new_len = {
-                let (src_indices, src_real, src_imag, dst_indices, dst_real, dst_imag) = if self.active_a {
-                    (
-                        &self.indices_a[..len],
-                        &self.real_a[..len],
-                        &self.imag_a[..len],
-                        &mut self.indices_b,
-                        &mut self.real_b,
-                        &mut self.imag_b,
-                    )
+            {
+                let (indices, real, imag) = if self.active_a {
+                    (&mut self.indices_a[..len], &mut self.real_a[..len], &mut self.imag_a[..len])
                 } else {
-                    (
-                        &self.indices_b[..len],
-                        &self.real_b[..len],
-                        &self.imag_b[..len],
-                        &mut self.indices_a,
-                        &mut self.real_a,
-                        &mut self.imag_a,
-                    )
+                    (&mut self.indices_b[..len], &mut self.real_b[..len], &mut self.imag_b[..len])
                 };
 
-                dst_indices.clear();
-                dst_real.clear();
-                dst_imag.clear();
-
-                for i in 0..len {
-                    if src_indices[i] & mask == keep_value {
-                        dst_indices.push(src_indices[i]);
-                        dst_real.push(src_real[i]);
-                        dst_imag.push(src_imag[i]);
+                let mut write = 0;
+                for read in 0..len {
+                    if indices[read] & mask == keep_value {
+                        if write != read {
+                            indices[write] = indices[read];
+                            real[write] = real[read];
+                            imag[write] = imag[read];
+                        }
+                        write += 1;
                     }
                 }
+                self.len = write;
+            }
 
-                dst_indices.len()
-            };
-
-            self.len = new_len;
-            self.active_a = !self.active_a;
             self.normalize();
         }
 

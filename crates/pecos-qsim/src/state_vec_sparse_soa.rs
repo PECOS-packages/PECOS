@@ -73,6 +73,8 @@ where
     scratch_low: Vec<u32>,
     /// Positions of amplitudes with target bit=1 (reused across gates)
     scratch_high: Vec<u32>,
+    /// Reusable permutation buffer for sort_active
+    sort_perm: Vec<usize>,
 
     // ===== MERGE BUFFERS - for sorted-merge gate output =====
     /// Temporary storage for one sorted stream during merge
@@ -140,6 +142,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
             len: 1,
             scratch_low: Vec::new(),
             scratch_high: Vec::new(),
+            sort_perm: Vec::new(),
             merge_idx: Vec::new(),
             merge_re: Vec::new(),
             merge_im: Vec::new(),
@@ -639,6 +642,29 @@ impl<R: Rng> SparseStateVecSoA<R> {
 
     /// Sort the active buffer by index.
     ///
+    /// Sort the active buffer only if it's not already sorted.
+    /// Skips the full sort machinery when the indices are in order (common
+    /// after CX/SWAP when indices happen to stay sorted).
+    #[inline]
+    fn sort_active_if_needed(&mut self) {
+        let len = self.len;
+        let indices = if self.active_a {
+            &self.indices_a[..len]
+        } else {
+            &self.indices_b[..len]
+        };
+        let mut sorted = true;
+        for i in 1..len {
+            if indices[i - 1] >= indices[i] {
+                sorted = false;
+                break;
+            }
+        }
+        if !sorted {
+            self.sort_active();
+        }
+    }
+
     /// Builds a permutation sorted by index, then applies it in-place using
     /// cycle sort. Marks visited positions by setting `perm[j] = j` to avoid
     /// a separate visited-flags allocation.
@@ -651,9 +677,11 @@ impl<R: Rng> SparseStateVecSoA<R> {
             (&mut self.indices_b[..len], &mut self.real_b[..len], &mut self.imag_b[..len])
         };
 
-        // Create permutation sorted by index
-        let mut perm: Vec<usize> = (0..len).collect();
-        perm.sort_unstable_by_key(|&i| indices[i]);
+        // Reuse the permutation buffer across calls
+        self.sort_perm.clear();
+        self.sort_perm.extend(0..len);
+        self.sort_perm.sort_unstable_by_key(|&i| indices[i]);
+        let perm = &mut self.sort_perm;
 
         // Apply permutation in-place using cycle sort.
         // Mark visited by setting perm[j] = j (no separate visited vec needed).
@@ -742,7 +770,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
             }
         }
 
-        self.sort_active();
+        self.sort_active_if_needed();
     }
 
     /// Apply SWAP gate in-place: swap bits q1 and q2.
@@ -766,7 +794,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
             }
         }
 
-        self.sort_active();
+        self.sort_active_if_needed();
     }
 
     /// Normalize the state
@@ -967,14 +995,29 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         self
     }
 
-    // ---- Two-qubit gates: flush both frames, then apply physically ----
+    // ---- Two-qubit gates ----
+    //
+    // When both frames are Pauli, push them through the two-qubit gate
+    // symbolically (O(1) frame update) instead of flushing (O(k) gate
+    // application). CX is phase-free; CZ picks up (-1)^{xc*xt}.
+    // SWAP can always swap frames without flushing.
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(qubits.len() % 2 == 0, "CX requires pairs of qubits");
         for pair in qubits.chunks_exact(2) {
             let (c, t) = (pair[0].0, pair[1].0);
-            self.flush_frame(c);
-            self.flush_frame(t);
+            let fc = self.frames[c];
+            let ft = self.frames[t];
+            if fc.is_pauli() && ft.is_pauli() {
+                // Push Pauli frames through CX (phase-free in element convention).
+                // For identity frames this is a no-op on the frames.
+                let (new_c, new_t) = CliffordFrame::push_through_cx(fc, ft);
+                self.frames[c] = new_c;
+                self.frames[t] = new_t;
+            } else {
+                self.flush_frame(c);
+                self.flush_frame(t);
+            }
             self.apply_cx_gate(c, t);
         }
         self
@@ -984,8 +1027,22 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         debug_assert!(qubits.len() % 2 == 0, "CZ requires pairs of qubits");
         for pair in qubits.chunks_exact(2) {
             let (c, t) = (pair[0].0, pair[1].0);
-            self.flush_frame(c);
-            self.flush_frame(t);
+            let fc = self.frames[c];
+            let ft = self.frames[t];
+            if fc.is_pauli() && ft.is_pauli() {
+                // Push Pauli frames through CZ with phase (-1)^{xc*xt}.
+                let (xc, _) = fc.pauli_xz_bits();
+                let (xt, _) = ft.pauli_xz_bits();
+                let (new_c, new_t) = CliffordFrame::push_through_cz(fc, ft);
+                self.frames[c] = new_c;
+                self.frames[t] = new_t;
+                if xc && xt {
+                    self.frame_phases[c] = (self.frame_phases[c] + 4) % 8;
+                }
+            } else {
+                self.flush_frame(c);
+                self.flush_frame(t);
+            }
             self.apply_cz_inplace(c, t);
         }
         self
@@ -1009,9 +1066,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         debug_assert!(qubits.len() % 2 == 0, "SWAP requires pairs of qubits");
         for pair in qubits.chunks_exact(2) {
             let (c, t) = (pair[0].0, pair[1].0);
-            self.flush_frame(c);
-            self.flush_frame(t);
+            // SWAP * (A tensor B) = (B tensor A) * SWAP for any operators,
+            // so we can always swap frames without flushing.
             self.apply_swap_gate(c, t);
+            self.frames.swap(c, t);
+            self.frame_phases.swap(c, t);
         }
         self
     }

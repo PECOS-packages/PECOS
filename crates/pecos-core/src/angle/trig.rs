@@ -23,19 +23,35 @@ use std::ops::Rem;
 // ---------------------------------------------------------------------------
 
 // sin(x) = x + x^3 * (S1 + x^2 * (S2 + x^2 * (S3 + x^2 * (S4 + x^2 * (S5 + x^2 * S6)))))
+//
+// Coefficients from Cephes/musl-libc; preserved as published.
+#[allow(clippy::excessive_precision)]
 const S1: f64 = -1.666_666_666_666_663_24e-01;
+#[allow(clippy::excessive_precision)]
 const S2: f64 = 8.333_333_333_322_489_46e-03;
+#[allow(clippy::excessive_precision)]
 const S3: f64 = -1.984_126_982_985_794_93e-04;
+#[allow(clippy::excessive_precision)]
 const S4: f64 = 2.755_731_370_707_006_77e-06;
+#[allow(clippy::excessive_precision)]
 const S5: f64 = -2.505_076_025_340_686_34e-08;
+#[allow(clippy::excessive_precision)]
 const S6: f64 = 1.589_690_995_211_550_10e-10;
 
 // cos(x) = 1 - x^2/2 + x^4 * (C1 + x^2 * (C2 + x^2 * (C3 + x^2 * (C4 + x^2 * (C5 + x^2 * C6)))))
+//
+// Coefficients from Cephes/musl-libc; preserved as published.
+#[allow(clippy::excessive_precision)]
 const C1: f64 = 4.166_666_666_666_660_19e-02;
+#[allow(clippy::excessive_precision)]
 const C2: f64 = -1.388_888_888_887_410_96e-03;
+#[allow(clippy::excessive_precision)]
 const C3: f64 = 2.480_158_728_947_672_94e-05;
+#[allow(clippy::excessive_precision)]
 const C4: f64 = -2.755_731_435_139_066_33e-07;
+#[allow(clippy::excessive_precision)]
 const C5: f64 = 2.087_572_321_298_174_83e-09;
+#[allow(clippy::excessive_precision)]
 const C6: f64 = -1.135_964_755_778_819_48e-11;
 
 // ---------------------------------------------------------------------------
@@ -46,6 +62,7 @@ const C6: f64 = -1.135_964_755_778_819_48e-11;
 /// back to `a * b + c`. The software `fma()` in libm is correct but very slow
 /// (~1.5 ns per call), so avoiding it when FMA is not compiled in gives a
 /// large speedup with negligible precision loss for our polynomials.
+#[allow(clippy::inline_always)]
 #[inline(always)]
 fn fma(a: f64, b: f64, c: f64) -> f64 {
     #[cfg(target_feature = "fma")]
@@ -144,7 +161,9 @@ struct Octant {
 /// avoids catastrophic cancellation that would occur with a float-domain
 /// `pi/4 - x_raw` subtraction when `x_raw ≈ pi/4`.
 #[inline]
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn reduce_u64(frac: u64, bits: u32) -> Octant {
+    // Top 2 bits give quadrant (0-3), always fits in u32.
     let quadrant = (frac >> (bits - 2)) as u32;
     let half = ((frac >> (bits - 3)) & 1) != 0;
     let rem_bits = bits - 3;
@@ -157,6 +176,7 @@ fn reduce_u64(frac: u64, bits: u32) -> Octant {
         remainder
     };
 
+    // Precision loss converting to f64 is inherent (f64 has 53-bit mantissa).
     let inv_scale = std::f64::consts::FRAC_PI_4 / (1u64 << rem_bits) as f64;
     let x = (r as f64) * inv_scale;
 
@@ -167,6 +187,10 @@ fn reduce_u64(frac: u64, bits: u32) -> Octant {
 ///
 /// Same integer-complement strategy as `reduce_u64` (see its doc comment).
 #[inline]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss
+)]
 fn reduce_u128(frac: u128) -> Octant {
     let quadrant = (frac >> 126) as u32;
     let half = ((frac >> 125) & 1) != 0;
@@ -196,12 +220,13 @@ fn reduce_u128(frac: u128) -> Octant {
 /// Reduce any supported fraction to octant form.
 /// Uses native u64 arithmetic for types up to 64 bits; u128 only for u128.
 #[inline]
-fn reduce<T: ToPrimitive>(fraction: T) -> Octant {
+#[allow(clippy::cast_possible_truncation)]
+fn reduce<T: ToPrimitive + Copy>(fraction: T) -> Octant {
     let bits = std::mem::size_of::<T>() * 8;
     if bits <= 64 {
         reduce_u64(
             fraction.to_u64().expect("Failed to convert fraction to u64"),
-            bits as u32,
+            bits as u32, // size_of * 8 always fits in u32
         )
     } else {
         reduce_u128(fraction.to_u128().expect("Failed to convert fraction to u128"))
@@ -211,7 +236,7 @@ fn reduce<T: ToPrimitive>(fraction: T) -> Octant {
 /// Conditionally negate an f64 by XOR-ing the sign bit. Branchless.
 #[inline]
 fn apply_sign(val: f64, negate: bool) -> f64 {
-    f64::from_bits(val.to_bits() ^ ((negate as u64) << 63))
+    f64::from_bits(val.to_bits() ^ (u64::from(negate) << 63))
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +351,10 @@ where
     /// Common in quantum computing where rotation gates use half-angle
     /// components (e.g., `cos(theta/2)` and `sin(theta/2)` for RX, RY gates).
     /// Halving the fixed-point fraction is exact (integer division by 2).
+    ///
+    /// # Panics
+    /// Panics if `T` cannot represent the value 2 (unreachable for all
+    /// standard unsigned integer types).
     #[inline]
     pub fn half_angle_sin_cos(&self) -> (f64, f64) {
         let half = Self::new(self.fraction / T::from_u32(2).expect("2 must be representable"));

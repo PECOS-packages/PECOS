@@ -58,29 +58,68 @@ fn fma(a: f64, b: f64, c: f64) -> f64 {
 }
 
 /// Evaluate the minimax sin polynomial on [0, pi/4].
+///
+/// With hardware FMA: uses Horner's method (fewer total instructions, each step
+/// is a single FMA instruction).
+///
+/// Without FMA: uses Estrin's scheme (evaluates pairs of terms in parallel,
+/// reducing critical-path latency when each step is mul+add = 2 instructions).
 #[inline]
 fn poly_sin(x: f64) -> f64 {
     let x2 = x * x;
     let x3 = x * x2;
-    let r = fma(S6, x2, S5);
-    let r = fma(r, x2, S4);
-    let r = fma(r, x2, S3);
-    let r = fma(r, x2, S2);
-    let r = fma(r, x2, S1);
-    fma(x3, r, x)
+
+    #[cfg(target_feature = "fma")]
+    {
+        // Horner: 6 sequential FMAs, minimal total instruction count.
+        let r = fma(S6, x2, S5);
+        let r = fma(r, x2, S4);
+        let r = fma(r, x2, S3);
+        let r = fma(r, x2, S2);
+        let r = fma(r, x2, S1);
+        fma(x3, r, x)
+    }
+    #[cfg(not(target_feature = "fma"))]
+    {
+        // Estrin: 3 levels of parallelism, shorter dependency chain.
+        let x4 = x2 * x2;
+        let q0 = fma(S2, x2, S1);
+        let q1 = fma(S4, x2, S3);
+        let q2 = fma(S6, x2, S5);
+        let r0 = fma(q1, x4, q0);
+        let x8 = x4 * x4;
+        let p = fma(q2, x8, r0);
+        fma(x3, p, x)
+    }
 }
 
 /// Evaluate the minimax cos polynomial on [0, pi/4].
+///
+/// Strategy selection matches `poly_sin`: Horner with FMA, Estrin without.
 #[inline]
 fn poly_cos(x: f64) -> f64 {
     let x2 = x * x;
     let x4 = x2 * x2;
-    let r = fma(C6, x2, C5);
-    let r = fma(r, x2, C4);
-    let r = fma(r, x2, C3);
-    let r = fma(r, x2, C2);
-    let r = fma(r, x2, C1);
-    fma(x4, r, 1.0 - 0.5 * x2)
+
+    #[cfg(target_feature = "fma")]
+    {
+        let r = fma(C6, x2, C5);
+        let r = fma(r, x2, C4);
+        let r = fma(r, x2, C3);
+        let r = fma(r, x2, C2);
+        let r = fma(r, x2, C1);
+        fma(x4, r, 1.0 - 0.5 * x2)
+    }
+    #[cfg(not(target_feature = "fma"))]
+    {
+        let q0 = fma(C2, x2, C1);
+        let q1 = fma(C4, x2, C3);
+        let q2 = fma(C6, x2, C5);
+        let r0 = fma(q1, x4, q0);
+        let x8 = x4 * x4;
+        let p = fma(q2, x8, r0);
+        fma(x4, p, 1.0 - 0.5 * x2)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,43 +138,56 @@ struct Octant {
 
 /// Reduce a u64 fraction to an angle in [0, pi/4] plus octant metadata.
 ///
-/// Uses native u64 arithmetic (single instructions on x86-64) and replaces
-/// the f64 division with a multiplication by a precomputed reciprocal.
-/// The reciprocal is `pi/4 / 2^(bits-3)`, which is exact because `2^(bits-3)`
-/// is a power of 2.
+/// When the half-quadrant bit is set, the complement is computed in the
+/// integer domain (`max - remainder`) before converting to float. This
+/// avoids catastrophic cancellation that would occur with a float-domain
+/// `pi/4 - x_raw` subtraction when `x_raw ≈ pi/4`.
 #[inline]
 fn reduce_u64(frac: u64, bits: u32) -> Octant {
     let quadrant = (frac >> (bits - 2)) as u32;
     let half = ((frac >> (bits - 3)) & 1) != 0;
-    let remainder = frac & ((1u64 << (bits - 3)) - 1);
+    let rem_bits = bits - 3;
+    let remainder = frac & ((1u64 << rem_bits) - 1);
 
-    // Multiply by pi/(4 * 2^(bits-3)) instead of dividing then multiplying.
-    // Both the division by 2^(bits-3) and the constant are exact in f64.
-    let inv_scale = std::f64::consts::FRAC_PI_4 / (1u64 << (bits - 3)) as f64;
-    let x_raw = (remainder as f64) * inv_scale;
-    let x = if half {
-        std::f64::consts::FRAC_PI_4 - x_raw
+    // Integer-domain complement to avoid floating-point cancellation.
+    let r = if half {
+        ((1u64 << rem_bits) - 1) - remainder
     } else {
-        x_raw
+        remainder
     };
+
+    let inv_scale = std::f64::consts::FRAC_PI_4 / (1u64 << rem_bits) as f64;
+    let x = (r as f64) * inv_scale;
 
     Octant { x, half, quadrant }
 }
 
 /// Reduce a u128 fraction to an angle in [0, pi/4] plus octant metadata.
+///
+/// Same integer-complement strategy as `reduce_u64` (see its doc comment).
 #[inline]
 fn reduce_u128(frac: u128) -> Octant {
     let quadrant = (frac >> 126) as u32;
     let half = ((frac >> 125) & 1) != 0;
     let remainder = frac & ((1u128 << 125) - 1);
 
-    let inv_scale = std::f64::consts::FRAC_PI_4 / (1u128 << 125) as f64;
-    let x_raw = (remainder as f64) * inv_scale;
-    let x = if half {
-        std::f64::consts::FRAC_PI_4 - x_raw
+    // Integer-domain complement to avoid floating-point cancellation.
+    let r = if half {
+        ((1u128 << 125) - 1) - remainder
     } else {
-        x_raw
+        remainder
     };
+
+    // 125-bit value: split into high (53-bit) and mid (53-bit) parts.
+    // The bottom 19 bits are below f64 precision.
+    let split = 53u32;
+    let discard = 125 - 2 * split; // 19 bits
+    let hi = (r >> (split + discard)) as f64;
+    let mid = ((r >> discard) as u64 & ((1u64 << split) - 1)) as f64;
+    let inv_scale_hi =
+        std::f64::consts::FRAC_PI_4 / (1u128 << (125 - split - discard)) as f64;
+    let inv_scale_mid = std::f64::consts::FRAC_PI_4 / (1u128 << (125 - discard)) as f64;
+    let x = fma(hi, inv_scale_hi, mid * inv_scale_mid);
 
     Octant { x, half, quadrant }
 }
@@ -755,5 +807,138 @@ mod tests {
             max_cos_err < 1e-12,
             "max cos error {max_cos_err:.3e} exceeds threshold"
         );
+    }
+
+    // -- Detailed accuracy report (run with: cargo test --release -p pecos-core -- trig::tests::accuracy_report --nocapture --ignored)
+
+    #[test]
+    #[ignore]
+    fn accuracy_report() {
+        /// Compute ULP distance between two f64 values using integer
+        /// representation. This correctly handles zero crossings.
+        fn ulp_distance(a: f64, b: f64) -> u64 {
+            fn to_ordered(x: f64) -> i64 {
+                let bits = x.to_bits() as i64;
+                if bits < 0 {
+                    i64::MIN - bits
+                } else {
+                    bits
+                }
+            }
+            to_ordered(a).abs_diff(to_ordered(b))
+        }
+
+        const SAMPLES_PER_OCTANT: u64 = 100_000;
+        let octant_size: u64 = 1u64 << 61; // 2^(64-3)
+        let step = octant_size / SAMPLES_PER_OCTANT;
+
+        let mut global_max_sin_abs: f64 = 0.0;
+        let mut global_max_cos_abs: f64 = 0.0;
+        let mut global_max_sin_ulp: u64 = 0;
+        let mut global_max_cos_ulp: u64 = 0;
+        let mut global_max_pyth_residual: f64 = 0.0;
+        let mut total_sin_abs: f64 = 0.0;
+        let mut total_cos_abs: f64 = 0.0;
+        let mut total_sin_ulp: u64 = 0;
+        let mut total_cos_ulp: u64 = 0;
+        let mut total_pyth: f64 = 0.0;
+        let mut count: u64 = 0;
+        let mut ulp_count: u64 = 0; // samples where |ref| > threshold
+
+        println!();
+        println!("  Accuracy report: {} samples per octant, {} total",
+                 SAMPLES_PER_OCTANT, SAMPLES_PER_OCTANT * 8);
+        println!();
+        println!("  {:>7}  {:>12} {:>12}  {:>10} {:>10}  {:>12}",
+                 "Octant", "max|sin_err|", "max|cos_err|", "max_sin_ULP", "max_cos_ULP", "max|s²+c²-1|");
+
+        for octant in 0..8u64 {
+            let base = octant * octant_size;
+            let mut oct_max_sin_abs: f64 = 0.0;
+            let mut oct_max_cos_abs: f64 = 0.0;
+            let mut oct_max_sin_ulp: u64 = 0;
+            let mut oct_max_cos_ulp: u64 = 0;
+            let mut oct_max_pyth: f64 = 0.0;
+
+            for i in 0..SAMPLES_PER_OCTANT {
+                let frac = base + i * step;
+                let angle = Angle64::new(frac);
+                let theta = angle.to_radians();
+
+                let (s, c) = angle.sin_cos();
+                let (s_ref, c_ref) = theta.sin_cos();
+
+                let sin_abs = (s - s_ref).abs();
+                let cos_abs = (c - c_ref).abs();
+                let pyth = (s * s + c * c - 1.0).abs();
+
+                oct_max_sin_abs = oct_max_sin_abs.max(sin_abs);
+                oct_max_cos_abs = oct_max_cos_abs.max(cos_abs);
+                oct_max_pyth = oct_max_pyth.max(pyth);
+
+                // ULP error -- only meaningful when |value| is large enough
+                // that the absolute error and ULP size are comparable. For
+                // values near 0.1 or larger, 1 ULP ≈ 1e-17, so our ~1e-16
+                // errors correspond to single-digit ULPs.
+                if s_ref.abs() > 0.1 {
+                    let sin_ulp = ulp_distance(s, s_ref);
+                    oct_max_sin_ulp = oct_max_sin_ulp.max(sin_ulp);
+                    total_sin_ulp += sin_ulp;
+                    ulp_count += 1;
+                }
+                if c_ref.abs() > 0.1 {
+                    let cos_ulp = ulp_distance(c, c_ref);
+                    oct_max_cos_ulp = oct_max_cos_ulp.max(cos_ulp);
+                    total_cos_ulp += cos_ulp;
+                }
+
+                total_sin_abs += sin_abs;
+                total_cos_abs += cos_abs;
+                total_pyth += pyth;
+                count += 1;
+
+                global_max_sin_abs = global_max_sin_abs.max(sin_abs);
+                global_max_cos_abs = global_max_cos_abs.max(cos_abs);
+                global_max_sin_ulp = global_max_sin_ulp.max(oct_max_sin_ulp);
+                global_max_cos_ulp = global_max_cos_ulp.max(oct_max_cos_ulp);
+                global_max_pyth_residual = global_max_pyth_residual.max(pyth);
+            }
+
+            println!("  {:>7}  {:>12.3e} {:>12.3e}  {:>10} {:>10}  {:>12.3e}",
+                     octant, oct_max_sin_abs, oct_max_cos_abs,
+                     oct_max_sin_ulp, oct_max_cos_ulp, oct_max_pyth);
+        }
+
+        let n = count as f64;
+        let n_ulp = ulp_count as f64;
+        println!();
+        println!("  Global max:  sin_abs={:.3e}  cos_abs={:.3e}  sin_ULP={}  cos_ULP={}  pyth={:.3e}",
+                 global_max_sin_abs, global_max_cos_abs,
+                 global_max_sin_ulp, global_max_cos_ulp,
+                 global_max_pyth_residual);
+        println!("  Global mean: sin_abs={:.3e}  cos_abs={:.3e}  sin_ULP={:.2}  cos_ULP={:.2}  pyth={:.3e}",
+                 total_sin_abs / n, total_cos_abs / n,
+                 total_sin_ulp as f64 / n_ulp, total_cos_ulp as f64 / n_ulp,
+                 total_pyth / n);
+        println!("  (ULP stats exclude {} near-zero samples where |ref| < 1e-10)", count - ulp_count);
+        println!();
+
+        // The ULP comparison is against `f64::sin(angle.to_radians())`. Since
+        // `to_radians()` itself introduces rounding error (dividing by u64::MAX,
+        // which is not a power of 2, then multiplying by TAU), our implementation
+        // and stdlib effectively compute trig of *slightly different angles*.
+        // This accounts for up to ~50-70 ULP difference at small magnitudes where
+        // the angle error dominates the value error.
+        //
+        // The Pythagorean identity is the best accuracy metric because it doesn't
+        // depend on a potentially-inaccurate reference:
+        assert!(global_max_pyth_residual < 5e-16,
+                "Pythagorean residual {:.3e} exceeds threshold", global_max_pyth_residual);
+        // Absolute error vs stdlib should stay below ~2 ULP of 1.0 (the max
+        // range of sin/cos):
+        assert!(global_max_sin_abs < 2e-15,
+                "sin absolute error {:.3e} too large", global_max_sin_abs);
+        assert!(global_max_cos_abs < 2e-15,
+                "cos absolute error {:.3e} too large", global_max_cos_abs);
     }
 }

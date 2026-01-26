@@ -625,6 +625,9 @@ impl<R: Rng> SparseStateVecAoS<R> {
         }
 
         std::mem::swap(&mut self.amplitudes, &mut self.scratch);
+        // The two-pointer walk interleaves low and high results, producing
+        // unsorted output. Mark for deferred sorting.
+        self.needs_sort = true;
     }
 
     // =========================================================================

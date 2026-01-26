@@ -34,13 +34,96 @@
 //!
 //! 3. **Binary Search**: Uses same algorithm as AoS for pair lookup
 
+use crate::clifford_frame::{CliffordFrame, PauliAxis};
 use crate::clifford_gateable::MeasurementResult;
 use crate::{CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
 use pecos_core::QubitId;
 use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
-use wide::f64x4;
+// =============================================================================
+// Gate matrices for frame tracking (layout: [a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im])
+// =============================================================================
+
+const INV_SQRT2: f64 = std::f64::consts::FRAC_1_SQRT_2;
+
+/// Identity matrix
+const MAT_I: [f64; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+/// Hadamard: 1/sqrt(2) * [[1, 1], [1, -1]]
+const MAT_H: [f64; 8] = [INV_SQRT2, 0.0, INV_SQRT2, 0.0, INV_SQRT2, 0.0, -INV_SQRT2, 0.0];
+/// X gate: [[0, 1], [1, 0]]
+const MAT_X: [f64; 8] = [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+/// Y gate: [[0, -i], [i, 0]]
+const MAT_Y: [f64; 8] = [0.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0, 0.0];
+/// Z gate: [[1, 0], [0, -1]]
+const MAT_Z: [f64; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0];
+/// S gate: [[1, 0], [0, i]]
+const MAT_S: [f64; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+/// Sdg gate: [[1, 0], [0, -i]]
+const MAT_SDG: [f64; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0];
+/// SX gate: (1/2)[[1+i, 1-i], [1-i, 1+i]]
+const MAT_SX: [f64; 8] = [0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5];
+/// SXdg gate: (1/2)[[1-i, 1+i], [1+i, 1-i]]
+const MAT_SXDG: [f64; 8] = [0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5];
+/// SY gate: (1/2)[[1+i, -1-i], [1+i, 1+i]]
+const MAT_SY: [f64; 8] = [0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5];
+/// SYdg gate: (1/2)[[1-i, 1-i], [-1+i, 1-i]]
+const MAT_SYDG: [f64; 8] = [0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5];
+
+/// Multiply two 2x2 complex matrices: result = lhs * rhs
+/// Layout: [a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im] for [[a,b],[c,d]]
+#[inline]
+fn mat2_mul(lhs: &[f64; 8], rhs: &[f64; 8]) -> [f64; 8] {
+    // Complex multiply helper: (a_re + i*a_im) * (b_re + i*b_im)
+    #[inline(always)]
+    fn cmul(ar: f64, ai: f64, br: f64, bi: f64) -> (f64, f64) {
+        (ar * br - ai * bi, ar * bi + ai * br)
+    }
+    // Complex add
+    #[inline(always)]
+    fn cadd(ar: f64, ai: f64, br: f64, bi: f64) -> (f64, f64) {
+        (ar + br, ai + bi)
+    }
+
+    let [la, lai, lb, lbi, lc, lci, ld, ldi] = *lhs;
+    let [ra, rai, rb, rbi, rc, rci, rd, rdi] = *rhs;
+
+    // result[0,0] = lhs[0,0]*rhs[0,0] + lhs[0,1]*rhs[1,0]
+    let (t1r, t1i) = cmul(la, lai, ra, rai);
+    let (t2r, t2i) = cmul(lb, lbi, rc, rci);
+    let (r00r, r00i) = cadd(t1r, t1i, t2r, t2i);
+
+    // result[0,1] = lhs[0,0]*rhs[0,1] + lhs[0,1]*rhs[1,1]
+    let (t1r, t1i) = cmul(la, lai, rb, rbi);
+    let (t2r, t2i) = cmul(lb, lbi, rd, rdi);
+    let (r01r, r01i) = cadd(t1r, t1i, t2r, t2i);
+
+    // result[1,0] = lhs[1,0]*rhs[0,0] + lhs[1,1]*rhs[1,0]
+    let (t1r, t1i) = cmul(lc, lci, ra, rai);
+    let (t2r, t2i) = cmul(ld, ldi, rc, rci);
+    let (r10r, r10i) = cadd(t1r, t1i, t2r, t2i);
+
+    // result[1,1] = lhs[1,0]*rhs[0,1] + lhs[1,1]*rhs[1,1]
+    let (t1r, t1i) = cmul(lc, lci, rb, rbi);
+    let (t2r, t2i) = cmul(ld, ldi, rd, rdi);
+    let (r11r, r11i) = cadd(t1r, t1i, t2r, t2i);
+
+    [r00r, r00i, r01r, r01i, r10r, r10i, r11r, r11i]
+}
+
+/// Check if a 2x2 matrix is (approximately) the identity
+#[inline]
+fn mat2_is_identity(m: &[f64; 8]) -> bool {
+    let eps = 1e-12;
+    (m[0] - 1.0).abs() < eps
+        && m[1].abs() < eps
+        && m[2].abs() < eps
+        && m[3].abs() < eps
+        && m[4].abs() < eps
+        && m[5].abs() < eps
+        && (m[6] - 1.0).abs() < eps
+        && m[7].abs() < eps
+}
 
 /// DOD-optimized sparse state vector using SoA layout and double buffering.
 #[derive(Debug)]
@@ -79,6 +162,13 @@ where
     merge_idx: Vec<usize>,
     merge_re: Vec<f64>,
     merge_im: Vec<f64>,
+
+    // ===== CLIFFORD FRAME - per-qubit deferred single-qubit Cliffords =====
+    /// Per-qubit Clifford frame index (mod global phase) for Heisenberg lookups.
+    frames: Vec<CliffordFrame>,
+    /// Per-qubit accumulated 2x2 unitary matrix (tracks exact phases).
+    /// Layout: [a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im] for [[a,b],[c,d]].
+    frame_mats: Vec<[f64; 8]>,
 
     // ===== COLD DATA - rarely accessed =====
     /// Number of qubits
@@ -136,6 +226,8 @@ impl<R: Rng> SparseStateVecSoA<R> {
             merge_idx: Vec::new(),
             merge_re: Vec::new(),
             merge_im: Vec::new(),
+            frames: vec![CliffordFrame::IDENTITY; num_qubits],
+            frame_mats: vec![MAT_I; num_qubits],
             num_qubits,
             rng,
             epsilon: 0.0,
@@ -156,10 +248,11 @@ impl<R: Rng> SparseStateVecSoA<R> {
         self.num_qubits
     }
 
-    /// Get the number of non-zero amplitudes
+    /// Get the number of non-zero amplitudes.
+    /// Flushes any deferred Clifford frames first.
     #[inline]
-    #[must_use]
-    pub fn num_amplitudes(&self) -> usize {
+    pub fn num_amplitudes(&mut self) -> usize {
+        self.flush_all_frames();
         self.len
     }
 
@@ -170,9 +263,18 @@ impl<R: Rng> SparseStateVecSoA<R> {
         self.len as f64 / (1usize << self.num_qubits) as f64
     }
 
-    /// Get amplitude at a specific basis state index (binary search)
+    /// Flush all non-identity Clifford frames by physically applying them.
+    pub fn flush_all_frames(&mut self) {
+        for q in 0..self.num_qubits {
+            self.flush_frame(q);
+        }
+    }
+
+    /// Get amplitude at a specific basis state index (binary search).
+    /// Flushes all Clifford frames first to ensure the physical state is current.
     #[must_use]
-    pub fn get_amplitude(&self, index: usize) -> Complex64 {
+    pub fn get_amplitude(&mut self, index: usize) -> Complex64 {
+        self.flush_all_frames();
         let (indices, real, imag) = self.active_buffers();
         match indices[..self.len].binary_search(&index) {
             Ok(pos) => Complex64::new(real[pos], imag[pos]),
@@ -180,10 +282,11 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
     }
 
-    /// Get probability of measuring a specific basis state
+    /// Get probability of measuring a specific basis state.
+    /// Flushes all Clifford frames first.
     #[inline]
     #[must_use]
-    pub fn probability(&self, index: usize) -> f64 {
+    pub fn probability(&mut self, index: usize) -> f64 {
         let amp = self.get_amplitude(index);
         amp.re * amp.re + amp.im * amp.im
     }
@@ -668,112 +771,6 @@ impl<R: Rng> SparseStateVecSoA<R> {
     // Optimized in-place gates (Z, S, CZ) with SIMD
     // =========================================================================
 
-    /// Apply Z gate in-place with SIMD optimization.
-    ///
-    /// Uses the identity: sign = 1.0 - 2.0 * ((idx >> q) & 1)
-    /// This gives 1.0 for bit=0 and -1.0 for bit=1.
-    fn apply_z_inplace(&mut self, q: usize) {
-        let len = self.len;
-        let (indices, real, imag) = if self.active_a {
-            (
-                &self.indices_a[..len],
-                &mut self.real_a[..len],
-                &mut self.imag_a[..len],
-            )
-        } else {
-            (
-                &self.indices_b[..len],
-                &mut self.real_b[..len],
-                &mut self.imag_b[..len],
-            )
-        };
-
-        // SIMD path: process 4 elements at a time
-        let chunks = len / 4;
-
-        for c in 0..chunks {
-            let i = c * 4;
-
-            // Compute signs: 1.0 for bit=0, -1.0 for bit=1
-            let signs = f64x4::new([
-                1.0 - 2.0 * ((indices[i] >> q) & 1) as f64,
-                1.0 - 2.0 * ((indices[i + 1] >> q) & 1) as f64,
-                1.0 - 2.0 * ((indices[i + 2] >> q) & 1) as f64,
-                1.0 - 2.0 * ((indices[i + 3] >> q) & 1) as f64,
-            ]);
-
-            // Load, multiply, store
-            let re = f64x4::from(&real[i..i + 4]);
-            let im = f64x4::from(&imag[i..i + 4]);
-            let new_re: [f64; 4] = (re * signs).into();
-            let new_im: [f64; 4] = (im * signs).into();
-            real[i..i + 4].copy_from_slice(&new_re);
-            imag[i..i + 4].copy_from_slice(&new_im);
-        }
-
-        // Scalar remainder
-        for i in (chunks * 4)..len {
-            if indices[i] >> q & 1 != 0 {
-                real[i] = -real[i];
-                imag[i] = -imag[i];
-            }
-        }
-    }
-
-    /// Apply S gate in-place (multiply by i where bit is set)
-    fn apply_s_inplace(&mut self, q: usize) {
-        let mask = 1usize << q;
-        let (indices, real, imag) = if self.active_a {
-            (
-                &self.indices_a[..self.len],
-                &mut self.real_a[..self.len],
-                &mut self.imag_a[..self.len],
-            )
-        } else {
-            (
-                &self.indices_b[..self.len],
-                &mut self.real_b[..self.len],
-                &mut self.imag_b[..self.len],
-            )
-        };
-
-        for i in 0..self.len {
-            if indices[i] & mask != 0 {
-                // Multiply by i: (re, im) -> (-im, re)
-                let tmp = real[i];
-                real[i] = -imag[i];
-                imag[i] = tmp;
-            }
-        }
-    }
-
-    /// Apply S-dagger gate in-place (multiply by -i where bit is set)
-    fn apply_sdg_inplace(&mut self, q: usize) {
-        let mask = 1usize << q;
-        let (indices, real, imag) = if self.active_a {
-            (
-                &self.indices_a[..self.len],
-                &mut self.real_a[..self.len],
-                &mut self.imag_a[..self.len],
-            )
-        } else {
-            (
-                &self.indices_b[..self.len],
-                &mut self.real_b[..self.len],
-                &mut self.imag_b[..self.len],
-            )
-        };
-
-        for i in 0..self.len {
-            if indices[i] & mask != 0 {
-                // Multiply by -i: (re, im) -> (im, -re)
-                let tmp = real[i];
-                real[i] = imag[i];
-                imag[i] = -tmp;
-            }
-        }
-    }
-
     /// Apply CZ gate in-place (flip sign where both bits are set)
     fn apply_cz_inplace(&mut self, q1: usize, q2: usize) {
         let mask1 = 1usize << q1;
@@ -805,31 +802,6 @@ impl<R: Rng> SparseStateVecSoA<R> {
     // =========================================================================
     // Two-qubit gates
     // =========================================================================
-
-    /// Apply X gate in-place: flip bit q on all indices.
-    ///
-    /// XOR all indices with mask, then re-sort. The in-place approach with
-    /// sort is faster than a merge-based approach because:
-    /// - XOR is a single contiguous-memory pass
-    /// - After XOR, data has 2 sorted runs; sort_active handles this efficiently
-    /// - Avoids the cache-unfriendly indirect reads of a merge approach
-    #[inline]
-    fn apply_x_inplace(&mut self, q: usize) {
-        let mask = 1usize << q;
-        let len = self.len;
-
-        let indices = if self.active_a {
-            &mut self.indices_a[..len]
-        } else {
-            &mut self.indices_b[..len]
-        };
-
-        for i in 0..len {
-            indices[i] ^= mask;
-        }
-
-        self.sort_active();
-    }
 
     /// Apply CX (CNOT) gate in-place: if control=1, flip target bit.
     ///
@@ -912,6 +884,32 @@ impl<R: Rng> SparseStateVecSoA<R> {
 }
 
 // =============================================================================
+// Frame flush methods
+// =============================================================================
+
+impl<R: Rng> SparseStateVecSoA<R> {
+    /// Flush the Clifford frame on qubit `q` by physically applying the
+    /// accumulated 2x2 unitary matrix. Resets the frame to identity afterwards.
+    fn flush_frame(&mut self, q: usize) {
+        if mat2_is_identity(&self.frame_mats[q]) {
+            self.frames[q] = CliffordFrame::IDENTITY;
+            return;
+        }
+        let m = self.frame_mats[q];
+        self.apply_single_qubit_gate(q, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
+        self.frames[q] = CliffordFrame::IDENTITY;
+        self.frame_mats[q] = MAT_I;
+    }
+
+    /// Compose a gate matrix into qubit q's frame.
+    #[inline]
+    fn compose_frame(&mut self, q: usize, frame_idx: CliffordFrame, gate_mat: &[f64; 8]) {
+        self.frames[q] = self.frames[q].compose(frame_idx);
+        self.frame_mats[q] = mat2_mul(gate_mat, &self.frame_mats[q]);
+    }
+}
+
+// =============================================================================
 // QuantumSimulator trait implementation
 // =============================================================================
 
@@ -926,6 +924,8 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
         self.imag_a.push(0.0);
         self.active_a = true;
         self.len = 1;
+        self.frames.fill(CliffordFrame::IDENTITY);
+        self.frame_mats.fill(MAT_I);
         self
     }
 }
@@ -935,117 +935,87 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
 // =============================================================================
 
 impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
+    // ---- Single-qubit Clifford gates: O(1) frame composition ----
+
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
-        let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
         for &q in qubits {
-            self.apply_single_qubit_gate(
-                q.0,
-                inv_sqrt2, 0.0,
-                inv_sqrt2, 0.0,
-                inv_sqrt2, 0.0,
-                -inv_sqrt2, 0.0,
-            );
+            self.compose_frame(q.0, CliffordFrame::H_GATE, &MAT_H);
         }
         self
     }
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_x_inplace(q.0);
+            self.compose_frame(q.0, CliffordFrame::PAULI_X, &MAT_X);
         }
         self
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_single_qubit_gate(
-                q.0,
-                0.0, 0.0,   // a
-                0.0, -1.0,  // b = -i
-                0.0, 1.0,   // c = i
-                0.0, 0.0,   // d
-            );
+            self.compose_frame(q.0, CliffordFrame::PAULI_Y, &MAT_Y);
         }
         self
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_z_inplace(q.0);
+            self.compose_frame(q.0, CliffordFrame::PAULI_Z, &MAT_Z);
         }
         self
     }
 
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_s_inplace(q.0);
+            self.compose_frame(q.0, CliffordFrame::S_GATE, &MAT_S);
         }
         self
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_sdg_inplace(q.0);
+            self.compose_frame(q.0, CliffordFrame::SDG_GATE, &MAT_SDG);
         }
         self
     }
 
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_single_qubit_gate(
-                q.0,
-                0.5, 0.5,   // a = (1+i)/2
-                0.5, -0.5,  // b = (1-i)/2
-                0.5, -0.5,  // c = (1-i)/2
-                0.5, 0.5,   // d = (1+i)/2
-            );
+            self.compose_frame(q.0, CliffordFrame::SX_GATE, &MAT_SX);
         }
         self
     }
 
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_single_qubit_gate(
-                q.0,
-                0.5, -0.5,  // a = (1-i)/2
-                0.5, 0.5,   // b = (1+i)/2
-                0.5, 0.5,   // c = (1+i)/2
-                0.5, -0.5,  // d = (1-i)/2
-            );
+            self.compose_frame(q.0, CliffordFrame::SX_DG_GATE, &MAT_SXDG);
         }
         self
     }
 
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_single_qubit_gate(
-                q.0,
-                0.5, 0.5,    // a = (1+i)/2
-                -0.5, -0.5,  // b = -(1+i)/2
-                0.5, 0.5,    // c = (1+i)/2
-                0.5, 0.5,    // d = (1+i)/2
-            );
+            self.compose_frame(q.0, CliffordFrame::SY_GATE, &MAT_SY);
         }
         self
     }
 
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.apply_single_qubit_gate(
-                q.0,
-                0.5, -0.5,   // a = (1-i)/2
-                0.5, -0.5,   // b = (1-i)/2
-                -0.5, 0.5,   // c = -(1-i)/2
-                0.5, -0.5,   // d = (1-i)/2
-            );
+            self.compose_frame(q.0, CliffordFrame::SY_DG_GATE, &MAT_SYDG);
         }
         self
     }
 
+    // ---- Two-qubit gates: flush both frames, then apply physically ----
+
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(qubits.len() % 2 == 0, "CX requires pairs of qubits");
         for pair in qubits.chunks_exact(2) {
-            self.apply_cx_gate(pair[0].0, pair[1].0);
+            let (c, t) = (pair[0].0, pair[1].0);
+            self.flush_frame(c);
+            self.flush_frame(t);
+            self.apply_cx_gate(c, t);
         }
         self
     }
@@ -1053,17 +1023,24 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(qubits.len() % 2 == 0, "CZ requires pairs of qubits");
         for pair in qubits.chunks_exact(2) {
-            self.apply_cz_inplace(pair[0].0, pair[1].0);
+            let (c, t) = (pair[0].0, pair[1].0);
+            self.flush_frame(c);
+            self.flush_frame(t);
+            self.apply_cz_inplace(c, t);
         }
         self
     }
 
     fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // CY = (I ⊗ S†) CX (I ⊗ S)
+        // CY = (I tensor Sdg) . CX . (I tensor S)
         for pair in qubits.chunks_exact(2) {
-            self.apply_s_inplace(pair[1].0);
-            self.apply_cx_gate(pair[0].0, pair[1].0);
-            self.apply_sdg_inplace(pair[1].0);
+            let (c, t) = (pair[0].0, pair[1].0);
+            // Compose S on target frame, then flush both, apply CX, compose Sdg on target
+            self.compose_frame(t, CliffordFrame::S_GATE, &MAT_S);
+            self.flush_frame(c);
+            self.flush_frame(t);
+            self.apply_cx_gate(c, t);
+            self.compose_frame(t, CliffordFrame::SDG_GATE, &MAT_SDG);
         }
         self
     }
@@ -1071,67 +1048,110 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(qubits.len() % 2 == 0, "SWAP requires pairs of qubits");
         for pair in qubits.chunks_exact(2) {
-            self.apply_swap_gate(pair[0].0, pair[1].0);
+            let (c, t) = (pair[0].0, pair[1].0);
+            self.flush_frame(c);
+            self.flush_frame(t);
+            self.apply_swap_gate(c, t);
         }
         self
     }
+
+    // ---- Measurement: check Z-image to avoid unnecessary flush ----
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         let mut results = Vec::with_capacity(qubits.len());
 
         for &q in qubits {
-            let mask = 1usize << q.0;
-            let len = self.len;
+            let z_img = self.frames[q.0].z_image();
 
-            // Calculate probability of measuring |1⟩
-            let prob_one = {
-                let (indices, real, imag) = self.active_buffers();
-                let mut p = 0.0;
-                for i in 0..len {
-                    if indices[i] & mask != 0 {
-                        p += real[i] * real[i] + imag[i] * imag[i];
-                    }
-                }
-                p
-            };
-
-            let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
-            let outcome = self.rng.bernoulli(prob_one);
-
-            results.push(MeasurementResult {
-                outcome,
-                is_deterministic,
-            });
-
-            // Collapse in-place: keep only consistent amplitudes.
-            // Since we're filtering a sorted sequence, the result stays sorted.
-            let keep_value = if outcome { mask } else { 0 };
-
-            {
-                let (indices, real, imag) = if self.active_a {
-                    (&mut self.indices_a[..len], &mut self.real_a[..len], &mut self.imag_a[..len])
-                } else {
-                    (&mut self.indices_b[..len], &mut self.real_b[..len], &mut self.imag_b[..len])
-                };
-
-                let mut write = 0;
-                for read in 0..len {
-                    if indices[read] & mask == keep_value {
-                        if write != read {
-                            indices[write] = indices[read];
-                            real[write] = real[read];
-                            imag[write] = imag[read];
+            match z_img.axis {
+                PauliAxis::Z => {
+                    // Z maps to +/-Z: can measure physically without flush.
+                    // The physical state collapses to a Z eigenstate, and the
+                    // frame remains in place (logical state = frame * physical).
+                    let result = self.physical_mz(q.0);
+                    let result = if z_img.positive {
+                        result
+                    } else {
+                        MeasurementResult {
+                            outcome: !result.outcome,
+                            is_deterministic: result.is_deterministic,
                         }
-                        write += 1;
-                    }
+                    };
+                    results.push(result);
                 }
-                self.len = write;
+                _ => {
+                    // Z maps to +/-X or +/-Y: must flush frame first
+                    self.flush_frame(q.0);
+                    results.push(self.physical_mz(q.0));
+                }
             }
-
-            self.normalize();
         }
 
         results
+    }
+}
+
+impl<R: Rng> SparseStateVecSoA<R> {
+    /// Physical Z-basis measurement (no frame logic).
+    fn physical_mz(&mut self, q: usize) -> MeasurementResult {
+        let mask = 1usize << q;
+        let len = self.len;
+
+        // Calculate probability of measuring |1⟩
+        let prob_one = {
+            let (indices, real, imag) = self.active_buffers();
+            let mut p = 0.0;
+            for i in 0..len {
+                if indices[i] & mask != 0 {
+                    p += real[i] * real[i] + imag[i] * imag[i];
+                }
+            }
+            p
+        };
+
+        let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
+        let outcome = self.rng.bernoulli(prob_one);
+
+        let result = MeasurementResult {
+            outcome,
+            is_deterministic,
+        };
+
+        // Collapse in-place: keep only consistent amplitudes.
+        let keep_value = if outcome { mask } else { 0 };
+
+        {
+            let (indices, real, imag) = if self.active_a {
+                (
+                    &mut self.indices_a[..len],
+                    &mut self.real_a[..len],
+                    &mut self.imag_a[..len],
+                )
+            } else {
+                (
+                    &mut self.indices_b[..len],
+                    &mut self.real_b[..len],
+                    &mut self.imag_b[..len],
+                )
+            };
+
+            let mut write = 0;
+            for read in 0..len {
+                if indices[read] & mask == keep_value {
+                    if write != read {
+                        indices[write] = indices[read];
+                        real[write] = real[read];
+                        imag[write] = imag[read];
+                    }
+                    write += 1;
+                }
+            }
+            self.len = write;
+        }
+
+        self.normalize();
+        result
     }
 }
 
@@ -1145,7 +1165,7 @@ mod tests {
 
     #[test]
     fn test_new() {
-        let sim = SparseStateVecSoA::new(4);
+        let mut sim = SparseStateVecSoA::new(4);
         assert_eq!(sim.num_qubits(), 4);
         assert_eq!(sim.num_amplitudes(), 1);
         assert_eq!(sim.get_amplitude(0), Complex64::new(1.0, 0.0));

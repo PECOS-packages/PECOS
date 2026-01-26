@@ -275,6 +275,101 @@ const INVERSE: [u8; 24] = compute_inverse();
 const DECOMPOSE: [(u8, u8); 24] = compute_decompose();
 
 // ============================================================================
+// Phase cocycle tables for exact phase tracking
+// ============================================================================
+
+/// The 8th roots of unity: e^{ikπ/4} for k = 0..7, stored as [re, im].
+pub const PHASE_ROOTS: [[f64; 2]; 8] = {
+    const R: f64 = std::f64::consts::FRAC_1_SQRT_2;
+    [
+        [ 1.0,  0.0], // k=0: 1
+        [   R,    R], // k=1: e^{iπ/4}
+        [ 0.0,  1.0], // k=2: i
+        [  -R,    R], // k=3: e^{i3π/4}
+        [-1.0,  0.0], // k=4: -1
+        [  -R,   -R], // k=5: e^{i5π/4}
+        [ 0.0, -1.0], // k=6: -i
+        [   R,   -R], // k=7: e^{i7π/4}
+    ]
+};
+
+/// Representative 2x2 unitary matrix for each of the 24 elements.
+/// Layout: [a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im] for [[a,b],[c,d]].
+/// Computed from generator sequences (H, S).
+pub const ELEMENT_MATRIX: [[f64; 8]; 24] = {
+    const R: f64 = std::f64::consts::FRAC_1_SQRT_2;
+    const H: f64 = 0.5;
+    [
+        [ 1.0, 0.0,  0.0, 0.0,  0.0, 0.0,  1.0, 0.0], //  0: I
+        [ 0.0, 0.0,  1.0, 0.0,  1.0, 0.0,  0.0, 0.0], //  1: X
+        [ 0.0, 0.0,  1.0, 0.0, -1.0, 0.0,  0.0, 0.0], //  2: Y (= iXZ, differs from std Y by phase -i)
+        [ 1.0, 0.0,  0.0, 0.0,  0.0, 0.0, -1.0, 0.0], //  3: Z
+        [ 1.0, 0.0,  0.0, 0.0,  0.0, 0.0,  0.0, 1.0], //  4: S
+        [ 1.0, 0.0,  0.0, 0.0,  0.0, 0.0,  0.0,-1.0], //  5: Sdg
+        [   R, 0.0,    R, 0.0,    R, 0.0,   -R, 0.0], //  6: H
+        [   R, 0.0,    R, 0.0,  0.0,   R,  0.0,  -R], //  7: SH
+        [   R, 0.0,  0.0,   R,    R, 0.0,  0.0,  -R], //  8: HS
+        [   R, 0.0,    R, 0.0,   -R, 0.0,    R, 0.0], //  9: ZH (= SYdg rep)
+        [   R, 0.0,   -R, 0.0,    R, 0.0,    R, 0.0], // 10: HZ (= SY rep)
+        [   R, 0.0,    R, 0.0,  0.0,  -R,  0.0,   R], // 11: SdgH
+        [   R, 0.0,  0.0,   R,  0.0,   R,    R, 0.0], // 12: SHS (= SXdg rep)
+        [   H,   H,    H,  -H,    H,  -H,    H,   H], // 13: HSH (= SX)
+        [   H,   H,    H,  -H,    H,   H,   -H,   H], // 14: SHSH
+        [   R, 0.0,  0.0,   R,   -R, 0.0,  0.0,   R], // 15: S^2HS
+        [   R, 0.0,   -R, 0.0,  0.0,   R,  0.0,   R], // 16: SHS^2
+        [   R, 0.0,  0.0,   R,  0.0,  -R,   -R, 0.0], // 17: S^3HS
+        [   R, 0.0,   -R, 0.0,   -R, 0.0,   -R, 0.0], // 18: S^2HS^2
+        [   H,   H,    H,  -H,   -H,   H,   -H,  -H], // 19: S^2HSH
+        [ 0.0, 0.0,  0.0, 1.0,  1.0, 0.0,  0.0, 0.0], // 20: HS^2HS
+        [   R, 0.0,   -R, 0.0,  0.0,  -R,  0.0,  -R], // 21: S^3HS^2
+        [   H,   H,    H,  -H,   -H,  -H,    H,  -H], // 22: S^3HSH
+        [ 0.0, 0.0,  0.0,-1.0,  1.0, 0.0,  0.0, 0.0], // 23: HS^2HS^3
+    ]
+};
+
+/// Phase cocycle table: PHASE_COCYCLE[frame][gate] gives the phase correction
+/// (as an 8th-root index 0-7) when composing `gate` onto `frame`.
+///
+/// For element matrices M_i and M_j:
+///   M_j · M_i = e^{i·PHASE_COCYCLE[i][j]·π/4} · M_{COMPOSE[i][j]}
+pub const PHASE_COCYCLE: [[u8; 24]; 24] = [
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,2,6,0,0,1,0,4,0,1,7,7,1,4,1,4,7,2,4,7,6],
+    [0,4,4,0,6,2,4,4,6,4,0,4,6,2,2,6,0,6,0,2,6,0,2,2],
+    [0,4,4,0,0,0,0,0,7,0,0,0,7,1,1,7,0,7,0,1,0,0,1,0],
+    [0,0,4,0,0,0,0,0,0,0,7,0,0,1,1,0,7,0,7,1,4,7,1,0],
+    [0,0,4,0,0,0,7,7,0,7,0,7,0,1,1,0,0,0,0,1,0,0,1,4],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,2,6,0,6],
+    [0,2,2,0,0,0,0,0,0,0,7,0,2,1,1,0,7,6,7,1,4,7,1,0],
+    [0,7,7,0,0,0,0,0,1,0,0,0,1,0,0,1,2,1,4,0,1,2,0,5],
+    [0,4,4,0,0,0,0,2,7,0,0,6,7,1,1,7,0,7,0,1,6,0,1,2],
+    [0,0,0,0,0,0,0,0,1,0,4,0,1,7,7,1,2,1,4,7,2,6,7,6],
+    [0,6,6,0,0,0,7,7,0,7,0,7,0,7,1,0,0,0,0,3,0,0,1,4],
+    [0,1,1,0,0,0,1,1,0,1,7,1,2,1,1,4,7,2,7,1,3,7,1,7],
+    [0,7,7,0,0,0,0,0,1,0,2,0,1,0,2,1,2,1,2,0,1,2,6,5],
+    [0,1,1,0,0,0,1,1,2,1,1,1,2,1,1,2,7,2,5,1,3,7,1,7],
+    [0,3,3,0,0,0,0,2,7,4,0,2,7,2,2,7,0,7,0,2,5,0,2,1],
+    [0,2,2,0,0,0,1,1,4,1,6,1,2,1,1,4,6,6,6,1,4,6,1,0],
+    [0,5,5,0,0,0,7,7,0,7,1,7,0,3,1,0,1,0,1,3,7,1,5,3],
+    [0,4,4,0,0,0,4,2,6,4,0,6,6,2,2,6,0,6,0,2,6,0,2,2],
+    [0,3,3,0,0,0,2,2,1,2,0,2,7,2,2,5,0,7,0,2,5,0,2,1],
+    [0,0,0,4,2,2,0,0,2,0,3,0,2,7,7,2,3,2,3,7,2,3,7,6],
+    [0,6,6,0,0,0,6,6,0,6,1,6,0,7,5,0,1,0,1,3,0,1,5,4],
+    [0,5,5,0,0,0,1,7,0,5,1,7,0,3,3,0,1,0,1,3,7,1,3,3],
+    [0,0,0,4,6,6,7,7,2,7,4,7,2,7,7,2,4,2,4,7,2,4,7,6],
+];
+
+/// Phase correction from standard gate matrix to generator-based element matrix.
+/// standard_gate_matrix = e^{i·GATE_PHASE_DELTA[idx]·π/4} · ELEMENT_MATRIX[idx]
+///
+/// Only entries for indices used as gates matter:
+///   0(I)=0, 1(X)=0, 2(Y)=6, 3(Z)=0, 4(S)=0, 5(Sdg)=0, 6(H)=0,
+///   9(SYdg)=7, 10(SY)=1, 12(SXdg)=7, 13(SX)=0
+pub const GATE_PHASE_DELTA: [u8; 24] = [
+    0, 0, 6, 0, 0, 0, 0, 0, 0, 7, 1, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
+
+// ============================================================================
 // CliffordFrame implementation
 // ============================================================================
 
@@ -851,6 +946,149 @@ mod tests {
         }
     }
 
+    /// Extract the global phase ratio as an 8th-root-of-unity index.
+    /// ratio = actual / representative. Should be e^{i*k*pi/4} for k in 0..7.
+    fn phase_index(ratio: Complex64) -> u8 {
+        let phases = PHASE_ROOTS;
+        for (k, &[re, im]) in phases.iter().enumerate() {
+            if (ratio - Complex64::new(re, im)).norm() < 1e-6 {
+                return k as u8;
+            }
+        }
+        panic!("Phase ratio {ratio:?} is not an 8th root of unity");
+    }
+
+    /// Compute the global phase ratio between matrix product and representative.
+    fn compute_cocycle_entry(matrices: &[Mat2], i: usize, j: usize) -> u8 {
+        let product = mat_mul(&matrices[j], &matrices[i]);
+        let k = COMPOSE[i][j] as usize;
+        let rep = &matrices[k];
+        let mut ratio = Complex64::new(0.0, 0.0);
+        for r in 0..2 {
+            for c in 0..2 {
+                if rep[r][c].norm() > 1e-10 {
+                    ratio = product[r][c] / rep[r][c];
+                    break;
+                }
+            }
+            if ratio.norm() > 1e-10 {
+                break;
+            }
+        }
+        phase_index(ratio)
+    }
+
+    #[test]
+    fn test_verify_element_matrix() {
+        let matrices: Vec<Mat2> = (0..24).map(element_matrix).collect();
+        for idx in 0..24 {
+            let m = &matrices[idx];
+            let em = ELEMENT_MATRIX[idx];
+            for (r, c) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                let expected = Complex64::new(em[r * 4 + c * 2], em[r * 4 + c * 2 + 1]);
+                let actual = m[r][c];
+                assert!(
+                    (actual - expected).norm() < 1e-10,
+                    "ELEMENT_MATRIX[{idx}][{r}][{c}]: expected {actual:?}, got {expected:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_verify_phase_cocycle() {
+        let matrices: Vec<Mat2> = (0..24).map(element_matrix).collect();
+        for i in 0..24 {
+            for j in 0..24 {
+                let expected = compute_cocycle_entry(&matrices, i, j);
+                assert_eq!(
+                    PHASE_COCYCLE[i][j], expected,
+                    "PHASE_COCYCLE[{i}][{j}]: expected {expected}, got {}",
+                    PHASE_COCYCLE[i][j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_cocycle_satisfies_associativity() {
+        // For the cocycle to be consistent: composing three elements
+        // must give the same total phase regardless of grouping.
+        // (a * b) * c vs a * (b * c):
+        // phase(a,b) + phase(compose(a,b), c) == phase(b,c) + phase(a, compose(b,c))
+        for a in 0..24usize {
+            for b in 0..24usize {
+                let ab = COMPOSE[a][b] as usize;
+                for c in 0..24usize {
+                    let bc = COMPOSE[b][c] as usize;
+                    let lhs = (PHASE_COCYCLE[a][b] as u16 + PHASE_COCYCLE[ab][c] as u16) % 8;
+                    let rhs = (PHASE_COCYCLE[b][c] as u16 + PHASE_COCYCLE[a][bc] as u16) % 8;
+                    assert_eq!(
+                        lhs, rhs,
+                        "Cocycle associativity failed for ({a},{b},{c})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_verify_gate_phase_deltas() {
+        // Verify that GATE_PHASE_DELTA correctly maps standard gate matrices
+        // to element matrices.
+        let std_gates: [(usize, Mat2); 11] = [
+            (0, mat_i()),
+            (1, mat_x()),
+            (2, mat_y()),
+            (3, mat_z()),
+            (4, mat_s()),
+            (5, { let mi = Complex64::new(0.0, -1.0); [[ONE, ZERO], [ZERO, mi]] }),
+            (6, mat_h()),
+            (13, { // SX
+                let a = Complex64::new(0.5, 0.5);
+                let b = Complex64::new(0.5, -0.5);
+                [[a, b], [b, a]]
+            }),
+            (12, { // SXdg
+                let a = Complex64::new(0.5, -0.5);
+                let b = Complex64::new(0.5, 0.5);
+                [[a, b], [b, a]]
+            }),
+            (10, { // SY
+                let a = Complex64::new(0.5, 0.5);
+                let b = Complex64::new(-0.5, -0.5);
+                [[a, b], [Complex64::new(0.5, 0.5), a]]
+            }),
+            (9, { // SYdg
+                let a = Complex64::new(0.5, -0.5);
+                let b = Complex64::new(0.5, -0.5);
+                let c = Complex64::new(-0.5, 0.5);
+                [[a, b], [c, a]]
+            }),
+        ];
+
+        for &(idx, ref std_mat) in &std_gates {
+            let elem_mat = element_matrix(idx);
+            // Find ratio = std / elem
+            let mut ratio = Complex64::new(0.0, 0.0);
+            for r in 0..2 {
+                for c in 0..2 {
+                    if elem_mat[r][c].norm() > 1e-10 {
+                        ratio = std_mat[r][c] / elem_mat[r][c];
+                        break;
+                    }
+                }
+                if ratio.norm() > 1e-10 { break; }
+            }
+            let delta = phase_index(ratio);
+            assert_eq!(
+                GATE_PHASE_DELTA[idx], delta,
+                "GATE_PHASE_DELTA[{idx}]: expected {delta}, got {}",
+                GATE_PHASE_DELTA[idx]
+            );
+        }
+    }
+
     #[test]
     fn test_h_generates_order_2() {
         let h = CliffordFrame::H_GATE;
@@ -866,5 +1104,205 @@ mod tests {
         assert_eq!(s2, CliffordFrame::PAULI_Z, "S² should be Z");
         assert_eq!(s3, CliffordFrame::SDG_GATE, "S³ should be Sdg");
         assert_eq!(s4, CliffordFrame::IDENTITY, "S⁴ should be I");
+    }
+
+    #[test]
+    fn test_cx_cz_pauli_passthrough() {
+        // Verify CX and CZ Pauli pass-through in the ELEMENT_MATRIX convention.
+        //
+        // CX is phase-free: conjugating any Pauli tensor product by CX yields
+        // exactly the expected Pauli tensor product with no extra phase.
+        //
+        // CZ picks up a sign of (-1)^{xc * xt} in the element convention,
+        // where xc, xt are the X-bits of the input Paulis. This comes from
+        // two sources: (1) the Pauli anticommutation sign when CZ introduces
+        // Z factors that must be moved past X factors on the same qubit, and
+        // (2) the element convention phase for Y (Y_elem = i * Y_std). These
+        // combine to give phase = -1 exactly when both inputs have X-bit set
+        // (i.e., both are X or Y).
+
+        const ELEM: &[[f64; 8]; 24] = &ELEMENT_MATRIX;
+
+        // --- 4x4 complex matrix helpers using [re, im] pairs ---
+        // A 4x4 complex matrix is [[f64; 2]; 16], stored row-major:
+        //   entry (r, c) at index r*4 + c.
+        type Mat4 = [[f64; 2]; 16];
+
+        const CZERO: [f64; 2] = [0.0, 0.0];
+
+        fn cmul(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+            [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
+        }
+
+        fn cadd(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+            [a[0] + b[0], a[1] + b[1]]
+        }
+
+        fn mat4_zero() -> Mat4 {
+            [CZERO; 16]
+        }
+
+        fn mat4_mul(a: &Mat4, b: &Mat4) -> Mat4 {
+            let mut r = mat4_zero();
+            for i in 0..4 {
+                for j in 0..4 {
+                    let mut s = CZERO;
+                    for k in 0..4 {
+                        s = cadd(s, cmul(a[i * 4 + k], b[k * 4 + j]));
+                    }
+                    r[i * 4 + j] = s;
+                }
+            }
+            r
+        }
+
+        fn mat4_dag(a: &Mat4) -> Mat4 {
+            let mut r = mat4_zero();
+            for i in 0..4 {
+                for j in 0..4 {
+                    let v = a[j * 4 + i];
+                    r[i * 4 + j] = [v[0], -v[1]]; // conjugate transpose
+                }
+            }
+            r
+        }
+
+        /// Build a 4x4 matrix from the tensor product of two ELEMENT_MATRIX entries.
+        fn tensor(a_idx: usize, b_idx: usize) -> Mat4 {
+            let a = &ELEM[a_idx];
+            let b = &ELEM[b_idx];
+            // a is [[a00, a01], [a10, a11]] with a_rc = (a[r*4+c*2], a[r*4+c*2+1])
+            // tensor product: (A tensor B)_{(ia,ib),(ja,jb)} = A_{ia,ja} * B_{ib,jb}
+            let mut r = mat4_zero();
+            for ia in 0..2 {
+                for ja in 0..2 {
+                    let a_val = [a[ia * 4 + ja * 2], a[ia * 4 + ja * 2 + 1]];
+                    for ib in 0..2 {
+                        for jb in 0..2 {
+                            let b_val = [b[ib * 4 + jb * 2], b[ib * 4 + jb * 2 + 1]];
+                            let row = ia * 2 + ib;
+                            let col = ja * 2 + jb;
+                            r[row * 4 + col] = cmul(a_val, b_val);
+                        }
+                    }
+                }
+            }
+            r
+        }
+
+        /// CX matrix in computational basis (control qubit 0, target qubit 1):
+        /// |00> -> |00>, |01> -> |01>, |10> -> |11>, |11> -> |10>
+        fn mat_cx() -> Mat4 {
+            let mut m = mat4_zero();
+            let one = [1.0, 0.0];
+            m[0 * 4 + 0] = one; // |00> -> |00>
+            m[1 * 4 + 1] = one; // |01> -> |01>
+            m[2 * 4 + 3] = one; // |10> -> |11>
+            m[3 * 4 + 2] = one; // |11> -> |10>
+            m
+        }
+
+        /// CZ matrix: diag(1, 1, 1, -1)
+        fn mat_cz() -> Mat4 {
+            let mut m = mat4_zero();
+            let one = [1.0, 0.0];
+            m[0 * 4 + 0] = one;
+            m[1 * 4 + 1] = one;
+            m[2 * 4 + 2] = one;
+            m[3 * 4 + 3] = [-1.0, 0.0];
+            m
+        }
+
+        fn mat4_eq(a: &Mat4, b: &Mat4, tol: f64) -> bool {
+            for i in 0..16 {
+                let dr = a[i][0] - b[i][0];
+                let di = a[i][1] - b[i][1];
+                if (dr * dr + di * di).sqrt() > tol {
+                    return false;
+                }
+            }
+            true
+        }
+
+        /// Extract (x_bit, z_bit) from Pauli index 0..3.
+        fn pauli_xz(idx: usize) -> (bool, bool) {
+            match idx {
+                0 => (false, false), // I
+                1 => (true, false),  // X
+                2 => (true, true),   // Y
+                3 => (false, true),  // Z
+                _ => unreachable!(),
+            }
+        }
+
+        /// Construct Pauli index from (x_bit, z_bit).
+        fn pauli_from_xz(x: bool, z: bool) -> usize {
+            match (x, z) {
+                (false, false) => 0,
+                (true, false) => 1,
+                (true, true) => 2,
+                (false, true) => 3,
+            }
+        }
+
+        // --- Test CX ---
+        let cx = mat_cx();
+        let cx_dag = mat4_dag(&cx); // CX is self-adjoint, but compute anyway
+
+        for pc in 0..4 {
+            for pt in 0..4 {
+                let input = tensor(pc, pt);
+                // CX * input * CX^dag
+                let conjugated = mat4_mul(&cx, &mat4_mul(&input, &cx_dag));
+
+                // Compute expected output Paulis via symplectic rules
+                let (xc, zc) = pauli_xz(pc);
+                let (xt, zt) = pauli_xz(pt);
+                let pc_out = pauli_from_xz(xc, zc ^ zt);
+                let pt_out = pauli_from_xz(xc ^ xt, zt);
+
+                let expected = tensor(pc_out, pt_out);
+
+                assert!(
+                    mat4_eq(&conjugated, &expected, 1e-10),
+                    "CX phase-free check failed for pc={pc}, pt={pt}: \
+                     expected Pauli ({pc_out}, {pt_out})"
+                );
+            }
+        }
+
+        // --- Test CZ ---
+        // CZ picks up (-1)^{xc*xt} in the element convention.
+        let cz = mat_cz();
+        let cz_dag = mat4_dag(&cz); // CZ is self-adjoint
+
+        for pc in 0..4 {
+            for pt in 0..4 {
+                let input = tensor(pc, pt);
+                // CZ * input * CZ^dag
+                let conjugated = mat4_mul(&cz, &mat4_mul(&input, &cz_dag));
+
+                // Compute expected output Paulis via symplectic rules
+                let (xc, zc) = pauli_xz(pc);
+                let (xt, zt) = pauli_xz(pt);
+                let pc_out = pauli_from_xz(xc, zc ^ xt);
+                let pt_out = pauli_from_xz(xt, zt ^ xc);
+
+                // Element-convention phase: (-1) when both X-bits are set
+                let phase: f64 = if xc && xt { -1.0 } else { 1.0 };
+
+                let raw_expected = tensor(pc_out, pt_out);
+                let mut expected = mat4_zero();
+                for i in 0..16 {
+                    expected[i] = [raw_expected[i][0] * phase, raw_expected[i][1] * phase];
+                }
+
+                assert!(
+                    mat4_eq(&conjugated, &expected, 1e-10),
+                    "CZ check failed for pc={pc}, pt={pt}: \
+                     expected Pauli ({pc_out}, {pt_out}) with phase={phase}"
+                );
+            }
+        }
     }
 }

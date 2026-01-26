@@ -34,96 +34,13 @@
 //!
 //! 3. **Binary Search**: Uses same algorithm as AoS for pair lookup
 
-use crate::clifford_frame::{CliffordFrame, PauliAxis};
+use crate::clifford_frame::{CliffordFrame, PauliAxis, ELEMENT_MATRIX, PHASE_COCYCLE, PHASE_ROOTS};
 use crate::clifford_gateable::MeasurementResult;
 use crate::{CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
 use pecos_core::QubitId;
 use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
-// =============================================================================
-// Gate matrices for frame tracking (layout: [a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im])
-// =============================================================================
-
-const INV_SQRT2: f64 = std::f64::consts::FRAC_1_SQRT_2;
-
-/// Identity matrix
-const MAT_I: [f64; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-/// Hadamard: 1/sqrt(2) * [[1, 1], [1, -1]]
-const MAT_H: [f64; 8] = [INV_SQRT2, 0.0, INV_SQRT2, 0.0, INV_SQRT2, 0.0, -INV_SQRT2, 0.0];
-/// X gate: [[0, 1], [1, 0]]
-const MAT_X: [f64; 8] = [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0];
-/// Y gate: [[0, -i], [i, 0]]
-const MAT_Y: [f64; 8] = [0.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0, 0.0];
-/// Z gate: [[1, 0], [0, -1]]
-const MAT_Z: [f64; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0];
-/// S gate: [[1, 0], [0, i]]
-const MAT_S: [f64; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
-/// Sdg gate: [[1, 0], [0, -i]]
-const MAT_SDG: [f64; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0];
-/// SX gate: (1/2)[[1+i, 1-i], [1-i, 1+i]]
-const MAT_SX: [f64; 8] = [0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5];
-/// SXdg gate: (1/2)[[1-i, 1+i], [1+i, 1-i]]
-const MAT_SXDG: [f64; 8] = [0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5];
-/// SY gate: (1/2)[[1+i, -1-i], [1+i, 1+i]]
-const MAT_SY: [f64; 8] = [0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5];
-/// SYdg gate: (1/2)[[1-i, 1-i], [-1+i, 1-i]]
-const MAT_SYDG: [f64; 8] = [0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5];
-
-/// Multiply two 2x2 complex matrices: result = lhs * rhs
-/// Layout: [a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im] for [[a,b],[c,d]]
-#[inline]
-fn mat2_mul(lhs: &[f64; 8], rhs: &[f64; 8]) -> [f64; 8] {
-    // Complex multiply helper: (a_re + i*a_im) * (b_re + i*b_im)
-    #[inline(always)]
-    fn cmul(ar: f64, ai: f64, br: f64, bi: f64) -> (f64, f64) {
-        (ar * br - ai * bi, ar * bi + ai * br)
-    }
-    // Complex add
-    #[inline(always)]
-    fn cadd(ar: f64, ai: f64, br: f64, bi: f64) -> (f64, f64) {
-        (ar + br, ai + bi)
-    }
-
-    let [la, lai, lb, lbi, lc, lci, ld, ldi] = *lhs;
-    let [ra, rai, rb, rbi, rc, rci, rd, rdi] = *rhs;
-
-    // result[0,0] = lhs[0,0]*rhs[0,0] + lhs[0,1]*rhs[1,0]
-    let (t1r, t1i) = cmul(la, lai, ra, rai);
-    let (t2r, t2i) = cmul(lb, lbi, rc, rci);
-    let (r00r, r00i) = cadd(t1r, t1i, t2r, t2i);
-
-    // result[0,1] = lhs[0,0]*rhs[0,1] + lhs[0,1]*rhs[1,1]
-    let (t1r, t1i) = cmul(la, lai, rb, rbi);
-    let (t2r, t2i) = cmul(lb, lbi, rd, rdi);
-    let (r01r, r01i) = cadd(t1r, t1i, t2r, t2i);
-
-    // result[1,0] = lhs[1,0]*rhs[0,0] + lhs[1,1]*rhs[1,0]
-    let (t1r, t1i) = cmul(lc, lci, ra, rai);
-    let (t2r, t2i) = cmul(ld, ldi, rc, rci);
-    let (r10r, r10i) = cadd(t1r, t1i, t2r, t2i);
-
-    // result[1,1] = lhs[1,0]*rhs[0,1] + lhs[1,1]*rhs[1,1]
-    let (t1r, t1i) = cmul(lc, lci, rb, rbi);
-    let (t2r, t2i) = cmul(ld, ldi, rd, rdi);
-    let (r11r, r11i) = cadd(t1r, t1i, t2r, t2i);
-
-    [r00r, r00i, r01r, r01i, r10r, r10i, r11r, r11i]
-}
-
-/// Check if a 2x2 matrix is (approximately) the identity
-#[inline]
-fn mat2_is_identity(m: &[f64; 8]) -> bool {
-    let eps = 1e-12;
-    (m[0] - 1.0).abs() < eps
-        && m[1].abs() < eps
-        && m[2].abs() < eps
-        && m[3].abs() < eps
-        && m[4].abs() < eps
-        && m[5].abs() < eps
-        && (m[6] - 1.0).abs() < eps
-        && m[7].abs() < eps
-}
 
 /// DOD-optimized sparse state vector using SoA layout and double buffering.
 #[derive(Debug)]
@@ -166,9 +83,9 @@ where
     // ===== CLIFFORD FRAME - per-qubit deferred single-qubit Cliffords =====
     /// Per-qubit Clifford frame index (mod global phase) for Heisenberg lookups.
     frames: Vec<CliffordFrame>,
-    /// Per-qubit accumulated 2x2 unitary matrix (tracks exact phases).
-    /// Layout: [a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im] for [[a,b],[c,d]].
-    frame_mats: Vec<[f64; 8]>,
+    /// Per-qubit accumulated phase as 8th-root-of-unity index (0-7).
+    /// Tracks the exact global phase: actual_matrix = e^{i*phase*π/4} * ELEMENT_MATRIX[frame].
+    frame_phases: Vec<u8>,
 
     // ===== COLD DATA - rarely accessed =====
     /// Number of qubits
@@ -227,7 +144,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
             merge_re: Vec::new(),
             merge_im: Vec::new(),
             frames: vec![CliffordFrame::IDENTITY; num_qubits],
-            frame_mats: vec![MAT_I; num_qubits],
+            frame_phases: vec![0; num_qubits],
             num_qubits,
             rng,
             epsilon: 0.0,
@@ -889,23 +806,60 @@ impl<R: Rng> SparseStateVecSoA<R> {
 
 impl<R: Rng> SparseStateVecSoA<R> {
     /// Flush the Clifford frame on qubit `q` by physically applying the
-    /// accumulated 2x2 unitary matrix. Resets the frame to identity afterwards.
+    /// accumulated gate (reconstructed from frame index + phase).
+    /// Resets the frame to identity afterwards.
     fn flush_frame(&mut self, q: usize) {
-        if mat2_is_identity(&self.frame_mats[q]) {
-            self.frames[q] = CliffordFrame::IDENTITY;
-            return;
+        let idx = self.frames[q].index() as usize;
+        let phase = self.frame_phases[q];
+
+        if idx == 0 && phase == 0 {
+            return; // true identity, nothing to do
         }
-        let m = self.frame_mats[q];
-        self.apply_single_qubit_gate(q, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
+
+        if idx == 0 {
+            // Frame is identity with a global phase -- multiply all amplitudes
+            // by the phase scalar. This is cheaper than a full gate application.
+            let [cos_t, sin_t] = PHASE_ROOTS[phase as usize];
+            let (real, imag) = if self.active_a {
+                (&mut self.real_a[..self.len], &mut self.imag_a[..self.len])
+            } else {
+                (&mut self.real_b[..self.len], &mut self.imag_b[..self.len])
+            };
+            for i in 0..self.len {
+                let r = real[i];
+                let im = imag[i];
+                real[i] = r * cos_t - im * sin_t;
+                imag[i] = r * sin_t + im * cos_t;
+            }
+        } else {
+            // Reconstruct the full 2x2 matrix: phase * ELEMENT_MATRIX[idx]
+            let m = ELEMENT_MATRIX[idx];
+            let [cos_t, sin_t] = PHASE_ROOTS[phase as usize];
+            // Multiply each complex entry [re, im] by (cos_t + i*sin_t)
+            let a_re = m[0] * cos_t - m[1] * sin_t;
+            let a_im = m[0] * sin_t + m[1] * cos_t;
+            let b_re = m[2] * cos_t - m[3] * sin_t;
+            let b_im = m[2] * sin_t + m[3] * cos_t;
+            let c_re = m[4] * cos_t - m[5] * sin_t;
+            let c_im = m[4] * sin_t + m[5] * cos_t;
+            let d_re = m[6] * cos_t - m[7] * sin_t;
+            let d_im = m[6] * sin_t + m[7] * cos_t;
+            self.apply_single_qubit_gate(q, a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im);
+        }
+
         self.frames[q] = CliffordFrame::IDENTITY;
-        self.frame_mats[q] = MAT_I;
+        self.frame_phases[q] = 0;
     }
 
-    /// Compose a gate matrix into qubit q's frame.
+    /// Compose a gate into qubit q's frame using the phase cocycle table.
+    /// `gate_idx` is the Clifford index of the gate. `gate_delta` is the
+    /// phase correction from the standard gate matrix to the element matrix.
     #[inline]
-    fn compose_frame(&mut self, q: usize, frame_idx: CliffordFrame, gate_mat: &[f64; 8]) {
-        self.frames[q] = self.frames[q].compose(frame_idx);
-        self.frame_mats[q] = mat2_mul(gate_mat, &self.frame_mats[q]);
+    fn compose_frame(&mut self, q: usize, gate_idx: CliffordFrame, gate_delta: u8) {
+        let old = self.frames[q].index() as usize;
+        self.frames[q] = self.frames[q].compose(gate_idx);
+        self.frame_phases[q] =
+            (self.frame_phases[q] + PHASE_COCYCLE[old][gate_idx.index() as usize] + gate_delta) % 8;
     }
 }
 
@@ -925,7 +879,7 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
         self.active_a = true;
         self.len = 1;
         self.frames.fill(CliffordFrame::IDENTITY);
-        self.frame_mats.fill(MAT_I);
+        self.frame_phases.fill(0);
         self
     }
 }
@@ -937,72 +891,78 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
 impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // ---- Single-qubit Clifford gates: O(1) frame composition ----
 
-    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::H_GATE, &MAT_H);
-        }
-        self
-    }
+    // -- Pauli gates (delta: X=0, Y=6, Z=0) --
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::PAULI_X, &MAT_X);
+            self.compose_frame(q.0, CliffordFrame::PAULI_X, 0);
         }
         self
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::PAULI_Y, &MAT_Y);
+            self.compose_frame(q.0, CliffordFrame::PAULI_Y, 6);
         }
         self
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::PAULI_Z, &MAT_Z);
+            self.compose_frame(q.0, CliffordFrame::PAULI_Z, 0);
         }
         self
     }
 
+    // -- S-like gates (delta: S=0, Sdg=0, SX=0, SXdg=7, SY=1, SYdg=7) --
+
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::S_GATE, &MAT_S);
+            self.compose_frame(q.0, CliffordFrame::S_GATE, 0);
         }
         self
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SDG_GATE, &MAT_SDG);
+            self.compose_frame(q.0, CliffordFrame::SDG_GATE, 0);
         }
         self
     }
 
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SX_GATE, &MAT_SX);
+            self.compose_frame(q.0, CliffordFrame::SX_GATE, 0);
         }
         self
     }
 
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SX_DG_GATE, &MAT_SXDG);
+            self.compose_frame(q.0, CliffordFrame::SX_DG_GATE, 7);
         }
         self
     }
 
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SY_GATE, &MAT_SY);
+            self.compose_frame(q.0, CliffordFrame::SY_GATE, 1);
         }
         self
     }
 
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SY_DG_GATE, &MAT_SYDG);
+            self.compose_frame(q.0, CliffordFrame::SY_DG_GATE, 7);
+        }
+        self
+    }
+
+    // -- H-like gates (delta: H=0) --
+
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.compose_frame(q.0, CliffordFrame::H_GATE, 0);
         }
         self
     }
@@ -1036,11 +996,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         for pair in qubits.chunks_exact(2) {
             let (c, t) = (pair[0].0, pair[1].0);
             // Compose S on target frame, then flush both, apply CX, compose Sdg on target
-            self.compose_frame(t, CliffordFrame::S_GATE, &MAT_S);
+            self.compose_frame(t, CliffordFrame::S_GATE, 0);
             self.flush_frame(c);
             self.flush_frame(t);
             self.apply_cx_gate(c, t);
-            self.compose_frame(t, CliffordFrame::SDG_GATE, &MAT_SDG);
+            self.compose_frame(t, CliffordFrame::SDG_GATE, 0);
         }
         self
     }

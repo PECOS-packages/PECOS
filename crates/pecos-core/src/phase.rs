@@ -100,8 +100,8 @@ impl GlobalPhase {
         match self {
             Self::Quarter(qp) => qp.to_complex(),
             Self::Angle(a) => {
-                let theta = a.to_radians();
-                Complex64::new(theta.cos(), theta.sin())
+                let (s, c) = a.sin_cos();
+                Complex64::new(c, s)
             }
         }
     }

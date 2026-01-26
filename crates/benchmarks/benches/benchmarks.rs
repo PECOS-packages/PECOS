@@ -22,11 +22,12 @@ mod modules {
     pub mod set_ops;
     pub mod state_vec_sims;
     pub mod surface_code;
+    pub mod trig;
 }
 
 use modules::{
     allocation_overhead, measurement_sampling, noise_models, rng, set_ops, state_vec_sims,
-    surface_code,
+    surface_code, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
@@ -37,6 +38,7 @@ fn all_benchmarks(c: &mut Criterion) {
     set_ops::benchmarks(c);
     state_vec_sims::benchmarks(c);
     surface_code::benchmarks(c);
+    trig::benchmarks(c);
     // TODO: pauli_ops::benchmarks(c);
     // TODO: hadamard_ops::benchmarks(c);
 }

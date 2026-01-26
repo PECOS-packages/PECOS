@@ -12,6 +12,7 @@
 //! back via [`from_radians`](Angle::from_radians).
 
 use super::Angle;
+use num_complex::Complex64;
 use num_traits::{
     Bounded, FromPrimitive, ToPrimitive, Unsigned, WrappingAdd, WrappingNeg, WrappingSub, Zero,
 };
@@ -318,6 +319,27 @@ where
     #[must_use]
     pub fn atan2(y: f64, x: f64) -> Self {
         Self::from_radians(y.atan2(x))
+    }
+
+    /// Returns `(sin(theta/2), cos(theta/2))`.
+    ///
+    /// Common in quantum computing where rotation gates use half-angle
+    /// components (e.g., `cos(theta/2)` and `sin(theta/2)` for RX, RY gates).
+    /// Halving the fixed-point fraction is exact (integer division by 2).
+    #[inline]
+    pub fn half_angle_sin_cos(&self) -> (f64, f64) {
+        let half = Self::new(self.fraction / T::from_u32(2).expect("2 must be representable"));
+        half.sin_cos()
+    }
+
+    /// Returns `e^(i*theta) = cos(theta) + i*sin(theta)` as a `Complex64`.
+    ///
+    /// Euler's formula, commonly used in quantum gate matrices and signal
+    /// processing. Uses [`sin_cos`](Self::sin_cos) internally.
+    #[inline]
+    pub fn cis(&self) -> Complex64 {
+        let (s, c) = self.sin_cos();
+        Complex64::new(c, s)
     }
 }
 
@@ -644,6 +666,91 @@ mod tests {
         check_half!(Angle32);
         check_half!(Angle64);
         check_half!(Angle128);
+    }
+
+    // -- half_angle_sin_cos -----------------------------------------------
+
+    #[test]
+    fn half_angle_matches_manual_halving() {
+        // half_angle_sin_cos(HALF_TURN) should equal sin_cos(QUARTER_TURN)
+        let (s, c) = Angle64::HALF_TURN.half_angle_sin_cos();
+        let (s_ref, c_ref) = Angle64::QUARTER_TURN.sin_cos();
+        assert!((s - s_ref).abs() < TOL, "sin mismatch: {s} vs {s_ref}");
+        assert!((c - c_ref).abs() < TOL, "cos mismatch: {c} vs {c_ref}");
+    }
+
+    #[test]
+    fn half_angle_quarter_turn() {
+        // half_angle_sin_cos(QUARTER_TURN) = sin_cos(pi/4)
+        let (s, c) = Angle64::QUARTER_TURN.half_angle_sin_cos();
+        let expected = std::f64::consts::FRAC_1_SQRT_2;
+        assert!(
+            (s - expected).abs() < TOL,
+            "sin(pi/4) = {s}, expected {expected}"
+        );
+        assert!(
+            (c - expected).abs() < TOL,
+            "cos(pi/4) = {c}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn half_angle_random_matches() {
+        let mut rng = rand::rng();
+        for _ in 0..10_000 {
+            let frac: u64 = rand::Rng::random(&mut rng);
+            let angle = Angle64::new(frac);
+            let (s, c) = angle.half_angle_sin_cos();
+            let halved = Angle64::new(frac / 2);
+            let (s_ref, c_ref) = halved.sin_cos();
+            assert!(
+                (s - s_ref).abs() < TOL,
+                "sin mismatch for frac={frac}"
+            );
+            assert!(
+                (c - c_ref).abs() < TOL,
+                "cos mismatch for frac={frac}"
+            );
+        }
+    }
+
+    // -- cis --------------------------------------------------------------
+
+    #[test]
+    fn cis_zero() {
+        let z = Angle64::ZERO.cis();
+        assert!((z.re - 1.0).abs() < TOL, "cis(0) real = {}", z.re);
+        assert!(z.im.abs() < TOL, "cis(0) imag = {}", z.im);
+    }
+
+    #[test]
+    fn cis_quarter_turn() {
+        // e^(i*pi/2) = i
+        let z = Angle64::QUARTER_TURN.cis();
+        assert!(z.re.abs() < TOL, "cis(pi/2) real = {}", z.re);
+        assert!((z.im - 1.0).abs() < TOL, "cis(pi/2) imag = {}", z.im);
+    }
+
+    #[test]
+    fn cis_half_turn() {
+        // e^(i*pi) = -1
+        let z = Angle64::HALF_TURN.cis();
+        assert!((z.re + 1.0).abs() < TOL, "cis(pi) real = {}", z.re);
+        assert!(z.im.abs() < TOL, "cis(pi) imag = {}", z.im);
+    }
+
+    #[test]
+    fn cis_unit_magnitude() {
+        let mut rng = rand::rng();
+        for _ in 0..10_000 {
+            let frac: u64 = rand::Rng::random(&mut rng);
+            let z = Angle64::new(frac).cis();
+            let mag_sq = z.re * z.re + z.im * z.im;
+            assert!(
+                (mag_sq - 1.0).abs() < 1e-14,
+                "|cis|^2 = {mag_sq} for frac={frac}"
+            );
+        }
     }
 
     // -- Comparison with stdlib -------------------------------------------

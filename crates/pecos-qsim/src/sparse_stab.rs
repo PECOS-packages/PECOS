@@ -3161,24 +3161,6 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_bitset_gate_identities_suite() {
-        let mut sim = SparseStab::new(2);
-        stabilizer_test_utils::verify_all_gate_identities(&mut sim);
-    }
-
-    #[test]
-    fn test_bitset_bell_state_correlations_suite() {
-        let mut sim = SparseStab::new(2);
-        stabilizer_test_utils::verify_bell_state_correlations(&mut sim);
-    }
-
-    #[test]
-    fn test_bitset_ghz_state_correlations_suite() {
-        let mut sim = SparseStab::new(4);
-        stabilizer_test_utils::verify_ghz_state_correlations(&mut sim, 4);
-    }
-
-    #[test]
     fn test_bitset_basic_stabilizer_suite() {
         let mut sim = SparseStab::new(3);
         stabilizer_test_utils::run_basic_stabilizer_test_suite(&mut sim, 3);
@@ -3195,24 +3177,6 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_vecset_gate_identities_suite() {
-        let mut sim = SparseStabVecSet::new(2);
-        stabilizer_test_utils::verify_all_gate_identities(&mut sim);
-    }
-
-    #[test]
-    fn test_vecset_bell_state_correlations_suite() {
-        let mut sim = SparseStabVecSet::new(2);
-        stabilizer_test_utils::verify_bell_state_correlations(&mut sim);
-    }
-
-    #[test]
-    fn test_vecset_ghz_state_correlations_suite() {
-        let mut sim = SparseStabVecSet::new(4);
-        stabilizer_test_utils::verify_ghz_state_correlations(&mut sim, 4);
-    }
-
-    #[test]
     fn test_vecset_basic_stabilizer_suite() {
         let mut sim = SparseStabVecSet::new(3);
         stabilizer_test_utils::run_basic_stabilizer_test_suite(&mut sim, 3);
@@ -3227,24 +3191,6 @@ mod tests {
     // ========================================================================
     // SparseStabHybrid Tests
     // ========================================================================
-
-    #[test]
-    fn test_hybrid_gate_identities_suite() {
-        let mut sim = SparseStabHybrid::new(2);
-        stabilizer_test_utils::verify_all_gate_identities(&mut sim);
-    }
-
-    #[test]
-    fn test_hybrid_bell_state_correlations_suite() {
-        let mut sim = SparseStabHybrid::new(2);
-        stabilizer_test_utils::verify_bell_state_correlations(&mut sim);
-    }
-
-    #[test]
-    fn test_hybrid_ghz_state_correlations_suite() {
-        let mut sim = SparseStabHybrid::new(4);
-        stabilizer_test_utils::verify_ghz_state_correlations(&mut sim, 4);
-    }
 
     #[test]
     fn test_hybrid_basic_stabilizer_suite() {

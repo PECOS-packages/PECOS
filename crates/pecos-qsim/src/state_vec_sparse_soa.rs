@@ -38,7 +38,7 @@ use crate::clifford_gateable::MeasurementResult;
 use crate::{CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
 use pecos_core::QubitId;
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
 use wide::f64x4;
 
@@ -763,8 +763,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             self.apply_single_qubit_gate(
                 q.0,
                 0.5, -0.5,   // a = (1-i)/2
-                0.5, 0.5,    // b = (1+i)/2
-                -0.5, -0.5,  // c = -(1+i)/2
+                0.5, -0.5,   // b = (1-i)/2
+                -0.5, 0.5,   // c = -(1-i)/2
                 0.5, -0.5,   // d = (1-i)/2
             );
         }
@@ -825,7 +825,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             };
 
             let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
-            let outcome = self.rng.random::<f64>() < prob_one;
+            let outcome = self.rng.bernoulli(prob_one);
 
             results.push(MeasurementResult {
                 outcome,

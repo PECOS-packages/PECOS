@@ -21,7 +21,7 @@ use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
 use pecos_core::{QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngCore, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
 use wide::f64x4;
 
@@ -3413,7 +3413,7 @@ where
             let prob_one = self.probability_one(q_idx);
 
             // Sample outcome
-            let outcome = self.rng.random::<f64>() < prob_one;
+            let outcome = self.rng.bernoulli(prob_one);
             let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
 
             // Collapse and renormalize
@@ -3517,7 +3517,7 @@ where
             let prob_one = self.probability_one(q_idx);
 
             // Sample outcome (for the measurement result)
-            let outcome = self.rng.random::<f64>() < prob_one;
+            let outcome = self.rng.bernoulli(prob_one);
             let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
 
             // Always prepare |0⟩: zero the |1⟩ amplitudes and normalize |0⟩

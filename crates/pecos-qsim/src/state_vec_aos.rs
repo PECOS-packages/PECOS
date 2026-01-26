@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::{QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngCore, RngProbabilityExt, SeedableRng};
 
 use core::fmt::Debug;
 use num_complex::Complex64;
@@ -726,7 +726,7 @@ where
             }
 
             // Decide measurement outcome
-            let result = usize::from(self.rng.random::<f64>() < prob_one);
+            let result = usize::from(self.rng.bernoulli(prob_one));
 
             // Collapse and normalize state
             let mut norm = 0.0;
@@ -744,9 +744,10 @@ where
                 *amp *= norm_inv;
             }
 
+            let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
             results.push(MeasurementResult {
                 outcome: result != 0,
-                is_deterministic: false,
+                is_deterministic,
             });
         }
 

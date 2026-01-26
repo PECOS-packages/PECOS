@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::{QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngCore, RngProbabilityExt, SeedableRng};
 
 use core::fmt::Debug;
 
@@ -274,7 +274,7 @@ where
         qubits
             .iter()
             .map(|_| MeasurementResult {
-                outcome: self.rng.random::<f64>() < self.prob,
+                outcome: self.rng.bernoulli(self.prob),
                 is_deterministic: false,
             })
             .collect()

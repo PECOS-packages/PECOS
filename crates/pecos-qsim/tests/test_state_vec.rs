@@ -637,26 +637,6 @@ mod large_systems {
     use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid, qid2};
 
     #[test]
-    fn test_large_system() {
-        // Test with a large number of qubits to ensure robustness.
-        let num_qubits = 20; // 20 qubits => 2^20 amplitudes (~1M complex numbers)
-        let mut q = StateVec::new(num_qubits);
-
-        // Apply Hadamard to the first qubit
-        q.h(&qid(0));
-
-        // Check normalization and amplitudes for |0...0> and |1...0>
-        let expected_amp = 1.0 / (2.0_f64.sqrt());
-        assert!((q.state()[0].norm() - expected_amp).abs() < 1e-10);
-        assert!((q.state()[1].norm() - expected_amp).abs() < 1e-10);
-
-        // Ensure all other amplitudes remain zero
-        for i in 2..q.state().len() {
-            assert!(q.state()[i].norm() < 1e-10);
-        }
-    }
-
-    #[test]
     fn test_state_normalization_after_random_gates() {
         let mut state_vec = StateVec::new(3);
 

@@ -1221,6 +1221,12 @@ where
     }
 }
 
+impl crate::density_matrix_test_utils::DensityMatrixSimulator for DensityMatrix {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        DensityMatrix::with_seed(num_qubits, seed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

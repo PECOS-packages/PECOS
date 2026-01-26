@@ -52,7 +52,7 @@ use crate::clifford_gateable::MeasurementResult;
 use crate::{CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
 use pecos_core::QubitId;
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::f64::consts::FRAC_1_SQRT_2;
 use std::fmt::Debug;
 use wide::f64x4;
@@ -1018,8 +1018,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
 
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         let a = Complex64::new(0.5, -0.5);
-        let b = Complex64::new(0.5, 0.5);
-        let c = Complex64::new(-0.5, -0.5);
+        let b = Complex64::new(0.5, -0.5);
+        let c = Complex64::new(-0.5, 0.5);
 
         for &q in qubits {
             self.ensure_sorted();
@@ -1261,7 +1261,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
                 .sum();
 
             let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
-            let outcome = self.rng.random::<f64>() < prob_one;
+            let outcome = self.rng.bernoulli(prob_one);
 
             let keep_mask_value = if outcome { bit_mask } else { 0 };
             self.amplitudes.retain(|&(idx, _)| (idx & bit_mask) == keep_mask_value);
@@ -1285,42 +1285,51 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
         let qubit_masks: Vec<usize> = qubits.iter().map(|q| 1usize << q.0).collect();
         let combined_mask: usize = qubit_masks.iter().fold(0, |a, b| a | b);
 
-        // Compute probability for each of 2^n outcomes
+        // Compute probability for each of 2^n outcomes and marginals in single pass
+        // This is O(k * n) instead of O(2^n * n) for computing marginals afterwards
         let num_outcomes = 1usize << n;
         let mut probs = vec![0.0f64; num_outcomes];
+        let mut marginals = vec![0.0f64; n];
 
         for &(idx, amp) in &self.amplitudes {
+            let prob = amp.norm_sqr();
             // Extract the bits corresponding to measured qubits
             let mut outcome_idx = 0usize;
             for (i, &mask) in qubit_masks.iter().enumerate() {
                 if idx & mask != 0 {
                     outcome_idx |= 1 << i;
+                    marginals[i] += prob;
                 }
             }
-            probs[outcome_idx] += amp.norm_sqr();
+            probs[outcome_idx] += prob;
         }
 
         // Sample from the distribution
-        let rand_val = self.rng.random::<f64>();
-        let mut cumulative = 0.0;
-        let mut sampled_outcome = 0usize;
-        for (i, &p) in probs.iter().enumerate() {
-            cumulative += p;
-            if rand_val < cumulative {
-                sampled_outcome = i;
-                break;
+        // Use binary search for 6+ qubits (64+ outcomes) where it's faster
+        let sampled_outcome = if n >= 6 {
+            let cdf = self.rng.compute_cdf(&probs);
+            self.rng.sample_discrete_cdf(&cdf)
+        } else {
+            // Linear scan for small distributions
+            let rand_val = self.rng.random::<f64>();
+            let mut cumulative = 0.0;
+            let mut outcome = 0usize;
+            for (i, &p) in probs.iter().enumerate() {
+                cumulative += p;
+                if rand_val < cumulative {
+                    outcome = i;
+                    break;
+                }
             }
-        }
+            outcome
+        };
 
-        // Build results
+        // Build results using pre-computed marginals
         let mut results = Vec::with_capacity(n);
         for i in 0..n {
             let outcome = (sampled_outcome >> i) & 1 == 1;
-            // Check if this qubit's marginal is deterministic
-            let prob_one: f64 = probs.iter().enumerate()
-                .filter(|(j, _)| (j >> i) & 1 == 1)
-                .map(|(_, p)| p)
-                .sum();
+            // Use pre-computed marginal probability for determinism check
+            let prob_one = marginals[i];
             let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
             results.push(MeasurementResult { outcome, is_deterministic });
         }

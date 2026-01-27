@@ -2181,15 +2181,24 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
     }
 
     fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
-        let half = theta / 2.0;
-        let cos = half.cos();
-        let sin = half.sin();
-        // RZ(theta) = [[e^{-i*theta/2}, 0], [0, e^{i*theta/2}]]
-        // e^{-i*theta/2} = cos(theta/2) - i*sin(theta/2)
-        // e^{i*theta/2}  = cos(theta/2) + i*sin(theta/2)
+        // RZ(theta) = diag(e^{-i*theta/2}, e^{i*theta/2})
+        //
+        // Optimization: RZ is diagonal, so it pushes through Pauli frames
+        // without flushing. If the frame has an X component (X or Y Pauli),
+        // the angle is negated: RZ(theta)*X = X*RZ(-theta), RZ(theta)*Y = Y*RZ(-theta).
+        // Non-Pauli frames must be flushed first.
         for &q in qubits {
-            self.flush_frame(q.0);
-            // Diagonal gate: apply in-place without buffer swap
+            let effective_theta = if self.frames[q.0].is_pauli() {
+                let (has_x, _) = self.frames[q.0].pauli_xz_bits();
+                if has_x { -theta } else { theta }
+            } else {
+                self.flush_frame(q.0);
+                theta
+            };
+
+            let half = effective_theta / 2.0;
+            let cos = half.cos();
+            let sin = half.sin();
             let mask = 1usize << q.0;
             let len = self.len;
             let (indices, real, imag) = if self.active_a {
@@ -2227,17 +2236,36 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
         );
-        let half = theta / 2.0;
-        let cos_same = (-half).cos(); // same parity: e^{-i*theta/2}
-        let sin_same = (-half).sin();
-        let cos_diff = half.cos();    // different parity: e^{i*theta/2}
-        let sin_diff = half.sin();
-
+        // RZZ(theta) = diag(e^{-i*theta/2}, e^{i*theta/2}, e^{i*theta/2}, e^{-i*theta/2})
+        //
+        // Optimization: RZZ is diagonal in Z*Z, so it pushes through Pauli frames.
+        // Each qubit with an X component in its Pauli frame flips the parity,
+        // which is equivalent to negating theta once per such qubit.
+        // If the total number of X-component frames is odd, negate theta.
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].0;
             let q2 = pair[1].0;
-            self.flush_frame(q1);
-            self.flush_frame(q2);
+
+            let mut flips = 0u32;
+            if self.frames[q1].is_pauli() {
+                let (has_x, _) = self.frames[q1].pauli_xz_bits();
+                flips += has_x as u32;
+            } else {
+                self.flush_frame(q1);
+            }
+            if self.frames[q2].is_pauli() {
+                let (has_x, _) = self.frames[q2].pauli_xz_bits();
+                flips += has_x as u32;
+            } else {
+                self.flush_frame(q2);
+            }
+
+            let effective_theta = if flips & 1 == 1 { -theta } else { theta };
+            let half = effective_theta / 2.0;
+            let cos_same = (-half).cos(); // same parity: e^{-i*theta/2}
+            let sin_same = (-half).sin();
+            let cos_diff = half.cos();    // different parity: e^{i*theta/2}
+            let sin_diff = half.sin();
 
             let mask1 = 1usize << q1;
             let mask2 = 1usize << q2;

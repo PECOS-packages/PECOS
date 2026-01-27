@@ -27,6 +27,7 @@ mod modules {
     pub mod stabilizer_sims;
     pub mod state_vec_sims;
     pub mod surface_code;
+    pub mod trig;
 }
 
 #[cfg(feature = "gpu-sims")]
@@ -49,6 +50,7 @@ fn all_benchmarks(c: &mut Criterion) {
     stabilizer_sims::benchmarks(c);
     state_vec_sims::benchmarks(c);
     surface_code::benchmarks(c);
+    trig::benchmarks(c);
     // TODO: pauli_ops::benchmarks(c);
     // TODO: hadamard_ops::benchmarks(c);
 }

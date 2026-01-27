@@ -23,6 +23,7 @@
 //! ```
 mod macros;
 mod parse;
+mod trig;
 
 use num_traits::{
     Bounded, FromPrimitive, PrimInt, ToPrimitive, Unsigned, WrappingAdd, WrappingMul, WrappingNeg,
@@ -167,24 +168,6 @@ where
         Self {
             fraction: T::from_f64(fraction).expect("Conversion of fraction to target type failed"),
         }
-    }
-
-    /// Returns the sine of the angle.
-    #[inline]
-    pub fn sin(&self) -> f64 {
-        self.to_radians().sin()
-    }
-
-    /// Returns the cosine of the angle.
-    #[inline]
-    pub fn cos(&self) -> f64 {
-        self.to_radians().cos()
-    }
-
-    /// Returns the tangent of the angle.
-    #[inline]
-    pub fn tan(&self) -> f64 {
-        self.to_radians().tan()
     }
 
     /// Returns true if this angle is exactly 0.

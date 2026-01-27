@@ -41,6 +41,7 @@ use num_complex::Complex64;
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
+use wide::f64x4;
 
 /// DOD-optimized sparse state vector using SoA layout and double buffering.
 #[derive(Debug)]
@@ -232,6 +233,309 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
     }
 
+
+    // =========================================================================
+    // Rotation kernel helpers
+    // =========================================================================
+
+    /// Apply a diagonal RZ rotation in-place: e^{-i*theta/2} to |0> and e^{i*theta/2} to |1>.
+    /// Takes precomputed cos(theta/2) and sin(theta/2).
+    /// Branch-free with SIMD (f64x4) for the inner loop.
+    #[inline]
+    fn apply_rz_kernel(&mut self, q: usize, cos: f64, sin: f64) {
+        let shift = q;
+        let len = self.len;
+        let (indices, real, imag) = if self.active_a {
+            (
+                &self.indices_a[..len],
+                &mut self.real_a[..len],
+                &mut self.imag_a[..len],
+            )
+        } else {
+            (
+                &self.indices_b[..len],
+                &mut self.real_b[..len],
+                &mut self.imag_b[..len],
+            )
+        };
+
+        let cos_v = f64x4::splat(cos);
+        let sin_v = f64x4::splat(sin);
+        let chunks = len / 4;
+        for c in 0..chunks {
+            let base = c * 4;
+            // Branch-free sign: +1.0 if bit==0, -1.0 if bit==1
+            let s0 = 1.0 - 2.0 * ((indices[base] >> shift) & 1) as f64;
+            let s1 = 1.0 - 2.0 * ((indices[base + 1] >> shift) & 1) as f64;
+            let s2 = 1.0 - 2.0 * ((indices[base + 2] >> shift) & 1) as f64;
+            let s3 = 1.0 - 2.0 * ((indices[base + 3] >> shift) & 1) as f64;
+            let sign = f64x4::new([s0, s1, s2, s3]);
+            let signed_sin = sign * sin_v;
+
+            let r = f64x4::from(&real[base..base + 4]);
+            let im = f64x4::from(&imag[base..base + 4]);
+            // |0>: cos*r + sin*im,  cos*im - sin*r
+            // |1>: cos*r - sin*im,  cos*im + sin*r
+            // Unified: cos*r + sign*sin*im, cos*im - sign*sin*r
+            let new_re: [f64; 4] = (cos_v * r + signed_sin * im).into();
+            let new_im: [f64; 4] = (cos_v * im - signed_sin * r).into();
+            real[base..base + 4].copy_from_slice(&new_re);
+            imag[base..base + 4].copy_from_slice(&new_im);
+        }
+        // Scalar remainder
+        for i in (chunks * 4)..len {
+            let sign = 1.0 - 2.0 * ((indices[i] >> shift) & 1) as f64;
+            let r = real[i];
+            let im = imag[i];
+            real[i] = cos * r + sign * sin * im;
+            imag[i] = cos * im - sign * sin * r;
+        }
+    }
+
+    /// Apply a diagonal RZZ rotation in-place. Takes precomputed cos(theta/2) and sin(theta/2).
+    /// Same parity (bit1==bit2): multiply by e^{-i*theta/2}
+    /// Different parity: multiply by e^{i*theta/2}
+    #[inline]
+    fn apply_rzz_kernel(&mut self, q1: usize, q2: usize, cos: f64, sin: f64) {
+        // Precompute both phase options:
+        //   same parity: e^{-i*theta/2} = (cos, -sin)
+        //   diff parity: e^{i*theta/2}  = (cos, sin)
+        let cos_same = cos;
+        let sin_same = -sin;
+        let cos_diff = cos;
+        let sin_diff = sin;
+
+        let mask1 = 1usize << q1;
+        let mask2 = 1usize << q2;
+        let len = self.len;
+        let (indices, real, imag) = if self.active_a {
+            (
+                &self.indices_a[..len],
+                &mut self.real_a[..len],
+                &mut self.imag_a[..len],
+            )
+        } else {
+            (
+                &self.indices_b[..len],
+                &mut self.real_b[..len],
+                &mut self.imag_b[..len],
+            )
+        };
+        for i in 0..len {
+            let bit1 = (indices[i] & mask1) != 0;
+            let bit2 = (indices[i] & mask2) != 0;
+            let r = real[i];
+            let im = imag[i];
+            if bit1 == bit2 {
+                real[i] = cos_same * r - sin_same * im;
+                imag[i] = sin_same * r + cos_same * im;
+            } else {
+                real[i] = cos_diff * r - sin_diff * im;
+                imag[i] = sin_diff * r + cos_diff * im;
+            }
+        }
+    }
+
+    /// Apply a two-qubit parity-flip gate (RXX or RYY).
+    ///
+    /// These gates pair each amplitude at index `idx` with its partner at `idx ^ both_mask`
+    /// where `both_mask = (1 << q1) | (1 << q2)`. The partner has both target qubit bits flipped.
+    ///
+    /// Parameters:
+    /// - `same_sin_sign`: sign of the imaginary off-diagonal for same-parity pairs (00<->11).
+    ///   For RXX: -1.0 (matrix uses -i*sin). For RYY: +1.0 (matrix uses +i*sin).
+    /// - `diff_sin_sign`: sign for different-parity pairs (01<->10).
+    ///   For RXX: -1.0. For RYY: -1.0.
+    #[inline]
+    fn apply_parity_flip_gate(
+        &mut self,
+        q1: usize,
+        q2: usize,
+        cos: f64,
+        sin: f64,
+        same_sin_sign: f64,
+        diff_sin_sign: f64,
+    ) {
+        self.ensure_sorted();
+        let both_mask = (1usize << q1) | (1usize << q2);
+        let mask1 = 1usize << q1;
+        let mask2 = 1usize << q2;
+        let len = self.len;
+        let epsilon = self.epsilon;
+        let active = self.active_a;
+
+        // Read from active buffer, write to inactive buffer
+        let src_idx = if active {
+            &self.indices_a[..len]
+        } else {
+            &self.indices_b[..len]
+        };
+
+        // Build a quick lookup: for each amplitude, mark whether it's been processed.
+        // We process each pair only once (from the side with lower index).
+        // Use scratch_low as a bitset (repurposed; will be restored by clear).
+        self.scratch_low.clear();
+        self.scratch_low.resize(len, 0);
+
+        // Phase 1: Identify pairs. For each amplitude, find its partner.
+        // Process from lower index side only.
+        struct PairInfo {
+            self_pos: u32,
+            partner_pos: u32, // u32::MAX if partner doesn't exist
+            self_idx: usize,
+            partner_idx: usize,
+            same_parity: bool,
+        }
+
+        let mut pairs: Vec<PairInfo> = Vec::with_capacity(len);
+
+        for i in 0..len {
+            if self.scratch_low[i] != 0 {
+                continue; // Already processed as partner
+            }
+
+            let idx = src_idx[i];
+            let partner_idx = idx ^ both_mask;
+            let same = ((idx & mask1) != 0) == ((idx & mask2) != 0);
+
+            if partner_idx > idx {
+                // We're the lower index in the pair, look for partner
+                let partner_pos = src_idx.binary_search(&partner_idx).ok();
+                if let Some(pp) = partner_pos {
+                    self.scratch_low[pp] = 1; // Mark partner as processed
+                    pairs.push(PairInfo {
+                        self_pos: i as u32,
+                        partner_pos: pp as u32,
+                        self_idx: idx,
+                        partner_idx,
+                        same_parity: same,
+                    });
+                } else {
+                    pairs.push(PairInfo {
+                        self_pos: i as u32,
+                        partner_pos: u32::MAX,
+                        self_idx: idx,
+                        partner_idx,
+                        same_parity: same,
+                    });
+                }
+            } else {
+                // partner_idx < idx: partner should have been processed first.
+                // If partner doesn't exist, we're unpaired from the high side.
+                let partner_pos = src_idx.binary_search(&partner_idx).ok();
+                if partner_pos.is_some() {
+                    // Partner exists and was processed (or will be) -- skip
+                    // This shouldn't happen since partner has lower index and would
+                    // have processed us. But guard against it.
+                    continue;
+                }
+                // Unpaired from high side
+                pairs.push(PairInfo {
+                    self_pos: i as u32,
+                    partner_pos: u32::MAX,
+                    self_idx: idx,
+                    partner_idx,
+                    same_parity: same,
+                });
+            }
+        }
+
+        // Phase 2: Apply the gate and write to destination buffer
+        if active {
+            self.indices_b.clear();
+            self.real_b.clear();
+            self.imag_b.clear();
+            self.indices_b.reserve(len * 2);
+            self.real_b.reserve(len * 2);
+            self.imag_b.reserve(len * 2);
+        } else {
+            self.indices_a.clear();
+            self.real_a.clear();
+            self.imag_a.clear();
+            self.indices_a.reserve(len * 2);
+            self.real_a.reserve(len * 2);
+            self.imag_a.reserve(len * 2);
+        }
+
+        for pair in &pairs {
+            let (r_self, im_self) = if active {
+                (
+                    self.real_a[pair.self_pos as usize],
+                    self.imag_a[pair.self_pos as usize],
+                )
+            } else {
+                (
+                    self.real_b[pair.self_pos as usize],
+                    self.imag_b[pair.self_pos as usize],
+                )
+            };
+
+            let (r_partner, im_partner) = if pair.partner_pos != u32::MAX {
+                if active {
+                    (
+                        self.real_a[pair.partner_pos as usize],
+                        self.imag_a[pair.partner_pos as usize],
+                    )
+                } else {
+                    (
+                        self.real_b[pair.partner_pos as usize],
+                        self.imag_b[pair.partner_pos as usize],
+                    )
+                }
+            } else {
+                (0.0, 0.0)
+            };
+
+            // Select sign for this parity group
+            let s = if pair.same_parity {
+                same_sin_sign
+            } else {
+                diff_sin_sign
+            };
+            let ss = s * sin; // signed sin
+
+            // Matrix: [[cos, s*i*sin], [s*i*sin, cos]]  (symmetric)
+            // (s*i*sin) * (r + i*im) = s*(-sin*im + i*sin*r) = (-s*sin*im, s*sin*r)
+            let new_self_re = cos * r_self - ss * im_partner;
+            let new_self_im = cos * im_self + ss * r_partner;
+            let new_partner_re = -ss * im_self + cos * r_partner;
+            let new_partner_im = ss * r_self + cos * im_partner;
+
+            let norm_self = new_self_re * new_self_re + new_self_im * new_self_im;
+            let norm_partner = new_partner_re * new_partner_re + new_partner_im * new_partner_im;
+
+            if norm_self > epsilon {
+                if active {
+                    self.indices_b.push(pair.self_idx);
+                    self.real_b.push(new_self_re);
+                    self.imag_b.push(new_self_im);
+                } else {
+                    self.indices_a.push(pair.self_idx);
+                    self.real_a.push(new_self_re);
+                    self.imag_a.push(new_self_im);
+                }
+            }
+            if norm_partner > epsilon {
+                if active {
+                    self.indices_b.push(pair.partner_idx);
+                    self.real_b.push(new_partner_re);
+                    self.imag_b.push(new_partner_im);
+                } else {
+                    self.indices_a.push(pair.partner_idx);
+                    self.real_a.push(new_partner_re);
+                    self.imag_a.push(new_partner_im);
+                }
+            }
+        }
+
+        self.len = if active {
+            self.indices_b.len()
+        } else {
+            self.indices_a.len()
+        };
+        self.active_a = !active;
+        self.sort_active();
+    }
 
     // =========================================================================
     // Single-qubit gate application
@@ -2164,11 +2468,20 @@ impl<R: Rng> SparseStateVecSoA<R> {
 
 impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
     fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
-        let cos = (theta / 2.0).cos();
-        let sin = (theta / 2.0).sin();
-        // RX(theta) = [[cos, -i*sin], [-i*sin, cos]]
+        // RX(theta) = exp(-i*theta*X/2) = [[cos, -i*sin], [-i*sin, cos]]
+        //
+        // Push-through: Z and Y anticommute with X, so negate theta when has_z.
         for &q in qubits {
-            self.flush_frame(q.0);
+            let effective_theta = if self.frames[q.0].is_pauli() {
+                let (_, has_z) = self.frames[q.0].pauli_xz_bits();
+                if has_z { -theta } else { theta }
+            } else {
+                self.flush_frame(q.0);
+                theta
+            };
+            let half = effective_theta / 2.0;
+            let cos = half.cos();
+            let sin = half.sin();
             self.apply_single_qubit_gate(
                 q.0,
                 cos, 0.0,    // a = cos
@@ -2180,13 +2493,37 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
+    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        // RY(theta) = exp(-i*theta*Y/2) = [[cos, -sin], [sin, cos]]
+        //
+        // Push-through: X anticommutes with Y, Z anticommutes with Y, but Y commutes.
+        // Negate when has_x XOR has_z (i.e., frame is X or Z but not I or Y).
+        for &q in qubits {
+            let effective_theta = if self.frames[q.0].is_pauli() {
+                let (has_x, has_z) = self.frames[q.0].pauli_xz_bits();
+                if has_x != has_z { -theta } else { theta }
+            } else {
+                self.flush_frame(q.0);
+                theta
+            };
+            let half = effective_theta / 2.0;
+            let cos = half.cos();
+            let sin = half.sin();
+            self.apply_single_qubit_gate(
+                q.0,
+                cos, 0.0,     // a = cos
+                -sin, 0.0,    // b = -sin
+                sin, 0.0,     // c = sin
+                cos, 0.0,     // d = cos
+            );
+        }
+        self
+    }
+
     fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
         // RZ(theta) = diag(e^{-i*theta/2}, e^{i*theta/2})
         //
-        // Optimization: RZ is diagonal, so it pushes through Pauli frames
-        // without flushing. If the frame has an X component (X or Y Pauli),
-        // the angle is negated: RZ(theta)*X = X*RZ(-theta), RZ(theta)*Y = Y*RZ(-theta).
-        // Non-Pauli frames must be flushed first.
+        // Push-through: X and Y anticommute with Z, so negate theta when has_x.
         for &q in qubits {
             let effective_theta = if self.frames[q.0].is_pauli() {
                 let (has_x, _) = self.frames[q.0].pauli_xz_bits();
@@ -2199,34 +2536,129 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             let half = effective_theta / 2.0;
             let cos = half.cos();
             let sin = half.sin();
-            let mask = 1usize << q.0;
-            let len = self.len;
-            let (indices, real, imag) = if self.active_a {
-                (
-                    &self.indices_a[..len],
-                    &mut self.real_a[..len],
-                    &mut self.imag_a[..len],
-                )
-            } else {
-                (
-                    &self.indices_b[..len],
-                    &mut self.real_b[..len],
-                    &mut self.imag_b[..len],
-                )
-            };
-            for i in 0..len {
-                let r = real[i];
-                let im = imag[i];
-                if indices[i] & mask == 0 {
-                    // |0> component: multiply by e^{-i*theta/2}
-                    real[i] = cos * r + sin * im;
-                    imag[i] = cos * im - sin * r;
+            self.apply_rz_kernel(q.0, cos, sin);
+        }
+        self
+    }
+
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        // T = RZ(pi/4). cos(pi/8) and sin(pi/8) are compile-time constants.
+        const COS_PI_8: f64 = 0.923_879_532_511_286_7;
+        const SIN_PI_8: f64 = 0.382_683_432_365_089_8;
+        for &q in qubits {
+            let (cos, sin) = if self.frames[q.0].is_pauli() {
+                let (has_x, _) = self.frames[q.0].pauli_xz_bits();
+                if has_x {
+                    (COS_PI_8, -SIN_PI_8)
                 } else {
-                    // |1> component: multiply by e^{i*theta/2}
-                    real[i] = cos * r - sin * im;
-                    imag[i] = cos * im + sin * r;
+                    (COS_PI_8, SIN_PI_8)
                 }
+            } else {
+                self.flush_frame(q.0);
+                (COS_PI_8, SIN_PI_8)
+            };
+            self.apply_rz_kernel(q.0, cos, sin);
+        }
+        self
+    }
+
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        // Tdg = RZ(-pi/4). cos(-pi/8) = cos(pi/8), sin(-pi/8) = -sin(pi/8).
+        const COS_PI_8: f64 = 0.923_879_532_511_286_7;
+        const SIN_PI_8: f64 = 0.382_683_432_365_089_8;
+        for &q in qubits {
+            let (cos, sin) = if self.frames[q.0].is_pauli() {
+                let (has_x, _) = self.frames[q.0].pauli_xz_bits();
+                if has_x {
+                    (COS_PI_8, SIN_PI_8)
+                } else {
+                    (COS_PI_8, -SIN_PI_8)
+                }
+            } else {
+                self.flush_frame(q.0);
+                (COS_PI_8, -SIN_PI_8)
+            };
+            self.apply_rz_kernel(q.0, cos, sin);
+        }
+        self
+    }
+
+    fn rxx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RXX requires pairs of qubits"
+        );
+        // RXX(theta) = exp(-i*theta*XX/2)
+        // Pairs (00<->11) and (01<->10) with matrix [[cos, -i*sin], [-i*sin, cos]].
+        //
+        // Push-through: Z and Y anticommute with X, so each qubit with Z component
+        // in its Pauli frame contributes a flip (mirror of RZZ).
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].0;
+            let q2 = pair[1].0;
+
+            let mut flips = 0u32;
+            if self.frames[q1].is_pauli() {
+                let (_, has_z) = self.frames[q1].pauli_xz_bits();
+                flips += has_z as u32;
+            } else {
+                self.flush_frame(q1);
             }
+            if self.frames[q2].is_pauli() {
+                let (_, has_z) = self.frames[q2].pauli_xz_bits();
+                flips += has_z as u32;
+            } else {
+                self.flush_frame(q2);
+            }
+
+            let effective_theta = if flips & 1 == 1 { -theta } else { theta };
+            let half = effective_theta / 2.0;
+            let cos = half.cos();
+            let sin = half.sin();
+
+            // RXX: off-diagonal is -i*sin for both parity groups -> sin_sign = -1.0
+            self.apply_parity_flip_gate(q1, q2, cos, sin, -1.0, -1.0);
+        }
+        self
+    }
+
+    fn ryy(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RYY requires pairs of qubits"
+        );
+        // RYY(theta) = exp(-i*theta*YY/2)
+        // Same parity (00<->11): matrix [[cos, +i*sin], [+i*sin, cos]]
+        // Diff parity (01<->10): matrix [[cos, -i*sin], [-i*sin, cos]]
+        //
+        // Push-through: X and Z individually anticommute with Y, but Y commutes.
+        // Each qubit with has_x != has_z (X or Z, not I or Y) contributes a flip.
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].0;
+            let q2 = pair[1].0;
+
+            let mut flips = 0u32;
+            if self.frames[q1].is_pauli() {
+                let (has_x, has_z) = self.frames[q1].pauli_xz_bits();
+                flips += (has_x != has_z) as u32;
+            } else {
+                self.flush_frame(q1);
+            }
+            if self.frames[q2].is_pauli() {
+                let (has_x, has_z) = self.frames[q2].pauli_xz_bits();
+                flips += (has_x != has_z) as u32;
+            } else {
+                self.flush_frame(q2);
+            }
+
+            let effective_theta = if flips & 1 == 1 { -theta } else { theta };
+            let half = effective_theta / 2.0;
+            let cos = half.cos();
+            let sin = half.sin();
+
+            // RYY: same-parity off-diagonal is +i*sin (sign=+1),
+            //      diff-parity off-diagonal is -i*sin (sign=-1)
+            self.apply_parity_flip_gate(q1, q2, cos, sin, 1.0, -1.0);
         }
         self
     }
@@ -2238,10 +2670,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         );
         // RZZ(theta) = diag(e^{-i*theta/2}, e^{i*theta/2}, e^{i*theta/2}, e^{-i*theta/2})
         //
-        // Optimization: RZZ is diagonal in Z*Z, so it pushes through Pauli frames.
-        // Each qubit with an X component in its Pauli frame flips the parity,
-        // which is equivalent to negating theta once per such qubit.
-        // If the total number of X-component frames is odd, negate theta.
+        // Push-through: X and Y anticommute with Z, so each qubit with X component
+        // in its Pauli frame contributes a flip.
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].0;
             let q2 = pair[1].0;
@@ -2262,42 +2692,10 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
 
             let effective_theta = if flips & 1 == 1 { -theta } else { theta };
             let half = effective_theta / 2.0;
-            let cos_same = (-half).cos(); // same parity: e^{-i*theta/2}
-            let sin_same = (-half).sin();
-            let cos_diff = half.cos();    // different parity: e^{i*theta/2}
-            let sin_diff = half.sin();
+            let cos = half.cos();
+            let sin = half.sin();
 
-            let mask1 = 1usize << q1;
-            let mask2 = 1usize << q2;
-            let len = self.len;
-            let (indices, real, imag) = if self.active_a {
-                (
-                    &self.indices_a[..len],
-                    &mut self.real_a[..len],
-                    &mut self.imag_a[..len],
-                )
-            } else {
-                (
-                    &self.indices_b[..len],
-                    &mut self.real_b[..len],
-                    &mut self.imag_b[..len],
-                )
-            };
-            for i in 0..len {
-                let bit1 = (indices[i] & mask1) != 0;
-                let bit2 = (indices[i] & mask2) != 0;
-                let r = real[i];
-                let im = imag[i];
-                if bit1 == bit2 {
-                    // Same parity: multiply by e^{-i*theta/2}
-                    real[i] = cos_same * r - sin_same * im;
-                    imag[i] = sin_same * r + cos_same * im;
-                } else {
-                    // Different parity: multiply by e^{i*theta/2}
-                    real[i] = cos_diff * r - sin_diff * im;
-                    imag[i] = sin_diff * r + cos_diff * im;
-                }
-            }
+            self.apply_rzz_kernel(q1, q2, cos, sin);
         }
         self
     }

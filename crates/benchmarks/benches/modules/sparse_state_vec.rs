@@ -1423,6 +1423,252 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark non-diagonal rotation gates: RX, RY, RXX, RYY.
+/// Tests Pauli push-through and direct implementations vs decomposition baseline.
+fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
+    let mut group = c.benchmark_group("nondiag_rotation_pushthrough");
+    let num_qubits = 16;
+
+    for h_qubits in [0usize, 4, 8, 10] {
+        let amps = 1usize << h_qubits;
+        let label = format!("{amps}amps");
+
+        // --- RX gate ---
+
+        // RX with Pauli frame (Z frame -> push through)
+        group.bench_function(BenchmarkId::new("rx_pauli_frame", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = SparseStateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
+                    sim.z(&[QubitId(h_qubits)]); // Z frame (Pauli)
+                    sim
+                },
+                |mut sim| {
+                    sim.rx(0.123, &[QubitId(h_qubits)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // RX needing flush (H frame, non-Pauli)
+        group.bench_function(BenchmarkId::new("rx_non_pauli_frame", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = SparseStateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
+                    sim.h(&[QubitId(h_qubits)]); // H frame (non-Pauli)
+                    sim
+                },
+                |mut sim| {
+                    sim.rx(0.123, &[QubitId(h_qubits)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // RX on dense
+        group.bench_function(BenchmarkId::new("rx_dense", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = StateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim
+                },
+                |mut sim| {
+                    sim.rx(0.123, &[QubitId(h_qubits)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // --- RY gate ---
+
+        // RY with Pauli frame (X frame -> push through)
+        group.bench_function(BenchmarkId::new("ry_pauli_frame", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = SparseStateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
+                    sim.x(&[QubitId(h_qubits)]); // X frame (Pauli)
+                    sim
+                },
+                |mut sim| {
+                    sim.ry(0.123, &[QubitId(h_qubits)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // RY needing flush
+        group.bench_function(BenchmarkId::new("ry_non_pauli_frame", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = SparseStateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
+                    sim.h(&[QubitId(h_qubits)]);
+                    sim
+                },
+                |mut sim| {
+                    sim.ry(0.123, &[QubitId(h_qubits)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // RY on dense
+        group.bench_function(BenchmarkId::new("ry_dense", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = StateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim
+                },
+                |mut sim| {
+                    sim.ry(0.123, &[QubitId(h_qubits)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // --- RXX gate ---
+
+        // RXX with both Pauli frames (Z frames -> push through)
+        group.bench_function(BenchmarkId::new("rxx_pauli_frame", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = SparseStateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
+                    sim.z(&[QubitId(h_qubits)]);
+                    sim.z(&[QubitId(h_qubits + 1)]);
+                    sim
+                },
+                |mut sim| {
+                    sim.rxx(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // RXX needing flush
+        group.bench_function(BenchmarkId::new("rxx_non_pauli_frame", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = SparseStateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
+                    sim.h(&[QubitId(h_qubits)]);
+                    sim.h(&[QubitId(h_qubits + 1)]);
+                    sim
+                },
+                |mut sim| {
+                    sim.rxx(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // RXX on dense
+        group.bench_function(BenchmarkId::new("rxx_dense", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = StateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim
+                },
+                |mut sim| {
+                    sim.rxx(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // --- RYY gate ---
+
+        // RYY with both Pauli frames (X frames -> push through since has_x != has_z)
+        group.bench_function(BenchmarkId::new("ryy_pauli_frame", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = SparseStateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
+                    sim.x(&[QubitId(h_qubits)]);
+                    sim.x(&[QubitId(h_qubits + 1)]);
+                    sim
+                },
+                |mut sim| {
+                    sim.ryy(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // RYY needing flush
+        group.bench_function(BenchmarkId::new("ryy_non_pauli_frame", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = SparseStateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
+                    sim.h(&[QubitId(h_qubits)]);
+                    sim.h(&[QubitId(h_qubits + 1)]);
+                    sim
+                },
+                |mut sim| {
+                    sim.ryy(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        // RYY on dense
+        group.bench_function(BenchmarkId::new("ryy_dense", &label), |b| {
+            b.iter_batched(
+                || {
+                    let mut sim = StateVecSoA::new(num_qubits);
+                    for q in 0..h_qubits {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim
+                },
+                |mut sim| {
+                    sim.ryy(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+
+    group.finish();
+}
+
 /// Benchmark a QEC-like circuit with Cliffords interspersed with T/RZ gates.
 /// This represents the realistic use case where Pauli push-through matters.
 fn bench_qec_rotation_circuit(c: &mut Criterion) {
@@ -1531,5 +1777,6 @@ pub fn benchmarks(c: &mut Criterion) {
     bench_realistic_circuits(c);
     bench_three_statevecs_gates(c);
     bench_rotation_pauli_pushthrough(c);
+    bench_nondiag_rotation_pushthrough(c);
     bench_qec_rotation_circuit(c);
 }

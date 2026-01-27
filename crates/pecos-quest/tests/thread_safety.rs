@@ -2,7 +2,7 @@
 //! These tests verify that multiple `QuestStateVec` instances can work in parallel
 //! without interfering with each other, which is essential for Monte Carlo simulations.
 
-use pecos_core::{qid, qid2};
+use pecos_core::{Angle64, qid, qid2};
 use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
 use pecos_rng::PecosRng;
@@ -159,14 +159,14 @@ fn test_parallel_rotation_gates() {
                 match thread_id % 3 {
                     0 => {
                         // Test RX rotation
-                        state.rx(PI, &qid(0)); // RX(π)|0> = i|1>
+                        state.rx(Angle64::from_radians(PI), &qid(0)); // RX(π)|0> = i|1>
                         let prob_1 = state.probability(1);
                         assert_relative_eq!(prob_1, 1.0, epsilon = 1e-10);
                         prob_1
                     }
                     1 => {
                         // Test RY rotation
-                        state.ry(PI / 2.0, &qid(0)); // RY(π/2)|0> = (|0> + |1>)/√2
+                        state.ry(Angle64::from_radians(PI / 2.0), &qid(0)); // RY(π/2)|0> = (|0> + |1>)/√2
                         let prob_0 = state.probability(0);
                         let prob_1 = state.probability(1);
                         assert_relative_eq!(prob_0, 0.5, epsilon = 1e-10);
@@ -175,7 +175,7 @@ fn test_parallel_rotation_gates() {
                     }
                     2 => {
                         // Test RZ rotation (doesn't change computational probabilities)
-                        state.rz(PI / 4.0, &qid(0)); // RZ only adds phase
+                        state.rz(Angle64::from_radians(PI / 4.0), &qid(0)); // RZ only adds phase
                         let prob_0 = state.probability(0);
                         assert_relative_eq!(prob_0, 1.0, epsilon = 1e-10);
                         prob_0

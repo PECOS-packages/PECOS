@@ -4,7 +4,7 @@
 //! which accelerates state vector quantum simulation on CUDA GPUs.
 
 use crate::error::{check_status, CuQuantumError, Result, TryClone};
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_cuquantum_sys::{
     cuDoubleComplex, custatevecCollapseOp_t, custatevecComputeType_t, custatevecHandle_t,
     custatevecMatrixLayout_t, cudaDataType_t, cudaMemcpyKind_cudaMemcpyDeviceToDevice,
@@ -649,7 +649,8 @@ impl CliffordGateable for CuStateVec {
 }
 
 impl ArbitraryRotationGateable for CuStateVec {
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         // RX(theta) = [[cos(theta/2), -i*sin(theta/2)], [-i*sin(theta/2), cos(theta/2)]]
         let c = (theta / 2.0).cos();
         let s = (theta / 2.0).sin();
@@ -660,7 +661,8 @@ impl ArbitraryRotationGateable for CuStateVec {
         self
     }
 
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         // RZ(theta) = [[e^(-i*theta/2), 0], [0, e^(i*theta/2)]]
         let c = (theta / 2.0).cos();
         let s = (theta / 2.0).sin();
@@ -671,7 +673,8 @@ impl ArbitraryRotationGateable for CuStateVec {
         self
     }
 
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len() % 2 == 0,
             "RZZ requires pairs of qubits"
@@ -693,7 +696,8 @@ impl ArbitraryRotationGateable for CuStateVec {
     }
 
     // Override ry for efficiency
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         // RY(theta) = [[cos(theta/2), -sin(theta/2)], [sin(theta/2), cos(theta/2)]]
         let c = (theta / 2.0).cos();
         let s = (theta / 2.0).sin();

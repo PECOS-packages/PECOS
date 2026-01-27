@@ -16,6 +16,7 @@ use crate::program::QisInterfaceBuilder;
 use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, ProgramFormat};
 use crate::runtime::QisRuntime;
 use log::debug;
+use pecos_core::Angle64;
 use pecos_core::prelude::PecosError;
 use pecos_engines::noise::utils::NoiseUtils;
 use pecos_engines::shot_results::{Data, Shot};
@@ -375,16 +376,16 @@ impl QisEngine {
                     builder.add_tdg(&[qubit]);
                 }
                 QuantumOp::RX(angle, qubit) => {
-                    builder.add_rx(angle, &[qubit]);
+                    builder.add_rx(Angle64::from_radians(angle), &[qubit]);
                 }
                 QuantumOp::RY(angle, qubit) => {
-                    builder.add_ry(angle, &[qubit]);
+                    builder.add_ry(Angle64::from_radians(angle), &[qubit]);
                 }
                 QuantumOp::RZ(angle, qubit) => {
-                    builder.add_rz(angle, &[qubit]);
+                    builder.add_rz(Angle64::from_radians(angle), &[qubit]);
                 }
                 QuantumOp::RXY(theta, phi, qubit) => {
-                    builder.add_r1xy(theta, phi, &[qubit]);
+                    builder.add_r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &[qubit]);
                 }
                 QuantumOp::CX(control, target) => {
                     builder.add_cx(&[control], &[target]);
@@ -398,7 +399,7 @@ impl QisEngine {
                     builder.add_szz(&[qubit1], &[qubit2]);
                 }
                 QuantumOp::RZZ(angle, qubit1, qubit2) => {
-                    builder.add_rzz(angle, &[qubit1], &[qubit2]);
+                    builder.add_rzz(Angle64::from_radians(angle), &[qubit1], &[qubit2]);
                 }
                 QuantumOp::Reset(qubit) => {
                     builder.add_prep(&[qubit]);

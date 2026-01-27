@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use super::state_vec::StateVec;
-use pecos_core::{QubitId, RngManageable};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 
 use core::fmt::{Debug, Display, Formatter, Write};
@@ -1115,23 +1115,28 @@ where
     /// Apply a rotation around the X-axis
     ///
     /// # Arguments
-    /// * `theta` - Rotation angle in radians
+    /// * `theta` - Rotation angle
     /// * `qubits` - Target qubits
     ///
     /// # Returns
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let n = self.num_physical_qubits;
 
         for &q in qubits {
             let qubit = q.index();
+            let sys_qubits = [QubitId(qubit)];
+            let env_qubits = [QubitId(qubit + n)];
+
             // Apply RX to the system qubit
-            self.state_vector_mut().rx(theta, &[QubitId(qubit)]);
+            self.state_vector_mut().rx(theta, &sys_qubits);
 
             // Apply RX* to the environment qubit
-            // For RX, RX* is RX(-theta)
-            self.state_vector_mut().rx(-theta, &[QubitId(qubit + n)]);
+            // RX(-theta) = Z * RX(theta) * Z
+            self.state_vector_mut().z(&env_qubits);
+            self.state_vector_mut().rx(theta, &env_qubits);
+            self.state_vector_mut().z(&env_qubits);
         }
 
         self
@@ -1140,23 +1145,26 @@ where
     /// Apply a rotation around the Y-axis
     ///
     /// # Arguments
-    /// * `theta` - Rotation angle in radians
+    /// * `theta` - Rotation angle
     /// * `qubits` - Target qubits
     ///
     /// # Returns
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let n = self.num_physical_qubits;
 
         for &q in qubits {
             let qubit = q.index();
+            let sys_qubits = [QubitId(qubit)];
+            let env_qubits = [QubitId(qubit + n)];
+
             // Apply RY to the system qubit
-            self.state_vector_mut().ry(theta, &[QubitId(qubit)]);
+            self.state_vector_mut().ry(theta, &sys_qubits);
 
             // Apply RY* to the environment qubit
             // RY is a real matrix, so RY* = RY
-            self.state_vector_mut().ry(theta, &[QubitId(qubit + n)]);
+            self.state_vector_mut().ry(theta, &env_qubits);
         }
 
         self
@@ -1165,23 +1173,28 @@ where
     /// Apply a rotation around the Z-axis
     ///
     /// # Arguments
-    /// * `theta` - Rotation angle in radians
+    /// * `theta` - Rotation angle
     /// * `qubits` - Target qubits
     ///
     /// # Returns
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let n = self.num_physical_qubits;
 
         for &q in qubits {
             let qubit = q.index();
+            let sys_qubits = [QubitId(qubit)];
+            let env_qubits = [QubitId(qubit + n)];
+
             // Apply RZ to the system qubit
-            self.state_vector_mut().rz(theta, &[QubitId(qubit)]);
+            self.state_vector_mut().rz(theta, &sys_qubits);
 
             // Apply RZ* to the environment qubit
-            // For RZ, RZ* is RZ(-theta)
-            self.state_vector_mut().rz(-theta, &[QubitId(qubit + n)]);
+            // RZ(-theta) = X * RZ(theta) * X
+            self.state_vector_mut().x(&env_qubits);
+            self.state_vector_mut().rz(theta, &env_qubits);
+            self.state_vector_mut().x(&env_qubits);
         }
 
         self
@@ -1196,7 +1209,7 @@ where
     /// # Returns
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -1206,15 +1219,17 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+            let sys_pairs = [QubitId(q1), QubitId(q2)];
+            let env_pairs = [QubitId(q1 + n), QubitId(q2 + n)];
 
             // Apply RZZ to the system qubits
-            self.state_vector_mut()
-                .rzz(theta, &[QubitId(q1), QubitId(q2)]);
+            self.state_vector_mut().rzz(theta, &sys_pairs);
 
             // Apply RZZ* to the environment qubits
-            // For RZZ, RZZ* is RZZ(-theta)
-            self.state_vector_mut()
-                .rzz(-theta, &[QubitId(q1 + n), QubitId(q2 + n)]);
+            // RZZ(-theta) = (X tensor I) * RZZ(theta) * (X tensor I)
+            self.state_vector_mut().x(&[env_pairs[0]]);
+            self.state_vector_mut().rzz(theta, &env_pairs);
+            self.state_vector_mut().x(&[env_pairs[0]]);
         }
 
         self

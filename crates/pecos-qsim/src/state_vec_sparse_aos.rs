@@ -51,7 +51,7 @@
 use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::f64::consts::FRAC_1_SQRT_2;
 use std::fmt::Debug;
@@ -1466,7 +1466,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
 // =============================================================================
 
 impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
         // RX(theta) = [[cos, -i*sin], [-i*sin, cos]]
@@ -1480,7 +1481,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         let half = theta / 2.0;
         let cos = half.cos();
         let sin = half.sin();
@@ -1500,7 +1502,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -1526,7 +1529,10 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
+        let phi = phi.to_radians_signed();
+        let lambda = lambda.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
 

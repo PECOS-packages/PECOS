@@ -17,7 +17,7 @@
 //! for simulating any quantum circuit.
 
 use anyhow::{Result, anyhow, bail};
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, StateVec};
 use pecos_rng::PecosRng;
 use selene_core::export_simulator_plugin;
@@ -83,7 +83,10 @@ impl SimulatorInterface for StateVecSimulator {
         // RXY(theta, phi) = Rz(phi) * Rx(theta) * Rz(-phi)
         // Gates are applied left-to-right in code but the matrix multiplication
         // is right-to-left, so we apply Rz(-phi) first
-        self.simulator.rz(-phi, &[q]).rx(theta, &[q]).rz(phi, &[q]);
+        self.simulator
+            .rz(Angle64::from_radians(-phi), &[q])
+            .rx(Angle64::from_radians(theta), &[q])
+            .rz(Angle64::from_radians(phi), &[q]);
 
         Ok(())
     }
@@ -97,7 +100,8 @@ impl SimulatorInterface for StateVecSimulator {
             ));
         }
 
-        self.simulator.rz(theta, &[QubitId(Self::to_usize(qubit))]);
+        self.simulator
+            .rz(Angle64::from_radians(theta), &[QubitId(Self::to_usize(qubit))]);
         Ok(())
     }
 
@@ -111,7 +115,7 @@ impl SimulatorInterface for StateVecSimulator {
         }
 
         self.simulator.rzz(
-            theta,
+            Angle64::from_radians(theta),
             &[
                 QubitId(Self::to_usize(qubit1)),
                 QubitId(Self::to_usize(qubit2)),

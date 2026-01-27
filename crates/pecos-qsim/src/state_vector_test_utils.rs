@@ -34,7 +34,7 @@
 
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, PI};
 
 // ============================================================================
@@ -652,7 +652,7 @@ pub fn verify_iswap_gate<S: StateVectorSimulator>(sim: &mut S) {
 pub fn verify_rx_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // RX(π)|0⟩ = -i|1⟩
     sim.reset();
-    sim.rx(PI, &qid(0));
+    sim.rx(Angle64::from_radians(PI), &qid(0));
     assert_amplitude_near_zero(sim.get_amplitude(0), "RX(π)|0⟩: |0⟩");
     assert_amplitude_eq(
         sim.get_amplitude(1),
@@ -662,7 +662,7 @@ pub fn verify_rx_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: 
 
     // RX(π/2)|0⟩ = (|0⟩ - i|1⟩)/√2
     sim.reset();
-    sim.rx(FRAC_PI_2, &qid(0));
+    sim.rx(Angle64::from_radians(FRAC_PI_2), &qid(0));
     let expected_0 = Complex64::new(FRAC_1_SQRT_2, 0.0);
     let expected_1 = Complex64::new(0.0, -FRAC_1_SQRT_2);
     assert_amplitude_eq(sim.get_amplitude(0), expected_0, "RX(π/2)|0⟩: |0⟩");
@@ -673,7 +673,7 @@ pub fn verify_rx_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: 
 pub fn verify_ry_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // RY(π)|0⟩ = |1⟩
     sim.reset();
-    sim.ry(PI, &qid(0));
+    sim.ry(Angle64::from_radians(PI), &qid(0));
     assert_amplitude_near_zero(sim.get_amplitude(0), "RY(π)|0⟩: |0⟩");
     assert_amplitude_eq(
         sim.get_amplitude(1),
@@ -683,7 +683,7 @@ pub fn verify_ry_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: 
 
     // RY(π/2)|0⟩ = (|0⟩ + |1⟩)/√2
     sim.reset();
-    sim.ry(FRAC_PI_2, &qid(0));
+    sim.ry(Angle64::from_radians(FRAC_PI_2), &qid(0));
     let expected = Complex64::new(FRAC_1_SQRT_2, 0.0);
     assert_amplitude_eq(sim.get_amplitude(0), expected, "RY(π/2)|0⟩: |0⟩");
     assert_amplitude_eq(sim.get_amplitude(1), expected, "RY(π/2)|0⟩: |1⟩");
@@ -693,7 +693,7 @@ pub fn verify_ry_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: 
 pub fn verify_rz_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // RZ on |0⟩ only adds global phase
     sim.reset();
-    sim.rz(PI, &qid(0));
+    sim.rz(Angle64::from_radians(PI), &qid(0));
     // |amplitude|^2 should still be 1 at |0⟩
     let amp = sim.get_amplitude(0);
     assert_probability_eq(amp.norm_sqr(), 1.0, "RZ(π)|0⟩: probability at |0⟩");
@@ -701,7 +701,7 @@ pub fn verify_rz_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: 
     // RZ on |+⟩ gives rotation
     sim.reset();
     sim.h(&qid(0));
-    sim.rz(PI, &qid(0));
+    sim.rz(Angle64::from_radians(PI), &qid(0));
     // Should give |-⟩ up to global phase
     let amp0 = sim.get_amplitude(0);
     let amp1 = sim.get_amplitude(1);
@@ -718,7 +718,7 @@ pub fn verify_rxx_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim:
 
     // RXX(π/2) on |00⟩
     sim.reset();
-    sim.rxx(FRAC_PI_2, &qid2(0, 1));
+    sim.rxx(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
 
     // Should create entanglement
     let amp00 = sim.get_amplitude(0b00);
@@ -738,7 +738,7 @@ pub fn verify_ryy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim:
     }
 
     sim.reset();
-    sim.ryy(FRAC_PI_2, &qid2(0, 1));
+    sim.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
 
     // Should create entanglement
     let amp00 = sim.get_amplitude(0b00);
@@ -758,7 +758,7 @@ pub fn verify_rzz_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim:
 
     // RZZ on |00⟩ only adds global phase
     sim.reset();
-    sim.rzz(PI, &qid2(0, 1));
+    sim.rzz(Angle64::from_radians(PI), &qid2(0, 1));
     let amp = sim.get_amplitude(0);
     assert_probability_eq(amp.norm_sqr(), 1.0, "RZZ(π)|00⟩: probability at |00⟩");
 
@@ -766,7 +766,7 @@ pub fn verify_rzz_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim:
     sim.reset();
     sim.h(&qid(0));
     sim.cx(&qid2(0, 1));
-    sim.rzz(PI, &qid2(0, 1));
+    sim.rzz(Angle64::from_radians(PI), &qid2(0, 1));
 
     // Bell state (|00⟩ + |11⟩)/√2 after RZZ(π) should have relative phase
     let amp00 = sim.get_amplitude(0b00);
@@ -1223,7 +1223,7 @@ pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGa
     }
 
     let qubits_batch = [QubitId(0), QubitId(1), QubitId(2)];
-    let theta = FRAC_PI_4;
+    let theta = Angle64::from_radians(FRAC_PI_4);
 
     // Test RX gate: batch vs sequential
     sim.reset();
@@ -1305,7 +1305,7 @@ pub fn verify_batch_two_qubit_rotation_gates<S: StateVectorSimulator + Arbitrary
     }
 
     let pairs_batch = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
-    let theta = FRAC_PI_4;
+    let theta = Angle64::from_radians(FRAC_PI_4);
 
     // Test RZZ gate: batch vs sequential
     sim.reset();
@@ -1356,7 +1356,7 @@ pub fn verify_batch_two_qubit_rotation_gates<S: StateVectorSimulator + Arbitrary
 pub fn verify_rotation_identities<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // RX(π) ≈ -iX (up to global phase)
     sim.reset();
-    sim.rx(PI, &qid(0));
+    sim.rx(Angle64::from_radians(PI), &qid(0));
     let amp1_rx = sim.get_amplitude(1);
 
     sim.reset();
@@ -1371,7 +1371,7 @@ pub fn verify_rotation_identities<S: StateVectorSimulator + ArbitraryRotationGat
 
     // RY(π) ≈ iY (up to global phase), which means RY(π)|0⟩ = |1⟩
     sim.reset();
-    sim.ry(PI, &qid(0));
+    sim.ry(Angle64::from_radians(PI), &qid(0));
     assert_amplitude_near_zero(sim.get_amplitude(0), "RY(π)|0⟩: |0⟩");
     assert!(
         (sim.get_amplitude(1).norm() - 1.0).abs() < TOLERANCE,
@@ -1383,7 +1383,7 @@ pub fn verify_rotation_identities<S: StateVectorSimulator + ArbitraryRotationGat
     sim.h(&qid(0)); // Create superposition to detect phase
     let amp0_before = sim.get_amplitude(0);
     let amp1_before = sim.get_amplitude(1);
-    sim.rz(2.0 * PI, &qid(0));
+    sim.rz(Angle64::from_radians(2.0 * PI), &qid(0));
     let amp0_after = sim.get_amplitude(0);
     let amp1_after = sim.get_amplitude(1);
 
@@ -1400,7 +1400,7 @@ pub fn verify_rotation_identities<S: StateVectorSimulator + ArbitraryRotationGat
 pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // U(π, 0, π) = X (Pauli X gate)
     sim.reset();
-    sim.u(PI, 0.0, PI, &qid(0));
+    sim.u(Angle64::from_radians(PI), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
 
     assert_amplitude_near_zero(sim.get_amplitude(0), "U(π,0,π)|0⟩: |0⟩");
     assert!(
@@ -1410,7 +1410,7 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
 
     // U(π, π/2, π/2) = Y (Pauli Y gate, up to global phase)
     sim.reset();
-    sim.u(PI, FRAC_PI_2, FRAC_PI_2, &qid(0));
+    sim.u(Angle64::from_radians(PI), Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(FRAC_PI_2), &qid(0));
 
     assert_amplitude_near_zero(sim.get_amplitude(0), "U(π,π/2,π/2)|0⟩: |0⟩");
     assert!(
@@ -1422,7 +1422,7 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
     sim.reset();
     sim.x(&qid(0)); // Prepare |1⟩
     let amp_before = sim.get_amplitude(1);
-    sim.u(0.0, 0.0, PI, &qid(0));
+    sim.u(Angle64::from_radians(0.0), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
     let amp_after = sim.get_amplitude(1);
 
     // Magnitude should be preserved
@@ -1434,7 +1434,7 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
     // Unitarity check: U preserves normalization
     sim.reset();
     sim.h(&qid(0)); // Start with superposition
-    sim.u(1.23, 0.45, 0.67, &qid(0)); // Apply U with arbitrary angles
+    sim.u(Angle64::from_radians(1.23), Angle64::from_radians(0.45), Angle64::from_radians(0.67), &qid(0)); // Apply U with arbitrary angles
 
     let amp0 = sim.get_amplitude(0);
     let amp1 = sim.get_amplitude(1);
@@ -1452,7 +1452,7 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
 pub fn verify_r1xy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // R1XY(π, 0) should act like X (flip |0⟩ to |1⟩)
     sim.reset();
-    sim.r1xy(PI, 0.0, &qid(0));
+    sim.r1xy(Angle64::from_radians(PI), Angle64::from_radians(0.0), &qid(0));
 
     assert_amplitude_near_zero(sim.get_amplitude(0), "R1XY(π,0)|0⟩: |0⟩");
     assert!(
@@ -1462,7 +1462,7 @@ pub fn verify_r1xy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim
 
     // R1XY(π, π/2) should act like Y (up to global phase)
     sim.reset();
-    sim.r1xy(PI, FRAC_PI_2, &qid(0));
+    sim.r1xy(Angle64::from_radians(PI), Angle64::from_radians(FRAC_PI_2), &qid(0));
 
     assert_amplitude_near_zero(sim.get_amplitude(0), "R1XY(π,π/2)|0⟩: |0⟩");
     assert!(
@@ -1472,7 +1472,7 @@ pub fn verify_r1xy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim
 
     // R1XY(π/2, 0) should create superposition like a Hadamard-like rotation
     sim.reset();
-    sim.r1xy(FRAC_PI_2, 0.0, &qid(0));
+    sim.r1xy(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(0.0), &qid(0));
 
     // Both amplitudes should have equal magnitude
     let amp0 = sim.get_amplitude(0);
@@ -1499,7 +1499,7 @@ pub fn verify_single_qubit_rotation<S: StateVectorSimulator + ArbitraryRotationG
 
     for &theta in &angles {
         sim.reset();
-        sim.ry(theta, &qid(0));
+        sim.ry(Angle64::from_radians(theta), &qid(0));
 
         // Verify normalization after rotation
         let amp0 = sim.get_amplitude(0);
@@ -2383,22 +2383,22 @@ pub fn verify_rotation_circuit_inverse<S: StateVectorSimulator + ArbitraryRotati
     let before: Vec<_> = (0..n).map(|i| sim.get_amplitude(i)).collect();
 
     // Forward rotation sequence
-    sim.rx(0.7, &qid(0));
-    sim.ry(1.3, &qid(1));
-    sim.rz(2.1, &qid(2));
-    sim.rzz(0.5, &qid2(0, 1));
-    sim.rxx(1.1, &qid2(1, 2));
-    sim.ry(0.9, &qid(1));
-    sim.rzz(2.3, &qid2(0, 2));
+    sim.rx(Angle64::from_radians(0.7), &qid(0));
+    sim.ry(Angle64::from_radians(1.3), &qid(1));
+    sim.rz(Angle64::from_radians(2.1), &qid(2));
+    sim.rzz(Angle64::from_radians(0.5), &qid2(0, 1));
+    sim.rxx(Angle64::from_radians(1.1), &qid2(1, 2));
+    sim.ry(Angle64::from_radians(0.9), &qid(1));
+    sim.rzz(Angle64::from_radians(2.3), &qid2(0, 2));
 
     // Reverse: R(theta)^-1 = R(-theta)
-    sim.rzz(-2.3, &qid2(0, 2));
-    sim.ry(-0.9, &qid(1));
-    sim.rxx(-1.1, &qid2(1, 2));
-    sim.rzz(-0.5, &qid2(0, 1));
-    sim.rz(-2.1, &qid(2));
-    sim.ry(-1.3, &qid(1));
-    sim.rx(-0.7, &qid(0));
+    sim.rzz(Angle64::from_radians(-2.3), &qid2(0, 2));
+    sim.ry(Angle64::from_radians(-0.9), &qid(1));
+    sim.rxx(Angle64::from_radians(-1.1), &qid2(1, 2));
+    sim.rzz(Angle64::from_radians(-0.5), &qid2(0, 1));
+    sim.rz(Angle64::from_radians(-2.1), &qid(2));
+    sim.ry(Angle64::from_radians(-1.3), &qid(1));
+    sim.rx(Angle64::from_radians(-0.7), &qid(0));
 
     for (i, amp_before) in before.iter().enumerate() {
         assert_amplitude_eq(

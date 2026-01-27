@@ -13,7 +13,7 @@
 //! Benchmarks comparing sparse vs dense state vector simulators.
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, SparseStateVecSoA, StateVecSoA,
 };
@@ -1308,8 +1308,8 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
             sim.flush_all_frames();
             sim.x(&[QubitId(h_qubits)]);
             b.iter(|| {
-                sim.rz(0.123, &[QubitId(h_qubits)]);
-                sim.rz(-0.123, &[QubitId(h_qubits)]);
+                sim.rz(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
+                sim.rz(Angle64::from_radians(-0.123), &[QubitId(h_qubits)]);
             });
         });
 
@@ -1321,8 +1321,8 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.rz(0.123, &[QubitId(h_qubits)]);
-                sim.rz(-0.123, &[QubitId(h_qubits)]);
+                sim.rz(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
+                sim.rz(Angle64::from_radians(-0.123), &[QubitId(h_qubits)]);
             });
         });
 
@@ -1339,7 +1339,7 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.rz(0.123, &[QubitId(h_qubits)]);
+                    sim.rz(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1352,8 +1352,8 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.rz(0.123, &[QubitId(h_qubits)]);
-                sim.rz(-0.123, &[QubitId(h_qubits)]);
+                sim.rz(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
+                sim.rz(Angle64::from_radians(-0.123), &[QubitId(h_qubits)]);
             });
         });
 
@@ -1369,8 +1369,8 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
             sim.x(&[QubitId(h_qubits)]);
             sim.x(&[QubitId(h_qubits + 1)]);
             b.iter(|| {
-                sim.rzz(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
-                sim.rzz(-0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                sim.rzz(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                sim.rzz(Angle64::from_radians(-0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
             });
         });
 
@@ -1382,8 +1382,8 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.rzz(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
-                sim.rzz(-0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                sim.rzz(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                sim.rzz(Angle64::from_radians(-0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
             });
         });
 
@@ -1401,7 +1401,7 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.rzz(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                    sim.rzz(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1414,8 +1414,8 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.rzz(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
-                sim.rzz(-0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                sim.rzz(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                sim.rzz(Angle64::from_radians(-0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
             });
         });
     }
@@ -1448,7 +1448,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.rx(0.123, &[QubitId(h_qubits)]);
+                    sim.rx(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1467,7 +1467,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.rx(0.123, &[QubitId(h_qubits)]);
+                    sim.rx(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1484,7 +1484,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.rx(0.123, &[QubitId(h_qubits)]);
+                    sim.rx(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1505,7 +1505,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.ry(0.123, &[QubitId(h_qubits)]);
+                    sim.ry(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1524,7 +1524,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.ry(0.123, &[QubitId(h_qubits)]);
+                    sim.ry(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1541,7 +1541,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.ry(0.123, &[QubitId(h_qubits)]);
+                    sim.ry(Angle64::from_radians(0.123), &[QubitId(h_qubits)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1563,7 +1563,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.rxx(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                    sim.rxx(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1583,7 +1583,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.rxx(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                    sim.rxx(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1600,7 +1600,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.rxx(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                    sim.rxx(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1622,7 +1622,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.ryy(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                    sim.ryy(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1642,7 +1642,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.ryy(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                    sim.ryy(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1659,7 +1659,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                     sim
                 },
                 |mut sim| {
-                    sim.ryy(0.123, &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
+                    sim.ryy(Angle64::from_radians(0.123), &[QubitId(h_qubits), QubitId(h_qubits + 1)]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -1740,7 +1740,7 @@ fn bench_qec_rotation_circuit(c: &mut Criterion) {
                         sim.z(&[QubitId(q + 1)]);
                     }
                     for q in (0..num_qubits - 1).step_by(2) {
-                        sim.rzz(0.1, &[QubitId(q), QubitId(q + 1)]);
+                        sim.rzz(Angle64::from_radians(0.1), &[QubitId(q), QubitId(q + 1)]);
                     }
                 }
             });
@@ -1759,7 +1759,7 @@ fn bench_qec_rotation_circuit(c: &mut Criterion) {
                         sim.z(&[QubitId(q + 1)]);
                     }
                     for q in (0..num_qubits - 1).step_by(2) {
-                        sim.rzz(0.1, &[QubitId(q), QubitId(q + 1)]);
+                        sim.rzz(Angle64::from_radians(0.1), &[QubitId(q), QubitId(q + 1)]);
                     }
                 }
             });

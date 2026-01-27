@@ -962,12 +962,12 @@ impl ClassicalEngine for PhirJsonEngine {
                     }
                     "RZ" => {
                         if !params.is_empty() {
-                            builder.add_rz(params[0], &qubits);
+                            builder.add_rz(Angle64::from_radians(params[0]), &qubits);
                         }
                     }
                     "R1XY" => {
                         if params.len() >= 2 {
-                            builder.add_r1xy(params[0], params[1], &qubits);
+                            builder.add_r1xy(Angle64::from_radians(params[0]), Angle64::from_radians(params[1]), &qubits);
                         }
                     }
                     "SZZ" => {
@@ -998,7 +998,7 @@ impl ClassicalEngine for PhirJsonEngine {
                     }
                     "RZZ" => {
                         if qubits.len() >= 2 && !params.is_empty() {
-                            builder.add_rzz(params[0], &[qubits[0]], &[qubits[1]]);
+                            builder.add_rzz(Angle64::from_radians(params[0]), &[qubits[0]], &[qubits[1]]);
                         }
                     }
                     _ => {

@@ -1,4 +1,4 @@
-use pecos_core::{qid, qid2};
+use pecos_core::{Angle64, qid, qid2};
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuestStateVec};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
@@ -14,7 +14,7 @@ fn main() {
     println!("Initial |11⟩ amplitude: {:?}", sim.get_amplitude(0b11));
 
     // Apply RZZ(π/2)
-    sim.rzz(FRAC_PI_2, &qid2(0, 1));
+    sim.rzz(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
     println!("After RZZ(π/2):");
     println!("|00⟩ amplitude: {:?}", sim.get_amplitude(0b00));
     println!("|01⟩ amplitude: {:?}", sim.get_amplitude(0b01));

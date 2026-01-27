@@ -13,7 +13,7 @@
 use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
-use pecos_core::{QubitId, RngManageable};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngCore, RngProbabilityExt, SeedableRng};
 
 use core::fmt::Debug;
@@ -286,13 +286,13 @@ where
     R: RngCore + SeedableRng + Debug,
 {
     // All rotation gates are no-ops in CoinToss - they all return self for chaining
-    fn rx(&mut self, _theta: f64, _qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, _theta: Angle64, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn rz(&mut self, _theta: f64, _qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, _theta: Angle64, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn rzz(&mut self, _theta: f64, _qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, _theta: Angle64, _qubits: &[QubitId]) -> &mut Self {
         self
     }
 }
@@ -389,10 +389,10 @@ mod tests {
         let mut sim = CoinToss::new(2);
 
         // All rotation gates should succeed and return self for chaining
-        sim.rx(1.5, &[QubitId(0)])
-            .ry(0.5, &[QubitId(1)])
-            .rz(2.1, &[QubitId(0)])
-            .rzz(0.8, &[QubitId(0), QubitId(1)]);
+        sim.rx(Angle64::from_radians(1.5), &[QubitId(0)])
+            .ry(Angle64::from_radians(0.5), &[QubitId(1)])
+            .rz(Angle64::from_radians(2.1), &[QubitId(0)])
+            .rzz(Angle64::from_radians(0.8), &[QubitId(0), QubitId(1)]);
         // If we get here without panic, rotation gates work as expected
     }
 

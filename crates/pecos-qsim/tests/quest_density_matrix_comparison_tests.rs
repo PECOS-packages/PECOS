@@ -5,7 +5,7 @@
 //!
 //! NOTE: `QuEST` has thread safety issues - run with --test-threads=1
 
-use pecos_core::{qid, qid2};
+use pecos_core::{Angle64, qid, qid2};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, DensityMatrix, QuantumSimulator};
 use pecos_quest::QuestDensityMatrix;
 use pecos_rng::PecosRng;
@@ -242,8 +242,8 @@ fn test_rx_gate() {
     let mut dm = DensityMatrix::new(num_qubits);
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-    dm.rx(PI / 4.0, &qid(0));
-    qdm.rx(PI / 4.0, &qid(0));
+    dm.rx(Angle64::from_radians(PI / 4.0), &qid(0));
+    qdm.rx(Angle64::from_radians(PI / 4.0), &qid(0));
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
     compare_purity(&mut dm, &qdm);
@@ -256,8 +256,8 @@ fn test_ry_gate() {
     let mut dm = DensityMatrix::new(num_qubits);
     let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-    dm.ry(PI / 3.0, &qid(0));
-    qdm.ry(PI / 3.0, &qid(0));
+    dm.ry(Angle64::from_radians(PI / 3.0), &qid(0));
+    qdm.ry(Angle64::from_radians(PI / 3.0), &qid(0));
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 }
@@ -286,8 +286,8 @@ fn test_ry_in_entangled_system() {
     compare_probabilities(&mut dm, &qdm, num_qubits);
 
     // Now apply RY
-    dm.ry(PI / 5.0, &qid(0));
-    qdm.ry(PI / 5.0, &qid(0));
+    dm.ry(Angle64::from_radians(PI / 5.0), &qid(0));
+    qdm.ry(Angle64::from_radians(PI / 5.0), &qid(0));
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 }
@@ -303,8 +303,8 @@ fn test_rz_gate() {
     dm.h(&qid(0));
     qdm.h(&qid(0));
 
-    dm.rz(PI / 6.0, &qid(0));
-    qdm.rz(PI / 6.0, &qid(0));
+    dm.rz(Angle64::from_radians(PI / 6.0), &qid(0));
+    qdm.rz(Angle64::from_radians(PI / 6.0), &qid(0));
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 }
@@ -322,8 +322,8 @@ fn test_rzz_gate() {
     qdm.h(&qid(0));
     qdm.h(&qid(1));
 
-    dm.rzz(PI / 4.0, &qid2(0, 1));
-    qdm.rzz(PI / 4.0, &qid2(0, 1));
+    dm.rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
+    qdm.rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 }
@@ -378,17 +378,17 @@ fn test_complex_circuit() {
     dm.h(&qid(0));
     dm.h(&qid(1));
     dm.cx(&qid2(0, 2));
-    dm.rz(PI / 4.0, &qid(1));
+    dm.rz(Angle64::from_radians(PI / 4.0), &qid(1));
     dm.cy(&qid2(1, 0));
-    dm.rx(PI / 3.0, &qid(2));
+    dm.rx(Angle64::from_radians(PI / 3.0), &qid(2));
     dm.cz(&qid2(0, 1));
 
     qdm.h(&qid(0));
     qdm.h(&qid(1));
     qdm.cx(&qid2(0, 2));
-    qdm.rz(PI / 4.0, &qid(1));
+    qdm.rz(Angle64::from_radians(PI / 4.0), &qid(1));
     qdm.cy(&qid2(1, 0));
-    qdm.rx(PI / 3.0, &qid(2));
+    qdm.rx(Angle64::from_radians(PI / 3.0), &qid(2));
     qdm.cz(&qid2(0, 1));
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
@@ -521,8 +521,8 @@ fn test_rotation_angles() {
         let mut dm = DensityMatrix::new(num_qubits);
         let mut qdm: QuestDensityMatrix<PecosRng> = QuestDensityMatrix::new(num_qubits);
 
-        dm.rx(theta, &qid(0));
-        qdm.rx(theta, &qid(0));
+        dm.rx(Angle64::from_radians(theta), &qid(0));
+        qdm.rx(Angle64::from_radians(theta), &qid(0));
 
         compare_probabilities(&mut dm, &qdm, num_qubits);
     }
@@ -541,16 +541,16 @@ fn test_larger_system_4_qubits() {
     dm.h(&qid(2));
     dm.cx(&qid2(2, 3));
     dm.cz(&qid2(1, 2));
-    dm.rx(PI / 3.0, &qid(0));
-    dm.ry(PI / 4.0, &qid(3));
+    dm.rx(Angle64::from_radians(PI / 3.0), &qid(0));
+    dm.ry(Angle64::from_radians(PI / 4.0), &qid(3));
 
     qdm.h(&qid(0));
     qdm.cx(&qid2(0, 1));
     qdm.h(&qid(2));
     qdm.cx(&qid2(2, 3));
     qdm.cz(&qid2(1, 2));
-    qdm.rx(PI / 3.0, &qid(0));
-    qdm.ry(PI / 4.0, &qid(3));
+    qdm.rx(Angle64::from_radians(PI / 3.0), &qid(0));
+    qdm.ry(Angle64::from_radians(PI / 4.0), &qid(3));
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
     compare_purity(&mut dm, &qdm);
@@ -564,7 +564,7 @@ fn test_density_matrix_trace_is_one() {
     // Apply various operations
     dm.h(&qid(0));
     dm.cx(&qid2(0, 1));
-    dm.rz(PI / 5.0, &qid(0));
+    dm.rz(Angle64::from_radians(PI / 5.0), &qid(0));
 
     // Check trace = sum of probabilities = 1
     let mut trace = 0.0;
@@ -665,16 +665,16 @@ fn test_random_circuit_comparison() {
                 qdm.swap(&qid2(*q1, *q_2));
             }
             "rx" => {
-                dm.rx(PI / 7.0, &qid(*q1));
-                qdm.rx(PI / 7.0, &qid(*q1));
+                dm.rx(Angle64::from_radians(PI / 7.0), &qid(*q1));
+                qdm.rx(Angle64::from_radians(PI / 7.0), &qid(*q1));
             }
             "ry" => {
-                dm.ry(PI / 5.0, &qid(*q1));
-                qdm.ry(PI / 5.0, &qid(*q1));
+                dm.ry(Angle64::from_radians(PI / 5.0), &qid(*q1));
+                qdm.ry(Angle64::from_radians(PI / 5.0), &qid(*q1));
             }
             "rz" => {
-                dm.rz(PI / 3.0, &qid(*q1));
-                qdm.rz(PI / 3.0, &qid(*q1));
+                dm.rz(Angle64::from_radians(PI / 3.0), &qid(*q1));
+                qdm.rz(Angle64::from_radians(PI / 3.0), &qid(*q1));
             }
             _ => {}
         }

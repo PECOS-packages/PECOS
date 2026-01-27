@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::dtypes::AngleParam;
 use pecos::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -107,8 +108,8 @@ impl QuestStateVec {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rx(angle, &[QubitId(location)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rx(angle.0, &[QubitId(location)]);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RX gate",
@@ -131,8 +132,8 @@ impl QuestStateVec {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.ry(angle, &[QubitId(location)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.ry(angle.0, &[QubitId(location)]);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RY gate",
@@ -155,8 +156,8 @@ impl QuestStateVec {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rz(angle, &[QubitId(location)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rz(angle.0, &[QubitId(location)]);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RZ gate",
@@ -223,8 +224,8 @@ impl QuestStateVec {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rxx(angle, &[QubitId(control), QubitId(target)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rxx(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -247,8 +248,8 @@ impl QuestStateVec {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.ryy(angle, &[QubitId(control), QubitId(target)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.ryy(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -271,8 +272,8 @@ impl QuestStateVec {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rzz(angle, &[QubitId(control), QubitId(target)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rzz(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -322,19 +323,19 @@ impl QuestStateVec {
         self.inner.szz(&[QubitId(control), QubitId(target)]);
     }
     /// Applies an R1XY gate to the specified qubit
-    fn r1xy_gate(&mut self, theta: f64, phi: f64, location: usize) {
-        self.inner.r1xy(theta, phi, &[QubitId(location)]);
+    fn r1xy_gate(&mut self, theta: AngleParam, phi: AngleParam, location: usize) {
+        self.inner.r1xy(theta.0, phi.0, &[QubitId(location)]);
     }
 
     /// Applies RZZRYYRXX gate (combination of RZZ, RYY, RXX) to two qubits
     /// NOTE: This uses the trait implementation which may differ from `StateVec`'s decomposition
     /// For consistency with `StateVec` tests, the Python bindings use manual decompositions
-    fn rzzryyrxx_gate(&mut self, theta: f64, phi: f64, lambda: f64, q1: usize, q2: usize) {
+    fn rzzryyrxx_gate(&mut self, theta: AngleParam, phi: AngleParam, lambda: AngleParam, q1: usize, q2: usize) {
         // Use the trait implementation directly
         // Note: The trait's rzzryyrxx has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
         self.inner
-            .rzzryyrxx(theta, phi, lambda, &[QubitId(q1), QubitId(q2)]);
+            .rzzryyrxx(theta.0, phi.0, lambda.0, &[QubitId(q1), QubitId(q2)]);
     }
 
     /// Applies a SWAP gate to two qubits
@@ -498,8 +499,8 @@ impl QuestDensityMatrix {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rx(angle, &[QubitId(location)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rx(angle.0, &[QubitId(location)]);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RX gate",
@@ -522,8 +523,8 @@ impl QuestDensityMatrix {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.ry(angle, &[QubitId(location)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.ry(angle.0, &[QubitId(location)]);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RY gate",
@@ -546,8 +547,8 @@ impl QuestDensityMatrix {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rz(angle, &[QubitId(location)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rz(angle.0, &[QubitId(location)]);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RZ gate",
@@ -614,8 +615,8 @@ impl QuestDensityMatrix {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rxx(angle, &[QubitId(control), QubitId(target)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rxx(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -638,8 +639,8 @@ impl QuestDensityMatrix {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.ryy(angle, &[QubitId(control), QubitId(target)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.ryy(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -662,8 +663,8 @@ impl QuestDensityMatrix {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rzz(angle, &[QubitId(control), QubitId(target)]);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rzz(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -713,19 +714,19 @@ impl QuestDensityMatrix {
         self.inner.szz(&[QubitId(control), QubitId(target)]);
     }
     /// Applies an R1XY gate to the specified qubit
-    fn r1xy_gate(&mut self, theta: f64, phi: f64, location: usize) {
-        self.inner.r1xy(theta, phi, &[QubitId(location)]);
+    fn r1xy_gate(&mut self, theta: AngleParam, phi: AngleParam, location: usize) {
+        self.inner.r1xy(theta.0, phi.0, &[QubitId(location)]);
     }
 
     /// Applies RZZRYYRXX gate (combination of RZZ, RYY, RXX) to two qubits
     /// NOTE: This uses the trait implementation which may differ from `StateVec`'s decomposition
     /// For consistency with `StateVec` tests, the Python bindings use manual decompositions
-    fn rzzryyrxx_gate(&mut self, theta: f64, phi: f64, lambda: f64, q1: usize, q2: usize) {
+    fn rzzryyrxx_gate(&mut self, theta: AngleParam, phi: AngleParam, lambda: AngleParam, q1: usize, q2: usize) {
         // Use the trait implementation directly
         // Note: The trait's rzzryyrxx has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
         self.inner
-            .rzzryyrxx(theta, phi, lambda, &[QubitId(q1), QubitId(q2)]);
+            .rzzryyrxx(theta.0, phi.0, lambda.0, &[QubitId(q1), QubitId(q2)]);
     }
 
     /// Applies a SWAP gate to two qubits

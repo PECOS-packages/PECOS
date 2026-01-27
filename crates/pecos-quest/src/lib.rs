@@ -33,7 +33,7 @@ pub use quantum_engine::{
 #[cfg(feature = "cuda")]
 pub use quantum_engine::QuestCudaStateVecEngine;
 
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 pub use pecos_core::rng::RngManageable;
 pub use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
@@ -451,7 +451,8 @@ impl<R> ArbitraryRotationGateable for QuestStateVec<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             self.check_qubit_index(q.index())
                 .expect("Invalid qubit index");
@@ -463,7 +464,8 @@ where
         self
     }
 
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             self.check_qubit_index(q.index())
                 .expect("Invalid qubit index");
@@ -475,7 +477,8 @@ where
         self
     }
 
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -489,16 +492,19 @@ where
             self.check_qubit_index(q2.index())
                 .expect("Invalid qubit2 index");
 
-            self.rz(half_angle, &[q1]).rz(half_angle, &[q2]);
+            let half_angle_a = Angle64::from_radians(half_angle);
+            let neg_half_angle_a = Angle64::from_radians(-half_angle);
+            self.rz(half_angle_a, &[q1]).rz(half_angle_a, &[q2]);
             self.cz(&[q1, q2]);
-            self.rz(-half_angle, &[q1]).rz(-half_angle, &[q2]);
+            self.rz(neg_half_angle_a, &[q1]).rz(neg_half_angle_a, &[q2]);
         }
         self
     }
 
     // Override with native QuEST implementations
 
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             self.check_qubit_index(q.index())
                 .expect("Invalid qubit index");
@@ -917,7 +923,8 @@ impl<R> ArbitraryRotationGateable for QuestDensityMatrix<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             self.check_qubit_index(q.index())
                 .expect("Invalid qubit index");
@@ -929,7 +936,8 @@ where
         self
     }
 
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             self.check_qubit_index(q.index())
                 .expect("Invalid qubit index");
@@ -941,7 +949,8 @@ where
         self
     }
 
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -955,16 +964,19 @@ where
             self.check_qubit_index(q2.index())
                 .expect("Invalid qubit2 index");
 
-            self.rz(half_angle, &[q1]).rz(half_angle, &[q2]);
+            let half_angle_a = Angle64::from_radians(half_angle);
+            let neg_half_angle_a = Angle64::from_radians(-half_angle);
+            self.rz(half_angle_a, &[q1]).rz(half_angle_a, &[q2]);
             self.cz(&[q1, q2]);
-            self.rz(-half_angle, &[q1]).rz(-half_angle, &[q2]);
+            self.rz(neg_half_angle_a, &[q1]).rz(neg_half_angle_a, &[q2]);
         }
         self
     }
 
     // Override with native QuEST implementations
 
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             self.check_qubit_index(q.index())
                 .expect("Invalid qubit index");

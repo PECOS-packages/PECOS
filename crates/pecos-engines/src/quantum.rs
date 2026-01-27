@@ -319,7 +319,7 @@ where
                     if cmd.angles.is_empty() {
                         return Err(quantum_error("RZZ gate requires at least one angle"));
                     }
-                    let angle = cmd.angles[0].to_radians();
+                    let angle = cmd.angles[0];
                     debug!("Processing RZZ gate on qubits {:?}", cmd.qubits);
                     self.simulator.rzz(angle, &cmd.qubits);
                 }
@@ -363,8 +363,8 @@ where
                     if cmd.angles.is_empty() {
                         return Err(quantum_error("CRZ gate requires at least one angle"));
                     }
-                    let angle = cmd.angles[0].to_radians();
-                    let half_angle = angle / 2.0;
+                    let angle = cmd.angles[0];
+                    let half_angle = angle / 2u64;
                     // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
                     for qubits in cmd.qubits.chunks_exact(2) {
                         debug!(
@@ -413,7 +413,7 @@ where
                 }
                 GateType::RX => {
                     if !cmd.angles.is_empty() {
-                        let angle = cmd.angles[0].to_radians();
+                        let angle = cmd.angles[0];
                         debug!(
                             "Processing RX gate with angle {angle:?} on qubits {:?}",
                             cmd.qubits
@@ -423,7 +423,7 @@ where
                 }
                 GateType::RY => {
                     if !cmd.angles.is_empty() {
-                        let angle = cmd.angles[0].to_radians();
+                        let angle = cmd.angles[0];
                         debug!(
                             "Processing RY gate with angle {angle:?} on qubits {:?}",
                             cmd.qubits
@@ -433,7 +433,7 @@ where
                 }
                 GateType::RZ => {
                     if !cmd.angles.is_empty() {
-                        let angle = cmd.angles[0].to_radians();
+                        let angle = cmd.angles[0];
                         debug!(
                             "Processing RZ gate with angle {angle:?} on qubits {:?}",
                             cmd.qubits
@@ -443,8 +443,8 @@ where
                 }
                 GateType::R1XY => {
                     if cmd.angles.len() >= 2 {
-                        let theta = cmd.angles[0].to_radians();
-                        let phi = cmd.angles[1].to_radians();
+                        let theta = cmd.angles[0];
+                        let phi = cmd.angles[1];
                         debug!(
                             "Processing R1XY gate with angles theta={theta:?}, phi={phi:?} on qubits {:?}",
                             cmd.qubits
@@ -496,9 +496,9 @@ where
                 }
                 GateType::U => {
                     if cmd.angles.len() >= 3 {
-                        let theta = cmd.angles[0].to_radians();
-                        let phi = cmd.angles[1].to_radians();
-                        let lambda = cmd.angles[2].to_radians();
+                        let theta = cmd.angles[0];
+                        let phi = cmd.angles[1];
+                        let lambda = cmd.angles[2];
                         debug!(
                             "Processing U gate with angles theta={theta:?}, phi={phi:?}, lambda={lambda:?} on qubits {:?}",
                             cmd.qubits

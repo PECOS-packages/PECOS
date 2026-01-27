@@ -1,4 +1,5 @@
 // Copyright 2025 The PECOS Developers
+use crate::dtypes::AngleParam;
 use pecos::prelude::*;
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -46,22 +47,22 @@ impl PyQulacs {
                 self.inner.g(pair);
             }
             "SXX" => {
-                self.inner.rxx(std::f64::consts::FRAC_PI_2, pair);
+                self.inner.rxx(Angle64::QUARTER_TURN, pair);
             }
             "SXXdg" => {
-                self.inner.rxx(-std::f64::consts::FRAC_PI_2, pair);
+                self.inner.rxx(-Angle64::QUARTER_TURN, pair);
             }
             "SYY" => {
-                self.inner.ryy(std::f64::consts::FRAC_PI_2, pair);
+                self.inner.ryy(Angle64::QUARTER_TURN, pair);
             }
             "SYYdg" => {
-                self.inner.ryy(-std::f64::consts::FRAC_PI_2, pair);
+                self.inner.ryy(-Angle64::QUARTER_TURN, pair);
             }
             "SZZ" | "SqrtZZ" => {
-                self.inner.rzz(std::f64::consts::FRAC_PI_2, pair);
+                self.inner.rzz(Angle64::QUARTER_TURN, pair);
             }
             "SZZdg" => {
-                self.inner.rzz(-std::f64::consts::FRAC_PI_2, pair);
+                self.inner.rzz(-Angle64::QUARTER_TURN, pair);
             }
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -73,9 +74,9 @@ impl PyQulacs {
     }
 
     /// Helper method to extract angle parameter from dict
-    fn extract_angle_param(params: &Bound<'_, PyDict>, gate_name: &str) -> PyResult<f64> {
+    fn extract_angle_param(params: &Bound<'_, PyDict>, gate_name: &str) -> PyResult<Angle64> {
         match params.get_item("angle") {
-            Ok(Some(py_any)) => py_any.extract::<f64>().map_err(|_| {
+            Ok(Some(py_any)) => py_any.extract::<AngleParam>().map(|a| a.0).map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Expected a valid angle parameter for {gate_name} gate"
                 ))
@@ -92,16 +93,16 @@ impl PyQulacs {
         params: &Bound<'_, PyDict>,
         gate_name: &str,
         expected_count: usize,
-    ) -> PyResult<Vec<f64>> {
+    ) -> PyResult<Vec<Angle64>> {
         match params.get_item("angles") {
             Ok(Some(py_any)) => {
-                let angles = py_any.extract::<Vec<f64>>().map_err(|_| {
+                let angles = py_any.extract::<Vec<AngleParam>>().map_err(|_| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                         "Expected valid angles parameter for {gate_name} gate"
                     ))
                 })?;
                 if angles.len() == expected_count {
-                    Ok(angles)
+                    Ok(angles.into_iter().map(|a| a.0).collect())
                 } else {
                     Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                         "{gate_name} requires exactly {expected_count} angles"
@@ -227,8 +228,8 @@ impl PyQulacs {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rx(angle, q);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rx(angle.0, q);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RX gate",
@@ -255,8 +256,8 @@ impl PyQulacs {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.ry(angle, q);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.ry(angle.0, q);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RY gate",
@@ -283,8 +284,8 @@ impl PyQulacs {
                 if let Some(params) = params {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rz(angle, q);
+                            if let Ok(angle) = py_any.extract::<AngleParam>() {
+                                self.inner.rz(angle.0, q);
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                     "Expected a valid angle parameter for RZ gate",
@@ -311,13 +312,13 @@ impl PyQulacs {
                 if let Some(params) = params {
                     match params.get_item("angles") {
                         Ok(Some(py_any)) => {
-                            if let Ok(angles) = py_any.extract::<Vec<f64>>() {
+                            if let Ok(angles) = py_any.extract::<Vec<AngleParam>>() {
                                 if angles.len() >= 2 {
                                     // R1XY = RZ(phi-pi/2) * RY(theta) * RZ(-phi+pi/2)
                                     // where theta = angles[0], phi = angles[1]
-                                    let theta = angles[0];
-                                    let phi = angles[1];
-                                    let pi_half = std::f64::consts::PI / 2.0;
+                                    let theta = angles[0].0;
+                                    let phi = angles[1].0;
+                                    let pi_half = Angle64::QUARTER_TURN;
 
                                     self.inner.rz(-phi + pi_half, q);
                                     self.inner.ry(theta, q);

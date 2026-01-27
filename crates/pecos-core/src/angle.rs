@@ -31,7 +31,7 @@ use num_traits::{
 };
 pub use parse::ParseAngleError;
 use std::fmt;
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Rem, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, SubAssign};
 
 /// Alias for `Angle` with an 8-bit unsigned integer.
 #[allow(clippy::module_name_repetitions)]
@@ -113,7 +113,7 @@ where
         self.fraction
     }
 
-    /// Converts the angle to radians.
+    /// Converts the angle to radians in `[0, 2π)`.
     ///
     /// # Panics
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
@@ -126,6 +126,25 @@ where
             .expect("Failed to convert fraction to f64")
             / max_value
             * std::f64::consts::TAU
+    }
+
+    /// Converts the angle to radians in `(-π, π]`.
+    ///
+    /// This is the signed (principal-value) form. It is essential for rotation
+    /// gates that use half-angle trig (`θ/2`): because `exp(-iθG/2)` has period
+    /// 4π while `Angle` wraps at 2π, using the unsigned `[0, 2π)` form for
+    /// half-angle computation introduces a global phase of −1 for angles whose
+    /// unsigned representation exceeds π.  The signed form avoids this.
+    ///
+    /// # Panics
+    /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
+    pub fn to_radians_signed(&self) -> f64 {
+        let r = self.to_radians();
+        if r > std::f64::consts::PI {
+            r - std::f64::consts::TAU
+        } else {
+            r
+        }
     }
 
     /// Creates an angle from a value in radians.
@@ -432,6 +451,17 @@ impl<T: Unsigned + Copy + FromPrimitive> Div<T> for Angle<T> {
 impl<T: Unsigned + Copy + FromPrimitive> DivAssign<T> for Angle<T> {
     fn div_assign(&mut self, scalar: T) {
         self.fraction = self.fraction / scalar;
+    }
+}
+
+/// Implements negation for angles (computes the additive inverse modulo 2π).
+impl<T: Unsigned + WrappingSub + Zero + Copy> Neg for Angle<T> {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        Self {
+            fraction: T::zero().wrapping_sub(&self.fraction),
+        }
     }
 }
 

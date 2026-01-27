@@ -1013,7 +1013,7 @@ impl GpuStateVec {
 
 // Trait implementations for PECOS integration
 
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
@@ -1093,17 +1093,20 @@ impl CliffordGateable for GpuStateVec {
 }
 
 impl ArbitraryRotationGateable for GpuStateVec {
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         self.apply_single_gate_batch_qubits(qubits, gates::rx(theta));
         self
     }
 
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         self.apply_single_gate_batch_qubits(qubits, gates::rz(theta));
         self
     }
 
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -1222,7 +1225,7 @@ mod tests {
 
         // Test RY gate (derived from RX and SZ)
         // RY(pi) should flip |0> to |1>
-        sim.ry(std::f64::consts::PI, &qid(0));
+        sim.ry(Angle64::from_radians(std::f64::consts::PI), &qid(0));
         assert!(sim.mz(&qid(0))[0].outcome, "RY(pi) should flip |0> to |1>");
 
         // Test T gate (derived from RZ)
@@ -1389,8 +1392,8 @@ mod tests {
             {
                 let mut gpu = GpuStateVec::new(1).unwrap();
                 let mut cpu = StateVec::new(1);
-                gpu.rx(theta, &qid(0));
-                cpu.rx(theta, &qid(0));
+                gpu.rx(Angle64::from_radians(theta), &qid(0));
+                cpu.rx(Angle64::from_radians(theta), &qid(0));
                 let max_diff = compare_states(&gpu, &mut cpu);
                 assert!(
                     max_diff < TOLERANCE,
@@ -1402,8 +1405,8 @@ mod tests {
             {
                 let mut gpu = GpuStateVec::new(1).unwrap();
                 let mut cpu = StateVec::new(1);
-                gpu.ry(theta, &qid(0));
-                cpu.ry(theta, &qid(0));
+                gpu.ry(Angle64::from_radians(theta), &qid(0));
+                cpu.ry(Angle64::from_radians(theta), &qid(0));
                 let max_diff = compare_states(&gpu, &mut cpu);
                 assert!(
                     max_diff < TOLERANCE,
@@ -1417,8 +1420,8 @@ mod tests {
                 let mut cpu = StateVec::new(1);
                 gpu.h(&qid(0)); // Put in superposition so RZ has visible effect
                 cpu.h(&qid(0));
-                gpu.rz(theta, &qid(0));
-                cpu.rz(theta, &qid(0));
+                gpu.rz(Angle64::from_radians(theta), &qid(0));
+                cpu.rz(Angle64::from_radians(theta), &qid(0));
                 let max_diff = compare_states(&gpu, &mut cpu);
                 assert!(
                     max_diff < TOLERANCE,
@@ -1494,8 +1497,8 @@ mod tests {
             cpu.h(&qid(1));
 
             // Apply RZZ
-            gpu.rzz(theta, &qid2(0, 1));
-            cpu.rzz(theta, &qid2(0, 1));
+            gpu.rzz(Angle64::from_radians(theta), &qid2(0, 1));
+            cpu.rzz(Angle64::from_radians(theta), &qid2(0, 1));
 
             let max_diff = compare_states(&gpu, &mut cpu);
             assert!(
@@ -1518,14 +1521,14 @@ mod tests {
         }
 
         // Layer 2: Rotations
-        gpu.rz(0.3, &qid(0));
-        cpu.rz(0.3, &qid(0));
-        gpu.rx(0.5, &qid(1));
-        cpu.rx(0.5, &qid(1));
-        gpu.ry(0.7, &qid(2));
-        cpu.ry(0.7, &qid(2));
-        gpu.rz(1.1, &qid(3));
-        cpu.rz(1.1, &qid(3));
+        gpu.rz(Angle64::from_radians(0.3), &qid(0));
+        cpu.rz(Angle64::from_radians(0.3), &qid(0));
+        gpu.rx(Angle64::from_radians(0.5), &qid(1));
+        cpu.rx(Angle64::from_radians(0.5), &qid(1));
+        gpu.ry(Angle64::from_radians(0.7), &qid(2));
+        cpu.ry(Angle64::from_radians(0.7), &qid(2));
+        gpu.rz(Angle64::from_radians(1.1), &qid(3));
+        cpu.rz(Angle64::from_radians(1.1), &qid(3));
 
         // Layer 3: Entangling gates
         gpu.cx(&qid2(0, 1));
@@ -1534,10 +1537,10 @@ mod tests {
         cpu.cx(&qid2(2, 3));
 
         // Layer 4: More rotations
-        gpu.rz(0.2, &qid(0));
-        cpu.rz(0.2, &qid(0));
-        gpu.rz(0.4, &qid(1));
-        cpu.rz(0.4, &qid(1));
+        gpu.rz(Angle64::from_radians(0.2), &qid(0));
+        cpu.rz(Angle64::from_radians(0.2), &qid(0));
+        gpu.rz(Angle64::from_radians(0.4), &qid(1));
+        cpu.rz(Angle64::from_radians(0.4), &qid(1));
 
         // Layer 5: Cross entanglement
         gpu.cx(&qid2(1, 2));

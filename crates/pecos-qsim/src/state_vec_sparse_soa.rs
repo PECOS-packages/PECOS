@@ -38,7 +38,7 @@ use crate::clifford_frame::{CliffordFrame, PauliAxis, ELEMENT_MATRIX, PHASE_COCY
 use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
-use pecos_core::{QubitId, RngManageable};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
 use wide::f64x4;
@@ -2467,7 +2467,8 @@ impl<R: Rng> SparseStateVecSoA<R> {
 // =============================================================================
 
 impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         // RX(theta) = exp(-i*theta*X/2) = [[cos, -i*sin], [-i*sin, cos]]
         //
         // Push-through: Z and Y anticommute with X, so negate theta when has_z.
@@ -2493,7 +2494,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         // RY(theta) = exp(-i*theta*Y/2) = [[cos, -sin], [sin, cos]]
         //
         // Push-through: X anticommutes with Y, Z anticommutes with Y, but Y commutes.
@@ -2520,7 +2522,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         // RZ(theta) = diag(e^{-i*theta/2}, e^{i*theta/2})
         //
         // Push-through: X and Y anticommute with Z, so negate theta when has_x.
@@ -2583,7 +2586,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn rxx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta_rad = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RXX requires pairs of qubits"
@@ -2607,7 +2611,7 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
                 let (_, has_z) = self.frames[q2].pauli_xz_bits();
                 flips += has_z as u32;
 
-                let effective_theta = if flips & 1 == 1 { -theta } else { theta };
+                let effective_theta = if flips & 1 == 1 { -theta_rad } else { theta_rad };
                 let half = effective_theta / 2.0;
                 let cos = half.cos();
                 let sin = half.sin();
@@ -2627,7 +2631,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn ryy(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta_rad = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RYY requires pairs of qubits"
@@ -2652,7 +2657,7 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
                 let (has_x, has_z) = self.frames[q2].pauli_xz_bits();
                 flips += (has_x != has_z) as u32;
 
-                let effective_theta = if flips & 1 == 1 { -theta } else { theta };
+                let effective_theta = if flips & 1 == 1 { -theta_rad } else { theta_rad };
                 let half = effective_theta / 2.0;
                 let cos = half.cos();
                 let sin = half.sin();
@@ -2673,7 +2678,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -2710,7 +2716,10 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
+        let phi = phi.to_radians_signed();
+        let lambda = lambda.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
 

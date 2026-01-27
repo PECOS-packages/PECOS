@@ -22,7 +22,7 @@
 use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex;
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_rng::{PecosRng, Rng, SeedableRng};
 use std::fmt::Debug;
 use wide::f32x8;
@@ -1230,7 +1230,8 @@ impl<R> ArbitraryRotationGateable for StateVecSoA32<R>
 where
     R: Rng,
 {
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         let theta = theta as f32;
         let cos_half = (theta / 2.0).cos();
         let sin_half = (theta / 2.0).sin();
@@ -1248,7 +1249,8 @@ where
         self
     }
 
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         let theta = theta as f32;
         let cos_half = (theta / 2.0).cos();
         let sin_half = (theta / 2.0).sin();
@@ -1266,7 +1268,8 @@ where
         self
     }
 
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         let theta = theta as f32;
         let cos_half = (theta / 2.0).cos();
         let sin_half = (theta / 2.0).sin();
@@ -1284,7 +1287,7 @@ where
         self
     }
 
-    fn rxx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         // RXX = exp(-i * theta/2 * XX)
         // Decompose: H-H, CX, RZ, CX, H-H
         debug_assert!(qubits.len() % 2 == 0);
@@ -1300,22 +1303,22 @@ where
         self
     }
 
-    fn ryy(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         // RYY decomposition
         debug_assert!(qubits.len() % 2 == 0);
         for pair in qubits.chunks_exact(2) {
             let q0 = pair[0];
             let q1 = pair[1];
-            self.rx(std::f64::consts::FRAC_PI_2, &[q0, q1]);
+            self.rx(Angle64::QUARTER_TURN, &[q0, q1]);
             self.cx(&[q0, q1]);
             self.rz(theta, &[q1]);
             self.cx(&[q0, q1]);
-            self.rx(-std::f64::consts::FRAC_PI_2, &[q0, q1]);
+            self.rx(-Angle64::QUARTER_TURN, &[q0, q1]);
         }
         self
     }
 
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         // RZZ = exp(-i * theta/2 * ZZ)
         debug_assert!(qubits.len() % 2 == 0);
         for pair in qubits.chunks_exact(2) {

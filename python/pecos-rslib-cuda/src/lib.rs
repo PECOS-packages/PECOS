@@ -15,7 +15,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_cuquantum::{
     is_cuquantum_available as cuquantum_available, ArbitraryRotationGateable, CliffordGateable,
     CuDensityMat, CuStabilizer, CuStateVec, CuTensorNet, QuantumSimulator,
@@ -286,49 +286,49 @@ impl PyCuStateVec {
     /// Apply RX rotation gate.
     fn rx(&mut self, angle: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.rx(angle, &qubits);
+        self.inner.rx(Angle64::from_radians(angle), &qubits);
     }
 
     /// Apply RY rotation gate.
     fn ry(&mut self, angle: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.ry(angle, &qubits);
+        self.inner.ry(Angle64::from_radians(angle), &qubits);
     }
 
     /// Apply RZ rotation gate.
     fn rz(&mut self, angle: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.rz(angle, &qubits);
+        self.inner.rz(Angle64::from_radians(angle), &qubits);
     }
 
     /// Apply RXX rotation gate.
     fn rxx(&mut self, angle: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.rxx(angle, &qubits);
+        self.inner.rxx(Angle64::from_radians(angle), &qubits);
     }
 
     /// Apply RYY rotation gate.
     fn ryy(&mut self, angle: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.ryy(angle, &qubits);
+        self.inner.ryy(Angle64::from_radians(angle), &qubits);
     }
 
     /// Apply RZZ rotation gate.
     fn rzz(&mut self, angle: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.rzz(angle, &qubits);
+        self.inner.rzz(Angle64::from_radians(angle), &qubits);
     }
 
     /// Apply U gate (general single-qubit rotation).
     fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.u(theta, phi, lambda, &qubits);
+        self.inner.u(Angle64::from_radians(theta), Angle64::from_radians(phi), Angle64::from_radians(lambda), &qubits);
     }
 
     /// Apply R1XY gate (rotation in XY plane).
     fn r1xy(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.r1xy(theta, phi, &qubits);
+        self.inner.r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &qubits);
     }
 
     // =========================================================================

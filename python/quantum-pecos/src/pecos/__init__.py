@@ -35,6 +35,7 @@ from pecos_rslib import (
     Array,  # Array type with generic dtype support (Array[f64], etc.)
     BitInt,  # Fixed-width binary integer type
     Nanoseconds,  # Time duration in nanoseconds
+    angle64,  # Fixed-point angle type with exact constants (pi, frac_pi_2, etc.)
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
     TimeUnits,  # Abstract time duration in arbitrary units
@@ -285,6 +286,8 @@ __all__ = [
     "Wat",
     # Version
     "__version__",
+    # Angle type
+    "angle64",
     # Mathematical functions
     "abs",
     "all",

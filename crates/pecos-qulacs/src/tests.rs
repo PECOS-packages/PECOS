@@ -14,7 +14,7 @@
 mod qulacs_tests {
     use crate::QulacsStateVec;
     use num_complex::Complex64;
-    use pecos_core::{RngManageable, qid, qid2};
+    use pecos_core::{Angle64, RngManageable, qid, qid2};
     use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
     use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, PI};
 
@@ -141,7 +141,7 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(1);
 
         // Test RX(π) - Qulacs may use a different phase convention
-        sim.rx(PI, &qid(0));
+        sim.rx(Angle64::from_radians(PI), &qid(0));
         let state = sim.state();
         assert!(state[0].norm() < 1e-10);
         // Check that we're in |1⟩ state (phase may differ between implementations)
@@ -149,7 +149,7 @@ mod qulacs_tests {
 
         // Test RY(π/2) rotation
         sim.reset();
-        sim.ry(FRAC_PI_2, &qid(0));
+        sim.ry(Angle64::from_radians(FRAC_PI_2), &qid(0));
         let state = sim.state();
         assert!((state[0].norm() - FRAC_1_SQRT_2).abs() < 1e-10);
         assert!((state[1].norm() - FRAC_1_SQRT_2).abs() < 1e-10);
@@ -157,7 +157,7 @@ mod qulacs_tests {
         // Test RZ(π) = -Z
         sim.reset();
         sim.h(&qid(0)); // Create |+⟩
-        sim.rz(PI, &qid(0));
+        sim.rz(Angle64::from_radians(PI), &qid(0));
         sim.h(&qid(0)); // Should give |1⟩
         assert!(sim.probability(0) < 1e-10);
         assert!((sim.probability(1) - 1.0).abs() < 1e-10);
@@ -375,7 +375,7 @@ mod qulacs_tests {
         // Apply various gates
         sim.h(&qid(0));
         sim.cx(&qid2(0, 1));
-        sim.ry(FRAC_PI_4, &qid(2));
+        sim.ry(Angle64::from_radians(FRAC_PI_4), &qid(2));
         sim.cz(&qid2(1, 2));
         sim.t(&qid(0));
 

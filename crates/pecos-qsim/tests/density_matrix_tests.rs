@@ -1,4 +1,4 @@
-use pecos_core::{qid, qid2};
+use pecos_core::{Angle64, qid, qid2};
 use pecos_qsim::DensityMatrix;
 use pecos_qsim::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use pecos_qsim::clifford_gateable::CliffordGateable;
@@ -140,7 +140,7 @@ fn test_rotation_gates() {
     let mut dm = DensityMatrix::new(1);
 
     // Apply Rx(pi/2) to |0><0|
-    dm.rx(PI / 2.0, &qid(0));
+    dm.rx(Angle64::from_radians(PI / 2.0), &qid(0));
 
     // Should result in equal superposition in X basis
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
@@ -148,7 +148,7 @@ fn test_rotation_gates() {
 
     // Reset and try Ry
     dm.reset();
-    dm.ry(PI / 2.0, &qid(0));
+    dm.ry(Angle64::from_radians(PI / 2.0), &qid(0));
 
     // Should result in equal superposition in Y basis
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);

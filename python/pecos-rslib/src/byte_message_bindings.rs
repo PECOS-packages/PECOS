@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::dtypes::AngleParam;
 use pecos::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -75,14 +76,14 @@ impl PyByteMessageBuilder {
 
     /// Add an RZ gate to the message
     #[pyo3(text_signature = "($self, theta, qubit)")]
-    fn add_rz(&mut self, theta: f64, qubit: usize) {
-        self.inner.add_rz(theta, &[qubit]);
+    fn add_rz(&mut self, theta: AngleParam, qubit: usize) {
+        self.inner.add_rz(theta.0, &[qubit]);
     }
 
     /// Add an RZZ gate to the message
     #[pyo3(text_signature = "($self, theta, qubit1, qubit2)")]
-    fn add_rzz(&mut self, theta: f64, qubit1: usize, qubit2: usize) {
-        self.inner.add_rzz(theta, &[qubit1], &[qubit2]);
+    fn add_rzz(&mut self, theta: AngleParam, qubit1: usize, qubit2: usize) {
+        self.inner.add_rzz(theta.0, &[qubit1], &[qubit2]);
     }
 
     /// Add an SZZ gate to the message
@@ -93,8 +94,8 @@ impl PyByteMessageBuilder {
 
     /// Add an R1XY gate to the message
     #[pyo3(text_signature = "($self, theta, phi, qubit)")]
-    fn add_r1xy(&mut self, theta: f64, phi: f64, qubit: usize) {
-        self.inner.add_r1xy(theta, phi, &[qubit]);
+    fn add_r1xy(&mut self, theta: AngleParam, phi: AngleParam, qubit: usize) {
+        self.inner.add_r1xy(theta.0, phi.0, &[qubit]);
     }
 
     /// Add a measurement gate to the message

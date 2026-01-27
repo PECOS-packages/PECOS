@@ -210,19 +210,19 @@ impl NoiseUtils {
             // Rotation gates - angles are now stored in gate.angles field
             GateType::RX if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_rx(gate.angles[0].to_radians(), &qubits_usize);
+                builder.add_rx(gate.angles[0], &qubits_usize);
             }
             GateType::RY if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_ry(gate.angles[0].to_radians(), &qubits_usize);
+                builder.add_ry(gate.angles[0], &qubits_usize);
             }
             GateType::RZ if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_rz(gate.angles[0].to_radians(), &qubits_usize);
+                builder.add_rz(gate.angles[0], &qubits_usize);
             }
             GateType::RZZ if gate.qubits.len() >= 2 && !gate.angles.is_empty() => {
                 builder.add_rzz(
-                    gate.angles[0].to_radians(),
+                    gate.angles[0],
                     &[*gate.qubits[0]],
                     &[*gate.qubits[1]],
                 );
@@ -230,17 +230,17 @@ impl NoiseUtils {
             GateType::R1XY if gate.angles.len() >= 2 => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
                 builder.add_r1xy(
-                    gate.angles[0].to_radians(),
-                    gate.angles[1].to_radians(),
+                    gate.angles[0],
+                    gate.angles[1],
                     &qubits_usize,
                 );
             }
             GateType::U if gate.angles.len() >= 3 => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
                 builder.add_u(
-                    gate.angles[0].to_radians(),
-                    gate.angles[1].to_radians(),
-                    gate.angles[2].to_radians(),
+                    gate.angles[0],
+                    gate.angles[1],
+                    gate.angles[2],
                     &qubits_usize,
                 );
             }

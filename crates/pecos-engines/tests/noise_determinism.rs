@@ -11,6 +11,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use log::info;
+use pecos_core::Angle64;
 use pecos_engines::noise::general::GeneralNoiseModel;
 use pecos_engines::quantum::{QuantumEngine, StateVecEngine};
 use pecos_engines::{
@@ -217,10 +218,10 @@ fn test_single_qubit_gate_determinism() {
     for _ in 0..10 {
         // Repeat pattern to increase chance of errors
         builder.add_h(&[0]);
-        builder.add_rz(0.5, &[0]);
-        builder.add_r1xy(0.5, 0.5, &[0]);
+        builder.add_rz(Angle64::from_radians(0.5), &[0]);
+        builder.add_r1xy(Angle64::from_radians(0.5), Angle64::from_radians(0.5), &[0]);
         builder.add_h(&[1]);
-        builder.add_rz(0.5, &[1]);
+        builder.add_rz(Angle64::from_radians(0.5), &[1]);
     }
     let msg = builder.build();
 
@@ -626,26 +627,26 @@ fn test_comprehensive_noise_determinism() {
     // Use 3 qubits
     // Apply a variety of single and two-qubit gates
     builder.add_h(&[0]); // Apply Hadamard to qubit 0
-    builder.add_rz(0.5, &[1]); // Apply RZ to qubit 1
+    builder.add_rz(Angle64::from_radians(0.5), &[1]); // Apply RZ to qubit 1
     builder.add_cx(&[0], &[1]); // Apply CNOT from qubit 0 to qubit 1
     builder.add_h(&[2]); // Apply Hadamard to qubit 2
     builder.add_cx(&[1], &[2]); // Apply CNOT from qubit 1 to qubit 2
 
     // RX and RY gates can be implemented using H-RZ-H and other combinations
     builder.add_h(&[0]); // Start of RX implementation
-    builder.add_rz(0.25, &[0]);
+    builder.add_rz(Angle64::from_radians(0.25), &[0]);
     builder.add_h(&[0]); // End of RX implementation
 
     builder.add_h(&[1]); // Start of RY approximation
     builder.add_z(&[1]);
-    builder.add_rz(0.33, &[1]);
+    builder.add_rz(Angle64::from_radians(0.33), &[1]);
     builder.add_z(&[1]);
     builder.add_h(&[1]); // End of RY approximation
 
     builder.add_x(&[2]); // Apply X to qubit 2
     builder.add_y(&[0]); // Apply Y to qubit 0
     builder.add_z(&[1]); // Apply Z to qubit 1
-    builder.add_rzz(0.75, &[0], &[2]); // Apply RZZ to qubits 0 and 2
+    builder.add_rzz(Angle64::from_radians(0.75), &[0], &[2]); // Apply RZZ to qubits 0 and 2
     builder.add_cx(&[2], &[0]); // Apply CNOT from qubit 2 to qubit 0
 
     // Add measurements for all qubits
@@ -762,25 +763,25 @@ fn test_long_running_determinism() {
     for i in 0..100 {
         // 100 repetitions of 5+ operations = 500+ operations total
         // Rotate each qubit differently based on iteration
-        builder.add_rz(0.01 * f64::from(i as u32), &[0]);
+        builder.add_rz(Angle64::from_radians(0.01 * f64::from(i as u32)), &[0]);
 
         // Implement RX using H-RZ-H
         builder.add_h(&[1]);
-        builder.add_rz(0.02 * f64::from(i as u32), &[1]);
+        builder.add_rz(Angle64::from_radians(0.02 * f64::from(i as u32)), &[1]);
         builder.add_h(&[1]);
 
         // Implement RY using H-Z-RZ-Z-H
         builder.add_h(&[2]);
         builder.add_z(&[2]);
-        builder.add_rz(0.03 * f64::from(i as u32), &[2]);
+        builder.add_rz(Angle64::from_radians(0.03 * f64::from(i as u32)), &[2]);
         builder.add_z(&[2]);
         builder.add_h(&[2]);
 
-        builder.add_rz(0.04 * f64::from(i as u32), &[3]);
+        builder.add_rz(Angle64::from_radians(0.04 * f64::from(i as u32)), &[3]);
 
         // Another RX implementation
         builder.add_h(&[4]);
-        builder.add_rz(0.05 * f64::from(i as u32), &[4]);
+        builder.add_rz(Angle64::from_radians(0.05 * f64::from(i as u32)), &[4]);
         builder.add_h(&[4]);
 
         // Add entangling operations that change with iteration

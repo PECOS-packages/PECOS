@@ -11,9 +11,8 @@
 // the License.
 
 use crate::CliffordGateable;
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use smallvec::SmallVec;
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
 /// Stack-allocated qubit buffer for small batches (up to 8 qubits).
 type QubitBuf = SmallVec<[QubitId; 8]>;
@@ -44,12 +43,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///              [-i*sin(theta/2), cos(theta/2)]]
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle in radians.
+    /// - `theta`: The rotation angle.
     /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self;
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a rotation around the Y-axis by an angle `theta`.
     ///
@@ -62,13 +61,13 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// RY(theta) = S * RX(theta) * S^dagger
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle in radians.
+    /// - `theta`: The rotation angle.
     /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         self.szdg(qubits).rx(theta, qubits).sz(qubits)
     }
 
@@ -80,12 +79,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///              [0, cos(theta/2)+i*sin(theta/2)]]
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle in radians.
+    /// - `theta`: The rotation angle.
     /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self;
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a general single-qubit unitary U(theta, phi, lambda) gate.
     ///
@@ -95,15 +94,15 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// By default, this is implemented in terms of `rz` and `ry` gates.
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle around the Y-axis in radians.
-    /// - `phi`: The first Z-axis rotation angle in radians.
-    /// - `lambda`: The second Z-axis rotation angle in radians.
+    /// - `theta`: The rotation angle around the Y-axis.
+    /// - `phi`: The first Z-axis rotation angle.
+    /// - `lambda`: The second Z-axis rotation angle.
     /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
         self.rz(lambda, qubits).ry(theta, qubits).rz(phi, qubits)
     }
 
@@ -112,17 +111,17 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// By default, this is implemented in terms of `rz` and `ry` gates.
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle in radians.
-    /// - `phi`: The axis angle in radians.
+    /// - `theta`: The rotation angle.
+    /// - `phi`: The axis angle.
     /// - `qubits`: The target qubit indices.
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn r1xy(&mut self, theta: f64, phi: f64, qubits: &[QubitId]) -> &mut Self {
-        self.rz(-phi + FRAC_PI_2, qubits)
+    fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+        self.rz(-phi + Angle64::QUARTER_TURN, qubits)
             .ry(theta, qubits)
-            .rz(phi - FRAC_PI_2, qubits)
+            .rz(phi - Angle64::QUARTER_TURN, qubits)
     }
 
     /// Applies the T gate (pi/8 rotation around Z-axis).
@@ -134,7 +133,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// A mutable reference to `Self` for method chaining.
     #[inline]
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.rz(FRAC_PI_4, qubits)
+        self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
     }
 
     /// Applies the T^dagger (T-dagger) gate (-pi/8 rotation around Z-axis).
@@ -146,7 +145,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// A mutable reference to `Self` for method chaining.
     #[inline]
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.rz(-FRAC_PI_4, qubits)
+        self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Applies a two-qubit XX rotation gate.
@@ -156,13 +155,13 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// By default, this is implemented in terms of Hadamard (`h`) and ZZ rotation (`rzz`) gates.
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle in radians.
+    /// - `theta`: The rotation angle.
     /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn rxx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RXX requires pairs of qubits"
@@ -185,13 +184,13 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// By default, this is implemented in terms of SX and ZZ rotation (`rzz`) gates.
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle in radians.
+    /// - `theta`: The rotation angle.
     /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn ryy(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RYY requires pairs of qubits"
@@ -228,19 +227,19 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// ```
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle in radians.
+    /// - `theta`: The rotation angle.
     /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self;
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a composite rotation gate using RXX, RYY, and RZZ gates.
     ///
     /// # Parameters
-    /// - `theta`: The rotation angle for the RXX gate in radians.
-    /// - `phi`: The rotation angle for the RYY gate in radians.
-    /// - `lambda`: The rotation angle for the RZZ gate in radians.
+    /// - `theta`: The rotation angle for the RXX gate.
+    /// - `phi`: The rotation angle for the RYY gate.
+    /// - `lambda`: The rotation angle for the RZZ gate.
     /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
     ///
     /// # Returns
@@ -249,7 +248,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// # Note
     /// The current implementation might have a reversed order of operations.
     #[inline]
-    fn rzzryyrxx(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzzryyrxx(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
         self.rxx(theta, qubits).ryy(phi, qubits).rzz(lambda, qubits)
     }
 }

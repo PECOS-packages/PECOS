@@ -29,7 +29,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use num_complex::Complex64;
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 #[cfg(feature = "cuda")]
 use pecos_quest::QuantumSimulator;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuestDensityMatrix, QuestStateVec};
@@ -206,12 +206,13 @@ impl QuestSimulatorInner {
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn rz(&mut self, theta: f64, qubit: usize) {
         let q = QubitId(qubit);
+        let angle = Angle64::from_radians(theta);
         match self {
             Self::StateVector(sim) => {
-                sim.rz(theta, &[q]);
+                sim.rz(angle, &[q]);
             }
             Self::DensityMatrix(sim) => {
-                sim.rz(theta, &[q]);
+                sim.rz(angle, &[q]);
             }
             #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => unsafe {
@@ -227,12 +228,13 @@ impl QuestSimulatorInner {
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn rx(&mut self, theta: f64, qubit: usize) {
         let q = QubitId(qubit);
+        let angle = Angle64::from_radians(theta);
         match self {
             Self::StateVector(sim) => {
-                sim.rx(theta, &[q]);
+                sim.rx(angle, &[q]);
             }
             Self::DensityMatrix(sim) => {
-                sim.rx(theta, &[q]);
+                sim.rx(angle, &[q]);
             }
             #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => unsafe {

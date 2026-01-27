@@ -1,6 +1,6 @@
 //! Basic tests for the `QuEST` wrapper using PECOS-style API
 
-use pecos_core::{qid, qid2};
+use pecos_core::{Angle64, qid, qid2};
 use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
 use pecos_rng::PecosRng;
@@ -217,18 +217,18 @@ fn test_rotation_gates() {
     let mut state = QuestStateVec::new(1);
 
     // RX(π) = -iX, so RX(π)|0> should give |1>
-    state.rx(PI, &qid(0));
+    state.rx(Angle64::from_radians(PI), &qid(0));
     assert_relative_eq!(state.probability(0), 0.0, epsilon = 1e-10);
     assert_relative_eq!(state.probability(1), 1.0, epsilon = 1e-10);
 
     // RZ doesn't change computational basis probabilities
     state.reset();
-    state.rz(PI / 2.0, &qid(0));
+    state.rz(Angle64::from_radians(PI / 2.0), &qid(0));
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 
     // RY(π/2) should create superposition
     state.reset();
-    state.ry(PI / 2.0, &qid(0));
+    state.ry(Angle64::from_radians(PI / 2.0), &qid(0));
     assert_relative_eq!(state.probability(0), 0.5, epsilon = 1e-10);
     assert_relative_eq!(state.probability(1), 0.5, epsilon = 1e-10);
 }
@@ -253,12 +253,12 @@ fn test_rzz_gate() {
     let mut state = QuestStateVec::new(2);
 
     // RZZ doesn't change computational basis probabilities
-    state.rzz(PI / 2.0, &qid2(0, 1));
+    state.rzz(Angle64::from_radians(PI / 2.0), &qid2(0, 1));
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 
     // Test on |11> state
     state.prepare_computational_basis(0b11);
-    state.rzz(PI / 2.0, &qid2(0, 1));
+    state.rzz(Angle64::from_radians(PI / 2.0), &qid2(0, 1));
     assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10);
 }
 
@@ -272,7 +272,7 @@ fn test_method_chaining() {
         .h(&qid(0))
         .cx(&qid2(0, 1))
         .z(&qid(1))
-        .rx(std::f64::consts::PI / 4.0, &qid(0));
+        .rx(Angle64::from_radians(std::f64::consts::PI / 4.0), &qid(0));
 
     // Just verify it compiles and runs
     assert_eq!(state.num_qubits(), 2);

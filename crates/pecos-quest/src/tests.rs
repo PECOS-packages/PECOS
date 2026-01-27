@@ -5,7 +5,7 @@ use crate::{QuestDensityMatrix, QuestStateVec};
 #[cfg(test)]
 use num_complex::Complex64;
 #[cfg(test)]
-use pecos_core::{qid, qid2};
+use pecos_core::{Angle64, qid, qid2};
 #[cfg(test)]
 use pecos_num::assert_relative_eq;
 #[cfg(test)]
@@ -199,21 +199,22 @@ fn test_rotation_gates() {
     let mut sim = QuestStateVec::new(1);
 
     // Test Rx(π) = X
-    sim.rx(PI, &qid(0));
+    sim.rx(Angle64::from_radians(PI), &qid(0));
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), 1e-9);
     assert_complex_eq(sim.get_amplitude(1), Complex64::new(0.0, -1.0), 1e-9); // Note: -i|1⟩ due to phase
 
     sim.reset();
 
     // Test Ry(π) = Y (up to global phase)
-    sim.ry(PI, &qid(0));
+    sim.ry(Angle64::from_radians(PI), &qid(0));
     assert_complex_eq(sim.get_amplitude(0), Complex64::new(0.0, 0.0), 1e-9);
     assert_complex_eq(sim.get_amplitude(1), Complex64::new(1.0, 0.0), 1e-9);
 
     sim.reset();
 
     // Test Rz(π) on |+⟩ state
-    sim.h(&qid(0)).rz(PI, &qid(0));
+    sim.h(&qid(0))
+        .rz(Angle64::from_radians(PI), &qid(0));
     // QuEST uses the convention RZ(θ) = diag(e^(-iθ/2), e^(iθ/2))
     // So RZ(π) on |+⟩ gives (e^(-iπ/2)|0⟩ + e^(iπ/2)|1⟩)/√2 = (-i|0⟩ + i|1⟩)/√2
     let sqrt2_inv = 1.0 / 2.0_f64.sqrt();
@@ -390,7 +391,7 @@ fn test_rzz_gate() {
     sim.x(&qid(0)).x(&qid(1));
 
     // Apply RZZ(π/2)
-    sim.rzz(FRAC_PI_2, &qid2(0, 1));
+    sim.rzz(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
 
     // QuEST's RZZ appears to apply a different scaling
     // RZZ(π/2) on |11⟩ gives phase -π instead of -π/4

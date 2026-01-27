@@ -1,4 +1,4 @@
-use pecos_core::qid;
+use pecos_core::{Angle64, qid};
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuestStateVec};
 use std::f64::consts::PI;
 
@@ -8,7 +8,7 @@ fn main() {
     // Test 1: Apply RZ(π) to |0⟩
     println!("\nTest 1: RZ(π) on |0⟩");
     let mut sim = QuestStateVec::new(1);
-    sim.rz(PI, &qid(0));
+    sim.rz(Angle64::from_radians(PI), &qid(0));
     println!("|0⟩ amplitude: {:?}", sim.get_amplitude(0));
     println!("|1⟩ amplitude: {:?}", sim.get_amplitude(1));
 
@@ -16,7 +16,7 @@ fn main() {
     println!("\nTest 2: RZ(π) on |1⟩");
     let mut sim = QuestStateVec::new(1);
     sim.x(&qid(0)); // Create |1⟩
-    sim.rz(PI, &qid(0));
+    sim.rz(Angle64::from_radians(PI), &qid(0));
     println!("|0⟩ amplitude: {:?}", sim.get_amplitude(0));
     println!("|1⟩ amplitude: {:?}", sim.get_amplitude(1));
 
@@ -28,7 +28,7 @@ fn main() {
     println!("|0⟩ amplitude: {:?}", sim.get_amplitude(0));
     println!("|1⟩ amplitude: {:?}", sim.get_amplitude(1));
 
-    sim.rz(PI, &qid(0));
+    sim.rz(Angle64::from_radians(PI), &qid(0));
     println!("After RZ(π):");
     println!("|0⟩ amplitude: {:?}", sim.get_amplitude(0));
     println!("|1⟩ amplitude: {:?}", sim.get_amplitude(1));

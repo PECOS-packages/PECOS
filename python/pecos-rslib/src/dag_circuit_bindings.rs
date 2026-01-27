@@ -22,6 +22,7 @@
 //! This module provides Python bindings for `DagCircuit`, `Gate`, `GateType`, and `QubitId`
 //! from the pecos-quantum crate, as well as HUGR conversion utilities.
 
+use crate::dtypes::AngleParam;
 use pecos::core::{Angle64, Nanoseconds, TimeUnits};
 use pecos::quantum::{Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit};
 use pyo3::prelude::*;
@@ -599,76 +600,67 @@ impl PyGate {
 
     /// Create an RX gate.
     #[staticmethod]
-    fn rx(angle: f64, qubits: Vec<usize>) -> Self {
+    fn rx(angle: AngleParam, qubits: Vec<usize>) -> Self {
         Self {
-            inner: Gate::rx(Angle64::from_radians(angle), &qubits),
+            inner: Gate::rx(angle.0, &qubits),
         }
     }
 
     /// Create an RY gate.
     #[staticmethod]
-    fn ry(angle: f64, qubits: Vec<usize>) -> Self {
+    fn ry(angle: AngleParam, qubits: Vec<usize>) -> Self {
         Self {
-            inner: Gate::ry(Angle64::from_radians(angle), &qubits),
+            inner: Gate::ry(angle.0, &qubits),
         }
     }
 
     /// Create an RZ gate.
     #[staticmethod]
-    fn rz(angle: f64, qubits: Vec<usize>) -> Self {
+    fn rz(angle: AngleParam, qubits: Vec<usize>) -> Self {
         Self {
-            inner: Gate::rz(Angle64::from_radians(angle), &qubits),
+            inner: Gate::rz(angle.0, &qubits),
         }
     }
 
     /// Create an RXX gate.
     #[staticmethod]
-    fn rxx(angle: f64, pairs: Vec<(usize, usize)>) -> Self {
+    fn rxx(angle: AngleParam, pairs: Vec<(usize, usize)>) -> Self {
         Self {
-            inner: Gate::rxx(Angle64::from_radians(angle), &pairs),
+            inner: Gate::rxx(angle.0, &pairs),
         }
     }
 
     /// Create an RYY gate.
     #[staticmethod]
-    fn ryy(angle: f64, pairs: Vec<(usize, usize)>) -> Self {
+    fn ryy(angle: AngleParam, pairs: Vec<(usize, usize)>) -> Self {
         Self {
-            inner: Gate::ryy(Angle64::from_radians(angle), &pairs),
+            inner: Gate::ryy(angle.0, &pairs),
         }
     }
 
     /// Create an RZZ gate.
     #[staticmethod]
     #[pyo3(name = "rzz")]
-    fn rzz_gate(angle: f64, pairs: Vec<(usize, usize)>) -> Self {
+    fn rzz_gate(angle: AngleParam, pairs: Vec<(usize, usize)>) -> Self {
         Self {
-            inner: Gate::rzz(Angle64::from_radians(angle), &pairs),
+            inner: Gate::rzz(angle.0, &pairs),
         }
     }
 
     /// Create an R1XY gate.
     #[staticmethod]
-    fn r1xy(theta: f64, phi: f64, qubits: Vec<usize>) -> Self {
+    fn r1xy(theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) -> Self {
         Self {
-            inner: Gate::r1xy(
-                Angle64::from_radians(theta),
-                Angle64::from_radians(phi),
-                &qubits,
-            ),
+            inner: Gate::r1xy(theta.0, phi.0, &qubits),
         }
     }
 
     /// Create a U gate.
     #[staticmethod]
     #[pyo3(name = "u")]
-    fn u_gate(theta: f64, phi: f64, lam: f64, qubits: Vec<usize>) -> Self {
+    fn u_gate(theta: AngleParam, phi: AngleParam, lam: AngleParam, qubits: Vec<usize>) -> Self {
         Self {
-            inner: Gate::u(
-                Angle64::from_radians(theta),
-                Angle64::from_radians(phi),
-                Angle64::from_radians(lam),
-                &qubits,
-            ),
+            inner: Gate::u(theta.0, phi.0, lam.0, &qubits),
         }
     }
 
@@ -1034,43 +1026,41 @@ impl PyDagCircuit {
     /// Apply an RX rotation gate.
     ///
     /// Args:
-    ///     theta: Rotation angle in radians.
+    ///     theta: Rotation angle (angle64 or float radians).
     ///     q: The qubit to rotate.
-    fn rx(slf: Py<Self>, py: Python<'_>, theta: f64, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.rx(Angle64::from_radians(theta), q);
+    fn rx(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> Py<Self> {
+        slf.borrow_mut(py).inner.rx(theta.0, q);
         slf
     }
 
     /// Apply an RY rotation gate.
     ///
     /// Args:
-    ///     theta: Rotation angle in radians.
+    ///     theta: Rotation angle (angle64 or float radians).
     ///     q: The qubit to rotate.
-    fn ry(slf: Py<Self>, py: Python<'_>, theta: f64, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.ry(Angle64::from_radians(theta), q);
+    fn ry(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> Py<Self> {
+        slf.borrow_mut(py).inner.ry(theta.0, q);
         slf
     }
 
     /// Apply an RZ rotation gate.
     ///
     /// Args:
-    ///     theta: Rotation angle in radians.
+    ///     theta: Rotation angle (angle64 or float radians).
     ///     q: The qubit to rotate.
-    fn rz(slf: Py<Self>, py: Python<'_>, theta: f64, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.rz(Angle64::from_radians(theta), q);
+    fn rz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> Py<Self> {
+        slf.borrow_mut(py).inner.rz(theta.0, q);
         slf
     }
 
     /// Apply an RZZ rotation gate.
     ///
     /// Args:
-    ///     theta: Rotation angle in radians.
+    ///     theta: Rotation angle (angle64 or float radians).
     ///     q1: First qubit.
     ///     q2: Second qubit.
-    fn rzz(slf: Py<Self>, py: Python<'_>, theta: f64, q1: usize, q2: usize) -> Py<Self> {
-        slf.borrow_mut(py)
-            .inner
-            .rzz(Angle64::from_radians(theta), q1, q2);
+    fn rzz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q1: usize, q2: usize) -> Py<Self> {
+        slf.borrow_mut(py).inner.rzz(theta.0, q1, q2);
         slf
     }
 
@@ -2356,40 +2346,36 @@ impl PyTickHandle {
     }
 
     /// Apply an RX rotation.
-    fn rx(slf: Py<Self>, py: Python<'_>, theta: f64, q: usize) -> PyResult<Py<Self>> {
+    fn rx(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::rx(Angle64::from_radians(theta), &[q]))?;
+            .add_gate_internal(py, Gate::rx(theta.0, &[q]))?;
         Ok(slf)
     }
 
     /// Apply an RY rotation.
-    fn ry(slf: Py<Self>, py: Python<'_>, theta: f64, q: usize) -> PyResult<Py<Self>> {
+    fn ry(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::ry(Angle64::from_radians(theta), &[q]))?;
+            .add_gate_internal(py, Gate::ry(theta.0, &[q]))?;
         Ok(slf)
     }
 
     /// Apply an RZ rotation.
-    fn rz(slf: Py<Self>, py: Python<'_>, theta: f64, q: usize) -> PyResult<Py<Self>> {
+    fn rz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::rz(Angle64::from_radians(theta), &[q]))?;
+            .add_gate_internal(py, Gate::rz(theta.0, &[q]))?;
         Ok(slf)
     }
 
     /// Apply an R1XY rotation (single-qubit gate with two angle parameters).
     ///
     /// Args:
-    ///     theta: First rotation angle in radians.
-    ///     phi: Second rotation angle in radians.
+    ///     theta: First rotation angle (angle64 or float radians).
+    ///     phi: Second rotation angle (angle64 or float radians).
     ///     q: The qubit to rotate.
-    fn r1xy(slf: Py<Self>, py: Python<'_>, theta: f64, phi: f64, q: usize) -> PyResult<Py<Self>> {
+    fn r1xy(slf: Py<Self>, py: Python<'_>, theta: AngleParam, phi: AngleParam, q: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py).add_gate_internal(
             py,
-            Gate::r1xy(
-                Angle64::from_radians(theta),
-                Angle64::from_radians(phi),
-                &[q],
-            ),
+            Gate::r1xy(theta.0, phi.0, &[q]),
         )?;
         Ok(slf)
     }
@@ -2397,27 +2383,22 @@ impl PyTickHandle {
     /// Apply a U gate (general single-qubit unitary with three angle parameters).
     ///
     /// Args:
-    ///     theta: First rotation angle in radians.
-    ///     phi: Second rotation angle in radians.
-    ///     lam: Third rotation angle (lambda) in radians.
+    ///     theta: First rotation angle (angle64 or float radians).
+    ///     phi: Second rotation angle (angle64 or float radians).
+    ///     lam: Third rotation angle (angle64 or float radians).
     ///     q: The qubit to rotate.
     #[pyo3(name = "u")]
     fn u_gate(
         slf: Py<Self>,
         py: Python<'_>,
-        theta: f64,
-        phi: f64,
-        lam: f64,
+        theta: AngleParam,
+        phi: AngleParam,
+        lam: AngleParam,
         q: usize,
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py).add_gate_internal(
             py,
-            Gate::u(
-                Angle64::from_radians(theta),
-                Angle64::from_radians(phi),
-                Angle64::from_radians(lam),
-                &[q],
-            ),
+            Gate::u(theta.0, phi.0, lam.0, &[q]),
         )?;
         Ok(slf)
     }
@@ -2462,23 +2443,23 @@ impl PyTickHandle {
     }
 
     /// Apply an RXX rotation.
-    fn rxx(slf: Py<Self>, py: Python<'_>, theta: f64, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn rxx(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q1: usize, q2: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::rxx(Angle64::from_radians(theta), &[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::rxx(theta.0, &[(q1, q2)]))?;
         Ok(slf)
     }
 
     /// Apply an RYY rotation.
-    fn ryy(slf: Py<Self>, py: Python<'_>, theta: f64, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn ryy(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q1: usize, q2: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::ryy(Angle64::from_radians(theta), &[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::ryy(theta.0, &[(q1, q2)]))?;
         Ok(slf)
     }
 
     /// Apply an RZZ rotation.
-    fn rzz(slf: Py<Self>, py: Python<'_>, theta: f64, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn rzz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q1: usize, q2: usize) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::rzz(Angle64::from_radians(theta), &[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::rzz(theta.0, &[(q1, q2)]))?;
         Ok(slf)
     }
 

@@ -90,7 +90,7 @@ use crate::noise::weighted_sampler::{
 };
 use crate::noise::{NoiseModel, RngManageable};
 use log::trace;
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_core::errors::PecosError;
 use pecos_rng::PecosRng;
 use std::any::Any;
@@ -844,7 +844,7 @@ impl GeneralNoiseModel {
             }
             if !noisy_qubits.is_empty() {
                 if self.p_idle_coherent {
-                    builder.add_rz(angle, &noisy_qubits);
+                    builder.add_rz(Angle64::from_radians(angle), &noisy_qubits);
                 } else {
                     builder.add_z(&noisy_qubits);
                 }

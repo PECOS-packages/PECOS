@@ -23,7 +23,7 @@
 //! - **License:** MIT License
 
 use anyhow::{Result, anyhow, bail};
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_qulacs::QulacsStateVec;
 use pecos_rng::PecosRng;
@@ -107,7 +107,10 @@ impl SimulatorInterface for QulacsSimulator {
         // RXY(theta, phi) = Rz(phi) * Rx(theta) * Rz(-phi)
         // Gates are applied left-to-right in code but the matrix multiplication
         // is right-to-left, so we apply Rz(-phi) first
-        self.simulator.rz(-phi, &[q]).rx(theta, &[q]).rz(phi, &[q]);
+        self.simulator
+            .rz(Angle64::from_radians(-phi), &[q])
+            .rx(Angle64::from_radians(theta), &[q])
+            .rz(Angle64::from_radians(phi), &[q]);
 
         Ok(())
     }
@@ -122,7 +125,7 @@ impl SimulatorInterface for QulacsSimulator {
         }
 
         self.simulator
-            .rz(theta, &[QubitId(self.convert_qubit(qubit))]);
+            .rz(Angle64::from_radians(theta), &[QubitId(self.convert_qubit(qubit))]);
         Ok(())
     }
 
@@ -140,7 +143,7 @@ impl SimulatorInterface for QulacsSimulator {
 
         // PECOS Qulacs's rzz is implemented correctly using CX decomposition
         // RZZ(theta) = CX(q1, q2) * Rz(theta, q2) * CX(q1, q2)
-        self.simulator.rzz(theta, &[q1, q2]);
+        self.simulator.rzz(Angle64::from_radians(theta), &[q1, q2]);
 
         Ok(())
     }

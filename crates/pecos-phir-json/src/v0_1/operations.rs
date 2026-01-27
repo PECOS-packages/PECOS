@@ -3,6 +3,7 @@ use crate::v0_1::environment::{DataType, Environment, TypedValue};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
 use log::debug;
+use pecos_core::Angle64;
 use pecos_core::errors::PecosError;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1564,10 +1565,10 @@ impl OperationProcessor {
     ) -> Result<(), PecosError> {
         match gate_type {
             "RZ" => {
-                builder.add_rz(angle_args[0], &[qubit_args[0]]);
+                builder.add_rz(Angle64::from_radians(angle_args[0]), &[qubit_args[0]]);
             }
             "R1XY" => {
-                builder.add_r1xy(angle_args[0], angle_args[1], &[qubit_args[0]]);
+                builder.add_r1xy(Angle64::from_radians(angle_args[0]), Angle64::from_radians(angle_args[1]), &[qubit_args[0]]);
             }
             "SZZ" => {
                 builder.add_szz(&[qubit_args[0]], &[qubit_args[1]]);

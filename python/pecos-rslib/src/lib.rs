@@ -416,6 +416,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("f64", dtypes.getattr("f64")?.getattr("type")?)?;
     m.add("complex64", dtypes.getattr("complex64")?.getattr("type")?)?;
     m.add("complex128", dtypes.getattr("complex128")?.getattr("type")?)?;
+    m.add("angle64", m.py().get_type::<dtypes::ScalarAngle64>())?;
 
     // Note: Type aliases (Integer, Float, Complex, etc.) are now defined in quantum-pecos
     // (pecos.typing module) as they are Python TypeAlias constructs, not Rust types.

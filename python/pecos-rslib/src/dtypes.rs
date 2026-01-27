@@ -25,6 +25,7 @@
 #![allow(clippy::wrong_self_convention)] // to_* methods are correct in this context
 
 use num_complex::Complex64;
+use pecos::core::Angle64;
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -3880,6 +3881,248 @@ impl ScalarComplex128 {
     }
 }
 
+/// Rust-backed angle64 scalar (fixed-point angle with u64 precision)
+#[pyclass(name = "angle64", module = "pecos_rslib.dtypes")]
+#[derive(Debug, Clone, Copy)]
+pub struct ScalarAngle64 {
+    value: Angle64,
+}
+
+#[pymethods]
+impl ScalarAngle64 {
+    /// Item size in bytes
+    #[classattr]
+    #[allow(non_upper_case_globals)]
+    const itemsize: usize = 8;
+
+    /// Create from a raw u64 fraction (fraction of a full turn)
+    #[new]
+    fn new(fraction: u64) -> Self {
+        Self {
+            value: Angle64::new(fraction),
+        }
+    }
+
+    /// Create from radians
+    #[staticmethod]
+    fn from_radians(radians: f64) -> Self {
+        Self {
+            value: Angle64::from_radians(radians),
+        }
+    }
+
+    /// Create from turns (0.0 = 0, 0.5 = half turn, 1.0 = full turn)
+    #[staticmethod]
+    fn from_turns(turns: f64) -> Self {
+        Self {
+            value: Angle64::from_turns(turns),
+        }
+    }
+
+    /// Convert to radians (unsigned, in [0, 2pi))
+    fn to_radians(&self) -> f64 {
+        self.value.to_radians()
+    }
+
+    /// Convert to signed radians (in (-pi, pi])
+    fn to_radians_signed(&self) -> f64 {
+        self.value.to_radians_signed()
+    }
+
+    /// Get the raw u64 fraction
+    #[getter]
+    fn fraction(&self) -> u64 {
+        self.value.fraction()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("angle64({:#x})", self.value.fraction())
+    }
+
+    fn __str__(&self) -> String {
+        format!("{:.6} rad", self.value.to_radians())
+    }
+
+    fn __float__(&self) -> f64 {
+        self.value.to_radians()
+    }
+
+    // -- Arithmetic --
+
+    fn __neg__(&self) -> Self {
+        Self { value: -self.value }
+    }
+
+    fn __add__(&self, other: &Self) -> Self {
+        Self {
+            value: self.value + other.value,
+        }
+    }
+
+    fn __sub__(&self, other: &Self) -> Self {
+        Self {
+            value: self.value - other.value,
+        }
+    }
+
+    fn __mul__(&self, rhs: u64) -> Self {
+        Self {
+            value: self.value * rhs,
+        }
+    }
+
+    fn __rmul__(&self, lhs: u64) -> Self {
+        Self {
+            value: self.value * lhs,
+        }
+    }
+
+    fn __truediv__(&self, rhs: u64) -> Self {
+        Self {
+            value: self.value / rhs,
+        }
+    }
+
+    fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+        match op {
+            CompareOp::Eq => self.value == other.value,
+            CompareOp::Ne => self.value != other.value,
+            CompareOp::Lt => self.value < other.value,
+            CompareOp::Le => self.value <= other.value,
+            CompareOp::Gt => self.value > other.value,
+            CompareOp::Ge => self.value >= other.value,
+        }
+    }
+
+    fn __hash__(&self) -> u64 {
+        self.value.fraction()
+    }
+
+    // -- Radian-named constants (mirrors f64 constants) --
+
+    #[classattr]
+    fn pi() -> Self {
+        Self {
+            value: Angle64::HALF_TURN,
+        }
+    }
+
+    #[classattr]
+    fn tau() -> Self {
+        Self {
+            value: Angle64::ZERO,
+        }
+    } // 2pi wraps to 0
+
+    #[classattr]
+    fn frac_pi_2() -> Self {
+        Self {
+            value: Angle64::QUARTER_TURN,
+        }
+    }
+
+    #[classattr]
+    fn frac_pi_3() -> Self {
+        Self {
+            value: Angle64::new(Angle64::HALF_TURN.fraction() / 3),
+        }
+    }
+
+    #[classattr]
+    fn frac_pi_4() -> Self {
+        Self {
+            value: Angle64::new(Angle64::QUARTER_TURN.fraction() / 2),
+        }
+    }
+
+    #[classattr]
+    fn frac_pi_6() -> Self {
+        Self {
+            value: Angle64::new(Angle64::QUARTER_TURN.fraction() / 3),
+        }
+    }
+
+    #[classattr]
+    fn frac_pi_8() -> Self {
+        Self {
+            value: Angle64::new(Angle64::QUARTER_TURN.fraction() / 4),
+        }
+    }
+
+    // -- Turn-named constants --
+
+    #[classattr]
+    fn zero() -> Self {
+        Self {
+            value: Angle64::ZERO,
+        }
+    }
+
+    #[classattr]
+    fn quarter_turn() -> Self {
+        Self {
+            value: Angle64::QUARTER_TURN,
+        }
+    }
+
+    #[classattr]
+    fn half_turn() -> Self {
+        Self {
+            value: Angle64::HALF_TURN,
+        }
+    }
+
+    #[classattr]
+    fn three_quarter_turn() -> Self {
+        Self {
+            value: Angle64::THREE_QUARTERS_TURN,
+        }
+    }
+
+    // -- Trig --
+
+    fn sin(&self) -> f64 {
+        self.value.sin()
+    }
+
+    fn cos(&self) -> f64 {
+        self.value.cos()
+    }
+}
+
+impl ScalarAngle64 {
+    pub fn from_angle64(value: Angle64) -> Self {
+        Self { value }
+    }
+
+    pub fn inner(&self) -> Angle64 {
+        self.value
+    }
+}
+
+/// Wrapper for extracting angle parameters from Python.
+///
+/// Accepts either a `ScalarAngle64` (exact fixed-point) or a plain `f64` (radians).
+/// This allows Python code to pass either `pc.angle64.pi` or `3.14159` wherever an
+/// angle is expected.
+pub struct AngleParam(pub Angle64);
+
+impl<'a, 'py> pyo3::FromPyObject<'a, 'py> for AngleParam {
+    type Error = PyErr;
+
+    fn extract(ob: pyo3::Borrowed<'a, 'py, pyo3::PyAny>) -> PyResult<Self> {
+        if let Ok(sa) = ob.extract::<ScalarAngle64>() {
+            Ok(Self(sa.inner()))
+        } else if let Ok(f) = ob.extract::<f64>() {
+            Ok(Self(Angle64::from_radians(f)))
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "expected angle64 or float for angle parameter",
+            ))
+        }
+    }
+}
+
 /// Module constants for dtype singletons
 pub fn register_dtypes_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let dtypes = PyModule::new(parent_module.py(), "dtypes")?;
@@ -3903,6 +4146,8 @@ pub fn register_dtypes_module(parent_module: &Bound<'_, PyModule>) -> PyResult<(
     dtypes.add_class::<ScalarF32>()?;
     // Complex
     dtypes.add_class::<ScalarComplex128>()?;
+    // Angles
+    dtypes.add_class::<ScalarAngle64>()?;
 
     // Create singleton instances for each dtype (Rust-based names)
     dtypes.add("bool", DType::Bool)?;

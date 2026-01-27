@@ -1,3 +1,4 @@
+use pecos_core::Angle64;
 use pecos_qsim::ArbitraryRotationGateable;
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::DensityMatrix;
@@ -330,19 +331,19 @@ fn test_complex_circuit_consistency() {
 fn test_non_clifford_circuits() {
     // Test rotation gates (only StateVec and DensityMatrix)
     compare_general_circuit(1, |sv, dm| {
-        sv.rx(PI / 4.0, &qid(0));
-        dm.rx(PI / 4.0, &qid(0));
+        sv.rx(Angle64::from_radians(PI / 4.0), &qid(0));
+        dm.rx(Angle64::from_radians(PI / 4.0), &qid(0));
     });
 
     compare_general_circuit(1, |sv, dm| {
-        sv.rz(PI / 3.0, &qid(0));
-        dm.rz(PI / 3.0, &qid(0));
+        sv.rz(Angle64::from_radians(PI / 3.0), &qid(0));
+        dm.rz(Angle64::from_radians(PI / 3.0), &qid(0));
     });
 
     // Test two-qubit rotations
     compare_general_circuit(2, |sv, dm| {
-        sv.h(&qid(0)).h(&qid(1)).rzz(PI / 4.0, &qid2(0, 1));
-        dm.h(&qid(0)).h(&qid(1)).rzz(PI / 4.0, &qid2(0, 1));
+        sv.h(&qid(0)).h(&qid(1)).rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
+        dm.h(&qid(0)).h(&qid(1)).rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
     });
 
     // Test complex non-Clifford circuit
@@ -352,12 +353,12 @@ fn test_non_clifford_circuits() {
         dm.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
 
         // Apply non-Clifford rotations
-        sv.rx(PI / 5.0, &qid(0))
-            .rz(PI / 7.0, &qid(1))
-            .rzz(PI / 9.0, &qid2(0, 2));
-        dm.rx(PI / 5.0, &qid(0))
-            .rz(PI / 7.0, &qid(1))
-            .rzz(PI / 9.0, &qid2(0, 2));
+        sv.rx(Angle64::from_radians(PI / 5.0), &qid(0))
+            .rz(Angle64::from_radians(PI / 7.0), &qid(1))
+            .rzz(Angle64::from_radians(PI / 9.0), &qid2(0, 2));
+        dm.rx(Angle64::from_radians(PI / 5.0), &qid(0))
+            .rz(Angle64::from_radians(PI / 7.0), &qid(1))
+            .rzz(Angle64::from_radians(PI / 9.0), &qid2(0, 2));
     });
 }
 

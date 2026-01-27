@@ -28,7 +28,7 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVecSoA};
 use std::hint::black_box;
 
@@ -56,7 +56,7 @@ where
         // Single-qubit layer: H and RZ on all qubits
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
-            sim.rz(0.1, &[QubitId(q)]);
+            sim.rz(Angle64::from_radians(0.1), &[QubitId(q)]);
         }
         // Two-qubit layer: CX between adjacent qubits
         for q in 0..(num_qubits - 1) {

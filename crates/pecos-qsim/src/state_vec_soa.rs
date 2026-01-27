@@ -20,7 +20,7 @@
 use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
-use pecos_core::{QubitId, RngManageable};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngCore, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
 use wide::f64x4;
@@ -3577,7 +3577,8 @@ where
     R: Rng,
 {
     #[inline]
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         if self.fusion_enabled {
             let cos = (theta / 2.0).cos();
             let sin = (theta / 2.0).sin();
@@ -3598,7 +3599,8 @@ where
     }
 
     #[inline]
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         if self.fusion_enabled {
             let cos = (theta / 2.0).cos();
             let sin = (theta / 2.0).sin();
@@ -3619,7 +3621,8 @@ where
     }
 
     #[inline]
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         if self.fusion_enabled {
             let half = theta / 2.0;
             let cos = half.cos();
@@ -3641,7 +3644,9 @@ where
     }
 
     #[inline]
-    fn r1xy(&mut self, theta: f64, phi: f64, qubits: &[QubitId]) -> &mut Self {
+    fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
+        let phi = phi.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
         // R1XY: [[cos, r01], [r10, cos]]
@@ -3661,7 +3666,8 @@ where
     }
 
     #[inline]
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -3720,7 +3726,8 @@ where
     }
 
     #[inline]
-    fn rxx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RXX requires pairs of qubits"
@@ -3782,7 +3789,8 @@ where
     }
 
     #[inline]
-    fn ryy(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RYY requires pairs of qubits"
@@ -3844,7 +3852,10 @@ where
     }
 
     #[inline]
-    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
+        let phi = phi.to_radians_signed();
+        let lambda = lambda.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
 
@@ -4259,8 +4270,8 @@ mod tests {
             let mut sv = StateVecSoA::new(2);
             let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-            sv.rx(theta, &[QubitId(0)]);
-            opt.rx(theta, &[QubitId(0)]);
+            sv.rx(Angle64::from_radians(theta), &[QubitId(0)]);
+            opt.rx(Angle64::from_radians(theta), &[QubitId(0)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RX({theta})"));
         }
@@ -4271,8 +4282,8 @@ mod tests {
         let mut sv = StateVecSoA::new(2);
         let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-        sv.u(PI / 3.0, PI / 4.0, PI / 5.0, &[QubitId(0)]);
-        opt.u(PI / 3.0, PI / 4.0, PI / 5.0, &[QubitId(0)]);
+        sv.u(Angle64::from_radians(PI / 3.0), Angle64::from_radians(PI / 4.0), Angle64::from_radians(PI / 5.0), &[QubitId(0)]);
+        opt.u(Angle64::from_radians(PI / 3.0), Angle64::from_radians(PI / 4.0), Angle64::from_radians(PI / 5.0), &[QubitId(0)]);
 
         assert_states_match(&mut sv, &mut opt, "U gate");
     }
@@ -4697,8 +4708,8 @@ mod tests {
             let mut sv = StateVecSoA::new(2);
             let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-            sv.ry(theta, &[QubitId(0)]);
-            opt.ry(theta, &[QubitId(0)]);
+            sv.ry(Angle64::from_radians(theta), &[QubitId(0)]);
+            opt.ry(Angle64::from_radians(theta), &[QubitId(0)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RY({theta})"));
         }
@@ -4714,8 +4725,8 @@ mod tests {
             // Put in superposition to see phase effects
             sv.h(&[QubitId(0)]);
             opt.h(&[QubitId(0)]);
-            sv.rz(theta, &[QubitId(0)]);
-            opt.rz(theta, &[QubitId(0)]);
+            sv.rz(Angle64::from_radians(theta), &[QubitId(0)]);
+            opt.rz(Angle64::from_radians(theta), &[QubitId(0)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RZ({theta})"));
         }
@@ -4729,8 +4740,8 @@ mod tests {
         let theta = FRAC_PI_3;
         let phi = FRAC_PI_4;
 
-        sv.r1xy(theta, phi, &[QubitId(0)]);
-        opt.r1xy(theta, phi, &[QubitId(0)]);
+        sv.r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &[QubitId(0)]);
+        opt.r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &[QubitId(0)]);
 
         assert_states_match(&mut sv, &mut opt, "R1XY gate");
     }
@@ -4742,8 +4753,8 @@ mod tests {
             let mut sv = StateVecSoA::new(2);
             let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-            sv.rxx(theta, &[QubitId(0), QubitId(1)]);
-            opt.rxx(theta, &[QubitId(0), QubitId(1)]);
+            sv.rxx(Angle64::from_radians(theta), &[QubitId(0), QubitId(1)]);
+            opt.rxx(Angle64::from_radians(theta), &[QubitId(0), QubitId(1)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RXX({theta})"));
         }
@@ -4756,8 +4767,8 @@ mod tests {
             let mut sv = StateVecSoA::new(2);
             let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-            sv.ryy(theta, &[QubitId(0), QubitId(1)]);
-            opt.ryy(theta, &[QubitId(0), QubitId(1)]);
+            sv.ryy(Angle64::from_radians(theta), &[QubitId(0), QubitId(1)]);
+            opt.ryy(Angle64::from_radians(theta), &[QubitId(0), QubitId(1)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RYY({theta})"));
         }
@@ -4776,8 +4787,8 @@ mod tests {
             sv.h(&[QubitId(1)]);
             opt.h(&[QubitId(1)]);
 
-            sv.rzz(theta, &[QubitId(0), QubitId(1)]);
-            opt.rzz(theta, &[QubitId(0), QubitId(1)]);
+            sv.rzz(Angle64::from_radians(theta), &[QubitId(0), QubitId(1)]);
+            opt.rzz(Angle64::from_radians(theta), &[QubitId(0), QubitId(1)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RZZ({theta})"));
         }

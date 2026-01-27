@@ -19,7 +19,7 @@ mod bridge;
 
 use bridge::ffi;
 use num_complex::Complex64;
-use pecos_core::{QubitId, RngManageable};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
@@ -368,7 +368,8 @@ impl<R> ArbitraryRotationGateable for QulacsStateVec<R>
 where
     R: RngCore + SeedableRng + Debug,
 {
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             let qulacs_qubit = self.convert_qubit_index(q.index());
             ffi::apply_rx(self.state.pin_mut(), qulacs_qubit, theta);
@@ -376,7 +377,8 @@ where
         self
     }
 
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             let qulacs_qubit = self.convert_qubit_index(q.index());
             // Both Qulacs and PECOS StateVec use the same convention: diag(e^(-iθ/2), e^(iθ/2))
@@ -386,7 +388,8 @@ where
         self
     }
 
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -405,7 +408,8 @@ where
 
     // Override with native Qulacs implementations
 
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         for &q in qubits {
             let qulacs_qubit = self.convert_qubit_index(q.index());
             ffi::apply_ry(self.state.pin_mut(), qulacs_qubit, theta);

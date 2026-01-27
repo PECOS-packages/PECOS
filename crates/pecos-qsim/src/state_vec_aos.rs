@@ -13,7 +13,7 @@
 use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
-use pecos_core::{QubitId, RngManageable};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngCore, RngProbabilityExt, SeedableRng};
 
 use core::fmt::Debug;
@@ -767,13 +767,13 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVecAoS, ArbitraryRotationGateable};
-    /// use pecos_core::QubitId;
+    /// use pecos_core::{QubitId, Angle64};
     /// use std::f64::consts::FRAC_PI_2;
     ///
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create superposition with phase
-    /// state.rx(FRAC_PI_2, &[QubitId(0)]);  // Creates (|0> - i|1>)/sqrt(2)
+    /// state.rx(Angle64::from_radians(FRAC_PI_2), &[QubitId(0)]);  // Creates (|0> - i|1>)/sqrt(2)
     /// ```
     ///
     /// # Safety
@@ -781,7 +781,8 @@ where
     /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
         for &q in qubits {
@@ -804,13 +805,13 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVecAoS, ArbitraryRotationGateable};
-    /// use pecos_core::QubitId;
+    /// use pecos_core::{QubitId, Angle64};
     /// use std::f64::consts::PI;
     ///
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create equal superposition
-    /// state.ry(PI/2.0, &[QubitId(0)]);  // Creates (|0> + |1>)/sqrt(2)
+    /// state.ry(Angle64::from_radians(PI/2.0), &[QubitId(0)]);  // Creates (|0> + |1>)/sqrt(2)
     /// ```
     ///
     /// # Safety
@@ -818,7 +819,8 @@ where
     /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn ry(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
         for &q in qubits {
@@ -841,20 +843,21 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVecAoS, CliffordGateable, ArbitraryRotationGateable};
-    /// use pecos_core::QubitId;
+    /// use pecos_core::{QubitId, Angle64};
     /// use std::f64::consts::FRAC_PI_4;
     ///
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create superposition and add phase
-    /// state.h(&[QubitId(0)]).rz(FRAC_PI_4, &[QubitId(0)]);  // T gate equivalent
+    /// state.h(&[QubitId(0)]).rz(Angle64::from_radians(FRAC_PI_4), &[QubitId(0)]);  // T gate equivalent
     /// ```
     ///
     /// # Safety
     /// This function assumes that:
     /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
-    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         let e_pos = Complex64::from_polar(1.0, -theta / 2.0);
         let e_neg = Complex64::from_polar(1.0, theta / 2.0);
 
@@ -878,13 +881,13 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVecAoS, ArbitraryRotationGateable};
-    /// use pecos_core::QubitId;
+    /// use pecos_core::{QubitId, Angle64};
     /// use std::f64::consts::{PI, FRAC_PI_2};
     ///
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create arbitrary rotation (equivalent to TH up to global phase)
-    /// state.u(FRAC_PI_2, 0.0, FRAC_PI_2, &[QubitId(0)]);
+    /// state.u(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(0.0), Angle64::from_radians(FRAC_PI_2), &[QubitId(0)]);
     /// ```
     ///
     /// # Safety
@@ -892,7 +895,10 @@ where
     /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
+        let phi = phi.to_radians_signed();
+        let lambda = lambda.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
 
@@ -916,13 +922,13 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVecAoS, ArbitraryRotationGateable};
-    /// use pecos_core::QubitId;
+    /// use pecos_core::{QubitId, Angle64};
     /// use std::f64::consts::FRAC_PI_2;
     ///
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // 90-degree rotation around X+Y axis
-    /// state.r1xy(FRAC_PI_2, FRAC_PI_2, &[QubitId(0)]);
+    /// state.r1xy(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(FRAC_PI_2), &[QubitId(0)]);
     /// ```
     ///
     /// # Safety
@@ -930,7 +936,9 @@ where
     /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn r1xy(&mut self, theta: f64, phi: f64, qubits: &[QubitId]) -> &mut Self {
+    fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
+        let phi = phi.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
 
@@ -955,13 +963,13 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVecAoS, ArbitraryRotationGateable};
-    /// use pecos_core::QubitId;
+    /// use pecos_core::{QubitId, Angle64};
     /// use std::f64::consts::FRAC_PI_2;
     ///
     /// let mut state = StateVecAoS::new(2);
     ///
     /// // Create maximally entangled state
-    /// state.rxx(FRAC_PI_2, &[QubitId(0), QubitId(1)]);  // Creates (|00> - i|11>)/sqrt(2)
+    /// state.rxx(Angle64::from_radians(FRAC_PI_2), &[QubitId(0), QubitId(1)]);  // Creates (|00> - i|11>)/sqrt(2)
     /// ```
     ///
     /// # Safety
@@ -970,7 +978,8 @@ where
     /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn rxx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RXX requires pairs of qubits"
@@ -1023,7 +1032,7 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVecAoS, CliffordGateable, ArbitraryRotationGateable};
-    /// use pecos_core::QubitId;
+    /// use pecos_core::{QubitId, Angle64};
     /// use std::f64::consts::FRAC_PI_2;
     ///
     /// let mut state = StateVecAoS::new(2);
@@ -1033,7 +1042,7 @@ where
     ///      .cx(&[QubitId(0), QubitId(1)]);
     ///
     /// // Apply RYY rotation
-    /// state.ryy(FRAC_PI_2, &[QubitId(0), QubitId(1)]);
+    /// state.ryy(Angle64::from_radians(FRAC_PI_2), &[QubitId(0), QubitId(1)]);
     /// ```
     ///
     /// # Safety
@@ -1042,7 +1051,8 @@ where
     /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn ryy(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RYY requires pairs of qubits"
@@ -1089,7 +1099,7 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_qsim::{QuantumSimulator, StateVecAoS, CliffordGateable, ArbitraryRotationGateable};
-    /// use pecos_core::QubitId;
+    /// use pecos_core::{QubitId, Angle64};
     /// use std::f64::consts::PI;
     ///
     /// let mut state = StateVecAoS::new(3);
@@ -1100,7 +1110,7 @@ where
     ///      .cx(&[QubitId(1), QubitId(2)]);
     ///
     /// // Apply phase rotation between first and last qubit
-    /// state.rzz(PI/4.0, &[QubitId(0), QubitId(2)]);
+    /// state.rzz(Angle64::from_radians(PI/4.0), &[QubitId(0), QubitId(2)]);
     /// ```
     ///
     /// # Safety
@@ -1108,7 +1118,8 @@ where
     /// - `qubits.len() % 2 == 0` (pairs of qubits).
     /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
-    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let theta = theta.to_radians_signed();
         debug_assert!(
             qubits.len().is_multiple_of(2),
             "RZZ requires pairs of qubits"
@@ -1610,13 +1621,13 @@ mod tests {
         let mut q = StateVecAoS::new(1);
 
         // RX(π) should flip |0⟩ to -i|1⟩
-        q.rx(PI, &qid(0));
+        q.rx(Angle64::from_radians(PI), &qid(0));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].norm() - 1.0).abs() < 1e-10);
 
         // RX(2π) should return to the initial state up to global phase
         let mut q = StateVecAoS::new(1);
-        q.rx(2.0 * PI, &qid(0));
+        q.rx(Angle64::from_radians(2.0 * PI), &qid(0));
         assert!((q.state[0].norm() - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
     }
@@ -1626,12 +1637,12 @@ mod tests {
         let mut q = StateVecAoS::new(1);
 
         // RY(π) should flip |0⟩ to |1⟩
-        q.ry(PI, &qid(0));
+        q.ry(Angle64::from_radians(PI), &qid(0));
         assert!(q.state[0].norm() < 1e-10); // Close to zero
         assert!((q.state[1].norm() - 1.0).abs() < 1e-10); // Magnitude 1 for |1⟩
 
         // Two RY(π) rotations should return to the initial state
-        q.ry(PI, &qid(0));
+        q.ry(Angle64::from_radians(PI), &qid(0));
         assert!((q.state[0].norm() - 1.0).abs() < 1e-10); // Magnitude 1 for |0⟩
         assert!(q.state[1].norm() < 1e-10); // Close to zero
     }
@@ -1644,7 +1655,7 @@ mod tests {
         q.h(&qid(0)); // Put qubit in superposition
         let probs_before: Vec<f64> = q.state.iter().map(num_complex::Complex::norm_sqr).collect();
 
-        q.rz(FRAC_PI_2, &qid(0)); // Rotate Z by π/2
+        q.rz(Angle64::from_radians(FRAC_PI_2), &qid(0)); // Rotate Z by π/2
         let probs_after: Vec<f64> = q.state.iter().map(num_complex::Complex::norm_sqr).collect();
 
         for (p1, p2) in probs_before.iter().zip(probs_after.iter()) {
@@ -1660,7 +1671,7 @@ mod tests {
         let theta = PI / 5.0;
         let phi = PI / 7.0;
         let lambda = PI / 3.0;
-        q.u(theta, phi, lambda, &qid(0));
+        q.u(Angle64::from_radians(theta), Angle64::from_radians(phi), Angle64::from_radians(lambda), &qid(0));
 
         // Verify normalization is preserved
         let norm: f64 = q.state.iter().map(num_complex::Complex::norm_sqr).sum();
@@ -1684,10 +1695,10 @@ mod tests {
         let phi = FRAC_PI_4;
 
         // Apply the manual `r1xy` implementation.
-        state_vec_r1xy.r1xy(theta, phi, &qid(0));
+        state_vec_r1xy.r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &qid(0));
 
         // Apply the `r1xy` implementation from the `ArbitraryRotationGateable` trait.
-        ArbitraryRotationGateable::r1xy(&mut trait_r1xy, theta, phi, &qid(0));
+        ArbitraryRotationGateable::r1xy(&mut trait_r1xy, Angle64::from_radians(theta), Angle64::from_radians(phi), &qid(0));
 
         // Use the `assert_states_equal` function to compare the states up to a global phase.
         assert_states_equal(&state_vec_r1xy.state, &trait_r1xy.state);
@@ -1699,7 +1710,7 @@ mod tests {
     fn test_rxx() {
         // Test 1: RXX(π/2) on |00⟩ should give (|00⟩ - i|11⟩)/√2
         let mut q = StateVecAoS::new(2);
-        q.rxx(FRAC_PI_2, &qid2(0, 1));
+        q.rxx(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
 
         let expected = FRAC_1_SQRT_2;
         assert!((q.state[0].re - expected).abs() < 1e-10);
@@ -1711,7 +1722,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0)); // Create some initial state
         let initial = q.state.clone();
-        q.rxx(TAU, &qid2(0, 1));
+        q.rxx(Angle64::from_radians(TAU), &qid2(0, 1));
 
         // Compare up to global phase
         if q.state[0].norm() > 1e-10 {
@@ -1723,7 +1734,7 @@ mod tests {
 
         // Test 3: RXX(π) should flip |00⟩ to |11⟩ up to phase
         let mut q = StateVecAoS::new(2);
-        q.rxx(PI, &qid2(0, 1));
+        q.rxx(Angle64::from_radians(PI), &qid2(0, 1));
 
         // Should get -i|11⟩
         assert!(q.state[0].norm() < 1e-10);
@@ -1739,7 +1750,7 @@ mod tests {
         // Test all basis states for RYY(π/2)
         // |00⟩ -> (1/√2)|00⟩ - i(1/√2)|11⟩
         let mut q = StateVecAoS::new(2);
-        q.ryy(FRAC_PI_2, &qid2(0, 1));
+        q.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
         assert!((q.state[0].re - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
@@ -1748,7 +1759,7 @@ mod tests {
         // |11⟩ -> i(1/√2)|00⟩ + (1/√2)|11⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(0)).x(&qid(1)); // Prepare |11⟩
-        q.ryy(FRAC_PI_2, &qid2(0, 1));
+        q.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
         assert!((q.state[0].im - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
@@ -1757,7 +1768,7 @@ mod tests {
         // |01⟩ -> (1/√2)|01⟩ + i(1/√2)|10⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(1)); // Prepare |01⟩
-        q.ryy(FRAC_PI_2, &qid2(0, 1));
+        q.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
         assert!(q.state[0].norm() < 1e-10);
         assert!(q.state[1].re.abs() < 1e-10);
         assert!((q.state[1].im + expected).abs() < 1e-10);
@@ -1768,7 +1779,7 @@ mod tests {
         // |10⟩ -> (1/√2)|10⟩ + i(1/√2)|01⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(0)); // Prepare |10⟩
-        q.ryy(FRAC_PI_2, &qid2(0, 1));
+        q.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re - expected).abs() < 1e-10);
         assert!(q.state[1].im.abs() < 1e-10);
@@ -1782,7 +1793,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0)); // Create non-trivial initial state
         let initial = q.state.clone();
-        q.ryy(TAU, &qid2(0, 1));
+        q.ryy(Angle64::from_radians(TAU), &qid2(0, 1));
         // Need to account for potential global phase
         if q.state[0].norm() > 1e-10 {
             let phase = q.state[0] / initial[0];
@@ -1799,8 +1810,8 @@ mod tests {
         let mut q2 = StateVecAoS::new(2);
         q1.h(&qid(0)); // Create non-trivial initial state
         q2.h(&qid(0)); // Same initial state
-        q1.ryy(FRAC_PI_3, &qid2(0, 1)).ryy(FRAC_PI_6, &qid2(0, 1));
-        q2.ryy(FRAC_PI_2, &qid2(0, 1));
+        q1.ryy(Angle64::from_radians(FRAC_PI_3), &qid2(0, 1)).ryy(Angle64::from_radians(FRAC_PI_6), &qid2(0, 1));
+        q2.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
         // Compare up to global phase
         if q1.state[0].norm() > 1e-10 {
             let phase = q1.state[0] / q2.state[0];
@@ -1817,8 +1828,8 @@ mod tests {
         let mut q2 = StateVecAoS::new(2);
         q1.h(&qid(0)).h(&qid(1)); // Create non-trivial initial state
         q2.h(&qid(0)).h(&qid(1)); // Same initial state
-        q1.ryy(FRAC_PI_3, &qid2(0, 1));
-        q2.ryy(FRAC_PI_3, &qid2(1, 0));
+        q1.ryy(Angle64::from_radians(FRAC_PI_3), &qid2(0, 1));
+        q2.ryy(Angle64::from_radians(FRAC_PI_3), &qid2(1, 0));
         // States should be exactly equal (no phase difference)
         for (a, b) in q1.state.iter().zip(q2.state.iter()) {
             assert!((a - b).norm() < 1e-10, "Symmetry test failed: a={a}, b={b}");
@@ -1834,7 +1845,7 @@ mod tests {
         q.cx(&qid2(0, 1));
         let initial = q.state.clone();
 
-        q.rzz(PI, &qid2(0, 1));
+        q.rzz(Angle64::from_radians(PI), &qid2(0, 1));
 
         // Compare up to global phase
         if q.state[0].norm() > 1e-10 {
@@ -1848,7 +1859,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0));
         q.h(&qid(1));
-        q.rzz(FRAC_PI_2, &qid2(0, 1));
+        q.rzz(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
 
         // e^(-iπ/4) = (1-i)/√2
         // e^(iπ/4) = (1+i)/√2

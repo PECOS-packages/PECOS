@@ -7,6 +7,7 @@
     clippy::float_cmp
 )]
 
+use pecos_core::Angle64;
 use pecos_engines::byte_message::GateType;
 use pecos_engines::byte_message::{ByteMessage, ByteMessageBuilder};
 use pecos_engines::noise::RngManageable;
@@ -180,7 +181,7 @@ fn test_rotation_gate_with_different_angles() {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.add_h(&[0]);
-        builder.add_rz(angle, &[0]);
+        builder.add_rz(Angle64::from_radians(angle), &[0]);
         builder.add_h(&[0]);
         builder.add_measurements(&[0]);
         let circ = builder.build();
@@ -466,7 +467,7 @@ fn test_rzz_angle_dependent_error_model() {
         builder.add_h(&[1]);
 
         // Apply RZZ with the specified angle
-        builder.add_rzz(angle, &[0], &[1]);
+        builder.add_rzz(Angle64::from_radians(angle), &[0], &[1]);
 
         // Apply H gates again to convert phase to population
         builder.add_h(&[0]);
@@ -575,7 +576,7 @@ fn test_software_gates_not_affected_by_noise() {
     // Circuit 1: |0⟩ → RZ(π) → |0⟩ (no change in population)
     let mut builder1 = ByteMessageBuilder::new();
     let _ = builder1.for_quantum_operations();
-    builder1.add_rz(PI, &[0]);
+    builder1.add_rz(Angle64::from_radians(PI), &[0]);
     builder1.add_measurements(&[0]);
     let circ_rz = builder1.build();
 
@@ -583,7 +584,7 @@ fn test_software_gates_not_affected_by_noise() {
     let mut builder2 = ByteMessageBuilder::new();
     let _ = builder2.for_quantum_operations();
     builder2.add_h(&[0]);
-    builder2.add_rz(PI, &[0]);
+    builder2.add_rz(Angle64::from_radians(PI), &[0]);
     builder2.add_h(&[0]);
     builder2.add_measurements(&[0]);
     let circ_hardware = builder2.build();

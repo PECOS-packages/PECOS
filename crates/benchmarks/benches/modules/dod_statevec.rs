@@ -27,7 +27,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use num_complex::Complex64;
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, StateVec, StateVecAoS};
+use pecos_qsim::{CliffordGateable, StateVecAoS, StateVecSoA};
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
@@ -59,7 +59,7 @@ fn bench_single_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("H", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2; // Middle qubit
                 b.iter(|| {
                     sim.h(&[QubitId(target)]);
@@ -73,7 +73,7 @@ fn bench_single_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("X", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.x(&[QubitId(target)]);
@@ -87,7 +87,7 @@ fn bench_single_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("Z", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.z(&[QubitId(target)]);
@@ -101,7 +101,7 @@ fn bench_single_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("S", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.sz(&[QubitId(target)]);
@@ -135,7 +135,7 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("CX_adjacent", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
@@ -150,7 +150,7 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("CX_distant", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let q1 = 0;
                 let q2 = nq - 1;
                 b.iter(|| {
@@ -165,7 +165,7 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("CZ", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
@@ -180,7 +180,7 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("SWAP", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
@@ -214,7 +214,7 @@ fn bench_cx_scaling<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("CX_low_qubit", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 // Control on qubit 0, target on qubit 1
                 b.iter(|| {
                     sim.cx(&[QubitId(0), QubitId(1)]);
@@ -228,7 +228,7 @@ fn bench_cx_scaling<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("CX_high_qubit", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 // Control on high qubit, target on highest
                 b.iter(|| {
                     sim.cx(&[QubitId(nq - 2), QubitId(nq - 1)]);
@@ -324,7 +324,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("StateVec", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
@@ -364,7 +364,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("StateVec", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.h(&[QubitId(target)]);
@@ -401,7 +401,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("StateVec", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
@@ -440,7 +440,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("StateVec", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
@@ -488,7 +488,7 @@ fn bench_fused_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("separate", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.h(&[QubitId(target)]);
@@ -503,7 +503,7 @@ fn bench_fused_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("fused", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.hz(&[QubitId(target)]);
@@ -528,7 +528,7 @@ fn bench_fused_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("separate", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.h(&[QubitId(target)]);
@@ -543,7 +543,7 @@ fn bench_fused_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("fused", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.hs(&[QubitId(target)]);
@@ -568,7 +568,7 @@ fn bench_fused_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("separate", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.h(&[QubitId(target)]);
@@ -583,7 +583,7 @@ fn bench_fused_gates<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("fused", num_qubits),
             &num_qubits,
             |b, &nq| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 let target = nq / 2;
                 b.iter(|| {
                     sim.hx(&[QubitId(target)]);

@@ -29,7 +29,7 @@
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
 use pecos_core::QubitId;
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec};
+use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVecSoA};
 use std::hint::black_box;
 
 #[cfg(feature = "gpu-sims")]
@@ -83,7 +83,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 
     // Single-qubit gates
     group.bench_function("H_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits {
@@ -95,7 +95,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("SZ_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits {
@@ -107,7 +107,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("SX_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits {
@@ -119,7 +119,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("X_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits {
@@ -131,7 +131,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("Y_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits {
@@ -143,7 +143,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("Z_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits {
@@ -156,7 +156,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 
     // Two-qubit gates
     group.bench_function("CX_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
@@ -168,7 +168,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("CZ_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
@@ -180,7 +180,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("SZZ_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
@@ -192,7 +192,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("SXX_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
@@ -205,7 +205,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 
     // Prep operation (measure + prepare |0⟩)
     group.bench_function("pz_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         // Put in superposition first so prep has work to do
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
@@ -222,7 +222,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 
     // Measurement
     group.bench_function("mz_18q", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         b.iter(|| {
             // Reset to known state, apply H, then measure
             sim.reset();
@@ -251,7 +251,7 @@ fn bench_parallel_execution<M: Measurement>(c: &mut Criterion<M>) {
 
     // Sequential H gates
     group.bench_function("H_18q_sequential", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         sim.set_parallel(false);
         b.iter(|| {
             for _ in 0..gates_per_iter {
@@ -265,7 +265,7 @@ fn bench_parallel_execution<M: Measurement>(c: &mut Criterion<M>) {
 
     // Parallel H gates
     group.bench_function("H_18q_parallel", |b| {
-        let mut sim = StateVec::new(num_qubits);
+        let mut sim = StateVecSoA::new(num_qubits);
         sim.set_parallel(true);
         b.iter(|| {
             for _ in 0..gates_per_iter {
@@ -282,7 +282,7 @@ fn bench_parallel_execution<M: Measurement>(c: &mut Criterion<M>) {
     let gates_per_iter_large = 20;
 
     group.bench_function("H_20q_sequential", |b| {
-        let mut sim = StateVec::new(num_qubits_large);
+        let mut sim = StateVecSoA::new(num_qubits_large);
         sim.set_parallel(false);
         b.iter(|| {
             for _ in 0..gates_per_iter_large {
@@ -295,7 +295,7 @@ fn bench_parallel_execution<M: Measurement>(c: &mut Criterion<M>) {
     });
 
     group.bench_function("H_20q_parallel", |b| {
-        let mut sim = StateVec::new(num_qubits_large);
+        let mut sim = StateVecSoA::new(num_qubits_large);
         sim.set_parallel(true);
         b.iter(|| {
             for _ in 0..gates_per_iter_large {
@@ -336,7 +336,7 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new("StateVec_CPU", &label),
             &(num_qubits, num_layers),
             |b, &(nq, nl)| {
-                let mut sim = StateVec::new(nq);
+                let mut sim = StateVecSoA::new(nq);
                 b.iter(|| {
                     sim.reset();
                     benchmark_circuit(&mut sim, nq, nl);

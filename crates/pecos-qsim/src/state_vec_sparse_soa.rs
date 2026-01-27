@@ -36,9 +36,9 @@
 
 use crate::clifford_frame::{CliffordFrame, PauliAxis, ELEMENT_MATRIX, PHASE_COCYCLE, PHASE_ROOTS};
 use crate::clifford_gateable::MeasurementResult;
-use crate::{CliffordGateable, QuantumSimulator};
+use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
-use pecos_core::QubitId;
+use pecos_core::{QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
 
@@ -1226,6 +1226,228 @@ impl<R: Rng> SparseStateVecSoA<R> {
 }
 
 // =============================================================================
+// Clone implementation
+// =============================================================================
+
+impl<R: Rng + Clone> Clone for SparseStateVecSoA<R> {
+    fn clone(&self) -> Self {
+        Self {
+            indices_a: self.indices_a.clone(),
+            real_a: self.real_a.clone(),
+            imag_a: self.imag_a.clone(),
+            indices_b: self.indices_b.clone(),
+            real_b: self.real_b.clone(),
+            imag_b: self.imag_b.clone(),
+            active_a: self.active_a,
+            len: self.len,
+            // Don't clone scratch buffers - they're lazily reused
+            scratch_low: Vec::new(),
+            scratch_high: Vec::new(),
+            sort_perm: Vec::new(),
+            merge_idx: Vec::new(),
+            merge_re: Vec::new(),
+            merge_im: Vec::new(),
+            frames: self.frames.clone(),
+            frame_phases: self.frame_phases.clone(),
+            needs_sort: self.needs_sort,
+            num_qubits: self.num_qubits,
+            rng: self.rng.clone(),
+            epsilon: self.epsilon,
+        }
+    }
+}
+
+// =============================================================================
+// RngManageable implementation
+// =============================================================================
+
+impl<R: Rng + SeedableRng> RngManageable for SparseStateVecSoA<R> {
+    type Rng = R;
+
+    fn set_rng(&mut self, rng: R) {
+        self.rng = rng;
+    }
+
+    fn rng(&self) -> &R {
+        &self.rng
+    }
+
+    fn rng_mut(&mut self) -> &mut R {
+        &mut self.rng
+    }
+}
+
+// =============================================================================
+// State expansion
+// =============================================================================
+
+impl<R: Rng> SparseStateVecSoA<R> {
+    /// Returns the full state vector as a dense Vec of Complex64.
+    ///
+    /// Flushes all Clifford frames and returns a 2^n-element vector with the
+    /// sparse amplitudes placed at their corresponding indices.
+    pub fn state(&mut self) -> Vec<Complex64> {
+        self.flush_all_frames();
+        self.ensure_sorted();
+        let mut full = vec![Complex64::new(0.0, 0.0); 1 << self.num_qubits];
+        let (indices, real, imag) = self.active_buffers();
+        for i in 0..self.len {
+            full[indices[i]] = Complex64::new(real[i], imag[i]);
+        }
+        full
+    }
+
+    /// Prepare a specific computational basis state |basis_state>.
+    ///
+    /// Resets the sparse state to contain exactly one amplitude at the given index.
+    pub fn prepare_computational_basis(&mut self, basis_state: usize) -> &mut Self {
+        // Reset all frames to identity
+        for f in &mut self.frames {
+            *f = CliffordFrame::IDENTITY;
+        }
+        for p in &mut self.frame_phases {
+            *p = 0;
+        }
+        self.needs_sort = false;
+
+        // Set single amplitude in active buffer
+        if self.active_a {
+            self.indices_a[0] = basis_state;
+            self.real_a[0] = 1.0;
+            self.imag_a[0] = 0.0;
+        } else {
+            self.indices_b[0] = basis_state;
+            self.real_b[0] = 1.0;
+            self.imag_b[0] = 0.0;
+        }
+        self.len = 1;
+        self
+    }
+
+    /// Prepare all qubits in the |+> state, creating an equal superposition of all basis states.
+    ///
+    /// Creates a dense state with 2^n amplitudes, each equal to 1/sqrt(2^n).
+    pub fn prepare_plus_state(&mut self) -> &mut Self {
+        // Reset all frames to identity
+        for f in &mut self.frames {
+            *f = CliffordFrame::IDENTITY;
+        }
+        for p in &mut self.frame_phases {
+            *p = 0;
+        }
+        self.needs_sort = false;
+
+        let size = 1 << self.num_qubits;
+        let factor = 1.0 / (size as f64).sqrt();
+
+        // Ensure buffers are large enough
+        if self.indices_a.len() < size {
+            self.indices_a.resize(size, 0);
+            self.real_a.resize(size, 0.0);
+            self.imag_a.resize(size, 0.0);
+            self.indices_b.resize(size, 0);
+            self.real_b.resize(size, 0.0);
+            self.imag_b.resize(size, 0.0);
+        }
+
+        let (indices, real, imag) = if self.active_a {
+            (&mut self.indices_a[..], &mut self.real_a[..], &mut self.imag_a[..])
+        } else {
+            (&mut self.indices_b[..], &mut self.real_b[..], &mut self.imag_b[..])
+        };
+        for i in 0..size {
+            indices[i] = i;
+            real[i] = factor;
+            imag[i] = 0.0;
+        }
+        self.len = size;
+        self
+    }
+
+    /// Apply a general 2-qubit unitary gate given by a 4x4 complex matrix.
+    ///
+    /// The matrix is indexed as `matrix[output_basis][input_basis]` where
+    /// basis index = (qubit1_bit << 1) | qubit2_bit.
+    pub fn two_qubit_unitary(
+        &mut self,
+        qubit1: usize,
+        qubit2: usize,
+        matrix: [[Complex64; 4]; 4],
+    ) -> &mut Self {
+        self.flush_frame(qubit1);
+        self.flush_frame(qubit2);
+
+        let mask1 = 1usize << qubit1;
+        let mask2 = 1usize << qubit2;
+        let len = self.len;
+
+        // Build input: collect (basis_index, amplitude) pairs
+        let (indices, real, imag) = self.active_buffers();
+        let input: Vec<(usize, Complex64)> = (0..len)
+            .map(|i| (indices[i], Complex64::new(real[i], imag[i])))
+            .collect();
+
+        // Apply the unitary: for each input amplitude, distribute across all 4 output basis states
+        // Use a map for accumulation since new indices may or may not overlap
+        let mut output_map: std::collections::HashMap<usize, Complex64> =
+            std::collections::HashMap::new();
+
+        for &(idx, amp) in &input {
+            let bit1 = ((idx & mask1) != 0) as usize;
+            let bit2 = ((idx & mask2) != 0) as usize;
+            let input_basis = (bit1 << 1) | bit2;
+
+            // Clear the two qubit bits from the index
+            let base_idx = idx & !mask1 & !mask2;
+
+            for out_basis in 0..4 {
+                let m_elem = matrix[out_basis][input_basis];
+                if m_elem.norm_sqr() < 1e-30 {
+                    continue;
+                }
+                let out_bit1 = (out_basis >> 1) & 1;
+                let out_bit2 = out_basis & 1;
+                let out_idx = base_idx | (out_bit1 * mask1) | (out_bit2 * mask2);
+                let contribution = m_elem * amp;
+                *output_map.entry(out_idx).or_insert(Complex64::new(0.0, 0.0)) += contribution;
+            }
+        }
+
+        // Filter out near-zero entries and write back
+        let eps_sq = self.epsilon * self.epsilon;
+        let results: Vec<(usize, Complex64)> = output_map
+            .into_iter()
+            .filter(|(_, c)| c.norm_sqr() > eps_sq)
+            .collect();
+
+        let new_len = results.len();
+        // Ensure buffers are large enough
+        if self.indices_a.len() < new_len {
+            self.indices_a.resize(new_len, 0);
+            self.real_a.resize(new_len, 0.0);
+            self.imag_a.resize(new_len, 0.0);
+            self.indices_b.resize(new_len, 0);
+            self.real_b.resize(new_len, 0.0);
+            self.imag_b.resize(new_len, 0.0);
+        }
+
+        let (out_indices, out_real, out_imag) = if self.active_a {
+            (&mut self.indices_a[..], &mut self.real_a[..], &mut self.imag_a[..])
+        } else {
+            (&mut self.indices_b[..], &mut self.real_b[..], &mut self.imag_b[..])
+        };
+        for (i, (idx, c)) in results.iter().enumerate() {
+            out_indices[i] = *idx;
+            out_real[i] = c.re;
+            out_imag[i] = c.im;
+        }
+        self.len = new_len;
+        self.needs_sort = true;
+        self
+    }
+}
+
+// =============================================================================
 // Frame flush methods
 // =============================================================================
 
@@ -1321,21 +1543,21 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::PAULI_X, 0);
+            self.compose_frame(q.0, CliffordFrame::X, 0);
         }
         self
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::PAULI_Y, 6);
+            self.compose_frame(q.0, CliffordFrame::Y, 6);
         }
         self
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::PAULI_Z, 0);
+            self.compose_frame(q.0, CliffordFrame::Z, 0);
         }
         self
     }
@@ -1344,42 +1566,42 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
 
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::S_GATE, 0);
+            self.compose_frame(q.0, CliffordFrame::SZ, 0);
         }
         self
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SDG_GATE, 0);
+            self.compose_frame(q.0, CliffordFrame::SZDG, 0);
         }
         self
     }
 
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SX_GATE, 0);
+            self.compose_frame(q.0, CliffordFrame::SX, 0);
         }
         self
     }
 
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SX_DG_GATE, 7);
+            self.compose_frame(q.0, CliffordFrame::SXDG, 7);
         }
         self
     }
 
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SY_GATE, 1);
+            self.compose_frame(q.0, CliffordFrame::SY, 1);
         }
         self
     }
 
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::SY_DG_GATE, 7);
+            self.compose_frame(q.0, CliffordFrame::SYDG, 7);
         }
         self
     }
@@ -1388,7 +1610,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
 
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.compose_frame(q.0, CliffordFrame::H_GATE, 0);
+            self.compose_frame(q.0, CliffordFrame::H, 0);
         }
         self
     }
@@ -1529,15 +1751,16 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // CY = (I tensor Sdg) . CX . (I tensor S)
+        // CY = (I tensor S) . CX . (I tensor Sdg)
+        // Circuit order: Sdg on target, then CX, then S on target
         for pair in qubits.chunks_exact(2) {
             let (c, t) = (pair[0].0, pair[1].0);
-            // Compose S on target frame, then flush both, apply CX, compose Sdg on target
-            self.compose_frame(t, CliffordFrame::S_GATE, 0);
+            // Compose Sdg on target frame, then flush both, apply CX, compose S on target
+            self.compose_frame(t, CliffordFrame::SZDG, 0);
             self.flush_frame(c);
             self.flush_frame(t);
             self.apply_cx_gate(c, t);
-            self.compose_frame(t, CliffordFrame::SDG_GATE, 0);
+            self.compose_frame(t, CliffordFrame::SZ, 0);
         }
         self
     }
@@ -1932,6 +2155,152 @@ impl<R: Rng> SparseStateVecSoA<R> {
 
         self.normalize();
         result
+    }
+}
+
+// =============================================================================
+// ArbitraryRotationGateable trait implementation
+// =============================================================================
+
+impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
+    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        let cos = (theta / 2.0).cos();
+        let sin = (theta / 2.0).sin();
+        // RX(theta) = [[cos, -i*sin], [-i*sin, cos]]
+        for &q in qubits {
+            self.flush_frame(q.0);
+            self.apply_single_qubit_gate(
+                q.0,
+                cos, 0.0,    // a = cos
+                0.0, -sin,   // b = -i*sin
+                0.0, -sin,   // c = -i*sin
+                cos, 0.0,    // d = cos
+            );
+        }
+        self
+    }
+
+    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        let half = theta / 2.0;
+        let cos = half.cos();
+        let sin = half.sin();
+        // RZ(theta) = [[e^{-i*theta/2}, 0], [0, e^{i*theta/2}]]
+        // e^{-i*theta/2} = cos(theta/2) - i*sin(theta/2)
+        // e^{i*theta/2}  = cos(theta/2) + i*sin(theta/2)
+        for &q in qubits {
+            self.flush_frame(q.0);
+            // Diagonal gate: apply in-place without buffer swap
+            let mask = 1usize << q.0;
+            let len = self.len;
+            let (indices, real, imag) = if self.active_a {
+                (
+                    &self.indices_a[..len],
+                    &mut self.real_a[..len],
+                    &mut self.imag_a[..len],
+                )
+            } else {
+                (
+                    &self.indices_b[..len],
+                    &mut self.real_b[..len],
+                    &mut self.imag_b[..len],
+                )
+            };
+            for i in 0..len {
+                let r = real[i];
+                let im = imag[i];
+                if indices[i] & mask == 0 {
+                    // |0> component: multiply by e^{-i*theta/2}
+                    real[i] = cos * r + sin * im;
+                    imag[i] = cos * im - sin * r;
+                } else {
+                    // |1> component: multiply by e^{i*theta/2}
+                    real[i] = cos * r - sin * im;
+                    imag[i] = cos * im + sin * r;
+                }
+            }
+        }
+        self
+    }
+
+    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RZZ requires pairs of qubits"
+        );
+        let half = theta / 2.0;
+        let cos_same = (-half).cos(); // same parity: e^{-i*theta/2}
+        let sin_same = (-half).sin();
+        let cos_diff = half.cos();    // different parity: e^{i*theta/2}
+        let sin_diff = half.sin();
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].0;
+            let q2 = pair[1].0;
+            self.flush_frame(q1);
+            self.flush_frame(q2);
+
+            let mask1 = 1usize << q1;
+            let mask2 = 1usize << q2;
+            let len = self.len;
+            let (indices, real, imag) = if self.active_a {
+                (
+                    &self.indices_a[..len],
+                    &mut self.real_a[..len],
+                    &mut self.imag_a[..len],
+                )
+            } else {
+                (
+                    &self.indices_b[..len],
+                    &mut self.real_b[..len],
+                    &mut self.imag_b[..len],
+                )
+            };
+            for i in 0..len {
+                let bit1 = (indices[i] & mask1) != 0;
+                let bit2 = (indices[i] & mask2) != 0;
+                let r = real[i];
+                let im = imag[i];
+                if bit1 == bit2 {
+                    // Same parity: multiply by e^{-i*theta/2}
+                    real[i] = cos_same * r - sin_same * im;
+                    imag[i] = sin_same * r + cos_same * im;
+                } else {
+                    // Different parity: multiply by e^{i*theta/2}
+                    real[i] = cos_diff * r - sin_diff * im;
+                    imag[i] = sin_diff * r + cos_diff * im;
+                }
+            }
+        }
+        self
+    }
+
+    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+        let cos = (theta / 2.0).cos();
+        let sin = (theta / 2.0).sin();
+
+        // U gate matrix elements (matching StateVecSoA's direct implementation):
+        // U = [[cos(theta/2),            -e^{i*lambda}*sin(theta/2)],
+        //      [e^{i*phi}*sin(theta/2),   e^{i*(phi+lambda)}*cos(theta/2)]]
+        let u00_re = cos;
+        let u00_im = 0.0;
+        let u01_re = -sin * lambda.cos();
+        let u01_im = -sin * lambda.sin();
+        let u10_re = sin * phi.cos();
+        let u10_im = sin * phi.sin();
+        let u11_re = cos * (phi + lambda).cos();
+        let u11_im = cos * (phi + lambda).sin();
+
+        for &q in qubits {
+            self.flush_frame(q.0);
+            self.apply_single_qubit_gate(
+                q.0,
+                u00_re, u00_im,
+                u01_re, u01_im,
+                u10_re, u10_im,
+                u11_re, u11_im,
+            );
+        }
+        self
     }
 }
 

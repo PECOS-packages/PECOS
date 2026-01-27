@@ -1242,7 +1242,7 @@ mod tests {
 
     /// Compare GPU and CPU state vectors with tolerance for f32 vs f64 precision.
     /// Returns the maximum absolute difference found.
-    fn compare_states(gpu: &GpuStateVec, cpu: &StateVec) -> f64 {
+    fn compare_states(gpu: &GpuStateVec, cpu: &mut StateVec) -> f64 {
         let gpu_state = gpu.state();
         let cpu_state = cpu.state();
 
@@ -1279,9 +1279,9 @@ mod tests {
     #[test]
     fn test_compare_initial_state() {
         let gpu = GpuStateVec::new(3).unwrap();
-        let cpu = StateVec::new(3);
+        let mut cpu = StateVec::new(3);
 
-        let max_diff = compare_states(&gpu, &cpu);
+        let max_diff = compare_states(&gpu, &mut cpu);
         assert!(
             max_diff < TOLERANCE,
             "Initial state mismatch: max_diff = {max_diff}"
@@ -1296,13 +1296,13 @@ mod tests {
         // H on qubit 0
         gpu.h(&qid(0));
         cpu.h(&qid(0));
-        let max_diff = compare_states(&gpu, &cpu);
+        let max_diff = compare_states(&gpu, &mut cpu);
         assert!(max_diff < TOLERANCE, "H(0) mismatch: max_diff = {max_diff}");
 
         // H on qubit 1
         gpu.h(&qid(1));
         cpu.h(&qid(1));
-        let max_diff = compare_states(&gpu, &cpu);
+        let max_diff = compare_states(&gpu, &mut cpu);
         assert!(
             max_diff < TOLERANCE,
             "H(0)H(1) mismatch: max_diff = {max_diff}"
@@ -1317,7 +1317,7 @@ mod tests {
             let mut cpu = StateVec::new(2);
             gpu.x(&qid(0));
             cpu.x(&qid(0));
-            let max_diff = compare_states(&gpu, &cpu);
+            let max_diff = compare_states(&gpu, &mut cpu);
             assert!(max_diff < TOLERANCE, "X(0) mismatch: max_diff = {max_diff}");
         }
 
@@ -1327,7 +1327,7 @@ mod tests {
             let mut cpu = StateVec::new(2);
             gpu.y(&qid(1));
             cpu.y(&qid(1));
-            let max_diff = compare_states(&gpu, &cpu);
+            let max_diff = compare_states(&gpu, &mut cpu);
             assert!(max_diff < TOLERANCE, "Y(1) mismatch: max_diff = {max_diff}");
         }
 
@@ -1339,7 +1339,7 @@ mod tests {
             cpu.h(&qid(0));
             gpu.z(&qid(0));
             cpu.z(&qid(0));
-            let max_diff = compare_states(&gpu, &cpu);
+            let max_diff = compare_states(&gpu, &mut cpu);
             assert!(
                 max_diff < TOLERANCE,
                 "H(0)Z(0) mismatch: max_diff = {max_diff}"
@@ -1357,7 +1357,7 @@ mod tests {
             cpu.h(&qid(0));
             gpu.sz(&qid(0));
             cpu.sz(&qid(0));
-            let max_diff = compare_states(&gpu, &cpu);
+            let max_diff = compare_states(&gpu, &mut cpu);
             assert!(
                 max_diff < TOLERANCE,
                 "H(0)S(0) mismatch: max_diff = {max_diff}"
@@ -1372,7 +1372,7 @@ mod tests {
             cpu.h(&qid(0));
             gpu.t(&qid(0));
             cpu.t(&qid(0));
-            let max_diff = compare_states(&gpu, &cpu);
+            let max_diff = compare_states(&gpu, &mut cpu);
             assert!(
                 max_diff < TOLERANCE,
                 "H(0)T(0) mismatch: max_diff = {max_diff}"
@@ -1391,7 +1391,7 @@ mod tests {
                 let mut cpu = StateVec::new(1);
                 gpu.rx(theta, &qid(0));
                 cpu.rx(theta, &qid(0));
-                let max_diff = compare_states(&gpu, &cpu);
+                let max_diff = compare_states(&gpu, &mut cpu);
                 assert!(
                     max_diff < TOLERANCE,
                     "RX({theta}) mismatch: max_diff = {max_diff}"
@@ -1404,7 +1404,7 @@ mod tests {
                 let mut cpu = StateVec::new(1);
                 gpu.ry(theta, &qid(0));
                 cpu.ry(theta, &qid(0));
-                let max_diff = compare_states(&gpu, &cpu);
+                let max_diff = compare_states(&gpu, &mut cpu);
                 assert!(
                     max_diff < TOLERANCE,
                     "RY({theta}) mismatch: max_diff = {max_diff}"
@@ -1419,7 +1419,7 @@ mod tests {
                 cpu.h(&qid(0));
                 gpu.rz(theta, &qid(0));
                 cpu.rz(theta, &qid(0));
-                let max_diff = compare_states(&gpu, &cpu);
+                let max_diff = compare_states(&gpu, &mut cpu);
                 assert!(
                     max_diff < TOLERANCE,
                     "H RZ({theta}) mismatch: max_diff = {max_diff}"
@@ -1448,7 +1448,7 @@ mod tests {
                 gpu.cx(&qid2(control, target));
                 cpu.cx(&qid2(control, target));
 
-                let max_diff = compare_states(&gpu, &cpu);
+                let max_diff = compare_states(&gpu, &mut cpu);
                 assert!(
                     max_diff < TOLERANCE,
                     "CX({control},{target}) mismatch: max_diff = {max_diff}"
@@ -1472,7 +1472,7 @@ mod tests {
         gpu.cz(&qid2(0, 1));
         cpu.cz(&qid2(0, 1));
 
-        let max_diff = compare_states(&gpu, &cpu);
+        let max_diff = compare_states(&gpu, &mut cpu);
         assert!(
             max_diff < TOLERANCE,
             "H(0)H(1)CZ(0,1) mismatch: max_diff = {max_diff}"
@@ -1497,7 +1497,7 @@ mod tests {
             gpu.rzz(theta, &qid2(0, 1));
             cpu.rzz(theta, &qid2(0, 1));
 
-            let max_diff = compare_states(&gpu, &cpu);
+            let max_diff = compare_states(&gpu, &mut cpu);
             assert!(
                 max_diff < TOLERANCE,
                 "RZZ({theta}) mismatch: max_diff = {max_diff}"
@@ -1543,7 +1543,7 @@ mod tests {
         gpu.cx(&qid2(1, 2));
         cpu.cx(&qid2(1, 2));
 
-        let max_diff = compare_states(&gpu, &cpu);
+        let max_diff = compare_states(&gpu, &mut cpu);
         assert!(
             max_diff < TOLERANCE,
             "Complex circuit mismatch: max_diff = {max_diff}"
@@ -1565,7 +1565,7 @@ mod tests {
         gpu.reset();
         cpu.reset();
 
-        let max_diff = compare_states(&gpu, &cpu);
+        let max_diff = compare_states(&gpu, &mut cpu);
         assert!(
             max_diff < TOLERANCE,
             "Reset state mismatch: max_diff = {max_diff}"

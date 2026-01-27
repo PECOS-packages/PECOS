@@ -2621,7 +2621,7 @@ mod tests {
     full_state_vector_test_suite!(StateVecAoS, 4);
     full_state_vector_test_suite!(StateVecSoA, 4);
 
-    // Sparse simulators (Clifford-only)
-    state_vector_test_suite!(SparseStateVecAoS, 4);
-    state_vector_test_suite!(SparseStateVecSoA, 4);
+    // Sparse simulators (now with rotation gate support)
+    full_state_vector_test_suite!(SparseStateVecAoS, 4);
+    full_state_vector_test_suite!(SparseStateVecSoA, 4);
 }

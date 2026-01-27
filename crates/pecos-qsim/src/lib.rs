@@ -74,9 +74,10 @@ pub use sparse_stab::{
 };
 pub use stab::Stab;
 pub use stabilizer_tableau::StabilizerTableauSimulator;
-// StateVec uses the optimized SoA implementation with SIMD support.
-// The original AoS implementation is available as StateVecAoS.
-pub use state_vec_soa::StateVecSoA as StateVec;
+// StateVec uses the sparse SoA implementation optimized for QEC workloads.
+// The dense implementation is available as DenseStateVec / StateVecSoA.
+pub use state_vec_sparse_soa::SparseStateVecSoA as StateVec;
+pub use state_vec_soa::StateVecSoA as DenseStateVec;
 pub use state_vec::StateVec as StateVecOld;
 pub use state_vec_aos::StateVecAoS;
 pub use state_vec_soa::StateVecSoA;

@@ -30,7 +30,7 @@ pub use noise::{
 };
 pub use pecos_core::errors::PecosError;
 pub use quantum::{
-    QuantumEngine, StateVecEngine, StateVectorEngine, StateVectorSimulator,
+    DenseStateVecEngine, QuantumEngine, StateVecEngine, StateVectorEngine, StateVectorSimulator,
 };
 pub use quantum_engine_builder::{
     IntoQuantumEngineBuilder, QuantumEngineBuilder, SparseStabilizerEngineBuilder,

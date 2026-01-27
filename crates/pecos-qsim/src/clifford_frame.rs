@@ -376,16 +376,16 @@ pub const GATE_PHASE_DELTA: [u8; 24] = [
 impl CliffordFrame {
     // Named constants for all single-qubit Cliffords used as gates
     pub const IDENTITY: Self = Self(0);
-    pub const PAULI_X: Self = Self(1);
-    pub const PAULI_Y: Self = Self(2);
-    pub const PAULI_Z: Self = Self(3);
-    pub const S_GATE: Self = Self(4);
-    pub const SDG_GATE: Self = Self(5);
-    pub const H_GATE: Self = Self(6);
-    pub const SX_GATE: Self = Self(13);   // HSH
-    pub const SX_DG_GATE: Self = Self(12); // SHS
-    pub const SY_GATE: Self = Self(10);   // HZ = HS²
-    pub const SY_DG_GATE: Self = Self(9); // ZH = S²H
+    pub const X: Self = Self(1);
+    pub const Y: Self = Self(2);
+    pub const Z: Self = Self(3);
+    pub const SZ: Self = Self(4);
+    pub const SZDG: Self = Self(5);
+    pub const H: Self = Self(6);
+    pub const SX: Self = Self(13);   // HSH
+    pub const SXDG: Self = Self(12); // SHS
+    pub const SY: Self = Self(10);   // HZ = HS²
+    pub const SYDG: Self = Self(9);  // ZH = S²H
 
     /// Compose: new_frame = frame.compose(gate).
     ///
@@ -868,11 +868,11 @@ mod tests {
         // Verify named constants match expected matrices
         let cases: Vec<(CliffordFrame, Mat2)> = vec![
             (CliffordFrame::IDENTITY, mat_i()),
-            (CliffordFrame::PAULI_X, mat_x()),
-            (CliffordFrame::PAULI_Y, mat_y()),
-            (CliffordFrame::PAULI_Z, mat_z()),
-            (CliffordFrame::H_GATE, mat_h()),
-            (CliffordFrame::S_GATE, mat_s()),
+            (CliffordFrame::X, mat_x()),
+            (CliffordFrame::Y, mat_y()),
+            (CliffordFrame::Z, mat_z()),
+            (CliffordFrame::H, mat_h()),
+            (CliffordFrame::SZ, mat_s()),
         ];
         for (frame, expected) in &cases {
             let actual = element_matrix(frame.index() as usize);
@@ -887,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_sx_is_hsh() {
-        let sx_mat = element_matrix(CliffordFrame::SX_GATE.index() as usize);
+        let sx_mat = element_matrix(CliffordFrame::SX.index() as usize);
         let hsh = mat_mul(&mat_h(), &mat_mul(&mat_s(), &mat_h()));
         assert!(eq_mod_phase(&sx_mat, &hsh), "SX should equal HSH");
     }
@@ -895,11 +895,11 @@ mod tests {
     #[test]
     fn test_compose_semantics() {
         // frame=I, apply H -> frame=H
-        let f = CliffordFrame::IDENTITY.compose(CliffordFrame::H_GATE);
-        assert_eq!(f, CliffordFrame::H_GATE);
+        let f = CliffordFrame::IDENTITY.compose(CliffordFrame::H);
+        assert_eq!(f, CliffordFrame::H);
 
         // frame=H, apply S -> frame should correspond to matrix S·H
-        let f2 = f.compose(CliffordFrame::S_GATE);
+        let f2 = f.compose(CliffordFrame::SZ);
         let sh_mat = mat_mul(&mat_s(), &mat_h());
         let f2_mat = element_matrix(f2.index() as usize);
         assert!(
@@ -935,11 +935,11 @@ mod tests {
     #[test]
     fn test_is_pauli() {
         assert!(CliffordFrame::IDENTITY.is_pauli());
-        assert!(CliffordFrame::PAULI_X.is_pauli());
-        assert!(CliffordFrame::PAULI_Y.is_pauli());
-        assert!(CliffordFrame::PAULI_Z.is_pauli());
-        assert!(!CliffordFrame::H_GATE.is_pauli());
-        assert!(!CliffordFrame::S_GATE.is_pauli());
+        assert!(CliffordFrame::X.is_pauli());
+        assert!(CliffordFrame::Y.is_pauli());
+        assert!(CliffordFrame::Z.is_pauli());
+        assert!(!CliffordFrame::H.is_pauli());
+        assert!(!CliffordFrame::SZ.is_pauli());
     }
 
     #[test]
@@ -950,17 +950,17 @@ mod tests {
         assert!(img.positive);
 
         // H maps Z to +X
-        let img = CliffordFrame::H_GATE.z_image();
+        let img = CliffordFrame::H.z_image();
         assert_eq!(img.axis, PauliAxis::X);
         assert!(img.positive);
 
         // X maps Z to -Z
-        let img = CliffordFrame::PAULI_X.z_image();
+        let img = CliffordFrame::X.z_image();
         assert_eq!(img.axis, PauliAxis::Z);
         assert!(!img.positive);
 
         // S maps Z to +Z
-        let img = CliffordFrame::S_GATE.z_image();
+        let img = CliffordFrame::SZ.z_image();
         assert_eq!(img.axis, PauliAxis::Z);
         assert!(img.positive);
     }
@@ -979,48 +979,48 @@ mod tests {
     fn test_push_through_cx() {
         // X_ctrl through CX -> X_ctrl X_targ
         let (c, t) =
-            CliffordFrame::push_through_cx(CliffordFrame::PAULI_X, CliffordFrame::IDENTITY);
-        assert_eq!(c, CliffordFrame::PAULI_X);
-        assert_eq!(t, CliffordFrame::PAULI_X);
+            CliffordFrame::push_through_cx(CliffordFrame::X, CliffordFrame::IDENTITY);
+        assert_eq!(c, CliffordFrame::X);
+        assert_eq!(t, CliffordFrame::X);
 
         // I_ctrl, Z_targ through CX -> Z_ctrl Z_targ
         let (c, t) =
-            CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::PAULI_Z);
-        assert_eq!(c, CliffordFrame::PAULI_Z);
-        assert_eq!(t, CliffordFrame::PAULI_Z);
+            CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::Z);
+        assert_eq!(c, CliffordFrame::Z);
+        assert_eq!(t, CliffordFrame::Z);
 
         // Z_ctrl through CX -> Z_ctrl
         let (c, t) =
-            CliffordFrame::push_through_cx(CliffordFrame::PAULI_Z, CliffordFrame::IDENTITY);
-        assert_eq!(c, CliffordFrame::PAULI_Z);
+            CliffordFrame::push_through_cx(CliffordFrame::Z, CliffordFrame::IDENTITY);
+        assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::IDENTITY);
 
         // I_ctrl, X_targ through CX -> X_targ unchanged
         let (c, t) =
-            CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::PAULI_X);
+            CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::X);
         assert_eq!(c, CliffordFrame::IDENTITY);
-        assert_eq!(t, CliffordFrame::PAULI_X);
+        assert_eq!(t, CliffordFrame::X);
     }
 
     #[test]
     fn test_push_through_cz() {
         // X_ctrl through CZ -> X_ctrl Z_targ
         let (c, t) =
-            CliffordFrame::push_through_cz(CliffordFrame::PAULI_X, CliffordFrame::IDENTITY);
-        assert_eq!(c, CliffordFrame::PAULI_X);
-        assert_eq!(t, CliffordFrame::PAULI_Z);
+            CliffordFrame::push_through_cz(CliffordFrame::X, CliffordFrame::IDENTITY);
+        assert_eq!(c, CliffordFrame::X);
+        assert_eq!(t, CliffordFrame::Z);
 
         // I_ctrl, X_targ through CZ -> Z_ctrl X_targ
         let (c, t) =
-            CliffordFrame::push_through_cz(CliffordFrame::IDENTITY, CliffordFrame::PAULI_X);
-        assert_eq!(c, CliffordFrame::PAULI_Z);
-        assert_eq!(t, CliffordFrame::PAULI_X);
+            CliffordFrame::push_through_cz(CliffordFrame::IDENTITY, CliffordFrame::X);
+        assert_eq!(c, CliffordFrame::Z);
+        assert_eq!(t, CliffordFrame::X);
 
         // Z_ctrl, Z_targ through CZ -> unchanged
         let (c, t) =
-            CliffordFrame::push_through_cz(CliffordFrame::PAULI_Z, CliffordFrame::PAULI_Z);
-        assert_eq!(c, CliffordFrame::PAULI_Z);
-        assert_eq!(t, CliffordFrame::PAULI_Z);
+            CliffordFrame::push_through_cz(CliffordFrame::Z, CliffordFrame::Z);
+        assert_eq!(c, CliffordFrame::Z);
+        assert_eq!(t, CliffordFrame::Z);
     }
 
     #[test]
@@ -1208,18 +1208,18 @@ mod tests {
 
     #[test]
     fn test_h_generates_order_2() {
-        let h = CliffordFrame::H_GATE;
+        let h = CliffordFrame::H;
         assert_eq!(h.compose(h), CliffordFrame::IDENTITY, "H² should be I");
     }
 
     #[test]
     fn test_s_generates_order_4() {
-        let s = CliffordFrame::S_GATE;
+        let s = CliffordFrame::SZ;
         let s2 = s.compose(s);
         let s3 = s2.compose(s);
         let s4 = s3.compose(s);
-        assert_eq!(s2, CliffordFrame::PAULI_Z, "S² should be Z");
-        assert_eq!(s3, CliffordFrame::SDG_GATE, "S³ should be Sdg");
+        assert_eq!(s2, CliffordFrame::Z, "S² should be Z");
+        assert_eq!(s3, CliffordFrame::SZDG, "S³ should be Sdg");
         assert_eq!(s4, CliffordFrame::IDENTITY, "S⁴ should be I");
     }
 

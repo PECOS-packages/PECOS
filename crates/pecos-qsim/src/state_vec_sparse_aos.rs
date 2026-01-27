@@ -49,7 +49,7 @@
 //!    keeping the state sparse longer (at cost of approximation error).
 
 use crate::clifford_gateable::MeasurementResult;
-use crate::{CliffordGateable, QuantumSimulator};
+use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
 use pecos_core::QubitId;
 use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
@@ -1458,6 +1458,88 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
         }
 
         results
+    }
+}
+
+// =============================================================================
+// ArbitraryRotationGateable trait implementation
+// =============================================================================
+
+impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
+    fn rx(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        let cos = (theta / 2.0).cos();
+        let sin = (theta / 2.0).sin();
+        // RX(theta) = [[cos, -i*sin], [-i*sin, cos]]
+        let a = Complex64::new(cos, 0.0);
+        let b = Complex64::new(0.0, -sin);
+        let c = Complex64::new(0.0, -sin);
+        let d = Complex64::new(cos, 0.0);
+        for &q in qubits {
+            self.apply_single_qubit_gate(q.0, a, b, c, d);
+        }
+        self
+    }
+
+    fn rz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        let half = theta / 2.0;
+        let cos = half.cos();
+        let sin = half.sin();
+        // RZ(theta) = [[e^{-i*theta/2}, 0], [0, e^{i*theta/2}]]
+        let phase_low = Complex64::new(cos, -sin);
+        let phase_high = Complex64::new(cos, sin);
+        for &q in qubits {
+            let mask = 1usize << q.0;
+            for (idx, amp) in &mut self.amplitudes {
+                if *idx & mask == 0 {
+                    *amp *= phase_low;
+                } else {
+                    *amp *= phase_high;
+                }
+            }
+        }
+        self
+    }
+
+    fn rzz(&mut self, theta: f64, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RZZ requires pairs of qubits"
+        );
+        let half = theta / 2.0;
+        // Same parity: e^{-i*theta/2}, different parity: e^{i*theta/2}
+        let phase_same = Complex64::new((-half).cos(), (-half).sin());
+        let phase_diff = Complex64::new(half.cos(), half.sin());
+
+        for pair in qubits.chunks_exact(2) {
+            let mask1 = 1usize << pair[0].0;
+            let mask2 = 1usize << pair[1].0;
+            for (idx, amp) in &mut self.amplitudes {
+                let bit1 = (*idx & mask1) != 0;
+                let bit2 = (*idx & mask2) != 0;
+                if bit1 == bit2 {
+                    *amp *= phase_same;
+                } else {
+                    *amp *= phase_diff;
+                }
+            }
+        }
+        self
+    }
+
+    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[QubitId]) -> &mut Self {
+        let cos = (theta / 2.0).cos();
+        let sin = (theta / 2.0).sin();
+
+        // U gate matrix (matching StateVecSoA's direct implementation)
+        let a = Complex64::new(cos, 0.0);
+        let b = Complex64::new(-sin * lambda.cos(), -sin * lambda.sin());
+        let c = Complex64::new(sin * phi.cos(), sin * phi.sin());
+        let d = Complex64::new(cos * (phi + lambda).cos(), cos * (phi + lambda).sin());
+
+        for &q in qubits {
+            self.apply_single_qubit_gate(q.0, a, b, c, d);
+        }
+        self
     }
 }
 

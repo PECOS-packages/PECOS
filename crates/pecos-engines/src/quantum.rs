@@ -8,7 +8,7 @@ use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, SparseStab, StateVec,
-    StateVecAoS,
+    StateVecAoS, StateVecSoA,
 };
 use pecos_rng::{PecosRng, SeedableRng};
 use std::any::Any;
@@ -119,6 +119,24 @@ impl StateVectorSimulator for StateVecAoS {
     }
 }
 
+impl StateVectorSimulator for StateVecSoA {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits()
+    }
+
+    fn create(num_qubits: usize) -> Self {
+        StateVecSoA::new(num_qubits)
+    }
+
+    fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
+        StateVecSoA::with_seed(num_qubits, seed)
+    }
+
+    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
+        StateVecSoA::with_rng(num_qubits, rng)
+    }
+}
+
 /// A generic quantum engine that uses any state vector simulator.
 ///
 /// This engine works with any simulator implementing `StateVectorSimulator`.
@@ -164,16 +182,21 @@ where
     }
 }
 
-/// Type alias for state vector engine using the optimized StateVec simulator.
+/// Type alias for state vector engine using the default StateVec simulator
+/// (sparse SoA, optimized for QEC workloads).
+pub type StateVecEngine = StateVectorEngine<StateVec>;
+
+/// Type alias for state vector engine using the dense StateVecSoA simulator.
 ///
-/// StateVec uses:
+/// DenseStateVecEngine uses:
 /// - SoA (Structure of Arrays) layout for better SIMD performance
 /// - Strided iteration for cache-efficient access patterns
 /// - Fused gate primitives for reduced memory bandwidth
-pub type StateVecEngine = StateVectorEngine<StateVec>;
+/// - Optional parallel execution for large state vectors
+pub type DenseStateVecEngine = StateVectorEngine<StateVecSoA>;
 
-impl StateVecEngine {
-    /// Create a new state vector engine with parallel execution enabled/disabled
+impl DenseStateVecEngine {
+    /// Create a new dense state vector engine with parallel execution enabled/disabled
     ///
     /// # Arguments
     /// * `num_qubits` - Number of qubits in the system
@@ -181,7 +204,7 @@ impl StateVecEngine {
     /// * `num_threads` - Number of threads for parallel execution (None = use Rayon's default)
     #[must_use]
     pub fn with_parallel(num_qubits: usize, parallel: bool, num_threads: Option<usize>) -> Self {
-        let mut simulator = StateVec::new(num_qubits);
+        let mut simulator = StateVecSoA::new(num_qubits);
         simulator.set_parallel(parallel);
         simulator.set_num_threads(num_threads);
         Self { simulator }

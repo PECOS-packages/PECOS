@@ -14,7 +14,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, QuantumSimulator, SparseStateVec, SparseStateVecSoA, StateVec};
+use pecos_qsim::{CliffordGateable, QuantumSimulator, SparseStateVec, SparseStateVecSoA, StateVecSoA};
 
 /// Benchmark sparse state vector on sparse-friendly circuits (X, Z, CX only)
 fn bench_sparse_friendly(c: &mut Criterion) {
@@ -28,7 +28,7 @@ fn bench_sparse_friendly(c: &mut Criterion) {
             BenchmarkId::new("sparse", num_qubits),
             &num_qubits,
             |b, &n| {
-                let mut sim = SparseStateVec::new(n);
+                let mut sim = SparseStateVecSoA::new(n);
                 b.iter(|| {
                     for q in 0..n {
                         sim.x(&[QubitId(q)]);
@@ -64,7 +64,7 @@ fn bench_sparse_friendly(c: &mut Criterion) {
             BenchmarkId::new("dense", num_qubits),
             &num_qubits,
             |b, &n| {
-                let mut sim = StateVec::new(n);
+                let mut sim = StateVecSoA::new(n);
                 b.iter(|| {
                     for q in 0..n {
                         sim.x(&[QubitId(q)]);
@@ -95,7 +95,7 @@ fn bench_varying_superposition(c: &mut Criterion) {
             BenchmarkId::new("sparse", h_qubits),
             &h_qubits,
             |b, &h| {
-                let mut sim = SparseStateVec::new(num_qubits);
+                let mut sim = SparseStateVecSoA::new(num_qubits);
                 b.iter(|| {
                     sim.reset();
                     for q in 0..h {
@@ -126,7 +126,7 @@ fn bench_varying_superposition(c: &mut Criterion) {
             BenchmarkId::new("dense", h_qubits),
             &h_qubits,
             |b, &h| {
-                let mut sim = StateVec::new(num_qubits);
+                let mut sim = StateVecSoA::new(num_qubits);
                 b.iter(|| {
                     sim.reset();
                     for q in 0..h {
@@ -150,7 +150,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // H gate (doubles amplitude count)
         group.bench_function(BenchmarkId::new("h_gate", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             // Set up initial state with 2^h_qubits amplitudes
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
@@ -163,7 +163,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // X gate (permutes amplitudes, count stays same)
         group.bench_function(BenchmarkId::new("x_gate", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -174,7 +174,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // Z gate (in-place phase flip)
         group.bench_function(BenchmarkId::new("z_gate", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -185,7 +185,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // CX gate
         group.bench_function(BenchmarkId::new("cx_gate", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -196,7 +196,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // CZ gate (in-place)
         group.bench_function(BenchmarkId::new("cz_gate", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -207,7 +207,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // Batched Z gates: compare individual vs batched
         group.bench_function(BenchmarkId::new("z_gate_x4_individual", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -220,7 +220,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("z_gate_x4_batched", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -231,7 +231,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // Batched X gates
         group.bench_function(BenchmarkId::new("x_gate_x4_individual", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -244,7 +244,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("x_gate_x4_batched", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -255,7 +255,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // Batched CZ gates
         group.bench_function(BenchmarkId::new("cz_gate_x4_individual", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -268,7 +268,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("cz_gate_x4_batched", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -284,7 +284,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // Batched CX gates
         group.bench_function(BenchmarkId::new("cx_gate_x4_individual", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -297,7 +297,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("cx_gate_x4_batched", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -559,7 +559,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("mz_x4_individual", &label), |b| {
             b.iter_batched(
                 || {
-                    let mut sim = SparseStateVec::new(16);
+                    let mut sim = SparseStateVecSoA::new(16);
                     for q in 0..h_qubits {
                         sim.h(&[QubitId(q)]);
                     }
@@ -578,7 +578,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("mz_x4_batched", &label), |b| {
             b.iter_batched(
                 || {
-                    let mut sim = SparseStateVec::new(16);
+                    let mut sim = SparseStateVecSoA::new(16);
                     for q in 0..h_qubits {
                         sim.h(&[QubitId(q)]);
                     }
@@ -593,7 +593,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
 
         // Batched H gates (H doubles amplitude count, so use H^2=I pattern)
         group.bench_function(BenchmarkId::new("h_gate_x2_individual", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -607,7 +607,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("h_gate_x2_batched", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -631,7 +631,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // H gate - AoS version (original)
         group.bench_function(BenchmarkId::new("h_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -655,7 +655,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // X gate - AoS
         group.bench_function(BenchmarkId::new("x_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -677,7 +677,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // CX gate - AoS
         group.bench_function(BenchmarkId::new("cx_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -699,7 +699,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // Z gate - AoS (in-place operation)
         group.bench_function(BenchmarkId::new("z_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -721,7 +721,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // CZ gate - AoS (in-place operation)
         group.bench_function(BenchmarkId::new("cz_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -743,7 +743,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // SZZ gate - AoS (trait default: H.H.SXX.H.H decomposition)
         group.bench_function(BenchmarkId::new("szz_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -766,7 +766,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // SZZdg gate - AoS (trait default: Z.Z.SZZ decomposition)
         group.bench_function(BenchmarkId::new("szzdg_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -789,7 +789,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // iSWAP gate - AoS (trait default: SZ.SZ.H.CX.CX.H decomposition)
         group.bench_function(BenchmarkId::new("iswap_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -812,7 +812,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // SXX gate - AoS (trait default decomposition)
         group.bench_function(BenchmarkId::new("sxx_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -835,7 +835,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
 
         // G gate - AoS (trait default)
         group.bench_function(BenchmarkId::new("g_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(16);
+            let mut sim = SparseStateVecSoA::new(16);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -868,7 +868,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
     // Stays at 2 amplitudes throughout (sparse-friendly)
     for num_qubits in [10, 20, 30, 50] {
         group.bench_function(BenchmarkId::new("ghz_aos", num_qubits), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             b.iter(|| {
                 sim.reset();
                 sim.h(&[QubitId(0)]);
@@ -892,7 +892,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
         // Dense only feasible for <= 20 qubits (2^20 = 1M amplitudes)
         if num_qubits <= 20 {
             group.bench_function(BenchmarkId::new("ghz_dense", num_qubits), |b| {
-                let mut sim = StateVec::new(num_qubits);
+                let mut sim = StateVecSoA::new(num_qubits);
                 b.iter(|| {
                     sim.reset();
                     sim.h(&[QubitId(0)]);
@@ -910,7 +910,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
         let gates_per_iter = 100;
 
         group.bench_function(BenchmarkId::new("clifford_sparse_aos", num_qubits), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             b.iter(|| {
                 for i in 0..gates_per_iter {
                     let q = i % num_qubits;
@@ -944,7 +944,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
         // Dense only feasible for <= 20 qubits
         if num_qubits <= 20 {
             group.bench_function(BenchmarkId::new("clifford_sparse_dense", num_qubits), |b| {
-                let mut sim = StateVec::new(num_qubits);
+                let mut sim = StateVecSoA::new(num_qubits);
                 b.iter(|| {
                     for i in 0..gates_per_iter {
                         let q = i % num_qubits;
@@ -967,7 +967,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
         let num_qubits = 16;
 
         group.bench_function(BenchmarkId::new("incremental_h_aos", final_h_count), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             b.iter(|| {
                 sim.reset();
                 for q in 0..final_h_count {
@@ -994,7 +994,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("incremental_h_dense", final_h_count), |b| {
-            let mut sim = StateVec::new(num_qubits);
+            let mut sim = StateVecSoA::new(num_qubits);
             b.iter(|| {
                 sim.reset();
                 for q in 0..final_h_count {
@@ -1021,7 +1021,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
 
         // --- SZZ ---
         group.bench_function(BenchmarkId::new("szz_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1042,7 +1042,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("szz_dense", &label), |b| {
-            let mut sim = StateVec::new(num_qubits);
+            let mut sim = StateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1053,7 +1053,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
 
         // --- SZZdg ---
         group.bench_function(BenchmarkId::new("szzdg_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1074,7 +1074,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("szzdg_dense", &label), |b| {
-            let mut sim = StateVec::new(num_qubits);
+            let mut sim = StateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1085,7 +1085,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
 
         // --- iSWAP ---
         group.bench_function(BenchmarkId::new("iswap_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1106,7 +1106,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("iswap_dense", &label), |b| {
-            let mut sim = StateVec::new(num_qubits);
+            let mut sim = StateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1117,7 +1117,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
 
         // --- SXX ---
         group.bench_function(BenchmarkId::new("sxx_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1138,7 +1138,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("sxx_dense", &label), |b| {
-            let mut sim = StateVec::new(num_qubits);
+            let mut sim = StateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1149,7 +1149,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
 
         // --- CX ---
         group.bench_function(BenchmarkId::new("cx_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1170,7 +1170,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("cx_dense", &label), |b| {
-            let mut sim = StateVec::new(num_qubits);
+            let mut sim = StateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1181,7 +1181,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
 
         // --- H (apply twice: H^2 = I to avoid state growth) ---
         group.bench_function(BenchmarkId::new("h_aos", &label), |b| {
-            let mut sim = SparseStateVec::new(num_qubits);
+            let mut sim = SparseStateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }
@@ -1204,7 +1204,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("h_dense", &label), |b| {
-            let mut sim = StateVec::new(num_qubits);
+            let mut sim = StateVecSoA::new(num_qubits);
             for q in 0..h_qubits {
                 sim.h(&[QubitId(q)]);
             }

@@ -16,7 +16,7 @@
 //! in a flexible, extensible way that allows different crates to implement
 //! their own quantum simulators.
 
-use crate::quantum::{QuantumEngine, SparseStabEngine, StateVecEngine};
+use crate::quantum::{DenseStateVecEngine, QuantumEngine, SparseStabEngine, StateVecEngine};
 use pecos_core::errors::PecosError;
 
 /// Trait for types that can build or configure a quantum engine
@@ -143,11 +143,16 @@ impl QuantumEngineBuilder for StateVectorEngineBuilder {
         let num_qubits = self.num_qubits.ok_or_else(|| {
             PecosError::Input("Number of qubits not specified for quantum engine".to_string())
         })?;
-        Ok(Box::new(StateVecEngine::with_parallel(
-            num_qubits,
-            self.parallel,
-            self.num_threads,
-        )))
+        if self.parallel || self.num_threads.is_some() {
+            // Parallel execution requires the dense StateVecSoA backend
+            Ok(Box::new(DenseStateVecEngine::with_parallel(
+                num_qubits,
+                self.parallel,
+                self.num_threads,
+            )))
+        } else {
+            Ok(Box::new(StateVecEngine::new(num_qubits)))
+        }
     }
 
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {

@@ -89,6 +89,11 @@ where
     /// Tracks the exact global phase: actual_matrix = e^{i*phase*π/4} * ELEMENT_MATRIX[frame].
     frame_phases: Vec<u8>,
 
+    /// Deferred sorting flag. When true, indices may not be in sorted order.
+    /// Index-permuting gates (iSWAP) set this; operations needing sorted order
+    /// (merge, binary search) call `ensure_sorted()` first.
+    needs_sort: bool,
+
     // ===== COLD DATA - rarely accessed =====
     /// Number of qubits
     num_qubits: usize,
@@ -146,6 +151,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
             merge_idx: Vec::new(),
             merge_re: Vec::new(),
             merge_im: Vec::new(),
+            needs_sort: false,
             frames: vec![CliffordFrame::IDENTITY; num_qubits],
             frame_phases: vec![0; num_qubits],
             num_qubits,
@@ -195,6 +201,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     #[must_use]
     pub fn get_amplitude(&mut self, index: usize) -> Complex64 {
         self.flush_all_frames();
+        self.ensure_sorted();
         let (indices, real, imag) = self.active_buffers();
         match indices[..self.len].binary_search(&index) {
             Ok(pos) => Complex64::new(real[pos], imag[pos]),
@@ -245,6 +252,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
         c_re: f64, c_im: f64,  // Gate matrix element [1,0]
         d_re: f64, d_im: f64,  // Gate matrix element [1,1]
     ) {
+        self.ensure_sorted();
         let mask = 1usize << q;
         let len = self.len;
         let epsilon = self.epsilon;
@@ -640,6 +648,16 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
     }
 
+    /// Ensure the active buffer is in sorted order.
+    /// Called before operations that depend on sorted indices (merges, binary search).
+    #[inline]
+    fn ensure_sorted(&mut self) {
+        if self.needs_sort {
+            self.sort_active();
+            self.needs_sort = false;
+        }
+    }
+
     /// Sort the active buffer by index.
     ///
     /// Sort the active buffer only if it's not already sorted.
@@ -748,53 +766,432 @@ impl<R: Rng> SparseStateVecSoA<R> {
     // Two-qubit gates
     // =========================================================================
 
-    /// Apply CX (CNOT) gate in-place: if control=1, flip target bit.
+    /// Apply SZZ diagonal phase gate in-place.
     ///
-    /// Modifies indices in the active buffer and re-sorts. Avoids copying
-    /// all three arrays to the destination buffer.
-    #[inline]
-    fn apply_cx_gate(&mut self, control: usize, target: usize) {
-        let control_mask = 1usize << control;
-        let target_mask = 1usize << target;
-        let len = self.len;
-
-        let indices = if self.active_a {
-            &mut self.indices_a[..len]
-        } else {
-            &mut self.indices_b[..len]
-        };
-
-        for i in 0..len {
-            if indices[i] & control_mask != 0 {
-                indices[i] ^= target_mask;
-            }
-        }
-
-        self.sort_active_if_needed();
-    }
-
-    /// Apply SWAP gate in-place: swap bits q1 and q2.
-    #[inline]
-    fn apply_swap_gate(&mut self, q1: usize, q2: usize) {
+    /// SZZ = diag(e^{-iπ/4}, e^{iπ/4}, e^{iπ/4}, e^{-iπ/4}).
+    /// Same parity (both bits equal) → multiply by e^{-iπ/4} = (1-i)/√2.
+    /// Different parity → multiply by e^{iπ/4} = (1+i)/√2.
+    /// No index changes; pure O(k) phase application.
+    fn apply_szz_gate(&mut self, q1: usize, q2: usize) {
         let mask1 = 1usize << q1;
         let mask2 = 1usize << q2;
         let len = self.len;
-
-        let indices = if self.active_a {
-            &mut self.indices_a[..len]
+        let (indices, real, imag) = if self.active_a {
+            (
+                &self.indices_a[..len],
+                &mut self.real_a[..len],
+                &mut self.imag_a[..len],
+            )
         } else {
-            &mut self.indices_b[..len]
+            (
+                &self.indices_b[..len],
+                &mut self.real_b[..len],
+                &mut self.imag_b[..len],
+            )
         };
+        let c = std::f64::consts::FRAC_1_SQRT_2;
+        for i in 0..len {
+            let bit1 = (indices[i] & mask1) != 0;
+            let bit2 = (indices[i] & mask2) != 0;
+            let r = real[i];
+            let im = imag[i];
+            if bit1 == bit2 {
+                // Same parity: e^{-iπ/4} = (1-i)/√2
+                real[i] = (r + im) * c;
+                imag[i] = (im - r) * c;
+            } else {
+                // Different parity: e^{iπ/4} = (1+i)/√2
+                real[i] = (r - im) * c;
+                imag[i] = (im + r) * c;
+            }
+        }
+    }
 
+    /// Apply SZZdg diagonal phase gate in-place.
+    ///
+    /// SZZdg = diag(e^{iπ/4}, e^{-iπ/4}, e^{-iπ/4}, e^{iπ/4}).
+    /// Same parity → multiply by e^{iπ/4} = (1+i)/√2.
+    /// Different parity → multiply by e^{-iπ/4} = (1-i)/√2.
+    fn apply_szzdg_gate(&mut self, q1: usize, q2: usize) {
+        let mask1 = 1usize << q1;
+        let mask2 = 1usize << q2;
+        let len = self.len;
+        let (indices, real, imag) = if self.active_a {
+            (
+                &self.indices_a[..len],
+                &mut self.real_a[..len],
+                &mut self.imag_a[..len],
+            )
+        } else {
+            (
+                &self.indices_b[..len],
+                &mut self.real_b[..len],
+                &mut self.imag_b[..len],
+            )
+        };
+        let c = std::f64::consts::FRAC_1_SQRT_2;
+        for i in 0..len {
+            let bit1 = (indices[i] & mask1) != 0;
+            let bit2 = (indices[i] & mask2) != 0;
+            let r = real[i];
+            let im = imag[i];
+            if bit1 == bit2 {
+                // Same parity: e^{iπ/4} = (1+i)/√2
+                real[i] = (r - im) * c;
+                imag[i] = (im + r) * c;
+            } else {
+                // Different parity: e^{-iπ/4} = (1-i)/√2
+                real[i] = (r + im) * c;
+                imag[i] = (im - r) * c;
+            }
+        }
+    }
+
+    /// Apply iSWAP gate: swap bits when different, multiply by i.
+    ///
+    /// |00⟩→|00⟩, |01⟩→i|10⟩, |10⟩→i|01⟩, |11⟩→|11⟩.
+    /// In-place XOR + phase. Sorting is deferred via `needs_sort` flag
+    /// and only performed when an operation requiring sorted order is called.
+    fn apply_iswap_gate(&mut self, q1: usize, q2: usize) {
+        let mask1 = 1usize << q1;
+        let mask2 = 1usize << q2;
+        let swap_mask = mask1 | mask2;
+        let len = self.len;
+
+        let (indices, real, imag) = if self.active_a {
+            (
+                &mut self.indices_a[..len],
+                &mut self.real_a[..len],
+                &mut self.imag_a[..len],
+            )
+        } else {
+            (
+                &mut self.indices_b[..len],
+                &mut self.real_b[..len],
+                &mut self.imag_b[..len],
+            )
+        };
         for i in 0..len {
             let bit1 = (indices[i] & mask1) != 0;
             let bit2 = (indices[i] & mask2) != 0;
             if bit1 != bit2 {
-                indices[i] ^= mask1 | mask2;
+                indices[i] ^= swap_mask;
+                // Multiply by i: (r, im) -> (-im, r)
+                let r = real[i];
+                real[i] = -imag[i];
+                imag[i] = r;
+            }
+        }
+        self.needs_sort = true;
+    }
+
+    /// Apply CX (CNOT) gate: if control=1, flip target bit.
+    ///
+    /// For small states, XOR in-place + sort. For larger states, uses O(k)
+    /// partition-merge: partition into 3 sorted groups (control=0, control=1
+    /// with target flipped down, control=1 with target flipped up), then
+    /// 3-way merge into inactive buffer.
+    #[inline]
+    fn apply_cx_gate(&mut self, control: usize, target: usize) {
+        self.ensure_sorted();
+        let control_mask = 1usize << control;
+        let target_mask = 1usize << target;
+        let len = self.len;
+
+        // Small state: XOR + sort in-place (often stays sorted, low overhead)
+        if len <= 16 {
+            let indices = if self.active_a {
+                &mut self.indices_a[..len]
+            } else {
+                &mut self.indices_b[..len]
+            };
+            for i in 0..len {
+                if indices[i] & control_mask != 0 {
+                    indices[i] ^= target_mask;
+                }
+            }
+            self.sort_active_if_needed();
+            return;
+        }
+
+        // Larger state: O(k) partition-merge into inactive buffer.
+        //
+        // Partition source into 3 groups (each sorted since source is sorted):
+        //   A:  control=0 (unchanged)
+        //   B1: control=1, target=1 → clear target bit (index -= target_mask)
+        //   B0: control=1, target=0 → set target bit   (index += target_mask)
+        // Then 3-way merge produces sorted output in O(k).
+        self.scratch_low.clear();   // A positions
+        self.scratch_high.clear();  // B1 positions
+        self.sort_perm.clear();     // B0 positions
+
+        {
+            let indices = if self.active_a {
+                &self.indices_a[..len]
+            } else {
+                &self.indices_b[..len]
+            };
+            for i in 0..len {
+                if indices[i] & control_mask == 0 {
+                    self.scratch_low.push(i as u32);
+                } else if indices[i] & target_mask != 0 {
+                    self.scratch_high.push(i as u32);
+                } else {
+                    self.sort_perm.push(i);
+                }
             }
         }
 
-        self.sort_active_if_needed();
+        // If no control=1 indices, nothing changes
+        if self.scratch_high.is_empty() && self.sort_perm.is_empty() {
+            return;
+        }
+
+        let a_len = self.scratch_low.len();
+        let b0_len = self.sort_perm.len();
+        let b1_len = self.scratch_high.len();
+        let mut a = 0usize;
+        let mut b0 = 0usize;
+        let mut b1 = 0usize;
+
+        // 3-way merge into inactive buffer
+        if self.active_a {
+            self.indices_b.clear();
+            self.real_b.clear();
+            self.imag_b.clear();
+            self.indices_b.reserve(len);
+            self.real_b.reserve(len);
+            self.imag_b.reserve(len);
+
+            while a < a_len || b0 < b0_len || b1 < b1_len {
+                let a_val = if a < a_len {
+                    self.indices_a[self.scratch_low[a] as usize]
+                } else { usize::MAX };
+                let b1_val = if b1 < b1_len {
+                    self.indices_a[self.scratch_high[b1] as usize] ^ target_mask
+                } else { usize::MAX };
+                let b0_val = if b0 < b0_len {
+                    self.indices_a[self.sort_perm[b0]] ^ target_mask
+                } else { usize::MAX };
+
+                if a_val <= b1_val && a_val <= b0_val {
+                    let pos = self.scratch_low[a] as usize;
+                    self.indices_b.push(a_val);
+                    self.real_b.push(self.real_a[pos]);
+                    self.imag_b.push(self.imag_a[pos]);
+                    a += 1;
+                } else if b1_val <= b0_val {
+                    let pos = self.scratch_high[b1] as usize;
+                    self.indices_b.push(b1_val);
+                    self.real_b.push(self.real_a[pos]);
+                    self.imag_b.push(self.imag_a[pos]);
+                    b1 += 1;
+                } else {
+                    let pos = self.sort_perm[b0];
+                    self.indices_b.push(b0_val);
+                    self.real_b.push(self.real_a[pos]);
+                    self.imag_b.push(self.imag_a[pos]);
+                    b0 += 1;
+                }
+            }
+        } else {
+            self.indices_a.clear();
+            self.real_a.clear();
+            self.imag_a.clear();
+            self.indices_a.reserve(len);
+            self.real_a.reserve(len);
+            self.imag_a.reserve(len);
+
+            while a < a_len || b0 < b0_len || b1 < b1_len {
+                let a_val = if a < a_len {
+                    self.indices_b[self.scratch_low[a] as usize]
+                } else { usize::MAX };
+                let b1_val = if b1 < b1_len {
+                    self.indices_b[self.scratch_high[b1] as usize] ^ target_mask
+                } else { usize::MAX };
+                let b0_val = if b0 < b0_len {
+                    self.indices_b[self.sort_perm[b0]] ^ target_mask
+                } else { usize::MAX };
+
+                if a_val <= b1_val && a_val <= b0_val {
+                    let pos = self.scratch_low[a] as usize;
+                    self.indices_a.push(a_val);
+                    self.real_a.push(self.real_b[pos]);
+                    self.imag_a.push(self.imag_b[pos]);
+                    a += 1;
+                } else if b1_val <= b0_val {
+                    let pos = self.scratch_high[b1] as usize;
+                    self.indices_a.push(b1_val);
+                    self.real_a.push(self.real_b[pos]);
+                    self.imag_a.push(self.imag_b[pos]);
+                    b1 += 1;
+                } else {
+                    let pos = self.sort_perm[b0];
+                    self.indices_a.push(b0_val);
+                    self.real_a.push(self.real_b[pos]);
+                    self.imag_a.push(self.imag_b[pos]);
+                    b0 += 1;
+                }
+            }
+        }
+
+        self.active_a = !self.active_a;
+    }
+
+    /// Apply SWAP gate: swap bits q1 and q2.
+    /// For len <= 16: XOR + sort in-place.
+    /// For len > 16: O(k) partition-merge into inactive buffer.
+    #[inline]
+    fn apply_swap_gate(&mut self, q1: usize, q2: usize) {
+        let mask1 = 1usize << q1;
+        let mask2 = 1usize << q2;
+        let swap_mask = mask1 | mask2;
+        let len = self.len;
+
+        // Small state: XOR + sort in-place
+        if len <= 16 {
+            let indices = if self.active_a {
+                &mut self.indices_a[..len]
+            } else {
+                &mut self.indices_b[..len]
+            };
+            for i in 0..len {
+                let bit1 = (indices[i] & mask1) != 0;
+                let bit2 = (indices[i] & mask2) != 0;
+                if bit1 != bit2 {
+                    indices[i] ^= swap_mask;
+                }
+            }
+            self.sort_active_if_needed();
+            return;
+        }
+
+        // Larger state: O(k) partition-merge into inactive buffer.
+        //
+        // Partition source into 3 groups (each sorted since source is sorted):
+        //   A:   bits equal (00 or 11) -> unchanged
+        //   B01: bit1=0, bit2=1 -> XOR swap_mask (becomes bit1=1, bit2=0)
+        //   B10: bit1=1, bit2=0 -> XOR swap_mask (becomes bit1=0, bit2=1)
+        // Within each group, all entries share the same q1/q2 bit pattern, so
+        // XOR with swap_mask is equivalent to a fixed add/subtract (no carry
+        // interference), preserving relative order. 3-way merge -> O(k).
+        self.scratch_low.clear();   // A positions
+        self.scratch_high.clear();  // B01 positions
+        self.sort_perm.clear();     // B10 positions
+
+        {
+            let indices = if self.active_a {
+                &self.indices_a[..len]
+            } else {
+                &self.indices_b[..len]
+            };
+            for i in 0..len {
+                let bit1 = (indices[i] & mask1) != 0;
+                let bit2 = (indices[i] & mask2) != 0;
+                if bit1 == bit2 {
+                    self.scratch_low.push(i as u32);    // A: unchanged
+                } else if !bit1 {
+                    self.scratch_high.push(i as u32);   // B01: bit1=0, bit2=1
+                } else {
+                    self.sort_perm.push(i);             // B10: bit1=1, bit2=0
+                }
+            }
+        }
+
+        // If no entries need swapping, nothing changes
+        if self.scratch_high.is_empty() && self.sort_perm.is_empty() {
+            return;
+        }
+
+        let a_len = self.scratch_low.len();
+        let b01_len = self.scratch_high.len();
+        let b10_len = self.sort_perm.len();
+        let mut a = 0usize;
+        let mut b01 = 0usize;
+        let mut b10 = 0usize;
+
+        // 3-way merge into inactive buffer
+        if self.active_a {
+            self.indices_b.clear();
+            self.real_b.clear();
+            self.imag_b.clear();
+            self.indices_b.reserve(len);
+            self.real_b.reserve(len);
+            self.imag_b.reserve(len);
+
+            while a < a_len || b01 < b01_len || b10 < b10_len {
+                let a_val = if a < a_len {
+                    self.indices_a[self.scratch_low[a] as usize]
+                } else { usize::MAX };
+                let b01_val = if b01 < b01_len {
+                    self.indices_a[self.scratch_high[b01] as usize] ^ swap_mask
+                } else { usize::MAX };
+                let b10_val = if b10 < b10_len {
+                    self.indices_a[self.sort_perm[b10]] ^ swap_mask
+                } else { usize::MAX };
+
+                if a_val <= b01_val && a_val <= b10_val {
+                    let pos = self.scratch_low[a] as usize;
+                    self.indices_b.push(a_val);
+                    self.real_b.push(self.real_a[pos]);
+                    self.imag_b.push(self.imag_a[pos]);
+                    a += 1;
+                } else if b01_val <= b10_val {
+                    let pos = self.scratch_high[b01] as usize;
+                    self.indices_b.push(b01_val);
+                    self.real_b.push(self.real_a[pos]);
+                    self.imag_b.push(self.imag_a[pos]);
+                    b01 += 1;
+                } else {
+                    let pos = self.sort_perm[b10];
+                    self.indices_b.push(b10_val);
+                    self.real_b.push(self.real_a[pos]);
+                    self.imag_b.push(self.imag_a[pos]);
+                    b10 += 1;
+                }
+            }
+        } else {
+            self.indices_a.clear();
+            self.real_a.clear();
+            self.imag_a.clear();
+            self.indices_a.reserve(len);
+            self.real_a.reserve(len);
+            self.imag_a.reserve(len);
+
+            while a < a_len || b01 < b01_len || b10 < b10_len {
+                let a_val = if a < a_len {
+                    self.indices_b[self.scratch_low[a] as usize]
+                } else { usize::MAX };
+                let b01_val = if b01 < b01_len {
+                    self.indices_b[self.scratch_high[b01] as usize] ^ swap_mask
+                } else { usize::MAX };
+                let b10_val = if b10 < b10_len {
+                    self.indices_b[self.sort_perm[b10]] ^ swap_mask
+                } else { usize::MAX };
+
+                if a_val <= b01_val && a_val <= b10_val {
+                    let pos = self.scratch_low[a] as usize;
+                    self.indices_a.push(a_val);
+                    self.real_a.push(self.real_b[pos]);
+                    self.imag_a.push(self.imag_b[pos]);
+                    a += 1;
+                } else if b01_val <= b10_val {
+                    let pos = self.scratch_high[b01] as usize;
+                    self.indices_a.push(b01_val);
+                    self.real_a.push(self.real_b[pos]);
+                    self.imag_a.push(self.imag_b[pos]);
+                    b01 += 1;
+                } else {
+                    let pos = self.sort_perm[b10];
+                    self.indices_a.push(b10_val);
+                    self.real_a.push(self.real_b[pos]);
+                    self.imag_a.push(self.imag_b[pos]);
+                    b10 += 1;
+                }
+            }
+        }
+
+        self.active_a = !self.active_a;
     }
 
     /// Normalize the state
@@ -906,6 +1303,7 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
         self.imag_a.push(0.0);
         self.active_a = true;
         self.len = 1;
+        self.needs_sort = false;
         self.frames.fill(CliffordFrame::IDENTITY);
         self.frame_phases.fill(0);
         self
@@ -1004,13 +1402,12 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(qubits.len() % 2 == 0, "CX requires pairs of qubits");
-        for pair in qubits.chunks_exact(2) {
-            let (c, t) = (pair[0].0, pair[1].0);
+        if qubits.len() == 2 {
+            // Single pair: fast path
+            let (c, t) = (qubits[0].0, qubits[1].0);
             let fc = self.frames[c];
             let ft = self.frames[t];
             if fc.is_pauli() && ft.is_pauli() {
-                // Push Pauli frames through CX (phase-free in element convention).
-                // For identity frames this is a no-op on the frames.
                 let (new_c, new_t) = CliffordFrame::push_through_cx(fc, ft);
                 self.frames[c] = new_c;
                 self.frames[t] = new_t;
@@ -1019,18 +1416,52 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 self.flush_frame(t);
             }
             self.apply_cx_gate(c, t);
+        } else {
+            // Multiple pairs: process all frames, then batch physical ops.
+            for pair in qubits.chunks_exact(2) {
+                let (c, t) = (pair[0].0, pair[1].0);
+                let fc = self.frames[c];
+                let ft = self.frames[t];
+                if fc.is_pauli() && ft.is_pauli() {
+                    let (new_c, new_t) = CliffordFrame::push_through_cx(fc, ft);
+                    self.frames[c] = new_c;
+                    self.frames[t] = new_t;
+                } else {
+                    self.flush_frame(c);
+                    self.flush_frame(t);
+                }
+            }
+            // Batched physical operation: combined XOR mask in single pass + single sort
+            let len = self.len;
+            let indices = if self.active_a {
+                &mut self.indices_a[..len]
+            } else {
+                &mut self.indices_b[..len]
+            };
+            for i in 0..len {
+                let mut xor_mask = 0usize;
+                for pair in qubits.chunks_exact(2) {
+                    let control_mask = 1usize << pair[0].0;
+                    let target_mask = 1usize << pair[1].0;
+                    if indices[i] & control_mask != 0 {
+                        xor_mask ^= target_mask;
+                    }
+                }
+                indices[i] ^= xor_mask;
+            }
+            self.sort_active_if_needed();
         }
         self
     }
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(qubits.len() % 2 == 0, "CZ requires pairs of qubits");
-        for pair in qubits.chunks_exact(2) {
-            let (c, t) = (pair[0].0, pair[1].0);
+        if qubits.len() == 2 {
+            // Single pair: fast path
+            let (c, t) = (qubits[0].0, qubits[1].0);
             let fc = self.frames[c];
             let ft = self.frames[t];
             if fc.is_pauli() && ft.is_pauli() {
-                // Push Pauli frames through CZ with phase (-1)^{xc*xt}.
                 let (xc, _) = fc.pauli_xz_bits();
                 let (xt, _) = ft.pauli_xz_bits();
                 let (new_c, new_t) = CliffordFrame::push_through_cz(fc, ft);
@@ -1044,6 +1475,55 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 self.flush_frame(t);
             }
             self.apply_cz_inplace(c, t);
+        } else {
+            // Multiple pairs: process all frames, then batch physical sign flips
+            for pair in qubits.chunks_exact(2) {
+                let (c, t) = (pair[0].0, pair[1].0);
+                let fc = self.frames[c];
+                let ft = self.frames[t];
+                if fc.is_pauli() && ft.is_pauli() {
+                    let (xc, _) = fc.pauli_xz_bits();
+                    let (xt, _) = ft.pauli_xz_bits();
+                    let (new_c, new_t) = CliffordFrame::push_through_cz(fc, ft);
+                    self.frames[c] = new_c;
+                    self.frames[t] = new_t;
+                    if xc && xt {
+                        self.frame_phases[c] = (self.frame_phases[c] + 4) % 8;
+                    }
+                } else {
+                    self.flush_frame(c);
+                    self.flush_frame(t);
+                }
+            }
+            // Batched physical operation: single pass with parity-based sign flip
+            let len = self.len;
+            let (indices, real, imag) = if self.active_a {
+                (
+                    &self.indices_a[..len],
+                    &mut self.real_a[..len],
+                    &mut self.imag_a[..len],
+                )
+            } else {
+                (
+                    &self.indices_b[..len],
+                    &mut self.real_b[..len],
+                    &mut self.imag_b[..len],
+                )
+            };
+            for i in 0..len {
+                let mut flip = false;
+                for pair in qubits.chunks_exact(2) {
+                    let q1_mask = 1usize << pair[0].0;
+                    let q2_mask = 1usize << pair[1].0;
+                    if (indices[i] & q1_mask != 0) && (indices[i] & q2_mask != 0) {
+                        flip = !flip;
+                    }
+                }
+                if flip {
+                    real[i] = -real[i];
+                    imag[i] = -imag[i];
+                }
+            }
         }
         self
     }
@@ -1064,16 +1544,297 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
 
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(qubits.len() % 2 == 0, "SWAP requires pairs of qubits");
-        for pair in qubits.chunks_exact(2) {
-            let (c, t) = (pair[0].0, pair[1].0);
-            // SWAP * (A tensor B) = (B tensor A) * SWAP for any operators,
-            // so we can always swap frames without flushing.
+        if qubits.len() == 2 {
+            // Single pair: fast path
+            let (c, t) = (qubits[0].0, qubits[1].0);
             self.apply_swap_gate(c, t);
             self.frames.swap(c, t);
             self.frame_phases.swap(c, t);
+        } else {
+            // Multiple pairs: swap all frames, then batch physical bit-swaps
+            for pair in qubits.chunks_exact(2) {
+                let (c, t) = (pair[0].0, pair[1].0);
+                self.frames.swap(c, t);
+                self.frame_phases.swap(c, t);
+            }
+            // Batched physical operation: all bit swaps in single pass + single sort
+            let len = self.len;
+            let indices = if self.active_a {
+                &mut self.indices_a[..len]
+            } else {
+                &mut self.indices_b[..len]
+            };
+            for i in 0..len {
+                for pair in qubits.chunks_exact(2) {
+                    let mask1 = 1usize << pair[0].0;
+                    let mask2 = 1usize << pair[1].0;
+                    let bit1 = (indices[i] & mask1) != 0;
+                    let bit2 = (indices[i] & mask2) != 0;
+                    if bit1 != bit2 {
+                        indices[i] ^= mask1 | mask2;
+                    }
+                }
+            }
+            self.sort_active_if_needed();
         }
         self
     }
+
+    // ---- Optimized two-qubit Clifford gates with frame push-through ----
+    //
+    // When both frames are Pauli, push them through the gate symbolically
+    // (O(1) frame update + phase correction) instead of flushing (O(k)).
+    // Then apply the physical gate directly.
+    //
+    // Note: push_through_* functions return the Heisenberg-picture phase
+    // (G† P G = phase · P'), but we need the Schrödinger-picture phase
+    // (G P G† = phase* · P'). For 8th-root phases, conjugation is (8-k)%8.
+
+    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(qubits.len() % 2 == 0, "SZZ requires pairs of qubits");
+        if qubits.len() == 2 {
+            let (q1, q2) = (qubits[0].0, qubits[1].0);
+            let f1 = self.frames[q1];
+            let f2 = self.frames[q2];
+            if f1.is_pauli() && f2.is_pauli() {
+                let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_szz(f1, f2);
+                self.frames[q1] = new_f1;
+                self.frames[q2] = new_f2;
+                let schrod_phase = (8 - heis_phase) % 8;
+                self.frame_phases[q1] = (self.frame_phases[q1] + schrod_phase) % 8;
+            } else {
+                self.flush_frame(q1);
+                self.flush_frame(q2);
+            }
+            self.apply_szz_gate(q1, q2);
+        } else {
+            // Multiple pairs: process frames, then batch physical diagonal phase
+            for pair in qubits.chunks_exact(2) {
+                let (q1, q2) = (pair[0].0, pair[1].0);
+                let f1 = self.frames[q1];
+                let f2 = self.frames[q2];
+                if f1.is_pauli() && f2.is_pauli() {
+                    let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_szz(f1, f2);
+                    self.frames[q1] = new_f1;
+                    self.frames[q2] = new_f2;
+                    let schrod_phase = (8 - heis_phase) % 8;
+                    self.frame_phases[q1] = (self.frame_phases[q1] + schrod_phase) % 8;
+                } else {
+                    self.flush_frame(q1);
+                    self.flush_frame(q2);
+                }
+            }
+            // Batched physical SZZ: single pass, combined parity phase
+            let n_pairs = qubits.len() / 2;
+            let len = self.len;
+            let (indices, real, imag) = if self.active_a {
+                (
+                    &self.indices_a[..len],
+                    &mut self.real_a[..len],
+                    &mut self.imag_a[..len],
+                )
+            } else {
+                (
+                    &self.indices_b[..len],
+                    &mut self.real_b[..len],
+                    &mut self.imag_b[..len],
+                )
+            };
+            for i in 0..len {
+                let mut n_diff: u32 = 0;
+                for pair in qubits.chunks_exact(2) {
+                    let mask1 = 1usize << pair[0].0;
+                    let mask2 = 1usize << pair[1].0;
+                    let bit1 = (indices[i] & mask1) != 0;
+                    let bit2 = (indices[i] & mask2) != 0;
+                    if bit1 != bit2 {
+                        n_diff += 1;
+                    }
+                }
+                // Phase index = (2*n_diff - n_pairs) mod 8
+                // n_diff different-parity pairs contribute e^{iπ/4} each,
+                // (n_pairs - n_diff) same-parity pairs contribute e^{-iπ/4} each.
+                let k = ((2 * n_diff as i32 - n_pairs as i32).rem_euclid(8)) as usize;
+                if k != 0 {
+                    let [cos_k, sin_k] = PHASE_ROOTS[k];
+                    let r = real[i];
+                    let im = imag[i];
+                    real[i] = r * cos_k - im * sin_k;
+                    imag[i] = r * sin_k + im * cos_k;
+                }
+            }
+        }
+        self
+    }
+
+    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(qubits.len() % 2 == 0, "SZZdg requires pairs of qubits");
+        if qubits.len() == 2 {
+            let (q1, q2) = (qubits[0].0, qubits[1].0);
+            let f1 = self.frames[q1];
+            let f2 = self.frames[q2];
+            if f1.is_pauli() && f2.is_pauli() {
+                let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_szz(f1, f2);
+                self.frames[q1] = new_f1;
+                self.frames[q2] = new_f2;
+                // For SZZdg, Schrödinger phase = Heisenberg phase of SZZ (no conjugation),
+                // because SZZdg Schrödinger = SZZ† · P · SZZ = SZZ Heisenberg.
+                self.frame_phases[q1] = (self.frame_phases[q1] + heis_phase) % 8;
+            } else {
+                self.flush_frame(q1);
+                self.flush_frame(q2);
+            }
+            self.apply_szzdg_gate(q1, q2);
+        } else {
+            // Multiple pairs: process frames, then batch physical diagonal phase
+            for pair in qubits.chunks_exact(2) {
+                let (q1, q2) = (pair[0].0, pair[1].0);
+                let f1 = self.frames[q1];
+                let f2 = self.frames[q2];
+                if f1.is_pauli() && f2.is_pauli() {
+                    let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_szz(f1, f2);
+                    self.frames[q1] = new_f1;
+                    self.frames[q2] = new_f2;
+                    self.frame_phases[q1] = (self.frame_phases[q1] + heis_phase) % 8;
+                } else {
+                    self.flush_frame(q1);
+                    self.flush_frame(q2);
+                }
+            }
+            // Batched physical SZZdg: single pass, conjugated parity phase
+            let n_pairs = qubits.len() / 2;
+            let len = self.len;
+            let (indices, real, imag) = if self.active_a {
+                (
+                    &self.indices_a[..len],
+                    &mut self.real_a[..len],
+                    &mut self.imag_a[..len],
+                )
+            } else {
+                (
+                    &self.indices_b[..len],
+                    &mut self.real_b[..len],
+                    &mut self.imag_b[..len],
+                )
+            };
+            for i in 0..len {
+                let mut n_diff: u32 = 0;
+                for pair in qubits.chunks_exact(2) {
+                    let mask1 = 1usize << pair[0].0;
+                    let mask2 = 1usize << pair[1].0;
+                    let bit1 = (indices[i] & mask1) != 0;
+                    let bit2 = (indices[i] & mask2) != 0;
+                    if bit1 != bit2 {
+                        n_diff += 1;
+                    }
+                }
+                // SZZdg: conjugated phase = (8 - szz_phase) % 8
+                // SZZ phase = (2*n_diff - n_pairs) mod 8
+                // SZZdg phase = (n_pairs - 2*n_diff) mod 8
+                let k = ((n_pairs as i32 - 2 * n_diff as i32).rem_euclid(8)) as usize;
+                if k != 0 {
+                    let [cos_k, sin_k] = PHASE_ROOTS[k];
+                    let r = real[i];
+                    let im = imag[i];
+                    real[i] = r * cos_k - im * sin_k;
+                    imag[i] = r * sin_k + im * cos_k;
+                }
+            }
+        }
+        self
+    }
+
+    fn iswap(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(qubits.len() % 2 == 0, "iSWAP requires pairs of qubits");
+        if qubits.len() == 2 {
+            let (q1, q2) = (qubits[0].0, qubits[1].0);
+            let f1 = self.frames[q1];
+            let f2 = self.frames[q2];
+            if f1.is_pauli() && f2.is_pauli() {
+                let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_iswap(f1, f2);
+                self.frames[q1] = new_f1;
+                self.frames[q2] = new_f2;
+                let schrod_phase = (8 - heis_phase) % 8;
+                self.frame_phases[q1] = (self.frame_phases[q1] + schrod_phase) % 8;
+            } else {
+                self.flush_frame(q1);
+                self.flush_frame(q2);
+            }
+            self.apply_iswap_gate(q1, q2);
+        } else {
+            // Multiple pairs: process frames, then batch physical iSWAP
+            for pair in qubits.chunks_exact(2) {
+                let (q1, q2) = (pair[0].0, pair[1].0);
+                let f1 = self.frames[q1];
+                let f2 = self.frames[q2];
+                if f1.is_pauli() && f2.is_pauli() {
+                    let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_iswap(f1, f2);
+                    self.frames[q1] = new_f1;
+                    self.frames[q2] = new_f2;
+                    let schrod_phase = (8 - heis_phase) % 8;
+                    self.frame_phases[q1] = (self.frame_phases[q1] + schrod_phase) % 8;
+                } else {
+                    self.flush_frame(q1);
+                    self.flush_frame(q2);
+                }
+            }
+            // Batched physical iSWAP: combined bit-swaps + i^count phase
+            let len = self.len;
+            let (indices, real, imag) = if self.active_a {
+                (
+                    &mut self.indices_a[..len],
+                    &mut self.real_a[..len],
+                    &mut self.imag_a[..len],
+                )
+            } else {
+                (
+                    &mut self.indices_b[..len],
+                    &mut self.real_b[..len],
+                    &mut self.imag_b[..len],
+                )
+            };
+            for i in 0..len {
+                let mut swap_count: u32 = 0;
+                for pair in qubits.chunks_exact(2) {
+                    let mask1 = 1usize << pair[0].0;
+                    let mask2 = 1usize << pair[1].0;
+                    let bit1 = (indices[i] & mask1) != 0;
+                    let bit2 = (indices[i] & mask2) != 0;
+                    if bit1 != bit2 {
+                        indices[i] ^= mask1 | mask2;
+                        swap_count += 1;
+                    }
+                }
+                // Multiply by i^swap_count
+                match swap_count % 4 {
+                    0 => {}
+                    1 => {
+                        let r = real[i];
+                        real[i] = -imag[i];
+                        imag[i] = r;
+                    }
+                    2 => {
+                        real[i] = -real[i];
+                        imag[i] = -imag[i];
+                    }
+                    3 => {
+                        let r = real[i];
+                        real[i] = imag[i];
+                        imag[i] = -r;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            self.sort_active_if_needed();
+        }
+        self
+    }
+
+    // SXX, SYY, G: trait defaults are already optimal with the frame system.
+    // SXX/SYY decompose into single-qubit frame compositions + CX (one flush),
+    // and G chains CZ push-through with H compositions. Overriding would not
+    // improve performance since the decomposition requires non-Pauli flushes
+    // regardless of outer frame push-through.
 
     // ---- Measurement: check Z-image to avoid unnecessary flush ----
 

@@ -41,6 +41,24 @@ fn bench_sparse_friendly(c: &mut Criterion) {
             },
         );
 
+        // Sparse SoA version
+        group.bench_with_input(
+            BenchmarkId::new("sparse_soa", num_qubits),
+            &num_qubits,
+            |b, &n| {
+                let mut sim = SparseStateVecSoA::new(n);
+                b.iter(|| {
+                    for q in 0..n {
+                        sim.x(&[QubitId(q)]);
+                        sim.z(&[QubitId(q)]);
+                    }
+                    for q in 0..n - 1 {
+                        sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    }
+                });
+            },
+        );
+
         // Dense version
         group.bench_with_input(
             BenchmarkId::new("dense", num_qubits),
@@ -83,6 +101,22 @@ fn bench_varying_superposition(c: &mut Criterion) {
                     for q in 0..h {
                         sim.h(&[QubitId(q)]);
                     }
+                });
+            },
+        );
+
+        // Sparse SoA version
+        group.bench_with_input(
+            BenchmarkId::new("sparse_soa", h_qubits),
+            &h_qubits,
+            |b, &h| {
+                let mut sim = SparseStateVecSoA::new(num_qubits);
+                b.iter(|| {
+                    sim.reset();
+                    for q in 0..h {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    sim.flush_all_frames();
                 });
             },
         );
@@ -277,6 +311,250 @@ fn bench_sparse_operations(c: &mut Criterion) {
             });
         });
 
+        // Batched CX gates - SoA
+        group.bench_function(BenchmarkId::new("cx_gate_x4_individual_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.cx(&[QubitId(10), QubitId(11)]);
+                sim.cx(&[QubitId(12), QubitId(13)]);
+                sim.cx(&[QubitId(14), QubitId(15)]);
+                sim.cx(&[QubitId(8), QubitId(9)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("cx_gate_x4_batched_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.cx(&[
+                    QubitId(10), QubitId(11),
+                    QubitId(12), QubitId(13),
+                    QubitId(14), QubitId(15),
+                    QubitId(8), QubitId(9),
+                ]);
+            });
+        });
+
+        // Batched CZ gates - SoA
+        group.bench_function(BenchmarkId::new("cz_gate_x4_individual_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.cz(&[QubitId(10), QubitId(11)]);
+                sim.cz(&[QubitId(12), QubitId(13)]);
+                sim.cz(&[QubitId(14), QubitId(15)]);
+                sim.cz(&[QubitId(8), QubitId(9)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("cz_gate_x4_batched_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.cz(&[
+                    QubitId(10), QubitId(11),
+                    QubitId(12), QubitId(13),
+                    QubitId(14), QubitId(15),
+                    QubitId(8), QubitId(9),
+                ]);
+            });
+        });
+
+        // SWAP x4 individual (SoA) with frames (physical state stays small)
+        group.bench_function(BenchmarkId::new("swap_gate_x4_individual_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.swap(&[QubitId(10), QubitId(11)]);
+                sim.swap(&[QubitId(12), QubitId(13)]);
+                sim.swap(&[QubitId(14), QubitId(15)]);
+                sim.swap(&[QubitId(8), QubitId(9)]);
+            });
+        });
+
+        // SWAP x4 batched (SoA) with frames (physical state stays small)
+        group.bench_function(BenchmarkId::new("swap_gate_x4_batched_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.swap(&[
+                    QubitId(10), QubitId(11),
+                    QubitId(12), QubitId(13),
+                    QubitId(14), QubitId(15),
+                    QubitId(8), QubitId(9),
+                ]);
+            });
+        });
+
+        // SWAP x4 individual (SoA) with flushed frames (expanded physical state)
+        group.bench_function(BenchmarkId::new("swap_x4_individual_soa_flushed", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.swap(&[QubitId(0), QubitId(1)]);
+                sim.swap(&[QubitId(2), QubitId(3)]);
+                sim.swap(&[QubitId(4), QubitId(5)]);
+                sim.swap(&[QubitId(6), QubitId(7)]);
+            });
+        });
+
+        // SWAP x4 batched (SoA) with flushed frames (expanded physical state)
+        group.bench_function(BenchmarkId::new("swap_x4_batched_soa_flushed", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.swap(&[
+                    QubitId(0), QubitId(1),
+                    QubitId(2), QubitId(3),
+                    QubitId(4), QubitId(5),
+                    QubitId(6), QubitId(7),
+                ]);
+            });
+        });
+
+        // SZZ x4 individual (SoA) with frames
+        group.bench_function(BenchmarkId::new("szz_x4_individual_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.szz(&[QubitId(10), QubitId(11)]);
+                sim.szz(&[QubitId(12), QubitId(13)]);
+                sim.szz(&[QubitId(14), QubitId(15)]);
+                sim.szz(&[QubitId(8), QubitId(9)]);
+            });
+        });
+
+        // SZZ x4 batched (SoA) with frames
+        group.bench_function(BenchmarkId::new("szz_x4_batched_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.szz(&[
+                    QubitId(10), QubitId(11),
+                    QubitId(12), QubitId(13),
+                    QubitId(14), QubitId(15),
+                    QubitId(8), QubitId(9),
+                ]);
+            });
+        });
+
+        // SZZ x4 individual (SoA) with flushed frames
+        group.bench_function(BenchmarkId::new("szz_x4_individual_soa_flushed", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.szz(&[QubitId(0), QubitId(1)]);
+                sim.szz(&[QubitId(2), QubitId(3)]);
+                sim.szz(&[QubitId(4), QubitId(5)]);
+                sim.szz(&[QubitId(6), QubitId(7)]);
+            });
+        });
+
+        // SZZ x4 batched (SoA) with flushed frames
+        group.bench_function(BenchmarkId::new("szz_x4_batched_soa_flushed", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.szz(&[
+                    QubitId(0), QubitId(1),
+                    QubitId(2), QubitId(3),
+                    QubitId(4), QubitId(5),
+                    QubitId(6), QubitId(7),
+                ]);
+            });
+        });
+
+        // iSWAP x4 individual (SoA) with frames
+        group.bench_function(BenchmarkId::new("iswap_x4_individual_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.iswap(&[QubitId(10), QubitId(11)]);
+                sim.iswap(&[QubitId(12), QubitId(13)]);
+                sim.iswap(&[QubitId(14), QubitId(15)]);
+                sim.iswap(&[QubitId(8), QubitId(9)]);
+            });
+        });
+
+        // iSWAP x4 batched (SoA) with frames
+        group.bench_function(BenchmarkId::new("iswap_x4_batched_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.iswap(&[
+                    QubitId(10), QubitId(11),
+                    QubitId(12), QubitId(13),
+                    QubitId(14), QubitId(15),
+                    QubitId(8), QubitId(9),
+                ]);
+            });
+        });
+
+        // iSWAP x4 individual (SoA) with flushed frames
+        group.bench_function(BenchmarkId::new("iswap_x4_individual_soa_flushed", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.iswap(&[QubitId(0), QubitId(1)]);
+                sim.iswap(&[QubitId(2), QubitId(3)]);
+                sim.iswap(&[QubitId(4), QubitId(5)]);
+                sim.iswap(&[QubitId(6), QubitId(7)]);
+            });
+        });
+
+        // iSWAP x4 batched (SoA) with flushed frames
+        group.bench_function(BenchmarkId::new("iswap_x4_batched_soa_flushed", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.iswap(&[
+                    QubitId(0), QubitId(1),
+                    QubitId(2), QubitId(3),
+                    QubitId(4), QubitId(5),
+                    QubitId(6), QubitId(7),
+                ]);
+            });
+        });
+
         // Batched measurement (measure then restore with H gates)
         group.bench_function(BenchmarkId::new("mz_x4_individual", &label), |b| {
             b.iter_batched(
@@ -462,6 +740,121 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.cz(&[QubitId(0), QubitId(1)]);
             });
         });
+
+        // SZZ gate - AoS (trait default: H.H.SXX.H.H decomposition)
+        group.bench_function(BenchmarkId::new("szz_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.szz(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // SZZ gate - SoA (direct diagonal + push-through, flushed for fair comparison)
+        group.bench_function(BenchmarkId::new("szz_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.szz(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // SZZdg gate - AoS (trait default: Z.Z.SZZ decomposition)
+        group.bench_function(BenchmarkId::new("szzdg_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.szzdg(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // SZZdg gate - SoA (direct diagonal + push-through, flushed)
+        group.bench_function(BenchmarkId::new("szzdg_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.szzdg(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // iSWAP gate - AoS (trait default: SZ.SZ.H.CX.CX.H decomposition)
+        group.bench_function(BenchmarkId::new("iswap_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.iswap(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // iSWAP gate - SoA (direct bit-swap + push-through, flushed)
+        group.bench_function(BenchmarkId::new("iswap_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.iswap(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // SXX gate - AoS (trait default decomposition)
+        group.bench_function(BenchmarkId::new("sxx_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.sxx(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // SXX gate - SoA (trait default decomposition, flushed)
+        group.bench_function(BenchmarkId::new("sxx_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.sxx(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // G gate - AoS (trait default)
+        group.bench_function(BenchmarkId::new("g_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.g(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // G gate - SoA (trait default, flushed)
+        group.bench_function(BenchmarkId::new("g_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(16);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.g(&[QubitId(0), QubitId(1)]);
+            });
+        });
     }
 
     group.finish();
@@ -571,10 +964,219 @@ fn bench_realistic_circuits(c: &mut Criterion) {
     group.finish();
 }
 
+/// 3-way benchmark comparing Sparse AoS, Sparse SoA, and Dense StateVec on individual gates
+fn bench_three_way_gates(c: &mut Criterion) {
+    let mut group = c.benchmark_group("three_way");
+    let num_qubits = 16;
+
+    for h_qubits in [0usize, 8, 10] {
+        let amps = 1usize << h_qubits;
+        let label = format!("{amps}amps");
+
+        // --- SZZ ---
+        group.bench_function(BenchmarkId::new("szz_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.szz(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("szz_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.szz(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("szz_dense", &label), |b| {
+            let mut sim = StateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.szz(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // --- SZZdg ---
+        group.bench_function(BenchmarkId::new("szzdg_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.szzdg(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("szzdg_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.szzdg(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("szzdg_dense", &label), |b| {
+            let mut sim = StateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.szzdg(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // --- iSWAP ---
+        group.bench_function(BenchmarkId::new("iswap_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.iswap(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("iswap_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.iswap(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("iswap_dense", &label), |b| {
+            let mut sim = StateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.iswap(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // --- SXX ---
+        group.bench_function(BenchmarkId::new("sxx_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.sxx(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("sxx_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.sxx(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("sxx_dense", &label), |b| {
+            let mut sim = StateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.sxx(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // --- CX ---
+        group.bench_function(BenchmarkId::new("cx_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.cx(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("cx_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.cx(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("cx_dense", &label), |b| {
+            let mut sim = StateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.cx(&[QubitId(0), QubitId(1)]);
+            });
+        });
+
+        // --- H (apply twice: H^2 = I to avoid state growth) ---
+        group.bench_function(BenchmarkId::new("h_aos", &label), |b| {
+            let mut sim = SparseStateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.h(&[QubitId(h_qubits)]);
+                sim.h(&[QubitId(h_qubits)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("h_soa", &label), |b| {
+            let mut sim = SparseStateVecSoA::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            sim.flush_all_frames();
+            b.iter(|| {
+                sim.h(&[QubitId(h_qubits)]);
+                sim.h(&[QubitId(h_qubits)]);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("h_dense", &label), |b| {
+            let mut sim = StateVec::new(num_qubits);
+            for q in 0..h_qubits {
+                sim.h(&[QubitId(q)]);
+            }
+            b.iter(|| {
+                sim.h(&[QubitId(h_qubits)]);
+                sim.h(&[QubitId(h_qubits)]);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 pub fn benchmarks(c: &mut Criterion) {
     bench_sparse_friendly(c);
     bench_varying_superposition(c);
     bench_sparse_operations(c);
     bench_sparse_aos_vs_soa(c);
     bench_realistic_circuits(c);
+    bench_three_way_gates(c);
 }

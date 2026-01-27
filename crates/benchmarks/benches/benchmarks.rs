@@ -34,7 +34,7 @@ mod modules {
 use modules::gpu_influence_sampler;
 use modules::{
     allocation_overhead, dod_statevec, measurement_sampling, noise_models, rng, set_ops,
-    sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code,
+    sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {

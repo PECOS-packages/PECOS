@@ -2593,31 +2593,36 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         //
         // Push-through: Z and Y anticommute with X, so each qubit with Z component
         // in its Pauli frame contributes a flip (mirror of RZZ).
+        //
+        // Hybrid: use direct gate for Pauli frames (push-through saves flush),
+        // decomposition H*H*RZZ*H*H for non-Pauli (frame cancellation is O(k)).
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].0;
             let q2 = pair[1].0;
 
-            let mut flips = 0u32;
-            if self.frames[q1].is_pauli() {
+            if self.frames[q1].is_pauli() && self.frames[q2].is_pauli() {
+                let mut flips = 0u32;
                 let (_, has_z) = self.frames[q1].pauli_xz_bits();
                 flips += has_z as u32;
-            } else {
-                self.flush_frame(q1);
-            }
-            if self.frames[q2].is_pauli() {
                 let (_, has_z) = self.frames[q2].pauli_xz_bits();
                 flips += has_z as u32;
+
+                let effective_theta = if flips & 1 == 1 { -theta } else { theta };
+                let half = effective_theta / 2.0;
+                let cos = half.cos();
+                let sin = half.sin();
+
+                // RXX: off-diagonal is -i*sin for both parity groups -> sin_sign = -1.0
+                self.apply_parity_flip_gate(q1, q2, cos, sin, -1.0, -1.0);
             } else {
-                self.flush_frame(q2);
+                // Non-Pauli frame: decompose as H*H*RZZ*H*H.
+                // H updates the frame cheaply, and RZZ benefits from push-through.
+                self.h(&[pair[0]])
+                    .h(&[pair[1]])
+                    .rzz(theta, pair)
+                    .h(&[pair[0]])
+                    .h(&[pair[1]]);
             }
-
-            let effective_theta = if flips & 1 == 1 { -theta } else { theta };
-            let half = effective_theta / 2.0;
-            let cos = half.cos();
-            let sin = half.sin();
-
-            // RXX: off-diagonal is -i*sin for both parity groups -> sin_sign = -1.0
-            self.apply_parity_flip_gate(q1, q2, cos, sin, -1.0, -1.0);
         }
         self
     }
@@ -2633,32 +2638,37 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         //
         // Push-through: X and Z individually anticommute with Y, but Y commutes.
         // Each qubit with has_x != has_z (X or Z, not I or Y) contributes a flip.
+        //
+        // Hybrid: use direct gate for Pauli frames (push-through saves flush),
+        // decomposition SX*SX*RZZ*SXdg*SXdg for non-Pauli (frame cancellation is O(k)).
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].0;
             let q2 = pair[1].0;
 
-            let mut flips = 0u32;
-            if self.frames[q1].is_pauli() {
+            if self.frames[q1].is_pauli() && self.frames[q2].is_pauli() {
+                let mut flips = 0u32;
                 let (has_x, has_z) = self.frames[q1].pauli_xz_bits();
                 flips += (has_x != has_z) as u32;
-            } else {
-                self.flush_frame(q1);
-            }
-            if self.frames[q2].is_pauli() {
                 let (has_x, has_z) = self.frames[q2].pauli_xz_bits();
                 flips += (has_x != has_z) as u32;
+
+                let effective_theta = if flips & 1 == 1 { -theta } else { theta };
+                let half = effective_theta / 2.0;
+                let cos = half.cos();
+                let sin = half.sin();
+
+                // RYY: same-parity off-diagonal is +i*sin (sign=+1),
+                //      diff-parity off-diagonal is -i*sin (sign=-1)
+                self.apply_parity_flip_gate(q1, q2, cos, sin, 1.0, -1.0);
             } else {
-                self.flush_frame(q2);
+                // Non-Pauli frame: decompose as SX*SX*RZZ*SXdg*SXdg.
+                // SX/SXdg update frames cheaply, and RZZ benefits from push-through.
+                self.sx(&[pair[0]])
+                    .sx(&[pair[1]])
+                    .rzz(theta, pair)
+                    .sxdg(&[pair[0]])
+                    .sxdg(&[pair[1]]);
             }
-
-            let effective_theta = if flips & 1 == 1 { -theta } else { theta };
-            let half = effective_theta / 2.0;
-            let cos = half.cos();
-            let sin = half.sin();
-
-            // RYY: same-parity off-diagonal is +i*sin (sign=+1),
-            //      diff-parity off-diagonal is -i*sin (sign=-1)
-            self.apply_parity_flip_gate(q1, q2, cos, sin, 1.0, -1.0);
         }
         self
     }

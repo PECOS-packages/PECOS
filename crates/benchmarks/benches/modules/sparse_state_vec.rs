@@ -860,12 +860,12 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark realistic circuits that stay sparse
+/// Benchmark realistic circuits comparing all three simulators
 fn bench_realistic_circuits(c: &mut Criterion) {
     let mut group = c.benchmark_group("sparse_realistic");
 
     // GHZ state preparation: H on q0, then CX chain
-    // Stays at 2 amplitudes throughout
+    // Stays at 2 amplitudes throughout (sparse-friendly)
     for num_qubits in [10, 20, 30, 50] {
         group.bench_function(BenchmarkId::new("ghz_aos", num_qubits), |b| {
             let mut sim = SparseStateVec::new(num_qubits);
@@ -888,10 +888,24 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                 }
             });
         });
+
+        // Dense only feasible for <= 20 qubits (2^20 = 1M amplitudes)
+        if num_qubits <= 20 {
+            group.bench_function(BenchmarkId::new("ghz_dense", num_qubits), |b| {
+                let mut sim = StateVec::new(num_qubits);
+                b.iter(|| {
+                    sim.reset();
+                    sim.h(&[QubitId(0)]);
+                    for q in 0..num_qubits - 1 {
+                        sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    }
+                });
+            });
+        }
     }
 
     // Random Clifford on sparse state: X, Z, CX, CZ gates
-    // These keep the state sparse
+    // These keep the state sparse (1 amplitude throughout)
     for num_qubits in [10, 20, 30] {
         let gates_per_iter = 100;
 
@@ -926,6 +940,25 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                 }
             });
         });
+
+        // Dense only feasible for <= 20 qubits
+        if num_qubits <= 20 {
+            group.bench_function(BenchmarkId::new("clifford_sparse_dense", num_qubits), |b| {
+                let mut sim = StateVec::new(num_qubits);
+                b.iter(|| {
+                    for i in 0..gates_per_iter {
+                        let q = i % num_qubits;
+                        let q2 = (i + 1) % num_qubits;
+                        match i % 4 {
+                            0 => { sim.x(&[QubitId(q)]); }
+                            1 => { sim.z(&[QubitId(q)]); }
+                            2 => { sim.cx(&[QubitId(q), QubitId(q2)]); }
+                            _ => { sim.cz(&[QubitId(q), QubitId(q2)]); }
+                        }
+                    }
+                });
+            });
+        }
     }
 
     // Incremental superposition: start sparse, progressively add H gates
@@ -959,14 +992,27 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                 }
             });
         });
+
+        group.bench_function(BenchmarkId::new("incremental_h_dense", final_h_count), |b| {
+            let mut sim = StateVec::new(num_qubits);
+            b.iter(|| {
+                sim.reset();
+                for q in 0..final_h_count {
+                    sim.h(&[QubitId(q)]);
+                    if q > 0 {
+                        sim.cz(&[QubitId(q - 1), QubitId(q)]);
+                    }
+                }
+            });
+        });
     }
 
     group.finish();
 }
 
 /// 3-way benchmark comparing Sparse AoS, Sparse SoA, and Dense StateVec on individual gates
-fn bench_three_way_gates(c: &mut Criterion) {
-    let mut group = c.benchmark_group("three_way");
+fn bench_three_statevecs_gates(c: &mut Criterion) {
+    let mut group = c.benchmark_group("three_statevecs");
     let num_qubits = 16;
 
     for h_qubits in [0usize, 8, 10] {
@@ -1178,5 +1224,5 @@ pub fn benchmarks(c: &mut Criterion) {
     bench_sparse_operations(c);
     bench_sparse_aos_vs_soa(c);
     bench_realistic_circuits(c);
-    bench_three_way_gates(c);
+    bench_three_statevecs_gates(c);
 }

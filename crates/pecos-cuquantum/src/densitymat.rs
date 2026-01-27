@@ -7,8 +7,8 @@
 //! which is essential for simulating open quantum systems with noise
 //! and decoherence.
 
-use crate::error::{check_densitymat_status, Result};
 use crate::CuQuantumError;
+use crate::error::{Result, check_densitymat_status};
 use pecos_cuquantum_sys::{
     cudaDataType_t, cudensitymatHandle_t, cudensitymatState_t, cudensitymatStatePurity_t,
 };
@@ -81,10 +81,10 @@ impl CuDensityMat {
             let status = pecos_cuquantum_sys::cudensitymatCreateState(
                 handle,
                 cudensitymatStatePurity_t::CUDENSITYMAT_STATE_PURITY_PURE,
-                num_qubits as i32,       // numSpaceModes
+                num_qubits as i32,           // numSpaceModes
                 space_mode_extents.as_ptr(), // spaceModeExtents
-                1,                       // batchSize
-                cudaDataType_t::CUDA_C_64F, // Complex double precision
+                1,                           // batchSize
+                cudaDataType_t::CUDA_C_64F,  // Complex double precision
                 &mut state,
             );
             if !pecos_cuquantum_sys::densitymat_is_success(status) {

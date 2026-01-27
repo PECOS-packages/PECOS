@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::{Angle64, QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngCore, RngProbabilityExt, SeedableRng};
+use pecos_rng::{PecosRng, RngCore, RngProbabilityExt, SeedableRng};
 
 use core::fmt::Debug;
 use num_complex::Complex64;
@@ -217,7 +217,7 @@ where
     /// ```
     #[inline]
     pub fn prepare_plus_state(&mut self) -> &mut Self {
-        let factor = Complex64::new(1.0 / ((1 << self.num_qubits) as f64).sqrt(), 0.0);
+        let factor = Complex64::new(1.0 / f64::from(1 << self.num_qubits).sqrt(), 0.0);
         self.state.fill(factor);
         self
     }
@@ -744,7 +744,7 @@ where
                 *amp *= norm_inv;
             }
 
-            let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
+            let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
             results.push(MeasurementResult {
                 outcome: result != 0,
                 is_deterministic,
@@ -895,7 +895,13 @@ where
     /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
         let theta = theta.to_radians_signed();
         let phi = phi.to_radians_signed();
         let lambda = lambda.to_radians_signed();
@@ -1671,7 +1677,12 @@ mod tests {
         let theta = PI / 5.0;
         let phi = PI / 7.0;
         let lambda = PI / 3.0;
-        q.u(Angle64::from_radians(theta), Angle64::from_radians(phi), Angle64::from_radians(lambda), &qid(0));
+        q.u(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            Angle64::from_radians(lambda),
+            &qid(0),
+        );
 
         // Verify normalization is preserved
         let norm: f64 = q.state.iter().map(num_complex::Complex::norm_sqr).sum();
@@ -1695,10 +1706,19 @@ mod tests {
         let phi = FRAC_PI_4;
 
         // Apply the manual `r1xy` implementation.
-        state_vec_r1xy.r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &qid(0));
+        state_vec_r1xy.r1xy(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            &qid(0),
+        );
 
         // Apply the `r1xy` implementation from the `ArbitraryRotationGateable` trait.
-        ArbitraryRotationGateable::r1xy(&mut trait_r1xy, Angle64::from_radians(theta), Angle64::from_radians(phi), &qid(0));
+        ArbitraryRotationGateable::r1xy(
+            &mut trait_r1xy,
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            &qid(0),
+        );
 
         // Use the `assert_states_equal` function to compare the states up to a global phase.
         assert_states_equal(&state_vec_r1xy.state, &trait_r1xy.state);
@@ -1810,7 +1830,8 @@ mod tests {
         let mut q2 = StateVecAoS::new(2);
         q1.h(&qid(0)); // Create non-trivial initial state
         q2.h(&qid(0)); // Same initial state
-        q1.ryy(Angle64::from_radians(FRAC_PI_3), &qid2(0, 1)).ryy(Angle64::from_radians(FRAC_PI_6), &qid2(0, 1));
+        q1.ryy(Angle64::from_radians(FRAC_PI_3), &qid2(0, 1))
+            .ryy(Angle64::from_radians(FRAC_PI_6), &qid2(0, 1));
         q2.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
         // Compare up to global phase
         if q1.state[0].norm() > 1e-10 {

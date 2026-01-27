@@ -102,7 +102,13 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
         self.rz(lambda, qubits).ry(theta, qubits).rz(phi, qubits)
     }
 
@@ -248,7 +254,13 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// # Note
     /// The current implementation might have a reversed order of operations.
     #[inline]
-    fn rzzryyrxx(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzzryyrxx(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
         self.rxx(theta, qubits).ryy(phi, qubits).rzz(lambda, qubits)
     }
 }

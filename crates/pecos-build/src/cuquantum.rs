@@ -35,10 +35,10 @@ pub fn get_pecos_cuquantum_dir() -> Option<PathBuf> {
 #[must_use]
 pub fn find_cuquantum() -> Option<PathBuf> {
     // 1. Check ~/.pecos/cuquantum/ first (local installation)
-    if let Some(pecos_cuquantum) = get_pecos_cuquantum_dir() {
-        if is_valid_cuquantum_installation(&pecos_cuquantum) {
-            return Some(pecos_cuquantum);
-        }
+    if let Some(pecos_cuquantum) = get_pecos_cuquantum_dir()
+        && is_valid_cuquantum_installation(&pecos_cuquantum)
+    {
+        return Some(pecos_cuquantum);
     }
 
     // 2. Check CUQUANTUM_ROOT environment variable
@@ -179,14 +179,15 @@ pub fn get_cuquantum_version(cuquantum_path: &Path) -> Result<String> {
         _ => {
             // Try alternative version format
             for line in content.lines() {
-                if line.contains("CUSTATEVEC_VERSION") && !line.contains("VER_") {
-                    if let Some(ver) = extract_version_number(line) {
-                        // Version might be encoded as 10200 for 1.2.0
-                        let major = ver / 10000;
-                        let minor = (ver % 10000) / 100;
-                        let patch = ver % 100;
-                        return Ok(format!("{major}.{minor}.{patch}"));
-                    }
+                if line.contains("CUSTATEVEC_VERSION")
+                    && !line.contains("VER_")
+                    && let Some(ver) = extract_version_number(line)
+                {
+                    // Version might be encoded as 10200 for 1.2.0
+                    let major = ver / 10000;
+                    let minor = (ver % 10000) / 100;
+                    let patch = ver % 100;
+                    return Ok(format!("{major}.{minor}.{patch}"));
                 }
             }
             Err(Error::CuQuantum(
@@ -292,8 +293,7 @@ pub struct CuQuantumInfo {
 /// # Errors
 /// Returns an error if cuQuantum is not found.
 pub fn get_cuquantum_info() -> Result<CuQuantumInfo> {
-    let path = find_cuquantum()
-        .ok_or_else(|| Error::CuQuantum("cuQuantum not found".into()))?;
+    let path = find_cuquantum().ok_or_else(|| Error::CuQuantum("cuQuantum not found".into()))?;
 
     let version = get_cuquantum_version(&path).ok();
 
@@ -325,8 +325,8 @@ pub fn get_cuquantum_info() -> Result<CuQuantumInfo> {
 /// # Errors
 /// Returns an error if cuQuantum is not found.
 pub fn print_cargo_link_directives(libs: &[CuQuantumLib]) -> Result<()> {
-    let cuquantum_path = find_cuquantum()
-        .ok_or_else(|| Error::CuQuantum("cuQuantum not found".into()))?;
+    let cuquantum_path =
+        find_cuquantum().ok_or_else(|| Error::CuQuantum("cuQuantum not found".into()))?;
 
     let lib_dir = get_lib_dir(&cuquantum_path)
         .ok_or_else(|| Error::CuQuantum("cuQuantum lib directory not found".into()))?;

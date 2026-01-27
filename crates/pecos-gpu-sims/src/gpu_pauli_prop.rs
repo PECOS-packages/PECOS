@@ -150,20 +150,24 @@ impl GpuPauliProp {
 
         // Calculate dimensions
         let shot_words = num_shots.div_ceil(32);
-        let table_size = (num_qubits as u32 * shot_words * 4) as u64; // bytes
+        let table_size = u64::from(num_qubits as u32 * shot_words * 4); // bytes
 
         // Create fault table buffers (initialized to zero = no faults)
         let x_faults_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("X Faults Buffer"),
             size: table_size.max(4),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
         let z_faults_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Z Faults Buffer"),
             size: table_size.max(4),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -191,7 +195,7 @@ impl GpuPauliProp {
         // Create random buffer for probabilistic faults
         let random_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Random Buffer"),
-            size: (num_shots * 4) as u64, // One u32 per shot
+            size: u64::from(num_shots * 4), // One u32 per shot
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -339,11 +343,13 @@ impl GpuPauliProp {
     }
 
     /// Get the number of qubits.
+    #[must_use]
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
     }
 
     /// Get the number of shots.
+    #[must_use]
     pub fn num_shots(&self) -> u32 {
         self.num_shots
     }
@@ -383,13 +389,13 @@ impl GpuPauliProp {
     }
 
     /// Apply CX (CNOT) gate.
-    /// Transforms: ctrl_X -> tgt_X, tgt_Z -> ctrl_Z
+    /// Transforms: `ctrl_X` -> `tgt_X`, `tgt_Z` -> `ctrl_Z`
     pub fn cx(&mut self, control: usize, target: usize) {
         self.queue_gate(GATE_CX, control as u32, target as u32);
     }
 
     /// Apply CZ gate.
-    /// Transforms: ctrl_X -> tgt_Z, tgt_X -> ctrl_Z
+    /// Transforms: `ctrl_X` -> `tgt_Z`, `tgt_X` -> `ctrl_Z`
     pub fn cz(&mut self, qubit_a: usize, qubit_b: usize) {
         self.queue_gate(GATE_CZ, qubit_a as u32, qubit_b as u32);
     }
@@ -514,9 +520,11 @@ impl GpuPauliProp {
                 bytemuck::cast_slice(&queue_data),
             );
 
-            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PauliProp 1Q Encoder"),
-            });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PauliProp 1Q Encoder"),
+                });
 
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -548,9 +556,11 @@ impl GpuPauliProp {
                 bytemuck::cast_slice(&queue_data),
             );
 
-            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PauliProp 2Q Encoder"),
-            });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PauliProp 2Q Encoder"),
+                });
 
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -626,7 +636,7 @@ impl GpuPauliProp {
 
     /// Get the X and Z fault tables (for analysis).
     ///
-    /// Returns (x_faults, z_faults) where each is indexed as [qubit][shot].
+    /// Returns (`x_faults`, `z_faults`) where each is indexed as [qubit][shot].
     pub fn get_fault_tables(&mut self) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
         self.sync();
 
@@ -660,11 +670,7 @@ impl GpuPauliProp {
     ///
     /// # Returns
     /// A vector of bools, one per shot, true if anticommutes (logical error).
-    pub fn check_anticommutation(
-        &mut self,
-        x_qubits: &[usize],
-        z_qubits: &[usize],
-    ) -> Vec<bool> {
+    pub fn check_anticommutation(&mut self, x_qubits: &[usize], z_qubits: &[usize]) -> Vec<bool> {
         self.sync();
 
         let x_faults = self.read_fault_table(&self.x_faults_buffer);
@@ -715,15 +721,10 @@ impl GpuPauliProp {
     }
 
     fn upload_random_bits(&mut self) {
-        let random_bits: Vec<u32> = (0..self.num_shots)
-            .map(|_| self.rng.next_u32())
-            .collect();
+        let random_bits: Vec<u32> = (0..self.num_shots).map(|_| self.rng.next_u32()).collect();
 
-        self.queue.write_buffer(
-            &self.random_buffer,
-            0,
-            bytemuck::cast_slice(&random_bits),
-        );
+        self.queue
+            .write_buffer(&self.random_buffer, 0, bytemuck::cast_slice(&random_bits));
     }
 
     fn read_fault_table(&self, buffer: &wgpu::Buffer) -> Vec<u32> {
@@ -802,7 +803,7 @@ mod tests {
 
         // Qubit 0 should now have Z fault, not X
         assert!(x[0].iter().all(|&b| !b)); // No X fault
-        assert!(z[0].iter().all(|&b| b));  // Z fault present
+        assert!(z[0].iter().all(|&b| b)); // Z fault present
     }
 
     #[test]
@@ -876,7 +877,7 @@ mod tests {
 
         // All shots: qubit 0 flipped, qubits 1 and 2 not flipped
         for shot_result in &flips {
-            assert!(shot_result[0]);  // X fault flips Z measurement
+            assert!(shot_result[0]); // X fault flips Z measurement
             assert!(!shot_result[1]); // Z fault doesn't flip Z measurement
             assert!(!shot_result[2]); // No fault, no flip
         }

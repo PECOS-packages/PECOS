@@ -18,16 +18,13 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_qsim::state_vector_test_utils::*;
 //! use pecos_qsim::StateVecAoS;
 //!
-//! #[test]
-//! fn test_my_simulator() {
-//!     let mut sim = StateVecAoS::new(4);
-//!     verify_h_gate(&mut sim);
-//!     verify_bell_state(&mut sim);
-//! }
+//! let mut sim = StateVecAoS::with_seed(4, 42);
+//! verify_h_gate(&mut sim);
+//! verify_bell_state_preparation(&mut sim);
 //! ```
 
 #![allow(clippy::missing_panics_doc)]
@@ -80,8 +77,8 @@ pub trait StateVectorSimulator: CliffordGateable + QuantumSimulator + Sized {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use pecos_qsim::state_vector_test_utils::state_vector_test_suite;
+/// ```no_run
+/// use pecos_qsim::state_vector_test_suite;
 /// use pecos_qsim::SparseStateVecAoS;
 ///
 /// state_vector_test_suite!(SparseStateVecAoS);
@@ -130,7 +127,7 @@ macro_rules! state_vector_test_suite {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_qsim::full_state_vector_test_suite;
 /// use pecos_qsim::StateVecAoS;
 ///
@@ -149,7 +146,7 @@ macro_rules! full_state_vector_test_suite {
             #[test]
             fn [<test_ $sim_type:snake _rotation_suite>]() {
                 use $crate::state_vector_test_utils::{run_rotation_test_suite, StateVectorSimulator};
-                use $crate::ArbitraryRotationGateable;
+
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_rotation_test_suite(&mut sim);
             }
@@ -157,7 +154,7 @@ macro_rules! full_state_vector_test_suite {
             #[test]
             fn [<test_ $sim_type:snake _full_suite>]() {
                 use $crate::state_vector_test_utils::{run_full_state_vector_test_suite, StateVectorSimulator};
-                use $crate::ArbitraryRotationGateable;
+
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_full_state_vector_test_suite(&mut sim);
             }
@@ -218,7 +215,10 @@ pub fn verify_initial_state<S: StateVectorSimulator>(sim: &mut S) {
     );
 
     for i in 1..dim {
-        assert_amplitude_near_zero(sim.get_amplitude(i), &format!("Initial state amplitude at |{i}⟩"));
+        assert_amplitude_near_zero(
+            sim.get_amplitude(i),
+            &format!("Initial state amplitude at |{i}⟩"),
+        );
     }
 }
 
@@ -276,10 +276,26 @@ pub fn verify_probability<S: StateVectorSimulator>(sim: &mut S) {
         sim.h(&qid(0));
         sim.cx(&qid2(0, 1));
 
-        assert_probability_eq(sim.get_amplitude(0b00).norm_sqr(), 0.5, "P(|00⟩) in Bell state");
-        assert_probability_eq(sim.get_amplitude(0b01).norm_sqr(), 0.0, "P(|01⟩) in Bell state");
-        assert_probability_eq(sim.get_amplitude(0b10).norm_sqr(), 0.0, "P(|10⟩) in Bell state");
-        assert_probability_eq(sim.get_amplitude(0b11).norm_sqr(), 0.5, "P(|11⟩) in Bell state");
+        assert_probability_eq(
+            sim.get_amplitude(0b00).norm_sqr(),
+            0.5,
+            "P(|00⟩) in Bell state",
+        );
+        assert_probability_eq(
+            sim.get_amplitude(0b01).norm_sqr(),
+            0.0,
+            "P(|01⟩) in Bell state",
+        );
+        assert_probability_eq(
+            sim.get_amplitude(0b10).norm_sqr(),
+            0.0,
+            "P(|10⟩) in Bell state",
+        );
+        assert_probability_eq(
+            sim.get_amplitude(0b11).norm_sqr(),
+            0.5,
+            "P(|11⟩) in Bell state",
+        );
     }
 }
 
@@ -637,11 +653,7 @@ pub fn verify_iswap_gate<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.x(&qid(0));
     sim.iswap(&qid2(0, 1));
-    assert_amplitude_eq(
-        sim.get_amplitude(0b10),
-        Complex64::i(),
-        "iSWAP|10⟩ = i|01⟩",
-    );
+    assert_amplitude_eq(sim.get_amplitude(0b10), Complex64::i(), "iSWAP|10⟩ = i|01⟩");
 }
 
 // ============================================================================
@@ -943,32 +955,20 @@ pub fn verify_gate_identities<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.x(&qid(0));
     sim.x(&qid(0));
-    assert_amplitude_eq(
-        sim.get_amplitude(0),
-        Complex64::new(1.0, 0.0),
-        "X^2 = I",
-    );
+    assert_amplitude_eq(sim.get_amplitude(0), Complex64::new(1.0, 0.0), "X^2 = I");
 
     // H^2 = I
     sim.reset();
     sim.h(&qid(0));
     sim.h(&qid(0));
-    assert_amplitude_eq(
-        sim.get_amplitude(0),
-        Complex64::new(1.0, 0.0),
-        "H^2 = I",
-    );
+    assert_amplitude_eq(sim.get_amplitude(0), Complex64::new(1.0, 0.0), "H^2 = I");
 
     // S^4 = I
     sim.reset();
     for _ in 0..4 {
         sim.sz(&qid(0));
     }
-    assert_amplitude_eq(
-        sim.get_amplitude(0),
-        Complex64::new(1.0, 0.0),
-        "S^4 = I",
-    );
+    assert_amplitude_eq(sim.get_amplitude(0), Complex64::new(1.0, 0.0), "S^4 = I");
 
     // HZH = X
     sim.reset();
@@ -1200,7 +1200,11 @@ pub fn verify_batch_measurements<S: StateVectorSimulator>(sim: &mut S) {
     let qubits = [QubitId(0), QubitId(1), QubitId(2)];
     let results = sim.mz(&qubits);
 
-    assert_eq!(results.len(), 3, "Batch measurement should return 3 results");
+    assert_eq!(
+        results.len(),
+        3,
+        "Batch measurement should return 3 results"
+    );
     assert!(results[0].outcome, "Qubit 0 should measure |1⟩");
     assert!(!results[1].outcome, "Qubit 1 should measure |0⟩");
     assert!(results[2].outcome, "Qubit 2 should measure |1⟩");
@@ -1297,7 +1301,9 @@ pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGa
 }
 
 /// Verify batch two-qubit rotation gates produce same result as sequential.
-pub fn verify_batch_two_qubit_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGateable>(
+pub fn verify_batch_two_qubit_rotation_gates<
+    S: StateVectorSimulator + ArbitraryRotationGateable,
+>(
     sim: &mut S,
 ) {
     if sim.num_qubits() < 4 {
@@ -1353,7 +1359,9 @@ pub fn verify_batch_two_qubit_rotation_gates<S: StateVectorSimulator + Arbitrary
 }
 
 /// Verify rotation gate identities.
-pub fn verify_rotation_identities<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
+pub fn verify_rotation_identities<S: StateVectorSimulator + ArbitraryRotationGateable>(
+    sim: &mut S,
+) {
     // RX(π) ≈ -iX (up to global phase)
     sim.reset();
     sim.rx(Angle64::from_radians(PI), &qid(0));
@@ -1400,7 +1408,12 @@ pub fn verify_rotation_identities<S: StateVectorSimulator + ArbitraryRotationGat
 pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // U(π, 0, π) = X (Pauli X gate)
     sim.reset();
-    sim.u(Angle64::from_radians(PI), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
+    sim.u(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
 
     assert_amplitude_near_zero(sim.get_amplitude(0), "U(π,0,π)|0⟩: |0⟩");
     assert!(
@@ -1410,7 +1423,12 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
 
     // U(π, π/2, π/2) = Y (Pauli Y gate, up to global phase)
     sim.reset();
-    sim.u(Angle64::from_radians(PI), Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(FRAC_PI_2), &qid(0));
+    sim.u(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(FRAC_PI_2),
+        Angle64::from_radians(FRAC_PI_2),
+        &qid(0),
+    );
 
     assert_amplitude_near_zero(sim.get_amplitude(0), "U(π,π/2,π/2)|0⟩: |0⟩");
     assert!(
@@ -1422,7 +1440,12 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
     sim.reset();
     sim.x(&qid(0)); // Prepare |1⟩
     let amp_before = sim.get_amplitude(1);
-    sim.u(Angle64::from_radians(0.0), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
+    sim.u(
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
     let amp_after = sim.get_amplitude(1);
 
     // Magnitude should be preserved
@@ -1434,7 +1457,12 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
     // Unitarity check: U preserves normalization
     sim.reset();
     sim.h(&qid(0)); // Start with superposition
-    sim.u(Angle64::from_radians(1.23), Angle64::from_radians(0.45), Angle64::from_radians(0.67), &qid(0)); // Apply U with arbitrary angles
+    sim.u(
+        Angle64::from_radians(1.23),
+        Angle64::from_radians(0.45),
+        Angle64::from_radians(0.67),
+        &qid(0),
+    ); // Apply U with arbitrary angles
 
     let amp0 = sim.get_amplitude(0);
     let amp1 = sim.get_amplitude(1);
@@ -1452,7 +1480,11 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
 pub fn verify_r1xy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // R1XY(π, 0) should act like X (flip |0⟩ to |1⟩)
     sim.reset();
-    sim.r1xy(Angle64::from_radians(PI), Angle64::from_radians(0.0), &qid(0));
+    sim.r1xy(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(0.0),
+        &qid(0),
+    );
 
     assert_amplitude_near_zero(sim.get_amplitude(0), "R1XY(π,0)|0⟩: |0⟩");
     assert!(
@@ -1462,7 +1494,11 @@ pub fn verify_r1xy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim
 
     // R1XY(π, π/2) should act like Y (up to global phase)
     sim.reset();
-    sim.r1xy(Angle64::from_radians(PI), Angle64::from_radians(FRAC_PI_2), &qid(0));
+    sim.r1xy(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(FRAC_PI_2),
+        &qid(0),
+    );
 
     assert_amplitude_near_zero(sim.get_amplitude(0), "R1XY(π,π/2)|0⟩: |0⟩");
     assert!(
@@ -1472,7 +1508,11 @@ pub fn verify_r1xy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim
 
     // R1XY(π/2, 0) should create superposition like a Hadamard-like rotation
     sim.reset();
-    sim.r1xy(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(0.0), &qid(0));
+    sim.r1xy(
+        Angle64::from_radians(FRAC_PI_2),
+        Angle64::from_radians(0.0),
+        &qid(0),
+    );
 
     // Both amplitudes should have equal magnitude
     let amp0 = sim.get_amplitude(0);
@@ -1605,7 +1645,10 @@ pub fn verify_two_qubit_locality<S: StateVectorSimulator>(sim: &mut S) {
                 "CX(0,1) on |1000⟩: state {expected_idx:#b} should have amplitude 1"
             );
         } else {
-            assert_amplitude_near_zero(amp, &format!("CX(0,1) on |1000⟩: state {i:#b} should be zero"));
+            assert_amplitude_near_zero(
+                amp,
+                &format!("CX(0,1) on |1000⟩: state {i:#b} should be zero"),
+            );
         }
     }
 
@@ -1643,8 +1686,16 @@ pub fn verify_adjoint_gates<S: StateVectorSimulator>(sim: &mut S) {
     let amp1_before = sim.get_amplitude(1);
     sim.sx(&qid(0));
     sim.sxdg(&qid(0));
-    assert_amplitude_eq(sim.get_amplitude(0), amp0_before, "SX·SXdg = I: |0⟩ component");
-    assert_amplitude_eq(sim.get_amplitude(1), amp1_before, "SX·SXdg = I: |1⟩ component");
+    assert_amplitude_eq(
+        sim.get_amplitude(0),
+        amp0_before,
+        "SX·SXdg = I: |0⟩ component",
+    );
+    assert_amplitude_eq(
+        sim.get_amplitude(1),
+        amp1_before,
+        "SX·SXdg = I: |1⟩ component",
+    );
 
     // SXdg · SX = I
     sim.reset();
@@ -1653,8 +1704,16 @@ pub fn verify_adjoint_gates<S: StateVectorSimulator>(sim: &mut S) {
     let amp1_before = sim.get_amplitude(1);
     sim.sxdg(&qid(0));
     sim.sx(&qid(0));
-    assert_amplitude_eq(sim.get_amplitude(0), amp0_before, "SXdg·SX = I: |0⟩ component");
-    assert_amplitude_eq(sim.get_amplitude(1), amp1_before, "SXdg·SX = I: |1⟩ component");
+    assert_amplitude_eq(
+        sim.get_amplitude(0),
+        amp0_before,
+        "SXdg·SX = I: |0⟩ component",
+    );
+    assert_amplitude_eq(
+        sim.get_amplitude(1),
+        amp1_before,
+        "SXdg·SX = I: |1⟩ component",
+    );
 
     // SY · SYdg = I
     sim.reset();
@@ -1663,8 +1722,16 @@ pub fn verify_adjoint_gates<S: StateVectorSimulator>(sim: &mut S) {
     let amp1_before = sim.get_amplitude(1);
     sim.sy(&qid(0));
     sim.sydg(&qid(0));
-    assert_amplitude_eq(sim.get_amplitude(0), amp0_before, "SY·SYdg = I: |0⟩ component");
-    assert_amplitude_eq(sim.get_amplitude(1), amp1_before, "SY·SYdg = I: |1⟩ component");
+    assert_amplitude_eq(
+        sim.get_amplitude(0),
+        amp0_before,
+        "SY·SYdg = I: |0⟩ component",
+    );
+    assert_amplitude_eq(
+        sim.get_amplitude(1),
+        amp1_before,
+        "SY·SYdg = I: |1⟩ component",
+    );
 
     // SYdg · SY = I
     sim.reset();
@@ -1673,8 +1740,16 @@ pub fn verify_adjoint_gates<S: StateVectorSimulator>(sim: &mut S) {
     let amp1_before = sim.get_amplitude(1);
     sim.sydg(&qid(0));
     sim.sy(&qid(0));
-    assert_amplitude_eq(sim.get_amplitude(0), amp0_before, "SYdg·SY = I: |0⟩ component");
-    assert_amplitude_eq(sim.get_amplitude(1), amp1_before, "SYdg·SY = I: |1⟩ component");
+    assert_amplitude_eq(
+        sim.get_amplitude(0),
+        amp0_before,
+        "SYdg·SY = I: |0⟩ component",
+    );
+    assert_amplitude_eq(
+        sim.get_amplitude(1),
+        amp1_before,
+        "SYdg·SY = I: |1⟩ component",
+    );
 
     // SZ · SZdg = I
     sim.reset();
@@ -1683,8 +1758,16 @@ pub fn verify_adjoint_gates<S: StateVectorSimulator>(sim: &mut S) {
     let amp1_before = sim.get_amplitude(1);
     sim.sz(&qid(0));
     sim.szdg(&qid(0));
-    assert_amplitude_eq(sim.get_amplitude(0), amp0_before, "SZ·SZdg = I: |0⟩ component");
-    assert_amplitude_eq(sim.get_amplitude(1), amp1_before, "SZ·SZdg = I: |1⟩ component");
+    assert_amplitude_eq(
+        sim.get_amplitude(0),
+        amp0_before,
+        "SZ·SZdg = I: |0⟩ component",
+    );
+    assert_amplitude_eq(
+        sim.get_amplitude(1),
+        amp1_before,
+        "SZ·SZdg = I: |1⟩ component",
+    );
 
     // SZdg · SZ = I
     sim.reset();
@@ -1693,8 +1776,16 @@ pub fn verify_adjoint_gates<S: StateVectorSimulator>(sim: &mut S) {
     let amp1_before = sim.get_amplitude(1);
     sim.szdg(&qid(0));
     sim.sz(&qid(0));
-    assert_amplitude_eq(sim.get_amplitude(0), amp0_before, "SZdg·SZ = I: |0⟩ component");
-    assert_amplitude_eq(sim.get_amplitude(1), amp1_before, "SZdg·SZ = I: |1⟩ component");
+    assert_amplitude_eq(
+        sim.get_amplitude(0),
+        amp0_before,
+        "SZdg·SZ = I: |0⟩ component",
+    );
+    assert_amplitude_eq(
+        sim.get_amplitude(1),
+        amp1_before,
+        "SZdg·SZ = I: |1⟩ component",
+    );
 }
 
 /// Verify that two-qubit adjoint gates are proper inverses.
@@ -1713,7 +1804,11 @@ pub fn verify_adjoint_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.sxx(&qid2(0, 1));
     sim.sxxdg(&qid2(0, 1));
     for (i, amp_before) in before.iter().enumerate() {
-        assert_amplitude_eq(sim.get_amplitude(i), *amp_before, &format!("SXX·SXXdg = I at {i}"));
+        assert_amplitude_eq(
+            sim.get_amplitude(i),
+            *amp_before,
+            &format!("SXX·SXXdg = I at {i}"),
+        );
     }
 
     // SYY · SYYdg = I
@@ -1724,7 +1819,11 @@ pub fn verify_adjoint_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.syy(&qid2(0, 1));
     sim.syydg(&qid2(0, 1));
     for (i, amp_before) in before.iter().enumerate() {
-        assert_amplitude_eq(sim.get_amplitude(i), *amp_before, &format!("SYY·SYYdg = I at {i}"));
+        assert_amplitude_eq(
+            sim.get_amplitude(i),
+            *amp_before,
+            &format!("SYY·SYYdg = I at {i}"),
+        );
     }
 
     // SZZ · SZZdg = I
@@ -1735,7 +1834,11 @@ pub fn verify_adjoint_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.szz(&qid2(0, 1));
     sim.szzdg(&qid2(0, 1));
     for (i, amp_before) in before.iter().enumerate() {
-        assert_amplitude_eq(sim.get_amplitude(i), *amp_before, &format!("SZZ·SZZdg = I at {i}"));
+        assert_amplitude_eq(
+            sim.get_amplitude(i),
+            *amp_before,
+            &format!("SZZ·SZZdg = I at {i}"),
+        );
     }
 }
 
@@ -2000,7 +2103,10 @@ pub fn verify_y_xz_decomposition<S: StateVectorSimulator>(sim: &mut S) {
             }
         }
     }
-    assert!(phase_ratio.is_some(), "Y and XZ should have non-zero amplitudes");
+    assert!(
+        phase_ratio.is_some(),
+        "Y and XZ should have non-zero amplitudes"
+    );
 }
 
 // ============================================================================
@@ -2173,9 +2279,18 @@ pub fn verify_face_gate_adjoints<S: StateVectorSimulator>(sim: &mut S) {
         sim.h(q);
         let before: Vec<_> = (0..n).map(|i| sim.get_amplitude(i)).collect();
         match *name {
-            "F2" => { sim.f2(q); sim.f2dg(q); }
-            "F3" => { sim.f3(q); sim.f3dg(q); }
-            "F4" => { sim.f4(q); sim.f4dg(q); }
+            "F2" => {
+                sim.f2(q);
+                sim.f2dg(q);
+            }
+            "F3" => {
+                sim.f3(q);
+                sim.f3dg(q);
+            }
+            "F4" => {
+                sim.f4(q);
+                sim.f4dg(q);
+            }
             _ => unreachable!(),
         }
         for (i, amp_before) in before.iter().enumerate() {
@@ -2207,11 +2322,21 @@ pub fn verify_hadamard_variants<S: StateVectorSimulator>(sim: &mut S) {
         // Apply twice
         for _ in 0..2 {
             match *name {
-                "H2" => { sim.h2(q); }
-                "H3" => { sim.h3(q); }
-                "H4" => { sim.h4(q); }
-                "H5" => { sim.h5(q); }
-                "H6" => { sim.h6(q); }
+                "H2" => {
+                    sim.h2(q);
+                }
+                "H3" => {
+                    sim.h3(q);
+                }
+                "H4" => {
+                    sim.h4(q);
+                }
+                "H5" => {
+                    sim.h5(q);
+                }
+                "H6" => {
+                    sim.h6(q);
+                }
                 _ => unreachable!(),
             }
         }
@@ -2259,12 +2384,24 @@ pub fn verify_hadamard_variants_distinct<S: StateVectorSimulator>(sim: &mut S) {
     for name in &variant_names {
         sim.reset();
         match *name {
-            "H" => { sim.h(q); }
-            "H2" => { sim.h2(q); }
-            "H3" => { sim.h3(q); }
-            "H4" => { sim.h4(q); }
-            "H5" => { sim.h5(q); }
-            "H6" => { sim.h6(q); }
+            "H" => {
+                sim.h(q);
+            }
+            "H2" => {
+                sim.h2(q);
+            }
+            "H3" => {
+                sim.h3(q);
+            }
+            "H4" => {
+                sim.h4(q);
+            }
+            "H5" => {
+                sim.h5(q);
+            }
+            "H6" => {
+                sim.h6(q);
+            }
             _ => unreachable!(),
         }
         results.push((sim.get_amplitude(0), sim.get_amplitude(1)));
@@ -2272,9 +2409,9 @@ pub fn verify_hadamard_variants_distinct<S: StateVectorSimulator>(sim: &mut S) {
 
     // At least some should differ from standard H
     let h_result = results[0];
-    let some_differ = results[1..]
-        .iter()
-        .any(|(a0, a1)| (a0 - h_result.0).norm() > TOLERANCE || (a1 - h_result.1).norm() > TOLERANCE);
+    let some_differ = results[1..].iter().any(|(a0, a1)| {
+        (a0 - h_result.0).norm() > TOLERANCE || (a1 - h_result.1).norm() > TOLERANCE
+    });
     assert!(
         some_differ,
         "Hadamard variants should differ from standard H"

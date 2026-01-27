@@ -9,6 +9,7 @@ license = "Apache-2.0"
 repository = "https://github.com/PECOS-packages/PECOS"
 keywords = ["quantum", "cuda", "nvidia", "cuquantum", "ffi"]
 categories = ["external-ffi-bindings", "science"]
+readme = "README.md"
 
 [dependencies]
 

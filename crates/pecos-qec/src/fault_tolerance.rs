@@ -151,6 +151,7 @@ pub use gadget_checker::{
     GadgetFaultResult, GadgetFollowUpConfig, GadgetHistoryAnalysis, GadgetHistoryPattern,
     GadgetSyndromeAnalysis,
 };
+pub use influence_builder::InfluenceBuilder;
 pub use pauli_prop_checker::{
     DecoderAnalysis, FaultClass, FaultToleranceAnalysis, FaultToleranceFailure, FollowUpConfig,
     MeasurementRound, PauliPropChecker, PropagationResult, SyndromeAnalysis, SyndromeClass,
@@ -169,7 +170,6 @@ pub use propagator::{
 pub use stabilizer_flip_checker::{
     ErrorClass, StabilizerFlipAnalysis, StabilizerFlipChecker, StabilizerFlips,
 };
-pub use influence_builder::InfluenceBuilder;
 
 /// A spacetime location where a fault can occur.
 ///
@@ -194,6 +194,7 @@ pub struct SpacetimeLocation {
 
 impl SpacetimeLocation {
     /// Creates a new spacetime location.
+    #[must_use]
     pub fn new(
         tick: usize,
         qubits: Vec<QubitId>,
@@ -211,11 +212,13 @@ impl SpacetimeLocation {
     }
 
     /// Returns the number of qubits at this location.
+    #[must_use]
     pub fn num_qubits(&self) -> usize {
         self.qubits.len()
     }
 
     /// Returns true if this is a measurement location.
+    #[must_use]
     pub fn is_measurement(&self) -> bool {
         matches!(self.gate_type, GateType::Measure | GateType::MeasureFree)
     }
@@ -235,21 +238,25 @@ pub struct PauliFault {
 
 impl PauliFault {
     /// Creates a new Pauli fault.
+    #[must_use]
     pub fn new(location: SpacetimeLocation, paulis: Vec<u8>) -> Self {
         Self { location, paulis }
     }
 
     /// Returns the weight (number of non-identity Paulis) of this fault.
+    #[must_use]
     pub fn weight(&self) -> usize {
         self.paulis.iter().filter(|&&p| p != 0).count()
     }
 
     /// Returns true if this fault is non-trivial (not all identity).
+    #[must_use]
     pub fn is_nontrivial(&self) -> bool {
         self.paulis.iter().any(|&p| p != 0)
     }
 
     /// Converts the Pauli indices to characters for display.
+    #[must_use]
     pub fn pauli_string(&self) -> String {
         self.paulis
             .iter()
@@ -273,11 +280,13 @@ pub struct FaultConfiguration {
 
 impl FaultConfiguration {
     /// Creates a new empty fault configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self { faults: Vec::new() }
     }
 
     /// Creates a fault configuration with the given faults.
+    #[must_use]
     pub fn with_faults(faults: Vec<PauliFault>) -> Self {
         Self { faults }
     }
@@ -288,23 +297,27 @@ impl FaultConfiguration {
     }
 
     /// Returns the total weight of all faults.
+    #[must_use]
     pub fn total_weight(&self) -> usize {
-        self.faults.iter().map(|f| f.weight()).sum()
+        self.faults.iter().map(PauliFault::weight).sum()
     }
 
     /// Returns true if this configuration has no faults.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.faults.is_empty()
     }
 
     /// Returns the number of fault locations.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.faults.len()
     }
 
     /// Groups faults by tick for error injection.
     ///
-    /// Returns a map from tick index to (before_faults, after_faults).
+    /// Returns a map from tick index to (`before_faults`, `after_faults`).
+    #[must_use]
     pub fn by_tick(
         &self,
     ) -> std::collections::BTreeMap<usize, (Vec<&PauliFault>, Vec<&PauliFault>)> {
@@ -361,17 +374,20 @@ impl Default for FaultCheckConfig {
 
 impl FaultCheckConfig {
     /// Creates a new configuration with default settings.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Sets the maximum weight of faults to check.
+    #[must_use]
     pub fn with_weight(mut self, weight: usize) -> Self {
         self.max_weight = weight;
         self
     }
 
     /// Configures to only check X-type errors (CSS mode for Z-distance).
+    #[must_use]
     pub fn x_only(mut self) -> Self {
         self.include_x = true;
         self.include_y = false;
@@ -380,6 +396,7 @@ impl FaultCheckConfig {
     }
 
     /// Configures to only check Z-type errors (CSS mode for X-distance).
+    #[must_use]
     pub fn z_only(mut self) -> Self {
         self.include_x = false;
         self.include_y = false;
@@ -388,6 +405,7 @@ impl FaultCheckConfig {
     }
 
     /// Configures to check all Pauli types.
+    #[must_use]
     pub fn all_paulis(mut self) -> Self {
         self.include_x = true;
         self.include_y = true;
@@ -396,30 +414,35 @@ impl FaultCheckConfig {
     }
 
     /// Sets whether to stop at the first failure.
+    #[must_use]
     pub fn stop_on_first(mut self, stop: bool) -> Self {
         self.stop_on_first_failure = stop;
         self
     }
 
     /// Restricts fault locations to specific qubits.
+    #[must_use]
     pub fn with_restricted_qubits(mut self, qubits: BTreeSet<QubitId>) -> Self {
         self.restricted_qubits = Some(qubits);
         self
     }
 
     /// Sets whether to include data qubit errors.
+    #[must_use]
     pub fn with_data_errors(mut self, include: bool) -> Self {
         self.data_errors = include;
         self
     }
 
     /// Sets whether to include ancilla qubit errors.
+    #[must_use]
     pub fn with_ancilla_errors(mut self, include: bool) -> Self {
         self.ancilla_errors = include;
         self
     }
 
     /// Returns the Pauli types to include based on configuration.
+    #[must_use]
     pub fn pauli_types(&self) -> Vec<u8> {
         let mut types = Vec::with_capacity(3);
         if self.include_x {
@@ -463,6 +486,7 @@ impl PauliFaultIterator {
     /// * `locations` - All spacetime locations where faults can occur
     /// * `weight` - Number of fault locations to use
     /// * `config` - Configuration for Pauli types to include
+    #[must_use]
     pub fn new(locations: Vec<SpacetimeLocation>, weight: usize, config: FaultCheckConfig) -> Self {
         let pauli_types = config.pauli_types();
 
@@ -618,6 +642,7 @@ pub struct FaultCheckResult {
 
 impl FaultCheckResult {
     /// Creates a new fault check result.
+    #[must_use]
     pub fn new(failures: Vec<FaultConfiguration>, total_tested: usize, weight: usize) -> Self {
         let passed = failures.is_empty();
         Self {
@@ -629,11 +654,13 @@ impl FaultCheckResult {
     }
 
     /// Returns true if the circuit is fault-tolerant to the tested weight.
+    #[must_use]
     pub fn is_fault_tolerant(&self) -> bool {
         self.passed
     }
 
     /// Returns the number of failures found.
+    #[must_use]
     pub fn num_failures(&self) -> usize {
         self.failures.len()
     }

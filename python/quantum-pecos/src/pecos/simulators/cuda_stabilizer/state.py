@@ -114,7 +114,17 @@ class CudaStabilizer(Stabilizer):
                     result = self.bindings[symbol](self, location, **params)
                     if result is not None:
                         output[location] = result
-                elif symbol in ("T", "Tdg", "RX", "RY", "RZ", "R1XY", "RXX", "RYY", "RZZ"):
+                elif symbol in (
+                    "T",
+                    "Tdg",
+                    "RX",
+                    "RY",
+                    "RZ",
+                    "R1XY",
+                    "RXX",
+                    "RYY",
+                    "RZZ",
+                ):
                     msg = f"Gate '{symbol}' is not a Clifford gate and is not supported by CudaStabilizer. Use CudaStateVec for non-Clifford gates."
                     raise ValueError(msg)
 

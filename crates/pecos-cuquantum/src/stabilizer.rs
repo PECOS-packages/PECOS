@@ -27,15 +27,15 @@
 //! // results.measurements[shot][meas_idx] gives the outcome
 //! ```
 
-use crate::error::{check_stabilizer_status, CuQuantumError, Result, TryClone};
+use crate::error::{CuQuantumError, Result, TryClone, check_stabilizer_status};
 use pecos_core::QubitId;
 use pecos_cuquantum_sys::{
     cudaFree, cudaMalloc, cudaMemcpy, cudaMemcpyKind_cudaMemcpyDeviceToHost,
-    cudaMemcpyKind_cudaMemcpyHostToDevice, custabilizerCircuitSizeFromString,
-    custabilizerCircuit_t, custabilizerCreate, custabilizerCreateCircuitFromString,
+    cudaMemcpyKind_cudaMemcpyHostToDevice, custabilizerCircuit_t,
+    custabilizerCircuitSizeFromString, custabilizerCreate, custabilizerCreateCircuitFromString,
     custabilizerCreateFrameSimulator, custabilizerDestroy, custabilizerDestroyCircuit,
-    custabilizerDestroyFrameSimulator, custabilizerFrameSimulatorApplyCircuit,
-    custabilizerFrameSimulator_t, custabilizerHandle_t,
+    custabilizerDestroyFrameSimulator, custabilizerFrameSimulator_t,
+    custabilizerFrameSimulatorApplyCircuit, custabilizerHandle_t,
 };
 use pecos_qsim::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 use pecos_qsim::{CliffordGateable, MeasurementResult, QuantumSimulator};
@@ -127,21 +127,20 @@ impl CuFrameSimulator {
 
         // Calculate table stride (must be multiple of 4 bytes)
         // Each row stores num_shots bits, packed into u32s
-        let bytes_per_row = (num_shots + 7) / 8;
-        let table_stride = ((bytes_per_row + 3) / 4) * 4; // Round up to multiple of 4
+        let bytes_per_row = num_shots.div_ceil(8);
+        let table_stride = bytes_per_row.div_ceil(4) * 4; // Round up to multiple of 4
 
         // Allocate GPU buffers for X and Z tables
         let x_table_size = num_qubits * table_stride;
         let z_table_size = num_qubits * table_stride;
         let m_table_size = max_measurements * table_stride;
 
-        let mut x_table_device: *mut u32 = ptr::null_mut();
-        let mut z_table_device: *mut u32 = ptr::null_mut();
-        let mut m_table_device: *mut u32 = ptr::null_mut();
+        let x_table_device: *mut u32 = ptr::null_mut();
+        let z_table_device: *mut u32 = ptr::null_mut();
+        let m_table_device: *mut u32 = ptr::null_mut();
 
         unsafe {
-            let cuda_status =
-                cudaMalloc(&mut x_table_device.cast(), x_table_size);
+            let cuda_status = cudaMalloc(&mut x_table_device.cast(), x_table_size);
             if cuda_status != 0 {
                 custabilizerDestroy(handle);
                 return Err(CuQuantumError::Cuda(format!(
@@ -149,8 +148,7 @@ impl CuFrameSimulator {
                 )));
             }
 
-            let cuda_status =
-                cudaMalloc(&mut z_table_device.cast(), z_table_size);
+            let cuda_status = cudaMalloc(&mut z_table_device.cast(), z_table_size);
             if cuda_status != 0 {
                 cudaFree(x_table_device.cast());
                 custabilizerDestroy(handle);
@@ -159,8 +157,7 @@ impl CuFrameSimulator {
                 )));
             }
 
-            let cuda_status =
-                cudaMalloc(&mut m_table_device.cast(), m_table_size);
+            let cuda_status = cudaMalloc(&mut m_table_device.cast(), m_table_size);
             if cuda_status != 0 {
                 cudaFree(x_table_device.cast());
                 cudaFree(z_table_device.cast());
@@ -209,7 +206,11 @@ impl CuFrameSimulator {
     ///
     /// # Errors
     /// Returns an error if the circuit is invalid or execution fails.
-    pub fn run_circuit(&mut self, circuit_string: &str, seed: u64) -> Result<FrameSimulationResults> {
+    pub fn run_circuit(
+        &mut self,
+        circuit_string: &str,
+        seed: u64,
+    ) -> Result<FrameSimulationResults> {
         self.run_circuit_internal(circuit_string, seed, true)
     }
 
@@ -253,8 +254,7 @@ impl CuFrameSimulator {
                 if !self.circuit_buffer_device.is_null() {
                     cudaFree(self.circuit_buffer_device);
                 }
-                let cuda_status =
-                    cudaMalloc(&mut self.circuit_buffer_device, buffer_size_usize);
+                let cuda_status = cudaMalloc(&mut self.circuit_buffer_device, buffer_size_usize);
                 if cuda_status != 0 {
                     self.circuit_buffer_device = ptr::null_mut();
                     self.circuit_buffer_size = 0;
@@ -610,21 +610,24 @@ impl CliffordGateable for CuStabilizer {
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
         if qubits.len() >= 2 {
-            self.gates.push(format!("CNOT {} {}", qubits[0].0, qubits[1].0));
+            self.gates
+                .push(format!("CNOT {} {}", qubits[0].0, qubits[1].0));
         }
         self
     }
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
         if qubits.len() >= 2 {
-            self.gates.push(format!("CZ {} {}", qubits[0].0, qubits[1].0));
+            self.gates
+                .push(format!("CZ {} {}", qubits[0].0, qubits[1].0));
         }
         self
     }
 
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
         if qubits.len() >= 2 {
-            self.gates.push(format!("SWAP {} {}", qubits[0].0, qubits[1].0));
+            self.gates
+                .push(format!("SWAP {} {}", qubits[0].0, qubits[1].0));
         }
         self
     }
@@ -679,7 +682,10 @@ mod tests {
         // Just check that we can attempt to create one
         // Actual GPU tests should be in integration tests
         if result.is_err() {
-            eprintln!("CuFrameSimulator creation failed (expected if no GPU): {:?}", result.err());
+            eprintln!(
+                "CuFrameSimulator creation failed (expected if no GPU): {:?}",
+                result.err()
+            );
         }
     }
 

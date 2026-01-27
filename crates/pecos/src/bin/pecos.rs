@@ -3,7 +3,7 @@ use env_logger::Env;
 
 mod cli;
 use cli::{
-    CudaCommands, CuQuantumCommands, DepsCommands, FeaturesCommands, GoCommands, GpuCommands,
+    CuQuantumCommands, CudaCommands, DepsCommands, FeaturesCommands, GoCommands, GpuCommands,
     JuliaCommands, LlvmCommands, PythonCommands, RustCommands, SeleneCommands,
 };
 
@@ -20,9 +20,9 @@ use pecos::{
     state_vector,
 };
 #[cfg(feature = "runtime")]
-use pecos_build::cuquantum::{find_cuquantum, get_cuquantum_version};
-#[cfg(feature = "runtime")]
 use pecos_build::cuda::find_cuda;
+#[cfg(feature = "runtime")]
+use pecos_build::cuquantum::{find_cuquantum, get_cuquantum_version};
 #[cfg(feature = "runtime")]
 use pecos_build::llvm::{find_llvm_14, get_llvm_version};
 #[cfg(feature = "runtime")]
@@ -869,29 +869,36 @@ fn run_doctor() {
 
     // Check 7: CUDA installation
     if let Some(cuda_path) = find_cuda() {
-        let version = pecos_build::cuda::get_cuda_version(&cuda_path)
-            .unwrap_or_else(|_| "unknown".into());
+        let version =
+            pecos_build::cuda::get_cuda_version(&cuda_path).unwrap_or_else(|_| "unknown".into());
         print_check(
             "CUDA",
             true,
             &format!("{version} at {}", cuda_path.display()),
         );
     } else {
-        print_check("CUDA", false, "not found (optional, run 'pecos cuda install')");
+        print_check(
+            "CUDA",
+            false,
+            "not found (optional, run 'pecos cuda install')",
+        );
         // CUDA is optional, so just a suggestion not a warning
     }
 
     // Check 8: cuQuantum installation
     if let Some(cuquantum_path) = find_cuquantum() {
-        let version = get_cuquantum_version(&cuquantum_path)
-            .unwrap_or_else(|_| "unknown".into());
+        let version = get_cuquantum_version(&cuquantum_path).unwrap_or_else(|_| "unknown".into());
         print_check(
             "cuQuantum",
             true,
             &format!("{version} at {}", cuquantum_path.display()),
         );
     } else {
-        print_check("cuQuantum", false, "not found (optional, run 'pecos cuquantum install')");
+        print_check(
+            "cuQuantum",
+            false,
+            "not found (optional, run 'pecos cuquantum install')",
+        );
         // cuQuantum is optional, so just a suggestion not a warning
     }
 

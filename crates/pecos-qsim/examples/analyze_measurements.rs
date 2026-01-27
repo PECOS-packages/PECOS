@@ -13,7 +13,7 @@
 //! Analyze measurement patterns in surface code simulation.
 //!
 //! Run with:
-//!   cargo run --release --example analyze_measurements -p pecos-qsim
+//!   cargo run --release --example `analyze_measurements` -p pecos-qsim
 
 use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, SparseStab};

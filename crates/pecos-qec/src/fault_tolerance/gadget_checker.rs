@@ -120,6 +120,7 @@ impl Default for GadgetConfig {
 
 impl GadgetConfig {
     /// Creates a new empty gadget configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -127,6 +128,7 @@ impl GadgetConfig {
     /// Creates a configuration for a state preparation gadget.
     ///
     /// State preparation has no input qubits (all initialized) but has output qubits.
+    #[must_use]
     pub fn state_preparation() -> Self {
         Self::default()
     }
@@ -134,6 +136,7 @@ impl GadgetConfig {
     /// Creates a configuration for a syndrome extraction gadget.
     ///
     /// Syndrome extraction has both input and output data qubits.
+    #[must_use]
     pub fn syndrome_extraction() -> Self {
         Self::default()
     }
@@ -141,6 +144,7 @@ impl GadgetConfig {
     /// Creates a configuration for a measurement gadget.
     ///
     /// Measurement has input qubits but no output qubits (all measured).
+    #[must_use]
     pub fn measurement() -> Self {
         Self::default()
     }
@@ -148,6 +152,7 @@ impl GadgetConfig {
     /// Creates a configuration for a self-contained circuit.
     ///
     /// Self-contained circuits have no input or output qubits.
+    #[must_use]
     pub fn self_contained() -> Self {
         Self::default()
     }
@@ -174,6 +179,7 @@ impl GadgetConfig {
     /// assert!(config.has_input());  // Data qubits 0, 1 are inputs
     /// assert!(config.has_output()); // Data qubits 0, 1 are outputs
     /// ```
+    #[must_use]
     pub fn from_circuit(circuit: &TickCircuit) -> Self {
         let io = CircuitIO::from_circuit(circuit);
         Self {
@@ -187,6 +193,7 @@ impl GadgetConfig {
     /// Populates I/O configuration by detecting from a circuit.
     ///
     /// This analyzes the circuit structure to determine input, output, and ancilla qubits.
+    #[must_use]
     pub fn with_detected_io(mut self, circuit: &TickCircuit) -> Self {
         let io = CircuitIO::from_circuit(circuit);
         self.input_qubits = io.input_qubits;
@@ -196,36 +203,42 @@ impl GadgetConfig {
     }
 
     /// Sets the input qubits (qubits entering the gadget with potential errors).
+    #[must_use]
     pub fn with_input_qubits(mut self, qubits: &[usize]) -> Self {
         self.input_qubits = qubits.to_vec();
         self
     }
 
     /// Sets the output qubits (qubits exiting the gadget).
+    #[must_use]
     pub fn with_output_qubits(mut self, qubits: &[usize]) -> Self {
         self.output_qubits = qubits.to_vec();
         self
     }
 
     /// Sets the ancilla qubits (initialized and measured within gadget).
+    #[must_use]
     pub fn with_ancilla_qubits(mut self, qubits: &[usize]) -> Self {
         self.ancilla_qubits = qubits.to_vec();
         self
     }
 
     /// Sets the Z-basis measurement qubits.
+    #[must_use]
     pub fn with_z_ancillas(mut self, qubits: &[usize]) -> Self {
         self.z_ancillas = qubits.to_vec();
         self
     }
 
     /// Sets the X-basis measurement qubits.
+    #[must_use]
     pub fn with_x_ancillas(mut self, qubits: &[usize]) -> Self {
         self.x_ancillas = qubits.to_vec();
         self
     }
 
     /// Adds a logical Z operator.
+    #[must_use]
     pub fn with_logical_z(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.logical_zs
             .push((x_positions.to_vec(), z_positions.to_vec()));
@@ -233,6 +246,7 @@ impl GadgetConfig {
     }
 
     /// Adds a logical X operator.
+    #[must_use]
     pub fn with_logical_x(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.logical_xs
             .push((x_positions.to_vec(), z_positions.to_vec()));
@@ -240,6 +254,7 @@ impl GadgetConfig {
     }
 
     /// Configures to only check X-type errors (CSS mode for Z-distance).
+    #[must_use]
     pub fn x_only(mut self) -> Self {
         self.include_x = true;
         self.include_y = false;
@@ -248,6 +263,7 @@ impl GadgetConfig {
     }
 
     /// Configures to only check Z-type errors (CSS mode for X-distance).
+    #[must_use]
     pub fn z_only(mut self) -> Self {
         self.include_x = false;
         self.include_y = false;
@@ -256,6 +272,7 @@ impl GadgetConfig {
     }
 
     /// Returns the Pauli types to include.
+    #[must_use]
     pub fn pauli_types(&self) -> Vec<u8> {
         let mut types = Vec::with_capacity(3);
         if self.include_x {
@@ -271,11 +288,13 @@ impl GadgetConfig {
     }
 
     /// Returns true if this gadget has input qubits.
+    #[must_use]
     pub fn has_input(&self) -> bool {
         !self.input_qubits.is_empty()
     }
 
     /// Returns true if this gadget has output qubits.
+    #[must_use]
     pub fn has_output(&self) -> bool {
         !self.output_qubits.is_empty()
     }
@@ -340,6 +359,7 @@ pub enum GadgetFaultClass {
 
 impl GadgetFaultClass {
     /// Returns true if this is a fault tolerance failure.
+    #[must_use]
     pub fn is_failure(&self) -> bool {
         matches!(
             self,
@@ -381,16 +401,19 @@ impl GadgetAnalysis {
     ///
     /// A gadget is t-FT if no combination of s input faults + r internal faults
     /// with s + r <= t causes an undetected logical error or excessive output error.
+    #[must_use]
     pub fn is_fault_tolerant(&self) -> bool {
         self.undetected_logical == 0 && self.excessive_output == 0
     }
 
     /// Returns the number of failures.
+    #[must_use]
     pub fn num_failures(&self) -> usize {
         self.undetected_logical + self.excessive_output
     }
 
     /// Returns a summary of failure modes.
+    #[must_use]
     pub fn failure_summary(&self) -> Vec<String> {
         let mut summary = Vec::new();
         if self.undetected_logical > 0 {
@@ -451,16 +474,19 @@ impl GadgetDecoderAnalysis {
     ///
     /// A gadget is decoder-FT if there are no undetectable logical errors
     /// and no ambiguous syndromes (where decoder must guess).
+    #[must_use]
     pub fn is_fault_tolerant(&self) -> bool {
         self.undetectable_logical_errors == 0 && self.ambiguous_syndromes == 0
     }
 
     /// Returns the total number of distinct syndrome patterns.
+    #[must_use]
     pub fn num_syndrome_patterns(&self) -> usize {
         self.syndromes.len()
     }
 
     /// Returns syndromes that are problematic (ambiguous or detected-uncorrectable).
+    #[must_use]
     pub fn problematic_syndromes(&self) -> Vec<&GadgetSyndromeAnalysis> {
         self.syndromes
             .iter()
@@ -503,6 +529,7 @@ pub struct GadgetFollowUpConfig {
 
 impl GadgetFollowUpConfig {
     /// Creates a new follow-up config with the given stabilizers.
+    #[must_use]
     pub fn new(stabilizers: Vec<(Vec<usize>, Vec<usize>)>) -> Self {
         Self {
             follow_up_stabilizers: stabilizers,
@@ -510,6 +537,7 @@ impl GadgetFollowUpConfig {
     }
 
     /// Builder method to add a stabilizer.
+    #[must_use]
     pub fn with_stabilizer(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.follow_up_stabilizers
             .push((x_positions.to_vec(), z_positions.to_vec()));
@@ -554,6 +582,7 @@ pub struct GadgetHistoryAnalysis {
 
 impl GadgetHistoryAnalysis {
     /// Returns true if the gadget is fault-tolerant considering syndrome history.
+    #[must_use]
     pub fn is_fault_tolerant(&self) -> bool {
         self.never_detected_logical_errors == 0 && self.ambiguous_histories == 0
     }
@@ -587,6 +616,7 @@ pub struct GadgetChecker<'a> {
 
 impl<'a> GadgetChecker<'a> {
     /// Creates a new gadget checker.
+    #[must_use]
     pub fn new(circuit: &'a TickCircuit, config: GadgetConfig) -> Self {
         // Extract internal fault locations (excluding input qubit initialization)
         let internal_locations = extract_spacetime_locations(circuit, false);
@@ -623,54 +653,64 @@ impl<'a> GadgetChecker<'a> {
     ///
     /// assert!(checker.has_input_qubits());
     /// ```
+    #[must_use]
     pub fn from_circuit(circuit: &'a TickCircuit) -> Self {
         let config = GadgetConfig::from_circuit(circuit);
         Self::new(circuit, config)
     }
 
     /// Returns true if this gadget has input qubits.
+    #[must_use]
     pub fn has_input_qubits(&self) -> bool {
         self.config.has_input()
     }
 
     /// Returns true if this gadget has output qubits.
+    #[must_use]
     pub fn has_output_qubits(&self) -> bool {
         self.config.has_output()
     }
 
     /// Returns the input qubits (enter the gadget with potential errors).
+    #[must_use]
     pub fn input_qubits(&self) -> &[usize] {
         &self.config.input_qubits
     }
 
     /// Returns the output qubits (exit the gadget, may carry errors).
+    #[must_use]
     pub fn output_qubits(&self) -> &[usize] {
         &self.config.output_qubits
     }
 
     /// Returns the ancilla qubits (initialized within the gadget).
+    #[must_use]
     pub fn ancilla_qubits(&self) -> &[usize] {
         &self.config.ancilla_qubits
     }
 
     /// Returns the gadget configuration.
+    #[must_use]
     pub fn config(&self) -> &GadgetConfig {
         &self.config
     }
 
     /// Sets the Z-basis measurement qubits.
+    #[must_use]
     pub fn with_z_ancillas(mut self, qubits: &[usize]) -> Self {
         self.config.z_ancillas = qubits.to_vec();
         self
     }
 
     /// Sets the X-basis measurement qubits.
+    #[must_use]
     pub fn with_x_ancillas(mut self, qubits: &[usize]) -> Self {
         self.config.x_ancillas = qubits.to_vec();
         self
     }
 
     /// Adds a logical Z operator.
+    #[must_use]
     pub fn with_logical_z(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.config
             .logical_zs
@@ -679,6 +719,7 @@ impl<'a> GadgetChecker<'a> {
     }
 
     /// Adds a logical X operator.
+    #[must_use]
     pub fn with_logical_x(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.config
             .logical_xs
@@ -690,6 +731,7 @@ impl<'a> GadgetChecker<'a> {
     ///
     /// For gadgets with input qubits, this enumerates all (s, r) combinations
     /// where s = input fault weight and r = internal fault weight, with s + r <= t.
+    #[must_use]
     pub fn analyze(&self, max_weight: usize) -> GadgetAnalysis {
         self.analyze_with_options(max_weight, true)
     }
@@ -699,6 +741,7 @@ impl<'a> GadgetChecker<'a> {
     /// # Arguments
     /// * `max_weight` - Maximum total fault weight (input + internal)
     /// * `collect_failures` - Whether to store detailed failure information
+    #[must_use]
     pub fn analyze_with_options(
         &self,
         max_weight: usize,
@@ -820,7 +863,7 @@ impl<'a> GadgetChecker<'a> {
         }
     }
 
-    /// Analyze a single (input_faults, internal_faults) combination.
+    /// Analyze a single (`input_faults`, `internal_faults`) combination.
     fn analyze_single_combination(
         &self,
         input_faults: &[(usize, u8)],
@@ -909,7 +952,7 @@ impl<'a> GadgetChecker<'a> {
         }
     }
 
-    /// Propagate a PauliProp through the circuit without additional faults.
+    /// Propagate a `PauliProp` through the circuit without additional faults.
     fn propagate_through_circuit(&self, mut prop: PauliProp) -> PauliProp {
         for tick in self.circuit.ticks() {
             for gate in tick.gates() {
@@ -953,7 +996,7 @@ impl<'a> GadgetChecker<'a> {
         prop
     }
 
-    /// Merge two PauliProp states (XOR the X and Z components).
+    /// Merge two `PauliProp` states (XOR the X and Z components).
     fn merge_pauli_props(&self, target: &mut PauliProp, source: &PauliProp) {
         // XOR the X and Z bits from source into target
         for q in source.get_x_qubits() {
@@ -1077,6 +1120,7 @@ impl<'a> GadgetChecker<'a> {
     ///
     /// A gadget is fault-tolerant from a decoder perspective if there are no
     /// undetectable logical errors and no ambiguous syndromes.
+    #[must_use]
     pub fn analyze_decoder_requirements(&self, max_weight: usize) -> GadgetDecoderAnalysis {
         // Map from syndrome pattern to (correctable_count, uncorrectable_count)
         let mut syndrome_map: HashMap<Vec<u8>, (usize, usize)> = HashMap::new();
@@ -1193,20 +1237,20 @@ impl<'a> GadgetChecker<'a> {
         // Check if syndrome is trivial (all zeros)
         let has_syndrome = syndrome.iter().any(|&s| s != 0);
 
-        if !has_syndrome {
-            // Undetectable
-            if has_logical_error {
-                *undetectable_logical_errors += 1;
-            } else {
-                *undetectable_stabilizers += 1;
-            }
-        } else {
+        if has_syndrome {
             // Detectable - group by syndrome
             let entry = syndrome_map.entry(syndrome).or_insert((0, 0));
             if has_logical_error {
                 entry.1 += 1; // uncorrectable
             } else {
                 entry.0 += 1; // correctable
+            }
+        } else {
+            // Undetectable
+            if has_logical_error {
+                *undetectable_logical_errors += 1;
+            } else {
+                *undetectable_stabilizers += 1;
             }
         }
     }
@@ -1217,12 +1261,12 @@ impl<'a> GadgetChecker<'a> {
 
         // Z ancillas (detect X errors)
         for &q in &self.config.z_ancillas {
-            syndrome.push(if z_flips.contains(&q) { 1 } else { 0 });
+            syndrome.push(u8::from(z_flips.contains(&q)));
         }
 
         // X ancillas (detect Z errors)
         for &q in &self.config.x_ancillas {
-            syndrome.push(if x_flips.contains(&q) { 1 } else { 0 });
+            syndrome.push(u8::from(x_flips.contains(&q)));
         }
 
         syndrome
@@ -1289,7 +1333,8 @@ impl<'a> GadgetChecker<'a> {
     /// By also considering what syndrome an ideal EC round following the gadget
     /// would produce, we can often disambiguate.
     ///
-    /// The full syndrome key becomes: (gadget_syndrome, follow_up_syndrome)
+    /// The full syndrome key becomes: (`gadget_syndrome`, `follow_up_syndrome`)
+    #[must_use]
     pub fn analyze_with_follow_up(
         &self,
         max_weight: usize,
@@ -1425,25 +1470,23 @@ impl<'a> GadgetChecker<'a> {
 
         // Append follow-up syndrome to full syndrome
         for s in follow_up_syndrome {
-            full_syndrome.push(if s { 1 } else { 0 });
+            full_syndrome.push(u8::from(s));
         }
 
         let has_logical_error = result.logical_errors.iter().any(|&e| e);
         let has_syndrome = full_syndrome.iter().any(|&s| s != 0);
 
-        if !has_syndrome {
-            if has_logical_error {
-                *undetectable_logical_errors += 1;
-            } else {
-                *undetectable_stabilizers += 1;
-            }
-        } else {
+        if has_syndrome {
             let entry = syndrome_map.entry(full_syndrome).or_insert((0, 0));
             if has_logical_error {
                 entry.1 += 1;
             } else {
                 entry.0 += 1;
             }
+        } else if has_logical_error {
+            *undetectable_logical_errors += 1;
+        } else {
+            *undetectable_stabilizers += 1;
         }
     }
 
@@ -1456,6 +1499,7 @@ impl<'a> GadgetChecker<'a> {
     /// For gadgets with multiple measurement rounds, this tracks the complete
     /// syndrome evolution rather than just the final syndrome. A fault may be
     /// detected in an earlier round even if the final syndrome is trivial.
+    #[must_use]
     pub fn analyze_with_syndrome_history(&self, max_weight: usize) -> GadgetHistoryAnalysis {
         // Extract measurement rounds from circuit
         let rounds = extract_measurement_rounds(self.circuit);
@@ -1602,19 +1646,17 @@ impl<'a> GadgetChecker<'a> {
         );
         let has_logical_error = result.logical_errors.iter().any(|&e| e);
 
-        if !ever_detected {
-            if has_logical_error {
-                *never_detected_logical_errors += 1;
-            } else {
-                *never_detected_stabilizers += 1;
-            }
-        } else {
+        if ever_detected {
             let entry = history_map.entry(history).or_insert((0, 0));
             if has_logical_error {
                 entry.1 += 1;
             } else {
                 entry.0 += 1;
             }
+        } else if has_logical_error {
+            *never_detected_logical_errors += 1;
+        } else {
+            *never_detected_stabilizers += 1;
         }
     }
 
@@ -1660,10 +1702,10 @@ impl<'a> GadgetChecker<'a> {
 
             let mut round_syndrome = Vec::new();
             for &q in &round.z_qubits {
-                round_syndrome.push(if z_flips.contains(&q) { 1 } else { 0 });
+                round_syndrome.push(u8::from(z_flips.contains(&q)));
             }
             for &q in &round.x_qubits {
-                round_syndrome.push(if x_flips.contains(&q) { 1 } else { 0 });
+                round_syndrome.push(u8::from(x_flips.contains(&q)));
             }
 
             history.push(round_syndrome);
@@ -1703,9 +1745,9 @@ impl<'a> GadgetChecker<'a> {
                     for (i, &p) in fault.paulis.iter().enumerate() {
                         if let Some(&qubit) = fault.location.qubits.get(i) {
                             match p {
-                                1 => prop.add_x(qubit.0 as usize),
-                                2 => prop.add_y(qubit.0 as usize),
-                                3 => prop.add_z(qubit.0 as usize),
+                                1 => prop.add_x(qubit.0),
+                                2 => prop.add_y(qubit.0),
+                                3 => prop.add_z(qubit.0),
                                 _ => {}
                             }
                         }
@@ -1714,7 +1756,7 @@ impl<'a> GadgetChecker<'a> {
             }
 
             // Apply gates
-            for gate in tick.gates().iter() {
+            for gate in tick.gates() {
                 let qubits: Vec<QubitId> = gate.qubits.to_vec();
                 match gate.gate_type {
                     pecos_core::gate_type::GateType::H => {
@@ -1756,9 +1798,9 @@ impl<'a> GadgetChecker<'a> {
                     for (i, &p) in fault.paulis.iter().enumerate() {
                         if let Some(&qubit) = fault.location.qubits.get(i) {
                             match p {
-                                1 => prop.add_x(qubit.0 as usize),
-                                2 => prop.add_y(qubit.0 as usize),
-                                3 => prop.add_z(qubit.0 as usize),
+                                1 => prop.add_x(qubit.0),
+                                2 => prop.add_y(qubit.0),
+                                3 => prop.add_z(qubit.0),
                                 _ => {}
                             }
                         }
@@ -2298,10 +2340,7 @@ mod tests {
         // s=1: 9 patterns
         // s=2: 27 patterns
 
-        println!(
-            "Input fault patterns: w0={}, w1={}, w2={}",
-            input_w0, input_w1, input_w2
-        );
+        println!("Input fault patterns: w0={input_w0}, w1={input_w1}, w2={input_w2}");
     }
 
     #[test]

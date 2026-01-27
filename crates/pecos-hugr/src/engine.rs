@@ -19,9 +19,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 use log::debug;
-use pecos_core::{Angle64, QubitId};
 use pecos_core::errors::PecosError;
 use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, QubitId};
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
 use pecos_quantum::hugr_convert::{
@@ -3732,45 +3732,60 @@ impl HugrEngine {
                     self.message_builder.add_z(&[qubits[0].0]);
                 }
                 GateType::SZ => {
-                    self.message_builder
-                        .add_rz(Angle64::from_radians(std::f64::consts::FRAC_PI_2), &[qubits[0].0]);
+                    self.message_builder.add_rz(
+                        Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+                        &[qubits[0].0],
+                    );
                 }
                 GateType::SZdg => {
-                    self.message_builder
-                        .add_rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_2), &[qubits[0].0]);
+                    self.message_builder.add_rz(
+                        Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
+                        &[qubits[0].0],
+                    );
                 }
                 GateType::T => {
-                    self.message_builder
-                        .add_rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[qubits[0].0]);
+                    self.message_builder.add_rz(
+                        Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+                        &[qubits[0].0],
+                    );
                 }
                 GateType::Tdg => {
-                    self.message_builder
-                        .add_rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_4), &[qubits[0].0]);
+                    self.message_builder.add_rz(
+                        Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
+                        &[qubits[0].0],
+                    );
                 }
                 GateType::RX => {
                     let angle = op.params.first().copied().unwrap_or(0.0);
-                    self.message_builder.add_rx(Angle64::from_radians(angle), &[qubits[0].0]);
+                    self.message_builder
+                        .add_rx(Angle64::from_radians(angle), &[qubits[0].0]);
                 }
                 GateType::RY => {
                     let angle = op.params.first().copied().unwrap_or(0.0);
-                    self.message_builder.add_ry(Angle64::from_radians(angle), &[qubits[0].0]);
+                    self.message_builder
+                        .add_ry(Angle64::from_radians(angle), &[qubits[0].0]);
                 }
                 GateType::RZ => {
                     let angle = op.params.first().copied().unwrap_or(0.0);
-                    self.message_builder.add_rz(Angle64::from_radians(angle), &[qubits[0].0]);
+                    self.message_builder
+                        .add_rz(Angle64::from_radians(angle), &[qubits[0].0]);
                 }
                 GateType::Prep => {
                     self.message_builder.add_prep(&[qubits[0].0]);
                 }
                 // SX = sqrt(X) = Rx(π/2)
                 GateType::SX => {
-                    self.message_builder
-                        .add_rx(Angle64::from_radians(std::f64::consts::FRAC_PI_2), &[qubits[0].0]);
+                    self.message_builder.add_rx(
+                        Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+                        &[qubits[0].0],
+                    );
                 }
                 // SXdg = sqrt(X)† = Rx(-π/2)
                 GateType::SXdg => {
-                    self.message_builder
-                        .add_rx(Angle64::from_radians(-std::f64::consts::FRAC_PI_2), &[qubits[0].0]);
+                    self.message_builder.add_rx(
+                        Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
+                        &[qubits[0].0],
+                    );
                 }
 
                 // Two-qubit gates
@@ -3796,9 +3811,11 @@ impl HugrEngine {
                 GateType::CRZ => {
                     let angle = op.params.first().copied().unwrap_or(0.0);
                     let half_angle = angle / 2.0;
-                    self.message_builder.add_rz(Angle64::from_radians(half_angle), &[qubits[1].0]);
+                    self.message_builder
+                        .add_rz(Angle64::from_radians(half_angle), &[qubits[1].0]);
                     self.message_builder.add_cx(&[qubits[0].0], &[qubits[1].0]);
-                    self.message_builder.add_rz(Angle64::from_radians(-half_angle), &[qubits[1].0]);
+                    self.message_builder
+                        .add_rz(Angle64::from_radians(-half_angle), &[qubits[1].0]);
                     self.message_builder.add_cx(&[qubits[0].0], &[qubits[1].0]);
                 }
                 // CCX (Toffoli) decomposition into Clifford+T gates
@@ -3810,19 +3827,27 @@ impl HugrEngine {
                     // Toffoli decomposition (simplified version)
                     self.message_builder.add_h(&[target]);
                     self.message_builder.add_cx(&[c1], &[target]);
-                    self.message_builder
-                        .add_rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_4), &[target]);
+                    self.message_builder.add_rz(
+                        Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
+                        &[target],
+                    );
                     self.message_builder.add_cx(&[c0], &[target]);
-                    self.message_builder
-                        .add_rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[target]);
+                    self.message_builder.add_rz(
+                        Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+                        &[target],
+                    );
                     self.message_builder.add_cx(&[c1], &[target]);
-                    self.message_builder
-                        .add_rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_4), &[target]);
+                    self.message_builder.add_rz(
+                        Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
+                        &[target],
+                    );
                     self.message_builder.add_cx(&[c0], &[target]);
                     self.message_builder
                         .add_rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c1]);
-                    self.message_builder
-                        .add_rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[target]);
+                    self.message_builder.add_rz(
+                        Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+                        &[target],
+                    );
                     self.message_builder.add_h(&[target]);
                     self.message_builder.add_cx(&[c0], &[c1]);
                     self.message_builder

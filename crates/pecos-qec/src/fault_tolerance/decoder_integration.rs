@@ -81,6 +81,7 @@ pub struct ErrorCorrectionConfig {
 
 impl ErrorCorrectionConfig {
     /// Creates a new error correction configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             z_ancillas: Vec::new(),
@@ -92,24 +93,28 @@ impl ErrorCorrectionConfig {
     }
 
     /// Sets the Z-basis measurement ancillas.
+    #[must_use]
     pub fn with_z_ancillas(mut self, ancillas: &[usize]) -> Self {
         self.z_ancillas = ancillas.to_vec();
         self
     }
 
     /// Sets the X-basis measurement ancillas.
+    #[must_use]
     pub fn with_x_ancillas(mut self, ancillas: &[usize]) -> Self {
         self.x_ancillas = ancillas.to_vec();
         self
     }
 
     /// Sets the data qubit indices.
+    #[must_use]
     pub fn with_data_qubits(mut self, qubits: &[usize]) -> Self {
         self.data_qubits = qubits.to_vec();
         self
     }
 
     /// Adds a logical Z operator.
+    #[must_use]
     pub fn with_logical_z(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.logical_zs
             .push((x_positions.to_vec(), z_positions.to_vec()));
@@ -117,6 +122,7 @@ impl ErrorCorrectionConfig {
     }
 
     /// Adds a logical X operator.
+    #[must_use]
     pub fn with_logical_x(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.logical_xs
             .push((x_positions.to_vec(), z_positions.to_vec()));
@@ -124,6 +130,7 @@ impl ErrorCorrectionConfig {
     }
 
     /// Gets all logical operators.
+    #[must_use]
     pub fn all_logicals(&self) -> Vec<(&[usize], &[usize])> {
         let mut all = Vec::new();
         for (xs, zs) in &self.logical_zs {
@@ -161,6 +168,7 @@ pub struct CorrectionResult {
 
 impl CorrectionResult {
     /// Returns true if correction was successful (no logical error).
+    #[must_use]
     pub fn is_successful(&self) -> bool {
         !self.logical_error && self.decoder_converged
     }
@@ -184,6 +192,7 @@ pub struct ErrorCorrectionResult {
 impl ErrorCorrectionResult {
     /// Returns the logical error rate.
     #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn logical_error_rate(&self) -> f64 {
         if self.total_tested == 0 {
             0.0
@@ -193,6 +202,7 @@ impl ErrorCorrectionResult {
     }
 
     /// Returns true if all corrections were successful.
+    #[must_use]
     pub fn all_successful(&self) -> bool {
         self.logical_errors == 0 && self.decoder_failures == 0
     }
@@ -202,6 +212,7 @@ impl ErrorCorrectionResult {
 ///
 /// For Z-basis measurements, X errors on ancillas flip the syndrome.
 /// For X-basis measurements, Z errors on ancillas flip the syndrome.
+#[must_use]
 pub fn extract_syndrome(prop: &PauliProp, z_ancillas: &[usize], x_ancillas: &[usize]) -> Vec<u8> {
     let mut syndrome = Vec::with_capacity(z_ancillas.len() + x_ancillas.len());
 
@@ -239,6 +250,7 @@ pub fn apply_recovery(prop: &mut PauliProp, recovery: &[u8], apply_x: bool) {
 }
 
 /// Checks for logical errors after applying recovery.
+#[must_use]
 pub fn check_logical_errors_after_recovery(
     prop: &PauliProp,
     logicals: &[(&[usize], &[usize])],
@@ -320,6 +332,7 @@ pub struct ErrorCorrectionChecker<'a> {
 
 impl<'a> ErrorCorrectionChecker<'a> {
     /// Creates a new error correction checker.
+    #[must_use]
     pub fn new(circuit: &'a pecos_quantum::TickCircuit) -> Self {
         let locations = super::circuit_runner::extract_spacetime_locations(circuit, false);
         Self {
@@ -330,30 +343,35 @@ impl<'a> ErrorCorrectionChecker<'a> {
     }
 
     /// Sets the error correction configuration.
+    #[must_use]
     pub fn with_config(mut self, config: ErrorCorrectionConfig) -> Self {
         self.ec_config = config;
         self
     }
 
     /// Sets the Z-basis measurement ancillas.
+    #[must_use]
     pub fn with_z_ancillas(mut self, ancillas: &[usize]) -> Self {
         self.ec_config.z_ancillas = ancillas.to_vec();
         self
     }
 
     /// Sets the X-basis measurement ancillas.
+    #[must_use]
     pub fn with_x_ancillas(mut self, ancillas: &[usize]) -> Self {
         self.ec_config.x_ancillas = ancillas.to_vec();
         self
     }
 
     /// Sets the data qubit indices.
+    #[must_use]
     pub fn with_data_qubits(mut self, qubits: &[usize]) -> Self {
         self.ec_config.data_qubits = qubits.to_vec();
         self
     }
 
     /// Adds a logical Z operator.
+    #[must_use]
     pub fn with_logical_z(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.ec_config
             .logical_zs
@@ -362,6 +380,7 @@ impl<'a> ErrorCorrectionChecker<'a> {
     }
 
     /// Adds a logical X operator.
+    #[must_use]
     pub fn with_logical_x(mut self, x_positions: &[usize], z_positions: &[usize]) -> Self {
         self.ec_config
             .logical_xs
@@ -370,6 +389,7 @@ impl<'a> ErrorCorrectionChecker<'a> {
     }
 
     /// Returns the spacetime locations that will be checked.
+    #[must_use]
     pub fn locations(&self) -> &[SpacetimeLocation] {
         &self.locations
     }
@@ -445,6 +465,7 @@ pub struct LookupTableDecoder {
 
 impl LookupTableDecoder {
     /// Creates a new lookup table decoder.
+    #[must_use]
     pub fn new(syndrome_size: usize, data_size: usize) -> Self {
         Self {
             table: std::collections::HashMap::new(),
@@ -465,6 +486,7 @@ impl LookupTableDecoder {
     /// - 10 -> error on qubit 0
     /// - 11 -> error on qubit 1
     /// - 01 -> error on qubit 2
+    #[must_use]
     pub fn three_qubit_bitflip() -> Self {
         let mut decoder = Self::new(2, 3);
         decoder.add_entry(vec![0, 0], vec![0, 0, 0]); // No error

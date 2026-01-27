@@ -41,7 +41,9 @@ def check_cuda_available():
         return True
     except ImportError:
         print("pecos-rslib-cuda is not installed.")
-        print("Please build and install it: cd python/pecos-rslib-cuda && maturin develop")
+        print(
+            "Please build and install it: cd python/pecos-rslib-cuda && maturin develop"
+        )
         return False
 
 
@@ -73,7 +75,7 @@ def bell_state_example():
     # Run multiple shots to see correlation
     print("\nRunning 100 shots to verify Bell state correlation:")
     correlations = {"00": 0, "01": 0, "10": 0, "11": 0}
-    for i in range(100):
+    for _i in range(100):
         sim = CudaStateVec(2)  # New simulator for each shot
         sim.run_gate("H", [0])
         sim.run_gate("CX", [(0, 1)])
@@ -107,17 +109,17 @@ def rotation_gates_example():
     # Apply various rotation gates
     print("\nApplying rotation gates:")
 
-    print(f"  RX(pi/4) on qubit 0")
+    print("  RX(pi/4) on qubit 0")
     sim.run_gate("RX", [0], angles=(math.pi / 4,))
 
-    print(f"  RY(pi/2) on qubit 1")
+    print("  RY(pi/2) on qubit 1")
     sim.run_gate("RY", [1], angles=(math.pi / 2,))
 
-    print(f"  RZ(pi) on qubit 2")
+    print("  RZ(pi) on qubit 2")
     sim.run_gate("RZ", [2], angles=(math.pi,))
 
     # Two-qubit rotation
-    print(f"  RZZ(pi/4) on qubits (0, 1)")
+    print("  RZZ(pi/4) on qubits (0, 1)")
     sim.run_gate("RZZ", [(0, 1)], angles=(math.pi / 4,))
 
     # Measure
@@ -191,7 +193,9 @@ def quantum_simulator_backend_example():
     # Create QuantumSimulator with CudaStateVec backend
     qsim = QuantumSimulator(backend="CudaStateVec", seed=42)
     qsim.init(4)
-    print(f"Created QuantumSimulator with CudaStateVec backend, {qsim.num_qubits} qubits")
+    print(
+        f"Created QuantumSimulator with CudaStateVec backend, {qsim.num_qubits} qubits"
+    )
 
     # Use the run method with QOp-style operations
     print("\nThis backend can be used with HybridEngine for PHIR execution.")

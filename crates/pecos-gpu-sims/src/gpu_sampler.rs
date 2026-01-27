@@ -75,7 +75,7 @@ pub struct GpuMeasurementSampler {
     /// Parameters buffer
     params_buffer: wgpu::Buffer,
 
-    /// RNG seeds buffer (one seed per word)
+    /// RNG seed data buffer (4 u32s per word, used as input to stateless hash)
     seeds_buffer: wgpu::Buffer,
 
     /// Output results buffer

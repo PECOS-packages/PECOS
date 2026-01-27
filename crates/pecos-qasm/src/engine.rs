@@ -300,9 +300,10 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine
-            .message_builder
-            .add_rz(Angle64::from_radians(std::f64::consts::PI / 2.0), &[qubits[0]]);
+        engine.message_builder.add_rz(
+            Angle64::from_radians(std::f64::consts::PI / 2.0),
+            &[qubits[0]],
+        );
         Ok(())
     }
 
@@ -312,9 +313,10 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine
-            .message_builder
-            .add_rz(Angle64::from_radians(-std::f64::consts::PI / 2.0), &[qubits[0]]);
+        engine.message_builder.add_rz(
+            Angle64::from_radians(-std::f64::consts::PI / 2.0),
+            &[qubits[0]],
+        );
         Ok(())
     }
 
@@ -324,9 +326,10 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine
-            .message_builder
-            .add_rz(Angle64::from_radians(std::f64::consts::PI / 4.0), &[qubits[0]]);
+        engine.message_builder.add_rz(
+            Angle64::from_radians(std::f64::consts::PI / 4.0),
+            &[qubits[0]],
+        );
         Ok(())
     }
 
@@ -336,9 +339,10 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine
-            .message_builder
-            .add_rz(Angle64::from_radians(-std::f64::consts::PI / 4.0), &[qubits[0]]);
+        engine.message_builder.add_rz(
+            Angle64::from_radians(-std::f64::consts::PI / 4.0),
+            &[qubits[0]],
+        );
         Ok(())
     }
 
@@ -352,7 +356,9 @@ impl QASMEngine {
             "QASM: handle_rz called with angle={}, qubit={}",
             params[0], qubits[0]
         );
-        engine.message_builder.add_rz(Angle64::from_radians(params[0]), &[qubits[0]]);
+        engine
+            .message_builder
+            .add_rz(Angle64::from_radians(params[0]), &[qubits[0]]);
         Ok(())
     }
 
@@ -362,7 +368,9 @@ impl QASMEngine {
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.add_rx(Angle64::from_radians(params[0]), &[qubits[0]]);
+        engine
+            .message_builder
+            .add_rx(Angle64::from_radians(params[0]), &[qubits[0]]);
         Ok(())
     }
 
@@ -372,7 +380,9 @@ impl QASMEngine {
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.add_ry(Angle64::from_radians(params[0]), &[qubits[0]]);
+        engine
+            .message_builder
+            .add_ry(Angle64::from_radians(params[0]), &[qubits[0]]);
         Ok(())
     }
 
@@ -382,9 +392,11 @@ impl QASMEngine {
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        engine
-            .message_builder
-            .add_r1xy(Angle64::from_radians(params[0]), Angle64::from_radians(params[1]), &[qubits[0]]);
+        engine.message_builder.add_r1xy(
+            Angle64::from_radians(params[0]),
+            Angle64::from_radians(params[1]),
+            &[qubits[0]],
+        );
         Ok(())
     }
 
@@ -405,13 +417,15 @@ impl QASMEngine {
         _params: &[f64],
     ) -> Result<(), PecosError> {
         // CY = S† · CX · S
-        engine
-            .message_builder
-            .add_rz(Angle64::from_radians(-std::f64::consts::PI / 2.0), &[qubits[1]]); // S†
+        engine.message_builder.add_rz(
+            Angle64::from_radians(-std::f64::consts::PI / 2.0),
+            &[qubits[1]],
+        ); // S†
         engine.message_builder.add_cx(&[qubits[0]], &[qubits[1]]);
-        engine
-            .message_builder
-            .add_rz(Angle64::from_radians(std::f64::consts::PI / 2.0), &[qubits[1]]); // S
+        engine.message_builder.add_rz(
+            Angle64::from_radians(std::f64::consts::PI / 2.0),
+            &[qubits[1]],
+        ); // S
         Ok(())
     }
 
@@ -434,9 +448,11 @@ impl QASMEngine {
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        engine
-            .message_builder
-            .add_rzz(Angle64::from_radians(params[0]), &[qubits[0]], &[qubits[1]]);
+        engine.message_builder.add_rzz(
+            Angle64::from_radians(params[0]),
+            &[qubits[0]],
+            &[qubits[1]],
+        );
         Ok(())
     }
 
@@ -528,21 +544,24 @@ impl QASMEngine {
             GateType::RX => {
                 if let Some(&angle) = params.first() {
                     for &qubit in qubits {
-                        self.message_builder.add_rx(Angle64::from_radians(angle), &[qubit]);
+                        self.message_builder
+                            .add_rx(Angle64::from_radians(angle), &[qubit]);
                     }
                 }
             }
             GateType::RY => {
                 if let Some(&angle) = params.first() {
                     for &qubit in qubits {
-                        self.message_builder.add_ry(Angle64::from_radians(angle), &[qubit]);
+                        self.message_builder
+                            .add_ry(Angle64::from_radians(angle), &[qubit]);
                     }
                 }
             }
             GateType::RZ => {
                 if let Some(&angle) = params.first() {
                     for &qubit in qubits {
-                        self.message_builder.add_rz(Angle64::from_radians(angle), &[qubit]);
+                        self.message_builder
+                            .add_rz(Angle64::from_radians(angle), &[qubit]);
                     }
                 }
             }
@@ -550,8 +569,11 @@ impl QASMEngine {
                 if let Some(&angle) = params.first() {
                     for chunk in qubits.chunks(2) {
                         if chunk.len() == 2 {
-                            self.message_builder
-                                .add_rzz(Angle64::from_radians(angle), &[chunk[0]], &[chunk[1]]);
+                            self.message_builder.add_rzz(
+                                Angle64::from_radians(angle),
+                                &[chunk[0]],
+                                &[chunk[1]],
+                            );
                         }
                     }
                 }
@@ -561,7 +583,11 @@ impl QASMEngine {
                     let theta = params[0];
                     let phi = params[1];
                     for &qubit in qubits {
-                        self.message_builder.add_r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &[qubit]);
+                        self.message_builder.add_r1xy(
+                            Angle64::from_radians(theta),
+                            Angle64::from_radians(phi),
+                            &[qubit],
+                        );
                     }
                 }
             }
@@ -571,7 +597,12 @@ impl QASMEngine {
                     let phi = params[1];
                     let lambda = params[2];
                     for &qubit in qubits {
-                        self.message_builder.add_u(Angle64::from_radians(theta), Angle64::from_radians(phi), Angle64::from_radians(lambda), &[qubit]);
+                        self.message_builder.add_u(
+                            Angle64::from_radians(theta),
+                            Angle64::from_radians(phi),
+                            Angle64::from_radians(lambda),
+                            &[qubit],
+                        );
                     }
                 }
             }

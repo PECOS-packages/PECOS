@@ -64,19 +64,27 @@ impl Complex2x2_32 {
         Self {
             a_re: self.a_re * other.a_re - self.a_im * other.a_im + self.b_re * other.c_re
                 - self.b_im * other.c_im,
-            a_im: self.a_re * other.a_im + self.a_im * other.a_re + self.b_re * other.c_im
+            a_im: self.a_re * other.a_im
+                + self.a_im * other.a_re
+                + self.b_re * other.c_im
                 + self.b_im * other.c_re,
             b_re: self.a_re * other.b_re - self.a_im * other.b_im + self.b_re * other.d_re
                 - self.b_im * other.d_im,
-            b_im: self.a_re * other.b_im + self.a_im * other.b_re + self.b_re * other.d_im
+            b_im: self.a_re * other.b_im
+                + self.a_im * other.b_re
+                + self.b_re * other.d_im
                 + self.b_im * other.d_re,
             c_re: self.c_re * other.a_re - self.c_im * other.a_im + self.d_re * other.c_re
                 - self.d_im * other.c_im,
-            c_im: self.c_re * other.a_im + self.c_im * other.a_re + self.d_re * other.c_im
+            c_im: self.c_re * other.a_im
+                + self.c_im * other.a_re
+                + self.d_re * other.c_im
                 + self.d_im * other.c_re,
             d_re: self.c_re * other.b_re - self.c_im * other.b_im + self.d_re * other.d_re
                 - self.d_im * other.d_im,
-            d_im: self.c_re * other.b_im + self.c_im * other.b_re + self.d_re * other.d_im
+            d_im: self.c_re * other.b_im
+                + self.c_im * other.b_re
+                + self.d_re * other.d_im
                 + self.d_im * other.d_re,
         }
     }
@@ -88,87 +96,135 @@ mod gate_matrices_32 {
     const INV_SQRT2: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
     pub const H: Complex2x2_32 = Complex2x2_32 {
-        a_re: INV_SQRT2, a_im: 0.0,
-        b_re: INV_SQRT2, b_im: 0.0,
-        c_re: INV_SQRT2, c_im: 0.0,
-        d_re: -INV_SQRT2, d_im: 0.0,
+        a_re: INV_SQRT2,
+        a_im: 0.0,
+        b_re: INV_SQRT2,
+        b_im: 0.0,
+        c_re: INV_SQRT2,
+        c_im: 0.0,
+        d_re: -INV_SQRT2,
+        d_im: 0.0,
     };
 
     pub const X: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.0, a_im: 0.0,
-        b_re: 1.0, b_im: 0.0,
-        c_re: 1.0, c_im: 0.0,
-        d_re: 0.0, d_im: 0.0,
+        a_re: 0.0,
+        a_im: 0.0,
+        b_re: 1.0,
+        b_im: 0.0,
+        c_re: 1.0,
+        c_im: 0.0,
+        d_re: 0.0,
+        d_im: 0.0,
     };
 
     pub const Y: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.0, a_im: 0.0,
-        b_re: 0.0, b_im: -1.0,
-        c_re: 0.0, c_im: 1.0,
-        d_re: 0.0, d_im: 0.0,
+        a_re: 0.0,
+        a_im: 0.0,
+        b_re: 0.0,
+        b_im: -1.0,
+        c_re: 0.0,
+        c_im: 1.0,
+        d_re: 0.0,
+        d_im: 0.0,
     };
 
     pub const Z: Complex2x2_32 = Complex2x2_32 {
-        a_re: 1.0, a_im: 0.0,
-        b_re: 0.0, b_im: 0.0,
-        c_re: 0.0, c_im: 0.0,
-        d_re: -1.0, d_im: 0.0,
+        a_re: 1.0,
+        a_im: 0.0,
+        b_re: 0.0,
+        b_im: 0.0,
+        c_re: 0.0,
+        c_im: 0.0,
+        d_re: -1.0,
+        d_im: 0.0,
     };
 
     pub const SZ: Complex2x2_32 = Complex2x2_32 {
-        a_re: 1.0, a_im: 0.0,
-        b_re: 0.0, b_im: 0.0,
-        c_re: 0.0, c_im: 0.0,
-        d_re: 0.0, d_im: 1.0,
+        a_re: 1.0,
+        a_im: 0.0,
+        b_re: 0.0,
+        b_im: 0.0,
+        c_re: 0.0,
+        c_im: 0.0,
+        d_re: 0.0,
+        d_im: 1.0,
     };
 
     pub const SZDG: Complex2x2_32 = Complex2x2_32 {
-        a_re: 1.0, a_im: 0.0,
-        b_re: 0.0, b_im: 0.0,
-        c_re: 0.0, c_im: 0.0,
-        d_re: 0.0, d_im: -1.0,
+        a_re: 1.0,
+        a_im: 0.0,
+        b_re: 0.0,
+        b_im: 0.0,
+        c_re: 0.0,
+        c_im: 0.0,
+        d_re: 0.0,
+        d_im: -1.0,
     };
 
     pub const SX: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5, a_im: 0.5,
-        b_re: 0.5, b_im: -0.5,
-        c_re: 0.5, c_im: -0.5,
-        d_re: 0.5, d_im: 0.5,
+        a_re: 0.5,
+        a_im: 0.5,
+        b_re: 0.5,
+        b_im: -0.5,
+        c_re: 0.5,
+        c_im: -0.5,
+        d_re: 0.5,
+        d_im: 0.5,
     };
 
     pub const SXDG: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5, a_im: -0.5,
-        b_re: 0.5, b_im: 0.5,
-        c_re: 0.5, c_im: 0.5,
-        d_re: 0.5, d_im: -0.5,
+        a_re: 0.5,
+        a_im: -0.5,
+        b_re: 0.5,
+        b_im: 0.5,
+        c_re: 0.5,
+        c_im: 0.5,
+        d_re: 0.5,
+        d_im: -0.5,
     };
 
     pub const SY: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5, a_im: 0.5,
-        b_re: -0.5, b_im: -0.5,
-        c_re: 0.5, c_im: 0.5,
-        d_re: 0.5, d_im: 0.5,
+        a_re: 0.5,
+        a_im: 0.5,
+        b_re: -0.5,
+        b_im: -0.5,
+        c_re: 0.5,
+        c_im: 0.5,
+        d_re: 0.5,
+        d_im: 0.5,
     };
 
     pub const SYDG: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5, a_im: -0.5,
-        b_re: 0.5, b_im: -0.5,
-        c_re: -0.5, c_im: 0.5,
-        d_re: 0.5, d_im: -0.5,
+        a_re: 0.5,
+        a_im: -0.5,
+        b_re: 0.5,
+        b_im: -0.5,
+        c_re: -0.5,
+        c_im: 0.5,
+        d_re: 0.5,
+        d_im: -0.5,
     };
 
     pub const F: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5, a_im: 0.5,
-        b_re: 0.5, b_im: -0.5,
-        c_re: 0.5, c_im: 0.5,
-        d_re: -0.5, d_im: 0.5,
+        a_re: 0.5,
+        a_im: 0.5,
+        b_re: 0.5,
+        b_im: -0.5,
+        c_re: 0.5,
+        c_im: 0.5,
+        d_re: -0.5,
+        d_im: 0.5,
     };
 
     pub const FDG: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5, a_im: -0.5,
-        b_re: 0.5, b_im: 0.5,
-        c_re: 0.5, c_im: -0.5,
-        d_re: -0.5, d_im: -0.5,
+        a_re: 0.5,
+        a_im: -0.5,
+        b_re: 0.5,
+        b_im: 0.5,
+        c_re: 0.5,
+        c_im: -0.5,
+        d_re: -0.5,
+        d_im: -0.5,
     };
 }
 
@@ -242,10 +298,10 @@ where
     /// Flush pending gates for a specific qubit.
     #[inline]
     fn flush_qubit(&mut self, qubit: usize) {
-        if let Some(matrix) = self.pending_gates[qubit].take() {
-            if !matrix.is_identity() {
-                self.apply_fused_matrix(qubit, &matrix);
-            }
+        if let Some(matrix) = self.pending_gates[qubit].take()
+            && !matrix.is_identity()
+        {
+            self.apply_fused_matrix(qubit, &matrix);
         }
     }
 
@@ -309,14 +365,14 @@ where
                     let beta_re = f32x8::from(&self.real[p..p + 8]);
                     let beta_im = f32x8::from(&self.imag[p..p + 8]);
 
-                    let new_alpha_re = (a_re * alpha_re - a_im * alpha_im)
-                        + (b_re * beta_re - b_im * beta_im);
-                    let new_alpha_im = (a_re * alpha_im + a_im * alpha_re)
-                        + (b_re * beta_im + b_im * beta_re);
-                    let new_beta_re = (c_re * alpha_re - c_im * alpha_im)
-                        + (d_re * beta_re - d_im * beta_im);
-                    let new_beta_im = (c_re * alpha_im + c_im * alpha_re)
-                        + (d_re * beta_im + d_im * beta_re);
+                    let new_alpha_re =
+                        (a_re * alpha_re - a_im * alpha_im) + (b_re * beta_re - b_im * beta_im);
+                    let new_alpha_im =
+                        (a_re * alpha_im + a_im * alpha_re) + (b_re * beta_im + b_im * beta_re);
+                    let new_beta_re =
+                        (c_re * alpha_re - c_im * alpha_im) + (d_re * beta_re - d_im * beta_im);
+                    let new_beta_im =
+                        (c_re * alpha_im + c_im * alpha_re) + (d_re * beta_im + d_im * beta_re);
 
                     let arr_re_a: [f32; 8] = new_alpha_re.into();
                     let arr_im_a: [f32; 8] = new_alpha_im.into();
@@ -794,8 +850,8 @@ where
     /// Get probability of a basis state.
     pub fn probability(&mut self, basis_state: usize) -> f64 {
         self.flush();
-        let re = self.real[basis_state] as f64;
-        let im = self.imag[basis_state] as f64;
+        let re = f64::from(self.real[basis_state]);
+        let im = f64::from(self.imag[basis_state]);
         re * re + im * im
     }
 
@@ -1038,7 +1094,10 @@ where
     }
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "CX requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
 
         for pair in qubits.chunks_exact(2) {
             let control = pair[0].index();
@@ -1103,7 +1162,10 @@ where
     }
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "CZ requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
 
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
@@ -1148,7 +1210,10 @@ where
     }
 
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "SWAP requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SWAP requires pairs of qubits"
+        );
 
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
@@ -1184,8 +1249,8 @@ where
                 let mut prob_one = 0.0f64;
                 for i in 0..self.real.len() {
                     if (i & mask) != 0 {
-                        let re = self.real[i] as f64;
-                        let im = self.imag[i] as f64;
+                        let re = f64::from(self.real[i]);
+                        let im = f64::from(self.imag[i]);
                         prob_one += re * re + im * im;
                     }
                 }
@@ -1193,7 +1258,7 @@ where
                 // Determine outcome
                 let random: f64 = self.rng.random();
                 let outcome = random < prob_one;
-                let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
+                let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
 
                 // Collapse and renormalize
                 let norm_factor = if outcome {
@@ -1237,10 +1302,14 @@ where
         let sin_half = (theta / 2.0).sin();
 
         let matrix = Complex2x2_32 {
-            a_re: cos_half, a_im: 0.0,
-            b_re: 0.0, b_im: -sin_half,
-            c_re: 0.0, c_im: -sin_half,
-            d_re: cos_half, d_im: 0.0,
+            a_re: cos_half,
+            a_im: 0.0,
+            b_re: 0.0,
+            b_im: -sin_half,
+            c_re: 0.0,
+            c_im: -sin_half,
+            d_re: cos_half,
+            d_im: 0.0,
         };
 
         for &q in qubits {
@@ -1256,10 +1325,14 @@ where
         let sin_half = (theta / 2.0).sin();
 
         let matrix = Complex2x2_32 {
-            a_re: cos_half, a_im: 0.0,
-            b_re: -sin_half, b_im: 0.0,
-            c_re: sin_half, c_im: 0.0,
-            d_re: cos_half, d_im: 0.0,
+            a_re: cos_half,
+            a_im: 0.0,
+            b_re: -sin_half,
+            b_im: 0.0,
+            c_re: sin_half,
+            c_im: 0.0,
+            d_re: cos_half,
+            d_im: 0.0,
         };
 
         for &q in qubits {
@@ -1275,10 +1348,14 @@ where
         let sin_half = (theta / 2.0).sin();
 
         let matrix = Complex2x2_32 {
-            a_re: cos_half, a_im: -sin_half,
-            b_re: 0.0, b_im: 0.0,
-            c_re: 0.0, c_im: 0.0,
-            d_re: cos_half, d_im: sin_half,
+            a_re: cos_half,
+            a_im: -sin_half,
+            b_re: 0.0,
+            b_im: 0.0,
+            c_re: 0.0,
+            c_im: 0.0,
+            d_re: cos_half,
+            d_im: sin_half,
         };
 
         for &q in qubits {
@@ -1290,7 +1367,7 @@ where
     fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         // RXX = exp(-i * theta/2 * XX)
         // Decompose: H-H, CX, RZ, CX, H-H
-        debug_assert!(qubits.len() % 2 == 0);
+        debug_assert!(qubits.len().is_multiple_of(2));
         for pair in qubits.chunks_exact(2) {
             let q0 = pair[0];
             let q1 = pair[1];
@@ -1305,7 +1382,7 @@ where
 
     fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         // RYY decomposition
-        debug_assert!(qubits.len() % 2 == 0);
+        debug_assert!(qubits.len().is_multiple_of(2));
         for pair in qubits.chunks_exact(2) {
             let q0 = pair[0];
             let q1 = pair[1];
@@ -1320,7 +1397,7 @@ where
 
     fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         // RZZ = exp(-i * theta/2 * ZZ)
-        debug_assert!(qubits.len() % 2 == 0);
+        debug_assert!(qubits.len().is_multiple_of(2));
         for pair in qubits.chunks_exact(2) {
             let q0 = pair[0];
             let q1 = pair[1];

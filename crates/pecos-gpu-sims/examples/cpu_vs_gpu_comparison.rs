@@ -1,10 +1,10 @@
 //! Quick CPU vs GPU comparison for surface codes with 2*d rounds
 //!
-//! Run with: cargo run --example cpu_vs_gpu_comparison --release -p pecos-gpu-sims
+//! Run with: cargo run --example `cpu_vs_gpu_comparison` --release -p pecos-gpu-sims
 
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
-use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
+use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
 use pecos_quantum::DagCircuit;
 use std::time::Instant;
 
@@ -99,15 +99,26 @@ fn main() {
 
         // Export for GPU
         let (
-            num_loc, num_det, num_log,
-            det_off_x, det_data_x, det_off_y, det_data_y, det_off_z, det_data_z,
-            log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+            num_loc,
+            num_det,
+            num_log,
+            det_off_x,
+            det_data_x,
+            det_off_y,
+            det_data_y,
+            det_off_z,
+            det_data_z,
+            log_off_x,
+            log_data_x,
+            log_off_y,
+            log_data_y,
+            log_off_z,
+            log_data_z,
         ) = influence_map.export_csr();
 
         let gpu_map = GpuInfluenceMapData::from_csr(
-            num_loc, num_det, num_log,
-            det_off_x, det_data_x, det_off_y, det_data_y, det_off_z, det_data_z,
-            log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+            num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
+            det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
         );
 
         // CPU benchmark
@@ -119,8 +130,8 @@ fn main() {
         let cpu_time = cpu_start.elapsed();
 
         // GPU benchmark (with warmup)
-        let mut gpu_sampler = GpuInfluenceSampler::new(&gpu_map, seed)
-            .expect("Failed to create GPU sampler");
+        let mut gpu_sampler =
+            GpuInfluenceSampler::new(&gpu_map, seed).expect("Failed to create GPU sampler");
         let _ = gpu_sampler.sample_uniform(1000, p_error); // Warmup
 
         let gpu_start = Instant::now();
@@ -159,15 +170,26 @@ fn main() {
         let influence_map = builder.build();
 
         let (
-            num_loc, num_det, num_log,
-            det_off_x, det_data_x, det_off_y, det_data_y, det_off_z, det_data_z,
-            log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+            num_loc,
+            num_det,
+            num_log,
+            det_off_x,
+            det_data_x,
+            det_off_y,
+            det_data_y,
+            det_off_z,
+            det_data_z,
+            log_off_x,
+            log_data_x,
+            log_off_y,
+            log_data_y,
+            log_off_z,
+            log_data_z,
         ) = influence_map.export_csr();
 
         let gpu_map = GpuInfluenceMapData::from_csr(
-            num_loc, num_det, num_log,
-            det_off_x, det_data_x, det_off_y, det_data_y, det_off_z, det_data_z,
-            log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+            num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
+            det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
         );
 
         // CPU
@@ -184,17 +206,12 @@ fn main() {
         let _ = gpu_sampler.sample_uniform(num_shots, p_error);
         let gpu_time = gpu_start.elapsed();
 
-        let cpu_throughput = num_shots as f64 / cpu_time.as_secs_f64() / 1_000_000.0;
-        let gpu_throughput = num_shots as f64 / gpu_time.as_secs_f64() / 1_000_000.0;
+        let cpu_throughput = f64::from(num_shots) / cpu_time.as_secs_f64() / 1_000_000.0;
+        let gpu_throughput = f64::from(num_shots) / gpu_time.as_secs_f64() / 1_000_000.0;
         let speedup = gpu_throughput / cpu_throughput;
 
         println!(
-            "{:>4} {:>6} {:>15.3} {:>15.3} {:>9.1}x",
-            distance,
-            num_rounds,
-            cpu_throughput,
-            gpu_throughput,
-            speedup
+            "{distance:>4} {num_rounds:>6} {cpu_throughput:>15.3} {gpu_throughput:>15.3} {speedup:>9.1}x"
         );
     }
 

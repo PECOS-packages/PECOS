@@ -4,7 +4,7 @@
 // Uses column-major processing: each thread handles one "word" (32 shots) and
 // processes all measurements sequentially.
 //
-// RNG: PCG (Permuted Congruential Generator) - fast and statistically good.
+// RNG: Stateless hash-based (MurmurHash3 finalizer) - race-free and independent per measurement.
 
 // Measurement metadata buffer
 // Packed format: [type: 4 bits][flip: 1 bit][dep_count: 4 bits][source: 23 bits]
@@ -26,7 +26,7 @@ struct Params {
 }
 @group(0) @binding(2) var<uniform> params: Params;
 
-// RNG state (4 u32s per word: state_hi, state_lo, inc_hi, inc_lo)
+// RNG seed data (4 u32s per word, read-only - used as input to stateless hash)
 @group(0) @binding(3) var<storage, read_write> rng_state: array<u32>;
 
 // Results: results[measurement * num_words + word_idx]
@@ -47,47 +47,33 @@ const TYPE_COMPUTED: u32 = 5u;
 const MAX_DEPS: u32 = 16u;
 
 // ============================================================================
-// Xorshift128+ Random Number Generator
+// Stateless Hash-Based Random Number Generator
 // ============================================================================
-// Fast, simple, and good statistical properties.
-// State: 4 u32s per thread (s0_hi, s0_lo, s1_hi, s1_lo representing two 64-bit values)
+// Uses per-word seed data (read-only) combined with a key parameter to produce
+// independent random values. No mutable state means no data races when multiple
+// threads share the same word_idx but use different keys.
 
-// Generate one random u32 and advance state
-fn xorshift_random(word_idx: u32) -> u32 {
+// Generate one random u32 from the per-word seed and a unique key.
+// Different keys produce independent random values for the same word.
+fn random_u32(word_idx: u32, key: u32) -> u32 {
     let base = word_idx * 4u;
 
-    // Load state (two 64-bit values as 4 u32s)
-    var s0_hi = rng_state[base];
-    var s0_lo = rng_state[base + 1u];
-    var s1_hi = rng_state[base + 2u];
-    var s1_lo = rng_state[base + 3u];
+    // Combine all 4 seed values with the key using multiplicative hashing
+    var h = rng_state[base] + (key * 2654435761u); // golden ratio constant
+    h ^= rng_state[base + 1u];
+    h *= 2246822519u;
+    h ^= rng_state[base + 2u];
+    h += rng_state[base + 3u];
+    h ^= key;
 
-    // Xorshift128+ algorithm:
-    // s1 ^= s0
-    // s0 ^= s0 << 23
-    // s1 ^= s1 >> 17
-    // s1 ^= s0
-    // s0 ^= s0 >> 26
-    // return s0 + s1
+    // MurmurHash3 32-bit finalizer for good avalanche properties
+    h ^= h >> 16u;
+    h *= 0x85EBCA6Bu;
+    h ^= h >> 13u;
+    h *= 0xC2B2AE35u;
+    h ^= h >> 16u;
 
-    // For simplicity, we'll use a simpler xorshift on the 32-bit values
-    // This is xorshift128 adapted for 32-bit chunks
-
-    // Use a simple but effective xorshift on the state
-    var t = s0_hi ^ (s0_hi << 11u);
-    s0_hi = s0_lo;
-    s0_lo = s1_hi;
-    s1_hi = s1_lo;
-    s1_lo = s1_lo ^ (s1_lo >> 19u) ^ t ^ (t >> 8u);
-
-    // Store updated state
-    rng_state[base] = s0_hi;
-    rng_state[base + 1u] = s0_lo;
-    rng_state[base + 2u] = s1_hi;
-    rng_state[base + 3u] = s1_lo;
-
-    // Output is the new s1_lo
-    return s1_lo;
+    return h;
 }
 
 // ============================================================================
@@ -119,7 +105,7 @@ fn sample_measurements(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 result = 0xFFFFFFFFu;
             }
             case TYPE_RANDOM: {
-                result = xorshift_random(word_idx);
+                result = random_u32(word_idx, m);
             }
             case TYPE_COPY: {
                 let src_idx = source * params.num_words + word_idx;
@@ -188,7 +174,7 @@ fn sample_parallel(@builtin(global_invocation_id) global_id: vec3<u32>) {
             result = 0xFFFFFFFFu;
         }
         case TYPE_RANDOM: {
-            result = xorshift_random(word_idx);
+            result = random_u32(word_idx, m);
         }
         default: {
             // Skip Copy/CopyFlipped/Computed - handled by dependent kernel
@@ -328,7 +314,7 @@ fn sample_and_count(@builtin(global_invocation_id) global_id: vec3<u32>) {
             result = 0xFFFFFFFFu;
         }
         case TYPE_RANDOM: {
-            result = xorshift_random(word_idx);
+            result = random_u32(word_idx, m);
         }
         default: {
             // For dependent measurements, we need to fall back to sequential
@@ -369,11 +355,13 @@ fn apply_noise(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    // Generate 32 random bits and compare each to threshold
+    // Generate 32 random bits and compare each to threshold.
+    // Use keys in a separate namespace (high bit set) to avoid collisions with sampling keys.
     var flip_mask: u32 = 0u;
+    let noise_key_base = 0x80000000u | (m * 32u);
 
     for (var bit: u32 = 0u; bit < 32u; bit = bit + 1u) {
-        let rand_val = xorshift_random(word_idx);
+        let rand_val = random_u32(word_idx, noise_key_base + bit);
         if (rand_val < params.error_threshold) {
             flip_mask = flip_mask | (1u << bit);
         }

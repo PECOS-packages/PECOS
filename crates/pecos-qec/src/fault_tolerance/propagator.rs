@@ -17,7 +17,7 @@
 //! backward from measurements/logicals, we can efficiently determine which faults
 //! affect which detectors:
 //!
-//! 1. **Speed up fault enumeration** - O(1) lookup instead of O(circuit_depth) propagation
+//! 1. **Speed up fault enumeration** - O(1) lookup instead of `O(circuit_depth)` propagation
 //! 2. **Build detector error models** - Direct mapping from faults to detectors
 //! 3. **Analyze syndrome histories** - Know which round each fault affects
 //!
@@ -114,7 +114,7 @@ pub use types::{
 use super::{PauliFault, SpacetimeLocation, extract_spacetime_locations};
 use pecos_core::gate_type::GateType;
 use pecos_qsim::PauliProp;
-use pecos_quantum::{DagCircuit, DagTraversalIndex, TickCircuit};
+use pecos_quantum::{DagCircuit, DagTraversalIndex};
 use std::collections::{BTreeSet, BinaryHeap};
 
 // ============================================================================
@@ -130,7 +130,7 @@ pub struct PropagatorWorkBuffers {
     pub visited: Vec<bool>,
     /// Active qubits (indexed by qubit id)
     pub active_qubits: Vec<bool>,
-    /// Priority queue for heap-based traversal (topo_pos, node_id)
+    /// Priority queue for heap-based traversal (`topo_pos`, `node_id`)
     pub heap: BinaryHeap<(usize, usize)>,
 }
 
@@ -178,7 +178,7 @@ pub trait InfluenceRecorder {
     /// Records influences for a fault at the given location.
     ///
     /// # Arguments
-    /// * `loc_idx` - Location index in the FaultLocations array
+    /// * `loc_idx` - Location index in the `FaultLocations` array
     /// * `qubit` - The qubit where the fault occurs
     /// * `obs_x` - Whether the current observable has X on this qubit
     /// * `obs_z` - Whether the current observable has Z on this qubit
@@ -239,18 +239,21 @@ impl<'a> PropagationContext<'a> {
 
     /// Returns whether the observable has X on the given qubit.
     #[inline]
+    #[must_use]
     pub fn has_x(&self, qubit: usize) -> bool {
         self.prop.contains_x(qubit)
     }
 
     /// Returns whether the observable has Z on the given qubit.
     #[inline]
+    #[must_use]
     pub fn has_z(&self, qubit: usize) -> bool {
         self.prop.contains_z(qubit)
     }
 
     /// Returns whether the qubit is currently active (has non-trivial Pauli).
     #[inline]
+    #[must_use]
     pub fn is_active(&self, qubit: usize) -> bool {
         self.prop.contains_x(qubit) || self.prop.contains_z(qubit)
     }
@@ -273,6 +276,7 @@ impl<'a> PropagationContext<'a> {
 
     /// Returns whether a qubit was active before the current gate.
     #[inline]
+    #[must_use]
     pub fn was_active(&self, qubit: usize) -> bool {
         qubit < self.buffers.active_qubits.len() && self.buffers.active_qubits[qubit]
     }
@@ -386,12 +390,12 @@ impl InfluenceRecorder for CountingRecorder {
 pub struct DagPropagator<'a> {
     /// Reference to the underlying DAG circuit.
     dag: &'a DagCircuit,
-    /// Pre-computed traversal index from DagCircuit.
+    /// Pre-computed traversal index from `DagCircuit`.
     index: DagTraversalIndex,
 }
 
 impl<'a> DagPropagator<'a> {
-    /// Creates a new DagPropagator with pre-computed indices.
+    /// Creates a new `DagPropagator` with pre-computed indices.
     ///
     /// This is O(V + E) where V is the number of gates and E is the number of edges.
     #[must_use]
@@ -400,7 +404,7 @@ impl<'a> DagPropagator<'a> {
         Self { dag, index }
     }
 
-    /// Creates a DagPropagator from an existing traversal index.
+    /// Creates a `DagPropagator` from an existing traversal index.
     ///
     /// Use this when you already have a `DagTraversalIndex` to avoid recomputing it.
     #[must_use]
@@ -517,7 +521,10 @@ impl<'a> DagPropagator<'a> {
         for &node in node_iter {
             if let Some(gate) = self.gate(node) {
                 // Check if this gate touches any active qubit
-                let touches_active = gate.qubits.iter().any(|q| active_qubits.contains(&q.index()));
+                let touches_active = gate
+                    .qubits
+                    .iter()
+                    .any(|q| active_qubits.contains(&q.index()));
 
                 if touches_active {
                     // Apply the gate
@@ -577,7 +584,10 @@ impl<'a> DagPropagator<'a> {
 
             if let Some(gate) = self.gate(node) {
                 // Check if this gate touches any active qubit
-                let touches_active = gate.qubits.iter().any(|q| active_qubits.contains(&q.index()));
+                let touches_active = gate
+                    .qubits
+                    .iter()
+                    .any(|q| active_qubits.contains(&q.index()));
 
                 if touches_active {
                     // Handle prep gates specially - they kill the Pauli
@@ -618,8 +628,8 @@ impl<'a> DagPropagator<'a> {
 
 /// Propagates a Pauli through a DAG circuit using sparse traversal.
 ///
-/// This is a convenience function that creates a temporary DagPropagator.
-/// For repeated propagations, create a DagPropagator once and reuse it.
+/// This is a convenience function that creates a temporary `DagPropagator`.
+/// For repeated propagations, create a `DagPropagator` once and reuse it.
 pub fn propagate_sparse_dag(dag: &DagCircuit, prop: &mut PauliProp, direction: Direction) {
     let propagator = DagPropagator::new(dag);
     propagator.propagate_sparse(prop, direction);
@@ -650,6 +660,7 @@ pub fn propagate_backward_from_node(dag: &DagCircuit, prop: &mut PauliProp, star
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_quantum::TickCircuit;
 
     fn simple_syndrome_circuit() -> TickCircuit {
         // Simple Z-stabilizer measurement: Z0 Z1
@@ -712,7 +723,7 @@ mod tests {
                 // Check if X error here flips the detector
                 if !influence.detectors_for_pauli(1).is_empty() {
                     found_x_flip = true;
-                    println!("X error at {:?} flips detector", loc);
+                    println!("X error at {loc:?} flips detector");
                 }
             }
         }
@@ -754,10 +765,7 @@ mod tests {
         // Get any fault location and check classification
         if let Some((loc, _)) = map.influences.iter().next() {
             let (has_syndrome, has_logical) = checker.classify(loc, 1); // X fault
-            println!(
-                "Location {:?}: syndrome={}, logical={}",
-                loc, has_syndrome, has_logical
-            );
+            println!("Location {loc:?}: syndrome={has_syndrome}, logical={has_logical}");
         }
     }
 
@@ -957,10 +965,10 @@ mod tests {
         // X errors on data qubits should flip the logical
         let mut found_logical_flip = false;
         for (loc, influence) in &map.influences {
-            if loc.qubits.iter().any(|q| q.index() == 0 || q.index() == 1) {
-                if !influence.logicals_for_pauli(1).is_empty() {
-                    found_logical_flip = true;
-                }
+            if loc.qubits.iter().any(|q| q.index() == 0 || q.index() == 1)
+                && !influence.logicals_for_pauli(1).is_empty()
+            {
+                found_logical_flip = true;
             }
         }
         assert!(found_logical_flip, "Should find X errors that flip logical");
@@ -1053,222 +1061,4 @@ mod tests {
         assert_eq!(map.detectors.len(), 2);
     }
 
-    // =========================================================================
-    // Benchmark Tests (run with --ignored)
-    // =========================================================================
-
-    fn build_surface_code_circuit(data_qubits: usize, ancilla_qubits: usize) -> TickCircuit {
-        let mut circuit = TickCircuit::new();
-
-        // Compute grid size for 2D connectivity
-        let grid_size = (data_qubits as f64).sqrt().ceil() as usize;
-
-        // Build connectivity map: which data qubits each ancilla connects to
-        let mut ancilla_neighbors: Vec<Vec<usize>> = Vec::with_capacity(ancilla_qubits);
-        for a_idx in 0..ancilla_qubits {
-            let row = a_idx / (grid_size - 1).max(1);
-            let col = a_idx % (grid_size - 1).max(1);
-
-            let mut neighbors = Vec::with_capacity(4);
-            let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)];
-            for (dr, dc) in offsets {
-                let data_row = row + dr;
-                let data_col = col + dc;
-                if data_row < grid_size && data_col < grid_size {
-                    let data_idx = data_row * grid_size + data_col;
-                    if data_idx < data_qubits {
-                        neighbors.push(data_idx);
-                    }
-                }
-            }
-            ancilla_neighbors.push(neighbors);
-        }
-
-        // Build circuit: prep all ancillas
-        let ancilla_indices: Vec<usize> = (data_qubits..data_qubits + ancilla_qubits).collect();
-        circuit.tick().pz(&ancilla_indices);
-
-        // CNOT layers (4 layers for surface code)
-        for layer in 0..4 {
-            let mut cx_pairs = Vec::new();
-            for (a_idx, neighbors) in ancilla_neighbors.iter().enumerate() {
-                if layer < neighbors.len() {
-                    cx_pairs.push((neighbors[layer], data_qubits + a_idx));
-                }
-            }
-            if !cx_pairs.is_empty() {
-                circuit.tick().cx(&cx_pairs);
-            }
-        }
-
-        // Measure all ancillas
-        circuit.tick().mz(&ancilla_indices);
-
-        circuit
-    }
-
-    fn build_surface_code_dag(data_qubits: usize, ancilla_qubits: usize) -> DagCircuit {
-        let mut dag = DagCircuit::new();
-
-        let grid_size = (data_qubits as f64).sqrt().ceil() as usize;
-
-        let mut ancilla_neighbors: Vec<Vec<usize>> = Vec::with_capacity(ancilla_qubits);
-        for a_idx in 0..ancilla_qubits {
-            let row = a_idx / (grid_size - 1).max(1);
-            let col = a_idx % (grid_size - 1).max(1);
-            let mut neighbors = Vec::with_capacity(4);
-            let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)];
-            for (dr, dc) in offsets {
-                let data_row = row + dr;
-                let data_col = col + dc;
-                if data_row < grid_size && data_col < grid_size {
-                    let data_idx = data_row * grid_size + data_col;
-                    if data_idx < data_qubits {
-                        neighbors.push(data_idx);
-                    }
-                }
-            }
-            ancilla_neighbors.push(neighbors);
-        }
-
-        // Prep ancillas
-        for a in 0..ancilla_qubits {
-            dag.pz(data_qubits + a);
-        }
-
-        // CNOTs
-        for a in 0..ancilla_qubits {
-            for &d in &ancilla_neighbors[a] {
-                dag.cx(d, data_qubits + a);
-            }
-        }
-
-        // Measure ancillas
-        for a in 0..ancilla_qubits {
-            dag.mz(data_qubits + a);
-        }
-
-        dag
-    }
-
-    /// Run with: cargo test -p pecos-qec benchmark_dag_fault_analyzer --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_dag_fault_analyzer() {
-        println!("\n========================================");
-        println!("Fault Analyzer Benchmark");
-        println!("========================================\n");
-
-        let sizes = [(3, 9, 8), (5, 25, 24), (7, 49, 48), (11, 121, 120)];
-
-        for (d, data, ancilla) in sizes {
-            let _ = d;
-
-            let tick_circuit = build_surface_code_circuit(data, ancilla);
-            let dag_circuit = build_surface_code_dag(data, ancilla);
-
-            // Warmup
-            for _ in 0..10 {
-                let _ = TickFaultAnalyzer::new(&tick_circuit).build_influence_map();
-                let _ = DagFaultAnalyzer::new(&dag_circuit).build_influence_map();
-            }
-
-            let iterations = 100;
-
-            // Benchmark TickFaultAnalyzer
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let propagator = TickFaultAnalyzer::new(&tick_circuit);
-                let _ = propagator.build_influence_map();
-            }
-            let tick_time = start.elapsed();
-
-            // Benchmark DagFaultAnalyzer
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let propagator = DagFaultAnalyzer::new(&dag_circuit);
-                let _ = propagator.build_influence_map();
-            }
-            let dag_time = start.elapsed();
-
-            println!("--- {} data + {} ancilla qubits ---", data, ancilla);
-            println!(
-                "  TickFaultAnalyzer: {:>8.1} us/iter",
-                tick_time.as_micros() as f64 / iterations as f64
-            );
-            println!(
-                "  DagFaultAnalyzer:  {:>8.1} us/iter ({:.1}x faster)",
-                dag_time.as_micros() as f64 / iterations as f64,
-                tick_time.as_micros() as f64 / dag_time.as_micros() as f64
-            );
-            println!();
-        }
-    }
-
-    /// Run with: cargo test -p pecos-qec benchmark_multi_round --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_multi_round() {
-        println!("\n========================================");
-        println!("Multi-Round Benchmark");
-        println!("========================================\n");
-
-        let d = 5;
-        let data = 25;
-        let ancilla = 24;
-        let rounds = [1, 2, 4, 8];
-
-        for num_rounds in rounds {
-            // Build multi-round tick circuit
-            let mut tick_circuit = TickCircuit::new();
-            let ancilla_indices: Vec<usize> = (data..data + ancilla).collect();
-
-            for _ in 0..num_rounds {
-                tick_circuit.tick().pz(&ancilla_indices);
-                for i in 0..ancilla.min(data) {
-                    tick_circuit.tick().cx(&[(i, data + i)]);
-                }
-                tick_circuit.tick().mz(&ancilla_indices);
-            }
-
-            // Build multi-round DAG
-            let mut dag_circuit = DagCircuit::new();
-            for _ in 0..num_rounds {
-                for a in 0..ancilla {
-                    dag_circuit.pz(data + a);
-                }
-                for i in 0..ancilla.min(data) {
-                    dag_circuit.cx(i, data + i);
-                }
-                for a in 0..ancilla {
-                    dag_circuit.mz(data + a);
-                }
-            }
-
-            let iterations = 50;
-
-            // Benchmark Tick
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let _ = TickFaultAnalyzer::new(&tick_circuit).build_influence_map();
-            }
-            let tick_time = start.elapsed();
-
-            // Benchmark DAG
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let _ = DagFaultAnalyzer::new(&dag_circuit).build_influence_map();
-            }
-            let dag_time = start.elapsed();
-
-            println!(
-                "d={}, {} rounds: Tick {:>6.1} us, DAG {:>6.1} us ({:.1}x faster)",
-                d,
-                num_rounds,
-                tick_time.as_micros() as f64 / iterations as f64,
-                dag_time.as_micros() as f64 / iterations as f64,
-                tick_time.as_micros() as f64 / dag_time.as_micros() as f64
-            );
-        }
-    }
 }

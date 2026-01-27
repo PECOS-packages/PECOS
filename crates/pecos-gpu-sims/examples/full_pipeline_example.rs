@@ -3,13 +3,13 @@
 //! This example demonstrates the complete workflow for building fault influence
 //! maps from quantum error correction circuits and sampling with the GPU.
 //!
-//! Run with: cargo run --example full_pipeline_example --release
+//! Run with: cargo run --example `full_pipeline_example` --release
 //!
 //! Pipeline steps:
-//! 1. Build a syndrome extraction circuit using DagCircuit
-//! 2. Use InfluenceBuilder to extract detectors and build influence map
-//! 3. Convert to GPU format using export_csr()
-//! 4. Use GpuInfluenceSampler for fast noisy sampling
+//! 1. Build a syndrome extraction circuit using `DagCircuit`
+//! 2. Use `InfluenceBuilder` to extract detectors and build influence map
+//! 3. Convert to GPU format using `export_csr()`
+//! 4. Use `GpuInfluenceSampler` for fast noisy sampling
 
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
@@ -89,10 +89,7 @@ fn main() {
     let influence_map = builder.build();
     println!("   Locations: {}", influence_map.locations.len());
     println!("   Detectors: {}", influence_map.detectors.len());
-    println!(
-        "   Measurements: {}",
-        influence_map.measurements.len()
-    );
+    println!("   Measurements: {}", influence_map.measurements.len());
 
     // Export to GPU format
     let (
@@ -114,8 +111,7 @@ fn main() {
     ) = influence_map.export_csr();
 
     println!(
-        "   Exported CSR: {} locations, {} detectors, {} logicals",
-        num_locations, num_detectors, num_logicals
+        "   Exported CSR: {num_locations} locations, {num_detectors} detectors, {num_logicals} logicals"
     );
 
     let gpu_map = GpuInfluenceMapData::from_csr(
@@ -144,7 +140,7 @@ fn main() {
 
     let result = sampler.sample_uniform(num_shots, p_error);
     let logical_errors = result.count_logical_errors();
-    let error_rate = logical_errors as f64 / num_shots as f64;
+    let error_rate = logical_errors as f64 / f64::from(num_shots);
 
     println!(
         "   GPU Sampling: {} shots, p={}, logical error rate: {:.4}%",
@@ -209,7 +205,7 @@ fn main() {
 
     let result = sampler.sample_uniform(num_shots, p_error);
     let logical_errors = result.count_logical_errors();
-    let error_rate = logical_errors as f64 / num_shots as f64;
+    let error_rate = logical_errors as f64 / f64::from(num_shots);
 
     println!(
         "   GPU Sampling: {} shots, p={}, logical error rate: {:.4}%",

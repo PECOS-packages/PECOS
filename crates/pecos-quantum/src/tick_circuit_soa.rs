@@ -1,4 +1,4 @@
-//! Data-Oriented Design (DOD) TickCircuit implementation.
+//! Data-Oriented Design (DOD) `TickCircuit` implementation.
 //!
 //! This module provides `TickCircuitSoA`, an alternative representation of tick-based
 //! quantum circuits optimized for **batched simulation**.
@@ -108,6 +108,7 @@ pub struct GateBatch {
 impl GateBatch {
     /// Creates a new empty batch for the given gate type.
     #[inline]
+    #[must_use]
     pub fn new(gate_type: GateType) -> Self {
         Self {
             gate_type,
@@ -119,18 +120,21 @@ impl GateBatch {
 
     /// Returns the qubits for batch application.
     #[inline]
+    #[must_use]
     pub fn qubits(&self) -> &[QubitId] {
         &self.qubits
     }
 
     /// Returns the angles for parameterized gates.
     #[inline]
+    #[must_use]
     pub fn angles(&self) -> &[Angle64] {
         &self.angles
     }
 
     /// Returns the number of gate instances in this batch.
     #[inline]
+    #[must_use]
     pub fn gate_count(&self) -> usize {
         let arity = self.gate_type.quantum_arity();
         if arity == 0 {
@@ -142,6 +146,7 @@ impl GateBatch {
 
     /// Returns true if the batch is empty.
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.qubits.is_empty()
     }
@@ -169,6 +174,7 @@ pub struct TickBatches {
 
 impl TickBatches {
     /// Creates a new empty tick.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -181,13 +187,15 @@ impl TickBatches {
 
     /// Returns the number of batches.
     #[inline]
+    #[must_use]
     pub fn batch_count(&self) -> usize {
         self.batches.len()
     }
 
     /// Returns the total number of gates in this tick.
+    #[must_use]
     pub fn gate_count(&self) -> usize {
-        self.batches.iter().map(|b| b.gate_count()).sum()
+        self.batches.iter().map(GateBatch::gate_count).sum()
     }
 
     /// Adds a gate to the appropriate batch (creates batch if needed).
@@ -209,6 +217,7 @@ impl TickBatches {
 
     /// Returns the batch for a specific gate type, if present.
     #[inline]
+    #[must_use]
     pub fn batch_for_type(&self, gate_type: GateType) -> Option<&GateBatch> {
         self.batches.iter().find(|b| b.gate_type == gate_type)
     }
@@ -232,18 +241,21 @@ pub struct TickGateGroups {
 
 impl TickGateGroups {
     /// Creates empty gate groups.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Returns the number of ticks.
     #[inline]
+    #[must_use]
     pub fn num_ticks(&self) -> usize {
         self.num_ticks
     }
 
     /// Returns the batches for a specific tick.
     #[inline]
+    #[must_use]
     pub fn tick(&self, tick_idx: usize) -> Option<&TickBatches> {
         self.ticks.get(tick_idx)
     }
@@ -287,8 +299,9 @@ impl TickGateGroups {
     }
 
     /// Returns the total number of gates across all ticks.
+    #[must_use]
     pub fn total_gate_count(&self) -> usize {
-        self.ticks.iter().map(|t| t.gate_count()).sum()
+        self.ticks.iter().map(TickBatches::gate_count).sum()
     }
 }
 
@@ -310,20 +323,23 @@ pub struct GateId {
 }
 
 impl GateId {
-    /// Creates a new GateId.
+    /// Creates a new `GateId`.
     #[inline]
+    #[must_use]
     pub const fn new(index: u32, generation: u16) -> Self {
         Self { index, generation }
     }
 
     /// Returns the raw index (use with caution).
     #[inline]
+    #[must_use]
     pub const fn index(self) -> usize {
         self.index as usize
     }
 
     /// Returns the generation.
     #[inline]
+    #[must_use]
     pub const fn generation(self) -> u16 {
         self.generation
     }
@@ -349,15 +365,15 @@ pub struct GateStorage {
     pub qubit_spans: Vec<(u32, u32)>,
     /// Span (start, end) into the angles array
     pub angle_spans: Vec<(u32, u32)>,
-    /// Generation counter for each slot (for GateId validation)
+    /// Generation counter for each slot (for `GateId` validation)
     pub generations: Vec<u16>,
     /// Whether each slot is occupied (for sparse storage after removals)
     pub occupied: Vec<bool>,
 
     // Backing arrays for variable-length data
-    /// All qubits, indexed by qubit_spans
+    /// All qubits, indexed by `qubit_spans`
     pub qubits: Vec<QubitId>,
-    /// All angles, indexed by angle_spans
+    /// All angles, indexed by `angle_spans`
     pub angles: Vec<Angle64>,
     /// All params (e.g., idle duration), indexed similarly
     pub param_spans: Vec<(u32, u32)>,
@@ -369,11 +385,13 @@ pub struct GateStorage {
 
 impl GateStorage {
     /// Creates empty gate storage.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Creates gate storage with pre-allocated capacity.
+    #[must_use]
     pub fn with_capacity(gate_capacity: usize, qubit_capacity: usize) -> Self {
         Self {
             types: Vec::with_capacity(gate_capacity),
@@ -392,17 +410,20 @@ impl GateStorage {
 
     /// Returns the number of gates (including removed slots).
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.types.len()
     }
 
     /// Returns true if there are no gates.
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.types.is_empty()
     }
 
     /// Returns the number of active (non-removed) gates.
+    #[must_use]
     pub fn active_count(&self) -> usize {
         self.occupied.iter().filter(|&&o| o).count()
     }
@@ -461,17 +482,17 @@ impl GateStorage {
         GateId::new(index, generation)
     }
 
-    /// Validates that a GateId is still valid.
+    /// Validates that a `GateId` is still valid.
     #[inline]
+    #[must_use]
     pub fn is_valid(&self, id: GateId) -> bool {
         let idx = id.index();
-        idx < self.len()
-            && self.generations[idx] == id.generation()
-            && self.occupied[idx]
+        idx < self.len() && self.generations[idx] == id.generation() && self.occupied[idx]
     }
 
     /// Returns the gate type for a valid ID.
     #[inline]
+    #[must_use]
     pub fn gate_type(&self, id: GateId) -> Option<GateType> {
         if self.is_valid(id) {
             Some(self.types[id.index()])
@@ -482,6 +503,7 @@ impl GateStorage {
 
     /// Returns the tick ID for a valid gate.
     #[inline]
+    #[must_use]
     pub fn tick_id(&self, id: GateId) -> Option<u16> {
         if self.is_valid(id) {
             Some(self.tick_ids[id.index()])
@@ -496,18 +518,21 @@ impl GateStorage {
 
     /// Returns the gate type without validation. Use only when index is known valid.
     #[inline]
+    #[must_use]
     pub fn type_unchecked(&self, idx: usize) -> GateType {
         self.types[idx]
     }
 
     /// Returns the tick ID without validation.
     #[inline]
+    #[must_use]
     pub fn tick_id_unchecked(&self, idx: usize) -> u16 {
         self.tick_ids[idx]
     }
 
     /// Returns the qubits without validation.
     #[inline]
+    #[must_use]
     pub fn qubits_unchecked(&self, idx: usize) -> &[QubitId] {
         let (start, end) = self.qubit_spans[idx];
         &self.qubits[start as usize..end as usize]
@@ -515,18 +540,21 @@ impl GateStorage {
 
     /// Returns whether the slot is occupied.
     #[inline]
+    #[must_use]
     pub fn is_occupied(&self, idx: usize) -> bool {
         idx < self.occupied.len() && self.occupied[idx]
     }
 
     /// Returns the total number of slots (for iteration bounds).
     #[inline]
+    #[must_use]
     pub fn slot_count(&self) -> usize {
         self.types.len()
     }
 
     /// Returns the qubits for a valid gate.
     #[inline]
+    #[must_use]
     pub fn gate_qubits(&self, id: GateId) -> Option<&[QubitId]> {
         if self.is_valid(id) {
             let (start, end) = self.qubit_spans[id.index()];
@@ -538,6 +566,7 @@ impl GateStorage {
 
     /// Returns the angles for a valid gate.
     #[inline]
+    #[must_use]
     pub fn gate_angles(&self, id: GateId) -> Option<&[Angle64]> {
         if self.is_valid(id) {
             let (start, end) = self.angle_spans[id.index()];
@@ -549,6 +578,7 @@ impl GateStorage {
 
     /// Returns the params for a valid gate.
     #[inline]
+    #[must_use]
     pub fn gate_params(&self, id: GateId) -> Option<&[f64]> {
         if self.is_valid(id) {
             let (start, end) = self.param_spans[id.index()];
@@ -603,7 +633,7 @@ impl GateStorage {
 
 /// Pre-computed indexes for efficient circuit queries.
 ///
-/// Uses raw u32 indices instead of GateIds for minimal overhead in hot paths.
+/// Uses raw u32 indices instead of `GateIds` for minimal overhead in hot paths.
 #[derive(Debug, Clone, Default)]
 pub struct CircuitIndexes {
     /// For each tick, the list of gate indices in that tick.
@@ -612,11 +642,11 @@ pub struct CircuitIndexes {
 
     /// For each qubit, the list of gate indices that touch it.
     /// Indexed by qubit index; grows dynamically.
-    /// Uses u32 instead of GateId to avoid validation overhead.
+    /// Uses u32 instead of `GateId` to avoid validation overhead.
     pub qubit_to_gates: Vec<SmallVec<[u32; 8]>>,
 
     /// For each qubit, gates sorted by tick (for efficient backward traversal).
-    /// Each entry is (tick_id, gate_idx).
+    /// Each entry is (`tick_id`, `gate_idx`).
     pub qubit_gates_by_tick: Vec<Vec<(u16, u32)>>,
 
     /// Maximum qubit index seen.
@@ -628,6 +658,7 @@ pub struct CircuitIndexes {
 
 impl CircuitIndexes {
     /// Creates empty indexes.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -660,17 +691,18 @@ impl CircuitIndexes {
         }
     }
 
-    /// Registers a gate in the qubit index (GateId version for compatibility).
+    /// Registers a gate in the qubit index (`GateId` version for compatibility).
     pub fn register_gate(&mut self, gate_id: GateId, qubits: &[QubitId]) {
         for qubit in qubits {
             let q = qubit.index();
             self.ensure_qubit_capacity(q);
-            self.qubit_to_gates[q].push(gate_id.index as u32);
+            self.qubit_to_gates[q].push(gate_id.index);
         }
     }
 
     /// Returns all gate indices touching the given qubit.
     #[inline]
+    #[must_use]
     pub fn gates_touching_qubit_raw(&self, qubit: usize) -> &[u32] {
         if qubit < self.qubit_to_gates.len() {
             &self.qubit_to_gates[qubit]
@@ -679,16 +711,18 @@ impl CircuitIndexes {
         }
     }
 
-    /// Returns all gates touching the given qubit (GateId version).
+    /// Returns all gates touching the given qubit (`GateId` version).
     #[inline]
+    #[must_use]
     pub fn gates_touching_qubit(&self, _qubit: usize) -> &[GateId] {
         // Note: This is a bit of a hack - we're reinterpreting u32 as GateId
         // In practice, for read-only circuits without removal, generation is always 0
-        &[]  // Return empty - use gates_touching_qubit_raw instead
+        &[] // Return empty - use gates_touching_qubit_raw instead
     }
 
     /// Returns gate indices in a specific tick.
     #[inline]
+    #[must_use]
     pub fn gates_in_tick(&self, tick: usize) -> &[u32] {
         if tick < self.tick_gates.len() {
             &self.tick_gates[tick]
@@ -699,6 +733,7 @@ impl CircuitIndexes {
 
     /// Returns gates on a qubit sorted by tick (for backward traversal).
     #[inline]
+    #[must_use]
     pub fn qubit_gates_sorted(&self, qubit: usize) -> &[(u16, u32)] {
         if qubit < self.qubit_gates_by_tick.len() {
             &self.qubit_gates_by_tick[qubit]
@@ -707,7 +742,7 @@ impl CircuitIndexes {
         }
     }
 
-    /// Sorts the qubit_gates_by_tick for each qubit (call after building).
+    /// Sorts the `qubit_gates_by_tick` for each qubit (call after building).
     pub fn finalize(&mut self) {
         for gates in &mut self.qubit_gates_by_tick {
             gates.sort_by_key(|&(tick, _)| tick);
@@ -756,6 +791,7 @@ pub struct MetadataStorage {
 
 impl MetadataStorage {
     /// Creates empty metadata storage.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -769,6 +805,7 @@ impl MetadataStorage {
     }
 
     /// Gets a gate attribute.
+    #[must_use]
     pub fn get_gate_attr(&self, gate_id: GateId, key: &str) -> Option<&Attribute> {
         self.gate_attrs.get(&gate_id).and_then(|m| m.get(key))
     }
@@ -782,6 +819,7 @@ impl MetadataStorage {
     }
 
     /// Gets a tick attribute.
+    #[must_use]
     pub fn get_tick_attr(&self, tick: usize, key: &str) -> Option<&Attribute> {
         self.tick_attrs.get(tick).and_then(|m| m.get(key))
     }
@@ -792,6 +830,7 @@ impl MetadataStorage {
     }
 
     /// Gets a circuit attribute.
+    #[must_use]
     pub fn get_circuit_attr(&self, key: &str) -> Option<&Attribute> {
         self.circuit_attrs.get(key)
     }
@@ -814,12 +853,12 @@ impl MetadataStorage {
 /// that provides:
 /// - **Batched simulation**: Gates grouped by type for efficient batch execution
 /// - **Cache-friendly access**: Qubits for same-type gates stored contiguously
-/// - **Individual gate access**: SoA storage for analysis workloads
+/// - **Individual gate access**: `SoA` storage for analysis workloads
 #[derive(Debug, Clone, Default)]
 pub struct TickCircuitSoA {
     /// Gates grouped by type for batched simulation (primary interface).
     pub batched: TickGateGroups,
-    /// Gate data in SoA layout (for individual gate access).
+    /// Gate data in `SoA` layout (for individual gate access).
     pub storage: GateStorage,
     /// Pre-computed indexes.
     pub indexes: CircuitIndexes,
@@ -829,77 +868,90 @@ pub struct TickCircuitSoA {
 
 impl TickCircuitSoA {
     /// Creates a new empty circuit.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Creates a builder for constructing circuits with a fluent API.
+    #[must_use]
     pub fn builder() -> TickCircuitSoABuilder {
         TickCircuitSoABuilder::new()
     }
 
     /// Returns the number of ticks.
     #[inline]
+    #[must_use]
     pub fn num_ticks(&self) -> usize {
         self.indexes.num_ticks
     }
 
     /// Returns the total number of active gates.
     #[inline]
+    #[must_use]
     pub fn gate_count(&self) -> usize {
         self.storage.active_count()
     }
 
     /// Returns the maximum qubit index.
     #[inline]
+    #[must_use]
     pub fn max_qubit(&self) -> usize {
         self.indexes.max_qubit
     }
 
     /// Returns the gate type for a gate ID.
     #[inline]
+    #[must_use]
     pub fn gate_type(&self, id: GateId) -> Option<GateType> {
         self.storage.gate_type(id)
     }
 
     /// Returns the qubits for a gate ID.
     #[inline]
+    #[must_use]
     pub fn gate_qubits(&self, id: GateId) -> Option<&[QubitId]> {
         self.storage.gate_qubits(id)
     }
 
     /// Returns the angles for a gate ID.
     #[inline]
+    #[must_use]
     pub fn gate_angles(&self, id: GateId) -> Option<&[Angle64]> {
         self.storage.gate_angles(id)
     }
 
     /// Returns all gates touching a specific qubit.
     #[inline]
+    #[must_use]
     pub fn gates_touching_qubit(&self, qubit: usize) -> &[GateId] {
         self.indexes.gates_touching_qubit(qubit)
     }
 
     /// Returns all gate indices touching a specific qubit (optimized, no validation).
     #[inline]
+    #[must_use]
     pub fn gates_touching_qubit_raw(&self, qubit: usize) -> &[u32] {
         self.indexes.gates_touching_qubit_raw(qubit)
     }
 
     /// Returns gate indices in a specific tick (optimized, O(1)).
     #[inline]
+    #[must_use]
     pub fn gates_in_tick_raw(&self, tick: usize) -> &[u32] {
         self.indexes.gates_in_tick(tick)
     }
 
     /// Returns gates on a qubit sorted by tick (for backward traversal).
     #[inline]
+    #[must_use]
     pub fn qubit_gates_sorted(&self, qubit: usize) -> &[(u16, u32)] {
         self.indexes.qubit_gates_sorted(qubit)
     }
 
     /// Validates that a gate ID is still valid.
     #[inline]
+    #[must_use]
     pub fn is_valid(&self, id: GateId) -> bool {
         self.storage.is_valid(id)
     }
@@ -911,9 +963,9 @@ impl TickCircuitSoA {
 
     /// Iterator over gate IDs in a specific tick.
     pub fn gates_in_tick(&self, tick: usize) -> impl Iterator<Item = GateId> + '_ {
-        self.storage.iter_ids().filter(move |&id| {
-            self.storage.tick_id(id) == Some(tick as u16)
-        })
+        self.storage
+            .iter_ids()
+            .filter(move |&id| self.storage.tick_id(id) == Some(tick as u16))
     }
 
     // =========================================================================
@@ -941,12 +993,14 @@ impl TickCircuitSoA {
 
     /// Returns the batched gates for a specific tick.
     #[inline]
+    #[must_use]
     pub fn tick_batched(&self, tick: usize) -> Option<&TickBatches> {
         self.batched.tick(tick)
     }
 
     /// Returns the number of ticks (from batched representation).
     #[inline]
+    #[must_use]
     pub fn num_ticks_batched(&self) -> usize {
         self.batched.num_ticks()
     }
@@ -982,6 +1036,7 @@ pub struct TickCircuitSoABuilder {
 
 impl TickCircuitSoABuilder {
     /// Creates a new builder.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             batched: TickGateGroups::new(),
@@ -1013,13 +1068,16 @@ impl TickCircuitSoABuilder {
         let tick = self.current_tick.saturating_sub(1);
 
         // Add to batched representation (primary for simulation)
-        self.batched.add_gate(tick as usize, gate_type, qubits, angles);
+        self.batched
+            .add_gate(tick as usize, gate_type, qubits, angles);
 
         // Add to SoA storage (for individual gate access)
-        let gate_id = self.storage.add_gate(gate_type, tick, qubits, angles, params);
+        let gate_id = self
+            .storage
+            .add_gate(gate_type, tick, qubits, angles, params);
 
         // Update indexes
-        self.indexes.register_gate_raw(gate_id.index as u32, tick, qubits);
+        self.indexes.register_gate_raw(gate_id.index, tick, qubits);
         self.last_gate_id = Some(gate_id);
         self
     }
@@ -1037,6 +1095,7 @@ impl TickCircuitSoABuilder {
     }
 
     /// Builds the final circuit.
+    #[must_use]
     pub fn build(mut self) -> TickCircuitSoA {
         // Finalize indexes (sort qubit gates by tick for efficient traversal)
         self.indexes.finalize();
@@ -1159,16 +1218,15 @@ impl From<&crate::TickCircuit> for TickCircuitSoA {
                 let tick_num = builder.current_tick.saturating_sub(1);
 
                 // Add to batched representation (primary for simulation)
-                builder.batched.add_gate(tick_num as usize, gate.gate_type, &qubits, &angles);
+                builder
+                    .batched
+                    .add_gate(tick_num as usize, gate.gate_type, &qubits, &angles);
 
                 // Add to SoA storage (for individual gate access)
-                let gate_id = builder.storage.add_gate(
-                    gate.gate_type,
-                    tick_num,
-                    &qubits,
-                    &angles,
-                    &params,
-                );
+                let gate_id =
+                    builder
+                        .storage
+                        .add_gate(gate.gate_type, tick_num, &qubits, &angles, &params);
                 builder.indexes.register_gate(gate_id, &qubits);
                 builder.indexes.num_ticks = builder.indexes.num_ticks.max(tick_num as usize + 1);
 
@@ -1218,10 +1276,7 @@ mod tests {
     #[test]
     fn test_gate_lookup() {
         let mut builder = TickCircuitSoA::builder();
-        builder
-            .tick()
-            .h(&[0])
-            .x(&[1]);
+        builder.tick().h(&[0]).x(&[1]);
 
         let circuit = builder.build();
 
@@ -1234,19 +1289,20 @@ mod tests {
         assert_eq!(circuit.gate_type(gate_ids[1]), Some(GateType::X));
 
         // Check qubits
-        assert_eq!(circuit.gate_qubits(gate_ids[0]), Some([QubitId::from(0)].as_slice()));
-        assert_eq!(circuit.gate_qubits(gate_ids[1]), Some([QubitId::from(1)].as_slice()));
+        assert_eq!(
+            circuit.gate_qubits(gate_ids[0]),
+            Some([QubitId::from(0)].as_slice())
+        );
+        assert_eq!(
+            circuit.gate_qubits(gate_ids[1]),
+            Some([QubitId::from(1)].as_slice())
+        );
     }
 
     #[test]
     fn test_qubit_index() {
         let mut builder = TickCircuitSoA::builder();
-        builder
-            .tick()
-            .h(&[0])
-            .x(&[1])
-            .tick()
-            .cx(&[(0, 1)]);
+        builder.tick().h(&[0]).x(&[1]).tick().cx(&[(0, 1)]);
 
         let circuit = builder.build();
 
@@ -1291,10 +1347,7 @@ mod tests {
     #[test]
     fn test_gate_removal() {
         let mut builder = TickCircuitSoA::builder();
-        builder
-            .tick()
-            .h(&[0])
-            .x(&[1]);
+        builder.tick().h(&[0]).x(&[1]);
 
         let mut circuit = builder.build();
         let gate_ids: Vec<_> = circuit.iter_gate_ids().collect();
@@ -1336,12 +1389,12 @@ mod tests {
         let mut builder = TickCircuitSoA::builder();
         builder
             .tick()
-            .pz(&[0, 1, 2, 3])  // 4 preps
+            .pz(&[0, 1, 2, 3]) // 4 preps
             .tick()
-            .h(&[0, 1])        // 2 H gates
-            .x(&[2, 3])        // 2 X gates
+            .h(&[0, 1]) // 2 H gates
+            .x(&[2, 3]) // 2 X gates
             .tick()
-            .cx(&[(0, 1), (2, 3)])  // 2 CX gates
+            .cx(&[(0, 1), (2, 3)]) // 2 CX gates
             .tick()
             .mz(&[0, 1, 2, 3]); // 4 measurements
 
@@ -1369,7 +1422,7 @@ mod tests {
         let tick2 = circuit.tick_batched(2).unwrap();
         assert_eq!(tick2.batch_count(), 1);
         let cx_batch = tick2.batch_for_type(GateType::CX).unwrap();
-        assert_eq!(cx_batch.qubits().len(), 4);  // 2 pairs = 4 qubits
+        assert_eq!(cx_batch.qubits().len(), 4); // 2 pairs = 4 qubits
         assert_eq!(cx_batch.gate_count(), 2);
 
         // Check tick 3: measurements batched
@@ -1383,11 +1436,7 @@ mod tests {
     #[test]
     fn test_iter_ticks_batched() {
         let mut builder = TickCircuitSoA::builder();
-        builder
-            .tick()
-            .h(&[0, 1, 2])
-            .tick()
-            .cx(&[(0, 1)]);
+        builder.tick().h(&[0, 1, 2]).tick().cx(&[(0, 1)]);
 
         let circuit = builder.build();
 
@@ -1401,95 +1450,5 @@ mod tests {
 
         assert_eq!(tick_count, 2);
         assert_eq!(total_batches, 2); // H batch + CX batch
-    }
-
-    /// Run with: cargo test -p pecos-quantum benchmark_batched --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_batched_vs_gatewise() {
-        // Build a surface-code-like circuit
-        let distances = [5, 9, 13];
-
-        println!("\n========================================");
-        println!("Batched vs Gate-wise Iteration Benchmark");
-        println!("========================================\n");
-
-        for d in distances {
-            let num_data = d * d;
-            let num_ancilla = num_data - 1;
-
-            // Build circuit
-            let mut builder = TickCircuitSoA::builder();
-
-            // Tick 0: Prep all ancillas
-            builder.tick();
-            let ancilla_qubits: Vec<usize> = (num_data..num_data + num_ancilla).collect();
-            builder.pz(&ancilla_qubits);
-
-            // Tick 1: H on data qubits
-            builder.tick();
-            let data_qubits: Vec<usize> = (0..num_data).collect();
-            builder.h(&data_qubits);
-
-            // Tick 2: CX between data and ancilla (simplified connectivity)
-            builder.tick();
-            let cx_pairs: Vec<(usize, usize)> = (0..num_ancilla.min(num_data))
-                .map(|i| (i, num_data + i))
-                .collect();
-            builder.cx(&cx_pairs);
-
-            // Tick 3: Measure ancillas
-            builder.tick();
-            builder.mz(&ancilla_qubits);
-
-            let circuit = builder.build();
-
-            let iterations = 10000;
-
-            // Benchmark batched iteration
-            let start = std::time::Instant::now();
-            let mut batched_ops = 0usize;
-            for _ in 0..iterations {
-                for (_tick_idx, tick) in circuit.iter_ticks_batched() {
-                    for batch in tick.iter() {
-                        batched_ops += 1;
-                        std::hint::black_box(batch.gate_type);
-                        std::hint::black_box(batch.qubits());
-                    }
-                }
-            }
-            let batched_time = start.elapsed();
-
-            // Benchmark gate-wise iteration via storage
-            let start = std::time::Instant::now();
-            let mut gatewise_ops = 0usize;
-            for _ in 0..iterations {
-                for tick_idx in 0..circuit.num_ticks() {
-                    for &gate_idx in circuit.gates_in_tick_raw(tick_idx) {
-                        gatewise_ops += 1;
-                        let idx = gate_idx as usize;
-                        std::hint::black_box(circuit.storage.type_unchecked(idx));
-                        std::hint::black_box(circuit.storage.qubits_unchecked(idx));
-                    }
-                }
-            }
-            let gatewise_time = start.elapsed();
-
-            let speedup = gatewise_time.as_nanos() as f64 / batched_time.as_nanos() as f64;
-
-            println!("d={}, {} data + {} ancilla qubits:", d, num_data, num_ancilla);
-            println!(
-                "  Batched iteration:   {:>8.1} us ({} ops/iter, {} batches)",
-                batched_time.as_micros() as f64 / iterations as f64,
-                batched_ops / iterations,
-                circuit.batched.total_gate_count()
-            );
-            println!(
-                "  Gate-wise iteration: {:>8.1} us ({} ops/iter)",
-                gatewise_time.as_micros() as f64 / iterations as f64,
-                gatewise_ops / iterations
-            );
-            println!("  Speedup: {:.2}x\n", speedup);
-        }
     }
 }

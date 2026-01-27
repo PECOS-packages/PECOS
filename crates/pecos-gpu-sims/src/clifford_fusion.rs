@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-/// Gate type constants (must match gpu_stab shader)
+/// Gate type constants (must match `gpu_stab` shader)
 pub const GATE_H: u32 = 0;
 pub const GATE_S: u32 = 1;
 pub const GATE_SDG: u32 = 2;
@@ -37,14 +37,14 @@ impl GateSequence {
     /// Add a gate and simplify if possible
     fn add(&mut self, gate: u32) {
         // Try to simplify with the last gate
-        if let Some(&last) = self.gates.last() {
-            if let Some(simplified) = simplify_pair(last, gate) {
-                self.gates.pop();
-                if let Some(g) = simplified {
-                    self.add(g); // Recursively simplify
-                }
-                return;
+        if let Some(&last) = self.gates.last()
+            && let Some(simplified) = simplify_pair(last, gate)
+        {
+            self.gates.pop();
+            if let Some(g) = simplified {
+                self.add(g); // Recursively simplify
             }
+            return;
         }
         self.gates.push(gate);
     }
@@ -126,7 +126,7 @@ impl CliffordFuser {
     pub fn add_gate(&mut self, gate_type: u32, target: u32, control: u32) -> bool {
         if Self::is_single_qubit(gate_type) {
             // Single-qubit gate - try to fuse
-            let seq = self.pending.entry(target).or_insert_with(GateSequence::new);
+            let seq = self.pending.entry(target).or_default();
             seq.add(gate_type);
             true
         } else {
@@ -143,12 +143,12 @@ impl CliffordFuser {
 
     /// Flush pending gates for a specific qubit
     fn flush_qubit(&mut self, qubit: u32) {
-        if let Some(seq) = self.pending.remove(&qubit) {
-            if !seq.is_empty() {
-                for gate_type in seq.into_gates() {
-                    let packed = pack_gate(gate_type, qubit, 0);
-                    self.output.push(packed);
-                }
+        if let Some(seq) = self.pending.remove(&qubit)
+            && !seq.is_empty()
+        {
+            for gate_type in seq.into_gates() {
+                let packed = pack_gate(gate_type, qubit, 0);
+                self.output.push(packed);
             }
         }
     }

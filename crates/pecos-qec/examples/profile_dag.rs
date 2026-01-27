@@ -6,8 +6,9 @@ use pecos_quantum::DagCircuit;
 fn build_syndrome_circuit(data_qubits: usize, ancilla_qubits: usize) -> DagCircuit {
     let mut dag = DagCircuit::new();
 
-    // Compute grid size for 2D connectivity
-    let grid_size = (data_qubits as f64).sqrt().ceil() as usize;
+    // Compute grid size for 2D connectivity (ceiling of sqrt)
+    let s = data_qubits.isqrt();
+    let grid_size = if s * s == data_qubits { s } else { s + 1 };
 
     // Build connectivity map
     let mut ancilla_neighbors: Vec<Vec<usize>> = Vec::with_capacity(ancilla_qubits);
@@ -33,8 +34,8 @@ fn build_syndrome_circuit(data_qubits: usize, ancilla_qubits: usize) -> DagCircu
     for a in 0..ancilla_qubits {
         dag.pz(data_qubits + a);
     }
-    for a in 0..ancilla_qubits {
-        for &d in &ancilla_neighbors[a] {
+    for (a, neighbors) in ancilla_neighbors.iter().enumerate() {
+        for &d in neighbors {
             dag.cx(d, data_qubits + a);
         }
     }
@@ -49,7 +50,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let distance = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(3);
     let iterations = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
-    let reuse = args.get(3).map_or(false, |s| s == "reuse");
+    let reuse = args.get(3).is_some_and(|s| s == "reuse");
 
     let data_qubits = distance * distance;
     let ancilla_qubits = data_qubits - 1;

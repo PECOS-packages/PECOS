@@ -3652,6 +3652,7 @@ name = "pecos-rslib-cuda"
 version = "0.1.1"
 dependencies = [
  "log",
+ "pecos-build",
  "pecos-core",
  "pecos-cuquantum",
  "pecos-qsim",

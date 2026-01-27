@@ -195,7 +195,12 @@ def Tdg(state: CudaStateVec, qubit: int, **_params: SimulatorGateParams) -> None
 # =============================================================================
 
 
-def RX(state: CudaStateVec, qubit: int, angles: tuple[float], **_params: SimulatorGateParams) -> None:
+def RX(
+    state: CudaStateVec,
+    qubit: int,
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
     """RX rotation gate."""
     if len(angles) != 1:
         msg = "RX gate requires exactly 1 angle parameter."
@@ -203,7 +208,12 @@ def RX(state: CudaStateVec, qubit: int, angles: tuple[float], **_params: Simulat
     state.backend.rx(angles[0], [qubit])
 
 
-def RY(state: CudaStateVec, qubit: int, angles: tuple[float], **_params: SimulatorGateParams) -> None:
+def RY(
+    state: CudaStateVec,
+    qubit: int,
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
     """RY rotation gate."""
     if len(angles) != 1:
         msg = "RY gate requires exactly 1 angle parameter."
@@ -211,7 +221,12 @@ def RY(state: CudaStateVec, qubit: int, angles: tuple[float], **_params: Simulat
     state.backend.ry(angles[0], [qubit])
 
 
-def RZ(state: CudaStateVec, qubit: int, angles: tuple[float], **_params: SimulatorGateParams) -> None:
+def RZ(
+    state: CudaStateVec,
+    qubit: int,
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
     """RZ rotation gate."""
     if len(angles) != 1:
         msg = "RZ gate requires exactly 1 angle parameter."
@@ -219,7 +234,12 @@ def RZ(state: CudaStateVec, qubit: int, angles: tuple[float], **_params: Simulat
     state.backend.rz(angles[0], [qubit])
 
 
-def R1XY(state: CudaStateVec, qubit: int, angles: tuple[float, float], **_params: SimulatorGateParams) -> None:
+def R1XY(
+    state: CudaStateVec,
+    qubit: int,
+    angles: tuple[float, float],
+    **_params: SimulatorGateParams,
+) -> None:
     """R1XY gate (rotation in XY plane)."""
     if len(angles) != 2:
         msg = "R1XY gate requires exactly 2 angle parameters."
@@ -232,32 +252,56 @@ def R1XY(state: CudaStateVec, qubit: int, angles: tuple[float, float], **_params
 # =============================================================================
 
 
-def CX(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def CX(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """CNOT gate."""
     state.backend.cx(list(qubits))
 
 
-def CY(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def CY(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """CY gate."""
     state.backend.cy(list(qubits))
 
 
-def CZ(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def CZ(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """CZ gate."""
     state.backend.cz(list(qubits))
 
 
-def SWAP(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SWAP(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """SWAP gate."""
     state.backend.swap(list(qubits))
 
 
-def ISWAP(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
-    """iSWAP gate."""
+def ISWAP(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
+    """ISWAP gate."""
     state.backend.iswap(list(qubits))
 
 
-def G(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def G(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """G gate (Quantinuum native two-qubit gate)."""
     state.backend.g(list(qubits))
 
@@ -267,32 +311,56 @@ def G(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGatePara
 # =============================================================================
 
 
-def SXX(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SXX(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(XX) gate."""
     state.backend.sxx(list(qubits))
 
 
-def SXXdg(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SXXdg(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(XX)-dagger gate."""
     state.backend.sxxdg(list(qubits))
 
 
-def SYY(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SYY(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(YY) gate."""
     state.backend.syy(list(qubits))
 
 
-def SYYdg(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SYYdg(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(YY)-dagger gate."""
     state.backend.syydg(list(qubits))
 
 
-def SZZ(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SZZ(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(ZZ) gate."""
     state.backend.szz(list(qubits))
 
 
-def SZZdg(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SZZdg(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(ZZ)-dagger gate."""
     state.backend.szzdg(list(qubits))
 
@@ -302,7 +370,12 @@ def SZZdg(state: CudaStateVec, qubits: tuple[int, int], **_params: SimulatorGate
 # =============================================================================
 
 
-def RXX(state: CudaStateVec, qubits: tuple[int, int], angles: tuple[float], **_params: SimulatorGateParams) -> None:
+def RXX(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
     """RXX rotation gate."""
     if len(angles) != 1:
         msg = "RXX gate requires exactly 1 angle parameter."
@@ -310,7 +383,12 @@ def RXX(state: CudaStateVec, qubits: tuple[int, int], angles: tuple[float], **_p
     state.backend.rxx(angles[0], list(qubits))
 
 
-def RYY(state: CudaStateVec, qubits: tuple[int, int], angles: tuple[float], **_params: SimulatorGateParams) -> None:
+def RYY(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
     """RYY rotation gate."""
     if len(angles) != 1:
         msg = "RYY gate requires exactly 1 angle parameter."
@@ -318,7 +396,12 @@ def RYY(state: CudaStateVec, qubits: tuple[int, int], angles: tuple[float], **_p
     state.backend.ryy(angles[0], list(qubits))
 
 
-def RZZ(state: CudaStateVec, qubits: tuple[int, int], angles: tuple[float], **_params: SimulatorGateParams) -> None:
+def RZZ(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
     """RZZ rotation gate."""
     if len(angles) != 1:
         msg = "RZZ gate requires exactly 1 angle parameter."

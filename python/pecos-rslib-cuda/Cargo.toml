@@ -25,5 +25,8 @@ pecos-qsim = { workspace = true }
 pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 log.workspace = true
 
+[build-dependencies]
+pecos-build = { workspace = true }
+
 [lints]
 workspace = true

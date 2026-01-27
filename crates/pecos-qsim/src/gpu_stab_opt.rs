@@ -29,7 +29,7 @@
 //!
 //! # Memory Layout
 //!
-//! For n qubits with w_col = ceil(n/32) words per column and w_row = ceil(n/32) words per row:
+//! For n qubits with `w_col` = ceil(n/32) words per column and `w_row` = ceil(n/32) words per row:
 //!
 //! ```text
 //! Column view (for gates): col[qubit][word] -> generators [word*32..(word+1)*32]
@@ -49,8 +49,8 @@ use pecos_rng::{PecosRng, SeedableRng};
 #[derive(Clone)]
 pub struct GpuStabOpt {
     num_qubits: usize,
-    words_per_col: usize,  // ceil(num_qubits / 32) - for column storage
-    words_per_row: usize,  // ceil(num_qubits / 32) - for row storage
+    words_per_col: usize, // ceil(num_qubits / 32) - for column storage
+    words_per_row: usize, // ceil(num_qubits / 32) - for row storage
 
     // Column-major storage (for parallel gate application)
     // Layout: col_x[qubit * words_per_col + word] = generators [word*32..(word+1)*32]
@@ -348,7 +348,7 @@ impl GpuStabOpt {
         }
     }
 
-    /// Apply CX gate: X_c → X_c X_t, Z_t → Z_c Z_t
+    /// Apply CX gate: `X_c` → `X_c` `X_t`, `Z_t` → `Z_c` `Z_t`
     fn apply_cx(&mut self, control: usize, target: usize) {
         let ctrl_col = control * self.words_per_col;
         let tgt_col = target * self.words_per_col;
@@ -409,7 +409,7 @@ impl GpuStabOpt {
         }
     }
 
-    /// Apply CZ gate: X_a → X_a Z_b, X_b → Z_a X_b
+    /// Apply CZ gate: `X_a` → `X_a` `Z_b`, `X_b` → `Z_a` `X_b`
     fn apply_cz(&mut self, q1: usize, q2: usize) {
         let col1 = q1 * self.words_per_col;
         let col2 = q2 * self.words_per_col;

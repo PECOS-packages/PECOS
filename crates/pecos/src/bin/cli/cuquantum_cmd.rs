@@ -1,5 +1,6 @@
 //! Implementation of the `cuquantum` subcommand
 
+use pecos_build::Result;
 use pecos_build::cuquantum::config::auto_configure_cuquantum;
 use pecos_build::cuquantum::installer::{install_cuquantum, uninstall_cuquantum};
 use pecos_build::cuquantum::{
@@ -7,7 +8,6 @@ use pecos_build::cuquantum::{
     is_valid_cuquantum_installation,
 };
 use pecos_build::errors::Error;
-use pecos_build::Result;
 
 /// Run the cuquantum subcommand
 pub fn run(command: super::CuQuantumCommands) -> Result<()> {
@@ -218,14 +218,13 @@ fn run_validate(path: Option<String>) -> Result<()> {
                     .join(lib_dir)
                     .read_dir()
                     .ok()
-                    .map(|entries| {
+                    .is_some_and(|entries| {
                         entries.flatten().any(|e| {
                             e.file_name()
                                 .to_str()
                                 .is_some_and(|n| n.starts_with(&pattern))
                         })
                     })
-                    .unwrap_or(false)
             } else {
                 false
             };

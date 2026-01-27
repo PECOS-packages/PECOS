@@ -70,13 +70,14 @@ use std::collections::HashSet;
 /// # Returns
 ///
 /// A sorted vector of qubit indices that are input qubits.
+#[must_use]
 pub fn detect_input_qubits(circuit: &TickCircuit) -> Vec<usize> {
     let mut all_qubits: HashSet<usize> = HashSet::new();
     let mut prepared_qubits: HashSet<usize> = HashSet::new();
 
     for (_tick_idx, tick) in circuit.iter_ticks() {
         for gate in tick.gates() {
-            for &qubit in gate.qubits.iter() {
+            for &qubit in &gate.qubits {
                 let q = qubit.index();
                 all_qubits.insert(q);
 
@@ -102,13 +103,14 @@ pub fn detect_input_qubits(circuit: &TickCircuit) -> Vec<usize> {
 /// # Returns
 ///
 /// A sorted vector of qubit indices that are ancilla qubits.
+#[must_use]
 pub fn detect_ancilla_qubits(circuit: &TickCircuit) -> Vec<usize> {
     let mut prepared_qubits: HashSet<usize> = HashSet::new();
 
     for (_tick_idx, tick) in circuit.iter_ticks() {
         for gate in tick.gates() {
             if gate.gate_type == GateType::Prep {
-                for &qubit in gate.qubits.iter() {
+                for &qubit in &gate.qubits {
                     prepared_qubits.insert(qubit.index());
                 }
             }
@@ -134,13 +136,14 @@ pub fn detect_ancilla_qubits(circuit: &TickCircuit) -> Vec<usize> {
 /// # Returns
 ///
 /// A sorted vector of qubit indices that are output qubits.
+#[must_use]
 pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
     let mut all_qubits: HashSet<usize> = HashSet::new();
     let mut measured_qubits: HashSet<usize> = HashSet::new();
 
     for (_tick_idx, tick) in circuit.iter_ticks() {
         for gate in tick.gates() {
-            for &qubit in gate.qubits.iter() {
+            for &qubit in &gate.qubits {
                 let q = qubit.index();
                 all_qubits.insert(q);
 
@@ -188,7 +191,7 @@ impl CircuitIO {
 
         for (_tick_idx, tick) in circuit.iter_ticks() {
             for gate in tick.gates() {
-                for &qubit in gate.qubits.iter() {
+                for &qubit in &gate.qubits {
                     let q = qubit.index();
                     all_qubits.insert(q);
 
@@ -267,6 +270,7 @@ fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
 /// Propagates a Pauli fault through a circuit using `PauliProp`.
 ///
 /// Returns the propagated `PauliProp` state after the circuit.
+#[must_use]
 pub fn propagate_fault(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
     let mut prop = init_pauli_prop_with_fault(fault);
 
@@ -301,7 +305,8 @@ pub fn propagate_fault(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
 
 /// Propagates multiple faults through a circuit.
 ///
-/// Faults are combined (XORed) and then propagated.
+/// Faults are combined (`XORed`) and then propagated.
+#[must_use]
 pub fn propagate_faults(circuit: &TickCircuit, faults: &FaultConfiguration) -> PauliProp {
     let mut prop = PauliProp::new();
 
@@ -341,6 +346,7 @@ pub fn propagate_faults(circuit: &TickCircuit, faults: &FaultConfiguration) -> P
 /// Checks if a propagated Pauli error anticommutes with a logical operator.
 ///
 /// Returns true if the error anticommutes (causes a logical error).
+#[must_use]
 pub fn anticommutes_with_logical(
     prop: &PauliProp,
     logical_xs: &[usize],
@@ -353,14 +359,14 @@ pub fn anticommutes_with_logical(
     let mut anticommute_count = 0;
 
     // Check X positions in propagated error against Z positions in logical
-    for &q in prop.get_x_qubits().iter() {
+    for &q in &prop.get_x_qubits() {
         if logical_zs.contains(&q) {
             anticommute_count += 1;
         }
     }
 
     // Check Z positions in propagated error against X positions in logical
-    for &q in prop.get_z_qubits().iter() {
+    for &q in &prop.get_z_qubits() {
         if logical_xs.contains(&q) {
             anticommute_count += 1;
         }
@@ -383,8 +389,9 @@ pub fn anticommutes_with_logical(
 ///
 /// # Returns
 ///
-/// A tuple of (z_syndrome_flips, x_syndrome_flips) where each is a Vec of qubit indices
+/// A tuple of (`z_syndrome_flips`, `x_syndrome_flips`) where each is a Vec of qubit indices
 /// that would have their measurement outcome flipped.
+#[must_use]
 pub fn get_syndrome_flips(
     prop: &PauliProp,
     z_measurement_qubits: &[usize],
@@ -415,6 +422,7 @@ pub fn get_syndrome_flips(
 /// Checks if a propagated error would produce a non-trivial syndrome.
 ///
 /// Returns true if any syndrome bit would be flipped.
+#[must_use]
 pub fn has_syndrome(
     prop: &PauliProp,
     z_measurement_qubits: &[usize],
@@ -445,12 +453,13 @@ pub fn has_syndrome(
 /// # Arguments
 ///
 /// * `prop` - The propagated Pauli error (on output qubits)
-/// * `stabilizers` - List of stabilizers as (x_positions, z_positions) tuples
+/// * `stabilizers` - List of stabilizers as (`x_positions`, `z_positions`) tuples
 ///
 /// # Returns
 ///
 /// A vector of bools, one per stabilizer, indicating whether each would be flipped.
 /// True means the error anticommutes with that stabilizer (syndrome = 1).
+#[must_use]
 pub fn compute_stabilizer_syndromes(
     prop: &PauliProp,
     stabilizers: &[(&[usize], &[usize])],
@@ -463,14 +472,14 @@ pub fn compute_stabilizer_syndromes(
             let mut anticommute_count = 0;
 
             // Check X positions in error against Z positions in stabilizer
-            for &q in prop.get_x_qubits().iter() {
+            for &q in &prop.get_x_qubits() {
                 if z_positions.contains(&q) {
                     anticommute_count += 1;
                 }
             }
 
             // Check Z positions in error against X positions in stabilizer
-            for &q in prop.get_z_qubits().iter() {
+            for &q in &prop.get_z_qubits() {
                 if x_positions.contains(&q) {
                     anticommute_count += 1;
                 }
@@ -483,7 +492,8 @@ pub fn compute_stabilizer_syndromes(
 
 /// Extracts the output error from a propagated error.
 ///
-/// Returns a new PauliProp containing only the error on the specified output qubits.
+/// Returns a new `PauliProp` containing only the error on the specified output qubits.
+#[must_use]
 pub fn extract_output_error(prop: &PauliProp, output_qubits: &[usize]) -> PauliProp {
     let mut output = PauliProp::new();
 
@@ -512,17 +522,19 @@ pub struct FollowUpConfig {
     pub output_qubits: Vec<usize>,
 
     /// Stabilizers that will be measured in the follow-up EC round.
-    /// Each stabilizer is (x_positions, z_positions).
+    /// Each stabilizer is (`x_positions`, `z_positions`).
     pub follow_up_stabilizers: Vec<(Vec<usize>, Vec<usize>)>,
 }
 
 impl FollowUpConfig {
     /// Creates a new follow-up configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Sets the output qubits.
+    #[must_use]
     pub fn with_output_qubits(mut self, qubits: Vec<usize>) -> Self {
         self.output_qubits = qubits;
         self
@@ -534,6 +546,7 @@ impl FollowUpConfig {
     ///
     /// * `x_positions` - Qubits where the stabilizer has X
     /// * `z_positions` - Qubits where the stabilizer has Z
+    #[must_use]
     pub fn with_stabilizer(mut self, x_positions: Vec<usize>, z_positions: Vec<usize>) -> Self {
         self.follow_up_stabilizers.push((x_positions, z_positions));
         self
@@ -541,13 +554,15 @@ impl FollowUpConfig {
 
     /// Adds multiple stabilizers from a code definition.
     ///
-    /// Convenient for adding all stabilizers from a StabilizerCode.
+    /// Convenient for adding all stabilizers from a `StabilizerCode`.
+    #[must_use]
     pub fn with_stabilizers(mut self, stabilizers: Vec<(Vec<usize>, Vec<usize>)>) -> Self {
         self.follow_up_stabilizers.extend(stabilizers);
         self
     }
 
     /// Returns true if follow-up analysis is configured.
+    #[must_use]
     pub fn has_follow_up(&self) -> bool {
         !self.follow_up_stabilizers.is_empty()
     }
@@ -576,16 +591,19 @@ pub enum FaultClass {
 
 impl FaultClass {
     /// Returns true if this fault class represents a certain logical failure.
+    #[must_use]
     pub fn is_certain_failure(&self) -> bool {
         matches!(self, FaultClass::UndetectableLogicalError)
     }
 
     /// Returns true if this fault class is definitely safe.
+    #[must_use]
     pub fn is_safe(&self) -> bool {
         matches!(self, FaultClass::UndetectableStabilizer)
     }
 
     /// Returns true if this fault class is detectable by syndrome measurement.
+    #[must_use]
     pub fn is_detectable(&self) -> bool {
         matches!(self, FaultClass::DetectableError)
     }
@@ -614,16 +632,19 @@ pub enum SyndromeClass {
 
 impl SyndromeClass {
     /// Returns true if a decoder will always succeed for this syndrome.
+    #[must_use]
     pub fn is_correctable(&self) -> bool {
         matches!(self, SyndromeClass::Correctable)
     }
 
     /// Returns true if the decoder will always fail but can detect failure.
+    #[must_use]
     pub fn is_detected_failure(&self) -> bool {
         matches!(self, SyndromeClass::DetectedUncorrectable)
     }
 
     /// Returns true if decoder success depends on which fault occurred.
+    #[must_use]
     pub fn is_ambiguous(&self) -> bool {
         matches!(self, SyndromeClass::Ambiguous)
     }
@@ -644,11 +665,13 @@ pub struct SyndromeAnalysis {
 
 impl SyndromeAnalysis {
     /// Returns the total number of faults with this syndrome.
+    #[must_use]
     pub fn total_faults(&self) -> usize {
         self.correctable_count + self.uncorrectable_count
     }
 
     /// Returns the probability of successful correction assuming uniform fault distribution.
+    #[must_use]
     pub fn success_probability(&self) -> f64 {
         let total = self.total_faults();
         if total == 0 {
@@ -684,12 +707,12 @@ pub enum FaultToleranceFailure {
 
 impl FaultToleranceFailure {
     /// Returns a human-readable description.
+    #[must_use]
     pub fn description(&self) -> String {
         match self {
             FaultToleranceFailure::UndetectableLogicalErrors { count } => {
                 format!(
-                    "{} undetectable logical error(s): faults causing logical errors with no syndrome",
-                    count
+                    "{count} undetectable logical error(s): faults causing logical errors with no syndrome"
                 )
             }
             FaultToleranceFailure::AmbiguousSyndromes {
@@ -697,8 +720,7 @@ impl FaultToleranceFailure {
                 affected_faults,
             } => {
                 format!(
-                    "{} ambiguous syndrome(s) affecting {} fault(s): same syndrome, different logical outcomes",
-                    count, affected_faults
+                    "{count} ambiguous syndrome(s) affecting {affected_faults} fault(s): same syndrome, different logical outcomes"
                 )
             }
         }
@@ -732,7 +754,7 @@ pub struct DecoderAnalysis {
     /// Total faults that fall into ambiguous syndromes.
     pub ambiguous_faults: usize,
 
-    /// Faults with no syndrome (undetectable) - from FaultClass analysis.
+    /// Faults with no syndrome (undetectable) - from `FaultClass` analysis.
     pub undetectable_logical_errors: usize,
 
     /// Faults with no syndrome that are stabilizers.
@@ -773,11 +795,13 @@ impl DecoderAnalysis {
     }
 
     /// Simple boolean check for fault tolerance.
+    #[must_use]
     pub fn is_ft(&self) -> bool {
         self.undetectable_logical_errors == 0 && self.ambiguous_syndromes == 0
     }
 
     /// Returns the total number of faults analyzed.
+    #[must_use]
     pub fn total_faults(&self) -> usize {
         self.correctable_faults
             + self.detected_uncorrectable_faults
@@ -789,6 +813,7 @@ impl DecoderAnalysis {
     /// Returns the best-case logical error rate (assuming optimal decoder choices).
     ///
     /// This counts undetectable logical errors plus the minority of ambiguous faults.
+    #[must_use]
     pub fn best_case_failure_rate(&self, total_faults: usize) -> f64 {
         if total_faults == 0 {
             return 0.0;
@@ -812,6 +837,7 @@ impl DecoderAnalysis {
     }
 
     /// Returns the worst-case logical error rate (assuming adversarial decoder choices).
+    #[must_use]
     pub fn worst_case_failure_rate(&self, total_faults: usize) -> f64 {
         if total_faults == 0 {
             return 0.0;
@@ -861,11 +887,13 @@ pub struct SyndromeHistory {
 
 impl SyndromeHistory {
     /// Returns true if any round has a non-trivial syndrome.
+    #[must_use]
     pub fn is_detected(&self) -> bool {
         self.rounds.iter().any(|r| r.iter().any(|&b| b != 0))
     }
 
     /// Returns the indices of rounds where syndrome was non-trivial.
+    #[must_use]
     pub fn detection_rounds(&self) -> Vec<usize> {
         self.rounds
             .iter()
@@ -876,6 +904,7 @@ impl SyndromeHistory {
     }
 
     /// Returns true if this is an empty history (no rounds).
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rounds.is_empty()
     }
@@ -954,6 +983,7 @@ impl SyndromeHistoryResult {
     }
 
     /// Simple boolean check for fault tolerance.
+    #[must_use]
     pub fn is_ft(&self) -> bool {
         self.never_detected_logical_errors == 0 && self.ambiguous_histories == 0
     }
@@ -962,7 +992,8 @@ impl SyndromeHistoryResult {
 /// Extracts measurement rounds from a circuit.
 ///
 /// A measurement round is a set of Z-basis measurement operations at the same tick.
-/// Note: Currently only tracks Z-basis measurements (Measure, MeasureFree).
+/// Note: Currently only tracks Z-basis measurements (Measure, `MeasureFree`).
+#[must_use]
 pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound> {
     let mut rounds = Vec::new();
 
@@ -974,8 +1005,8 @@ pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound
             match gate.gate_type {
                 GateType::Measure | GateType::MeasureFree => {
                     // Z-basis measurement
-                    for q in gate.qubits.iter() {
-                        z_qubits.push(q.0 as usize);
+                    for q in &gate.qubits {
+                        z_qubits.push(q.0);
                     }
                 }
                 _ => {}
@@ -1002,7 +1033,7 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
 
     // Initialize with fault
     for (qubit, pauli_byte) in fault.location.qubits.iter().zip(fault.paulis.iter()) {
-        let qubit_idx = qubit.0 as usize;
+        let qubit_idx = qubit.0;
         match pauli_byte {
             1 => prop.add_x(qubit_idx), // X
             2 => prop.add_z(qubit_idx), // Z
@@ -1115,12 +1146,12 @@ fn compute_syndrome_history(
 
         // Z measurements detect X errors
         for &q in &round.z_qubits {
-            syndrome.push(if prop.contains_x(q) { 1 } else { 0 });
+            syndrome.push(u8::from(prop.contains_x(q)));
         }
 
         // X measurements detect Z errors
         for &q in &round.x_qubits {
-            syndrome.push(if prop.contains_z(q) { 1 } else { 0 });
+            syndrome.push(u8::from(prop.contains_z(q)));
         }
 
         history_rounds.push(syndrome);
@@ -1138,11 +1169,12 @@ fn compute_syndrome_history(
 /// * `prop` - The propagated Pauli error
 /// * `z_measurement_qubits` - Qubits measured in Z basis
 /// * `x_measurement_qubits` - Qubits measured in X basis
-/// * `logicals` - Logical operators as (x_positions, z_positions) pairs
+/// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs
 ///
 /// # Returns
 ///
 /// The classification of the fault.
+#[must_use]
 pub fn classify_fault(
     prop: &PauliProp,
     z_measurement_qubits: &[usize],
@@ -1182,21 +1214,25 @@ pub struct PropagationResult {
 
 impl PropagationResult {
     /// Returns true if any syndrome bit is flipped.
+    #[must_use]
     pub fn has_syndrome(&self) -> bool {
         !self.z_syndrome_flips.is_empty() || !self.x_syndrome_flips.is_empty()
     }
 
     /// Returns true if any logical error occurred.
+    #[must_use]
     pub fn has_logical_error(&self) -> bool {
         self.logical_errors.iter().any(|&e| e)
     }
 
     /// Returns the weight of the propagated error.
+    #[must_use]
     pub fn output_weight(&self) -> usize {
         self.propagated_error.weight()
     }
 
     /// Classifies this fault based on detectability and logical error.
+    #[must_use]
     pub fn classify(&self) -> FaultClass {
         if self.has_syndrome() {
             FaultClass::DetectableError
@@ -1238,11 +1274,13 @@ pub struct FaultToleranceAnalysis {
 
 impl FaultToleranceAnalysis {
     /// Returns true if the circuit is t-fault tolerant (no undetectable logical errors).
+    #[must_use]
     pub fn is_fault_tolerant(&self) -> bool {
         self.undetectable_logical_errors == 0
     }
 
     /// Returns the fraction of faults that are certain failures.
+    #[must_use]
     pub fn failure_rate(&self) -> f64 {
         if self.total_tested == 0 {
             0.0
@@ -1252,6 +1290,7 @@ impl FaultToleranceAnalysis {
     }
 
     /// Returns the fraction of faults that are safe (stabilizers).
+    #[must_use]
     pub fn safe_rate(&self) -> f64 {
         if self.total_tested == 0 {
             0.0
@@ -1261,6 +1300,7 @@ impl FaultToleranceAnalysis {
     }
 
     /// Returns the fraction of faults that are detectable.
+    #[must_use]
     pub fn detectable_rate(&self) -> f64 {
         if self.total_tested == 0 {
             0.0
@@ -1304,6 +1344,7 @@ impl<'a> PauliPropChecker<'a> {
     /// Automatically analyzes the circuit's I/O structure to determine:
     /// - Which qubits are inputs (need s + r <= t enumeration)
     /// - Which qubits are outputs (may need follow-up syndrome analysis)
+    #[must_use]
     pub fn new(circuit: &'a TickCircuit) -> Self {
         let locations = super::circuit_runner::extract_spacetime_locations(circuit, false);
         let io = CircuitIO::from_circuit(circuit);
@@ -1316,18 +1357,21 @@ impl<'a> PauliPropChecker<'a> {
     }
 
     /// Sets the fault check configuration.
+    #[must_use]
     pub fn with_config(mut self, config: FaultCheckConfig) -> Self {
         self.config = config;
         self
     }
 
     /// Sets whether to include initial qubit locations.
+    #[must_use]
     pub fn with_initial_locations(mut self, include: bool) -> Self {
         self.locations = super::circuit_runner::extract_spacetime_locations(self.circuit, include);
         self
     }
 
     /// Returns the spacetime locations that will be checked.
+    #[must_use]
     pub fn locations(&self) -> &[SpacetimeLocation] {
         &self.locations
     }
@@ -1336,6 +1380,7 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// These are qubits used by the circuit but never prepared, meaning they
     /// carry data (and potentially errors) from a previous stage.
+    #[must_use]
     pub fn input_qubits(&self) -> &[usize] {
         &self.io.input_qubits
     }
@@ -1344,6 +1389,7 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// These are qubits used by the circuit but never measured, meaning they
     /// carry data (and potentially errors) to the next stage.
+    #[must_use]
     pub fn output_qubits(&self) -> &[usize] {
         &self.io.output_qubits
     }
@@ -1352,6 +1398,7 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// If true, fault tolerance analysis should use s + r <= t enumeration
     /// to account for input faults.
+    #[must_use]
     pub fn has_input_qubits(&self) -> bool {
         self.io.has_inputs()
     }
@@ -1360,21 +1407,25 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// If true and analysis shows ambiguous syndromes, follow-up stabilizers
     /// may be needed to properly assess fault tolerance.
+    #[must_use]
     pub fn has_output_qubits(&self) -> bool {
         self.io.has_outputs()
     }
 
     /// Returns the ancilla qubits (prepared within the circuit).
+    #[must_use]
     pub fn ancilla_qubits(&self) -> &[usize] {
         &self.io.ancilla_qubits
     }
 
     /// Returns the measured qubits.
+    #[must_use]
     pub fn measured_qubits(&self) -> &[usize] {
         &self.io.measured_qubits
     }
 
     /// Returns a description of the circuit type based on I/O structure.
+    #[must_use]
     pub fn circuit_type(&self) -> &'static str {
         self.io.circuit_type()
     }
@@ -1389,6 +1440,7 @@ impl<'a> PauliPropChecker<'a> {
     /// # Returns
     ///
     /// The result of the fault tolerance check.
+    #[must_use]
     pub fn check_logical_error(
         &self,
         logical_xs: &[usize],
@@ -1425,6 +1477,7 @@ impl<'a> PauliPropChecker<'a> {
     /// Checks for logical errors against multiple logical operators.
     ///
     /// Returns true if any fault causes an error on any logical operator.
+    #[must_use]
     pub fn check_multiple_logicals(
         &self,
         logicals: &[(&[usize], &[usize])], // Vec of (logical_xs, logical_zs)
@@ -1463,6 +1516,7 @@ impl<'a> PauliPropChecker<'a> {
     /// Checks if the propagated error has weight above a threshold.
     ///
     /// Useful for checking if errors spread beyond acceptable limits.
+    #[must_use]
     pub fn check_error_weight(&self, max_output_weight: usize) -> FaultCheckResult {
         let mut failures = Vec::new();
         let mut total_tested = 0;
@@ -1504,6 +1558,7 @@ impl<'a> PauliPropChecker<'a> {
     /// # Returns
     ///
     /// Faults that produce unexpected syndrome behavior.
+    #[must_use]
     pub fn check_syndrome_detection(
         &self,
         z_ancillas: &[usize],
@@ -1548,12 +1603,13 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// * `z_ancillas` - Z-basis measurement qubits
     /// * `x_ancillas` - X-basis measurement qubits
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs
+    /// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs
     /// * `data_qubits` - Data qubit indices (for checking output error weight)
     ///
     /// # Returns
     ///
     /// A vector of `PropagationResult` for each fault configuration.
+    #[must_use]
     pub fn analyze_all_faults(
         &self,
         z_ancillas: &[usize],
@@ -1605,12 +1661,13 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// * `z_ancillas` - Qubits measured in Z basis (for detecting X errors)
     /// * `x_ancillas` - Qubits measured in X basis (for detecting Z errors)
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs
+    /// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs
     /// * `collect_failures` - Whether to store detailed info for failures
     ///
     /// # Returns
     ///
     /// A `FaultToleranceAnalysis` with counts and optional failure details.
+    #[must_use]
     pub fn analyze_fault_tolerance(
         &self,
         z_ancillas: &[usize],
@@ -1679,6 +1736,7 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// This is a convenience method that returns true if all weight-t faults
     /// either produce a syndrome (detectable) or are equivalent to a stabilizer.
+    #[must_use]
     pub fn is_fault_tolerant(
         &self,
         z_ancillas: &[usize],
@@ -1717,11 +1775,12 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// * `z_ancillas` - Qubits measured in Z basis
     /// * `x_ancillas` - Qubits measured in X basis
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs
+    /// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs
     ///
     /// # Returns
     ///
     /// A `DecoderAnalysis` with detailed syndrome-by-syndrome breakdown.
+    #[must_use]
     pub fn analyze_decoder_requirements(
         &self,
         z_ancillas: &[usize],
@@ -1828,7 +1887,7 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// # Arguments
     ///
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs
+    /// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs
     ///
     /// # Returns
     ///
@@ -1840,6 +1899,7 @@ impl<'a> PauliPropChecker<'a> {
     /// 2. For each fault, computes its syndrome at each measurement round
     /// 3. Groups faults by their complete syndrome history
     /// 4. Checks if each history pattern has consistent logical outcomes
+    #[must_use]
     pub fn analyze_with_syndrome_history(
         &self,
         logicals: &[(&[usize], &[usize])],
@@ -1967,18 +2027,19 @@ impl<'a> PauliPropChecker<'a> {
     /// - Input faults (weight s) on the input qubits (errors from previous stage)
     /// - Internal faults (weight r) at circuit locations
     ///
-    /// where s + r <= t (the fault tolerance level from config.max_weight).
+    /// where s + r <= t (the fault tolerance level from `config.max_weight`).
     ///
     /// # Arguments
     ///
     /// * `z_ancillas` - Qubits measured in Z basis
     /// * `x_ancillas` - Qubits measured in X basis
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs
+    /// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs
     /// * `collect_failures` - Whether to store detailed info for failures
     ///
     /// # Returns
     ///
     /// A `FaultToleranceAnalysis` covering all (s, r) combinations.
+    #[must_use]
     pub fn analyze_with_input_faults(
         &self,
         z_ancillas: &[usize],
@@ -2151,6 +2212,7 @@ impl<'a> PauliPropChecker<'a> {
     /// For circuits with input qubits, this checks all (s, r) combinations
     /// where s + r <= t. For self-contained circuits, it's equivalent to
     /// `is_fault_tolerant`.
+    #[must_use]
     pub fn is_fault_tolerant_with_inputs(
         &self,
         z_ancillas: &[usize],
@@ -2171,13 +2233,13 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// # The key insight
     ///
-    /// The "full syndrome" = (gadget_syndrome, follow_up_syndrome) where:
+    /// The "full syndrome" = (`gadget_syndrome`, `follow_up_syndrome`) where:
     /// - `gadget_syndrome` = syndromes from ancilla measurements within the gadget
     /// - `follow_up_syndrome` = syndromes the output error would produce in ideal EC
     ///
-    /// Two faults with the same gadget_syndrome but different logical outcomes MUST
+    /// Two faults with the same `gadget_syndrome` but different logical outcomes MUST
     /// produce different output errors (otherwise they'd be equivalent). These different
-    /// output errors will produce different follow_up_syndromes, making the full
+    /// output errors will produce different `follow_up_syndromes`, making the full
     /// syndrome unique.
     ///
     /// # Arguments
@@ -2190,6 +2252,7 @@ impl<'a> PauliPropChecker<'a> {
     /// # Returns
     ///
     /// A `DecoderAnalysis` using the combined (gadget + follow-up) syndrome.
+    #[must_use]
     pub fn analyze_with_follow_up(
         &self,
         z_ancillas: &[usize],
@@ -2248,28 +2311,21 @@ impl<'a> PauliPropChecker<'a> {
             // Classify based on combined detectability
             let detected = gadget_syndrome_detected || follow_up_detected;
 
-            if !detected {
-                // Undetectable by either gadget or follow-up
-                if causes_logical_error {
-                    undetectable_logical_errors += 1;
-                } else {
-                    undetectable_stabilizers += 1;
-                }
-            } else {
+            if detected {
                 // Build full syndrome key: gadget syndrome + follow-up syndrome
                 let mut full_syndrome: Vec<u8> = Vec::new();
 
                 // Encode gadget syndrome as bit vector
                 for &q in z_ancillas {
-                    full_syndrome.push(if z_flips.contains(&q) { 1 } else { 0 });
+                    full_syndrome.push(u8::from(z_flips.contains(&q)));
                 }
                 for &q in x_ancillas {
-                    full_syndrome.push(if x_flips.contains(&q) { 1 } else { 0 });
+                    full_syndrome.push(u8::from(x_flips.contains(&q)));
                 }
 
                 // Append follow-up syndrome
                 for &s in &follow_up_syndrome {
-                    full_syndrome.push(if s { 1 } else { 0 });
+                    full_syndrome.push(u8::from(s));
                 }
 
                 // Update counts for this full syndrome
@@ -2278,6 +2334,13 @@ impl<'a> PauliPropChecker<'a> {
                     entry.1 += 1;
                 } else {
                     entry.0 += 1;
+                }
+            } else {
+                // Undetectable by either gadget or follow-up
+                if causes_logical_error {
+                    undetectable_logical_errors += 1;
+                } else {
+                    undetectable_stabilizers += 1;
                 }
             }
         }
@@ -2338,6 +2401,7 @@ impl<'a> PauliPropChecker<'a> {
     ///
     /// A gadget passes if the combined (gadget + follow-up) syndromes uniquely
     /// identify all logical outcomes.
+    #[must_use]
     pub fn is_gadget_fault_tolerant(
         &self,
         z_ancillas: &[usize],
@@ -2352,7 +2416,7 @@ impl<'a> PauliPropChecker<'a> {
 
 /// Generates all Pauli error combinations of a given weight on specified qubits.
 ///
-/// Returns a vector of vectors, where each inner vector has length equal to qubits.len()
+/// Returns a vector of vectors, where each inner vector has length equal to `qubits.len()`
 /// and contains Pauli indices (0=I, 1=X, 2=Y, 3=Z).
 fn generate_pauli_combinations(
     qubits: &[usize],
@@ -2949,7 +3013,7 @@ mod tests {
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0])];
 
         let is_ft = checker.is_fault_tolerant(z_ancillas, x_ancillas, logicals);
-        println!("Simple circuit is 1-fault tolerant for X errors: {}", is_ft);
+        println!("Simple circuit is 1-fault tolerant for X errors: {is_ft}");
     }
 
     #[test]
@@ -3922,7 +3986,7 @@ mod tests {
             .with_stabilizer(vec![], vec![1, 2]);
 
         let is_ft = checker.is_gadget_fault_tolerant(z_ancillas, x_ancillas, logicals, &follow_up);
-        println!("Gadget is fault tolerant with follow-up: {}", is_ft);
+        println!("Gadget is fault tolerant with follow-up: {is_ft}");
     }
 
     #[test]

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import cmath
+
 import cupy as cp
 
 if TYPE_CHECKING:
@@ -210,10 +212,10 @@ def RZ(
 
     matrix = cp.asarray(
         [
-            cp.exp(-1j * theta / 2),
+            cmath.exp(-1j * float(theta) / 2),
             0,
             0,
-            cp.exp(1j * theta / 2),
+            cmath.exp(1j * float(theta) / 2),
         ],
         dtype=state.cp_type,
     )

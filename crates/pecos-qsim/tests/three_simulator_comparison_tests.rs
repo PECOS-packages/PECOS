@@ -342,8 +342,12 @@ fn test_non_clifford_circuits() {
 
     // Test two-qubit rotations
     compare_general_circuit(2, |sv, dm| {
-        sv.h(&qid(0)).h(&qid(1)).rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
-        dm.h(&qid(0)).h(&qid(1)).rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
+        sv.h(&qid(0))
+            .h(&qid(1))
+            .rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
+        dm.h(&qid(0))
+            .h(&qid(1))
+            .rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
     });
 
     // Test complex non-Clifford circuit

@@ -13,10 +13,10 @@
 //! Parallel stabilizer simulator using row-based threading (STABSim-style).
 //!
 //! This module provides [`GpuStabParallel`], a stabilizer simulator that uses the
-//! same parallel algorithms as STABSim (arxiv:2507.03092) but implemented with
+//! same parallel algorithms as `STABSim` (arxiv:2507.03092) but implemented with
 //! rayon for CPU parallelism.
 //!
-//! # Design (from STABSim)
+//! # Design (from `STABSim`)
 //!
 //! 1. **Row-based threading**: Each thread handles one generator row
 //! 2. **Embarrassingly parallel gates**: Clifford gates update rows independently
@@ -377,7 +377,7 @@ impl GpuStabParallel {
         }
     }
 
-    /// Apply CX gate: X_ctrl -> X_ctrl X_tgt, Z_tgt -> Z_ctrl Z_tgt
+    /// Apply CX gate: `X_ctrl` -> `X_ctrl` `X_tgt`, `Z_tgt` -> `Z_ctrl` `Z_tgt`
     fn apply_cx(&mut self, ctrl: usize, tgt: usize) {
         let words_per_row = self.words_per_row;
         let ctrl_word = ctrl / 32;
@@ -414,7 +414,7 @@ impl GpuStabParallel {
         }
     }
 
-    /// Apply CZ gate: X_a -> X_a Z_b, X_b -> Z_a X_b
+    /// Apply CZ gate: `X_a` -> `X_a` `Z_b`, `X_b` -> `Z_a` `X_b`
     fn apply_cz(&mut self, q1: usize, q2: usize) {
         let words_per_row = self.words_per_row;
         let word1 = q1 / 32;

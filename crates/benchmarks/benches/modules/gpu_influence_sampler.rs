@@ -16,7 +16,7 @@
 //! - Surface codes with distance d and 2*d syndrome extraction rounds
 //! - Varying shot counts
 //!
-//! Run with: cargo bench --features gpu-sims -p benchmarks -- gpu_influence
+//! Run with: cargo bench --features gpu-sims -p benchmarks -- `gpu_influence`
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
@@ -101,21 +101,35 @@ fn build_surface_code_grid(distance: usize, num_rounds: usize) -> DagCircuit {
 }
 
 /// Helper to build influence maps for both CPU and GPU.
-fn build_influence_maps(circuit: &DagCircuit, num_data: usize) -> (DagFaultInfluenceMap, GpuInfluenceMapData) {
+fn build_influence_maps(
+    circuit: &DagCircuit,
+    num_data: usize,
+) -> (DagFaultInfluenceMap, GpuInfluenceMapData) {
     let logical_qubits: Vec<usize> = (0..num_data).collect();
     let builder = InfluenceBuilder::new(circuit).with_logical_z(logical_qubits);
     let influence_map = builder.build();
 
     let (
-        num_loc, num_det, num_log,
-        det_off_x, det_data_x, det_off_y, det_data_y, det_off_z, det_data_z,
-        log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+        num_loc,
+        num_det,
+        num_log,
+        det_off_x,
+        det_data_x,
+        det_off_y,
+        det_data_y,
+        det_off_z,
+        det_data_z,
+        log_off_x,
+        log_data_x,
+        log_off_y,
+        log_data_y,
+        log_off_z,
+        log_data_z,
     ) = influence_map.export_csr();
 
     let gpu_map = GpuInfluenceMapData::from_csr(
-        num_loc, num_det, num_log,
-        det_off_x, det_data_x, det_off_y, det_data_y, det_off_z, det_data_z,
-        log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+        num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
+        det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
     );
 
     (influence_map, gpu_map)
@@ -138,7 +152,7 @@ fn bench_cpu_vs_gpu_surface_codes<M: Measurement>(c: &mut Criterion<M>) {
 
         let label = format!("d{distance}_r{num_rounds}");
 
-        group.throughput(Throughput::Elements(num_shots as u64));
+        group.throughput(Throughput::Elements(u64::from(num_shots)));
 
         // CPU benchmark
         let noise = UniformNoiseModel::depolarizing(p_error);
@@ -149,8 +163,8 @@ fn bench_cpu_vs_gpu_surface_codes<M: Measurement>(c: &mut Criterion<M>) {
         });
 
         // GPU benchmark
-        let mut gpu_sampler = GpuInfluenceSampler::new(&gpu_map, seed)
-            .expect("Failed to create GPU sampler");
+        let mut gpu_sampler =
+            GpuInfluenceSampler::new(&gpu_map, seed).expect("Failed to create GPU sampler");
         // Warm up
         let _ = gpu_sampler.sample_uniform(1000, p_error);
 
@@ -179,7 +193,7 @@ fn bench_gpu_sampler_shot_scaling<M: Measurement>(c: &mut Criterion<M>) {
     for num_shots in [10_000u32, 50_000, 100_000, 500_000, 1_000_000] {
         let label = format!("{num_shots}shots");
 
-        group.throughput(Throughput::Elements(num_shots as u64));
+        group.throughput(Throughput::Elements(u64::from(num_shots)));
 
         // CPU benchmark
         let noise = UniformNoiseModel::depolarizing(p_error);
@@ -190,8 +204,8 @@ fn bench_gpu_sampler_shot_scaling<M: Measurement>(c: &mut Criterion<M>) {
         });
 
         // GPU benchmark
-        let mut gpu_sampler = GpuInfluenceSampler::new(&gpu_map, seed)
-            .expect("Failed to create GPU sampler");
+        let mut gpu_sampler =
+            GpuInfluenceSampler::new(&gpu_map, seed).expect("Failed to create GPU sampler");
         let _ = gpu_sampler.sample_uniform(1000, p_error);
 
         group.bench_with_input(BenchmarkId::new("GPU", &label), &num_shots, |b, &shots| {

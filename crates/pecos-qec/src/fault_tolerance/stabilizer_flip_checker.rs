@@ -186,7 +186,7 @@ pub struct StabilizerFlipAnalysis {
     pub detectable_with_logical: usize,
 
     /// Syndrome patterns that have ambiguous corrections.
-    /// Maps syndrome -> (correctable_count, uncorrectable_count).
+    /// Maps syndrome -> (`correctable_count`, `uncorrectable_count`).
     pub ambiguous_syndromes: BTreeMap<u64, (usize, usize)>,
 
     /// Weight of errors analyzed.
@@ -493,15 +493,10 @@ impl<'a> StabilizerFlipChecker<'a> {
     /// Compute the distance of the code.
     ///
     /// The distance is the minimum weight of an undetectable logical error.
-    /// Returns None if no undetectable logical error is found up to max_weight.
+    /// Returns None if no undetectable logical error is found up to `max_weight`.
     #[must_use]
     pub fn compute_distance(&self, max_weight: usize) -> Option<usize> {
-        for w in 1..=max_weight {
-            if self.has_undetectable_logical(w) {
-                return Some(w);
-            }
-        }
-        None
+        (1..=max_weight).find(|&w| self.has_undetectable_logical(w))
     }
 }
 
@@ -626,7 +621,7 @@ impl Iterator for PauliProductIterator<'_> {
     }
 }
 
-/// Build a PauliString from positions and Pauli types.
+/// Build a `PauliString` from positions and Pauli types.
 fn build_pauli_string(positions: &[usize], paulis: &[u8]) -> PauliString {
     let mut xs = Vec::new();
     let mut ys = Vec::new();
@@ -659,12 +654,12 @@ mod tests {
             .unwrap()
     }
 
-    /// Helper to create X-only PauliString
+    /// Helper to create X-only `PauliString`
     fn pauli_x(qubits: &[usize]) -> PauliString {
         PauliString::from_decomposed(QuarterPhase::PlusOne, qubits.iter().copied(), [], [])
     }
 
-    /// Helper to create Z-only PauliString
+    /// Helper to create Z-only `PauliString`
     fn pauli_z(qubits: &[usize]) -> PauliString {
         PauliString::from_decomposed(QuarterPhase::PlusOne, [], [], qubits.iter().copied())
     }
@@ -714,7 +709,7 @@ mod tests {
             ErrorClass::Detectable { syndrome } => {
                 assert!(syndrome.contains(&1));
             }
-            _ => panic!("Expected Detectable, got {:?}", class),
+            _ => panic!("Expected Detectable, got {class:?}"),
         }
     }
 
@@ -731,7 +726,7 @@ mod tests {
             ErrorClass::UndetectableLogical { logical_zs, .. } => {
                 assert!(logical_zs.contains(&0));
             }
-            _ => panic!("Expected UndetectableLogical, got {:?}", class),
+            _ => panic!("Expected UndetectableLogical, got {class:?}"),
         }
     }
 

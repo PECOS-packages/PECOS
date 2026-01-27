@@ -651,10 +651,14 @@ pub trait RngProbabilityExt: RngCore {
     /// assert!(outcome < 4);
     /// ```
     #[inline]
+    #[allow(clippy::cast_precision_loss)]
     fn sample_discrete_cdf(&mut self, cdf: &[f64]) -> usize {
         debug_assert!(!cdf.is_empty(), "CDF must not be empty");
         let rand_val = (self.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64);
-        match cdf.binary_search_by(|&c| c.partial_cmp(&rand_val).unwrap_or(std::cmp::Ordering::Equal)) {
+        match cdf.binary_search_by(|&c| {
+            c.partial_cmp(&rand_val)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
             Ok(i) => i,
             Err(i) => i.min(cdf.len() - 1),
         }
@@ -783,8 +787,8 @@ impl RngBulkExt for rand::rngs::ThreadRng {
 #[allow(clippy::cast_precision_loss)]
 mod tests {
     use super::*;
-    use rand::rngs::SmallRng;
     use rand::Rng;
+    use rand::rngs::SmallRng;
     use rand_core::SeedableRng;
 
     #[test]
@@ -1157,7 +1161,10 @@ mod tests {
         // Sample many times and check bounds
         for _ in 0..10_000 {
             let idx = rng.sample_discrete_cdf(&cdf);
-            assert!(idx < 4, "sample_discrete_cdf returned out-of-bounds index {idx}");
+            assert!(
+                idx < 4,
+                "sample_discrete_cdf returned out-of-bounds index {idx}"
+            );
         }
     }
 
@@ -1168,7 +1175,7 @@ mod tests {
         let cdf = rng.compute_cdf(&probs);
 
         let mut counts = [0usize; 4];
-        let trials = 100_000;
+        let trials: usize = 100_000;
 
         for _ in 0..trials {
             let idx = rng.sample_discrete_cdf(&cdf);
@@ -1177,6 +1184,7 @@ mod tests {
 
         // Check distribution matches expected probabilities (allow 10% relative error)
         for (i, &expected) in probs.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss)]
             let observed = counts[i] as f64 / trials as f64;
             let error = (observed - expected).abs() / expected;
             assert!(
@@ -1219,7 +1227,7 @@ mod tests {
         let mut rng2 = SmallRng::seed_from_u64(42);
         let cdf = rng2.compute_cdf(&probs);
 
-        let trials = 50_000;
+        let trials: usize = 50_000;
         let mut counts_linear = vec![0usize; probs.len()];
         let mut counts_binary = vec![0usize; probs.len()];
 
@@ -1230,7 +1238,9 @@ mod tests {
 
         // Both should produce similar distributions
         for i in 0..probs.len() {
+            #[allow(clippy::cast_precision_loss)]
             let linear_ratio = counts_linear[i] as f64 / trials as f64;
+            #[allow(clippy::cast_precision_loss)]
             let binary_ratio = counts_binary[i] as f64 / trials as f64;
             let diff = (linear_ratio - binary_ratio).abs();
             assert!(
@@ -1283,7 +1293,10 @@ mod tests {
     fn test_bernoulli_always_false() {
         let mut rng = SmallRng::seed_from_u64(42);
         for _ in 0..1000 {
-            assert!(!rng.bernoulli(0.0), "bernoulli(0.0) should always return false");
+            assert!(
+                !rng.bernoulli(0.0),
+                "bernoulli(0.0) should always return false"
+            );
         }
     }
 
@@ -1291,24 +1304,27 @@ mod tests {
     fn test_bernoulli_always_true() {
         let mut rng = SmallRng::seed_from_u64(42);
         for _ in 0..1000 {
-            assert!(rng.bernoulli(1.0), "bernoulli(1.0) should always return true");
+            assert!(
+                rng.bernoulli(1.0),
+                "bernoulli(1.0) should always return true"
+            );
         }
     }
 
     #[test]
     fn test_bernoulli_distribution() {
         let mut rng = SmallRng::seed_from_u64(42);
-        let trials = 100_000;
+        let trials: u32 = 100_000;
         let p = 0.3;
 
-        let mut true_count = 0;
+        let mut true_count: u32 = 0;
         for _ in 0..trials {
             if rng.bernoulli(p) {
                 true_count += 1;
             }
         }
 
-        let observed = true_count as f64 / trials as f64;
+        let observed = f64::from(true_count) / f64::from(trials);
         let error = (observed - p).abs();
         assert!(
             error < 0.01,
@@ -1324,10 +1340,10 @@ mod tests {
 
         let p = 0.25;
         let threshold = rng2.probability_threshold(p);
-        let trials = 10_000;
+        let trials: i32 = 10_000;
 
-        let mut bernoulli_count = 0;
-        let mut threshold_count = 0;
+        let mut bernoulli_count: i32 = 0;
+        let mut threshold_count: i32 = 0;
 
         for _ in 0..trials {
             if rng1.bernoulli(p) {
@@ -1339,8 +1355,8 @@ mod tests {
         }
 
         // Both methods should produce similar counts
-        let diff = (bernoulli_count as i32 - threshold_count as i32).abs();
-        let max_diff = (trials as f64 * 0.02) as i32; // Allow 2% difference
+        let diff = (bernoulli_count - threshold_count).abs();
+        let max_diff = trials / 50; // Allow 2% difference
         assert!(
             diff < max_diff,
             "bernoulli and check_probability differ too much: {bernoulli_count} vs {threshold_count}"

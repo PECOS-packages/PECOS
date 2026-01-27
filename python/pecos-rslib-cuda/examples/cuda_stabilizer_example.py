@@ -42,7 +42,9 @@ def check_cuda_available():
         return True
     except ImportError:
         print("pecos-rslib-cuda is not installed.")
-        print("Please build and install it: cd python/pecos-rslib-cuda && maturin develop")
+        print(
+            "Please build and install it: cd python/pecos-rslib-cuda && maturin develop"
+        )
         return False
 
 

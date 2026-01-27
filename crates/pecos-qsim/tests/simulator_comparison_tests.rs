@@ -127,8 +127,12 @@ fn test_compare_complex_circuit() {
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 
     // Apply more gates
-    sv.x(&qid(0)).h(&qid(1)).rz(Angle64::from_radians(PI / 3.0), &qid(2));
-    dm.x(&qid(0)).h(&qid(1)).rz(Angle64::from_radians(PI / 3.0), &qid(2));
+    sv.x(&qid(0))
+        .h(&qid(1))
+        .rz(Angle64::from_radians(PI / 3.0), &qid(2));
+    dm.x(&qid(0))
+        .h(&qid(1))
+        .rz(Angle64::from_radians(PI / 3.0), &qid(2));
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 }
@@ -222,7 +226,7 @@ fn test_builtin_prepare_plus_state_consistency() {
 
     // All methods should produce the correct |+...+⟩ state with uniform probabilities
     // For n qubits, each basis state should have probability 1/2^n
-    let expected_prob = 1.0 / (1 << num_qubits) as f64; // 0.25 for 2 qubits
+    let expected_prob = 1.0 / f64::from(1 << num_qubits); // 0.25 for 2 qubits
 
     for i in 0..(1 << num_qubits) {
         let p1 = sv1.probability(i);

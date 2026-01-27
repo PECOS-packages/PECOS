@@ -22,7 +22,7 @@ pub struct GpuInfluenceMapData {
     pub num_logicals: u32,
 
     // CSR arrays for detector influences
-    /// Offsets for X detector influences: offsets_x[loc] to offsets_x[loc+1]
+    /// Offsets for X detector influences: `offsets_x`[loc] to `offsets_x`[loc+1]
     pub detector_offsets_x: Vec<u32>,
     /// Detector indices for X faults.
     pub detector_data_x: Vec<u32>,
@@ -52,6 +52,7 @@ pub struct GpuInfluenceMapData {
 
 impl GpuInfluenceMapData {
     /// Create an empty influence map.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             num_locations: 0,
@@ -74,6 +75,7 @@ impl GpuInfluenceMapData {
 
     /// Create from CSR arrays exported from a CPU influence map.
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn from_csr(
         num_locations: u32,
         num_detectors: u32,
@@ -460,7 +462,7 @@ impl GpuInfluenceSampler {
         let logical_words = self.num_logicals.div_ceil(32).max(1);
 
         // Update params
-        let p_threshold = (p_error * u32::MAX as f64) as u32;
+        let p_threshold = (p_error * f64::from(u32::MAX)) as u32;
         let params = SamplerParams {
             num_locations: self.num_locations,
             num_shots,
@@ -657,9 +659,9 @@ impl GpuInfluenceSampler {
 /// Result from GPU sampling.
 pub struct GpuSamplingResult {
     pub num_shots: usize,
-    /// Flat array: [shot * detector_words + word]
+    /// Flat array: [shot * `detector_words` + word]
     pub detector_flips: Vec<u32>,
-    /// Flat array: [shot * logical_words + word]
+    /// Flat array: [shot * `logical_words` + word]
     pub logical_flips: Vec<u32>,
     pub num_detectors: usize,
     pub num_logicals: usize,
@@ -669,6 +671,7 @@ pub struct GpuSamplingResult {
 
 impl GpuSamplingResult {
     /// Count shots with any logical error.
+    #[must_use]
     pub fn count_logical_errors(&self) -> usize {
         if self.num_logicals == 0 {
             return 0;
@@ -687,6 +690,7 @@ impl GpuSamplingResult {
     }
 
     /// Check if a specific shot has a logical error.
+    #[must_use]
     pub fn has_logical_error(&self, shot: usize) -> bool {
         if shot >= self.num_shots || self.num_logicals == 0 {
             return false;
@@ -696,6 +700,7 @@ impl GpuSamplingResult {
     }
 
     /// Get detector flip bits for a specific shot.
+    #[must_use]
     pub fn detector_flips_for_shot(&self, shot: usize) -> Vec<u32> {
         if shot >= self.num_shots {
             return vec![];

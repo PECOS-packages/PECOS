@@ -72,7 +72,7 @@ pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     bench_parallel_execution(c);
 }
 
-/// Benchmark individual gate performance on StateVec.
+/// Benchmark individual gate performance on `StateVec`.
 /// Tests gates commonly used in QEC circuits: H, SZ, SX, CX, SZZ, SXX, and prep.
 fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Individual Gates");

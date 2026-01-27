@@ -10,11 +10,11 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Sparse State Vector Simulator (AoS Layout)
+//! Sparse State Vector Simulator (`AoS` Layout)
 //!
 //! Uses a sorted `Vec<(usize, Complex64)>` for efficient memory usage when
-//! the state has few non-zero amplitudes. This AoS (Array of Structures) layout
-//! is faster than SoA for typical sparse states due to better cache locality
+//! the state has few non-zero amplitudes. This `AoS` (Array of Structures) layout
+//! is faster than `SoA` for typical sparse states due to better cache locality
 //! and simpler code paths.
 //!
 //! ## When to use
@@ -41,7 +41,7 @@
 //!
 //! ## Design decisions
 //!
-//! 1. **Sorted Vec over HashMap**: 3x more memory efficient, better cache locality
+//! 1. **Sorted Vec over `HashMap`**: 3x more memory efficient, better cache locality
 //! 2. **Scratch buffer reuse**: Gates use a persistent scratch buffer, avoiding
 //!    repeated allocation during gate sequences.
 //! 3. **Binary search for pairs**: O(log k) pair lookup, acceptable for sparse states
@@ -67,10 +67,10 @@ where
     R: Rng,
 {
     /// Non-zero amplitudes sorted by basis state index.
-    /// Invariant: indices are unique and sorted in ascending order (when needs_sort is false).
+    /// Invariant: indices are unique and sorted in ascending order (when `needs_sort` is false).
     amplitudes: Vec<(usize, Complex64)>,
 
-    /// Number of qubits (determines max index: 2^num_qubits - 1)
+    /// Number of qubits (determines max index: `2^num_qubits` - 1)
     num_qubits: usize,
 
     /// Random number generator for measurements
@@ -90,7 +90,7 @@ where
 
     /// Deferred sorting flag. When true, amplitudes may not be sorted.
     /// Gates that modify indices set this to true; gates that need sorted
-    /// order call ensure_sorted() first. This avoids redundant sorts when
+    /// order call `ensure_sorted()` first. This avoids redundant sorts when
     /// multiple index-modifying gates are applied in sequence.
     needs_sort: bool,
 }
@@ -154,7 +154,7 @@ impl<R: Rng> SparseStateVecAoS<R> {
         self.amplitudes.len()
     }
 
-    /// Get the sparsity ratio (num_amplitudes / 2^num_qubits)
+    /// Get the sparsity ratio (`num_amplitudes` / `2^num_qubits`)
     #[inline]
     #[must_use]
     pub fn sparsity(&self) -> f64 {
@@ -226,7 +226,7 @@ impl<R: Rng> SparseStateVecAoS<R> {
     }
 
     /// Ensure amplitudes are sorted by index. Call this before operations that
-    /// require sorted order (e.g., binary search, partition_point, two-pointer merge).
+    /// require sorted order (e.g., binary search, `partition_point`, two-pointer merge).
     #[inline]
     fn ensure_sorted(&mut self) {
         if self.needs_sort {
@@ -301,7 +301,14 @@ impl<R: Rng> SparseStateVecAoS<R> {
     ///
     /// For small states (<= 8 amplitudes), uses binary search which has lower overhead.
     #[inline]
-    fn apply_single_qubit_gate(&mut self, q: usize, a: Complex64, b: Complex64, c: Complex64, d: Complex64) {
+    fn apply_single_qubit_gate(
+        &mut self,
+        q: usize,
+        a: Complex64,
+        b: Complex64,
+        c: Complex64,
+        d: Complex64,
+    ) {
         let mask = 1usize << q;
         let len = self.amplitudes.len();
 
@@ -409,7 +416,14 @@ impl<R: Rng> SparseStateVecAoS<R> {
     /// Apply single-qubit gate for small states using binary search.
     /// Lower overhead than two-pointer for <= 8 amplitudes.
     #[inline]
-    fn apply_single_qubit_gate_small(&mut self, q: usize, a: Complex64, b: Complex64, c: Complex64, d: Complex64) {
+    fn apply_single_qubit_gate_small(
+        &mut self,
+        q: usize,
+        a: Complex64,
+        b: Complex64,
+        c: Complex64,
+        d: Complex64,
+    ) {
         let mask = 1usize << q;
         let len = self.amplitudes.len();
 
@@ -427,8 +441,9 @@ impl<R: Rng> SparseStateVecAoS<R> {
             let paired_amp = self.amplitudes[i + 1..]
                 .binary_search_by_key(&paired_idx, |&(j, _)| j)
                 .ok()
-                .map(|offset| self.amplitudes[i + 1 + offset].1)
-                .unwrap_or(Complex64::new(0.0, 0.0));
+                .map_or(Complex64::new(0.0, 0.0), |offset| {
+                    self.amplitudes[i + 1 + offset].1
+                });
 
             let new_low = a * amp + b * paired_amp;
             let new_high = c * amp + d * paired_amp;
@@ -474,7 +489,7 @@ impl<R: Rng> SparseStateVecAoS<R> {
     /// SIMD-optimized H gate implementation.
     ///
     /// Processes pairs in batches of 2 using f64x4 SIMD operations inline.
-    /// For the H gate: new_low = (low + high) / √2, new_high = (low - high) / √2
+    /// For the H gate: `new_low` = (low + high) / √2, `new_high` = (low - high) / √2
     #[inline]
     fn apply_h_simd(&mut self, q: usize) {
         let mask = 1usize << q;
@@ -591,8 +606,10 @@ impl<R: Rng> SparseStateVecAoS<R> {
                 low_ptr += 1;
             } else {
                 // Unpaired high
-                let new_low = Complex64::new(high_amp.re * FRAC_1_SQRT_2, high_amp.im * FRAC_1_SQRT_2);
-                let new_high = Complex64::new(-high_amp.re * FRAC_1_SQRT_2, -high_amp.im * FRAC_1_SQRT_2);
+                let new_low =
+                    Complex64::new(high_amp.re * FRAC_1_SQRT_2, high_amp.im * FRAC_1_SQRT_2);
+                let new_high =
+                    Complex64::new(-high_amp.re * FRAC_1_SQRT_2, -high_amp.im * FRAC_1_SQRT_2);
 
                 if new_low.norm_sqr() > self.epsilon {
                     self.scratch.push((high_partner, new_low));
@@ -682,8 +699,9 @@ impl<R: Rng> SparseStateVecAoS<R> {
             let paired_amp = self.amplitudes[i + 1..]
                 .binary_search_by_key(&paired_idx, |&(j, _)| j)
                 .ok()
-                .map(|offset| self.amplitudes[i + 1 + offset].1)
-                .unwrap_or(Complex64::new(0.0, 0.0));
+                .map_or(Complex64::new(0.0, 0.0), |offset| {
+                    self.amplitudes[i + 1 + offset].1
+                });
 
             // Apply gate
             let new_0 = a * amp + b * paired_amp;
@@ -757,14 +775,17 @@ impl<R: Rng> SparseStateVecAoS<R> {
         // For larger states, use O(k) partition-swap
         // Find the boundary between control=0 and control=1 indices
         // Since array is sorted, we can use partition_point
-        let control_boundary = self.amplitudes.partition_point(|&(idx, _)| idx & control_mask == 0);
+        let control_boundary = self
+            .amplitudes
+            .partition_point(|&(idx, _)| idx & control_mask == 0);
 
         // Control=0 indices stay unchanged
         // Control=1 indices need X applied on target bit
 
         // For control=1 indices, partition by target bit
         let control1_slice = &self.amplitudes[control_boundary..];
-        let target_boundary_in_control1 = control1_slice.partition_point(|&(idx, _)| idx & target_mask == 0);
+        let target_boundary_in_control1 =
+            control1_slice.partition_point(|&(idx, _)| idx & target_mask == 0);
         let target_boundary = control_boundary + target_boundary_in_control1;
 
         // After CX on control=1:
@@ -883,7 +904,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
                 let n_ones = (*idx & combined_mask).count_ones();
                 *idx ^= combined_mask;
                 // Phase = i^k * (-1)^n_ones
-                let phase = if n_ones % 2 == 0 { i_to_k } else { -i_to_k };
+                let phase = if n_ones.is_multiple_of(2) {
+                    i_to_k
+                } else {
+                    -i_to_k
+                };
                 *amp *= phase;
             }
         }
@@ -1036,7 +1061,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     // -------------------------------------------------------------------------
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "CX requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
 
         if qubits.len() == 2 {
             // Single pair: use O(k) partition-swap (needs sorted input)
@@ -1065,7 +1093,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "CZ requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
 
         if qubits.len() == 2 {
             // Single pair: simple path
@@ -1102,7 +1133,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
         // CY: if control=1, apply Y to target
         // Y|0⟩ = i|1⟩, Y|1⟩ = -i|0⟩
-        debug_assert!(qubits.len() % 2 == 0, "CY requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CY requires pairs of qubits"
+        );
 
         if qubits.len() == 2 {
             let control_mask = 1usize << qubits[0].0;
@@ -1148,7 +1182,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     }
 
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "SWAP requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SWAP requires pairs of qubits"
+        );
 
         if qubits.len() == 2 {
             // Single SWAP: simple path
@@ -1192,7 +1229,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     fn iswap(&mut self, qubits: &[QubitId]) -> &mut Self {
         // iSWAP: |00⟩→|00⟩, |01⟩→i|10⟩, |10⟩→i|01⟩, |11⟩→|11⟩
         // Swaps bits when they differ, multiplies by i for each swap
-        debug_assert!(qubits.len() % 2 == 0, "iSWAP requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "iSWAP requires pairs of qubits"
+        );
 
         if qubits.len() == 2 {
             let mask1 = 1usize << qubits[0].0;
@@ -1257,20 +1297,25 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
         if qubits.len() == 1 {
             // Single qubit: simple path
             let bit_mask = 1usize << qubits[0].0;
-            let prob_one: f64 = self.amplitudes
+            let prob_one: f64 = self
+                .amplitudes
                 .iter()
                 .filter(|&&(idx, _)| idx & bit_mask != 0)
                 .map(|&(_, amp)| amp.norm_sqr())
                 .sum();
 
-            let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
+            let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
             let outcome = self.rng.bernoulli(prob_one);
 
             let keep_mask_value = if outcome { bit_mask } else { 0 };
-            self.amplitudes.retain(|&(idx, _)| (idx & bit_mask) == keep_mask_value);
+            self.amplitudes
+                .retain(|&(idx, _)| (idx & bit_mask) == keep_mask_value);
             self.normalize();
 
-            return vec![MeasurementResult { outcome, is_deterministic }];
+            return vec![MeasurementResult {
+                outcome,
+                is_deterministic,
+            }];
         }
 
         // Batched measurement: compute all outcome probabilities in single pass
@@ -1333,8 +1378,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
             let outcome = (sampled_outcome >> i) & 1 == 1;
             // Use pre-computed marginal probability for determinism check
             let prob_one = marginals[i];
-            let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
-            results.push(MeasurementResult { outcome, is_deterministic });
+            let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
+            results.push(MeasurementResult {
+                outcome,
+                is_deterministic,
+            });
         }
 
         // Collapse: keep only amplitudes matching sampled outcome
@@ -1346,7 +1394,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
             }
         }
 
-        self.amplitudes.retain(|&(idx, _)| (idx & combined_mask) == expected_pattern);
+        self.amplitudes
+            .retain(|&(idx, _)| (idx & combined_mask) == expected_pattern);
         self.normalize();
 
         results
@@ -1529,7 +1578,13 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
         let theta = theta.to_radians_signed();
         let phi = phi.to_radians_signed();
         let lambda = lambda.to_radians_signed();
@@ -1698,10 +1753,7 @@ mod tests {
             let a2 = sim2.get_amplitude(i);
             assert!(
                 (a1 - a2).norm() < 1e-10,
-                "Mismatch at {}: {:?} vs {:?}",
-                i,
-                a1,
-                a2
+                "Mismatch at {i}: {a1:?} vs {a2:?}"
             );
         }
     }
@@ -1781,10 +1833,7 @@ mod tests {
             let a2 = sim2.get_amplitude(i);
             assert!(
                 (a1 - a2).norm() < 1e-10,
-                "S gate mismatch at {}: {:?} vs {:?}",
-                i,
-                a1,
-                a2
+                "S gate mismatch at {i}: {a1:?} vs {a2:?}"
             );
         }
 
@@ -1805,10 +1854,7 @@ mod tests {
             let a2 = sim4.get_amplitude(i);
             assert!(
                 (a1 - a2).norm() < 1e-10,
-                "Sdg gate mismatch at {}: {:?} vs {:?}",
-                i,
-                a1,
-                a2
+                "Sdg gate mismatch at {i}: {a1:?} vs {a2:?}"
             );
         }
     }
@@ -1839,10 +1885,7 @@ mod tests {
             let a2 = sim2.get_amplitude(i);
             assert!(
                 (a1 - a2).norm() < 1e-10,
-                "Y gate mismatch at {}: {:?} vs {:?}",
-                i,
-                a1,
-                a2
+                "Y gate mismatch at {i}: {a1:?} vs {a2:?}"
             );
         }
     }
@@ -1872,10 +1915,7 @@ mod tests {
             let a2 = sim2.get_amplitude(i);
             assert!(
                 (a1 - a2).norm() < 1e-10,
-                "CY gate mismatch at {}: {:?} vs {:?}",
-                i,
-                a1,
-                a2
+                "CY gate mismatch at {i}: {a1:?} vs {a2:?}"
             );
         }
     }
@@ -1905,10 +1945,7 @@ mod tests {
             let a2 = sim2.get_amplitude(i);
             assert!(
                 (a1 - a2).norm() < 1e-10,
-                "iSWAP mismatch at {}: {:?} vs {:?}",
-                i,
-                a1,
-                a2
+                "iSWAP mismatch at {i}: {a1:?} vs {a2:?}"
             );
         }
     }

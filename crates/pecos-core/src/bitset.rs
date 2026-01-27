@@ -142,11 +142,11 @@ impl BitSet {
     /// Toggle an index without bounds checking.
     ///
     /// # Safety
-    /// The caller must ensure the BitSet was created with sufficient capacity
+    /// The caller must ensure the `BitSet` was created with sufficient capacity
     /// via `with_capacity(max_index)` where `max_index > index`.
     ///
     /// This is an optimization for hot paths like CX gate implementation where
-    /// we know all BitSets are pre-sized to `num_qubits`.
+    /// we know all `BitSets` are pre-sized to `num_qubits`.
     #[inline]
     pub fn toggle_unchecked(&mut self, index: usize) {
         let word_idx = index / 64;

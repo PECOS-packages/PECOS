@@ -29,7 +29,11 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-def init_zero(state: CudaStabilizer, qubit: int, **_params: SimulatorGateParams) -> None:
+def init_zero(
+    state: CudaStabilizer,
+    qubit: int,
+    **_params: SimulatorGateParams,
+) -> None:
     """Initialize qubit to |0> state."""
     state.backend.reset()
 
@@ -177,32 +181,56 @@ def Fdg(state: CudaStabilizer, qubit: int, **_params: SimulatorGateParams) -> No
 # =============================================================================
 
 
-def CX(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def CX(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """CNOT gate."""
     state.backend.cx(list(qubits))
 
 
-def CY(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def CY(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """CY gate."""
     state.backend.cy(list(qubits))
 
 
-def CZ(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def CZ(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """CZ gate."""
     state.backend.cz(list(qubits))
 
 
-def SWAP(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SWAP(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """SWAP gate."""
     state.backend.swap(list(qubits))
 
 
-def ISWAP(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
-    """iSWAP gate."""
+def ISWAP(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
+    """ISWAP gate."""
     state.backend.iswap(list(qubits))
 
 
-def G(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def G(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """G gate (Quantinuum native two-qubit gate)."""
     state.backend.g(list(qubits))
 
@@ -212,32 +240,56 @@ def G(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGatePa
 # =============================================================================
 
 
-def SXX(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SXX(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(XX) gate."""
     state.backend.sxx(list(qubits))
 
 
-def SXXdg(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SXXdg(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(XX)-dagger gate."""
     state.backend.sxxdg(list(qubits))
 
 
-def SYY(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SYY(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(YY) gate."""
     state.backend.syy(list(qubits))
 
 
-def SYYdg(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SYYdg(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(YY)-dagger gate."""
     state.backend.syydg(list(qubits))
 
 
-def SZZ(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SZZ(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(ZZ) gate."""
     state.backend.szz(list(qubits))
 
 
-def SZZdg(state: CudaStabilizer, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
+def SZZdg(
+    state: CudaStabilizer,
+    qubits: tuple[int, int],
+    **_params: SimulatorGateParams,
+) -> None:
     """sqrt(ZZ)-dagger gate."""
     state.backend.szzdg(list(qubits))
 

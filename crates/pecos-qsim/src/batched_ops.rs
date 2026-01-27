@@ -523,8 +523,8 @@ impl CommandBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SparseStab;
     use crate::CliffordGateable;
+    use crate::SparseStab;
     use pecos_core::QubitId;
 
     #[test]
@@ -611,88 +611,4 @@ mod tests {
         assert_eq!(format!("{:?}", sim1.stabs), format!("{:?}", sim2.stabs));
     }
 
-    /// Run with: cargo test -p pecos-qsim benchmark_batched_ops --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_batched_ops() {
-        use std::time::Instant;
-
-        println!("\n========================================");
-        println!("Batched vs Sequential SparseStab Ops");
-        println!("========================================\n");
-
-        let sizes = [50, 100, 200];
-        let iterations = 1000;
-
-        for &n in &sizes {
-            // Benchmark H gates
-            let qubits: Vec<usize> = (0..n).collect();
-            let qubit_ids: Vec<QubitId> = (0..n).map(QubitId).collect();
-
-            // Warmup
-            for _ in 0..10 {
-                let mut sim = SparseStab::new(n);
-                sim.h_batched(&qubits);
-                let mut sim = SparseStab::new(n);
-                sim.h(&qubit_ids);
-            }
-
-            // Benchmark batched H
-            let start = Instant::now();
-            for _ in 0..iterations {
-                let mut sim = SparseStab::new(n);
-                sim.h_batched(&qubits);
-            }
-            let batched_h_time = start.elapsed();
-
-            // Benchmark sequential H
-            let start = Instant::now();
-            for _ in 0..iterations {
-                let mut sim = SparseStab::new(n);
-                sim.h(&qubit_ids);
-            }
-            let sequential_h_time = start.elapsed();
-
-            let h_speedup = sequential_h_time.as_nanos() as f64 / batched_h_time.as_nanos() as f64;
-
-            // Benchmark CX gates
-            let cx_pairs: Vec<usize> = (0..n/2).flat_map(|i| [i*2, i*2+1]).collect();
-            let cx_qubit_ids: Vec<QubitId> = cx_pairs.iter().map(|&q| QubitId(q)).collect();
-
-            // Benchmark batched CX
-            let start = Instant::now();
-            for _ in 0..iterations {
-                let mut sim = SparseStab::new(n);
-                sim.h_batched(&qubits[..n/2]); // Create entanglement
-                sim.cx_batched(&cx_pairs);
-            }
-            let batched_cx_time = start.elapsed();
-
-            // Benchmark sequential CX
-            let start = Instant::now();
-            for _ in 0..iterations {
-                let mut sim = SparseStab::new(n);
-                sim.h(&qubit_ids[..n/2]);
-                sim.cx(&cx_qubit_ids);
-            }
-            let sequential_cx_time = start.elapsed();
-
-            let cx_speedup = sequential_cx_time.as_nanos() as f64 / batched_cx_time.as_nanos() as f64;
-
-            println!("n={} qubits:", n);
-            println!(
-                "  H gates:  batched={:.1} us, sequential={:.1} us, speedup={:.2}x",
-                batched_h_time.as_micros() as f64 / iterations as f64,
-                sequential_h_time.as_micros() as f64 / iterations as f64,
-                h_speedup
-            );
-            println!(
-                "  CX gates: batched={:.1} us, sequential={:.1} us, speedup={:.2}x",
-                batched_cx_time.as_micros() as f64 / iterations as f64,
-                sequential_cx_time.as_micros() as f64 / iterations as f64,
-                cx_speedup
-            );
-            println!();
-        }
-    }
 }

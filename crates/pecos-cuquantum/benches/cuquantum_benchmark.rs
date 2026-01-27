@@ -7,9 +7,9 @@
 //!
 //! **Requires cuQuantum to be installed.**
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use pecos_core::Angle64;
-use pecos_cuquantum::{is_cuquantum_available, CuStabilizer, CuStateVec, QubitId, TryClone};
+use pecos_cuquantum::{CuStabilizer, CuStateVec, QubitId, TryClone, is_cuquantum_available};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use std::f64::consts::PI;
 
@@ -43,14 +43,18 @@ fn bench_statevec_gates(c: &mut Criterion) {
 
         // Benchmark CX gates (linear chain)
         if num_qubits >= 2 {
-            group.bench_with_input(BenchmarkId::new("cx_chain", num_qubits), &num_qubits, |b, &n| {
-                b.iter(|| {
-                    for i in 0..n - 1 {
-                        sim.cx(&[QubitId(i), QubitId(i + 1)]);
-                    }
-                    black_box(&sim);
-                });
-            });
+            group.bench_with_input(
+                BenchmarkId::new("cx_chain", num_qubits),
+                &num_qubits,
+                |b, &n| {
+                    b.iter(|| {
+                        for i in 0..n - 1 {
+                            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+                        }
+                        black_box(&sim);
+                    });
+                },
+            );
         }
     }
 
@@ -88,14 +92,18 @@ fn bench_stabilizer_gates(c: &mut Criterion) {
 
         // Benchmark CX chain
         if num_qubits >= 2 {
-            group.bench_with_input(BenchmarkId::new("cx_chain", num_qubits), &num_qubits, |b, &n| {
-                b.iter(|| {
-                    for i in 0..n - 1 {
-                        sim.cx(&[QubitId(i), QubitId(i + 1)]);
-                    }
-                    black_box(&sim);
-                });
-            });
+            group.bench_with_input(
+                BenchmarkId::new("cx_chain", num_qubits),
+                &num_qubits,
+                |b, &n| {
+                    b.iter(|| {
+                        for i in 0..n - 1 {
+                            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+                        }
+                        black_box(&sim);
+                    });
+                },
+            );
         }
     }
 
@@ -270,34 +278,55 @@ fn bench_two_qubit_rotation_gates(c: &mut Criterion) {
         group.throughput(Throughput::Elements(num_pairs));
 
         // Benchmark RZZ gates (chain)
-        group.bench_with_input(BenchmarkId::new("rzz_chain", num_qubits), &num_qubits, |b, &n| {
-            b.iter(|| {
-                for i in 0..n - 1 {
-                    sim.rzz(Angle64::from_radians(PI / 4.0), &[QubitId(i), QubitId(i + 1)]);
-                }
-                black_box(&sim);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("rzz_chain", num_qubits),
+            &num_qubits,
+            |b, &n| {
+                b.iter(|| {
+                    for i in 0..n - 1 {
+                        sim.rzz(
+                            Angle64::from_radians(PI / 4.0),
+                            &[QubitId(i), QubitId(i + 1)],
+                        );
+                    }
+                    black_box(&sim);
+                });
+            },
+        );
 
         // Benchmark RXX gates (chain)
-        group.bench_with_input(BenchmarkId::new("rxx_chain", num_qubits), &num_qubits, |b, &n| {
-            b.iter(|| {
-                for i in 0..n - 1 {
-                    sim.rxx(Angle64::from_radians(PI / 4.0), &[QubitId(i), QubitId(i + 1)]);
-                }
-                black_box(&sim);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("rxx_chain", num_qubits),
+            &num_qubits,
+            |b, &n| {
+                b.iter(|| {
+                    for i in 0..n - 1 {
+                        sim.rxx(
+                            Angle64::from_radians(PI / 4.0),
+                            &[QubitId(i), QubitId(i + 1)],
+                        );
+                    }
+                    black_box(&sim);
+                });
+            },
+        );
 
         // Benchmark RYY gates (chain)
-        group.bench_with_input(BenchmarkId::new("ryy_chain", num_qubits), &num_qubits, |b, &n| {
-            b.iter(|| {
-                for i in 0..n - 1 {
-                    sim.ryy(Angle64::from_radians(PI / 4.0), &[QubitId(i), QubitId(i + 1)]);
-                }
-                black_box(&sim);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("ryy_chain", num_qubits),
+            &num_qubits,
+            |b, &n| {
+                b.iter(|| {
+                    for i in 0..n - 1 {
+                        sim.ryy(
+                            Angle64::from_radians(PI / 4.0),
+                            &[QubitId(i), QubitId(i + 1)],
+                        );
+                    }
+                    black_box(&sim);
+                });
+            },
+        );
     }
 
     group.finish();

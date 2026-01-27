@@ -37,6 +37,7 @@ use pecos_quantum::TickCircuit;
 /// # Returns
 ///
 /// A vector of all spacetime locations in the circuit.
+#[must_use]
 pub fn extract_spacetime_locations(
     circuit: &TickCircuit,
     include_initial: bool,
@@ -231,10 +232,10 @@ pub fn run_circuit_with_faults<S: CliffordGateable>(
     // Execute tick by tick
     for (tick_idx, tick) in circuit.iter_ticks() {
         // Get faults for this tick
+        let empty: &[&PauliFault] = &[];
         let (before_faults, after_faults) = faults_by_tick
             .get(&tick_idx)
-            .map(|(b, a)| (b.as_slice(), a.as_slice()))
-            .unwrap_or((&[], &[]));
+            .map_or((empty, empty), |(b, a)| (b.as_slice(), a.as_slice()));
 
         // Apply before-faults (typically for measurements)
         for fault in before_faults {
@@ -272,17 +273,19 @@ pub struct FaultCategoryAnalysis {
     pub total_tested: usize,
     /// Maximum fault weight tested.
     pub weight: usize,
-    /// Detailed failure information (when collect_failures is true).
+    /// Detailed failure information (when `collect_failures` is true).
     pub failures: Vec<(FaultConfiguration, FaultClass)>,
 }
 
 impl FaultCategoryAnalysis {
     /// Returns true if there are no undetectable logical errors.
+    #[must_use]
     pub fn is_fault_tolerant(&self) -> bool {
         self.undetectable_logical_errors == 0
     }
 
     /// Returns the fraction of faults that are detectable.
+    #[must_use]
     pub fn detection_rate(&self) -> f64 {
         if self.total_tested == 0 {
             1.0
@@ -331,6 +334,7 @@ pub struct FaultChecker<'a> {
 
 impl<'a> FaultChecker<'a> {
     /// Creates a new fault checker for the given circuit.
+    #[must_use]
     pub fn new(circuit: &'a TickCircuit) -> Self {
         let locations = extract_spacetime_locations(circuit, false);
         let io = CircuitIO::from_circuit(circuit);
@@ -343,18 +347,21 @@ impl<'a> FaultChecker<'a> {
     }
 
     /// Sets the fault check configuration.
+    #[must_use]
     pub fn with_config(mut self, config: FaultCheckConfig) -> Self {
         self.config = config;
         self
     }
 
     /// Sets whether to include initial qubit locations.
+    #[must_use]
     pub fn with_initial_locations(mut self, include: bool) -> Self {
         self.locations = extract_spacetime_locations(self.circuit, include);
         self
     }
 
     /// Returns the spacetime locations that will be checked.
+    #[must_use]
     pub fn locations(&self) -> &[SpacetimeLocation] {
         &self.locations
     }
@@ -363,6 +370,7 @@ impl<'a> FaultChecker<'a> {
     ///
     /// If true, fault tolerance analysis should consider s + r <= t enumeration
     /// to account for input faults.
+    #[must_use]
     pub fn has_input_qubits(&self) -> bool {
         self.io.has_inputs()
     }
@@ -371,6 +379,7 @@ impl<'a> FaultChecker<'a> {
     ///
     /// If true and analysis shows ambiguous syndromes, follow-up stabilizers
     /// may be needed to properly assess fault tolerance.
+    #[must_use]
     pub fn has_output_qubits(&self) -> bool {
         self.io.has_outputs()
     }
@@ -378,6 +387,7 @@ impl<'a> FaultChecker<'a> {
     /// Returns the input qubits (used but never prepared).
     ///
     /// These qubits carry data/errors from a previous stage.
+    #[must_use]
     pub fn input_qubits(&self) -> &[usize] {
         &self.io.input_qubits
     }
@@ -385,21 +395,25 @@ impl<'a> FaultChecker<'a> {
     /// Returns the output qubits (used but never measured).
     ///
     /// These qubits carry data/errors to the next stage.
+    #[must_use]
     pub fn output_qubits(&self) -> &[usize] {
         &self.io.output_qubits
     }
 
     /// Returns the ancilla qubits (prepared within the circuit).
+    #[must_use]
     pub fn ancilla_qubits(&self) -> &[usize] {
         &self.io.ancilla_qubits
     }
 
     /// Returns the measured qubits.
+    #[must_use]
     pub fn measured_qubits(&self) -> &[usize] {
         &self.io.measured_qubits
     }
 
     /// Returns a description of the circuit type based on I/O structure.
+    #[must_use]
     pub fn circuit_type(&self) -> &'static str {
         self.io.circuit_type()
     }
@@ -473,12 +487,13 @@ impl<'a> FaultChecker<'a> {
     ///
     /// * `z_ancillas` - Qubits measured in Z basis (detect X errors)
     /// * `x_ancillas` - Qubits measured in X basis (detect Z errors)
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs
+    /// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs
     /// * `collect_failures` - Whether to store detailed info for failures
     ///
     /// # Returns
     ///
     /// A `FaultCategoryAnalysis` with counts of each fault category.
+    #[must_use]
     pub fn analyze_fault_categories(
         &self,
         z_ancillas: &[usize],
@@ -542,6 +557,7 @@ impl<'a> FaultChecker<'a> {
     ///
     /// A `FaultCheckResult` containing all fault configurations that cause
     /// undetectable logical errors.
+    #[must_use]
     pub fn check_undetectable_logical_errors(
         &self,
         z_ancillas: &[usize],
@@ -585,6 +601,7 @@ impl<'a> FaultChecker<'a> {
     ///
     /// A `FaultCheckResult` containing all fault configurations that produce
     /// no syndrome (regardless of whether they cause logical errors).
+    #[must_use]
     pub fn check_undetectable_errors(
         &self,
         z_ancillas: &[usize],
@@ -631,6 +648,7 @@ impl<'a> FaultChecker<'a> {
     ///
     /// A `FaultCheckResult` containing fault configurations where the output
     /// error weight exceeds the threshold.
+    #[must_use]
     pub fn check_output_weight_expansion(
         &self,
         output_qubits: &[usize],
@@ -1255,8 +1273,7 @@ mod tests {
         for q in 0..7 {
             assert!(
                 checker.input_qubits().contains(&q),
-                "Data qubit {} should be input",
-                q
+                "Data qubit {q} should be input"
             );
         }
 
@@ -1265,8 +1282,7 @@ mod tests {
         for q in 0..7 {
             assert!(
                 checker.output_qubits().contains(&q),
-                "Data qubit {} should be output",
-                q
+                "Data qubit {q} should be output"
             );
         }
 
@@ -1274,8 +1290,7 @@ mod tests {
         for q in 7..10 {
             assert!(
                 checker.ancilla_qubits().contains(&q),
-                "Ancilla {} should be prepared",
-                q
+                "Ancilla {q} should be prepared"
             );
         }
 
@@ -1283,8 +1298,7 @@ mod tests {
         for q in 7..10 {
             assert!(
                 checker.measured_qubits().contains(&q),
-                "Ancilla {} should be measured",
-                q
+                "Ancilla {q} should be measured"
             );
         }
 
@@ -1365,8 +1379,7 @@ mod tests {
         for q in 0..7 {
             assert!(
                 checker.output_qubits().contains(&q),
-                "Qubit {} should be output",
-                q
+                "Qubit {q} should be output"
             );
         }
 

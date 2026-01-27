@@ -66,6 +66,7 @@ pub trait IndexSet: Clone + Default + Debug {
     /// For [`BitSet`](crate::BitSet), this pre-allocates storage to avoid
     /// resizing during operations. For other implementations, this may
     /// just create an empty set.
+    #[must_use]
     fn with_capacity(max_index: usize) -> Self {
         let _ = max_index;
         Self::new()

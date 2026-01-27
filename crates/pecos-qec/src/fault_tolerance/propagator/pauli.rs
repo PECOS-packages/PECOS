@@ -35,7 +35,7 @@ pub enum Direction {
     Backward,
 }
 
-/// Applies a gate to a PauliProp in the specified direction.
+/// Applies a gate to a `PauliProp` in the specified direction.
 ///
 /// For forward propagation (P → G P G†), we apply the gate's transformation.
 /// For backward propagation (P → G† P G), we apply the adjoint transformation.
@@ -146,11 +146,11 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
     }
 }
 
-/// Propagates a PauliProp through a circuit in the specified direction.
+/// Propagates a `PauliProp` through a circuit in the specified direction.
 ///
 /// # Arguments
 /// * `circuit` - The circuit to propagate through
-/// * `prop` - The PauliProp to propagate (modified in place)
+/// * `prop` - The `PauliProp` to propagate (modified in place)
 /// * `direction` - Forward or Backward propagation
 pub fn propagate_through_circuit(
     circuit: &TickCircuit,
@@ -175,17 +175,17 @@ pub fn propagate_through_circuit(
     }
 }
 
-/// Propagates a PauliProp through a range of ticks in the specified direction.
+/// Propagates a `PauliProp` through a range of ticks in the specified direction.
 ///
 /// # Arguments
 /// * `circuit` - The circuit to propagate through
-/// * `prop` - The PauliProp to propagate (modified in place)
+/// * `prop` - The `PauliProp` to propagate (modified in place)
 /// * `start_tick` - The tick to start from (inclusive)
 /// * `end_tick` - The tick to end at (inclusive)
 /// * `direction` - Forward or Backward propagation
 ///
-/// For Forward: propagates from start_tick to end_tick
-/// For Backward: propagates from end_tick to start_tick
+/// For Forward: propagates from `start_tick` to `end_tick`
+/// For Backward: propagates from `end_tick` to `start_tick`
 pub fn propagate_tick_range(
     circuit: &TickCircuit,
     prop: &mut PauliProp,
@@ -300,6 +300,7 @@ pub fn propagate_backward_from_tick(
 /// // Z propagated backward through H becomes X
 /// assert!(prop.contains_x(0));
 /// ```
+#[must_use]
 pub fn propagate_fault_backward(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
     let mut prop = init_pauli_prop_with_fault(fault);
     let fault_tick = fault.location.tick;
@@ -332,6 +333,7 @@ pub fn propagate_fault_backward(circuit: &TickCircuit, fault: &PauliFault) -> Pa
 ///
 /// # Returns
 /// A `PauliProp` representing the backward-propagated observable.
+#[must_use]
 pub fn propagate_observable_backward(
     circuit: &TickCircuit,
     x_positions: &[usize],
@@ -351,7 +353,8 @@ pub fn propagate_observable_backward(
     prop
 }
 
-/// Initialize a PauliProp with the given fault.
+/// Initialize a `PauliProp` with the given fault.
+#[must_use]
 pub fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
     let mut prop = PauliProp::new();
     for (qubit, &pauli) in fault.location.qubits.iter().zip(fault.paulis.iter()) {

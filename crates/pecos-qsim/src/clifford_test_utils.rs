@@ -33,7 +33,7 @@
 #![allow(clippy::missing_panics_doc)]
 
 use crate::CliffordGateable;
-use pecos_core::{qid, qid2, QubitId};
+use pecos_core::{QubitId, qid, qid2};
 
 // ============================================================================
 // Helper: deterministic measurement assertion
@@ -817,7 +817,6 @@ pub fn verify_cz_decomposition<S: CliffordGateable>(sim: &mut S) {
             "CZ=HCXH on |{state:02b}>: q1 mismatch"
         );
     }
-
 }
 
 /// Verify X = HZH on both basis states.
@@ -935,7 +934,10 @@ pub fn verify_measurement_idempotence<S: CliffordGateable>(sim: &mut S) {
     let r1 = sim.mz(&qid(0));
     let r2 = sim.mz(&qid(0));
 
-    assert!(r2[0].is_deterministic, "Second measurement should be deterministic");
+    assert!(
+        r2[0].is_deterministic,
+        "Second measurement should be deterministic"
+    );
     assert_eq!(
         r1[0].outcome, r2[0].outcome,
         "Second measurement should match first"
@@ -960,7 +962,10 @@ pub fn verify_measurement_idempotence_entangled<S: CliffordGateable>(sim: &mut S
     );
 
     let r3 = sim.mz(&qid(1));
-    assert!(r3[0].is_deterministic, "Bell partner should be deterministic");
+    assert!(
+        r3[0].is_deterministic,
+        "Bell partner should be deterministic"
+    );
     assert_eq!(
         r1[0].outcome, r3[0].outcome,
         "Bell partner should correlate"
@@ -976,7 +981,10 @@ pub fn verify_measurement_then_gate<S: CliffordGateable>(sim: &mut S) {
     sim.x(&qid(0));
     let r2 = sim.mz(&qid(0));
 
-    assert!(r2[0].is_deterministic, "Post-X measurement should be deterministic");
+    assert!(
+        r2[0].is_deterministic,
+        "Post-X measurement should be deterministic"
+    );
     assert_ne!(
         r1[0].outcome, r2[0].outcome,
         "X should flip the measurement outcome"
@@ -1016,7 +1024,8 @@ pub fn verify_identity_gate<S: CliffordGateable>(sim: &mut S) {
 /// G = CZ * H(q0) * H(q1) * CZ, so
 /// G^2 = CZ * H*H * CZ * CZ * H*H * CZ = CZ * I * I * CZ = I.
 pub fn verify_g_squared<S: CliffordGateable>(sim: &mut S) {
-    let basis_states: &[(bool, bool)] = &[(false, false), (false, true), (true, false), (true, true)];
+    let basis_states: &[(bool, bool)] =
+        &[(false, false), (false, true), (true, false), (true, true)];
 
     for &(q0_one, q1_one) in basis_states {
         sim.reset();
@@ -1199,16 +1208,28 @@ pub fn verify_mnx_on_eigenstates<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0)); // |+>
     let result = sim.mnx(&qid(0));
-    assert!(result[0].is_deterministic, "mnx|+>: should be deterministic");
-    assert!(result[0].outcome, "mnx|+>: should be true (flipped from mx)");
+    assert!(
+        result[0].is_deterministic,
+        "mnx|+>: should be deterministic"
+    );
+    assert!(
+        result[0].outcome,
+        "mnx|+>: should be true (flipped from mx)"
+    );
 
     // mx on |-> = true (deterministic), so mnx on |-> = false (deterministic)
     sim.reset();
     sim.x(&qid(0));
     sim.h(&qid(0)); // |->
     let result = sim.mnx(&qid(0));
-    assert!(result[0].is_deterministic, "mnx|->: should be deterministic");
-    assert!(!result[0].outcome, "mnx|->: should be false (flipped from mx)");
+    assert!(
+        result[0].is_deterministic,
+        "mnx|->: should be deterministic"
+    );
+    assert!(
+        !result[0].outcome,
+        "mnx|->: should be false (flipped from mx)"
+    );
 }
 
 /// Verify `mny` on eigenstates gives the flipped outcome compared to `my`.
@@ -1218,16 +1239,28 @@ pub fn verify_mny_on_eigenstates<S: CliffordGateable>(sim: &mut S) {
     sim.h(&qid(0));
     sim.sz(&qid(0)); // |+Y>
     let result = sim.mny(&qid(0));
-    assert!(result[0].is_deterministic, "mny|+Y>: should be deterministic");
-    assert!(result[0].outcome, "mny|+Y>: should be true (flipped from my)");
+    assert!(
+        result[0].is_deterministic,
+        "mny|+Y>: should be deterministic"
+    );
+    assert!(
+        result[0].outcome,
+        "mny|+Y>: should be true (flipped from my)"
+    );
 
     // Prepare |-Y>: SZdg|+> has my = true, so mny should give false
     sim.reset();
     sim.h(&qid(0));
     sim.szdg(&qid(0)); // |-Y>
     let result = sim.mny(&qid(0));
-    assert!(result[0].is_deterministic, "mny|-Y>: should be deterministic");
-    assert!(!result[0].outcome, "mny|-Y>: should be false (flipped from my)");
+    assert!(
+        result[0].is_deterministic,
+        "mny|-Y>: should be deterministic"
+    );
+    assert!(
+        !result[0].outcome,
+        "mny|-Y>: should be false (flipped from my)"
+    );
 }
 
 /// Verify `mnz` on eigenstates gives the flipped outcome compared to `mz`.
@@ -1235,15 +1268,27 @@ pub fn verify_mnz_on_eigenstates<S: CliffordGateable>(sim: &mut S) {
     // mz on |0> = false, so mnz on |0> = true
     sim.reset();
     let result = sim.mnz(&qid(0));
-    assert!(result[0].is_deterministic, "mnz|0>: should be deterministic");
-    assert!(result[0].outcome, "mnz|0>: should be true (flipped from mz)");
+    assert!(
+        result[0].is_deterministic,
+        "mnz|0>: should be deterministic"
+    );
+    assert!(
+        result[0].outcome,
+        "mnz|0>: should be true (flipped from mz)"
+    );
 
     // mz on |1> = true, so mnz on |1> = false
     sim.reset();
     sim.x(&qid(0));
     let result = sim.mnz(&qid(0));
-    assert!(result[0].is_deterministic, "mnz|1>: should be deterministic");
-    assert!(!result[0].outcome, "mnz|1>: should be false (flipped from mz)");
+    assert!(
+        result[0].is_deterministic,
+        "mnz|1>: should be deterministic"
+    );
+    assert!(
+        !result[0].outcome,
+        "mnz|1>: should be false (flipped from mz)"
+    );
 }
 
 // ============================================================================
@@ -1334,8 +1379,8 @@ pub fn verify_cy_truth_table<S: CliffordGateable>(sim: &mut S) {
     let truth_table: &[(bool, bool, bool, bool)] = &[
         (false, false, false, false),
         (false, true, false, true),
-        (true, false, true, true),   // CY|10> -> ctrl=1, Y|0>=i|1>
-        (true, true, true, false),   // CY|11> -> ctrl=1, Y|1>=-i|0>
+        (true, false, true, true), // CY|10> -> ctrl=1, Y|0>=i|1>
+        (true, true, true, false), // CY|11> -> ctrl=1, Y|1>=-i|0>
     ];
 
     for &(ctrl_in, tgt_in, ctrl_out, tgt_out) in truth_table {
@@ -1359,12 +1404,8 @@ pub fn verify_cy_truth_table<S: CliffordGateable>(sim: &mut S) {
 pub fn verify_cz_truth_table<S: CliffordGateable>(sim: &mut S) {
     // CZ on computational basis states: only |11> gets a phase flip.
     // Since phase is invisible to mz, test that CZ doesn't change Z-basis outcomes:
-    let basis_states: &[(bool, bool)] = &[
-        (false, false),
-        (false, true),
-        (true, false),
-        (true, true),
-    ];
+    let basis_states: &[(bool, bool)] =
+        &[(false, false), (false, true), (true, false), (true, true)];
 
     for &(q0_one, q1_one) in basis_states {
         sim.reset();
@@ -1408,12 +1449,8 @@ pub fn verify_cz_truth_table<S: CliffordGateable>(sim: &mut S) {
 /// iSWAP^2 acts as -SWAP on the |01>,|10> subspace (global phase on each component),
 /// but global phase is invisible. We test that iSWAP^4 = I on all basis states.
 pub fn verify_iswap_fourth<S: CliffordGateable>(sim: &mut S) {
-    let basis_states: &[(bool, bool)] = &[
-        (false, false),
-        (false, true),
-        (true, false),
-        (true, true),
-    ];
+    let basis_states: &[(bool, bool)] =
+        &[(false, false), (false, true), (true, false), (true, true)];
 
     for &(q0_one, q1_one) in basis_states {
         sim.reset();

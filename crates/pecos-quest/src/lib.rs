@@ -33,8 +33,8 @@ pub use quantum_engine::{
 #[cfg(feature = "cuda")]
 pub use quantum_engine::QuestCudaStateVecEngine;
 
-use pecos_core::{Angle64, QubitId};
 pub use pecos_core::rng::RngManageable;
+use pecos_core::{Angle64, QubitId};
 pub use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };

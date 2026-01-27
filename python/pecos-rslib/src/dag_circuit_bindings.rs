@@ -2372,11 +2372,15 @@ impl PyTickHandle {
     ///     theta: First rotation angle (angle64 or float radians).
     ///     phi: Second rotation angle (angle64 or float radians).
     ///     q: The qubit to rotate.
-    fn r1xy(slf: Py<Self>, py: Python<'_>, theta: AngleParam, phi: AngleParam, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(
-            py,
-            Gate::r1xy(theta.0, phi.0, &[q]),
-        )?;
+    fn r1xy(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        phi: AngleParam,
+        q: usize,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::r1xy(theta.0, phi.0, &[q]))?;
         Ok(slf)
     }
 
@@ -2396,10 +2400,8 @@ impl PyTickHandle {
         lam: AngleParam,
         q: usize,
     ) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(
-            py,
-            Gate::u(theta.0, phi.0, lam.0, &[q]),
-        )?;
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::u(theta.0, phi.0, lam.0, &[q]))?;
         Ok(slf)
     }
 
@@ -2443,21 +2445,39 @@ impl PyTickHandle {
     }
 
     /// Apply an RXX rotation.
-    fn rxx(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn rxx(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        q1: usize,
+        q2: usize,
+    ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
             .add_gate_internal(py, Gate::rxx(theta.0, &[(q1, q2)]))?;
         Ok(slf)
     }
 
     /// Apply an RYY rotation.
-    fn ryy(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn ryy(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        q1: usize,
+        q2: usize,
+    ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
             .add_gate_internal(py, Gate::ryy(theta.0, &[(q1, q2)]))?;
         Ok(slf)
     }
 
     /// Apply an RZZ rotation.
-    fn rzz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn rzz(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        q1: usize,
+        q2: usize,
+    ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
             .add_gate_internal(py, Gate::rzz(theta.0, &[(q1, q2)]))?;
         Ok(slf)

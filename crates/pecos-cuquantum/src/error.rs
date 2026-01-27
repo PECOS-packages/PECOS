@@ -1,7 +1,7 @@
 //! Error types for cuQuantum operations
 
 use pecos_cuquantum_sys::{
-    cudensitymatStatus_t, custatevecStatus_t, custabilizerStatus_t, cutensornetStatus_t,
+    cudensitymatStatus_t, custabilizerStatus_t, custatevecStatus_t, cutensornetStatus_t,
 };
 use thiserror::Error;
 
@@ -450,8 +450,7 @@ mod tests {
 
     #[test]
     fn test_stabilizer_status_conversion() {
-        let err =
-            StabilizerError::from(custabilizerStatus_t::CUSTABILIZER_STATUS_INVALID_VALUE);
+        let err = StabilizerError::from(custabilizerStatus_t::CUSTABILIZER_STATUS_INVALID_VALUE);
         assert_eq!(err, StabilizerError::InvalidValue);
     }
 

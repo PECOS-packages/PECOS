@@ -385,7 +385,11 @@ impl QisEngine {
                     builder.add_rz(Angle64::from_radians(angle), &[qubit]);
                 }
                 QuantumOp::RXY(theta, phi, qubit) => {
-                    builder.add_r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &[qubit]);
+                    builder.add_r1xy(
+                        Angle64::from_radians(theta),
+                        Angle64::from_radians(phi),
+                        &[qubit],
+                    );
                 }
                 QuantumOp::CX(control, target) => {
                     builder.add_cx(&[control], &[target]);

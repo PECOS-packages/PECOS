@@ -794,23 +794,29 @@ Python components implement Protocol classes (structural typing):
 ```python
 # pecos/protocols.py
 
+
 class ErrorModelProtocol(Protocol):
     """Interface for custom error/noise models."""
+
     error_params: dict
 
     def init(self, num_qubits: int, machine: MachineProtocol | None = None) -> None: ...
     def process(self, qops: list, call_back: Callable | None = None) -> list | None: ...
     def reset(self) -> None: ...
 
+
 class MachineProtocol(Protocol):
     """Interface for hardware models (connectivity, leakage, etc.)."""
+
     leaked_qubits: set[int]
     lost_qubits: set[int]
 
     def process(self, op_buffer: list) -> list: ...
 
+
 class Decoder(Protocol):
     """Interface for QEC decoders."""
+
     def decode(self, syndrome: BitArray) -> Correction: ...
 ```
 
@@ -841,9 +847,10 @@ class MyCustomErrorModel:
     def reset(self) -> None:
         pass
 
+
 # Use with HybridEngine
 engine = HybridEngine(
-    qsim="sparse_stab",           # Rust simulator (fast)
+    qsim="sparse_stab",  # Rust simulator (fast)
     error_model=MyCustomErrorModel(0.01),  # Python error model (flexible)
 )
 results = engine.run(program, shots=10000)

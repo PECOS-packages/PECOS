@@ -462,7 +462,12 @@ impl PyStateVec {
                         Ok(Some(py_any)) => {
                             if let Ok(angles) = py_any.extract::<Vec<AngleParam>>() {
                                 if angles.len() >= 3 {
-                                    self.inner.rzzryyrxx(angles[0].0, angles[1].0, angles[2].0, pair);
+                                    self.inner.rzzryyrxx(
+                                        angles[0].0,
+                                        angles[1].0,
+                                        angles[2].0,
+                                        pair,
+                                    );
                                 } else {
                                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                         "RZZRYYRXX gate requires three angle parameters",
@@ -495,7 +500,12 @@ impl PyStateVec {
                         Ok(Some(py_any)) => {
                             if let Ok(angles) = py_any.extract::<Vec<AngleParam>>() {
                                 if angles.len() >= 3 {
-                                    self.inner.rzzryyrxx(angles[0].0, angles[1].0, angles[2].0, pair);
+                                    self.inner.rzzryyrxx(
+                                        angles[0].0,
+                                        angles[1].0,
+                                        angles[2].0,
+                                        pair,
+                                    );
                                 } else {
                                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                         "R2XXYYZZ gate requires three angle parameters",
@@ -572,7 +582,7 @@ impl PyStateVec {
         // Convert the state vector to a 1D complex ndarray
         use ndarray::Array1;
         let state = self.inner.state();
-        let complex_array: Vec<num_complex::Complex64> = state.to_vec();
+        let complex_array: Vec<num_complex::Complex64> = state.clone();
         let nd_array = Array1::from(complex_array);
 
         // Create ArrayData from the ndarray

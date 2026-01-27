@@ -40,7 +40,7 @@ pub struct TickFaultAnalyzer<'a> {
     circuit: &'a TickCircuit,
     /// Fault locations extracted from the circuit.
     locations: Vec<SpacetimeLocation>,
-    /// Pre-computed index: tick -> (location_index, before) pairs for O(1) lookup
+    /// Pre-computed index: tick -> (`location_index`, before) pairs for O(1) lookup
     tick_locations: Vec<Vec<(usize, bool)>>,
     /// Maximum qubit index in the circuit.
     max_qubit: usize,
@@ -48,6 +48,7 @@ pub struct TickFaultAnalyzer<'a> {
 
 impl<'a> TickFaultAnalyzer<'a> {
     /// Creates a new backward propagator for the given circuit.
+    #[must_use]
     pub fn new(circuit: &'a TickCircuit) -> Self {
         let locations = extract_spacetime_locations(circuit, false);
 
@@ -82,6 +83,7 @@ impl<'a> TickFaultAnalyzer<'a> {
     ///
     /// This performs backward propagation from all measurements and
     /// creates a lookup table for fault classification.
+    #[must_use]
     pub fn build_influence_map(&self) -> FaultInfluenceMap {
         self.build_influence_map_with_logicals(&[])
     }
@@ -90,9 +92,10 @@ impl<'a> TickFaultAnalyzer<'a> {
     ///
     /// # Arguments
     ///
-    /// * `logicals` - Logical operators as (x_positions, z_positions) pairs.
+    /// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs.
     ///   The first element of each pair is the X component positions,
     ///   the second is the Z component positions.
+    #[must_use]
     pub fn build_influence_map_with_logicals(
         &self,
         logicals: &[(&[usize], &[usize])],
@@ -454,7 +457,7 @@ impl<'a> TickFaultAnalyzer<'a> {
         }
     }
 
-    /// Applies a gate backward to a PauliProp.
+    /// Applies a gate backward to a `PauliProp`.
     ///
     /// For Clifford gates, backward propagation follows specific rules:
     /// - CX: Same as forward (CX is self-adjoint)
@@ -577,7 +580,7 @@ impl<'a> TickFaultAnalyzer<'a> {
                 // Preparation resets the qubit - backward propagation stops here
                 // Any Pauli on a prepared qubit doesn't propagate further back
                 // Toggle off both X and Z if present
-                for qid in qubits.iter() {
+                for qid in qubits {
                     let q = qid.index();
                     if prop.contains_x(q) {
                         prop.add_x(q); // toggles off

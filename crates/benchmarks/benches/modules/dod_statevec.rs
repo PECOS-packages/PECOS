@@ -10,10 +10,10 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! DOD (Data-Oriented Design) micro-benchmarks for StateVec.
+//! DOD (Data-Oriented Design) micro-benchmarks for `StateVec`.
 //!
 //! These benchmarks focus on measuring specific gate operations and data layout
-//! impacts for the StateVec simulator. The goal is to:
+//! impacts for the `StateVec` simulator. The goal is to:
 //!
 //! 1. Establish baselines for individual gate performance
 //! 2. Measure the impact of different qubit counts (cache pressure)
@@ -55,60 +55,44 @@ fn bench_single_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
         group.throughput(Throughput::Elements(state_size as u64));
 
         // H gate - involves both real/imag components
-        group.bench_with_input(
-            BenchmarkId::new("H", num_qubits),
-            &num_qubits,
-            |b, &nq| {
-                let mut sim = StateVecSoA::new(nq);
-                let target = nq / 2; // Middle qubit
-                b.iter(|| {
-                    sim.h(&[QubitId(target)]);
-                    black_box(());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("H", num_qubits), &num_qubits, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            let target = nq / 2; // Middle qubit
+            b.iter(|| {
+                sim.h(&[QubitId(target)]);
+                black_box(());
+            });
+        });
 
         // X gate - pure swap operation
-        group.bench_with_input(
-            BenchmarkId::new("X", num_qubits),
-            &num_qubits,
-            |b, &nq| {
-                let mut sim = StateVecSoA::new(nq);
-                let target = nq / 2;
-                b.iter(|| {
-                    sim.x(&[QubitId(target)]);
-                    black_box(());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("X", num_qubits), &num_qubits, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            let target = nq / 2;
+            b.iter(|| {
+                sim.x(&[QubitId(target)]);
+                black_box(());
+            });
+        });
 
         // Z gate - phase only, no swaps
-        group.bench_with_input(
-            BenchmarkId::new("Z", num_qubits),
-            &num_qubits,
-            |b, &nq| {
-                let mut sim = StateVecSoA::new(nq);
-                let target = nq / 2;
-                b.iter(|| {
-                    sim.z(&[QubitId(target)]);
-                    black_box(());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("Z", num_qubits), &num_qubits, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            let target = nq / 2;
+            b.iter(|| {
+                sim.z(&[QubitId(target)]);
+                black_box(());
+            });
+        });
 
         // S gate - phase only
-        group.bench_with_input(
-            BenchmarkId::new("S", num_qubits),
-            &num_qubits,
-            |b, &nq| {
-                let mut sim = StateVecSoA::new(nq);
-                let target = nq / 2;
-                b.iter(|| {
-                    sim.sz(&[QubitId(target)]);
-                    black_box(());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("S", num_qubits), &num_qubits, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            let target = nq / 2;
+            b.iter(|| {
+                sim.sz(&[QubitId(target)]);
+                black_box(());
+            });
+        });
     }
 
     group.finish();
@@ -161,19 +145,15 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
         );
 
         // CZ gate - diagonal, only phase changes
-        group.bench_with_input(
-            BenchmarkId::new("CZ", num_qubits),
-            &num_qubits,
-            |b, &nq| {
-                let mut sim = StateVecSoA::new(nq);
-                let q1 = nq / 2;
-                let q2 = q1 + 1;
-                b.iter(|| {
-                    sim.cz(&[QubitId(q1), QubitId(q2)]);
-                    black_box(());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("CZ", num_qubits), &num_qubits, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            let q1 = nq / 2;
+            let q2 = q1 + 1;
+            b.iter(|| {
+                sim.cz(&[QubitId(q1), QubitId(q2)]);
+                black_box(());
+            });
+        });
 
         // SWAP gate
         group.bench_with_input(
@@ -241,7 +221,7 @@ fn bench_cx_scaling<M: Measurement>(c: &mut Criterion<M>) {
     group.finish();
 }
 
-/// Benchmark the overhead of temporary allocations in two_qubit_unitary.
+/// Benchmark the overhead of temporary allocations in `two_qubit_unitary`.
 ///
 /// This measures the cost of allocating a full state vector copy per gate.
 fn bench_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
@@ -306,7 +286,7 @@ fn bench_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
     group.finish();
 }
 
-/// Compare StateVec (baseline) vs StateVecAoS (optimized) for CX gate.
+/// Compare `StateVec` (baseline) vs `StateVecAoS` (optimized) for CX gate.
 ///
 /// This directly measures the impact of strided iteration.
 fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {

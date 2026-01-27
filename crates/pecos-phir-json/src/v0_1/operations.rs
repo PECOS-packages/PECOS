@@ -1568,7 +1568,11 @@ impl OperationProcessor {
                 builder.add_rz(Angle64::from_radians(angle_args[0]), &[qubit_args[0]]);
             }
             "R1XY" => {
-                builder.add_r1xy(Angle64::from_radians(angle_args[0]), Angle64::from_radians(angle_args[1]), &[qubit_args[0]]);
+                builder.add_r1xy(
+                    Angle64::from_radians(angle_args[0]),
+                    Angle64::from_radians(angle_args[1]),
+                    &[qubit_args[0]],
+                );
             }
             "SZZ" => {
                 builder.add_szz(&[qubit_args[0]], &[qubit_args[1]]);

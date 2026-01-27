@@ -36,7 +36,7 @@ pub struct LogicalOperatorInfo {
     pub weight: usize,
     /// Which logical operators this is equivalent to.
     /// Each entry is a (type, index) pair where type is 'X' or 'Z' and index is the logical qubit.
-    /// For example, `[('X', 0), ('Z', 1)]` means this operator is equivalent to X_0 * Z_1.
+    /// For example, `[('X', 0), ('Z', 1)]` means this operator is equivalent to `X_0` * `Z_1`.
     pub equivalent_logicals: Vec<(char, usize)>,
 }
 
@@ -420,7 +420,7 @@ fn classify_logical_equivalence_indexed(
     }
 
     // Sort for consistent output (X before Z, then by index)
-    result.sort();
+    result.sort_unstable();
 
     result
 }
@@ -463,16 +463,14 @@ mod tests {
             // Pure X: has X positions but no Z positions
             assert!(
                 !p.x_positions().is_empty() && p.z_positions().is_empty(),
-                "Expected pure X error, got {:?}",
-                p
+                "Expected pure X error, got {p:?}"
             );
         }
         for p in &paulis[3..6] {
             // Pure Z: has Z positions but no X positions
             assert!(
                 p.x_positions().is_empty() && !p.z_positions().is_empty(),
-                "Expected pure Z error, got {:?}",
-                p
+                "Expected pure Z error, got {p:?}"
             );
         }
     }
@@ -490,15 +488,13 @@ mod tests {
         for p in &paulis[0..6] {
             assert!(
                 !p.x_positions().is_empty() && p.z_positions().is_empty(),
-                "Expected pure X error, got {:?}",
-                p
+                "Expected pure X error, got {p:?}"
             );
         }
         for p in &paulis[6..12] {
             assert!(
                 p.x_positions().is_empty() && !p.z_positions().is_empty(),
-                "Expected pure Z error, got {:?}",
-                p
+                "Expected pure Z error, got {p:?}"
             );
         }
     }

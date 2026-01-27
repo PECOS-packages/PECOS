@@ -225,7 +225,8 @@ impl QuestStateVec {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
-                                self.inner.rxx(angle.0, &[QubitId(control), QubitId(target)]);
+                                self.inner
+                                    .rxx(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -249,7 +250,8 @@ impl QuestStateVec {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
-                                self.inner.ryy(angle.0, &[QubitId(control), QubitId(target)]);
+                                self.inner
+                                    .ryy(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -273,7 +275,8 @@ impl QuestStateVec {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
-                                self.inner.rzz(angle.0, &[QubitId(control), QubitId(target)]);
+                                self.inner
+                                    .rzz(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -330,7 +333,14 @@ impl QuestStateVec {
     /// Applies RZZRYYRXX gate (combination of RZZ, RYY, RXX) to two qubits
     /// NOTE: This uses the trait implementation which may differ from `StateVec`'s decomposition
     /// For consistency with `StateVec` tests, the Python bindings use manual decompositions
-    fn rzzryyrxx_gate(&mut self, theta: AngleParam, phi: AngleParam, lambda: AngleParam, q1: usize, q2: usize) {
+    fn rzzryyrxx_gate(
+        &mut self,
+        theta: AngleParam,
+        phi: AngleParam,
+        lambda: AngleParam,
+        q1: usize,
+        q2: usize,
+    ) {
         // Use the trait implementation directly
         // Note: The trait's rzzryyrxx has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
@@ -616,7 +626,8 @@ impl QuestDensityMatrix {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
-                                self.inner.rxx(angle.0, &[QubitId(control), QubitId(target)]);
+                                self.inner
+                                    .rxx(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -640,7 +651,8 @@ impl QuestDensityMatrix {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
-                                self.inner.ryy(angle.0, &[QubitId(control), QubitId(target)]);
+                                self.inner
+                                    .ryy(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -664,7 +676,8 @@ impl QuestDensityMatrix {
                     match params.get_item("angle") {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
-                                self.inner.rzz(angle.0, &[QubitId(control), QubitId(target)]);
+                                self.inner
+                                    .rzz(angle.0, &[QubitId(control), QubitId(target)]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -721,7 +734,14 @@ impl QuestDensityMatrix {
     /// Applies RZZRYYRXX gate (combination of RZZ, RYY, RXX) to two qubits
     /// NOTE: This uses the trait implementation which may differ from `StateVec`'s decomposition
     /// For consistency with `StateVec` tests, the Python bindings use manual decompositions
-    fn rzzryyrxx_gate(&mut self, theta: AngleParam, phi: AngleParam, lambda: AngleParam, q1: usize, q2: usize) {
+    fn rzzryyrxx_gate(
+        &mut self,
+        theta: AngleParam,
+        phi: AngleParam,
+        lambda: AngleParam,
+        q1: usize,
+        q2: usize,
+    ) {
         // Use the trait implementation directly
         // Note: The trait's rzzryyrxx has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ

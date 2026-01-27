@@ -50,7 +50,7 @@ except ImportError:
     QuestDensityMatrix = None
 
 try:
-    from pecos.simulators import CudaStateVec, CudaStabilizer
+    from pecos.simulators import CudaStabilizer, CudaStateVec
 except ImportError:
     CudaStateVec = None
     CudaStabilizer = None

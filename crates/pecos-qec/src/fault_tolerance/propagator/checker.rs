@@ -15,12 +15,12 @@
 //! This module provides [`InfluenceBasedChecker`] for O(1) fault classification
 //! using pre-computed influence maps.
 
-use super::types::{DetectorId, FaultInfluenceMap};
 use super::SpacetimeLocation;
+use super::types::{DetectorId, FaultInfluenceMap};
 
 /// Efficient fault checker using pre-computed influence maps.
 ///
-/// This provides O(1) fault classification instead of O(circuit_depth)
+/// This provides O(1) fault classification instead of `O(circuit_depth)`
 /// forward propagation.
 pub struct InfluenceBasedChecker<'a> {
     influence_map: &'a FaultInfluenceMap,
@@ -28,6 +28,7 @@ pub struct InfluenceBasedChecker<'a> {
 
 impl<'a> InfluenceBasedChecker<'a> {
     /// Creates a new checker from a pre-computed influence map.
+    #[must_use]
     pub fn new(influence_map: &'a FaultInfluenceMap) -> Self {
         Self { influence_map }
     }
@@ -38,7 +39,8 @@ impl<'a> InfluenceBasedChecker<'a> {
     /// For multi-qubit locations where the same Pauli is applied to all qubits,
     /// use `classify_uniform` which properly handles cancellation effects.
     ///
-    /// Returns (has_syndrome, causes_logical_error).
+    /// Returns (`has_syndrome`, `causes_logical_error`).
+    #[must_use]
     pub fn classify(&self, location: &SpacetimeLocation, pauli: u8) -> (bool, bool) {
         self.influence_map.classify_fault(location, pauli)
     }
@@ -51,7 +53,8 @@ impl<'a> InfluenceBasedChecker<'a> {
     /// For Y faults (single or multi-qubit), we decompose Y = XZ and combine the
     /// X and Z contributions with XOR semantics.
     ///
-    /// Returns (has_syndrome, causes_logical_error).
+    /// Returns (`has_syndrome`, `causes_logical_error`).
+    #[must_use]
     pub fn classify_uniform(&self, location: &SpacetimeLocation, pauli: u8) -> (bool, bool) {
         // Always use multi-qubit logic for Y faults (even single-qubit)
         // because Y = XZ needs to combine X and Z contributions
@@ -65,6 +68,7 @@ impl<'a> InfluenceBasedChecker<'a> {
     }
 
     /// Returns all detectors flipped by the given fault.
+    #[must_use]
     pub fn detectors_flipped(&self, location: &SpacetimeLocation, pauli: u8) -> Vec<&DetectorId> {
         self.influence_map
             .get_influence(location)
@@ -74,6 +78,7 @@ impl<'a> InfluenceBasedChecker<'a> {
     }
 
     /// Checks if a fault causes an undetectable logical error.
+    #[must_use]
     pub fn is_undetectable_logical_error(&self, location: &SpacetimeLocation, pauli: u8) -> bool {
         let (has_syndrome, has_logical) = self.classify(location, pauli);
         !has_syndrome && has_logical

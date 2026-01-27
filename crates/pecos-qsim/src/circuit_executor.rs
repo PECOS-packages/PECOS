@@ -41,8 +41,8 @@
 //! ```
 
 use crate::{CliffordGateable, MeasurementResult};
-use pecos_core::gate_type::GateType;
 use pecos_core::QubitId;
+use pecos_core::gate_type::GateType;
 use pecos_quantum::{GateBatch, TickBatches, TickCircuitSoA, TickGateGroups};
 
 /// Executes a `TickCircuitSoA` on a Clifford simulator using batched operations.
@@ -130,24 +130,60 @@ fn execute_single_batch<S: CliffordGateable>(
     let qubits = batch.qubits();
 
     match batch.gate_type {
-        GateType::I => { sim.identity(qubits); }
-        GateType::X => { sim.x(qubits); }
-        GateType::Y => { sim.y(qubits); }
-        GateType::Z => { sim.z(qubits); }
-        GateType::H => { sim.h(qubits); }
-        GateType::SX => { sim.sx(qubits); }
-        GateType::SXdg => { sim.sxdg(qubits); }
-        GateType::SY => { sim.sy(qubits); }
-        GateType::SYdg => { sim.sydg(qubits); }
-        GateType::SZ => { sim.sz(qubits); }
-        GateType::SZdg => { sim.szdg(qubits); }
-        GateType::CX => { sim.cx(qubits); }
-        GateType::CY => { sim.cy(qubits); }
-        GateType::CZ => { sim.cz(qubits); }
-        GateType::SZZ => { sim.szz(qubits); }
-        GateType::SZZdg => { sim.szzdg(qubits); }
-        GateType::SWAP => { sim.swap(qubits); }
-        GateType::Prep | GateType::QAlloc => { sim.pz(qubits); }
+        GateType::I => {
+            sim.identity(qubits);
+        }
+        GateType::X => {
+            sim.x(qubits);
+        }
+        GateType::Y => {
+            sim.y(qubits);
+        }
+        GateType::Z => {
+            sim.z(qubits);
+        }
+        GateType::H => {
+            sim.h(qubits);
+        }
+        GateType::SX => {
+            sim.sx(qubits);
+        }
+        GateType::SXdg => {
+            sim.sxdg(qubits);
+        }
+        GateType::SY => {
+            sim.sy(qubits);
+        }
+        GateType::SYdg => {
+            sim.sydg(qubits);
+        }
+        GateType::SZ => {
+            sim.sz(qubits);
+        }
+        GateType::SZdg => {
+            sim.szdg(qubits);
+        }
+        GateType::CX => {
+            sim.cx(qubits);
+        }
+        GateType::CY => {
+            sim.cy(qubits);
+        }
+        GateType::CZ => {
+            sim.cz(qubits);
+        }
+        GateType::SZZ => {
+            sim.szz(qubits);
+        }
+        GateType::SZZdg => {
+            sim.szzdg(qubits);
+        }
+        GateType::SWAP => {
+            sim.swap(qubits);
+        }
+        GateType::Prep | GateType::QAlloc => {
+            sim.pz(qubits);
+        }
         GateType::Measure | GateType::MeasureFree => {
             measurements.extend(sim.mz(qubits));
         }
@@ -191,7 +227,9 @@ impl<S: CliffordGateable> GateSystemRegistry<S> {
     /// Creates an empty registry.
     #[must_use]
     pub fn new() -> Self {
-        Self { systems: Vec::new() }
+        Self {
+            systems: Vec::new(),
+        }
     }
 
     /// Registers a gate system.
@@ -213,16 +251,20 @@ impl<S: CliffordGateable> GateSystemRegistry<S> {
 mod tests {
     use super::*;
     use crate::SparseStab;
-    use pecos_quantum::{TickCircuit, TickCircuitSoA};
+    use pecos_quantum::TickCircuitSoA;
 
     #[test]
     fn test_circuit_executor_basic() {
         let mut builder = TickCircuitSoA::builder();
         builder
-            .tick().pz(&[0, 1])
-            .tick().h(&[0])
-            .tick().cx(&[(0, 1)])
-            .tick().mz(&[0, 1]);
+            .tick()
+            .pz(&[0, 1])
+            .tick()
+            .h(&[0])
+            .tick()
+            .cx(&[(0, 1)])
+            .tick()
+            .mz(&[0, 1]);
 
         let circuit = builder.build();
 
@@ -239,10 +281,14 @@ mod tests {
         // Create a circuit with multiple gates of same type per tick
         let mut builder = TickCircuitSoA::builder();
         builder
-            .tick().pz(&[0, 1, 2, 3])  // 4 preps in one batch
-            .tick().h(&[0, 1, 2, 3])   // 4 H gates in one batch
-            .tick().cx(&[(0, 1), (2, 3)])  // 2 CX gates in one batch
-            .tick().mz(&[0, 1, 2, 3]); // 4 measurements in one batch
+            .tick()
+            .pz(&[0, 1, 2, 3]) // 4 preps in one batch
+            .tick()
+            .h(&[0, 1, 2, 3]) // 4 H gates in one batch
+            .tick()
+            .cx(&[(0, 1), (2, 3)]) // 2 CX gates in one batch
+            .tick()
+            .mz(&[0, 1, 2, 3]); // 4 measurements in one batch
 
         let circuit = builder.build();
 
@@ -258,9 +304,12 @@ mod tests {
     fn test_execute_batched_function() {
         let mut builder = TickCircuitSoA::builder();
         builder
-            .tick().pz(&[0, 1])
-            .tick().h(&[0, 1])
-            .tick().mz(&[0, 1]);
+            .tick()
+            .pz(&[0, 1])
+            .tick()
+            .h(&[0, 1])
+            .tick()
+            .mz(&[0, 1]);
 
         let circuit = builder.build();
 
@@ -270,124 +319,4 @@ mod tests {
         assert_eq!(measurements.len(), 2);
     }
 
-    /// Run with: cargo test -p pecos-qsim benchmark_executor --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_executor_vs_gatewise() {
-        use pecos_quantum::TickCircuit;
-
-        println!("\n========================================");
-        println!("Batched Executor vs Gate-wise Execution");
-        println!("========================================\n");
-
-        let distances = [5, 9, 13];
-
-        for d in distances {
-            let num_data = d * d;
-            let num_ancilla = num_data - 1;
-            let total_qubits = num_data + num_ancilla;
-
-            // Build TickCircuitSoA (batched)
-            let mut soa_builder = TickCircuitSoA::builder();
-            soa_builder.tick();
-            let ancilla_qubits: Vec<usize> = (num_data..total_qubits).collect();
-            soa_builder.pz(&ancilla_qubits);
-
-            soa_builder.tick();
-            let data_qubits: Vec<usize> = (0..num_data).collect();
-            soa_builder.h(&data_qubits);
-
-            soa_builder.tick();
-            let cx_pairs: Vec<(usize, usize)> = (0..num_ancilla.min(num_data))
-                .map(|i| (i, num_data + i))
-                .collect();
-            soa_builder.cx(&cx_pairs);
-
-            soa_builder.tick();
-            soa_builder.mz(&ancilla_qubits);
-
-            let soa_circuit = soa_builder.build();
-
-            // Build equivalent TickCircuit (non-batched)
-            let mut tick_circuit = TickCircuit::new();
-            tick_circuit.tick().pz(&ancilla_qubits);
-            tick_circuit.tick().h(&data_qubits);
-            tick_circuit.tick().cx(&cx_pairs);
-            tick_circuit.tick().mz(&ancilla_qubits);
-
-            let iterations = 1000;
-
-            // Warmup
-            for _ in 0..10 {
-                let mut sim = SparseStab::new(total_qubits);
-                let executor = CircuitExecutor::new(&soa_circuit);
-                let _ = executor.run(&mut sim);
-
-                let mut sim = SparseStab::new(total_qubits);
-                run_tick_circuit_gatewise(&tick_circuit, &mut sim);
-            }
-
-            // Benchmark batched executor
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let mut sim = SparseStab::new(total_qubits);
-                let executor = CircuitExecutor::new(&soa_circuit);
-                let _ = executor.run(&mut sim);
-            }
-            let batched_time = start.elapsed();
-
-            // Benchmark gate-wise execution
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let mut sim = SparseStab::new(total_qubits);
-                run_tick_circuit_gatewise(&tick_circuit, &mut sim);
-            }
-            let gatewise_time = start.elapsed();
-
-            let speedup = gatewise_time.as_nanos() as f64 / batched_time.as_nanos() as f64;
-
-            println!("d={}, {} qubits ({} data + {} ancilla):", d, total_qubits, num_data, num_ancilla);
-            println!(
-                "  Batched executor:    {:>8.1} us/iter",
-                batched_time.as_micros() as f64 / iterations as f64
-            );
-            println!(
-                "  Gate-wise execution: {:>8.1} us/iter",
-                gatewise_time.as_micros() as f64 / iterations as f64
-            );
-            println!("  Speedup: {:.2}x\n", speedup);
-        }
-    }
-
-    /// Gate-wise execution for comparison (mimics circuit_runner.rs pattern)
-    fn run_tick_circuit_gatewise(circuit: &TickCircuit, sim: &mut SparseStab) {
-        for (_tick_idx, tick) in circuit.iter_ticks() {
-            for gate in tick.gates() {
-                let qubits: Vec<pecos_core::QubitId> = gate.qubits.iter().copied().collect();
-                match gate.gate_type {
-                    GateType::I => { sim.identity(&qubits); }
-                    GateType::X => { sim.x(&qubits); }
-                    GateType::Y => { sim.y(&qubits); }
-                    GateType::Z => { sim.z(&qubits); }
-                    GateType::H => { sim.h(&qubits); }
-                    GateType::SX => { sim.sx(&qubits); }
-                    GateType::SXdg => { sim.sxdg(&qubits); }
-                    GateType::SY => { sim.sy(&qubits); }
-                    GateType::SYdg => { sim.sydg(&qubits); }
-                    GateType::SZ => { sim.sz(&qubits); }
-                    GateType::SZdg => { sim.szdg(&qubits); }
-                    GateType::CX => { sim.cx(&qubits); }
-                    GateType::CY => { sim.cy(&qubits); }
-                    GateType::CZ => { sim.cz(&qubits); }
-                    GateType::SZZ => { sim.szz(&qubits); }
-                    GateType::SZZdg => { sim.szzdg(&qubits); }
-                    GateType::SWAP => { sim.swap(&qubits); }
-                    GateType::Prep | GateType::QAlloc => { sim.pz(&qubits); }
-                    GateType::Measure | GateType::MeasureFree => { sim.mz(&qubits); }
-                    GateType::Idle => {}
-                    _ => {}
-                }
-            }
-        }
-    }
 }

@@ -30,6 +30,9 @@ use std::hint::black_box;
 #[cfg(feature = "gpu-sims")]
 use pecos_gpu_sims::GpuStabMulti;
 
+#[cfg(feature = "gpu-sims")]
+use pecos_core::QubitId;
+
 #[cfg(feature = "cuquantum")]
 use pecos_cuquantum::CuFrameSimulator;
 
@@ -40,7 +43,7 @@ pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
 
 /// Benchmark running a fixed circuit across many shots.
 ///
-/// This is the primary use case for both GpuStabMulti and CuFrameSimulator:
+/// This is the primary use case for both `GpuStabMulti` and `CuFrameSimulator`:
 /// running the same Clifford circuit on many independent shots in parallel.
 fn bench_stabilizer_circuit_execution<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Stabilizer Circuit Execution");
@@ -89,7 +92,7 @@ fn bench_stabilizer_circuit_execution<M: Measurement>(c: &mut Criterion<M>) {
                 group.bench_with_input(
                     BenchmarkId::new("CuFrameSimulator_CUDA", &label),
                     &(),
-                    |b, _| {
+                    |b, ()| {
                         b.iter(|| {
                             let result = sim.run_circuit(&circuit, 42);
                             black_box(result);
@@ -145,7 +148,7 @@ fn bench_stabilizer_scaling<M: Measurement>(c: &mut Criterion<M>) {
                 group.bench_with_input(
                     BenchmarkId::new("CuFrameSimulator_CUDA", &label),
                     &(),
-                    |b, _| {
+                    |b, ()| {
                         b.iter(|| {
                             let result = sim.run_circuit(&circuit, 42);
                             black_box(result);
@@ -190,25 +193,25 @@ fn build_benchmark_circuit_string(num_qubits: usize, depth: usize) -> String {
     lines.join("\n")
 }
 
-/// Run a benchmark circuit on GpuStabMulti using its native API.
+/// Run a benchmark circuit on `GpuStabMulti` using its native API.
 #[cfg(feature = "gpu-sims")]
 fn run_benchmark_circuit_gpustab(sim: &mut GpuStabMulti, num_qubits: usize, depth: usize) {
     for _layer in 0..depth {
         // H on all qubits
         for q in 0..num_qubits {
-            sim.h(q);
+            sim.h(&[QubitId(q)]);
         }
         // S on half the qubits
         for q in (0..num_qubits).step_by(2) {
-            sim.s(q);
+            sim.sz(&[QubitId(q)]);
         }
         // CNOT chain
         for q in 0..(num_qubits - 1) {
-            sim.cx(q, q + 1);
+            sim.cx(&[QubitId(q), QubitId(q + 1)]);
         }
     }
 
     // Final measurement
-    let qubits: Vec<usize> = (0..num_qubits).collect();
+    let qubits: Vec<QubitId> = (0..num_qubits).map(QubitId).collect();
     let _results = sim.mz(&qubits);
 }

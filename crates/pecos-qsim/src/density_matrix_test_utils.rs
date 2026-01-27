@@ -128,9 +128,7 @@ macro_rules! density_matrix_test_suite {
 // ============================================================================
 
 /// Run the shared Clifford gate tests on a density matrix simulator.
-pub fn run_density_matrix_clifford_suite<
-    S: CliffordGateable + QuantumSimulator,
->(
+pub fn run_density_matrix_clifford_suite<S: CliffordGateable + QuantumSimulator>(
     sim: &mut S,
     num_qubits: usize,
 ) {

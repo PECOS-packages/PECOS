@@ -67,7 +67,7 @@ pub trait IntoQuantumEngineBuilder: Send + Sync {
 }
 
 /// Builder for state vector quantum engine
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StateVectorEngineBuilder {
     /// Number of qubits (if explicitly set)
     num_qubits: Option<usize>,
@@ -75,16 +75,6 @@ pub struct StateVectorEngineBuilder {
     parallel: bool,
     /// Number of threads for parallel execution (None = use Rayon's default)
     num_threads: Option<usize>,
-}
-
-impl Default for StateVectorEngineBuilder {
-    fn default() -> Self {
-        Self {
-            num_qubits: None,
-            parallel: false, // Default to serial for multi-shot workloads
-            num_threads: None,
-        }
-    }
 }
 
 impl StateVectorEngineBuilder {

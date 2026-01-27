@@ -94,6 +94,7 @@ pub struct DepolarizingNoiseSampler {
 
 impl DepolarizingNoiseSampler {
     /// Create a new depolarizing noise sampler.
+    #[must_use]
     pub fn new(p1: f64, p2: f64, p_meas: f64) -> Self {
         Self {
             p1,
@@ -109,6 +110,7 @@ impl DepolarizingNoiseSampler {
     }
 
     /// Create with a specific seed for reproducibility.
+    #[must_use]
     pub fn with_seed(p1: f64, p2: f64, p_meas: f64, seed: u64) -> Self {
         Self {
             p1,
@@ -192,6 +194,7 @@ pub struct BiasedDepolarizingNoiseSampler {
 
 impl BiasedDepolarizingNoiseSampler {
     /// Create a new biased depolarizing noise sampler.
+    #[must_use]
     pub fn new(p1: f64, p2: f64, p_meas_0: f64, p_meas_1: f64) -> Self {
         Self {
             p1,
@@ -209,6 +212,7 @@ impl BiasedDepolarizingNoiseSampler {
     }
 
     /// Create with a specific seed for reproducibility.
+    #[must_use]
     pub fn with_seed(p1: f64, p2: f64, p_meas_0: f64, p_meas_1: f64, seed: u64) -> Self {
         Self {
             p1,
@@ -275,11 +279,15 @@ impl NoiseSampler for BiasedDepolarizingNoiseSampler {
         // For biased noise, we need to know the actual outcome
         // Use the pending outcome if available, otherwise assume uniform error
         if let Some(outcome) = self.pending_meas_outcomes.pop() {
-            let p = if outcome { self.p_meas_1 } else { self.p_meas_0 };
+            let p = if outcome {
+                self.p_meas_1
+            } else {
+                self.p_meas_0
+            };
             self.occurs(p)
         } else {
             // Fallback: use average of the two probabilities
-            self.occurs((self.p_meas_0 + self.p_meas_1) / 2.0)
+            self.occurs(f64::midpoint(self.p_meas_0, self.p_meas_1))
         }
     }
 
@@ -329,6 +337,7 @@ pub struct CircuitBuilder {
 
 impl CircuitBuilder {
     /// Create a new empty circuit builder.
+    #[must_use]
     pub fn new() -> Self {
         Self { ops: Vec::new() }
     }
@@ -406,6 +415,7 @@ impl CircuitBuilder {
     }
 
     /// Get the operations in this circuit.
+    #[must_use]
     pub fn ops(&self) -> &[CircuitOp] {
         &self.ops
     }
@@ -617,12 +627,11 @@ mod tests {
         }
 
         // Should have roughly 50% errors for each
-        assert!(errors_1q > 30 && errors_1q < 70, "1Q errors: {}", errors_1q);
-        assert!(errors_2q > 30 && errors_2q < 70, "2Q errors: {}", errors_2q);
+        assert!(errors_1q > 30 && errors_1q < 70, "1Q errors: {errors_1q}");
+        assert!(errors_2q > 30 && errors_2q < 70, "2Q errors: {errors_2q}");
         assert!(
             errors_meas > 30 && errors_meas < 70,
-            "Meas errors: {}",
-            errors_meas
+            "Meas errors: {errors_meas}"
         );
     }
 
@@ -851,11 +860,7 @@ mod tests {
 
         // With 50% measurement error, about half should be flipped to 1
         let ones = results.iter().filter(|r| r.outcomes[0]).count();
-        assert!(
-            ones > 30 && ones < 70,
-            "Expected ~50% ones, got {}",
-            ones
-        );
+        assert!(ones > 30 && ones < 70, "Expected ~50% ones, got {ones}");
     }
 
     #[test]
@@ -878,8 +883,7 @@ mod tests {
         // So expect ~33% errors (2/3 of 50% error rate)
         assert!(
             ones > 10 && ones < 50,
-            "Expected some errors from gate noise, got {} ones",
-            ones
+            "Expected some errors from gate noise, got {ones} ones"
         );
     }
 
@@ -915,7 +919,10 @@ mod tests {
 
         // Same seed should give identical results
         for (r1, r2) in results1.iter().zip(results2.iter()) {
-            assert_eq!(r1.outcomes, r2.outcomes, "Same seed should give same results");
+            assert_eq!(
+                r1.outcomes, r2.outcomes,
+                "Same seed should give same results"
+            );
         }
     }
 
@@ -940,8 +947,7 @@ mod tests {
         // Should flip ~80% of the time when outcome is 0
         assert!(
             flips_from_0 > 60 && flips_from_0 < 95,
-            "Should flip ~80% when outcome is 0, got {}%",
-            flips_from_0
+            "Should flip ~80% when outcome is 0, got {flips_from_0}%"
         );
 
         // Test measurement errors - set outcome to 1 (will flip with 20% prob)
@@ -956,8 +962,7 @@ mod tests {
         // Should flip ~20% of the time when outcome is 1
         assert!(
             flips_from_1 > 5 && flips_from_1 < 40,
-            "Should flip ~20% when outcome is 1, got {}%",
-            flips_from_1
+            "Should flip ~20% when outcome is 1, got {flips_from_1}%"
         );
     }
 
@@ -981,8 +986,7 @@ mod tests {
         let ones = results.iter().filter(|r| r.outcomes[0]).count();
         assert!(
             ones > 50 && ones < 90,
-            "Expected ~70% ones (0->1 flips), got {}%",
-            ones
+            "Expected ~70% ones (0->1 flips), got {ones}%"
         );
 
         // Put qubit in |1> state with low 1->0 error rate
@@ -1000,8 +1004,7 @@ mod tests {
         let ones = results.iter().filter(|r| r.outcomes[0]).count();
         assert!(
             ones > 60 && ones < 95,
-            "Expected ~80% ones (some 1->0 flips), got {}%",
-            ones
+            "Expected ~80% ones (some 1->0 flips), got {ones}%"
         );
     }
 }

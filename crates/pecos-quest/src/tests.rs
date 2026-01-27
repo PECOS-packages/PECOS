@@ -213,8 +213,7 @@ fn test_rotation_gates() {
     sim.reset();
 
     // Test Rz(π) on |+⟩ state
-    sim.h(&qid(0))
-        .rz(Angle64::from_radians(PI), &qid(0));
+    sim.h(&qid(0)).rz(Angle64::from_radians(PI), &qid(0));
     // QuEST uses the convention RZ(θ) = diag(e^(-iθ/2), e^(iθ/2))
     // So RZ(π) on |+⟩ gives (e^(-iπ/2)|0⟩ + e^(iπ/2)|1⟩)/√2 = (-i|0⟩ + i|1⟩)/√2
     let sqrt2_inv = 1.0 / 2.0_f64.sqrt();

@@ -110,7 +110,7 @@ impl std::error::Error for LogicalDiscoveryError {}
 ///
 /// # Algorithm
 ///
-/// The algorithm follows the Python VerifyStabilizers approach:
+/// The algorithm follows the Python `VerifyStabilizers` approach:
 /// 1. Create simulator with n data + m ancilla qubits
 /// 2. For each stabilizer, prepare ancilla in |+⟩ and apply controlled-Paulis
 /// 3. Measure ancillas in X basis (deterministic +1 outcome)
@@ -223,21 +223,18 @@ pub fn discover_logical_operators(
         let (stabs, destabs) = state.stabs_and_destabs_mut();
         let result = stabs.refactor(destabs, x_positions, z_positions, None, Some(&protected));
 
-        match result {
-            Some(gen_idx) => {
-                used_indices.insert(gen_idx);
-                check_gen_indices.push(gen_idx);
-            }
-            None => {
-                // Check if it's already in the group (dependent)
-                let classification = state.stabs().classify_pauli_string(state.destabs(), stab);
-                match classification {
-                    pecos_qsim::PauliClassification::Stabilizer => {
-                        return Err(LogicalDiscoveryError::StabilizersNotIndependent);
-                    }
-                    _ => {
-                        return Err(LogicalDiscoveryError::RefactorFailed(check_idx));
-                    }
+        if let Some(gen_idx) = result {
+            used_indices.insert(gen_idx);
+            check_gen_indices.push(gen_idx);
+        } else {
+            // Check if it's already in the group (dependent)
+            let classification = state.stabs().classify_pauli_string(state.destabs(), stab);
+            match classification {
+                pecos_qsim::PauliClassification::Stabilizer => {
+                    return Err(LogicalDiscoveryError::StabilizersNotIndependent);
+                }
+                _ => {
+                    return Err(LogicalDiscoveryError::RefactorFailed(check_idx));
                 }
             }
         }
@@ -314,12 +311,9 @@ pub fn discover_logical_operators(
     })
 }
 
-/// Restrict a PauliString to only include qubits 0..n (data qubits).
+/// Restrict a `PauliString` to only include qubits 0..n (data qubits).
 fn restrict_to_data_qubits(ps: &PauliString, n: usize) -> PauliString {
-    let paulis: Vec<(Pauli, QubitId)> = ps
-        .iter_pairs()
-        .filter(|(_, q)| (q.0 as usize) < n)
-        .collect();
+    let paulis: Vec<(Pauli, QubitId)> = ps.iter_pairs().filter(|(_, q)| q.0 < n).collect();
     PauliString::with_phase_and_paulis(ps.phase(), paulis)
 }
 

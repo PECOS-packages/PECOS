@@ -63,15 +63,20 @@ pub mod tensornet;
 
 // Re-export main types
 pub use densitymat::CuDensityMat;
-pub use error::{CuQuantumError, DensityMatError, Result, StabilizerError, StateVecError, TensorNetError, TryClone};
-pub use tensornet::CuTensorNet;
-pub use stabilizer::{CuStabilizer, CuFrameSimulator, FrameSimulationResults};
+pub use error::{
+    CuQuantumError, DensityMatError, Result, StabilizerError, StateVecError, TensorNetError,
+    TryClone,
+};
+pub use stabilizer::{CuFrameSimulator, CuStabilizer, FrameSimulationResults};
 pub use statevec::CuStateVec;
+pub use tensornet::CuTensorNet;
 
 // Re-export PECOS traits for convenience
 pub use pecos_core::QubitId;
 pub use pecos_qsim::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
-pub use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator};
+pub use pecos_qsim::{
+    ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
+};
 
 /// Check if cuQuantum was found at build time
 ///

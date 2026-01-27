@@ -17,8 +17,8 @@
 
 use pecos_core::{Angle64, QubitId};
 use pecos_cuquantum::{
-    is_cuquantum_available as cuquantum_available, ArbitraryRotationGateable, CliffordGateable,
-    CuDensityMat, CuStabilizer, CuStateVec, CuTensorNet, QuantumSimulator,
+    ArbitraryRotationGateable, CliffordGateable, CuDensityMat, CuStabilizer, CuStateVec,
+    CuTensorNet, QuantumSimulator, is_cuquantum_available as cuquantum_available,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -37,7 +37,7 @@ fn is_cuquantum_available() -> bool {
 /// It supports all quantum gates including arbitrary rotations.
 ///
 /// Args:
-///     num_qubits: Number of qubits to simulate.
+///     `num_qubits`: Number of qubits to simulate.
 ///
 /// Example:
 ///     >>> sim = CuStateVecSim(4)
@@ -54,7 +54,8 @@ impl PyCuStateVec {
     /// Create a new state vector simulator with the given number of qubits.
     #[new]
     fn new(num_qubits: usize) -> PyResult<Self> {
-        let inner = CuStateVec::new(num_qubits).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let inner =
+            CuStateVec::new(num_qubits).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(Self { inner })
     }
 
@@ -322,13 +323,22 @@ impl PyCuStateVec {
     /// Apply U gate (general single-qubit rotation).
     fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.u(Angle64::from_radians(theta), Angle64::from_radians(phi), Angle64::from_radians(lambda), &qubits);
+        self.inner.u(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            Angle64::from_radians(lambda),
+            &qubits,
+        );
     }
 
     /// Apply R1XY gate (rotation in XY plane).
     fn r1xy(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &qubits);
+        self.inner.r1xy(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            &qubits,
+        );
     }
 
     // =========================================================================
@@ -375,7 +385,7 @@ impl PyCuStateVec {
     /// Sample measurement outcomes from the current state without collapsing it.
     ///
     /// Args:
-    ///     num_samples: Number of samples to draw.
+    ///     `num_samples`: Number of samples to draw.
     ///
     /// Returns:
     ///     List of bitstrings as integers. Each integer represents a measurement outcome
@@ -391,7 +401,7 @@ impl PyCuStateVec {
 /// Clifford gates (no T gates or arbitrary rotations).
 ///
 /// Args:
-///     num_qubits: Number of qubits to simulate.
+///     `num_qubits`: Number of qubits to simulate.
 ///
 /// Example:
 ///     >>> sim = CuStabilizerSim(100)
@@ -676,8 +686,8 @@ impl PyCuStabilizer {
 ///     - Approximate simulation of larger circuits
 ///
 /// Example:
-///     >>> net = CuTensorNet()
-///     >>> print(f"cuTensorNet version: {CuTensorNet.version()}")
+///     >>> net = `CuTensorNet()`
+///     >>> print(f"cuTensorNet version: {`CuTensorNet.version()`}")
 #[pyclass(name = "CuTensorNet", unsendable)]
 struct PyCuTensorNet {
     #[allow(dead_code)]
@@ -689,8 +699,7 @@ impl PyCuTensorNet {
     /// Create a new tensor network handle.
     #[new]
     fn new() -> PyResult<Self> {
-        let inner =
-            CuTensorNet::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let inner = CuTensorNet::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(Self { inner })
     }
 
@@ -719,7 +728,7 @@ impl PyCuTensorNet {
 ///
 /// Example:
 ///     >>> sim = CuDensityMat(4)  # 4-qubit density matrix
-///     >>> print(f"cuDensityMat version: {CuDensityMat.version()}")
+///     >>> print(f"cuDensityMat version: {`CuDensityMat.version()`}")
 #[pyclass(name = "CuDensityMat", unsendable)]
 struct PyCuDensityMat {
     inner: CuDensityMat,
@@ -732,7 +741,7 @@ impl PyCuDensityMat {
     /// Initializes the state to the pure state |0...0><0...0|.
     ///
     /// Args:
-    ///     num_qubits: Number of qubits to simulate.
+    ///     `num_qubits`: Number of qubits to simulate.
     #[new]
     fn new(num_qubits: usize) -> PyResult<Self> {
         let inner =

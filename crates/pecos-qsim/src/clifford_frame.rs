@@ -64,7 +64,7 @@ pub struct CliffordFrame(u8);
 // Heisenberg of compose(a, b): apply b's action first, then a's action.
 // Result: x_image = a.apply(b.x_image), z_image = a.apply(b.z_image).
 
-/// Heisenberg actions for all 24 elements: (x_axis, x_neg, z_axis, z_neg).
+/// Heisenberg actions for all 24 elements: (`x_axis`, `x_neg`, `z_axis`, `z_neg`).
 const HEIS: [(u8, bool, u8, bool); 24] = [
     // Paulis (indices 0-3)
     (0, false, 2, false), //  0: I       X→+X  Z→+Z
@@ -99,6 +99,7 @@ const HEIS: [(u8, bool, u8, bool); 24] = [
 /// Generator sequences for each element (0=H, 1=S), applied left-to-right
 /// as matrix products: seq [a,b,c] means the gate C = a·b·c (a applied last to state).
 /// Used by tests to construct matrices for verification.
+#[cfg(test)]
 const GENERATORS: [[u8; 7]; 24] = {
     // We store fixed-size arrays with 0xFF as padding (unused entries).
     const P: u8 = 0xFF; // padding
@@ -133,6 +134,7 @@ const GENERATORS: [[u8; 7]; 24] = {
 };
 
 /// Length of each generator sequence (number of non-padding entries).
+#[cfg(test)]
 const GEN_LENS: [u8; 24] = [
     0, 4, 6, 2, 1, 3, 1, 2, 2, 3, 3, 4, 3, 3, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7,
 ];
@@ -166,7 +168,7 @@ const fn apply_action(imgs: &[(u8, bool); 3], p_axis: u8, p_neg: bool) -> (u8, b
     (img_axis, p_neg != img_neg)
 }
 
-/// Find which element has the given (x_image, z_image).
+/// Find which element has the given (`x_image`, `z_image`).
 const fn find_element(x_axis: u8, x_neg: bool, z_axis: u8, z_neg: bool) -> u8 {
     let mut k = 0;
     while k < 24 {
@@ -185,7 +187,7 @@ const fn find_element(x_axis: u8, x_neg: bool, z_axis: u8, z_neg: bool) -> u8 {
 
 /// Compose(a, b) = element of matrix b·a.
 /// Heisenberg: apply b first, then a.
-/// result_x = a.apply(b.x), result_z = a.apply(b.z).
+/// `result_x` = a.apply(b.x), `result_z` = a.apply(b.z).
 const fn compute_compose() -> [[u8; 24]; 24] {
     let mut table = [[0u8; 24]; 24];
     let mut i = 0;
@@ -233,11 +235,11 @@ const fn coset_rep_for_axes(x_axis: u8, z_axis: u8) -> u8 {
         (1, 0) => 7,  // SH: (XYZ) cycle
         (2, 1) => 8,  // HS: (XZY) cycle
         (0, 1) => 12, // SHS: (YZ) swap
-        _ => 255,      // unreachable
+        _ => 255,     // unreachable
     }
 }
 
-/// Decompose each element as Pauli · Coset: C_matrix = P · V.
+/// Decompose each element as Pauli · Coset: `C_matrix` = P · V.
 /// compose(V, P) == C (since compose(a,b) = element of b·a).
 /// To flush C: apply V physically first, then P.
 const fn compute_decompose() -> [(u8, u8); 24] {
@@ -282,85 +284,133 @@ const DECOMPOSE: [(u8, u8); 24] = compute_decompose();
 pub const PHASE_ROOTS: [[f64; 2]; 8] = {
     const R: f64 = std::f64::consts::FRAC_1_SQRT_2;
     [
-        [ 1.0,  0.0], // k=0: 1
-        [   R,    R], // k=1: e^{iπ/4}
-        [ 0.0,  1.0], // k=2: i
-        [  -R,    R], // k=3: e^{i3π/4}
-        [-1.0,  0.0], // k=4: -1
-        [  -R,   -R], // k=5: e^{i5π/4}
-        [ 0.0, -1.0], // k=6: -i
-        [   R,   -R], // k=7: e^{i7π/4}
+        [1.0, 0.0],  // k=0: 1
+        [R, R],      // k=1: e^{iπ/4}
+        [0.0, 1.0],  // k=2: i
+        [-R, R],     // k=3: e^{i3π/4}
+        [-1.0, 0.0], // k=4: -1
+        [-R, -R],    // k=5: e^{i5π/4}
+        [0.0, -1.0], // k=6: -i
+        [R, -R],     // k=7: e^{i7π/4}
     ]
 };
 
 /// Representative 2x2 unitary matrix for each of the 24 elements.
-/// Layout: [a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im] for [[a,b],[c,d]].
+/// Layout: [`a_re`, `a_im`, `b_re`, `b_im`, `c_re`, `c_im`, `d_re`, `d_im`] for [[a,b],[c,d]].
 /// Computed from generator sequences (H, S).
 pub const ELEMENT_MATRIX: [[f64; 8]; 24] = {
     const R: f64 = std::f64::consts::FRAC_1_SQRT_2;
     const H: f64 = 0.5;
     [
-        [ 1.0, 0.0,  0.0, 0.0,  0.0, 0.0,  1.0, 0.0], //  0: I
-        [ 0.0, 0.0,  1.0, 0.0,  1.0, 0.0,  0.0, 0.0], //  1: X
-        [ 0.0, 0.0,  1.0, 0.0, -1.0, 0.0,  0.0, 0.0], //  2: Y (= iXZ, differs from std Y by phase -i)
-        [ 1.0, 0.0,  0.0, 0.0,  0.0, 0.0, -1.0, 0.0], //  3: Z
-        [ 1.0, 0.0,  0.0, 0.0,  0.0, 0.0,  0.0, 1.0], //  4: S
-        [ 1.0, 0.0,  0.0, 0.0,  0.0, 0.0,  0.0,-1.0], //  5: Sdg
-        [   R, 0.0,    R, 0.0,    R, 0.0,   -R, 0.0], //  6: H
-        [   R, 0.0,    R, 0.0,  0.0,   R,  0.0,  -R], //  7: SH
-        [   R, 0.0,  0.0,   R,    R, 0.0,  0.0,  -R], //  8: HS
-        [   R, 0.0,    R, 0.0,   -R, 0.0,    R, 0.0], //  9: ZH (= SYdg rep)
-        [   R, 0.0,   -R, 0.0,    R, 0.0,    R, 0.0], // 10: HZ (= SY rep)
-        [   R, 0.0,    R, 0.0,  0.0,  -R,  0.0,   R], // 11: SdgH
-        [   R, 0.0,  0.0,   R,  0.0,   R,    R, 0.0], // 12: SHS (= SXdg rep)
-        [   H,   H,    H,  -H,    H,  -H,    H,   H], // 13: HSH (= SX)
-        [   H,   H,    H,  -H,    H,   H,   -H,   H], // 14: SHSH
-        [   R, 0.0,  0.0,   R,   -R, 0.0,  0.0,   R], // 15: S^2HS
-        [   R, 0.0,   -R, 0.0,  0.0,   R,  0.0,   R], // 16: SHS^2
-        [   R, 0.0,  0.0,   R,  0.0,  -R,   -R, 0.0], // 17: S^3HS
-        [   R, 0.0,   -R, 0.0,   -R, 0.0,   -R, 0.0], // 18: S^2HS^2
-        [   H,   H,    H,  -H,   -H,   H,   -H,  -H], // 19: S^2HSH
-        [ 0.0, 0.0,  0.0, 1.0,  1.0, 0.0,  0.0, 0.0], // 20: HS^2HS
-        [   R, 0.0,   -R, 0.0,  0.0,  -R,  0.0,  -R], // 21: S^3HS^2
-        [   H,   H,    H,  -H,   -H,  -H,    H,  -H], // 22: S^3HSH
-        [ 0.0, 0.0,  0.0,-1.0,  1.0, 0.0,  0.0, 0.0], // 23: HS^2HS^3
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],  //  0: I
+        [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0],  //  1: X
+        [0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0], //  2: Y (= iXZ, differs from std Y by phase -i)
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0], //  3: Z
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],  //  4: S
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0], //  5: Sdg
+        [R, 0.0, R, 0.0, R, 0.0, -R, 0.0],         //  6: H
+        [R, 0.0, R, 0.0, 0.0, R, 0.0, -R],         //  7: SH
+        [R, 0.0, 0.0, R, R, 0.0, 0.0, -R],         //  8: HS
+        [R, 0.0, R, 0.0, -R, 0.0, R, 0.0],         //  9: ZH (= SYdg rep)
+        [R, 0.0, -R, 0.0, R, 0.0, R, 0.0],         // 10: HZ (= SY rep)
+        [R, 0.0, R, 0.0, 0.0, -R, 0.0, R],         // 11: SdgH
+        [R, 0.0, 0.0, R, 0.0, R, R, 0.0],          // 12: SHS (= SXdg rep)
+        [H, H, H, -H, H, -H, H, H],                // 13: HSH (= SX)
+        [H, H, H, -H, H, H, -H, H],                // 14: SHSH
+        [R, 0.0, 0.0, R, -R, 0.0, 0.0, R],         // 15: S^2HS
+        [R, 0.0, -R, 0.0, 0.0, R, 0.0, R],         // 16: SHS^2
+        [R, 0.0, 0.0, R, 0.0, -R, -R, 0.0],        // 17: S^3HS
+        [R, 0.0, -R, 0.0, -R, 0.0, -R, 0.0],       // 18: S^2HS^2
+        [H, H, H, -H, -H, H, -H, -H],              // 19: S^2HSH
+        [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0],  // 20: HS^2HS
+        [R, 0.0, -R, 0.0, 0.0, -R, 0.0, -R],       // 21: S^3HS^2
+        [H, H, H, -H, -H, -H, H, -H],              // 22: S^3HSH
+        [0.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 0.0], // 23: HS^2HS^3
     ]
 };
 
-/// Phase cocycle table: PHASE_COCYCLE[frame][gate] gives the phase correction
+/// Phase cocycle table: `PHASE_COCYCLE`[frame][gate] gives the phase correction
 /// (as an 8th-root index 0-7) when composing `gate` onto `frame`.
 ///
-/// For element matrices M_i and M_j:
-///   M_j · M_i = e^{i·PHASE_COCYCLE[i][j]·π/4} · M_{COMPOSE[i][j]}
+/// For element matrices `M_i` and `M_j`:
+///   `M_j` · `M_i` = `e^{i·PHASE_COCYCLE`[i][j]·π/4} · M_{COMPOSE[i][j]}
 pub const PHASE_COCYCLE: [[u8; 24]; 24] = [
-    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    [0,0,0,0,2,6,0,0,1,0,4,0,1,7,7,1,4,1,4,7,2,4,7,6],
-    [0,4,4,0,6,2,4,4,6,4,0,4,6,2,2,6,0,6,0,2,6,0,2,2],
-    [0,4,4,0,0,0,0,0,7,0,0,0,7,1,1,7,0,7,0,1,0,0,1,0],
-    [0,0,4,0,0,0,0,0,0,0,7,0,0,1,1,0,7,0,7,1,4,7,1,0],
-    [0,0,4,0,0,0,7,7,0,7,0,7,0,1,1,0,0,0,0,1,0,0,1,4],
-    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,2,6,0,6],
-    [0,2,2,0,0,0,0,0,0,0,7,0,2,1,1,0,7,6,7,1,4,7,1,0],
-    [0,7,7,0,0,0,0,0,1,0,0,0,1,0,0,1,2,1,4,0,1,2,0,5],
-    [0,4,4,0,0,0,0,2,7,0,0,6,7,1,1,7,0,7,0,1,6,0,1,2],
-    [0,0,0,0,0,0,0,0,1,0,4,0,1,7,7,1,2,1,4,7,2,6,7,6],
-    [0,6,6,0,0,0,7,7,0,7,0,7,0,7,1,0,0,0,0,3,0,0,1,4],
-    [0,1,1,0,0,0,1,1,0,1,7,1,2,1,1,4,7,2,7,1,3,7,1,7],
-    [0,7,7,0,0,0,0,0,1,0,2,0,1,0,2,1,2,1,2,0,1,2,6,5],
-    [0,1,1,0,0,0,1,1,2,1,1,1,2,1,1,2,7,2,5,1,3,7,1,7],
-    [0,3,3,0,0,0,0,2,7,4,0,2,7,2,2,7,0,7,0,2,5,0,2,1],
-    [0,2,2,0,0,0,1,1,4,1,6,1,2,1,1,4,6,6,6,1,4,6,1,0],
-    [0,5,5,0,0,0,7,7,0,7,1,7,0,3,1,0,1,0,1,3,7,1,5,3],
-    [0,4,4,0,0,0,4,2,6,4,0,6,6,2,2,6,0,6,0,2,6,0,2,2],
-    [0,3,3,0,0,0,2,2,1,2,0,2,7,2,2,5,0,7,0,2,5,0,2,1],
-    [0,0,0,4,2,2,0,0,2,0,3,0,2,7,7,2,3,2,3,7,2,3,7,6],
-    [0,6,6,0,0,0,6,6,0,6,1,6,0,7,5,0,1,0,1,3,0,1,5,4],
-    [0,5,5,0,0,0,1,7,0,5,1,7,0,3,3,0,1,0,1,3,7,1,3,3],
-    [0,0,0,4,6,6,7,7,2,7,4,7,2,7,7,2,4,2,4,7,2,4,7,6],
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    [
+        0, 0, 0, 0, 2, 6, 0, 0, 1, 0, 4, 0, 1, 7, 7, 1, 4, 1, 4, 7, 2, 4, 7, 6,
+    ],
+    [
+        0, 4, 4, 0, 6, 2, 4, 4, 6, 4, 0, 4, 6, 2, 2, 6, 0, 6, 0, 2, 6, 0, 2, 2,
+    ],
+    [
+        0, 4, 4, 0, 0, 0, 0, 0, 7, 0, 0, 0, 7, 1, 1, 7, 0, 7, 0, 1, 0, 0, 1, 0,
+    ],
+    [
+        0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 1, 1, 0, 7, 0, 7, 1, 4, 7, 1, 0,
+    ],
+    [
+        0, 0, 4, 0, 0, 0, 7, 7, 0, 7, 0, 7, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 4,
+    ],
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 6, 0, 6,
+    ],
+    [
+        0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 7, 0, 2, 1, 1, 0, 7, 6, 7, 1, 4, 7, 1, 0,
+    ],
+    [
+        0, 7, 7, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 2, 1, 4, 0, 1, 2, 0, 5,
+    ],
+    [
+        0, 4, 4, 0, 0, 0, 0, 2, 7, 0, 0, 6, 7, 1, 1, 7, 0, 7, 0, 1, 6, 0, 1, 2,
+    ],
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4, 0, 1, 7, 7, 1, 2, 1, 4, 7, 2, 6, 7, 6,
+    ],
+    [
+        0, 6, 6, 0, 0, 0, 7, 7, 0, 7, 0, 7, 0, 7, 1, 0, 0, 0, 0, 3, 0, 0, 1, 4,
+    ],
+    [
+        0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 7, 1, 2, 1, 1, 4, 7, 2, 7, 1, 3, 7, 1, 7,
+    ],
+    [
+        0, 7, 7, 0, 0, 0, 0, 0, 1, 0, 2, 0, 1, 0, 2, 1, 2, 1, 2, 0, 1, 2, 6, 5,
+    ],
+    [
+        0, 1, 1, 0, 0, 0, 1, 1, 2, 1, 1, 1, 2, 1, 1, 2, 7, 2, 5, 1, 3, 7, 1, 7,
+    ],
+    [
+        0, 3, 3, 0, 0, 0, 0, 2, 7, 4, 0, 2, 7, 2, 2, 7, 0, 7, 0, 2, 5, 0, 2, 1,
+    ],
+    [
+        0, 2, 2, 0, 0, 0, 1, 1, 4, 1, 6, 1, 2, 1, 1, 4, 6, 6, 6, 1, 4, 6, 1, 0,
+    ],
+    [
+        0, 5, 5, 0, 0, 0, 7, 7, 0, 7, 1, 7, 0, 3, 1, 0, 1, 0, 1, 3, 7, 1, 5, 3,
+    ],
+    [
+        0, 4, 4, 0, 0, 0, 4, 2, 6, 4, 0, 6, 6, 2, 2, 6, 0, 6, 0, 2, 6, 0, 2, 2,
+    ],
+    [
+        0, 3, 3, 0, 0, 0, 2, 2, 1, 2, 0, 2, 7, 2, 2, 5, 0, 7, 0, 2, 5, 0, 2, 1,
+    ],
+    [
+        0, 0, 0, 4, 2, 2, 0, 0, 2, 0, 3, 0, 2, 7, 7, 2, 3, 2, 3, 7, 2, 3, 7, 6,
+    ],
+    [
+        0, 6, 6, 0, 0, 0, 6, 6, 0, 6, 1, 6, 0, 7, 5, 0, 1, 0, 1, 3, 0, 1, 5, 4,
+    ],
+    [
+        0, 5, 5, 0, 0, 0, 1, 7, 0, 5, 1, 7, 0, 3, 3, 0, 1, 0, 1, 3, 7, 1, 3, 3,
+    ],
+    [
+        0, 0, 0, 4, 6, 6, 7, 7, 2, 7, 4, 7, 2, 7, 7, 2, 4, 2, 4, 7, 2, 4, 7, 6,
+    ],
 ];
 
 /// Phase correction from standard gate matrix to generator-based element matrix.
-/// standard_gate_matrix = e^{i·GATE_PHASE_DELTA[idx]·π/4} · ELEMENT_MATRIX[idx]
+/// `standard_gate_matrix` = `e^{i·GATE_PHASE_DELTA`[idx]·π/4} · `ELEMENT_MATRIX`[idx]
 ///
 /// Only entries for indices used as gates matter:
 ///   0(I)=0, 1(X)=0, 2(Y)=6, 3(Z)=0, 4(S)=0, 5(Sdg)=0, 6(H)=0,
@@ -382,28 +432,31 @@ impl CliffordFrame {
     pub const SZ: Self = Self(4);
     pub const SZDG: Self = Self(5);
     pub const H: Self = Self(6);
-    pub const SX: Self = Self(13);   // HSH
+    pub const SX: Self = Self(13); // HSH
     pub const SXDG: Self = Self(12); // SHS
-    pub const SY: Self = Self(10);   // HZ = HS²
-    pub const SYDG: Self = Self(9);  // ZH = S²H
+    pub const SY: Self = Self(10); // HZ = HS²
+    pub const SYDG: Self = Self(9); // ZH = S²H
 
-    /// Compose: new_frame = frame.compose(gate).
+    /// Compose: `new_frame` = frame.compose(gate).
     ///
     /// Returns the frame after applying `gate` to a qubit with accumulated
     /// frame `self`. Corresponds to the matrix product gate · self.
     #[inline]
+    #[must_use]
     pub fn compose(self, gate: Self) -> Self {
         Self(COMPOSE[self.0 as usize][gate.0 as usize])
     }
 
     /// Inverse of this Clifford.
     #[inline]
+    #[must_use]
     pub fn inverse(self) -> Self {
         Self(INVERSE[self.0 as usize])
     }
 
     /// Where this Clifford maps the Z axis (Heisenberg picture: C†ZC).
     #[inline]
+    #[must_use]
     pub fn z_image(self) -> SignedPauli {
         let (_, _, za, zn) = HEIS[self.0 as usize];
         SignedPauli {
@@ -414,6 +467,7 @@ impl CliffordFrame {
 
     /// Where this Clifford maps the X axis (Heisenberg picture: C†XC).
     #[inline]
+    #[must_use]
     pub fn x_image(self) -> SignedPauli {
         let (xa, xn, _, _) = HEIS[self.0 as usize];
         SignedPauli {
@@ -424,6 +478,7 @@ impl CliffordFrame {
 
     /// Where this Clifford maps the Y axis (derived from X and Z images).
     #[inline]
+    #[must_use]
     pub fn y_image(self) -> SignedPauli {
         let (xa, xn, za, zn) = HEIS[self.0 as usize];
         let (ya, yn) = y_image(xa, xn, za, zn);
@@ -435,21 +490,24 @@ impl CliffordFrame {
 
     /// Whether this is a Pauli gate (I, X, Y, or Z).
     #[inline]
+    #[must_use]
     pub fn is_pauli(self) -> bool {
         self.0 < 4
     }
 
     /// Whether this is the identity.
     #[inline]
+    #[must_use]
     pub fn is_identity(self) -> bool {
         self.0 == 0
     }
 
-    /// Decompose into Pauli × Coset: self_matrix = pauli · coset.
+    /// Decompose into Pauli × Coset: `self_matrix` = pauli · coset.
     ///
     /// The coset representative is one of {I, S, H, SH, HS, SHS}.
     /// To physically apply this Clifford: first apply coset, then pauli.
     #[inline]
+    #[must_use]
     pub fn decompose_pauli_coset(self) -> (Self, Self) {
         let (p, c) = DECOMPOSE[self.0 as usize];
         (Self(p), Self(c))
@@ -457,14 +515,16 @@ impl CliffordFrame {
 
     /// Get the raw index (for debugging/testing).
     #[inline]
+    #[must_use]
     pub fn index(self) -> u8 {
         self.0
     }
 
-    /// Pauli symplectic representation: (x_bit, z_bit).
+    /// Pauli symplectic representation: (`x_bit`, `z_bit`).
     /// Only valid for Pauli elements (index 0-3).
     /// I=(false,false), X=(true,false), Y=(true,true), Z=(false,true).
     #[inline]
+    #[must_use]
     pub fn pauli_xz_bits(self) -> (bool, bool) {
         debug_assert!(self.is_pauli());
         const PAULI_XZ: [(bool, bool); 4] =
@@ -472,21 +532,23 @@ impl CliffordFrame {
         PAULI_XZ[self.0 as usize]
     }
 
-    /// Construct a Pauli from symplectic (x_bit, z_bit) representation.
+    /// Construct a Pauli from symplectic (`x_bit`, `z_bit`) representation.
     #[inline]
+    #[must_use]
     pub fn pauli_from_xz(x: bool, z: bool) -> Self {
         const XZ_TO_IDX: [[u8; 2]; 2] = [[0, 3], [1, 2]]; // [x][z]
-        Self(XZ_TO_IDX[x as usize][z as usize])
+        Self(XZ_TO_IDX[usize::from(x)][usize::from(z)])
     }
 
     /// Push this Pauli frame through a CX gate (Heisenberg picture).
     ///
     /// Given Pauli frames (ctrl, targ) before CX, returns (ctrl', targ') after.
-    /// Only valid when both self and targ_frame are Paulis.
+    /// Only valid when both self and `targ_frame` are Paulis.
     ///
     /// CX propagation rules (symplectic):
     ///   xc' = xc,  zc' = zc ⊕ zt,  xt' = xc ⊕ xt,  zt' = zt
     #[inline]
+    #[must_use]
     pub fn push_through_cx(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self) {
         let (xc, zc) = ctrl_pauli.pauli_xz_bits();
         let (xt, zt) = targ_pauli.pauli_xz_bits();
@@ -500,6 +562,7 @@ impl CliffordFrame {
     /// CZ propagation (symplectic):
     ///   xc' = xc,  zc' = zc ⊕ xt,  xt' = xt,  zt' = zt ⊕ xc
     #[inline]
+    #[must_use]
     pub fn push_through_cz(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self) {
         let (xc, zc) = ctrl_pauli.pauli_xz_bits();
         let (xt, zt) = targ_pauli.pauli_xz_bits();
@@ -512,17 +575,19 @@ impl CliffordFrame {
     ///
     /// SWAP simply exchanges the two frames.
     #[inline]
+    #[must_use]
     pub fn push_through_swap(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self) {
         (targ_pauli, ctrl_pauli)
     }
 
-    /// Push Pauli frames through an SZZ gate. Returns (new_p1, new_p2, phase).
+    /// Push Pauli frames through an SZZ gate. Returns (`new_p1`, `new_p2`, phase).
     ///
     /// SZZ = exp(-iπ/4 ZZ). Symplectic:
     ///   x1' = x1,  z1' = z1 ⊕ x1 ⊕ x2,  x2' = x2,  z2' = z2 ⊕ x1 ⊕ x2
     /// Element-convention phase: i when exactly one x-bit is set (index 2),
     /// identity otherwise.
     #[inline]
+    #[must_use]
     pub fn push_through_szz(p1: Self, p2: Self) -> (Self, Self, u8) {
         let (x1, z1) = p1.pauli_xz_bits();
         let (x2, z2) = p2.pauli_xz_bits();
@@ -533,7 +598,7 @@ impl CliffordFrame {
         (new_p1, new_p2, phase)
     }
 
-    /// Push Pauli frames through an iSWAP gate. Returns (new_p1, new_p2, phase).
+    /// Push Pauli frames through an iSWAP gate. Returns (`new_p1`, `new_p2`, phase).
     ///
     /// iSWAP = SWAP · diag(1,i,i,1)-like. Combines SWAP with SZZ-like z-update.
     /// Symplectic:
@@ -541,6 +606,7 @@ impl CliffordFrame {
     ///   x2' = x1,  z2' = z1 ⊕ x1 ⊕ x2
     /// Element-convention phase: 2*(x1 XOR x2).
     #[inline]
+    #[must_use]
     pub fn push_through_iswap(p1: Self, p2: Self) -> (Self, Self, u8) {
         let (x1, z1) = p1.pauli_xz_bits();
         let (x2, z2) = p2.pauli_xz_bits();
@@ -551,13 +617,14 @@ impl CliffordFrame {
         (new_p1, new_p2, phase)
     }
 
-    /// Push Pauli frames through an SXX gate. Returns (new_p1, new_p2, phase).
+    /// Push Pauli frames through an SXX gate. Returns (`new_p1`, `new_p2`, phase).
     ///
     /// SXX = exp(-iπ/4 XX) = (H⊗H)·SZZ·(H⊗H). Symplectic:
     ///   x1' = x1 ⊕ z1 ⊕ z2,  z1' = z1
     ///   x2' = x2 ⊕ z1 ⊕ z2,  z2' = z2
     /// Element-convention phase: 6*(z1 XOR z2) mod 8 (= -i when one z-bit set).
     #[inline]
+    #[must_use]
     pub fn push_through_sxx(p1: Self, p2: Self) -> (Self, Self, u8) {
         let (x1, z1) = p1.pauli_xz_bits();
         let (x2, z2) = p2.pauli_xz_bits();
@@ -568,7 +635,7 @@ impl CliffordFrame {
         (new_p1, new_p2, phase)
     }
 
-    /// Push Pauli frames through an SYY gate. Returns (new_p1, new_p2, phase).
+    /// Push Pauli frames through an SYY gate. Returns (`new_p1`, `new_p2`, phase).
     ///
     /// SYY = (Sdg⊗Sdg)·SXX·(S⊗S). Derived by composing S/Sdg/SXX push-throughs.
     /// Symplectic:
@@ -576,6 +643,7 @@ impl CliffordFrame {
     ///   x2' = z1 ⊕ z2 ⊕ x1,  z2' = x1 ⊕ x2 ⊕ z1
     /// Phase: complex formula derived from S/SXX/Sdg composition.
     #[inline]
+    #[must_use]
     pub fn push_through_syy(p1: Self, p2: Self) -> (Self, Self, u8) {
         let (x1, z1) = p1.pauli_xz_bits();
         let (x2, z2) = p2.pauli_xz_bits();
@@ -602,10 +670,11 @@ impl CliffordFrame {
         (new_p1, new_p2, phase)
     }
 
-    /// Push Pauli frames through a G gate. Returns (new_p1, new_p2, phase).
+    /// Push Pauli frames through a G gate. Returns (`new_p1`, `new_p2`, phase).
     ///
     /// G = CZ · (H⊗H) · CZ. Derived by composing CZ and H push-throughs.
     #[inline]
+    #[must_use]
     pub fn push_through_g(p1: Self, p2: Self) -> (Self, Self, u8) {
         let (x1, z1) = p1.pauli_xz_bits();
         let (x2, z2) = p2.pauli_xz_bits();
@@ -978,26 +1047,22 @@ mod tests {
     #[test]
     fn test_push_through_cx() {
         // X_ctrl through CX -> X_ctrl X_targ
-        let (c, t) =
-            CliffordFrame::push_through_cx(CliffordFrame::X, CliffordFrame::IDENTITY);
+        let (c, t) = CliffordFrame::push_through_cx(CliffordFrame::X, CliffordFrame::IDENTITY);
         assert_eq!(c, CliffordFrame::X);
         assert_eq!(t, CliffordFrame::X);
 
         // I_ctrl, Z_targ through CX -> Z_ctrl Z_targ
-        let (c, t) =
-            CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::Z);
+        let (c, t) = CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::Z);
         assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::Z);
 
         // Z_ctrl through CX -> Z_ctrl
-        let (c, t) =
-            CliffordFrame::push_through_cx(CliffordFrame::Z, CliffordFrame::IDENTITY);
+        let (c, t) = CliffordFrame::push_through_cx(CliffordFrame::Z, CliffordFrame::IDENTITY);
         assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::IDENTITY);
 
         // I_ctrl, X_targ through CX -> X_targ unchanged
-        let (c, t) =
-            CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::X);
+        let (c, t) = CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::X);
         assert_eq!(c, CliffordFrame::IDENTITY);
         assert_eq!(t, CliffordFrame::X);
     }
@@ -1005,20 +1070,17 @@ mod tests {
     #[test]
     fn test_push_through_cz() {
         // X_ctrl through CZ -> X_ctrl Z_targ
-        let (c, t) =
-            CliffordFrame::push_through_cz(CliffordFrame::X, CliffordFrame::IDENTITY);
+        let (c, t) = CliffordFrame::push_through_cz(CliffordFrame::X, CliffordFrame::IDENTITY);
         assert_eq!(c, CliffordFrame::X);
         assert_eq!(t, CliffordFrame::Z);
 
         // I_ctrl, X_targ through CZ -> Z_ctrl X_targ
-        let (c, t) =
-            CliffordFrame::push_through_cz(CliffordFrame::IDENTITY, CliffordFrame::X);
+        let (c, t) = CliffordFrame::push_through_cz(CliffordFrame::IDENTITY, CliffordFrame::X);
         assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::X);
 
         // Z_ctrl, Z_targ through CZ -> unchanged
-        let (c, t) =
-            CliffordFrame::push_through_cz(CliffordFrame::Z, CliffordFrame::Z);
+        let (c, t) = CliffordFrame::push_through_cz(CliffordFrame::Z, CliffordFrame::Z);
         assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::Z);
     }
@@ -1138,12 +1200,11 @@ mod tests {
                 let ab = COMPOSE[a][b] as usize;
                 for c in 0..24usize {
                     let bc = COMPOSE[b][c] as usize;
-                    let lhs = (PHASE_COCYCLE[a][b] as u16 + PHASE_COCYCLE[ab][c] as u16) % 8;
-                    let rhs = (PHASE_COCYCLE[b][c] as u16 + PHASE_COCYCLE[a][bc] as u16) % 8;
-                    assert_eq!(
-                        lhs, rhs,
-                        "Cocycle associativity failed for ({a},{b},{c})"
-                    );
+                    let lhs =
+                        (u16::from(PHASE_COCYCLE[a][b]) + u16::from(PHASE_COCYCLE[ab][c])) % 8;
+                    let rhs =
+                        (u16::from(PHASE_COCYCLE[b][c]) + u16::from(PHASE_COCYCLE[a][bc])) % 8;
+                    assert_eq!(lhs, rhs, "Cocycle associativity failed for ({a},{b},{c})");
                 }
             }
         }
@@ -1159,24 +1220,31 @@ mod tests {
             (2, mat_y()),
             (3, mat_z()),
             (4, mat_s()),
-            (5, { let mi = Complex64::new(0.0, -1.0); [[ONE, ZERO], [ZERO, mi]] }),
+            (5, {
+                let mi = Complex64::new(0.0, -1.0);
+                [[ONE, ZERO], [ZERO, mi]]
+            }),
             (6, mat_h()),
-            (13, { // SX
+            (13, {
+                // SX
                 let a = Complex64::new(0.5, 0.5);
                 let b = Complex64::new(0.5, -0.5);
                 [[a, b], [b, a]]
             }),
-            (12, { // SXdg
+            (12, {
+                // SXdg
                 let a = Complex64::new(0.5, -0.5);
                 let b = Complex64::new(0.5, 0.5);
                 [[a, b], [b, a]]
             }),
-            (10, { // SY
+            (10, {
+                // SY
                 let a = Complex64::new(0.5, 0.5);
                 let b = Complex64::new(-0.5, -0.5);
                 [[a, b], [Complex64::new(0.5, 0.5), a]]
             }),
-            (9, { // SYdg
+            (9, {
+                // SYdg
                 let a = Complex64::new(0.5, -0.5);
                 let b = Complex64::new(0.5, -0.5);
                 let c = Complex64::new(-0.5, 0.5);
@@ -1195,7 +1263,9 @@ mod tests {
                         break;
                     }
                 }
-                if ratio.norm() > 1e-10 { break; }
+                if ratio.norm() > 1e-10 {
+                    break;
+                }
             }
             let delta = phase_index(ratio);
             assert_eq!(
@@ -1284,7 +1354,7 @@ mod tests {
             r
         }
 
-        /// Build a 4x4 matrix from the tensor product of two ELEMENT_MATRIX entries.
+        /// Build a 4x4 matrix from the tensor product of two `ELEMENT_MATRIX` entries.
         fn tensor(a_idx: usize, b_idx: usize) -> Mat4 {
             let a = &ELEM[a_idx];
             let b = &ELEM[b_idx];
@@ -1312,8 +1382,8 @@ mod tests {
         fn mat_cx() -> Mat4 {
             let mut m = mat4_zero();
             let one = [1.0, 0.0];
-            m[0 * 4 + 0] = one; // |00> -> |00>
-            m[1 * 4 + 1] = one; // |01> -> |01>
+            m[0] = one; // |00> -> |00>
+            m[4 + 1] = one; // |01> -> |01>
             m[2 * 4 + 3] = one; // |10> -> |11>
             m[3 * 4 + 2] = one; // |11> -> |10>
             m
@@ -1323,8 +1393,8 @@ mod tests {
         fn mat_cz() -> Mat4 {
             let mut m = mat4_zero();
             let one = [1.0, 0.0];
-            m[0 * 4 + 0] = one;
-            m[1 * 4 + 1] = one;
+            m[0] = one;
+            m[4 + 1] = one;
             m[2 * 4 + 2] = one;
             m[3 * 4 + 3] = [-1.0, 0.0];
             m
@@ -1341,7 +1411,7 @@ mod tests {
             true
         }
 
-        /// Extract (x_bit, z_bit) from Pauli index 0..3.
+        /// Extract (`x_bit`, `z_bit`) from Pauli index 0..3.
         fn pauli_xz(idx: usize) -> (bool, bool) {
             match idx {
                 0 => (false, false), // I
@@ -1352,7 +1422,7 @@ mod tests {
             }
         }
 
-        /// Construct Pauli index from (x_bit, z_bit).
+        /// Construct Pauli index from (`x_bit`, `z_bit`).
         fn pauli_from_xz(x: bool, z: bool) -> usize {
             match (x, z) {
                 (false, false) => 0,
@@ -1423,10 +1493,10 @@ mod tests {
         }
     }
 
-    /// Verify a two-qubit push_through against 4x4 matrix conjugation.
+    /// Verify a two-qubit `push_through` against 4x4 matrix conjugation.
     ///
     /// For each of the 16 Pauli⊗Pauli inputs, computes G†·(P1⊗P2)·G via
-    /// matrix multiplication and checks that it matches the push_through output.
+    /// matrix multiplication and checks that it matches the `push_through` output.
     fn verify_push_through_all_16(
         gate_matrix: &[[f64; 2]; 16],
         push_through: fn(CliffordFrame, CliffordFrame) -> (CliffordFrame, CliffordFrame, u8),
@@ -1541,10 +1611,10 @@ mod tests {
         // SZZ = exp(-iπ/4 ZZ) = diag(e^{-iπ/4}, e^{iπ/4}, e^{iπ/4}, e^{-iπ/4})
         let w = std::f64::consts::FRAC_1_SQRT_2;
         let mut szz = [[0.0, 0.0]; 16];
-        szz[0 * 4 + 0] = [w, -w];  // e^{-iπ/4}
-        szz[1 * 4 + 1] = [w, w];   // e^{iπ/4}
-        szz[2 * 4 + 2] = [w, w];   // e^{iπ/4}
-        szz[3 * 4 + 3] = [w, -w];  // e^{-iπ/4}
+        szz[0] = [w, -w]; // e^{-iπ/4}
+        szz[4 + 1] = [w, w]; // e^{iπ/4}
+        szz[2 * 4 + 2] = [w, w]; // e^{iπ/4}
+        szz[3 * 4 + 3] = [w, -w]; // e^{-iπ/4}
         verify_push_through_all_16(&szz, CliffordFrame::push_through_szz, "SZZ");
     }
 
@@ -1552,8 +1622,8 @@ mod tests {
     fn test_push_through_iswap() {
         // iSWAP: |00⟩→|00⟩, |01⟩→i|10⟩, |10⟩→i|01⟩, |11⟩→|11⟩
         let mut iswap = [[0.0, 0.0]; 16];
-        iswap[0 * 4 + 0] = [1.0, 0.0];
-        iswap[1 * 4 + 2] = [0.0, 1.0]; // i
+        iswap[0] = [1.0, 0.0];
+        iswap[4 + 2] = [0.0, 1.0]; // i
         iswap[2 * 4 + 1] = [0.0, 1.0]; // i
         iswap[3 * 4 + 3] = [1.0, 0.0];
         verify_push_through_all_16(&iswap, CliffordFrame::push_through_iswap, "iSWAP");
@@ -1564,13 +1634,13 @@ mod tests {
         // SXX = exp(-iπ/4 XX) = (I - iXX)/√2
         let w = std::f64::consts::FRAC_1_SQRT_2;
         let mut sxx = [[0.0, 0.0]; 16];
-        sxx[0 * 4 + 0] = [w, 0.0];
-        sxx[0 * 4 + 3] = [0.0, -w];
-        sxx[1 * 4 + 1] = [w, 0.0];
-        sxx[1 * 4 + 2] = [0.0, -w];
+        sxx[0] = [w, 0.0];
+        sxx[3] = [0.0, -w];
+        sxx[4 + 1] = [w, 0.0];
+        sxx[4 + 2] = [0.0, -w];
         sxx[2 * 4 + 1] = [0.0, -w];
         sxx[2 * 4 + 2] = [w, 0.0];
-        sxx[3 * 4 + 0] = [0.0, -w];
+        sxx[3 * 4] = [0.0, -w];
         sxx[3 * 4 + 3] = [w, 0.0];
         verify_push_through_all_16(&sxx, CliffordFrame::push_through_sxx, "SXX");
     }
@@ -1582,12 +1652,14 @@ mod tests {
         let w = std::f64::consts::FRAC_1_SQRT_2;
         type Mat4 = [[f64; 2]; 16];
         const CZERO: [f64; 2] = [0.0, 0.0];
-        fn mat4_zero() -> Mat4 { [CZERO; 16] }
+        fn mat4_zero() -> Mat4 {
+            [CZERO; 16]
+        }
         fn cmul(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
-            [a[0]*b[0]-a[1]*b[1], a[0]*b[1]+a[1]*b[0]]
+            [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
         }
         fn cadd(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
-            [a[0]+b[0], a[1]+b[1]]
+            [a[0] + b[0], a[1] + b[1]]
         }
         fn mat4_mul(a: &Mat4, b: &Mat4) -> Mat4 {
             let mut r = mat4_zero();
@@ -1595,36 +1667,36 @@ mod tests {
                 for j in 0..4 {
                     let mut s = CZERO;
                     for k in 0..4 {
-                        s = cadd(s, cmul(a[i*4+k], b[k*4+j]));
+                        s = cadd(s, cmul(a[i * 4 + k], b[k * 4 + j]));
                     }
-                    r[i*4+j] = s;
+                    r[i * 4 + j] = s;
                 }
             }
             r
         }
         // S⊗S tensor product: diag(1, i, i, -1)
         let mut ss = mat4_zero();
-        ss[0 * 4 + 0] = [1.0, 0.0];
-        ss[1 * 4 + 1] = [0.0, 1.0]; // i
+        ss[0] = [1.0, 0.0];
+        ss[4 + 1] = [0.0, 1.0]; // i
         ss[2 * 4 + 2] = [0.0, 1.0]; // i
         ss[3 * 4 + 3] = [-1.0, 0.0]; // i*i = -1
 
         // Sdg⊗Sdg: diag(1, -i, -i, -1)
         let mut sdsd = mat4_zero();
-        sdsd[0 * 4 + 0] = [1.0, 0.0];
-        sdsd[1 * 4 + 1] = [0.0, -1.0]; // -i
+        sdsd[0] = [1.0, 0.0];
+        sdsd[4 + 1] = [0.0, -1.0]; // -i
         sdsd[2 * 4 + 2] = [0.0, -1.0]; // -i
         sdsd[3 * 4 + 3] = [-1.0, 0.0]; // -1
 
         // SXX
         let mut sxx = mat4_zero();
-        sxx[0 * 4 + 0] = [w, 0.0];
-        sxx[0 * 4 + 3] = [0.0, -w];
-        sxx[1 * 4 + 1] = [w, 0.0];
-        sxx[1 * 4 + 2] = [0.0, -w];
+        sxx[0] = [w, 0.0];
+        sxx[3] = [0.0, -w];
+        sxx[4 + 1] = [w, 0.0];
+        sxx[4 + 2] = [0.0, -w];
         sxx[2 * 4 + 1] = [0.0, -w];
         sxx[2 * 4 + 2] = [w, 0.0];
-        sxx[3 * 4 + 0] = [0.0, -w];
+        sxx[3 * 4] = [0.0, -w];
         sxx[3 * 4 + 3] = [w, 0.0];
 
         let syy = mat4_mul(&sdsd, &mat4_mul(&sxx, &ss));
@@ -1636,12 +1708,14 @@ mod tests {
         // G = CZ · (H⊗H) · CZ
         type Mat4 = [[f64; 2]; 16];
         const CZERO: [f64; 2] = [0.0, 0.0];
-        fn mat4_zero() -> Mat4 { [CZERO; 16] }
+        fn mat4_zero() -> Mat4 {
+            [CZERO; 16]
+        }
         fn cmul(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
-            [a[0]*b[0]-a[1]*b[1], a[0]*b[1]+a[1]*b[0]]
+            [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
         }
         fn cadd(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
-            [a[0]+b[0], a[1]+b[1]]
+            [a[0] + b[0], a[1] + b[1]]
         }
         fn mat4_mul(a: &Mat4, b: &Mat4) -> Mat4 {
             let mut r = mat4_zero();
@@ -1649,22 +1723,22 @@ mod tests {
                 for j in 0..4 {
                     let mut s = CZERO;
                     for k in 0..4 {
-                        s = cadd(s, cmul(a[i*4+k], b[k*4+j]));
+                        s = cadd(s, cmul(a[i * 4 + k], b[k * 4 + j]));
                     }
-                    r[i*4+j] = s;
+                    r[i * 4 + j] = s;
                 }
             }
             r
         }
         // CZ = diag(1, 1, 1, -1)
         let mut cz = mat4_zero();
-        cz[0 * 4 + 0] = [1.0, 0.0];
-        cz[1 * 4 + 1] = [1.0, 0.0];
+        cz[0] = [1.0, 0.0];
+        cz[4 + 1] = [1.0, 0.0];
         cz[2 * 4 + 2] = [1.0, 0.0];
         cz[3 * 4 + 3] = [-1.0, 0.0];
 
         // H⊗H: tensor product of H with itself
-        let r = std::f64::consts::FRAC_1_SQRT_2;
+        let _r = std::f64::consts::FRAC_1_SQRT_2;
         let mut hh = mat4_zero();
         // H = [[r,r],[r,-r]]
         // H⊗H = [[r*r, r*r, r*r, r*r],
@@ -1672,10 +1746,22 @@ mod tests {
         //         [r*r, r*r, -r*r, -r*r],
         //         [r*r, -r*r, -r*r, r*r]]
         let h2 = 0.5; // r*r
-        hh[0 * 4 + 0] = [h2, 0.0]; hh[0 * 4 + 1] = [h2, 0.0]; hh[0 * 4 + 2] = [h2, 0.0]; hh[0 * 4 + 3] = [h2, 0.0];
-        hh[1 * 4 + 0] = [h2, 0.0]; hh[1 * 4 + 1] = [-h2, 0.0]; hh[1 * 4 + 2] = [h2, 0.0]; hh[1 * 4 + 3] = [-h2, 0.0];
-        hh[2 * 4 + 0] = [h2, 0.0]; hh[2 * 4 + 1] = [h2, 0.0]; hh[2 * 4 + 2] = [-h2, 0.0]; hh[2 * 4 + 3] = [-h2, 0.0];
-        hh[3 * 4 + 0] = [h2, 0.0]; hh[3 * 4 + 1] = [-h2, 0.0]; hh[3 * 4 + 2] = [-h2, 0.0]; hh[3 * 4 + 3] = [h2, 0.0];
+        hh[0] = [h2, 0.0];
+        hh[1] = [h2, 0.0];
+        hh[2] = [h2, 0.0];
+        hh[3] = [h2, 0.0];
+        hh[4] = [h2, 0.0];
+        hh[4 + 1] = [-h2, 0.0];
+        hh[4 + 2] = [h2, 0.0];
+        hh[4 + 3] = [-h2, 0.0];
+        hh[2 * 4] = [h2, 0.0];
+        hh[2 * 4 + 1] = [h2, 0.0];
+        hh[2 * 4 + 2] = [-h2, 0.0];
+        hh[2 * 4 + 3] = [-h2, 0.0];
+        hh[3 * 4] = [h2, 0.0];
+        hh[3 * 4 + 1] = [-h2, 0.0];
+        hh[3 * 4 + 2] = [-h2, 0.0];
+        hh[3 * 4 + 3] = [h2, 0.0];
 
         let g = mat4_mul(&cz, &mat4_mul(&hh, &cz));
         verify_push_through_all_16(&g, CliffordFrame::push_through_g, "G");

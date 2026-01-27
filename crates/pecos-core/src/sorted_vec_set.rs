@@ -17,12 +17,12 @@
 //!
 //! # Performance Characteristics
 //!
-//! | Operation      | SortedVecSet | VecSet  | BitSet |
+//! | Operation      | `SortedVecSet` | `VecSet`  | `BitSet` |
 //! |----------------|--------------|---------|--------|
 //! | contains       | O(log n)     | O(n)    | O(1)   |
 //! | insert         | O(n)         | O(n)    | O(1)   |
 //! | toggle         | O(n)         | O(n)    | O(1)   |
-//! | xor_assign     | O(n+m)       | O(n*m)  | O(words) |
+//! | `xor_assign`     | O(n+m)       | O(n*m)  | O(words) |
 //! | iteration      | O(n)         | O(n)    | O(words) |
 //!
 //! # When to Use
@@ -34,7 +34,7 @@
 use smallvec::SmallVec;
 
 /// Inline capacity for `SortedVecSet` elements.
-/// Same as VecSet for fair comparison.
+/// Same as `VecSet` for fair comparison.
 const SORTED_VECSET_INLINE_CAPACITY: usize = 8;
 
 /// A stack-optimized buffer for sorted set elements.
@@ -70,18 +70,21 @@ impl SortedVecSet {
 
     /// Returns the number of elements in the set.
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.elements.len()
     }
 
     /// Returns true if the set is empty.
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.elements.is_empty()
     }
 
     /// Returns the capacity of the set.
     #[inline]
+    #[must_use]
     pub fn capacity(&self) -> usize {
         self.elements.capacity()
     }
@@ -94,6 +97,7 @@ impl SortedVecSet {
 
     /// Check if the set contains an element using binary search.
     #[inline]
+    #[must_use]
     pub fn contains(&self, value: usize) -> bool {
         self.elements.binary_search(&value).is_ok()
     }
@@ -197,6 +201,7 @@ impl SortedVecSet {
 
     /// Get the elements as a slice.
     #[inline]
+    #[must_use]
     pub fn as_slice(&self) -> &[usize] {
         &self.elements
     }
@@ -217,6 +222,7 @@ impl SortedVecSet {
 
     /// Count elements in the intersection using merge algorithm.
     #[inline]
+    #[must_use]
     pub fn intersection_count(&self, other: &Self) -> usize {
         let mut count = 0;
         let mut i = 0;
@@ -335,12 +341,12 @@ impl crate::index_set::IndexSet for SortedVecSet {
 
     #[inline]
     fn toggle(&mut self, index: usize) {
-        Self::toggle(self, index)
+        Self::toggle(self, index);
     }
 
     #[inline]
     fn xor_assign(&mut self, other: &Self) {
-        Self::xor_assign(self, other)
+        Self::xor_assign(self, other);
     }
 
     #[inline]
@@ -360,7 +366,7 @@ impl crate::index_set::IndexSet for SortedVecSet {
 
     #[inline]
     fn clear(&mut self) {
-        Self::clear(self)
+        Self::clear(self);
     }
 
     #[inline]
@@ -370,7 +376,7 @@ impl crate::index_set::IndexSet for SortedVecSet {
 
     #[inline]
     fn set_single(&mut self, index: usize) {
-        Self::set_single(self, index)
+        Self::set_single(self, index);
     }
 
     #[inline]
@@ -380,12 +386,12 @@ impl crate::index_set::IndexSet for SortedVecSet {
 
     #[inline]
     fn xor_intersection_into(&self, other: &Self, target: &mut Self) {
-        Self::xor_intersection_into(self, other, target)
+        Self::xor_intersection_into(self, other, target);
     }
 
     #[inline]
     fn xor_symmetric_difference_into(&self, other: &Self, target: &mut Self) {
-        Self::xor_symmetric_difference_into(self, other, target)
+        Self::xor_symmetric_difference_into(self, other, target);
     }
 }
 

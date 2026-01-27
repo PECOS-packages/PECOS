@@ -29,7 +29,6 @@ class CuStateVec:
     """
 
     def __init__(self, num_qubits: int) -> None: ...
-
     @staticmethod
     def with_seed(num_qubits: int, seed: int) -> "CuStateVec":
         """Create a new state vector simulator with a specific random seed."""
@@ -43,7 +42,6 @@ class CuStateVec:
     def reset(self) -> None:
         """Reset the simulator to the |0...0> state."""
         ...
-
     # =========================================================================
     # Pauli gates
     # =========================================================================
@@ -59,7 +57,6 @@ class CuStateVec:
     def z(self, qubits: List[int]) -> None:
         """Apply Pauli Z gate to the specified qubits."""
         ...
-
     # =========================================================================
     # Hadamard and variants
     # =========================================================================
@@ -87,7 +84,6 @@ class CuStateVec:
     def h6(self, qubits: List[int]) -> None:
         """Apply H6 gate to the specified qubits."""
         ...
-
     # =========================================================================
     # Square root gates (Clifford)
     # =========================================================================
@@ -123,7 +119,6 @@ class CuStateVec:
     def szdg(self, qubits: List[int]) -> None:
         """Apply sqrt(Z)-dagger gate (same as Sdg) to the specified qubits."""
         ...
-
     # =========================================================================
     # Face rotation gates
     # =========================================================================
@@ -135,7 +130,6 @@ class CuStateVec:
     def fdg(self, qubits: List[int]) -> None:
         """Apply F-dagger gate to the specified qubits."""
         ...
-
     # =========================================================================
     # Two-qubit Clifford gates
     # =========================================================================
@@ -187,7 +181,6 @@ class CuStateVec:
     def szzdg(self, qubits: List[int]) -> None:
         """Apply sqrt(ZZ)-dagger gate."""
         ...
-
     # =========================================================================
     # Non-Clifford single-qubit gates
     # =========================================================================
@@ -199,7 +192,6 @@ class CuStateVec:
     def tdg(self, qubits: List[int]) -> None:
         """Apply T-dagger gate to the specified qubits."""
         ...
-
     # =========================================================================
     # Rotation gates
     # =========================================================================
@@ -235,7 +227,6 @@ class CuStateVec:
     def r1xy(self, theta: float, phi: float, qubits: List[int]) -> None:
         """Apply R1XY gate (rotation in XY plane)."""
         ...
-
     # =========================================================================
     # Measurement
     # =========================================================================
@@ -276,7 +267,6 @@ class CuStateVec:
         """
         ...
 
-
 class CuStabilizer:
     """GPU-accelerated stabilizer quantum simulator using cuQuantum.
 
@@ -294,7 +284,6 @@ class CuStabilizer:
     """
 
     def __init__(self, num_qubits: int) -> None: ...
-
     @staticmethod
     def with_seed(num_qubits: int, seed: int) -> "CuStabilizer":
         """Create a new stabilizer simulator with a specific random seed."""
@@ -308,7 +297,6 @@ class CuStabilizer:
     def reset(self) -> None:
         """Reset the simulator to the |0...0> state."""
         ...
-
     # =========================================================================
     # Pauli gates
     # =========================================================================
@@ -324,7 +312,6 @@ class CuStabilizer:
     def z(self, qubits: List[int]) -> None:
         """Apply Pauli Z gate to the specified qubits."""
         ...
-
     # =========================================================================
     # Hadamard and variants
     # =========================================================================
@@ -352,7 +339,6 @@ class CuStabilizer:
     def h6(self, qubits: List[int]) -> None:
         """Apply H6 gate to the specified qubits."""
         ...
-
     # =========================================================================
     # Square root gates
     # =========================================================================
@@ -388,7 +374,6 @@ class CuStabilizer:
     def szdg(self, qubits: List[int]) -> None:
         """Apply sqrt(Z)-dagger gate (same as Sdg) to the specified qubits."""
         ...
-
     # =========================================================================
     # Face rotation gates
     # =========================================================================
@@ -400,7 +385,6 @@ class CuStabilizer:
     def fdg(self, qubits: List[int]) -> None:
         """Apply F-dagger gate to the specified qubits."""
         ...
-
     # =========================================================================
     # Two-qubit Clifford gates
     # =========================================================================
@@ -452,7 +436,6 @@ class CuStabilizer:
     def szzdg(self, qubits: List[int]) -> None:
         """Apply sqrt(ZZ)-dagger gate."""
         ...
-
     # =========================================================================
     # Measurement
     # =========================================================================
@@ -480,7 +463,6 @@ class CuStabilizer:
             A list of measurement results (0 or 1) for each qubit.
         """
         ...
-
 
 class CuTensorNet:
     """Tensor network simulator using NVIDIA cuTensorNet.
@@ -511,7 +493,6 @@ class CuTensorNet:
             The version as a single integer (e.g., 20000 for version 2.0.0).
         """
         ...
-
 
 class CuDensityMat:
     """Density matrix simulator using NVIDIA cuDensityMat.

@@ -5,17 +5,17 @@
 //!
 //! # Optimizations
 //!
-//! 1. **Raw index access**: Uses u32 indices instead of GateId validation
-//! 2. **Bitset for visited tracking**: O(1) membership check instead of Vec::contains
+//! 1. **Raw index access**: Uses u32 indices instead of `GateId` validation
+//! 2. **Bitset for visited tracking**: O(1) membership check instead of `Vec::contains`
 //! 3. **Pre-computed tick indexes**: O(1) lookup for gates in each tick
 //! 4. **Sorted qubit gates**: Gates per qubit sorted by tick for efficient backward traversal
 //! 5. **Direct array access**: Skips Option-returning methods in hot loops
 
-use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, LogicalId, MeasurementId};
 use super::SpacetimeLocation;
+use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, LogicalId, MeasurementId};
 use pecos_core::gate_type::GateType;
-use pecos_quantum::tick_circuit_soa::TickCircuitSoA;
 use pecos_qsim::PauliProp;
+use pecos_quantum::tick_circuit_soa::TickCircuitSoA;
 
 // ============================================================================
 // Work Buffers for Reuse
@@ -71,12 +71,13 @@ pub struct TickFaultAnalyzerSoA<'a> {
     circuit: &'a TickCircuitSoA,
     /// Fault locations extracted from the circuit.
     locations: Vec<SpacetimeLocation>,
-    /// Pre-computed index: tick -> (location_index, before) pairs
+    /// Pre-computed index: tick -> (`location_index`, before) pairs
     tick_locations: Vec<Vec<(usize, bool)>>,
 }
 
 impl<'a> TickFaultAnalyzerSoA<'a> {
-    /// Creates a new analyzer for the given SoA circuit.
+    /// Creates a new analyzer for the given `SoA` circuit.
+    #[must_use]
     pub fn new(circuit: &'a TickCircuitSoA) -> Self {
         let locations = Self::extract_spacetime_locations(circuit);
 
@@ -135,16 +136,19 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
     }
 
     /// Returns the fault locations.
+    #[must_use]
     pub fn locations(&self) -> &[SpacetimeLocation] {
         &self.locations
     }
 
     /// Builds the complete fault influence map.
+    #[must_use]
     pub fn build_influence_map(&self) -> FaultInfluenceMap {
         self.build_influence_map_with_logicals(&[])
     }
 
     /// Builds the fault influence map with logical operator tracking.
+    #[must_use]
     pub fn build_influence_map_with_logicals(
         &self,
         logicals: &[(&[usize], &[usize])],
@@ -190,7 +194,13 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 logical_qubit: i,
                 observable: 0,
             };
-            self.propagate_from_logical_optimized(x_pos, z_pos, &logical_id, &mut map, &mut buffers);
+            self.propagate_from_logical_optimized(
+                x_pos,
+                z_pos,
+                &logical_id,
+                &mut map,
+                &mut buffers,
+            );
         }
 
         // Build reverse maps
@@ -268,17 +278,13 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         // Propagate backward through ticks
         for tick_idx in (0..measurement.tick).rev() {
             // Check before=false locations
-            self.record_influences_at_tick_filtered(
-                tick_idx, &prop, &detector, None, map, false,
-            );
+            self.record_influences_at_tick_filtered(tick_idx, &prop, &detector, None, map, false);
 
             // Apply gates at this tick backward using optimized sparse traversal
             self.apply_tick_backward_optimized(tick_idx, &mut prop, buffers);
 
             // Check before=true locations
-            self.record_influences_at_tick_filtered(
-                tick_idx, &prop, &detector, None, map, true,
-            );
+            self.record_influences_at_tick_filtered(tick_idx, &prop, &detector, None, map, true);
         }
     }
 
@@ -687,70 +693,4 @@ mod tests {
         assert_eq!(map.logicals.len(), 1);
     }
 
-    /// Run with: cargo test -p pecos-qec benchmark_tick_soa --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_tick_soa_vs_tick() {
-        use super::super::TickFaultAnalyzer;
-        use pecos_quantum::TickCircuit;
-
-        println!("\n========================================");
-        println!("TickFaultAnalyzer vs TickFaultAnalyzerSoA (Optimized)");
-        println!("========================================\n");
-
-        let sizes = [(5, 25, 24), (7, 49, 48), (9, 81, 80)];
-
-        for (d, data, ancilla) in sizes {
-            // Build regular TickCircuit
-            let mut tick_circuit = TickCircuit::new();
-            let ancilla_indices: Vec<usize> = (data..data + ancilla).collect();
-
-            tick_circuit.tick().pz(&ancilla_indices);
-            for i in 0..ancilla.min(data) {
-                tick_circuit.tick().cx(&[(i, data + i)]);
-            }
-            tick_circuit.tick().mz(&ancilla_indices);
-
-            // Convert to SoA
-            let soa_circuit = TickCircuitSoA::from(&tick_circuit);
-
-            let iterations = 100;
-
-            // Warmup
-            for _ in 0..10 {
-                let _ = TickFaultAnalyzer::new(&tick_circuit).build_influence_map();
-                let _ = TickFaultAnalyzerSoA::new(&soa_circuit).build_influence_map();
-            }
-
-            // Benchmark TickFaultAnalyzer
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let analyzer = TickFaultAnalyzer::new(&tick_circuit);
-                let _ = analyzer.build_influence_map();
-            }
-            let tick_time = start.elapsed();
-
-            // Benchmark TickFaultAnalyzerSoA
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let analyzer = TickFaultAnalyzerSoA::new(&soa_circuit);
-                let _ = analyzer.build_influence_map();
-            }
-            let soa_time = start.elapsed();
-
-            let speedup = tick_time.as_micros() as f64 / soa_time.as_micros() as f64;
-            println!("d={}, {} data + {} ancilla qubits:", d, data, ancilla);
-            println!(
-                "  TickFaultAnalyzer:    {:>8.1} us/iter",
-                tick_time.as_micros() as f64 / iterations as f64
-            );
-            println!(
-                "  TickFaultAnalyzerSoA: {:>8.1} us/iter ({:.2}x {})",
-                soa_time.as_micros() as f64 / iterations as f64,
-                if speedup >= 1.0 { speedup } else { 1.0 / speedup },
-                if speedup >= 1.0 { "faster" } else { "slower" }
-            );
-            println!();
-        }
-    }
 }

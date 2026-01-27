@@ -148,8 +148,8 @@ impl GpuStab {
     }
 
     /// Initialize to |0...0⟩ state.
-    /// Stabilizers: Z_i for each qubit i
-    /// Destabilizers: X_i for each qubit i
+    /// Stabilizers: `Z_i` for each qubit i
+    /// Destabilizers: `X_i` for each qubit i
     fn init_tableau(&mut self) {
         // Clear everything
         self.stab_col_x.fill(0);
@@ -231,7 +231,7 @@ impl GpuStab {
         }
     }
 
-    /// Apply S† (SZdg) gate to a qubit.
+    /// Apply S† (`SZdg`) gate to a qubit.
     /// S†: X → -iXZ = -Y, Z → Z
     ///
     /// GPU kernel: Each thread handles one u32 word (32 generators)
@@ -257,7 +257,7 @@ impl GpuStab {
     }
 
     /// Apply CX (CNOT) gate.
-    /// CX: X_c → X_c X_t, Z_t → Z_c Z_t
+    /// CX: `X_c` → `X_c` `X_t`, `Z_t` → `Z_c` `Z_t`
     ///
     /// GPU kernel: Each thread handles one u32 word, XORs two columns
     fn apply_cx(&mut self, control: usize, target: usize) {
@@ -280,7 +280,7 @@ impl GpuStab {
     }
 
     /// Apply CZ gate.
-    /// CZ: X_a → X_a Z_b, X_b → Z_a X_b (symmetric)
+    /// CZ: `X_a` → `X_a` `Z_b`, `X_b` → `Z_a` `X_b` (symmetric)
     ///
     /// GPU kernel: Each thread handles one u32 word
     fn apply_cz(&mut self, q1: usize, q2: usize) {
@@ -559,8 +559,8 @@ impl GpuStab {
         // Handle phase contribution (simplified)
         let phase_mod = ((phase_contrib % 4) + 4) % 4;
         match phase_mod {
-            1 => signs_i[dst_word] ^= dst_bit,         // +i
-            2 => signs_minus[dst_word] ^= dst_bit,     // -1
+            1 => signs_i[dst_word] ^= dst_bit,     // +i
+            2 => signs_minus[dst_word] ^= dst_bit, // -1
             3 => {
                 signs_minus[dst_word] ^= dst_bit;
                 signs_i[dst_word] ^= dst_bit;
@@ -791,158 +791,4 @@ mod tests {
         run_full_stabilizer_test_suite(&mut sim, 8);
     }
 
-    /// Run with: cargo test -p pecos-qsim benchmark_gpu_stab --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_gpu_stab_surface_code() {
-        use crate::{DenseStab, GpuStabOpt, GpuStabParallel, SparseStab};
-
-        println!("\n=====================================================");
-        println!("Stabilizer Simulator Comparison - Surface Code");
-        println!("2*d rounds per distance");
-        println!("=====================================================\n");
-
-        let distances = [5, 9, 13, 17];
-
-        for d in distances {
-            let rounds = 2 * d;
-            let num_data = d * d;
-            let num_ancilla = num_data - 1;
-            let total_qubits = num_data + num_ancilla;
-
-            let iterations = 100;
-
-            // Warmup
-            for _ in 0..5 {
-                let mut gpu = GpuStab::new(total_qubits);
-                run_surface_code_circuit(&mut gpu, d, rounds);
-
-                let mut gpu_opt = GpuStabOpt::new(total_qubits);
-                run_surface_code_circuit(&mut gpu_opt, d, rounds);
-
-                let mut gpu_par = GpuStabParallel::new(total_qubits);
-                run_surface_code_circuit(&mut gpu_par, d, rounds);
-
-                let mut dense = DenseStab::new(total_qubits);
-                run_surface_code_circuit(&mut dense, d, rounds);
-
-                let mut sparse = SparseStab::new(total_qubits);
-                run_surface_code_circuit(&mut sparse, d, rounds);
-            }
-
-            // Benchmark GpuStab (column-only)
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let mut sim = GpuStab::new(total_qubits);
-                run_surface_code_circuit(&mut sim, d, rounds);
-            }
-            let gpu_time = start.elapsed();
-
-            // Benchmark GpuStabOpt (dual row+column)
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let mut sim = GpuStabOpt::new(total_qubits);
-                run_surface_code_circuit(&mut sim, d, rounds);
-            }
-            let gpu_opt_time = start.elapsed();
-
-            // Benchmark GpuStabParallel (row-only, STABSim-style)
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let mut sim = GpuStabParallel::new(total_qubits);
-                run_surface_code_circuit(&mut sim, d, rounds);
-            }
-            let gpu_par_time = start.elapsed();
-
-            // Benchmark DenseStab
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let mut sim = DenseStab::new(total_qubits);
-                run_surface_code_circuit(&mut sim, d, rounds);
-            }
-            let dense_time = start.elapsed();
-
-            // Benchmark SparseStab
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                let mut sim = SparseStab::new(total_qubits);
-                run_surface_code_circuit(&mut sim, d, rounds);
-            }
-            let sparse_time = start.elapsed();
-
-            let gpu_us = gpu_time.as_micros() as f64 / iterations as f64;
-            let gpu_opt_us = gpu_opt_time.as_micros() as f64 / iterations as f64;
-            let gpu_par_us = gpu_par_time.as_micros() as f64 / iterations as f64;
-            let dense_us = dense_time.as_micros() as f64 / iterations as f64;
-            let sparse_us = sparse_time.as_micros() as f64 / iterations as f64;
-
-            println!(
-                "d={:2}, rounds={:2}, {} qubits ({} data + {} ancilla):",
-                d, rounds, total_qubits, num_data, num_ancilla
-            );
-            println!("  GpuStab (col-only):    {:>10.1} us/iter", gpu_us);
-            println!("  GpuStabOpt (row+col):  {:>10.1} us/iter", gpu_opt_us);
-            println!("  GpuStabParallel (row): {:>10.1} us/iter", gpu_par_us);
-            println!("  DenseStab:             {:>10.1} us/iter", dense_us);
-            println!("  SparseStab:            {:>10.1} us/iter", sparse_us);
-
-            // Find fastest
-            let fastest = gpu_us
-                .min(gpu_opt_us)
-                .min(gpu_par_us)
-                .min(dense_us)
-                .min(sparse_us);
-            println!(
-                "  Ratios: GpuStab {:.2}x, GpuStabOpt {:.2}x, GpuStabParallel {:.2}x, DenseStab {:.2}x, SparseStab {:.2}x\n",
-                gpu_us / fastest,
-                gpu_opt_us / fastest,
-                gpu_par_us / fastest,
-                dense_us / fastest,
-                sparse_us / fastest
-            );
-        }
-    }
-
-    /// Run a simplified surface code circuit on a stabilizer simulator.
-    fn run_surface_code_circuit<S: crate::CliffordGateable>(sim: &mut S, d: usize, rounds: usize) {
-        let num_data = d * d;
-        let num_ancilla = num_data - 1;
-
-        // Initialize data qubits in |+> state
-        let data_qubits: Vec<QubitId> = (0..num_data).map(QubitId).collect();
-        sim.h(&data_qubits);
-
-        // Perform syndrome extraction rounds
-        for _round in 0..rounds {
-            // Entangle ancillas with neighbors using CNOTs
-            for a in 0..num_ancilla {
-                let ancilla = QubitId(num_data + a);
-                let base = a % num_data;
-
-                if a < num_ancilla / 2 {
-                    // X-type stabilizers
-                    sim.cx(&[ancilla, QubitId(base)]);
-                    if base + 1 < num_data {
-                        sim.cx(&[ancilla, QubitId(base + 1)]);
-                    }
-                    if base + d < num_data {
-                        sim.cx(&[ancilla, QubitId(base + d)]);
-                    }
-                } else {
-                    // Z-type stabilizers
-                    sim.cx(&[QubitId(base), ancilla]);
-                    if base + 1 < num_data {
-                        sim.cx(&[QubitId(base + 1), ancilla]);
-                    }
-                    if base + d < num_data {
-                        sim.cx(&[QubitId(base + d), ancilla]);
-                    }
-                }
-            }
-
-            // Measure all ancillas
-            let ancilla_qubits: Vec<QubitId> = (num_data..num_data + num_ancilla).map(QubitId).collect();
-            sim.mz(&ancilla_qubits);
-        }
-    }
 }

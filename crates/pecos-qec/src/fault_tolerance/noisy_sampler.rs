@@ -8,7 +8,7 @@
 //! 2. For each shot, sample which faults fire
 //! 3. Use O(1) lookups to find which detectors/logicals flip
 //!
-//! This approach is O(shots × fault_locations) instead of O(shots × circuit_depth),
+//! This approach is O(shots × `fault_locations`) instead of O(shots × `circuit_depth`),
 //! providing significant speedup for noisy QEC simulations.
 //!
 //! # Example
@@ -36,10 +36,10 @@
 //! }
 //! ```
 
-use super::propagator::dag::DagFaultInfluenceMap;
 use super::propagator::Pauli;
-use pecos_rng::rng_ext::RngProbabilityExt;
+use super::propagator::dag::DagFaultInfluenceMap;
 use pecos_rng::PecosRng;
+use pecos_rng::rng_ext::RngProbabilityExt;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::collections::BTreeSet;
@@ -47,7 +47,7 @@ use std::collections::BTreeSet;
 /// Result from a single shot of noisy sampling.
 #[derive(Debug, Clone)]
 pub struct ShotResult {
-    /// Detectors that flipped (indices into influence_map.detectors).
+    /// Detectors that flipped (indices into `influence_map.detectors`).
     pub detector_flips: Vec<u32>,
     /// Logicals that flipped (indices).
     pub logical_flips: Vec<u32>,
@@ -57,6 +57,7 @@ pub struct ShotResult {
 
 impl ShotResult {
     /// Create an empty result.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             detector_flips: Vec::new(),
@@ -67,18 +68,21 @@ impl ShotResult {
 
     /// Check if any logical error occurred.
     #[inline]
+    #[must_use]
     pub fn has_logical_error(&self) -> bool {
         !self.logical_flips.is_empty()
     }
 
     /// Check if any syndrome was triggered.
     #[inline]
+    #[must_use]
     pub fn has_syndrome(&self) -> bool {
         !self.detector_flips.is_empty()
     }
 
     /// Check if this is an undetectable logical error.
     #[inline]
+    #[must_use]
     pub fn is_undetectable_logical_error(&self) -> bool {
         self.has_logical_error() && !self.has_syndrome()
     }
@@ -109,12 +113,13 @@ pub trait NoiseModel {
 pub struct UniformNoiseModel {
     /// Total error probability per location.
     p_error: f64,
-    /// Threshold for error occurrence (p_error * u64::MAX).
+    /// Threshold for error occurrence (`p_error` * `u64::MAX`).
     threshold: u64,
 }
 
 impl UniformNoiseModel {
     /// Create a uniform noise model with the given error probability.
+    #[must_use]
     pub fn new(p_error: f64) -> Self {
         Self {
             p_error,
@@ -123,6 +128,7 @@ impl UniformNoiseModel {
     }
 
     /// Create a depolarizing noise model (convenience alias).
+    #[must_use]
     pub fn depolarizing(p_error: f64) -> Self {
         Self::new(p_error)
     }
@@ -161,6 +167,7 @@ pub struct PerLocationNoiseModel {
 
 impl PerLocationNoiseModel {
     /// Create from a vector of error probabilities (one per location).
+    #[must_use]
     pub fn new(probabilities: Vec<f64>) -> Self {
         let thresholds = probabilities
             .iter()
@@ -228,8 +235,7 @@ impl<'a, N: NoiseModel> NoisySampler<'a, N> {
         let num_logicals = influence_map
             .influences
             .max_logical_index()
-            .map(|i| i + 1)
-            .unwrap_or(0);
+            .map_or(0, |i| i + 1);
 
         Self {
             influence_map,
@@ -256,13 +262,17 @@ impl<'a, N: NoiseModel> NoisySampler<'a, N> {
                 fault_count += 1;
 
                 // Get affected detectors (O(1) lookup)
-                let detectors = self.influence_map.get_detector_indices(loc_idx, pauli.as_u8());
+                let detectors = self
+                    .influence_map
+                    .get_detector_indices(loc_idx, pauli.as_u8());
                 for &det_idx in detectors {
                     detector_flip_counts[det_idx as usize] ^= 1;
                 }
 
                 // Get affected logicals (O(1) lookup)
-                let logicals = self.influence_map.get_logical_indices(loc_idx, pauli.as_u8());
+                let logicals = self
+                    .influence_map
+                    .get_logical_indices(loc_idx, pauli.as_u8());
                 for &log_idx in logicals {
                     if (log_idx as usize) < logical_flip_counts.len() {
                         logical_flip_counts[log_idx as usize] ^= 1;
@@ -338,6 +348,7 @@ pub struct SamplingStatistics {
 
 impl SamplingStatistics {
     /// Create empty statistics.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             total_shots: 0,
@@ -365,6 +376,7 @@ impl SamplingStatistics {
     }
 
     /// Logical error rate.
+    #[must_use]
     pub fn logical_error_rate(&self) -> f64 {
         if self.total_shots == 0 {
             0.0
@@ -374,6 +386,7 @@ impl SamplingStatistics {
     }
 
     /// Syndrome rate (fraction of shots with non-trivial syndrome).
+    #[must_use]
     pub fn syndrome_rate(&self) -> f64 {
         if self.total_shots == 0 {
             0.0
@@ -383,6 +396,7 @@ impl SamplingStatistics {
     }
 
     /// Undetectable error rate.
+    #[must_use]
     pub fn undetectable_rate(&self) -> f64 {
         if self.total_shots == 0 {
             0.0
@@ -392,6 +406,7 @@ impl SamplingStatistics {
     }
 
     /// Average faults per shot.
+    #[must_use]
     pub fn average_faults(&self) -> f64 {
         if self.total_shots == 0 {
             0.0
@@ -411,7 +426,7 @@ impl Default for SamplingStatistics {
 // Optimized Sampler using PecosRng batching and sparse tracking
 // ============================================================================
 
-/// Optimized noisy sampler using PecosRng batching and sparse flip tracking.
+/// Optimized noisy sampler using `PecosRng` batching and sparse flip tracking.
 ///
 /// Key optimizations over [`NoisySampler`]:
 /// 1. Uses `check_probability_indices()` to get sparse list of fault locations
@@ -426,7 +441,7 @@ pub struct FastNoisySampler<'a> {
     p_error: f64,
     /// Precomputed threshold for probability check.
     threshold: u64,
-    /// Random number generator (PecosRng for batching).
+    /// Random number generator (`PecosRng` for batching).
     rng: PecosRng,
     /// Number of fault locations.
     num_locations: usize,
@@ -445,13 +460,13 @@ impl<'a> FastNoisySampler<'a> {
     /// * `influence_map` - Precomputed influence map
     /// * `p_error` - Uniform depolarizing error probability
     /// * `seed` - RNG seed
+    #[must_use]
     pub fn new(influence_map: &'a DagFaultInfluenceMap, p_error: f64, seed: u64) -> Self {
         let num_locations = influence_map.locations.len();
         let num_logicals = influence_map
             .influences
             .max_logical_index()
-            .map(|i| i + 1)
-            .unwrap_or(0);
+            .map_or(0, |i| i + 1);
 
         let rng = PecosRng::seed_from_u64(seed);
         let threshold = rng.probability_threshold(p_error);
@@ -506,10 +521,10 @@ impl<'a> FastNoisySampler<'a> {
                 .influence_map
                 .get_logical_indices(loc_idx, pauli.as_u8());
             for &log_idx in logicals {
-                if (log_idx as usize) < self.num_logicals {
-                    if !self.logical_flips_buffer.remove(&log_idx) {
-                        self.logical_flips_buffer.insert(log_idx);
-                    }
+                if (log_idx as usize) < self.num_logicals
+                    && !self.logical_flips_buffer.remove(&log_idx)
+                {
+                    self.logical_flips_buffer.insert(log_idx);
                 }
             }
         }
@@ -543,11 +558,13 @@ impl<'a> FastNoisySampler<'a> {
     }
 
     /// Get the error probability.
+    #[must_use]
     pub fn p_error(&self) -> f64 {
         self.p_error
     }
 
     /// Get the number of fault locations.
+    #[must_use]
     pub fn num_locations(&self) -> usize {
         self.num_locations
     }

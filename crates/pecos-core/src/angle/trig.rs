@@ -187,10 +187,7 @@ fn reduce_u64(frac: u64, bits: u32) -> Octant {
 ///
 /// Same integer-complement strategy as `reduce_u64` (see its doc comment).
 #[inline]
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss
-)]
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn reduce_u128(frac: u128) -> Octant {
     let quadrant = (frac >> 126) as u32;
     let half = ((frac >> 125) & 1) != 0;
@@ -209,8 +206,7 @@ fn reduce_u128(frac: u128) -> Octant {
     let discard = 125 - 2 * split; // 19 bits
     let hi = (r >> (split + discard)) as f64;
     let mid = ((r >> discard) as u64 & ((1u64 << split) - 1)) as f64;
-    let inv_scale_hi =
-        std::f64::consts::FRAC_PI_4 / (1u128 << (125 - split - discard)) as f64;
+    let inv_scale_hi = std::f64::consts::FRAC_PI_4 / (1u128 << (125 - split - discard)) as f64;
     let inv_scale_mid = std::f64::consts::FRAC_PI_4 / (1u128 << (125 - discard)) as f64;
     let x = fma(hi, inv_scale_hi, mid * inv_scale_mid);
 
@@ -225,11 +221,17 @@ fn reduce<T: ToPrimitive + Copy>(fraction: T) -> Octant {
     let bits = std::mem::size_of::<T>() * 8;
     if bits <= 64 {
         reduce_u64(
-            fraction.to_u64().expect("Failed to convert fraction to u64"),
+            fraction
+                .to_u64()
+                .expect("Failed to convert fraction to u64"),
             bits as u32, // size_of * 8 always fits in u32
         )
     } else {
-        reduce_u128(fraction.to_u128().expect("Failed to convert fraction to u128"))
+        reduce_u128(
+            fraction
+                .to_u128()
+                .expect("Failed to convert fraction to u128"),
+        )
     }
 }
 
@@ -378,7 +380,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Angle128, Angle16, Angle32, Angle64, Angle8};
+    use super::super::{Angle8, Angle16, Angle32, Angle64, Angle128};
     use std::f64::consts::{FRAC_PI_3, FRAC_PI_4, FRAC_PI_6};
 
     const TOL: f64 = 1e-15;
@@ -436,10 +438,7 @@ mod tests {
         let angle = Angle64::from_radians(FRAC_PI_6);
         let (s, c) = angle.sin_cos();
         let sqrt3_over_2 = 3.0_f64.sqrt() / 2.0;
-        assert!(
-            (s - 0.5).abs() < TOL_LOOSE,
-            "sin(pi/6) = {s}, expected 0.5"
-        );
+        assert!((s - 0.5).abs() < TOL_LOOSE, "sin(pi/6) = {s}, expected 0.5");
         assert!(
             (c - sqrt3_over_2).abs() < TOL_LOOSE,
             "cos(pi/6) = {c}, expected {sqrt3_over_2}"
@@ -455,10 +454,7 @@ mod tests {
             (s - sqrt3_over_2).abs() < TOL_LOOSE,
             "sin(pi/3) = {s}, expected {sqrt3_over_2}"
         );
-        assert!(
-            (c - 0.5).abs() < TOL_LOOSE,
-            "cos(pi/3) = {c}, expected 0.5"
-        );
+        assert!((c - 0.5).abs() < TOL_LOOSE, "cos(pi/3) = {c}, expected 0.5");
     }
 
     // -- Standalone sin/cos match sin_cos ---------------------------------
@@ -683,11 +679,7 @@ mod tests {
             ($ty:ty) => {
                 let (s, c) = <$ty>::HALF_TURN.sin_cos();
                 assert!(s.abs() < TOL, "{}: sin(pi) = {s}", stringify!($ty));
-                assert!(
-                    (c + 1.0).abs() < TOL,
-                    "{}: cos(pi) = {c}",
-                    stringify!($ty)
-                );
+                assert!((c + 1.0).abs() < TOL, "{}: cos(pi) = {c}", stringify!($ty));
             };
         }
         check_half!(Angle8);
@@ -732,14 +724,8 @@ mod tests {
             let (s, c) = angle.half_angle_sin_cos();
             let halved = Angle64::new(frac / 2);
             let (s_ref, c_ref) = halved.sin_cos();
-            assert!(
-                (s - s_ref).abs() < TOL,
-                "sin mismatch for frac={frac}"
-            );
-            assert!(
-                (c - c_ref).abs() < TOL,
-                "cos mismatch for frac={frac}"
-            );
+            assert!((s - s_ref).abs() < TOL, "sin mismatch for frac={frac}");
+            assert!((c - c_ref).abs() < TOL, "cos mismatch for frac={frac}");
         }
     }
 
@@ -807,114 +793,6 @@ mod tests {
 
     // -- Accuracy: max error across all octants ---------------------------
 
-    // -- Timing comparison (run with: cargo test --release -p pecos-core -- trig::tests::bench --nocapture --ignored)
-
-    #[test]
-    #[ignore]
-    fn bench_sin_cos_vs_f64() {
-        use std::hint::black_box;
-        use std::time::Instant;
-
-        const N: usize = 10_000;
-        const ROUNDS: usize = 1_000;
-
-        // Build test data: uniform coverage of all octants
-        let step = u64::MAX / N as u64;
-        let angles: Vec<Angle64> = (0..N)
-            .map(|i| Angle64::new(step.wrapping_mul(i as u64)))
-            .collect();
-        let radians: Vec<f64> = angles.iter().map(|a| a.to_radians()).collect();
-
-        // Warmup
-        for _ in 0..100 {
-            for a in &angles {
-                black_box(a.sin_cos());
-            }
-            for &r in &radians {
-                black_box(r.sin_cos());
-            }
-        }
-
-        // --- sin_cos ---
-        let t = Instant::now();
-        for _ in 0..ROUNDS {
-            for a in &angles {
-                black_box(a.sin_cos());
-            }
-        }
-        let angle_sin_cos = t.elapsed();
-
-        let t = Instant::now();
-        for _ in 0..ROUNDS {
-            for &r in &radians {
-                black_box(r.sin_cos());
-            }
-        }
-        let f64_sin_cos = t.elapsed();
-
-        // --- sin (standalone) ---
-        let t = Instant::now();
-        for _ in 0..ROUNDS {
-            for a in &angles {
-                black_box(a.sin());
-            }
-        }
-        let angle_sin = t.elapsed();
-
-        let t = Instant::now();
-        for _ in 0..ROUNDS {
-            for &r in &radians {
-                black_box(r.sin());
-            }
-        }
-        let f64_sin = t.elapsed();
-
-        // --- cos (standalone) ---
-        let t = Instant::now();
-        for _ in 0..ROUNDS {
-            for a in &angles {
-                black_box(a.cos());
-            }
-        }
-        let angle_cos = t.elapsed();
-
-        let t = Instant::now();
-        for _ in 0..ROUNDS {
-            for &r in &radians {
-                black_box(r.cos());
-            }
-        }
-        let f64_cos = t.elapsed();
-
-        // --- old path: to_radians + stdlib ---
-        let t = Instant::now();
-        for _ in 0..ROUNDS {
-            for a in &angles {
-                let r = a.to_radians();
-                black_box(r.sin_cos());
-            }
-        }
-        let old_path = t.elapsed();
-
-        let total = (N * ROUNDS) as f64;
-        println!();
-        println!("  {N} angles x {ROUNDS} rounds = {} calls", N * ROUNDS);
-        println!();
-        println!("  sin_cos:");
-        println!("    angle.sin_cos()        {angle_sin_cos:>10.3?}  ({:.1} ns/call)", angle_sin_cos.as_nanos() as f64 / total);
-        println!("    f64::sin_cos()         {f64_sin_cos:>10.3?}  ({:.1} ns/call)", f64_sin_cos.as_nanos() as f64 / total);
-        println!("    to_radians + sin_cos   {old_path:>10.3?}  ({:.1} ns/call)", old_path.as_nanos() as f64 / total);
-        println!();
-        println!("  sin:");
-        println!("    angle.sin()            {angle_sin:>10.3?}  ({:.1} ns/call)", angle_sin.as_nanos() as f64 / total);
-        println!("    f64::sin()             {f64_sin:>10.3?}  ({:.1} ns/call)", f64_sin.as_nanos() as f64 / total);
-        println!();
-        println!("  cos:");
-        println!("    angle.cos()            {angle_cos:>10.3?}  ({:.1} ns/call)", angle_cos.as_nanos() as f64 / total);
-        println!("    f64::cos()             {f64_cos:>10.3?}  ({:.1} ns/call)", f64_cos.as_nanos() as f64 / total);
-        println!();
-    }
-
     #[test]
     fn max_ulp_error_vs_stdlib() {
         // Walk through each octant with fine steps and track max error.
@@ -943,138 +821,5 @@ mod tests {
             max_cos_err < 1e-12,
             "max cos error {max_cos_err:.3e} exceeds threshold"
         );
-    }
-
-    // -- Detailed accuracy report (run with: cargo test --release -p pecos-core -- trig::tests::accuracy_report --nocapture --ignored)
-
-    #[test]
-    #[ignore]
-    fn accuracy_report() {
-        /// Compute ULP distance between two f64 values using integer
-        /// representation. This correctly handles zero crossings.
-        fn ulp_distance(a: f64, b: f64) -> u64 {
-            fn to_ordered(x: f64) -> i64 {
-                let bits = x.to_bits() as i64;
-                if bits < 0 {
-                    i64::MIN - bits
-                } else {
-                    bits
-                }
-            }
-            to_ordered(a).abs_diff(to_ordered(b))
-        }
-
-        const SAMPLES_PER_OCTANT: u64 = 100_000;
-        let octant_size: u64 = 1u64 << 61; // 2^(64-3)
-        let step = octant_size / SAMPLES_PER_OCTANT;
-
-        let mut global_max_sin_abs: f64 = 0.0;
-        let mut global_max_cos_abs: f64 = 0.0;
-        let mut global_max_sin_ulp: u64 = 0;
-        let mut global_max_cos_ulp: u64 = 0;
-        let mut global_max_pyth_residual: f64 = 0.0;
-        let mut total_sin_abs: f64 = 0.0;
-        let mut total_cos_abs: f64 = 0.0;
-        let mut total_sin_ulp: u64 = 0;
-        let mut total_cos_ulp: u64 = 0;
-        let mut total_pyth: f64 = 0.0;
-        let mut count: u64 = 0;
-        let mut ulp_count: u64 = 0; // samples where |ref| > threshold
-
-        println!();
-        println!("  Accuracy report: {} samples per octant, {} total",
-                 SAMPLES_PER_OCTANT, SAMPLES_PER_OCTANT * 8);
-        println!();
-        println!("  {:>7}  {:>12} {:>12}  {:>10} {:>10}  {:>12}",
-                 "Octant", "max|sin_err|", "max|cos_err|", "max_sin_ULP", "max_cos_ULP", "max|s²+c²-1|");
-
-        for octant in 0..8u64 {
-            let base = octant * octant_size;
-            let mut oct_max_sin_abs: f64 = 0.0;
-            let mut oct_max_cos_abs: f64 = 0.0;
-            let mut oct_max_sin_ulp: u64 = 0;
-            let mut oct_max_cos_ulp: u64 = 0;
-            let mut oct_max_pyth: f64 = 0.0;
-
-            for i in 0..SAMPLES_PER_OCTANT {
-                let frac = base + i * step;
-                let angle = Angle64::new(frac);
-                let theta = angle.to_radians();
-
-                let (s, c) = angle.sin_cos();
-                let (s_ref, c_ref) = theta.sin_cos();
-
-                let sin_abs = (s - s_ref).abs();
-                let cos_abs = (c - c_ref).abs();
-                let pyth = (s * s + c * c - 1.0).abs();
-
-                oct_max_sin_abs = oct_max_sin_abs.max(sin_abs);
-                oct_max_cos_abs = oct_max_cos_abs.max(cos_abs);
-                oct_max_pyth = oct_max_pyth.max(pyth);
-
-                // ULP error -- only meaningful when |value| is large enough
-                // that the absolute error and ULP size are comparable. For
-                // values near 0.1 or larger, 1 ULP ≈ 1e-17, so our ~1e-16
-                // errors correspond to single-digit ULPs.
-                if s_ref.abs() > 0.1 {
-                    let sin_ulp = ulp_distance(s, s_ref);
-                    oct_max_sin_ulp = oct_max_sin_ulp.max(sin_ulp);
-                    total_sin_ulp += sin_ulp;
-                    ulp_count += 1;
-                }
-                if c_ref.abs() > 0.1 {
-                    let cos_ulp = ulp_distance(c, c_ref);
-                    oct_max_cos_ulp = oct_max_cos_ulp.max(cos_ulp);
-                    total_cos_ulp += cos_ulp;
-                }
-
-                total_sin_abs += sin_abs;
-                total_cos_abs += cos_abs;
-                total_pyth += pyth;
-                count += 1;
-
-                global_max_sin_abs = global_max_sin_abs.max(sin_abs);
-                global_max_cos_abs = global_max_cos_abs.max(cos_abs);
-                global_max_sin_ulp = global_max_sin_ulp.max(oct_max_sin_ulp);
-                global_max_cos_ulp = global_max_cos_ulp.max(oct_max_cos_ulp);
-                global_max_pyth_residual = global_max_pyth_residual.max(pyth);
-            }
-
-            println!("  {:>7}  {:>12.3e} {:>12.3e}  {:>10} {:>10}  {:>12.3e}",
-                     octant, oct_max_sin_abs, oct_max_cos_abs,
-                     oct_max_sin_ulp, oct_max_cos_ulp, oct_max_pyth);
-        }
-
-        let n = count as f64;
-        let n_ulp = ulp_count as f64;
-        println!();
-        println!("  Global max:  sin_abs={:.3e}  cos_abs={:.3e}  sin_ULP={}  cos_ULP={}  pyth={:.3e}",
-                 global_max_sin_abs, global_max_cos_abs,
-                 global_max_sin_ulp, global_max_cos_ulp,
-                 global_max_pyth_residual);
-        println!("  Global mean: sin_abs={:.3e}  cos_abs={:.3e}  sin_ULP={:.2}  cos_ULP={:.2}  pyth={:.3e}",
-                 total_sin_abs / n, total_cos_abs / n,
-                 total_sin_ulp as f64 / n_ulp, total_cos_ulp as f64 / n_ulp,
-                 total_pyth / n);
-        println!("  (ULP stats exclude {} near-zero samples where |ref| < 1e-10)", count - ulp_count);
-        println!();
-
-        // The ULP comparison is against `f64::sin(angle.to_radians())`. Since
-        // `to_radians()` itself introduces rounding error (dividing by u64::MAX,
-        // which is not a power of 2, then multiplying by TAU), our implementation
-        // and stdlib effectively compute trig of *slightly different angles*.
-        // This accounts for up to ~50-70 ULP difference at small magnitudes where
-        // the angle error dominates the value error.
-        //
-        // The Pythagorean identity is the best accuracy metric because it doesn't
-        // depend on a potentially-inaccurate reference:
-        assert!(global_max_pyth_residual < 5e-16,
-                "Pythagorean residual {:.3e} exceeds threshold", global_max_pyth_residual);
-        // Absolute error vs stdlib should stay below ~2 ULP of 1.0 (the max
-        // range of sin/cos):
-        assert!(global_max_sin_abs < 2e-15,
-                "sin absolute error {:.3e} too large", global_max_sin_abs);
-        assert!(global_max_cos_abs < 2e-15,
-                "cos absolute error {:.3e} too large", global_max_cos_abs);
     }
 }

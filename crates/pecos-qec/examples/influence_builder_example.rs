@@ -1,14 +1,16 @@
 //! Example showing the full CPU pipeline for noisy QEC sampling.
 //!
 //! Pipeline steps:
-//! 1. Build a syndrome extraction circuit using DagCircuit
-//! 2. Use InfluenceBuilder to extract detectors and build influence map
-//! 3. Use NoisySampler for CPU-based noisy sampling
+//! 1. Build a syndrome extraction circuit using `DagCircuit`
+//! 2. Use `InfluenceBuilder` to extract detectors and build influence map
+//! 3. Use `NoisySampler` for CPU-based noisy sampling
 //!
-//! Run with: cargo run --example influence_builder_example --release -p pecos-qec
+//! Run with: cargo run --example `influence_builder_example` --release -p pecos-qec
 
-use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, SamplingStatistics, UniformNoiseModel};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
+use pecos_qec::fault_tolerance::noisy_sampler::{
+    NoisySampler, SamplingStatistics, UniformNoiseModel,
+};
 use pecos_quantum::DagCircuit;
 
 /// Build a simple repetition code syndrome extraction circuit.
@@ -49,14 +51,13 @@ fn main() {
     let num_rounds = 3;
     let circuit = build_repetition_code_circuit(num_rounds);
     println!("\n1. Circuit built:");
-    println!("   Rounds: {}", num_rounds);
+    println!("   Rounds: {num_rounds}");
     println!("   Gates: {}", circuit.gate_count());
 
     // =========================================================================
     // Build influence map with InfluenceBuilder
     // =========================================================================
-    let builder = InfluenceBuilder::new(&circuit)
-        .with_logical_z(vec![0, 1, 2]); // Z logical on all data qubits
+    let builder = InfluenceBuilder::new(&circuit).with_logical_z(vec![0, 1, 2]); // Z logical on all data qubits
 
     let influence_map = builder.build();
 
@@ -86,7 +87,7 @@ fn main() {
     let mut sampler = NoisySampler::new(&influence_map, noise_model, seed);
 
     println!("\n3. Sampling with CPU NoisySampler:");
-    println!("   Error rate: {}", p_error);
+    println!("   Error rate: {p_error}");
 
     let num_shots = 100_000;
     let start = std::time::Instant::now();
@@ -99,30 +100,32 @@ fn main() {
         stats.record(result);
     }
 
-    println!("   Shots: {}", num_shots);
+    println!("   Shots: {num_shots}");
     println!("   Time: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
-    println!(
-        "   Throughput: {:.2}M shots/sec",
-        num_shots as f64 / elapsed.as_secs_f64() / 1_000_000.0
-    );
+    #[allow(clippy::cast_precision_loss)]
+    let throughput = num_shots as f64 / elapsed.as_secs_f64() / 1_000_000.0;
+    println!("   Throughput: {throughput:.2}M shots/sec");
 
     println!("\n4. Results:");
-    println!("   Logical error rate: {:.4}%", stats.logical_error_rate() * 100.0);
+    println!(
+        "   Logical error rate: {:.4}%",
+        stats.logical_error_rate() * 100.0
+    );
     println!("   Syndrome rate: {:.4}%", stats.syndrome_rate() * 100.0);
     println!(
         "   Undetectable error rate: {:.6}%",
         stats.undetectable_rate() * 100.0
     );
-    println!(
-        "   Avg faults per shot: {:.2}",
-        stats.average_faults()
-    );
+    println!("   Avg faults per shot: {:.2}", stats.average_faults());
 
     // =========================================================================
     // Compare with different error rates
     // =========================================================================
     println!("\n5. Scaling with error rate:\n");
-    println!("   {:>8} {:>15} {:>15}", "p_error", "Logical Error%", "Syndrome%");
+    println!(
+        "   {:>8} {:>15} {:>15}",
+        "p_error", "Logical Error%", "Syndrome%"
+    );
     println!("   {:->8} {:->15} {:->15}", "", "", "");
 
     for p in [0.0001, 0.0005, 0.001, 0.002, 0.005] {

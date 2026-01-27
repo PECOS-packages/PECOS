@@ -26,10 +26,17 @@ updatereqs:
     @echo "Generating lock files..."
     uv lock --project .
 
-# Install Python project requirements to root .venv
+# Install Python project requirements to root .venv (auto-detects CUDA)
 installreqs:
-    @echo "Installing requirements..."
-    uv sync --project .
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if cargo run -p pecos --features cli -- cuda check -q >/dev/null 2>&1; then
+        echo "CUDA detected, installing requirements with CUDA support..."
+        uv sync --project . --extra cuda
+    else
+        echo "Installing requirements..."
+        uv sync --project .
+    fi
 
 # Install requirements with specific Python version
 installreqs-python version:

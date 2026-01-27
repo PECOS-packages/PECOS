@@ -114,9 +114,7 @@ pub fn tensornet_is_success(status: cutensornetStatus_t) -> bool {
 /// # Errors
 /// Returns the status code if it indicates an error.
 #[inline]
-pub fn tensornet_status_to_result(
-    status: cutensornetStatus_t,
-) -> Result<(), cutensornetStatus_t> {
+pub fn tensornet_status_to_result(status: cutensornetStatus_t) -> Result<(), cutensornetStatus_t> {
     if tensornet_is_success(status) {
         Ok(())
     } else {
@@ -157,7 +155,9 @@ mod tests {
     #[test]
     fn test_status_success() {
         assert!(is_success(custatevecStatus_t::CUSTATEVEC_STATUS_SUCCESS));
-        assert!(!is_success(custatevecStatus_t::CUSTATEVEC_STATUS_INVALID_VALUE));
+        assert!(!is_success(
+            custatevecStatus_t::CUSTATEVEC_STATUS_INVALID_VALUE
+        ));
     }
 
     #[test]

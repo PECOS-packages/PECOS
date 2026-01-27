@@ -100,8 +100,10 @@ impl SimulatorInterface for StateVecSimulator {
             ));
         }
 
-        self.simulator
-            .rz(Angle64::from_radians(theta), &[QubitId(Self::to_usize(qubit))]);
+        self.simulator.rz(
+            Angle64::from_radians(theta),
+            &[QubitId(Self::to_usize(qubit))],
+        );
         Ok(())
     }
 

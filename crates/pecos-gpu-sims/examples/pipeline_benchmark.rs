@@ -5,18 +5,18 @@
 //! - Different round counts
 //! - Different shot counts
 //!
-//! Run with: cargo run --example pipeline_benchmark --release
+//! Run with: cargo run --example `pipeline_benchmark` --release
 
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
-use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
+use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
 use pecos_quantum::DagCircuit;
 use std::time::{Duration, Instant};
 
 /// Build a repetition code syndrome extraction circuit.
 ///
-/// Data qubits: 0..num_data
-/// Ancilla qubits: num_data..(num_data + num_data - 1)
+/// Data qubits: `0..num_data`
+/// Ancilla qubits: `num_data..(num_data` + `num_data` - 1)
 fn build_repetition_code(num_data: usize, num_rounds: usize) -> DagCircuit {
     let mut dag = DagCircuit::new();
     let num_ancillas = num_data - 1;
@@ -192,24 +192,12 @@ fn benchmark_circuit(
     ) = influence_map.export_csr();
 
     let gpu_map = GpuInfluenceMapData::from_csr(
-        num_loc,
-        num_det,
-        num_log,
-        det_off_x,
-        det_data_x,
-        det_off_y,
-        det_data_y,
-        det_off_z,
-        det_data_z,
-        log_off_x,
-        log_data_x,
-        log_off_y,
-        log_data_y,
-        log_off_z,
-        log_data_z,
+        num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
+        det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
     );
 
-    let mut gpu_sampler = GpuInfluenceSampler::new(&gpu_map, seed).expect("Failed to create GPU sampler");
+    let mut gpu_sampler =
+        GpuInfluenceSampler::new(&gpu_map, seed).expect("Failed to create GPU sampler");
 
     // Warm up GPU
     let _ = gpu_sampler.sample_uniform(100, p_error);
@@ -294,7 +282,7 @@ fn main() {
     for (num_data, num_rounds) in [(3, 2), (5, 3), (7, 4), (9, 5), (11, 6), (15, 8)] {
         let circuit = build_repetition_code(num_data, num_rounds);
         let logical_qubits: Vec<usize> = (0..num_data).collect();
-        let name = format!("rep_d{}r{}", num_data, num_rounds);
+        let name = format!("rep_d{num_data}r{num_rounds}");
 
         let result = benchmark_circuit(&name, &circuit, logical_qubits, num_shots, p_error, seed);
         results.push(result);
@@ -314,7 +302,14 @@ fn main() {
 
     for num_shots in [1_000u32, 10_000, 50_000, 100_000, 500_000, 1_000_000] {
         let name = format!("{}k shots", num_shots / 1000);
-        let result = benchmark_circuit(&name, &circuit, logical_qubits.clone(), num_shots, p_error, seed);
+        let result = benchmark_circuit(
+            &name,
+            &circuit,
+            logical_qubits.clone(),
+            num_shots,
+            p_error,
+            seed,
+        );
         shot_results.push(result);
     }
 
@@ -332,7 +327,7 @@ fn main() {
         let circuit = build_surface_code_grid(distance, rounds);
         let num_data = distance * distance;
         let logical_qubits: Vec<usize> = (0..num_data).collect();
-        let name = format!("surf_d{}r{}", distance, rounds);
+        let name = format!("surf_d{distance}r{rounds}");
 
         let result = benchmark_circuit(&name, &circuit, logical_qubits, num_shots, p_error, seed);
         surface_results.push(result);

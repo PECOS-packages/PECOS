@@ -29,20 +29,23 @@ use std::collections::BTreeMap;
 pub struct NodeId(pub u32);
 
 impl NodeId {
-    /// Creates a new NodeId from a raw index.
+    /// Creates a new `NodeId` from a raw index.
     #[inline]
+    #[must_use]
     pub const fn new(index: u32) -> Self {
         Self(index)
     }
 
     /// Returns the raw index.
     #[inline]
+    #[must_use]
     pub const fn index(self) -> usize {
         self.0 as usize
     }
 
     /// Creates from usize (for compatibility).
     #[inline]
+    #[must_use]
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }
@@ -72,16 +75,19 @@ pub struct LocationId(pub u32);
 
 impl LocationId {
     #[inline]
+    #[must_use]
     pub const fn new(index: u32) -> Self {
         Self(index)
     }
 
     #[inline]
+    #[must_use]
     pub const fn index(self) -> usize {
         self.0 as usize
     }
 
     #[inline]
+    #[must_use]
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }
@@ -108,16 +114,19 @@ pub struct DetectorIdx(pub u32);
 
 impl DetectorIdx {
     #[inline]
+    #[must_use]
     pub const fn new(index: u32) -> Self {
         Self(index)
     }
 
     #[inline]
+    #[must_use]
     pub const fn index(self) -> usize {
         self.0 as usize
     }
 
     #[inline]
+    #[must_use]
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }
@@ -144,16 +153,19 @@ pub struct LogicalIdx(pub u32);
 
 impl LogicalIdx {
     #[inline]
+    #[must_use]
     pub const fn new(index: u32) -> Self {
         Self(index)
     }
 
     #[inline]
+    #[must_use]
     pub const fn index(self) -> usize {
         self.0 as usize
     }
 
     #[inline]
+    #[must_use]
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }
@@ -187,6 +199,7 @@ pub enum Pauli {
 impl Pauli {
     /// Creates from raw u8 value.
     #[inline]
+    #[must_use]
     pub const fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::X,
@@ -198,12 +211,14 @@ impl Pauli {
 
     /// Returns the raw u8 value.
     #[inline]
+    #[must_use]
     pub const fn as_u8(self) -> u8 {
         self as u8
     }
 
     /// Returns true if this is a non-identity Pauli.
     #[inline]
+    #[must_use]
     pub const fn is_nontrivial(self) -> bool {
         self.as_u8() != 0
     }
@@ -231,9 +246,9 @@ pub struct MeasurementId {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DetectorId {
     /// The measurements that make up this detector.
-    /// For a simple detector: [m_i]
-    /// For a comparison detector: [m_i, m_{i-1}]
-    /// Using SmallVec to avoid heap allocation for common 1-2 measurement cases.
+    /// For a simple detector: [`m_i`]
+    /// For a comparison detector: [`m_i`, m_{i-1}]
+    /// Using `SmallVec` to avoid heap allocation for common 1-2 measurement cases.
     pub measurements: SmallVec<[MeasurementId; 2]>,
     /// Optional name/label for the detector.
     pub name: Option<String>,
@@ -242,6 +257,7 @@ pub struct DetectorId {
 impl DetectorId {
     /// Creates a single-measurement detector.
     #[inline]
+    #[must_use]
     pub fn single(measurement: MeasurementId) -> Self {
         Self {
             measurements: smallvec::smallvec![measurement],
@@ -251,6 +267,7 @@ impl DetectorId {
 
     /// Creates a comparison detector (XOR of two measurements).
     #[inline]
+    #[must_use]
     pub fn comparison(m1: MeasurementId, m2: MeasurementId) -> Self {
         Self {
             measurements: smallvec::smallvec![m1, m2],
@@ -277,7 +294,7 @@ pub struct LogicalId {
 /// What a single fault location influences.
 ///
 /// Uses fixed-size arrays indexed by Pauli type (0=I, 1=X, 2=Y, 3=Z) for fast access.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FaultInfluence {
     /// Which detectors this fault flips, indexed by Pauli type (1=X, 2=Y, 3=Z).
     /// Index 0 is unused (identity fault has no effect).
@@ -290,31 +307,22 @@ pub struct FaultInfluence {
     pub measurement_flips: [Vec<MeasurementId>; 4],
 
     /// Per-qubit detector flips for multi-qubit locations.
-    /// Key: (qubit_index_in_location, pauli_type), Value: detector IDs flipped by that qubit
+    /// Key: (`qubit_index_in_location`, `pauli_type`), Value: detector IDs flipped by that qubit
     pub per_qubit_detector_flips: BTreeMap<(usize, u8), Vec<DetectorId>>,
-}
-
-impl Default for FaultInfluence {
-    fn default() -> Self {
-        Self {
-            detector_flips: Default::default(),
-            logical_flips: Default::default(),
-            measurement_flips: Default::default(),
-            per_qubit_detector_flips: BTreeMap::new(),
-        }
-    }
 }
 
 impl FaultInfluence {
     /// Returns true if this fault has no effect.
+    #[must_use]
     pub fn is_trivial(&self) -> bool {
-        self.detector_flips.iter().all(|v| v.is_empty())
-            && self.logical_flips.iter().all(|v| v.is_empty())
-            && self.measurement_flips.iter().all(|v| v.is_empty())
+        self.detector_flips.iter().all(std::vec::Vec::is_empty)
+            && self.logical_flips.iter().all(std::vec::Vec::is_empty)
+            && self.measurement_flips.iter().all(std::vec::Vec::is_empty)
     }
 
     /// Returns all detectors flipped by a specific Pauli type.
     #[inline]
+    #[must_use]
     pub fn detectors_for_pauli(&self, pauli: u8) -> &[DetectorId] {
         self.detector_flips
             .get(pauli as usize)
@@ -323,6 +331,7 @@ impl FaultInfluence {
 
     /// Returns all logicals flipped by a specific Pauli type.
     #[inline]
+    #[must_use]
     pub fn logicals_for_pauli(&self, pauli: u8) -> &[LogicalId] {
         self.logical_flips
             .get(pauli as usize)
@@ -357,6 +366,7 @@ pub struct FaultInfluenceMap {
 
 impl FaultInfluenceMap {
     /// Creates an empty influence map.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             influences: BTreeMap::new(),
@@ -369,14 +379,16 @@ impl FaultInfluenceMap {
     }
 
     /// Returns the influence of a fault at the given location.
+    #[must_use]
     pub fn get_influence(&self, location: &SpacetimeLocation) -> Option<&FaultInfluence> {
         self.influences.get(location)
     }
 
     /// Quickly classifies a single-qubit fault based on pre-computed influences.
     ///
-    /// Returns (has_syndrome, has_logical_error) for the given Pauli type.
+    /// Returns (`has_syndrome`, `has_logical_error`) for the given Pauli type.
     /// For multi-qubit locations, use `classify_multi_qubit_fault` instead.
+    #[must_use]
     pub fn classify_fault(&self, location: &SpacetimeLocation, pauli: u8) -> (bool, bool) {
         if let Some(influence) = self.influences.get(location) {
             let has_syndrome = !influence.detectors_for_pauli(pauli).is_empty();
@@ -391,12 +403,13 @@ impl FaultInfluenceMap {
     ///
     /// For multi-qubit locations (e.g., CX gate), applying the same Pauli to both
     /// qubits can have cancellation effects. This method properly computes the
-    /// combined effect by XORing the per-qubit influences.
+    /// combined effect by `XORing` the per-qubit influences.
     ///
     /// For Y faults, we decompose Y = XZ and combine the X and Z contributions,
     /// since Y anticommutes with both X and Z components of the observable.
     ///
-    /// Returns (has_syndrome, has_logical_error).
+    /// Returns (`has_syndrome`, `has_logical_error`).
+    #[must_use]
     pub fn classify_multi_qubit_fault(
         &self,
         location: &SpacetimeLocation,
@@ -451,6 +464,7 @@ impl FaultInfluenceMap {
     }
 
     /// Returns all fault locations that flip a specific detector.
+    #[must_use]
     pub fn faults_for_detector(&self, detector: &DetectorId) -> &[(SpacetimeLocation, u8)] {
         self.detector_to_faults
             .get(detector)
@@ -458,6 +472,7 @@ impl FaultInfluenceMap {
     }
 
     /// Returns the number of fault locations tracked.
+    #[must_use]
     pub fn num_fault_locations(&self) -> usize {
         self.influences.len()
     }

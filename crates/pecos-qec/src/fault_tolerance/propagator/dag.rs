@@ -65,7 +65,7 @@ use std::collections::BinaryHeap;
 // Fault Locations (SoA Layout)
 // ============================================================================
 
-/// Fault locations in Struct-of-Arrays (SoA) layout for cache-efficient access.
+/// Fault locations in Struct-of-Arrays (`SoA`) layout for cache-efficient access.
 ///
 /// Each array is indexed by location ID. This layout is more cache-friendly
 /// than an array of structs when iterating over specific fields.
@@ -84,13 +84,13 @@ pub struct FaultLocations {
 }
 
 impl FaultLocations {
-    /// Creates a new empty FaultLocations.
+    /// Creates a new empty `FaultLocations`.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Creates FaultLocations with capacity for the given number of locations and nodes.
+    /// Creates `FaultLocations` with capacity for the given number of locations and nodes.
     #[must_use]
     pub fn with_capacity(num_locations: usize, max_node: usize) -> Self {
         Self {
@@ -163,7 +163,7 @@ impl FaultLocations {
         &self.qubits[loc_id]
     }
 
-    /// Converts to a Vec of DagSpacetimeLocation for backward compatibility.
+    /// Converts to a Vec of `DagSpacetimeLocation` for backward compatibility.
     #[must_use]
     pub fn to_dag_spacetime_locations(&self) -> Vec<DagSpacetimeLocation> {
         (0..self.len())
@@ -197,7 +197,6 @@ pub struct DagSpacetimeLocation {
     pub gate_type: GateType,
 }
 
-
 // ============================================================================
 // True SoA Influence Storage (Maximum Cache Efficiency)
 // ============================================================================
@@ -213,7 +212,7 @@ pub struct DagSpacetimeLocation {
 /// - O(1) access to any row's data slice
 #[derive(Debug, Clone, Default)]
 pub struct CsrArray {
-    /// Offset for each row. Length = num_rows + 1.
+    /// Offset for each row. Length = `num_rows` + 1.
     /// Row i's data is at `data[offsets[i]..offsets[i+1]]`.
     pub offsets: Vec<u32>,
     /// Flat data array containing all values.
@@ -312,7 +311,7 @@ impl CsrArray {
     }
 }
 
-/// True SoA (Struct of Arrays) influence storage using CSR layout.
+/// True `SoA` (Struct of Arrays) influence storage using CSR layout.
 ///
 /// This is the most cache-efficient representation, storing all influences
 /// in flat arrays with CSR-style indexing. Each Pauli type (X, Y, Z) has
@@ -321,10 +320,10 @@ impl CsrArray {
 /// # Memory Layout
 ///
 /// For N locations and M total detector influences:
-/// - Traditional AoS: N * (SmallVec overhead + potential heap allocs)
-/// - True SoA: 3 * (N+1) * 4 bytes (offsets) + M * 4 bytes (data)
+/// - Traditional `AoS`: N * (`SmallVec` overhead + potential heap allocs)
+/// - True `SoA`: 3 * (N+1) * 4 bytes (offsets) + M * 4 bytes (data)
 ///
-/// The SoA layout is more compact and has better cache behavior when
+/// The `SoA` layout is more compact and has better cache behavior when
 /// iterating over all influences for a specific Pauli type.
 #[derive(Debug, Clone, Default)]
 pub struct InfluencesSoA {
@@ -352,7 +351,7 @@ pub struct InfluencesSoA {
 }
 
 impl InfluencesSoA {
-    /// Creates a new SoA structure with capacity for the given number of locations.
+    /// Creates a new `SoA` structure with capacity for the given number of locations.
     #[must_use]
     pub fn with_capacity(num_locations: usize) -> Self {
         // Estimate: average 2 detector influences per location per Pauli type
@@ -418,7 +417,7 @@ impl InfluencesSoA {
 
     /// Classifies a fault at the given location.
     ///
-    /// Returns (has_syndrome, causes_logical_error).
+    /// Returns (`has_syndrome`, `causes_logical_error`).
     #[inline]
     #[must_use]
     pub fn classify(&self, loc_idx: usize, pauli: Pauli) -> (bool, bool) {
@@ -506,13 +505,13 @@ pub struct InfluencesSoAStats {
     pub total_bytes: usize,
 }
 
-/// True SoA fault influence map using CSR-style storage.
+/// True `SoA` fault influence map using CSR-style storage.
 ///
 /// This is the most memory-efficient and cache-friendly representation.
 /// Use this when processing large circuits or when memory is constrained.
 #[derive(Debug, Clone, Default)]
 pub struct DagFaultInfluenceMap {
-    /// Influences in true SoA layout.
+    /// Influences in true `SoA` layout.
     pub influences: InfluencesSoA,
 
     /// Locations indexed by location index.
@@ -526,7 +525,7 @@ pub struct DagFaultInfluenceMap {
 }
 
 impl DagFaultInfluenceMap {
-    /// Creates a new SoA map with capacity for the given number of locations.
+    /// Creates a new `SoA` map with capacity for the given number of locations.
     #[must_use]
     pub fn with_capacity(num_locations: usize) -> Self {
         Self {
@@ -539,7 +538,7 @@ impl DagFaultInfluenceMap {
 
     /// Classifies a fault at the given location index.
     ///
-    /// Returns (has_syndrome, causes_logical_error).
+    /// Returns (`has_syndrome`, `causes_logical_error`).
     #[inline]
     #[must_use]
     pub fn classify_fault(&self, loc_idx: usize, pauli: u8) -> (bool, bool) {
@@ -583,14 +582,15 @@ impl DagFaultInfluenceMap {
     /// Export CSR data for GPU use.
     ///
     /// Returns all CSR arrays needed to construct a GPU influence sampler:
-    /// (num_locations, num_detectors, num_logicals,
-    ///  detector_offsets_x, detector_data_x,
-    ///  detector_offsets_y, detector_data_y,
-    ///  detector_offsets_z, detector_data_z,
-    ///  logical_offsets_x, logical_data_x,
-    ///  logical_offsets_y, logical_data_y,
-    ///  logical_offsets_z, logical_data_z)
+    /// (`num_locations`, `num_detectors`, `num_logicals`,
+    ///  `detector_offsets_x`, `detector_data_x`,
+    ///  `detector_offsets_y`, `detector_data_y`,
+    ///  `detector_offsets_z`, `detector_data_z`,
+    ///  `logical_offsets_x`, `logical_data_x`,
+    ///  `logical_offsets_y`, `logical_data_y`,
+    ///  `logical_offsets_z`, `logical_data_z`)
     #[allow(clippy::type_complexity)]
+    #[must_use]
     pub fn export_csr(
         &self,
     ) -> (
@@ -615,8 +615,7 @@ impl DagFaultInfluenceMap {
         let num_logicals = self
             .influences
             .max_logical_index()
-            .map(|i| i as u32 + 1)
-            .unwrap_or(0);
+            .map_or(0, |i| i as u32 + 1);
 
         (
             num_locations,
@@ -642,12 +641,12 @@ impl DagFaultInfluenceMap {
 // Recorder Types
 // ============================================================================
 
-/// Recorder that writes to a true SoA influence map.
+/// Recorder that writes to a true `SoA` influence map.
 ///
-/// This recorder builds the SoA structure incrementally. Unlike other recorders,
+/// This recorder builds the `SoA` structure incrementally. Unlike other recorders,
 /// it requires locations to be processed in order and finalized one at a time.
 pub struct SoARecorderBuilder {
-    /// The SoA structure being built.
+    /// The `SoA` structure being built.
     influences: InfluencesSoA,
     /// Current location being built.
     current_location: usize,
@@ -658,7 +657,7 @@ pub struct SoARecorderBuilder {
 }
 
 impl SoARecorderBuilder {
-    /// Creates a new SoA recorder builder.
+    /// Creates a new `SoA` recorder builder.
     #[must_use]
     pub fn new(num_locations: usize) -> Self {
         Self {
@@ -682,7 +681,7 @@ impl SoARecorderBuilder {
         self.current_location += 1;
     }
 
-    /// Finishes building and returns the SoA structure.
+    /// Finishes building and returns the `SoA` structure.
     #[must_use]
     pub fn finish(mut self) -> InfluencesSoA {
         // Flush any remaining pending data
@@ -706,7 +705,7 @@ impl SoARecorderBuilder {
 
 /// Bucket-based recorder that accumulates influences per location for O(n) CSR construction.
 ///
-/// Unlike a sorting approach, this uses per-location buckets (SmallVecs) to collect
+/// Unlike a sorting approach, this uses per-location buckets (`SmallVecs`) to collect
 /// detector indices, then flattens to CSR format. This is O(n) in the number of
 /// influences, avoiding the O(n log n) sort overhead.
 pub struct BucketRecorder {
@@ -729,7 +728,7 @@ impl BucketRecorder {
         }
     }
 
-    /// Converts buckets to SoA format in O(n) time.
+    /// Converts buckets to `SoA` format in O(n) time.
     #[must_use]
     pub fn into_soa(self) -> InfluencesSoA {
         let num_locations = self.x_buckets.len();
@@ -804,7 +803,7 @@ impl InfluenceRecorder for BucketRecorder {
 pub struct DagFaultAnalyzer<'a> {
     /// Base propagator for traversal infrastructure.
     propagator: DagPropagator<'a>,
-    /// All fault locations in SoA layout.
+    /// All fault locations in `SoA` layout.
     locations: FaultLocations,
 }
 
@@ -862,7 +861,8 @@ impl<'a> DagFaultAnalyzer<'a> {
                 let is_prep = matches!(gate.gate_type, GateType::Prep | GateType::QAlloc);
 
                 // Convert QubitId to usize
-                let qubits: SmallVec<[usize; 2]> = gate.qubits.iter().map(|q| q.index()).collect();
+                let qubits: SmallVec<[usize; 2]> =
+                    gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
                 if is_measurement {
                     // Measurements only have before=true locations
@@ -1135,7 +1135,6 @@ impl<'a> DagFaultAnalyzer<'a> {
             );
         }
     }
-
 }
 
 #[cfg(test)]
@@ -1235,8 +1234,7 @@ mod tests {
         // Ensure at least one measurement
         if dag.topological_order().iter().all(|&n| {
             dag.gate(n)
-                .map(|g| !matches!(g.gate_type, GateType::Measure | GateType::MeasureFree))
-                .unwrap_or(true)
+                .is_none_or(|g| !matches!(g.gate_type, GateType::Measure | GateType::MeasureFree))
         }) {
             dag.mz(0);
         }
@@ -1540,7 +1538,9 @@ mod tests {
                 for pauli in 1u8..4 {
                     total_locations += 1;
 
-                    let back_has_syndrome = map.influences.has_detector_flips(loc_idx, Pauli::from_u8(pauli));
+                    let back_has_syndrome = map
+                        .influences
+                        .has_detector_flips(loc_idx, Pauli::from_u8(pauli));
 
                     // Forward: inject fault and propagate to see if it reaches measurements
                     let mut prop = PauliProp::new();
@@ -1588,7 +1588,7 @@ mod tests {
         }
 
         let consistency = if total_locations > 0 {
-            total_consistent as f64 / total_locations as f64
+            f64::from(total_consistent) / f64::from(total_locations)
         } else {
             1.0
         };
@@ -1623,10 +1623,7 @@ mod tests {
                 // Basic sanity checks
                 assert!(
                     !map.locations.is_empty() || dag.topological_order().is_empty(),
-                    "Size ({}, {}), seed {}: expected locations",
-                    num_qubits,
-                    num_gates,
-                    seed
+                    "Size ({num_qubits}, {num_gates}), seed {seed}: expected locations"
                 );
             }
         }
@@ -1687,8 +1684,7 @@ mod tests {
                 // Only locations after measurements or before preps might have no flips
                 assert!(
                     matches!(loc.gate_type, GateType::Prep | GateType::QAlloc) || !loc.before,
-                    "Multi-qubit location {:?} has no detector flips",
-                    loc
+                    "Multi-qubit location {loc:?} has no detector flips"
                 );
             }
         }

@@ -287,7 +287,8 @@ pub fn verify_rz_composition<S: ArbitraryRotationGateable>(sim: &mut S) {
     // On |+>: Z|+> = |->, so both should measure 1 in X basis
     sim.reset();
     sim.h(&qid(0));
-    sim.rz(Angle64::from_radians(FRAC_PI_2), &qid(0)).rz(Angle64::from_radians(FRAC_PI_2), &qid(0));
+    sim.rz(Angle64::from_radians(FRAC_PI_2), &qid(0))
+        .rz(Angle64::from_radians(FRAC_PI_2), &qid(0));
     assert_mx(sim, 0, true, "RZ(pi/2)+RZ(pi/2)|+> = RZ(pi)|+> = |->");
 
     sim.reset();
@@ -299,7 +300,8 @@ pub fn verify_rz_composition<S: ArbitraryRotationGateable>(sim: &mut S) {
     // S|+> = |+y>: measure 0 in Y basis
     sim.reset();
     sim.h(&qid(0));
-    sim.rz(Angle64::from_radians(FRAC_PI_4), &qid(0)).rz(Angle64::from_radians(FRAC_PI_4), &qid(0));
+    sim.rz(Angle64::from_radians(FRAC_PI_4), &qid(0))
+        .rz(Angle64::from_radians(FRAC_PI_4), &qid(0));
     let result = sim.my(&qid(0));
     assert!(
         result[0].is_deterministic,
@@ -354,18 +356,8 @@ pub fn verify_rzz_special_angles<S: ArbitraryRotationGateable>(sim: &mut S) {
             sim.x(&qid(1));
         }
         sim.rzz(Angle64::from_radians(1.0), &qid2(0, 1));
-        assert_mz(
-            sim,
-            0,
-            q0_val,
-            &format!("RZZ(1.0)|{state:02b}>: q0"),
-        );
-        assert_mz(
-            sim,
-            1,
-            q1_val,
-            &format!("RZZ(1.0)|{state:02b}>: q1"),
-        );
+        assert_mz(sim, 0, q0_val, &format!("RZZ(1.0)|{state:02b}>: q0"));
+        assert_mz(sim, 1, q1_val, &format!("RZZ(1.0)|{state:02b}>: q1"));
     }
 }
 
@@ -443,19 +435,34 @@ pub fn verify_rotation_circuit_inverse<S: ArbitraryRotationGateable>(sim: &mut S
 pub fn verify_u_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
     // On |0>
     sim.reset();
-    sim.u(Angle64::from_radians(0.0), Angle64::from_radians(0.0), Angle64::from_radians(0.0), &qid(0));
+    sim.u(
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        &qid(0),
+    );
     assert_mz(sim, 0, false, "U(0,0,0)|0>");
 
     // On |1>
     sim.reset();
     sim.x(&qid(0));
-    sim.u(Angle64::from_radians(0.0), Angle64::from_radians(0.0), Angle64::from_radians(0.0), &qid(0));
+    sim.u(
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        &qid(0),
+    );
     assert_mz(sim, 0, true, "U(0,0,0)|1>");
 
     // On |+>
     sim.reset();
     sim.h(&qid(0));
-    sim.u(Angle64::from_radians(0.0), Angle64::from_radians(0.0), Angle64::from_radians(0.0), &qid(0));
+    sim.u(
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        &qid(0),
+    );
     assert_mx(sim, 0, false, "U(0,0,0)|+>");
 }
 
@@ -463,13 +470,23 @@ pub fn verify_u_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
 pub fn verify_u_as_x<S: ArbitraryRotationGateable>(sim: &mut S) {
     // U(pi, 0, pi)|0> should give |1>
     sim.reset();
-    sim.u(Angle64::from_radians(PI), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
+    sim.u(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
     assert_mz(sim, 0, true, "U(pi,0,pi)|0> = X|0> = |1>");
 
     // U(pi, 0, pi)|1> should give |0>
     sim.reset();
     sim.x(&qid(0));
-    sim.u(Angle64::from_radians(PI), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
+    sim.u(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
     assert_mz(sim, 0, false, "U(pi,0,pi)|1> = X|1> = |0>");
 }
 
@@ -477,13 +494,28 @@ pub fn verify_u_as_x<S: ArbitraryRotationGateable>(sim: &mut S) {
 pub fn verify_u_as_h<S: ArbitraryRotationGateable>(sim: &mut S) {
     // U(pi/2, 0, pi)|0> should create |+> (superposition)
     sim.reset();
-    sim.u(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
+    sim.u(
+        Angle64::from_radians(FRAC_PI_2),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
     assert_mx(sim, 0, false, "U(pi/2,0,pi)|0> = H|0> = |+>");
 
     // U(pi/2, 0, pi) applied twice should give identity
     sim.reset();
-    sim.u(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
-    sim.u(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(0.0), Angle64::from_radians(PI), &qid(0));
+    sim.u(
+        Angle64::from_radians(FRAC_PI_2),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
+    sim.u(
+        Angle64::from_radians(FRAC_PI_2),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
     assert_mz(sim, 0, false, "U(pi/2,0,pi)^2|0> = H^2|0> = |0>");
 }
 
@@ -498,15 +530,35 @@ pub fn verify_u_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
     for &(theta, phi, lambda) in cases {
         // On |0>
         sim.reset();
-        sim.u(Angle64::from_radians(theta), Angle64::from_radians(phi), Angle64::from_radians(lambda), &qid(0));
-        sim.u(Angle64::from_radians(-theta), Angle64::from_radians(-lambda), Angle64::from_radians(-phi), &qid(0));
+        sim.u(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            Angle64::from_radians(lambda),
+            &qid(0),
+        );
+        sim.u(
+            Angle64::from_radians(-theta),
+            Angle64::from_radians(-lambda),
+            Angle64::from_radians(-phi),
+            &qid(0),
+        );
         assert_mz(sim, 0, false, &format!("U*U_inv|0> theta={theta}"));
 
         // On |+>
         sim.reset();
         sim.h(&qid(0));
-        sim.u(Angle64::from_radians(theta), Angle64::from_radians(phi), Angle64::from_radians(lambda), &qid(0));
-        sim.u(Angle64::from_radians(-theta), Angle64::from_radians(-lambda), Angle64::from_radians(-phi), &qid(0));
+        sim.u(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            Angle64::from_radians(lambda),
+            &qid(0),
+        );
+        sim.u(
+            Angle64::from_radians(-theta),
+            Angle64::from_radians(-lambda),
+            Angle64::from_radians(-phi),
+            &qid(0),
+        );
         assert_mx(sim, 0, false, &format!("U*U_inv|+> theta={theta}"));
     }
 }
@@ -521,12 +573,20 @@ pub fn verify_r1xy_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
 
     for &phi in phi_values {
         sim.reset();
-        sim.r1xy(Angle64::from_radians(0.0), Angle64::from_radians(phi), &qid(0));
+        sim.r1xy(
+            Angle64::from_radians(0.0),
+            Angle64::from_radians(phi),
+            &qid(0),
+        );
         assert_mz(sim, 0, false, &format!("R1XY(0, {phi})|0>"));
 
         sim.reset();
         sim.h(&qid(0));
-        sim.r1xy(Angle64::from_radians(0.0), Angle64::from_radians(phi), &qid(0));
+        sim.r1xy(
+            Angle64::from_radians(0.0),
+            Angle64::from_radians(phi),
+            &qid(0),
+        );
         assert_mx(sim, 0, false, &format!("R1XY(0, {phi})|+>"));
     }
 }
@@ -535,12 +595,20 @@ pub fn verify_r1xy_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
 pub fn verify_r1xy_as_rx<S: ArbitraryRotationGateable>(sim: &mut S) {
     // R1XY(pi, pi/2) should act like RX(pi) = X (up to phase)
     sim.reset();
-    sim.r1xy(Angle64::from_radians(PI), Angle64::from_radians(FRAC_PI_2), &qid(0));
+    sim.r1xy(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(FRAC_PI_2),
+        &qid(0),
+    );
     assert_mz(sim, 0, true, "R1XY(pi, pi/2)|0> = RX(pi)|0> = |1>");
 
     sim.reset();
     sim.x(&qid(0));
-    sim.r1xy(Angle64::from_radians(PI), Angle64::from_radians(FRAC_PI_2), &qid(0));
+    sim.r1xy(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(FRAC_PI_2),
+        &qid(0),
+    );
     assert_mz(sim, 0, false, "R1XY(pi, pi/2)|1> = RX(pi)|1> = |0>");
 }
 
@@ -548,33 +616,53 @@ pub fn verify_r1xy_as_rx<S: ArbitraryRotationGateable>(sim: &mut S) {
 pub fn verify_r1xy_as_ry<S: ArbitraryRotationGateable>(sim: &mut S) {
     // R1XY(pi, 0) should act like RY(pi) = Y (up to phase)
     sim.reset();
-    sim.r1xy(Angle64::from_radians(PI), Angle64::from_radians(0.0), &qid(0));
+    sim.r1xy(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(0.0),
+        &qid(0),
+    );
     assert_mz(sim, 0, true, "R1XY(pi, 0)|0> = RY(pi)|0> = |1>");
 
     sim.reset();
     sim.x(&qid(0));
-    sim.r1xy(Angle64::from_radians(PI), Angle64::from_radians(0.0), &qid(0));
+    sim.r1xy(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(0.0),
+        &qid(0),
+    );
     assert_mz(sim, 0, false, "R1XY(pi, 0)|1> = RY(pi)|1> = |0>");
 }
 
 /// Verify R1XY(theta, phi) * R1XY(-theta, phi) = I.
 pub fn verify_r1xy_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
-    let cases: &[(f64, f64)] = &[
-        (0.7, 0.3),
-        (PI, FRAC_PI_2),
-        (1.5, -0.8),
-    ];
+    let cases: &[(f64, f64)] = &[(0.7, 0.3), (PI, FRAC_PI_2), (1.5, -0.8)];
 
     for &(theta, phi) in cases {
         sim.reset();
-        sim.r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &qid(0));
-        sim.r1xy(Angle64::from_radians(-theta), Angle64::from_radians(phi), &qid(0));
+        sim.r1xy(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            &qid(0),
+        );
+        sim.r1xy(
+            Angle64::from_radians(-theta),
+            Angle64::from_radians(phi),
+            &qid(0),
+        );
         assert_mz(sim, 0, false, &format!("R1XY*R1XY_inv|0> theta={theta}"));
 
         sim.reset();
         sim.h(&qid(0));
-        sim.r1xy(Angle64::from_radians(theta), Angle64::from_radians(phi), &qid(0));
-        sim.r1xy(Angle64::from_radians(-theta), Angle64::from_radians(phi), &qid(0));
+        sim.r1xy(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            &qid(0),
+        );
+        sim.r1xy(
+            Angle64::from_radians(-theta),
+            Angle64::from_radians(phi),
+            &qid(0),
+        );
         assert_mx(sim, 0, false, &format!("R1XY*R1XY_inv|+> theta={theta}"));
     }
 }
@@ -587,46 +675,78 @@ pub fn verify_r1xy_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
 pub fn verify_rzzryyrxx_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
     // On |00>
     sim.reset();
-    sim.rzzryyrxx(Angle64::from_radians(0.0), Angle64::from_radians(0.0), Angle64::from_radians(0.0), &qid2(0, 1));
+    sim.rzzryyrxx(
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        &qid2(0, 1),
+    );
     assert_mz(sim, 0, false, "RZZRYYRXX(0,0,0)|00> q0");
     assert_mz(sim, 1, false, "RZZRYYRXX(0,0,0)|00> q1");
 
     // On |10>
     sim.reset();
     sim.x(&qid(0));
-    sim.rzzryyrxx(Angle64::from_radians(0.0), Angle64::from_radians(0.0), Angle64::from_radians(0.0), &qid2(0, 1));
+    sim.rzzryyrxx(
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        &qid2(0, 1),
+    );
     assert_mz(sim, 0, true, "RZZRYYRXX(0,0,0)|10> q0");
     assert_mz(sim, 1, false, "RZZRYYRXX(0,0,0)|10> q1");
 
     // On |+0>
     sim.reset();
     sim.h(&qid(0));
-    sim.rzzryyrxx(Angle64::from_radians(0.0), Angle64::from_radians(0.0), Angle64::from_radians(0.0), &qid2(0, 1));
+    sim.rzzryyrxx(
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(0.0),
+        &qid2(0, 1),
+    );
     assert_mx(sim, 0, false, "RZZRYYRXX(0,0,0)|+0> q0");
     assert_mz(sim, 1, false, "RZZRYYRXX(0,0,0)|+0> q1");
 }
 
 /// Verify RZZRYYRXX(a,b,c) * RZZRYYRXX(-a,-b,-c) = I.
 pub fn verify_rzzryyrxx_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
-    let cases: &[(f64, f64, f64)] = &[
-        (0.5, 0.3, 0.7),
-        (FRAC_PI_4, FRAC_PI_2, PI),
-    ];
+    let cases: &[(f64, f64, f64)] = &[(0.5, 0.3, 0.7), (FRAC_PI_4, FRAC_PI_2, PI)];
 
     for &(a, b, c) in cases {
         // On |01>
         sim.reset();
         sim.x(&qid(1));
-        sim.rzzryyrxx(Angle64::from_radians(a), Angle64::from_radians(b), Angle64::from_radians(c), &qid2(0, 1));
-        sim.rzzryyrxx(Angle64::from_radians(-a), Angle64::from_radians(-b), Angle64::from_radians(-c), &qid2(0, 1));
+        sim.rzzryyrxx(
+            Angle64::from_radians(a),
+            Angle64::from_radians(b),
+            Angle64::from_radians(c),
+            &qid2(0, 1),
+        );
+        sim.rzzryyrxx(
+            Angle64::from_radians(-a),
+            Angle64::from_radians(-b),
+            Angle64::from_radians(-c),
+            &qid2(0, 1),
+        );
         assert_mz(sim, 0, false, &format!("RZZRYYRXX inv|01> q0 a={a}"));
         assert_mz(sim, 1, true, &format!("RZZRYYRXX inv|01> q1 a={a}"));
 
         // On |+0>
         sim.reset();
         sim.h(&qid(0));
-        sim.rzzryyrxx(Angle64::from_radians(a), Angle64::from_radians(b), Angle64::from_radians(c), &qid2(0, 1));
-        sim.rzzryyrxx(Angle64::from_radians(-a), Angle64::from_radians(-b), Angle64::from_radians(-c), &qid2(0, 1));
+        sim.rzzryyrxx(
+            Angle64::from_radians(a),
+            Angle64::from_radians(b),
+            Angle64::from_radians(c),
+            &qid2(0, 1),
+        );
+        sim.rzzryyrxx(
+            Angle64::from_radians(-a),
+            Angle64::from_radians(-b),
+            Angle64::from_radians(-c),
+            &qid2(0, 1),
+        );
         assert_mx(sim, 0, false, &format!("RZZRYYRXX inv|+0> q0 a={a}"));
         assert_mz(sim, 1, false, &format!("RZZRYYRXX inv|+0> q1 a={a}"));
     }
@@ -642,7 +762,12 @@ pub fn verify_rzzryyrxx_decomposition<S: ArbitraryRotationGateable>(sim: &mut S)
     // RZZ(-c) * RYY(-b) * RXX(-a).
     sim.reset();
     sim.x(&qid(1)); // |01>
-    sim.rzzryyrxx(Angle64::from_radians(a), Angle64::from_radians(b), Angle64::from_radians(c), &qid2(0, 1));
+    sim.rzzryyrxx(
+        Angle64::from_radians(a),
+        Angle64::from_radians(b),
+        Angle64::from_radians(c),
+        &qid2(0, 1),
+    );
     sim.rzz(Angle64::from_radians(-c), &qid2(0, 1));
     sim.ryy(Angle64::from_radians(-b), &qid2(0, 1));
     sim.rxx(Angle64::from_radians(-a), &qid2(0, 1));
@@ -652,7 +777,12 @@ pub fn verify_rzzryyrxx_decomposition<S: ArbitraryRotationGateable>(sim: &mut S)
     // Also on |+0>
     sim.reset();
     sim.h(&qid(0));
-    sim.rzzryyrxx(Angle64::from_radians(a), Angle64::from_radians(b), Angle64::from_radians(c), &qid2(0, 1));
+    sim.rzzryyrxx(
+        Angle64::from_radians(a),
+        Angle64::from_radians(b),
+        Angle64::from_radians(c),
+        &qid2(0, 1),
+    );
     sim.rzz(Angle64::from_radians(-c), &qid2(0, 1));
     sim.ryy(Angle64::from_radians(-b), &qid2(0, 1));
     sim.rxx(Angle64::from_radians(-a), &qid2(0, 1));

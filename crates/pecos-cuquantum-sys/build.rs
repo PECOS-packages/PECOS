@@ -52,9 +52,33 @@ fn main() {
     println!("cargo:rustc-link-lib=cutensornet");
     println!("cargo:rustc-link-lib=cudensitymat");
 
+    // Emit metadata so downstream build scripts can read library paths
+    // via DEP_PECOS_CUQUANTUM_SYS_CUQUANTUM_LIB_DIR
+    println!("cargo:cuquantum_lib_dir={}", lib_dir.display());
+
+    // cuTensor is required by cuTensorNet at runtime.
+    // Find or install it to ~/.pecos/deps/cutensor-<version>/
+    match pecos_build::cutensor::ensure_cutensor() {
+        Ok(cutensor_path) => {
+            if let Some(cutensor_lib) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
+                println!(
+                    "cargo:warning=Using cuTensor from: {}",
+                    cutensor_path.display()
+                );
+                println!("cargo:rustc-link-search=native={}", cutensor_lib.display());
+                println!("cargo:cutensor_lib_dir={}", cutensor_lib.display());
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: cuTensor not found: {e}");
+            eprintln!("cuTensorNet may fail to load at runtime without libcutensor.");
+        }
+    }
+
     // Also need CUDA runtime
     if let Some(cuda_lib) = get_cuda_lib_dir(&cuda_path) {
         println!("cargo:rustc-link-search=native={}", cuda_lib.display());
+        println!("cargo:cuda_lib_dir={}", cuda_lib.display());
     }
     println!("cargo:rustc-link-lib=cudart");
 

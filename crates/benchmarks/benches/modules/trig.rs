@@ -34,7 +34,9 @@ impl TrigData {
         // Use a fixed-step pattern to cover all octants uniformly.
         // Avoids RNG overhead and ensures reproducible benchmarks.
         let step = u64::MAX / n as u64;
-        let angles: Vec<Angle64> = (0..n).map(|i| Angle64::new(step.wrapping_mul(i as u64))).collect();
+        let angles: Vec<Angle64> = (0..n)
+            .map(|i| Angle64::new(step.wrapping_mul(i as u64)))
+            .collect();
         let radians: Vec<f64> = angles.iter().map(Angle64::to_radians).collect();
         Self { angles, radians }
     }

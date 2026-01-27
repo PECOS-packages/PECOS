@@ -68,7 +68,7 @@ fn gate_qubits(packed: u32) -> (u32, Option<u32>) {
 
 /// Partition gates into independent batches for parallel processing.
 /// Gates in the same batch don't share any qubits and can be processed in parallel.
-/// Returns a list of (start_idx, end_idx) ranges into the gate queue.
+/// Returns a list of (`start_idx`, `end_idx`) ranges into the gate queue.
 fn partition_gates_into_batches(gate_queue: &[u32]) -> Vec<(usize, usize)> {
     if gate_queue.len() <= 1 {
         return Vec::new();
@@ -87,7 +87,8 @@ fn partition_gates_into_batches(gate_queue: &[u32]) -> Vec<(usize, usize)> {
         let (q1, q2_opt) = gate_qubits(packed);
 
         // Check if this gate conflicts with current batch
-        let conflicts = used_qubits.contains(&q1) || q2_opt.map_or(false, |q2| used_qubits.contains(&q2));
+        let conflicts =
+            used_qubits.contains(&q1) || q2_opt.is_some_and(|q2| used_qubits.contains(&q2));
 
         if conflicts {
             // End current batch, start new one
@@ -706,20 +707,17 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         // Gate-parallel shader (uses atomic sign updates)
         let parallel_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Parallel Gate Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("stab_gate_shader_parallel.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("stab_gate_shader_parallel.wgsl").into()),
         });
 
-        let parallel_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Parallel Gate Pipeline"),
-                layout: Some(&main_pipeline_layout),
-                module: &parallel_shader,
-                entry_point: Some("process_gates_parallel"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let parallel_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Parallel Gate Pipeline"),
+            layout: Some(&main_pipeline_layout),
+            module: &parallel_shader,
+            entry_point: Some("process_gates_parallel"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
 
         // Parallel bind group uses the same layout as main
         let parallel_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -836,7 +834,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         // measurement_data layout: [min_weight, chosen_row, outcome, qubit, weights...]
         let measurement_data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Measurement Data Buffer"),
-            size: (4 + num_qubits as u64) * 4, // 4 header fields + per-generator weights
+            size: (4 + u64::from(num_qubits)) * 4, // 4 header fields + per-generator weights
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -930,11 +928,12 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             ],
         });
 
-        let batch_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Batch Pipeline Layout"),
-            bind_group_layouts: &[&main_bind_group_layout, &batch_bind_group_layout],
-            immediate_size: 0,
-        });
+        let batch_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Batch Pipeline Layout"),
+                bind_group_layouts: &[&main_bind_group_layout, &batch_bind_group_layout],
+                immediate_size: 0,
+            });
 
         let batch_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Batch Find Anticommuting Pipeline"),
@@ -1422,7 +1421,8 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
 
         // Submit all accumulated command buffers at once
         if !self.batched_commands.is_empty() {
-            self.queue.submit(std::mem::take(&mut self.batched_commands));
+            self.queue
+                .submit(std::mem::take(&mut self.batched_commands));
             self.wait();
         }
     }
@@ -1524,10 +1524,12 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
 
         // Create pipeline if not already cached
         if !self.compiled_pipelines.contains_key(&hash) {
-            let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&format!("Compiled Circuit {hash:016x}")),
-                source: wgpu::ShaderSource::Wgsl(compiled.wgsl_source.clone().into()),
-            });
+            let shader = self
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(&format!("Compiled Circuit {hash:016x}")),
+                    source: wgpu::ShaderSource::Wgsl(compiled.wgsl_source.clone().into()),
+                });
 
             let pipeline_layout =
                 self.device
@@ -1626,11 +1628,11 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
 
     /// Add a single-qubit gate, optionally through the fuser.
     fn add_single_gate(&mut self, gate_type: u32, target: u32) {
-        if self.fusion_enabled {
-            if let Some(ref mut fuser) = self.fuser {
-                fuser.add_gate(gate_type, target, 0);
-                return;
-            }
+        if self.fusion_enabled
+            && let Some(ref mut fuser) = self.fuser
+        {
+            fuser.add_gate(gate_type, target, 0);
+            return;
         }
         // Direct path - add to gate queue
         self.gate_queue.push(pack_single_gate(gate_type, target));
@@ -1638,22 +1640,23 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
 
     /// Add a two-qubit gate, flushing any pending fused gates first.
     fn add_two_qubit_gate(&mut self, gate_type: u32, control: u32, target: u32) {
-        if self.fusion_enabled {
-            if let Some(ref mut fuser) = self.fuser {
-                // Two-qubit gate acts as barrier - fuser handles flushing
-                fuser.add_gate(gate_type, target, control);
-                // Get any flushed gates and add to queue
-                let fused_gates = fuser.flush_all();
-                for packed_gate in fused_gates {
-                    if self.gate_queue.len() < GATE_QUEUE_BUFFER_SIZE + 1 {
-                        self.gate_queue.push(packed_gate);
-                    }
+        if self.fusion_enabled
+            && let Some(ref mut fuser) = self.fuser
+        {
+            // Two-qubit gate acts as barrier - fuser handles flushing
+            fuser.add_gate(gate_type, target, control);
+            // Get any flushed gates and add to queue
+            let fused_gates = fuser.flush_all();
+            for packed_gate in fused_gates {
+                if self.gate_queue.len() < GATE_QUEUE_BUFFER_SIZE + 1 {
+                    self.gate_queue.push(packed_gate);
                 }
-                return;
             }
+            return;
         }
         // Direct path - add to gate queue
-        self.gate_queue.push(pack_two_qubit_gate(gate_type, control, target));
+        self.gate_queue
+            .push(pack_two_qubit_gate(gate_type, control, target));
     }
 
     /// Find first anticommuting stabilizer (for measurement)
@@ -1731,7 +1734,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         result
     }
 
-    /// Subgroup-based find_first_anticommuting implementation
+    /// Subgroup-based `find_first_anticommuting` implementation
     ///
     /// Uses subgroupBallot + atomicMin for O(1) parallel search instead of
     /// sequential iteration through results.
@@ -1797,7 +1800,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
     /// All outcomes (both deterministic and non-deterministic) are computed on GPU.
     /// Non-deterministic measurements properly update the stabilizer tableau.
     ///
-    /// Returns MeasurementResult for each qubit.
+    /// Returns `MeasurementResult` for each qubit.
     fn measure_batch_gpu(&mut self, qubits: &[u32]) -> Vec<MeasurementResult> {
         if qubits.is_empty() {
             return Vec::new();
@@ -1845,7 +1848,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
     }
 
     /// Find the first anticommuting stabilizer for a single qubit.
-    /// Returns None if deterministic, Some(gen_index) if non-deterministic.
+    /// Returns None if deterministic, `Some(gen_index)` if non-deterministic.
     fn find_anticommuting_single(&mut self, qubit: u32) -> Option<u32> {
         // Prepare input: [count=1, qubit]
         let input_data = [1u32, qubit];
@@ -1868,7 +1871,10 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             self.gen_words,
             self.num_qubits, // num_gens
             qubit,           // target_qubit
-            0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
         ];
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
@@ -1936,11 +1942,8 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         );
 
         // Random bit doesn't matter for deterministic, but need to provide it
-        self.queue.write_buffer(
-            &self.batch_random_buffer,
-            0,
-            bytemuck::cast_slice(&[0u32]),
-        );
+        self.queue
+            .write_buffer(&self.batch_random_buffer, 0, bytemuck::cast_slice(&[0u32]));
 
         // Update params
         let params = [
@@ -1948,7 +1951,10 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             self.gen_words,
             self.num_qubits,
             qubit,
-            0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
         ];
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
@@ -2013,7 +2019,10 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
             self.gen_words,
             self.num_qubits,
             qubit,
-            0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
         ];
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
@@ -2158,7 +2167,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
         for &qubit in &qubit_indices {
             let random_bit = self.rng.next_u32() & 1;
             let result = self.measure_single_qubit_gpu(qubit, random_bit);
-            results.push(if result.outcome { 1 } else { 0 });
+            results.push(u32::from(result.outcome));
         }
 
         // Write results to deferred buffer at current offset
@@ -2471,9 +2480,8 @@ mod tests {
     use super::*;
     use pecos_qsim::SparseStab;
     use pecos_qsim::stabilizer_test_utils::{
+        ForcedMeasurement, compare_simulators_on_random_circuits_direct,
         run_basic_stabilizer_test_suite,
-        compare_simulators_on_random_circuits_direct,
-        ForcedMeasurement,
     };
 
     impl<R: RngCore + SeedableRng + Debug> ForcedMeasurement for GpuStab<R> {
@@ -2492,14 +2500,18 @@ mod tests {
     /// so we use the basic suite instead of the full suite.
     #[test]
     fn test_gpu_stab_basic_suite() {
-        let Some(mut gpu) = gpu_sim(8, 42) else { return };
+        let Some(mut gpu) = gpu_sim(8, 42) else {
+            return;
+        };
         run_basic_stabilizer_test_suite(&mut gpu, 8);
     }
 
     /// Run the basic suite on a smaller number of qubits
     #[test]
     fn test_gpu_stab_basic_suite_small() {
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         run_basic_stabilizer_test_suite(&mut gpu, 4);
     }
 
@@ -2511,7 +2523,9 @@ mod tests {
     /// This uses the direct comparison method which doesn't require Clone.
     #[test]
     fn test_gpu_vs_cpu_random_circuits() {
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
         // Run 20 random circuits of 30 gates each with seed 12345
         compare_simulators_on_random_circuits_direct(&mut gpu, &mut cpu, 4, 30, 20, 12345);
@@ -2520,7 +2534,9 @@ mod tests {
     /// Compare GPU and CPU on larger random circuits
     #[test]
     fn test_gpu_vs_cpu_random_circuits_large() {
-        let Some(mut gpu) = gpu_sim(8, 42) else { return };
+        let Some(mut gpu) = gpu_sim(8, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(8);
         // Run 10 random circuits of 50 gates each
         compare_simulators_on_random_circuits_direct(&mut gpu, &mut cpu, 8, 50, 10, 67890);
@@ -2529,7 +2545,9 @@ mod tests {
     /// Compare GPU and CPU with many circuits to ensure consistency
     #[test]
     fn test_gpu_vs_cpu_many_circuits() {
-        let Some(mut gpu) = gpu_sim(5, 42) else { return };
+        let Some(mut gpu) = gpu_sim(5, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(5);
         // Run 50 random circuits of 20 gates each
         compare_simulators_on_random_circuits_direct(&mut gpu, &mut cpu, 5, 20, 50, 11111);
@@ -2538,12 +2556,12 @@ mod tests {
     /// Debug test to understand the specific failing circuit
     #[test]
     fn test_gpu_vs_cpu_specific_circuit_debug() {
-        use pecos_qsim::stabilizer_test_utils::{
-            generate_random_clifford_circuit, apply_circuit, CliffordGate,
-        };
+        use pecos_qsim::stabilizer_test_utils::{apply_circuit, generate_random_clifford_circuit};
         use pecos_rng::PecosRng;
 
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Use seed 12353 which was failing (base_seed 12345 + 8)
@@ -2588,7 +2606,9 @@ mod tests {
     fn test_gpu_vs_cpu_simpler_debug() {
         use pecos_qsim::stabilizer_test_utils::ForcedMeasurement;
 
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // Test 1: Just H on qubit 0 - should be non-deterministic
@@ -2602,8 +2622,14 @@ mod tests {
 
         let gpu_r = gpu.mz_forced(0, false);
         let cpu_r = cpu.mz_forced(0, false);
-        println!("  GPU: det={}, CPU: det={}", gpu_r.is_deterministic, cpu_r.is_deterministic);
-        assert_eq!(gpu_r.is_deterministic, cpu_r.is_deterministic, "H test failed");
+        println!(
+            "  GPU: det={}, CPU: det={}",
+            gpu_r.is_deterministic, cpu_r.is_deterministic
+        );
+        assert_eq!(
+            gpu_r.is_deterministic, cpu_r.is_deterministic,
+            "H test failed"
+        );
 
         // Test 2: SY gate - H*X decomposition
         println!("\nTest 2: SY on qubit 0 (uses H*X decomposition)");
@@ -2616,8 +2642,14 @@ mod tests {
 
         let gpu_r = gpu.mz_forced(0, false);
         let cpu_r = cpu.mz_forced(0, false);
-        println!("  GPU: det={}, CPU: det={}", gpu_r.is_deterministic, cpu_r.is_deterministic);
-        assert_eq!(gpu_r.is_deterministic, cpu_r.is_deterministic, "SY test failed");
+        println!(
+            "  GPU: det={}, CPU: det={}",
+            gpu_r.is_deterministic, cpu_r.is_deterministic
+        );
+        assert_eq!(
+            gpu_r.is_deterministic, cpu_r.is_deterministic,
+            "SY test failed"
+        );
 
         // Test 3: CY gate - Szdg*CX*Sz decomposition
         println!("\nTest 3: CY(0,1) (uses Szdg*CX*Sz decomposition)");
@@ -2632,10 +2664,22 @@ mod tests {
         let cpu_r0 = cpu.mz_forced(0, false);
         let gpu_r1 = gpu.mz_forced(1, false);
         let cpu_r1 = cpu.mz_forced(1, false);
-        println!("  Q0: GPU det={}, CPU det={}", gpu_r0.is_deterministic, cpu_r0.is_deterministic);
-        println!("  Q1: GPU det={}, CPU det={}", gpu_r1.is_deterministic, cpu_r1.is_deterministic);
-        assert_eq!(gpu_r0.is_deterministic, cpu_r0.is_deterministic, "CY test Q0 failed");
-        assert_eq!(gpu_r1.is_deterministic, cpu_r1.is_deterministic, "CY test Q1 failed");
+        println!(
+            "  Q0: GPU det={}, CPU det={}",
+            gpu_r0.is_deterministic, cpu_r0.is_deterministic
+        );
+        println!(
+            "  Q1: GPU det={}, CPU det={}",
+            gpu_r1.is_deterministic, cpu_r1.is_deterministic
+        );
+        assert_eq!(
+            gpu_r0.is_deterministic, cpu_r0.is_deterministic,
+            "CY test Q0 failed"
+        );
+        assert_eq!(
+            gpu_r1.is_deterministic, cpu_r1.is_deterministic,
+            "CY test Q1 failed"
+        );
 
         // Test 4: Bell state - H then CX
         println!("\nTest 4: Bell state H(0) CX(0,1)");
@@ -2652,10 +2696,22 @@ mod tests {
         let cpu_r0 = cpu.mz_forced(0, false);
         let gpu_r1 = gpu.mz_forced(1, false);
         let cpu_r1 = cpu.mz_forced(1, false);
-        println!("  Q0: GPU det={}, CPU det={}", gpu_r0.is_deterministic, cpu_r0.is_deterministic);
-        println!("  Q1: GPU det={}, CPU det={}", gpu_r1.is_deterministic, cpu_r1.is_deterministic);
-        assert_eq!(gpu_r0.is_deterministic, cpu_r0.is_deterministic, "Bell test Q0 failed");
-        assert_eq!(gpu_r1.is_deterministic, cpu_r1.is_deterministic, "Bell test Q1 failed");
+        println!(
+            "  Q0: GPU det={}, CPU det={}",
+            gpu_r0.is_deterministic, cpu_r0.is_deterministic
+        );
+        println!(
+            "  Q1: GPU det={}, CPU det={}",
+            gpu_r1.is_deterministic, cpu_r1.is_deterministic
+        );
+        assert_eq!(
+            gpu_r0.is_deterministic, cpu_r0.is_deterministic,
+            "Bell test Q0 failed"
+        );
+        assert_eq!(
+            gpu_r1.is_deterministic, cpu_r1.is_deterministic,
+            "Bell test Q1 failed"
+        );
 
         println!("\nAll simple tests passed!");
     }
@@ -2663,12 +2719,12 @@ mod tests {
     /// Test the specific failing circuit - check deterministic outcomes without prior measurements
     #[test]
     fn test_gpu_vs_cpu_failing_circuit_deterministic_only() {
-        use pecos_qsim::stabilizer_test_utils::{
-            generate_random_clifford_circuit, apply_circuit,
-        };
+        use pecos_qsim::stabilizer_test_utils::{apply_circuit, generate_random_clifford_circuit};
         use pecos_rng::PecosRng;
 
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Use seed 12354 which was failing
@@ -2706,11 +2762,19 @@ mod tests {
                 let gpu_outcome = gpu.compute_deterministic_outcome(q);
                 let mut cpu_copy = cpu.clone();
                 let cpu_result = cpu_copy.mz_forced(q, false);
-                assert!(cpu_result.is_deterministic, "CPU should be deterministic for Q{q}");
+                assert!(
+                    cpu_result.is_deterministic,
+                    "CPU should be deterministic for Q{q}"
+                );
                 println!(
                     "  Q{q}: GPU out={}, CPU out={}{}",
-                    gpu_outcome, cpu_result.outcome,
-                    if gpu_outcome != cpu_result.outcome { " MISMATCH!" } else { "" }
+                    gpu_outcome,
+                    cpu_result.outcome,
+                    if gpu_outcome == cpu_result.outcome {
+                        ""
+                    } else {
+                        " MISMATCH!"
+                    }
                 );
                 assert_eq!(gpu_outcome, cpu_result.outcome, "Q{q} outcome mismatch");
             }
@@ -2721,12 +2785,12 @@ mod tests {
     /// Test the failing circuit exactly - gates 0-22
     #[test]
     fn test_gpu_vs_cpu_failing_circuit() {
-        use pecos_qsim::stabilizer_test_utils::{
-            generate_random_clifford_circuit, CliffordGate,
-        };
+        use pecos_qsim::stabilizer_test_utils::{CliffordGate, generate_random_clifford_circuit};
         use pecos_rng::PecosRng;
 
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Helper to read GPU sign state
@@ -2751,12 +2815,12 @@ mod tests {
         fn read_cpu_signs(cpu: &SparseStab, num_qubits: usize) -> (Vec<bool>, Vec<bool>) {
             let mut sign_minus = vec![false; num_qubits];
             let mut sign_i = vec![false; num_qubits];
-            for g in cpu.stabs().signs_minus.iter() {
+            for g in &cpu.stabs().signs_minus {
                 if g < num_qubits {
                     sign_minus[g] = true;
                 }
             }
-            for g in cpu.stabs().signs_i.iter() {
+            for g in &cpu.stabs().signs_i {
                 if g < num_qubits {
                     sign_i[g] = true;
                 }
@@ -2775,24 +2839,66 @@ mod tests {
         println!("Applying gates 0-21:");
         for (i, gate) in circuit.iter().enumerate().take(22) {
             match gate {
-                CliffordGate::H(q) => { gpu.h(&[QubitId::new(*q)]); cpu.h(&[QubitId::new(*q)]); }
-                CliffordGate::S(q) => { gpu.sz(&[QubitId::new(*q)]); cpu.sz(&[QubitId::new(*q)]); }
-                CliffordGate::Sdg(q) => { gpu.szdg(&[QubitId::new(*q)]); cpu.szdg(&[QubitId::new(*q)]); }
-                CliffordGate::X(q) => { gpu.x(&[QubitId::new(*q)]); cpu.x(&[QubitId::new(*q)]); }
-                CliffordGate::Y(q) => { gpu.y(&[QubitId::new(*q)]); cpu.y(&[QubitId::new(*q)]); }
-                CliffordGate::Z(q) => { gpu.z(&[QubitId::new(*q)]); cpu.z(&[QubitId::new(*q)]); }
-                CliffordGate::CX(c, t) => { gpu.cx(&[QubitId::new(*c), QubitId::new(*t)]); cpu.cx(&[QubitId::new(*c), QubitId::new(*t)]); }
-                CliffordGate::CZ(a, b) => { gpu.cz(&[QubitId::new(*a), QubitId::new(*b)]); cpu.cz(&[QubitId::new(*a), QubitId::new(*b)]); }
-                CliffordGate::SWAP(a, b) => { gpu.swap(&[QubitId::new(*a), QubitId::new(*b)]); cpu.swap(&[QubitId::new(*a), QubitId::new(*b)]); }
-                CliffordGate::SX(q) => { gpu.sx(&[QubitId::new(*q)]); cpu.sx(&[QubitId::new(*q)]); }
-                CliffordGate::SXdg(q) => { gpu.sxdg(&[QubitId::new(*q)]); cpu.sxdg(&[QubitId::new(*q)]); }
-                CliffordGate::SY(q) => { gpu.sy(&[QubitId::new(*q)]); cpu.sy(&[QubitId::new(*q)]); }
-                CliffordGate::SYdg(q) => { gpu.sydg(&[QubitId::new(*q)]); cpu.sydg(&[QubitId::new(*q)]); }
-                CliffordGate::CY(c, t) => { gpu.cy(&[QubitId::new(*c), QubitId::new(*t)]); cpu.cy(&[QubitId::new(*c), QubitId::new(*t)]); }
+                CliffordGate::H(q) => {
+                    gpu.h(&[QubitId::new(*q)]);
+                    cpu.h(&[QubitId::new(*q)]);
+                }
+                CliffordGate::S(q) => {
+                    gpu.sz(&[QubitId::new(*q)]);
+                    cpu.sz(&[QubitId::new(*q)]);
+                }
+                CliffordGate::Sdg(q) => {
+                    gpu.szdg(&[QubitId::new(*q)]);
+                    cpu.szdg(&[QubitId::new(*q)]);
+                }
+                CliffordGate::X(q) => {
+                    gpu.x(&[QubitId::new(*q)]);
+                    cpu.x(&[QubitId::new(*q)]);
+                }
+                CliffordGate::Y(q) => {
+                    gpu.y(&[QubitId::new(*q)]);
+                    cpu.y(&[QubitId::new(*q)]);
+                }
+                CliffordGate::Z(q) => {
+                    gpu.z(&[QubitId::new(*q)]);
+                    cpu.z(&[QubitId::new(*q)]);
+                }
+                CliffordGate::CX(c, t) => {
+                    gpu.cx(&[QubitId::new(*c), QubitId::new(*t)]);
+                    cpu.cx(&[QubitId::new(*c), QubitId::new(*t)]);
+                }
+                CliffordGate::CZ(a, b) => {
+                    gpu.cz(&[QubitId::new(*a), QubitId::new(*b)]);
+                    cpu.cz(&[QubitId::new(*a), QubitId::new(*b)]);
+                }
+                CliffordGate::SWAP(a, b) => {
+                    gpu.swap(&[QubitId::new(*a), QubitId::new(*b)]);
+                    cpu.swap(&[QubitId::new(*a), QubitId::new(*b)]);
+                }
+                CliffordGate::SX(q) => {
+                    gpu.sx(&[QubitId::new(*q)]);
+                    cpu.sx(&[QubitId::new(*q)]);
+                }
+                CliffordGate::SXdg(q) => {
+                    gpu.sxdg(&[QubitId::new(*q)]);
+                    cpu.sxdg(&[QubitId::new(*q)]);
+                }
+                CliffordGate::SY(q) => {
+                    gpu.sy(&[QubitId::new(*q)]);
+                    cpu.sy(&[QubitId::new(*q)]);
+                }
+                CliffordGate::SYdg(q) => {
+                    gpu.sydg(&[QubitId::new(*q)]);
+                    cpu.sydg(&[QubitId::new(*q)]);
+                }
+                CliffordGate::CY(c, t) => {
+                    gpu.cy(&[QubitId::new(*c), QubitId::new(*t)]);
+                    cpu.cy(&[QubitId::new(*c), QubitId::new(*t)]);
+                }
             }
             gpu.sync();
             gpu.wait();
-            println!("  Gate {i}: {:?}", gate);
+            println!("  Gate {i}: {gate:?}");
         }
 
         // Check state after gate 21
@@ -2801,10 +2907,10 @@ mod tests {
         let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
         let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
         println!("\nAfter gate 21:");
-        println!("  GPU signs_minus: {:?}", gpu_sm);
-        println!("  CPU signs_minus: {:?}", cpu_sm);
-        println!("  GPU signs_i:     {:?}", gpu_si);
-        println!("  CPU signs_i:     {:?}", cpu_si);
+        println!("  GPU signs_minus: {gpu_sm:?}");
+        println!("  CPU signs_minus: {cpu_sm:?}");
+        println!("  GPU signs_i:     {gpu_si:?}");
+        println!("  CPU signs_i:     {cpu_si:?}");
         assert_eq!(gpu_sm, cpu_sm, "Signs differ after gate 21!");
         assert_eq!(gpu_si, cpu_si, "signs_i differ after gate 21!");
 
@@ -2819,10 +2925,10 @@ mod tests {
         gpu.wait();
         let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
         let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
-        println!("    GPU signs_minus: {:?}", gpu_sm);
-        println!("    CPU signs_minus: {:?}", cpu_sm);
-        println!("    GPU signs_i:     {:?}", gpu_si);
-        println!("    CPU signs_i:     {:?}", cpu_si);
+        println!("    GPU signs_minus: {gpu_sm:?}");
+        println!("    CPU signs_minus: {cpu_sm:?}");
+        println!("    GPU signs_i:     {gpu_si:?}");
+        println!("    CPU signs_i:     {cpu_si:?}");
         assert_eq!(gpu_sm, cpu_sm, "Signs differ after H!");
         assert_eq!(gpu_si, cpu_si, "signs_i differ after H!");
 
@@ -2837,14 +2943,14 @@ mod tests {
         for g in 0..4 {
             let word = g / 32;
             let bit = g % 32;
-            let offset = 3 * gen_words + word;  // qubit 3
+            let offset = 3 * gen_words + word; // qubit 3
             let has_x = (gpu_stab_x[offset] & (1 << bit)) != 0;
             println!("      Generator {g}: X={has_x}");
         }
 
         // Also check CPU
         println!("    Before S: CPU stab.col_x[3]:");
-        for g in cpu.stabs().col_x[3].iter() {
+        for g in &cpu.stabs().col_x[3] {
             println!("      Generator {g} has X");
         }
 
@@ -2854,10 +2960,10 @@ mod tests {
         gpu.wait();
         let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
         let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
-        println!("    GPU signs_minus: {:?}", gpu_sm);
-        println!("    CPU signs_minus: {:?}", cpu_sm);
-        println!("    GPU signs_i:     {:?}", gpu_si);
-        println!("    CPU signs_i:     {:?}", cpu_si);
+        println!("    GPU signs_minus: {gpu_sm:?}");
+        println!("    CPU signs_minus: {cpu_sm:?}");
+        println!("    GPU signs_i:     {gpu_si:?}");
+        println!("    CPU signs_i:     {cpu_si:?}");
         assert_eq!(gpu_sm, cpu_sm, "Signs differ after S!");
         assert_eq!(gpu_si, cpu_si, "signs_i differ after S!");
 
@@ -2869,10 +2975,10 @@ mod tests {
         gpu.wait();
         let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
         let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
-        println!("    GPU signs_minus: {:?}", gpu_sm);
-        println!("    CPU signs_minus: {:?}", cpu_sm);
-        println!("    GPU signs_i:     {:?}", gpu_si);
-        println!("    CPU signs_i:     {:?}", cpu_si);
+        println!("    GPU signs_minus: {gpu_sm:?}");
+        println!("    CPU signs_minus: {cpu_sm:?}");
+        println!("    GPU signs_i:     {gpu_si:?}");
+        println!("    CPU signs_i:     {cpu_si:?}");
         assert_eq!(gpu_sm, cpu_sm, "Signs differ after final H!");
         assert_eq!(gpu_si, cpu_si, "signs_i differ after final H!");
 
@@ -2882,7 +2988,9 @@ mod tests {
     /// Test SX gate in isolation
     #[test]
     fn test_gpu_vs_cpu_sx_gate() {
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Helper to read GPU sign state
@@ -2907,12 +3015,12 @@ mod tests {
         fn read_cpu_signs(cpu: &SparseStab, num_qubits: usize) -> (Vec<bool>, Vec<bool>) {
             let mut sign_minus = vec![false; num_qubits];
             let mut sign_i = vec![false; num_qubits];
-            for g in cpu.stabs().signs_minus.iter() {
+            for g in &cpu.stabs().signs_minus {
                 if g < num_qubits {
                     sign_minus[g] = true;
                 }
             }
-            for g in cpu.stabs().signs_i.iter() {
+            for g in &cpu.stabs().signs_i {
                 if g < num_qubits {
                     sign_i[g] = true;
                 }
@@ -2933,13 +3041,19 @@ mod tests {
         let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
         let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
         println!("After SX(3) on fresh state:");
-        println!("  GPU signs_minus: {:?}", gpu_sm);
-        println!("  CPU signs_minus: {:?}", cpu_sm);
-        println!("  GPU signs_i:     {:?}", gpu_si);
-        println!("  CPU signs_i:     {:?}", cpu_si);
+        println!("  GPU signs_minus: {gpu_sm:?}");
+        println!("  CPU signs_minus: {cpu_sm:?}");
+        println!("  GPU signs_i:     {gpu_si:?}");
+        println!("  CPU signs_i:     {cpu_si:?}");
 
-        assert_eq!(gpu_sm, cpu_sm, "signs_minus mismatch after SX(3) on fresh state");
-        assert_eq!(gpu_si, cpu_si, "signs_i mismatch after SX(3) on fresh state");
+        assert_eq!(
+            gpu_sm, cpu_sm,
+            "signs_minus mismatch after SX(3) on fresh state"
+        );
+        assert_eq!(
+            gpu_si, cpu_si,
+            "signs_i mismatch after SX(3) on fresh state"
+        );
 
         // Now test H then SX - since SX = H*S*H, this tests the components
         println!("\nTesting H(3) then SX(3):");
@@ -2950,11 +3064,11 @@ mod tests {
         gpu.sync();
         gpu.wait();
 
-        let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
-        let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
+        let (gpu_sm, _gpu_si) = read_gpu_signs(&gpu);
+        let (cpu_sm, _cpu_si) = read_cpu_signs(&cpu, 4);
         println!("After H(3):");
-        println!("  GPU signs_minus: {:?}", gpu_sm);
-        println!("  CPU signs_minus: {:?}", cpu_sm);
+        println!("  GPU signs_minus: {gpu_sm:?}");
+        println!("  CPU signs_minus: {cpu_sm:?}");
         assert_eq!(gpu_sm, cpu_sm, "signs_minus mismatch after H(3)");
 
         gpu.sx(&[QubitId::new(3)]);
@@ -2965,10 +3079,10 @@ mod tests {
         let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
         let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
         println!("After H(3) then SX(3):");
-        println!("  GPU signs_minus: {:?}", gpu_sm);
-        println!("  CPU signs_minus: {:?}", cpu_sm);
-        println!("  GPU signs_i:     {:?}", gpu_si);
-        println!("  CPU signs_i:     {:?}", cpu_si);
+        println!("  GPU signs_minus: {gpu_sm:?}");
+        println!("  CPU signs_minus: {cpu_sm:?}");
+        println!("  GPU signs_i:     {gpu_si:?}");
+        println!("  CPU signs_i:     {cpu_si:?}");
 
         assert_eq!(gpu_sm, cpu_sm, "signs_minus mismatch after H(3) then SX(3)");
         assert_eq!(gpu_si, cpu_si, "signs_i mismatch after H(3) then SX(3)");
@@ -2979,12 +3093,12 @@ mod tests {
     /// Test gate-by-gate to find where sign divergence occurs
     #[test]
     fn test_gpu_vs_cpu_gate_by_gate_debug() {
-        use pecos_qsim::stabilizer_test_utils::{
-            generate_random_clifford_circuit, CliffordGate,
-        };
+        use pecos_qsim::stabilizer_test_utils::{CliffordGate, generate_random_clifford_circuit};
         use pecos_rng::PecosRng;
 
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Helper to read GPU sign state
@@ -3009,12 +3123,12 @@ mod tests {
         fn read_cpu_signs(cpu: &SparseStab, num_qubits: usize) -> (Vec<bool>, Vec<bool>) {
             let mut sign_minus = vec![false; num_qubits];
             let mut sign_i = vec![false; num_qubits];
-            for g in cpu.stabs().signs_minus.iter() {
+            for g in &cpu.stabs().signs_minus {
                 if g < num_qubits {
                     sign_minus[g] = true;
                 }
             }
-            for g in cpu.stabs().signs_i.iter() {
+            for g in &cpu.stabs().signs_i {
                 if g < num_qubits {
                     sign_i[g] = true;
                 }
@@ -3033,10 +3147,10 @@ mod tests {
 
         println!("Gate-by-gate test with seed {seed}:");
         println!("After reset:");
-        let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
-        let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
-        println!("  GPU signs_minus: {:?}", gpu_sm);
-        println!("  CPU signs_minus: {:?}", cpu_sm);
+        let (gpu_sm, _gpu_si) = read_gpu_signs(&gpu);
+        let (cpu_sm, _cpu_si) = read_cpu_signs(&cpu, 4);
+        println!("  GPU signs_minus: {gpu_sm:?}");
+        println!("  CPU signs_minus: {cpu_sm:?}");
         assert_eq!(gpu_sm, cpu_sm, "Signs differ after reset!");
 
         // Apply gates one by one
@@ -3109,16 +3223,16 @@ mod tests {
             let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
 
             if gpu_sm != cpu_sm || gpu_si != cpu_si {
-                println!("\nDivergence at gate {i}: {:?}", gate);
-                println!("  GPU signs_minus: {:?}", gpu_sm);
-                println!("  CPU signs_minus: {:?}", cpu_sm);
-                println!("  GPU signs_i:     {:?}", gpu_si);
-                println!("  CPU signs_i:     {:?}", cpu_si);
+                println!("\nDivergence at gate {i}: {gate:?}");
+                println!("  GPU signs_minus: {gpu_sm:?}");
+                println!("  CPU signs_minus: {cpu_sm:?}");
+                println!("  GPU signs_i:     {gpu_si:?}");
+                println!("  CPU signs_i:     {cpu_si:?}");
                 println!("\nGates applied (0 to {i}):");
                 for (j, g) in circuit.iter().enumerate().take(i + 1) {
-                    println!("  {j}: {:?}", g);
+                    println!("  {j}: {g:?}");
                 }
-                panic!("Signs diverged at gate {i}: {:?}", gate);
+                panic!("Signs diverged at gate {i}: {gate:?}");
             }
         }
 
@@ -3128,12 +3242,12 @@ mod tests {
     /// Test sequential measurements to find where divergence occurs
     #[test]
     fn test_gpu_vs_cpu_sequential_measurement_debug() {
-        use pecos_qsim::stabilizer_test_utils::{
-            generate_random_clifford_circuit, apply_circuit,
-        };
+        use pecos_qsim::stabilizer_test_utils::{apply_circuit, generate_random_clifford_circuit};
         use pecos_rng::{PecosRng, Rng};
 
-        let Some(mut gpu) = gpu_sim(4, 42) else { return };
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(4);
 
         // Use seed 12354 which was failing
@@ -3170,12 +3284,12 @@ mod tests {
         fn read_cpu_signs(cpu: &SparseStab, num_qubits: usize) -> (Vec<bool>, Vec<bool>) {
             let mut sign_minus = vec![false; num_qubits];
             let mut sign_i = vec![false; num_qubits];
-            for g in cpu.stabs().signs_minus.iter() {
+            for g in &cpu.stabs().signs_minus {
                 if g < num_qubits {
                     sign_minus[g] = true;
                 }
             }
-            for g in cpu.stabs().signs_i.iter() {
+            for g in &cpu.stabs().signs_i {
                 if g < num_qubits {
                     sign_i[g] = true;
                 }
@@ -3199,10 +3313,10 @@ mod tests {
             // Print sign state before measurement
             let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
             let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
-            println!("  GPU signs_minus: {:?}", gpu_sm);
-            println!("  CPU signs_minus: {:?}", cpu_sm);
-            println!("  GPU signs_i:     {:?}", gpu_si);
-            println!("  CPU signs_i:     {:?}", cpu_si);
+            println!("  GPU signs_minus: {gpu_sm:?}");
+            println!("  CPU signs_minus: {cpu_sm:?}");
+            println!("  GPU signs_i:     {gpu_si:?}");
+            println!("  CPU signs_i:     {cpu_si:?}");
             if gpu_sm != cpu_sm {
                 println!("  SIGNS_MINUS MISMATCH!");
             }
@@ -3237,10 +3351,10 @@ mod tests {
                 // Print sign state at point of divergence
                 let (gpu_sm, gpu_si) = read_gpu_signs(&gpu);
                 let (cpu_sm, cpu_si) = read_cpu_signs(&cpu, 4);
-                println!("  After meas - GPU signs_minus: {:?}", gpu_sm);
-                println!("  After meas - CPU signs_minus: {:?}", cpu_sm);
-                println!("  After meas - GPU signs_i:     {:?}", gpu_si);
-                println!("  After meas - CPU signs_i:     {:?}", cpu_si);
+                println!("  After meas - GPU signs_minus: {gpu_sm:?}");
+                println!("  After meas - CPU signs_minus: {cpu_sm:?}");
+                println!("  After meas - GPU signs_i:     {gpu_si:?}");
+                println!("  After meas - CPU signs_i:     {cpu_si:?}");
                 panic!("Outcome mismatch at Q{q}");
             }
         }
@@ -3251,7 +3365,9 @@ mod tests {
     /// Test Bell state measurement - this should be deterministic after first measurement
     #[test]
     fn test_gpu_vs_cpu_bell_state_measurement() {
-        let Some(mut gpu) = gpu_sim(2, 42) else { return };
+        let Some(mut gpu) = gpu_sim(2, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(2);
 
         // Create Bell state: H(0), CX(0,1) -> (|00> + |11>)/sqrt(2)
@@ -3269,29 +3385,39 @@ mod tests {
         // Q0 should be non-deterministic
         let gpu_r0 = gpu.mz_forced(0, false);
         let cpu_r0 = cpu.mz_forced(0, false);
-        println!("Q0: GPU det={} out={}, CPU det={} out={}",
-            gpu_r0.is_deterministic, gpu_r0.outcome,
-            cpu_r0.is_deterministic, cpu_r0.outcome);
+        println!(
+            "Q0: GPU det={} out={}, CPU det={} out={}",
+            gpu_r0.is_deterministic, gpu_r0.outcome, cpu_r0.is_deterministic, cpu_r0.outcome
+        );
         assert_eq!(gpu_r0.is_deterministic, cpu_r0.is_deterministic);
         assert_eq!(gpu_r0.outcome, cpu_r0.outcome);
 
         // Q1 should now be deterministic (same as Q0 outcome)
         let gpu_r1 = gpu.mz_forced(1, false);
         let cpu_r1 = cpu.mz_forced(1, false);
-        println!("Q1: GPU det={} out={}, CPU det={} out={}",
-            gpu_r1.is_deterministic, gpu_r1.outcome,
-            cpu_r1.is_deterministic, cpu_r1.outcome);
-        assert_eq!(gpu_r1.is_deterministic, cpu_r1.is_deterministic, "Q1 determinism mismatch");
+        println!(
+            "Q1: GPU det={} out={}, CPU det={} out={}",
+            gpu_r1.is_deterministic, gpu_r1.outcome, cpu_r1.is_deterministic, cpu_r1.outcome
+        );
+        assert_eq!(
+            gpu_r1.is_deterministic, cpu_r1.is_deterministic,
+            "Q1 determinism mismatch"
+        );
         assert_eq!(gpu_r1.outcome, cpu_r1.outcome, "Q1 outcome mismatch");
 
         // Q1 outcome should equal Q0 outcome (Bell state correlation)
-        assert_eq!(gpu_r1.outcome, false, "Bell state: Q1 should equal Q0 (both false)");
+        assert!(
+            !gpu_r1.outcome,
+            "Bell state: Q1 should equal Q0 (both false)"
+        );
     }
 
     /// Test GHZ state measurement - demonstrates entanglement correlation
     #[test]
     fn test_gpu_vs_cpu_ghz_state_measurement() {
-        let Some(mut gpu) = gpu_sim(3, 42) else { return };
+        let Some(mut gpu) = gpu_sim(3, 42) else {
+            return;
+        };
         let mut cpu = SparseStab::new(3);
 
         // Create GHZ state: H(0), CX(0,1), CX(0,2) -> (|000> + |111>)/sqrt(2)
@@ -3309,33 +3435,51 @@ mod tests {
         println!("GHZ state measurement test:");
 
         // Q0 should be non-deterministic
-        let forced_outcome = true;  // Force Q0 to 1
+        let forced_outcome = true; // Force Q0 to 1
         let gpu_r0 = gpu.mz_forced(0, forced_outcome);
         let cpu_r0 = cpu.mz_forced(0, forced_outcome);
-        println!("Q0: GPU det={} out={}, CPU det={} out={}",
-            gpu_r0.is_deterministic, gpu_r0.outcome,
-            cpu_r0.is_deterministic, cpu_r0.outcome);
+        println!(
+            "Q0: GPU det={} out={}, CPU det={} out={}",
+            gpu_r0.is_deterministic, gpu_r0.outcome, cpu_r0.is_deterministic, cpu_r0.outcome
+        );
         assert!(!gpu_r0.is_deterministic, "Q0 should be non-deterministic");
-        assert_eq!(gpu_r0.outcome, forced_outcome, "Q0 should have forced outcome");
+        assert_eq!(
+            gpu_r0.outcome, forced_outcome,
+            "Q0 should have forced outcome"
+        );
 
         // Q1 and Q2 should now be deterministic and equal to Q0
         let gpu_r1 = gpu.mz_forced(1, false);
         let cpu_r1 = cpu.mz_forced(1, false);
-        println!("Q1: GPU det={} out={}, CPU det={} out={}",
-            gpu_r1.is_deterministic, gpu_r1.outcome,
-            cpu_r1.is_deterministic, cpu_r1.outcome);
-        assert!(gpu_r1.is_deterministic, "Q1 should be deterministic after Q0 measured");
-        assert_eq!(gpu_r1.is_deterministic, cpu_r1.is_deterministic, "Q1 determinism mismatch");
+        println!(
+            "Q1: GPU det={} out={}, CPU det={} out={}",
+            gpu_r1.is_deterministic, gpu_r1.outcome, cpu_r1.is_deterministic, cpu_r1.outcome
+        );
+        assert!(
+            gpu_r1.is_deterministic,
+            "Q1 should be deterministic after Q0 measured"
+        );
+        assert_eq!(
+            gpu_r1.is_deterministic, cpu_r1.is_deterministic,
+            "Q1 determinism mismatch"
+        );
         assert_eq!(gpu_r1.outcome, cpu_r1.outcome, "Q1 outcome mismatch");
         assert_eq!(gpu_r1.outcome, forced_outcome, "GHZ: Q1 should equal Q0");
 
         let gpu_r2 = gpu.mz_forced(2, false);
         let cpu_r2 = cpu.mz_forced(2, false);
-        println!("Q2: GPU det={} out={}, CPU det={} out={}",
-            gpu_r2.is_deterministic, gpu_r2.outcome,
-            cpu_r2.is_deterministic, cpu_r2.outcome);
-        assert!(gpu_r2.is_deterministic, "Q2 should be deterministic after Q0 measured");
-        assert_eq!(gpu_r2.is_deterministic, cpu_r2.is_deterministic, "Q2 determinism mismatch");
+        println!(
+            "Q2: GPU det={} out={}, CPU det={} out={}",
+            gpu_r2.is_deterministic, gpu_r2.outcome, cpu_r2.is_deterministic, cpu_r2.outcome
+        );
+        assert!(
+            gpu_r2.is_deterministic,
+            "Q2 should be deterministic after Q0 measured"
+        );
+        assert_eq!(
+            gpu_r2.is_deterministic, cpu_r2.is_deterministic,
+            "Q2 determinism mismatch"
+        );
         assert_eq!(gpu_r2.outcome, cpu_r2.outcome, "Q2 outcome mismatch");
         assert_eq!(gpu_r2.outcome, forced_outcome, "GHZ: Q2 should equal Q0");
     }
@@ -3980,723 +4124,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // GPU vs CPU Benchmarks
-    // ========================================================================
-
-    /// Run with: cargo test -p pecos-gpu-sims benchmark_gpu_vs_cpu --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_gpu_vs_cpu_surface_code() {
-        use pecos_qsim::{DenseStab, GpuStabOpt, QuantumSimulator};
-
-        println!("\n=====================================================");
-        println!("GPU vs CPU Stabilizer Benchmark - Surface Code");
-        println!("(Reusing instances with reset() between iterations)");
-        println!("2*d rounds per distance");
-        println!("=====================================================\n");
-
-        let distances = [5, 9, 13, 17, 21];
-
-        for d in distances {
-            let rounds = 2 * d;
-            let num_data = d * d;
-            let num_ancilla = num_data - 1;
-            let total_qubits = num_data + num_ancilla;
-
-            println!(
-                "d={:2}, rounds={:2}, {} qubits ({} data + {} ancilla):",
-                d, rounds, total_qubits, num_data, num_ancilla
-            );
-
-            // Try to create GPU simulator
-            let gpu_result: Result<GpuStab, _> = GpuStab::with_seed(total_qubits, 42);
-            if gpu_result.is_err() {
-                println!("  GPU: Not available\n");
-                continue;
-            }
-
-            let iterations = if d <= 13 { 100 } else { 50 };
-
-            // Create instances ONCE and reuse
-            let mut gpu = GpuStab::<rand::rngs::StdRng>::with_seed(total_qubits, 42).unwrap();
-            let mut dense = DenseStab::new(total_qubits);
-            let mut gpu_opt = GpuStabOpt::new(total_qubits);
-
-            // Warmup
-            for _ in 0..5 {
-                run_surface_code_benchmark(&mut gpu, d, rounds);
-                gpu.sync_wait();
-                gpu.reset();
-
-                run_surface_code_benchmark_deferred(&mut gpu, d, rounds);
-                gpu.reset();
-
-                run_surface_code_benchmark(&mut dense, d, rounds);
-                dense.reset();
-
-                run_surface_code_benchmark(&mut gpu_opt, d, rounds);
-                gpu_opt.reset();
-            }
-
-            // Benchmark wgpu GPU with per-round sync
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                run_surface_code_benchmark(&mut gpu, d, rounds);
-                gpu.sync_wait();
-                gpu.reset();
-            }
-            let gpu_wgpu_time = start.elapsed();
-
-            // Benchmark wgpu GPU with deferred measurements (single sync at end)
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                run_surface_code_benchmark_deferred(&mut gpu, d, rounds);
-                gpu.reset();
-            }
-            let gpu_deferred_time = start.elapsed();
-
-            // Benchmark DenseStab (CPU, fastest)
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                run_surface_code_benchmark(&mut dense, d, rounds);
-                dense.reset();
-            }
-            let dense_time = start.elapsed();
-
-            // Benchmark GpuStabOpt (CPU, GPU-style memory)
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                run_surface_code_benchmark(&mut gpu_opt, d, rounds);
-                gpu_opt.reset();
-            }
-            let gpu_opt_time = start.elapsed();
-
-            let gpu_wgpu_us = gpu_wgpu_time.as_micros() as f64 / iterations as f64;
-            let gpu_deferred_us = gpu_deferred_time.as_micros() as f64 / iterations as f64;
-            let dense_us = dense_time.as_micros() as f64 / iterations as f64;
-            let gpu_opt_us = gpu_opt_time.as_micros() as f64 / iterations as f64;
-
-            let fastest = dense_us.min(gpu_wgpu_us).min(gpu_opt_us).min(gpu_deferred_us);
-
-            println!("  wgpu GPU:      {:>10.1} us/iter ({:.2}x)", gpu_wgpu_us, gpu_wgpu_us / fastest);
-            println!("  wgpu deferred: {:>10.1} us/iter ({:.2}x)", gpu_deferred_us, gpu_deferred_us / fastest);
-            println!("  DenseStab:     {:>10.1} us/iter ({:.2}x)", dense_us, dense_us / fastest);
-            println!("  GpuStabOpt:    {:>10.1} us/iter ({:.2}x)", gpu_opt_us, gpu_opt_us / fastest);
-            println!();
-        }
-    }
-
-    /// Run with: cargo test -p pecos-gpu-sims benchmark_gpu_gates_only --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_gpu_gates_only() {
-        use pecos_qsim::{DenseStab, GpuStabOpt, QuantumSimulator};
-
-        println!("\n=====================================================");
-        println!("GPU vs CPU - Gates Only (No Measurement)");
-        println!("(Reusing instances with reset() between iterations)");
-        println!("=====================================================\n");
-
-        let qubit_counts = [100, 500, 1000, 2000];
-
-        for &num_qubits in &qubit_counts {
-            let num_gates = num_qubits * 10; // 10 gates per qubit
-
-            println!("{} qubits, {} gates:", num_qubits, num_gates);
-
-            let gpu_result: Result<GpuStab, _> = GpuStab::with_seed(num_qubits, 42);
-            if gpu_result.is_err() {
-                println!("  GPU: Not available\n");
-                continue;
-            }
-
-            let iterations = 100;
-
-            // Create instances ONCE and reuse
-            let mut gpu = GpuStab::<rand::rngs::StdRng>::with_seed(num_qubits, 42).unwrap();
-            let mut dense = DenseStab::new(num_qubits);
-            let mut gpu_opt = GpuStabOpt::new(num_qubits);
-
-            // Warmup
-            for _ in 0..5 {
-                run_gate_benchmark(&mut gpu, num_qubits, num_gates);
-                gpu.sync_wait();
-                gpu.reset();
-            }
-
-            // Benchmark wgpu GPU (reusing instance)
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                run_gate_benchmark(&mut gpu, num_qubits, num_gates);
-                gpu.sync_wait();
-                gpu.reset();
-            }
-            let gpu_wgpu_time = start.elapsed();
-
-            // Benchmark DenseStab
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                run_gate_benchmark(&mut dense, num_qubits, num_gates);
-                dense.reset();
-            }
-            let dense_time = start.elapsed();
-
-            // Benchmark GpuStabOpt
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                run_gate_benchmark(&mut gpu_opt, num_qubits, num_gates);
-                gpu_opt.reset();
-            }
-            let gpu_opt_time = start.elapsed();
-
-            let gpu_wgpu_us = gpu_wgpu_time.as_micros() as f64 / iterations as f64;
-            let dense_us = dense_time.as_micros() as f64 / iterations as f64;
-            let gpu_opt_us = gpu_opt_time.as_micros() as f64 / iterations as f64;
-
-            let fastest = dense_us.min(gpu_wgpu_us).min(gpu_opt_us);
-
-            println!("  wgpu GPU:      {:>10.1} us/iter ({:.2}x)", gpu_wgpu_us, gpu_wgpu_us / fastest);
-            println!("  DenseStab:     {:>10.1} us/iter ({:.2}x)", dense_us, dense_us / fastest);
-            println!("  GpuStabOpt:    {:>10.1} us/iter ({:.2}x)", gpu_opt_us, gpu_opt_us / fastest);
-            println!();
-        }
-    }
-
-    /// Run a simplified surface code circuit (gates + measurements)
-    fn run_surface_code_benchmark<S: CliffordGateable>(sim: &mut S, d: usize, rounds: usize) {
-        let num_data = d * d;
-        let num_ancilla = num_data - 1;
-
-        // Initialize data qubits in |+> state
-        let data_qubits: Vec<QubitId> = (0..num_data).map(QubitId).collect();
-        sim.h(&data_qubits);
-
-        // Perform syndrome extraction rounds
-        for _round in 0..rounds {
-            // Entangle ancillas with neighbors using CNOTs
-            for a in 0..num_ancilla {
-                let ancilla = QubitId(num_data + a);
-                let base = a % num_data;
-
-                if a < num_ancilla / 2 {
-                    // X-type stabilizers
-                    sim.cx(&[ancilla, QubitId(base)]);
-                    if base + 1 < num_data {
-                        sim.cx(&[ancilla, QubitId(base + 1)]);
-                    }
-                    if base + d < num_data {
-                        sim.cx(&[ancilla, QubitId(base + d)]);
-                    }
-                } else {
-                    // Z-type stabilizers
-                    sim.cx(&[QubitId(base), ancilla]);
-                    if base + 1 < num_data {
-                        sim.cx(&[QubitId(base + 1), ancilla]);
-                    }
-                    if base + d < num_data {
-                        sim.cx(&[QubitId(base + d), ancilla]);
-                    }
-                }
-            }
-
-            // Measure all ancillas
-            let ancilla_qubits: Vec<QubitId> = (num_data..num_data + num_ancilla).map(QubitId).collect();
-            sim.mz(&ancilla_qubits);
-        }
-    }
-
-    /// Run surface code benchmark with deferred measurements (GPU only).
-    /// Measurements are queued without sync, and results are flushed at the end.
-    fn run_surface_code_benchmark_deferred(sim: &mut GpuStab, d: usize, rounds: usize) {
-        let num_data = d * d;
-        let num_ancilla = num_data - 1;
-
-        // Use batch mode to accumulate all commands, submit once at end
-        sim.begin_batch();
-
-        // Initialize data qubits in |+> state
-        let data_qubits: Vec<QubitId> = (0..num_data).map(QubitId).collect();
-        sim.h(&data_qubits);
-
-        // Perform syndrome extraction rounds
-        for _round in 0..rounds {
-            // Entangle ancillas with neighbors using CNOTs
-            for a in 0..num_ancilla {
-                let ancilla = QubitId(num_data + a);
-                let base = a % num_data;
-
-                if a < num_ancilla / 2 {
-                    // X-type stabilizers
-                    sim.cx(&[ancilla, QubitId(base)]);
-                    if base + 1 < num_data {
-                        sim.cx(&[ancilla, QubitId(base + 1)]);
-                    }
-                    if base + d < num_data {
-                        sim.cx(&[ancilla, QubitId(base + d)]);
-                    }
-                } else {
-                    // Z-type stabilizers
-                    sim.cx(&[QubitId(base), ancilla]);
-                    if base + 1 < num_data {
-                        sim.cx(&[QubitId(base + 1), ancilla]);
-                    }
-                    if base + d < num_data {
-                        sim.cx(&[QubitId(base + d), ancilla]);
-                    }
-                }
-            }
-
-            // Queue measurements (accumulated in batch mode)
-            let ancilla_qubits: Vec<QubitId> = (num_data..num_data + num_ancilla).map(QubitId).collect();
-            sim.queue_mz(&ancilla_qubits);
-        }
-
-        // Flush all deferred measurements - this also ends batch mode and submits everything
-        let _results = sim.flush_deferred_mz();
-    }
-
-    /// Run a gate-only benchmark (no measurements)
-    fn run_gate_benchmark<S: CliffordGateable>(sim: &mut S, num_qubits: usize, num_gates: usize) {
-        // Apply a mix of gates
-        for i in 0..num_gates {
-            let q = i % num_qubits;
-            match i % 6 {
-                0 => { sim.h(&[QubitId(q)]); }
-                1 => { sim.sz(&[QubitId(q)]); }
-                2 => { sim.x(&[QubitId(q)]); }
-                3 => { sim.z(&[QubitId(q)]); }
-                4 => {
-                    let q2 = (q + 1) % num_qubits;
-                    sim.cx(&[QubitId(q), QubitId(q2)]);
-                }
-                5 => {
-                    let q2 = (q + 1) % num_qubits;
-                    sim.cz(&[QubitId(q), QubitId(q2)]);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Detailed profiling of GPU measurement phases
-    /// Run with: cargo test -p pecos-gpu-sims profile_gpu_measurement --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn profile_gpu_measurement() {
-        println!("\n=====================================================");
-        println!("GPU Measurement Phase Profiling");
-        println!("=====================================================\n");
-
-        let distances = [5, 9, 13, 17, 21];
-
-        for d in distances {
-            let num_data = d * d;
-            let num_ancilla = num_data - 1;
-            let total_qubits = num_data + num_ancilla;
-
-            println!("d={}, {} qubits ({} ancillas to measure):", d, total_qubits, num_ancilla);
-
-            let mut gpu = GpuStab::<rand::rngs::StdRng>::with_seed(total_qubits, 42).unwrap();
-
-            // Prepare state with some gates
-            let data_qubits: Vec<QubitId> = (0..num_data).map(QubitId).collect();
-            gpu.h(&data_qubits);
-
-            // Apply full surface code CNOTs (same as benchmark)
-            for a in 0..num_ancilla {
-                let ancilla = QubitId(num_data + a);
-                let base = a % num_data;
-
-                if a < num_ancilla / 2 {
-                    // X-type stabilizers
-                    gpu.cx(&[ancilla, QubitId(base)]);
-                    if base + 1 < num_data {
-                        gpu.cx(&[ancilla, QubitId(base + 1)]);
-                    }
-                    if base + d < num_data {
-                        gpu.cx(&[ancilla, QubitId(base + d)]);
-                    }
-                } else {
-                    // Z-type stabilizers
-                    gpu.cx(&[QubitId(base), ancilla]);
-                    if base + 1 < num_data {
-                        gpu.cx(&[QubitId(base + 1), ancilla]);
-                    }
-                    if base + d < num_data {
-                        gpu.cx(&[QubitId(base + d), ancilla]);
-                    }
-                }
-            }
-
-            gpu.flush();
-            gpu.sync_wait();
-
-            let iterations = 20;
-            let ancilla_qubits: Vec<QubitId> = (num_data..num_data + num_ancilla).map(QubitId).collect();
-            let qubit_indices: Vec<u32> = ancilla_qubits.iter().map(|q| q.index() as u32).collect();
-
-            // Profile each phase separately
-            let mut gate_flush_time = std::time::Duration::ZERO;
-            let mut buffer_write_time = std::time::Duration::ZERO;
-            let mut anticom_shader_time = std::time::Duration::ZERO;
-            let mut det_shader_time = std::time::Duration::ZERO;
-            let mut gpu_dispatch_time = std::time::Duration::ZERO;
-            let mut buffer_read_time = std::time::Duration::ZERO;
-            let mut gate_count = 0usize;
-
-            for _ in 0..iterations {
-                gpu.reset();
-                gpu.h(&data_qubits);
-                gate_count = num_data; // H gates
-                for a in 0..num_ancilla {
-                    let ancilla = QubitId(num_data + a);
-                    let base = a % num_data;
-
-                    if a < num_ancilla / 2 {
-                        gpu.cx(&[ancilla, QubitId(base)]);
-                        gate_count += 1;
-                        if base + 1 < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + 1)]);
-                            gate_count += 1;
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + d)]);
-                            gate_count += 1;
-                        }
-                    } else {
-                        gpu.cx(&[QubitId(base), ancilla]);
-                        gate_count += 1;
-                        if base + 1 < num_data {
-                            gpu.cx(&[QubitId(base + 1), ancilla]);
-                            gate_count += 1;
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[QubitId(base + d), ancilla]);
-                            gate_count += 1;
-                        }
-                    }
-                }
-
-                // Phase 1: Flush gates
-                let start = std::time::Instant::now();
-                gpu.sync();
-                gpu.wait();
-                gate_flush_time += start.elapsed();
-
-                // Phase 2: Write buffers (qubits, init results, random bits, params)
-                let start = std::time::Instant::now();
-                {
-                    let random_bits: Vec<u32> = (0..qubit_indices.len())
-                        .map(|i| (i as u32) & 1)
-                        .collect();
-
-                    let mut input_data = Vec::with_capacity(qubit_indices.len() + 1);
-                    input_data.push(qubit_indices.len() as u32);
-                    input_data.extend_from_slice(&qubit_indices);
-
-                    gpu.queue.write_buffer(
-                        &gpu.batch_qubits_buffer,
-                        0,
-                        bytemuck::cast_slice(&input_data),
-                    );
-
-                    let init_results: Vec<u32> = vec![0xFFFF_FFFFu32; qubit_indices.len()];
-                    gpu.queue.write_buffer(
-                        &gpu.batch_results_buffer,
-                        0,
-                        bytemuck::cast_slice(&init_results),
-                    );
-
-                    gpu.queue.write_buffer(
-                        &gpu.batch_random_buffer,
-                        0,
-                        bytemuck::cast_slice(&random_bits),
-                    );
-
-                    let params = [gpu.num_qubits, gpu.gen_words, gpu.num_qubits, 0, 0, 0, 0, 0];
-                    gpu.queue.write_buffer(&gpu.params_buffer, 0, bytemuck::cast_slice(&params));
-                }
-                buffer_write_time += start.elapsed();
-
-                // Phase 3a: Anticommuting detection shader
-                let start = std::time::Instant::now();
-                {
-                    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Anticommuting Encoder"),
-                    });
-
-                    {
-                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("Anticommuting Pass"),
-                            timestamp_writes: None,
-                        });
-
-                        pass.set_pipeline(&gpu.batch_pipeline);
-                        pass.set_bind_group(0, &gpu.main_bind_group, &[]);
-                        pass.set_bind_group(1, &gpu.batch_bind_group, &[]);
-                        // One thread per measured qubit
-                        pass.dispatch_workgroups((qubit_indices.len() as u32).div_ceil(256), 1, 1);
-                    }
-
-                    gpu.queue.submit(std::iter::once(encoder.finish()));
-                    let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-                }
-                let anticom_time = start.elapsed();
-
-                // Phase 3b: Deterministic outcome computation shader
-                let start = std::time::Instant::now();
-                {
-                    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Deterministic Encoder"),
-                    });
-
-                    {
-                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("Deterministic Pass"),
-                            timestamp_writes: None,
-                        });
-
-                        pass.set_pipeline(&gpu.deterministic_pipeline);
-                        pass.set_bind_group(0, &gpu.main_bind_group, &[]);
-                        pass.set_bind_group(1, &gpu.batch_bind_group, &[]);
-                        pass.dispatch_workgroups((qubit_indices.len() as u32).div_ceil(256), 1, 1);
-                    }
-
-                    let results_size = (qubit_indices.len() * 4) as u64;
-                    encoder.copy_buffer_to_buffer(
-                        &gpu.batch_results_buffer,
-                        0,
-                        &gpu.staging_buffer,
-                        0,
-                        results_size,
-                    );
-
-                    gpu.queue.submit(std::iter::once(encoder.finish()));
-                    let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-                }
-                let det_time = start.elapsed();
-                anticom_shader_time += anticom_time;
-                det_shader_time += det_time;
-                gpu_dispatch_time += anticom_time + det_time;
-
-                // Phase 4: Read buffer
-                let start = std::time::Instant::now();
-                {
-                    let results_size = (qubit_indices.len() * 4) as u64;
-                    let buffer_slice = gpu.staging_buffer.slice(..results_size);
-                    let (sender, receiver) = std::sync::mpsc::channel();
-                    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                        sender.send(result).unwrap();
-                    });
-                    let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-                    receiver.recv().unwrap().unwrap();
-
-                    let data = buffer_slice.get_mapped_range();
-                    let _result_data: &[u32] = bytemuck::cast_slice(&data);
-                    drop(data);
-                    gpu.staging_buffer.unmap();
-                }
-                buffer_read_time += start.elapsed();
-            }
-
-            let gate_us = gate_flush_time.as_micros() as f64 / iterations as f64;
-            let write_us = buffer_write_time.as_micros() as f64 / iterations as f64;
-            let anticom_us = anticom_shader_time.as_micros() as f64 / iterations as f64;
-            let det_us = det_shader_time.as_micros() as f64 / iterations as f64;
-            let dispatch_us = gpu_dispatch_time.as_micros() as f64 / iterations as f64;
-            let read_us = buffer_read_time.as_micros() as f64 / iterations as f64;
-            let total_us = gate_us + write_us + dispatch_us + read_us;
-
-            println!("  Gates/round: {}", gate_count);
-            println!("  Gate flush:     {:>8.1} us ({:>5.1}%) [{:.3} us/gate]", gate_us, 100.0 * gate_us / total_us, gate_us / gate_count as f64);
-            println!("  Buffer write:   {:>8.1} us ({:>5.1}%)", write_us, 100.0 * write_us / total_us);
-            println!("  GPU dispatch:   {:>8.1} us ({:>5.1}%)", dispatch_us, 100.0 * dispatch_us / total_us);
-            println!("    - Anticom:    {:>8.1} us ({:>5.1}%)", anticom_us, 100.0 * anticom_us / total_us);
-            println!("    - Determin:   {:>8.1} us ({:>5.1}%)", det_us, 100.0 * det_us / total_us);
-            println!("  Buffer read:    {:>8.1} us ({:>5.1}%)", read_us, 100.0 * read_us / total_us);
-            println!("  Total:          {:>8.1} us", total_us);
-            println!();
-        }
-    }
-
-    /// Benchmark compiled circuits vs dynamic gate queue.
-    /// Run with: cargo test -p pecos-gpu-sims benchmark_compiled_circuits --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_compiled_circuits() {
-        use crate::circuit_compiler::Gate;
-
-        println!("\n=====================================================");
-        println!("Compiled Circuits vs Dynamic Gate Queue");
-        println!("=====================================================\n");
-
-        // Test at different code distances
-        for d in [3, 5, 7, 11, 15, 21] {
-            let num_data = d * d;
-            let num_ancilla = num_data - 1;
-            let num_qubits = num_data + num_ancilla;
-
-            // Build the surface code round circuit using CompiledGate types
-            let mut gates = Vec::new();
-
-            // Hadamard on data qubits
-            for q in 0..num_data {
-                gates.push(Gate::h(q as u32));
-            }
-
-            // X-type stabilizers
-            for a in 0..num_ancilla / 2 {
-                let ancilla = (num_data + a) as u32;
-                let base = a % num_data;
-
-                gates.push(Gate::cx(ancilla, base as u32));
-                if base + 1 < num_data {
-                    gates.push(Gate::cx(ancilla, (base + 1) as u32));
-                }
-                if base + d < num_data {
-                    gates.push(Gate::cx(ancilla, (base + d) as u32));
-                }
-            }
-
-            // Z-type stabilizers
-            for a in num_ancilla / 2..num_ancilla {
-                let ancilla = (num_data + a) as u32;
-                let base = a % num_data;
-
-                gates.push(Gate::cx(base as u32, ancilla));
-                if base + 1 < num_data {
-                    gates.push(Gate::cx((base + 1) as u32, ancilla));
-                }
-                if base + d < num_data {
-                    gates.push(Gate::cx((base + d) as u32, ancilla));
-                }
-            }
-
-            let gate_count = gates.len();
-
-            println!("d={} ({} qubits, {} gates per round):", d, num_qubits, gate_count);
-
-            let gpu_result: Result<GpuStab, _> = GpuStab::with_seed(num_qubits, 42);
-            if gpu_result.is_err() {
-                println!("  GPU: Not available\n");
-                continue;
-            }
-
-            let mut gpu = gpu_result.unwrap();
-
-            // Compile the circuit
-            let compile_start = std::time::Instant::now();
-            let hash = gpu.compile_circuit(&gates);
-            let compile_time = compile_start.elapsed();
-
-            println!("  Compile time: {:>8.1} us", compile_time.as_micros());
-
-            let iterations = 1000;
-            let rounds = 10;
-
-            // Warmup
-            for _ in 0..5 {
-                for _ in 0..rounds {
-                    gpu.execute_compiled(hash);
-                }
-                gpu.wait();
-                gpu.reset();
-            }
-
-            // Benchmark compiled circuit
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                for _ in 0..rounds {
-                    gpu.execute_compiled(hash);
-                }
-                gpu.wait();
-                gpu.reset();
-            }
-            let compiled_time = start.elapsed();
-            let compiled_us = compiled_time.as_micros() as f64 / (iterations * rounds) as f64;
-
-            // Warmup dynamic
-            for _ in 0..5 {
-                for _ in 0..rounds {
-                    // Apply gates dynamically
-                    for q in 0..num_data {
-                        gpu.h(&[QubitId(q)]);
-                    }
-                    for a in 0..num_ancilla / 2 {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[ancilla, QubitId(base)]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + 1)]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + d)]);
-                        }
-                    }
-                    for a in num_ancilla / 2..num_ancilla {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[QubitId(base), ancilla]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[QubitId(base + 1), ancilla]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[QubitId(base + d), ancilla]);
-                        }
-                    }
-                    gpu.sync();
-                }
-                gpu.wait();
-                gpu.reset();
-            }
-
-            // Benchmark dynamic gate queue
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                for _ in 0..rounds {
-                    // Apply gates dynamically
-                    for q in 0..num_data {
-                        gpu.h(&[QubitId(q)]);
-                    }
-                    for a in 0..num_ancilla / 2 {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[ancilla, QubitId(base)]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + 1)]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + d)]);
-                        }
-                    }
-                    for a in num_ancilla / 2..num_ancilla {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[QubitId(base), ancilla]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[QubitId(base + 1), ancilla]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[QubitId(base + d), ancilla]);
-                        }
-                    }
-                    gpu.sync();
-                }
-                gpu.wait();
-                gpu.reset();
-            }
-            let dynamic_time = start.elapsed();
-            let dynamic_us = dynamic_time.as_micros() as f64 / (iterations * rounds) as f64;
-
-            let speedup = dynamic_us / compiled_us;
-            println!("  Compiled:      {:>8.1} us/round", compiled_us);
-            println!("  Dynamic:       {:>8.1} us/round", dynamic_us);
-            println!("  Speedup:       {:>8.2}x", speedup);
-            println!();
-        }
-    }
-
     /// Test that parallel processing produces same results as sequential.
     #[test]
     fn test_parallel_processing() {
@@ -4771,7 +4198,8 @@ mod tests {
 
         // All trials should be perfectly correlated
         assert_eq!(
-            correlated_count, num_trials,
+            correlated_count,
+            num_trials,
             "Deferred Bell state measurements should be 100% correlated, got {}%",
             correlated_count * 100 / num_trials
         );
@@ -4790,9 +4218,9 @@ mod tests {
         gpu.cx(&[QubitId(2), QubitId(3)]);
 
         // Queue measurements in separate calls
-        gpu.queue_mz(&[QubitId(0)]);  // Should be 0
-        gpu.queue_mz(&[QubitId(1)]);  // Should be 1
-        gpu.queue_mz(&[QubitId(2), QubitId(3)]);  // Should be correlated
+        gpu.queue_mz(&[QubitId(0)]); // Should be 0
+        gpu.queue_mz(&[QubitId(1)]); // Should be 1
+        gpu.queue_mz(&[QubitId(2), QubitId(3)]); // Should be correlated
 
         // Flush all at once
         let results = gpu.flush_deferred_mz();
@@ -4806,184 +4234,4 @@ mod tests {
         );
     }
 
-    /// Benchmark parallel vs sequential gate processing.
-    /// Run with: cargo test -p pecos-gpu-sims benchmark_parallel_gates --release -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn benchmark_parallel_gates() {
-        println!("\n=====================================================");
-        println!("Parallel vs Sequential Gate Processing");
-        println!("=====================================================\n");
-
-        // Test at different code distances
-        for d in [5, 7, 11, 15, 21] {
-            let num_data = d * d;
-            let num_ancilla = num_data - 1;
-            let num_qubits = num_data + num_ancilla;
-
-            println!("d={} ({} qubits):", d, num_qubits);
-
-            let gpu_result: Result<GpuStab, _> = GpuStab::with_seed(num_qubits, 42);
-            if gpu_result.is_err() {
-                println!("  GPU: Not available\n");
-                continue;
-            }
-
-            let mut gpu = gpu_result.unwrap();
-
-            let iterations = 500;
-            let rounds = 10;
-
-            // Warmup sequential
-            for _ in 0..5 {
-                for _ in 0..rounds {
-                    for q in 0..num_data {
-                        gpu.h(&[QubitId(q)]);
-                    }
-                    for a in 0..num_ancilla / 2 {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[ancilla, QubitId(base)]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + 1)]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + d)]);
-                        }
-                    }
-                    for a in num_ancilla / 2..num_ancilla {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[QubitId(base), ancilla]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[QubitId(base + 1), ancilla]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[QubitId(base + d), ancilla]);
-                        }
-                    }
-                    gpu.sync();
-                }
-                gpu.wait();
-                gpu.reset();
-            }
-
-            // Benchmark sequential
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                for _ in 0..rounds {
-                    for q in 0..num_data {
-                        gpu.h(&[QubitId(q)]);
-                    }
-                    for a in 0..num_ancilla / 2 {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[ancilla, QubitId(base)]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + 1)]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + d)]);
-                        }
-                    }
-                    for a in num_ancilla / 2..num_ancilla {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[QubitId(base), ancilla]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[QubitId(base + 1), ancilla]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[QubitId(base + d), ancilla]);
-                        }
-                    }
-                    gpu.sync();
-                }
-                gpu.wait();
-                gpu.reset();
-            }
-            let sequential_time = start.elapsed();
-            let sequential_us = sequential_time.as_micros() as f64 / (iterations * rounds) as f64;
-
-            // Enable parallel processing
-            gpu.enable_parallel();
-
-            // Warmup parallel
-            for _ in 0..5 {
-                for _ in 0..rounds {
-                    for q in 0..num_data {
-                        gpu.h(&[QubitId(q)]);
-                    }
-                    for a in 0..num_ancilla / 2 {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[ancilla, QubitId(base)]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + 1)]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + d)]);
-                        }
-                    }
-                    for a in num_ancilla / 2..num_ancilla {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[QubitId(base), ancilla]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[QubitId(base + 1), ancilla]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[QubitId(base + d), ancilla]);
-                        }
-                    }
-                    gpu.sync();
-                }
-                gpu.wait();
-                gpu.reset();
-            }
-
-            // Benchmark parallel
-            let start = std::time::Instant::now();
-            for _ in 0..iterations {
-                for _ in 0..rounds {
-                    for q in 0..num_data {
-                        gpu.h(&[QubitId(q)]);
-                    }
-                    for a in 0..num_ancilla / 2 {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[ancilla, QubitId(base)]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + 1)]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[ancilla, QubitId(base + d)]);
-                        }
-                    }
-                    for a in num_ancilla / 2..num_ancilla {
-                        let ancilla = QubitId(num_data + a);
-                        let base = a % num_data;
-                        gpu.cx(&[QubitId(base), ancilla]);
-                        if base + 1 < num_data {
-                            gpu.cx(&[QubitId(base + 1), ancilla]);
-                        }
-                        if base + d < num_data {
-                            gpu.cx(&[QubitId(base + d), ancilla]);
-                        }
-                    }
-                    gpu.sync();
-                }
-                gpu.wait();
-                gpu.reset();
-            }
-            let parallel_time = start.elapsed();
-            let parallel_us = parallel_time.as_micros() as f64 / (iterations * rounds) as f64;
-
-            let speedup = sequential_us / parallel_us;
-            println!("  Sequential:    {:>8.1} us/round", sequential_us);
-            println!("  Parallel:      {:>8.1} us/round", parallel_us);
-            println!("  Speedup:       {:>8.2}x", speedup);
-            println!();
-        }
-    }
 }

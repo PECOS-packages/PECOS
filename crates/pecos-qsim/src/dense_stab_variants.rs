@@ -1453,7 +1453,7 @@ impl SparseColOnly {
         })
     }
 
-    /// Compute phase when XORing generator `src` into `dst`.
+    /// Compute phase when `XORing` generator `src` into `dst`.
     /// Returns the number of Y-type interactions (mod 4 determines sign change).
     fn compute_phase(&self, src: u16, dst: u16) -> usize {
         let mut count = 0;
@@ -1866,10 +1866,10 @@ mod tests {
     }
 
     // Full test suite tests
+    use crate::SparseStab;
     use crate::stabilizer_test_utils::{
         compare_simulators_on_random_circuit_direct, run_full_stabilizer_test_suite,
     };
-    use crate::SparseStab;
 
     #[test]
     fn test_col_only_vs_sparse_stab() {
@@ -1898,8 +1898,13 @@ mod tests {
         for basis in 0..4 {
             let prob_sparse_col = calculate_basis_probability(&sparse_col, basis, 2);
             let prob_sparse = calculate_basis_probability(&sparse, basis, 2);
-            println!("Probability |{:02b}>: sparse_col={}, sparse={}", basis, prob_sparse_col, prob_sparse);
-            assert!((prob_sparse_col - prob_sparse).abs() < 1e-10, "Probability mismatch for basis {}", basis);
+            println!(
+                "Probability |{basis:02b}>: sparse_col={prob_sparse_col}, sparse={prob_sparse}"
+            );
+            assert!(
+                (prob_sparse_col - prob_sparse).abs() < 1e-10,
+                "Probability mismatch for basis {basis}"
+            );
         }
 
         // Test with more complex gates - SZ
@@ -1915,8 +1920,13 @@ mod tests {
         for basis in 0..4 {
             let prob_sparse_col = calculate_basis_probability(&sparse_col, basis, 2);
             let prob_sparse = calculate_basis_probability(&sparse, basis, 2);
-            println!("Probability |{:02b}>: sparse_col={}, sparse={}", basis, prob_sparse_col, prob_sparse);
-            assert!((prob_sparse_col - prob_sparse).abs() < 1e-10, "Probability mismatch after SZ for basis {}", basis);
+            println!(
+                "Probability |{basis:02b}>: sparse_col={prob_sparse_col}, sparse={prob_sparse}"
+            );
+            assert!(
+                (prob_sparse_col - prob_sparse).abs() < 1e-10,
+                "Probability mismatch after SZ for basis {basis}"
+            );
         }
     }
 
@@ -1934,13 +1944,13 @@ mod tests {
         let col_i = col_only.stab_signs_i[0] & 1 != 0;
         let col_x = col_only.stab_col_x[0] & 1 != 0;
         let col_z = col_only.stab_col_z[0] & 1 != 0;
-        println!("  col_only S[0]: X={}, Z={}, minus={}, i={}", col_x, col_z, col_minus, col_i);
+        println!("  col_only S[0]: X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}");
 
         let sparse_minus = sparse.stabs.signs_minus.contains(0);
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("  sparse S[0]: X={}, Z={}, minus={}, i={}", sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!("  sparse S[0]: X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i}");
 
         // Apply SZ
         col_only.sz(&[QubitId(0)]);
@@ -1951,13 +1961,13 @@ mod tests {
         let col_i = col_only.stab_signs_i[0] & 1 != 0;
         let col_x = col_only.stab_col_x[0] & 1 != 0;
         let col_z = col_only.stab_col_z[0] & 1 != 0;
-        println!("  col_only S[0]: X={}, Z={}, minus={}, i={}", col_x, col_z, col_minus, col_i);
+        println!("  col_only S[0]: X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}");
 
         let sparse_minus = sparse.stabs.signs_minus.contains(0);
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("  sparse S[0]: X={}, Z={}, minus={}, i={}", sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!("  sparse S[0]: X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i}");
 
         // Expected after SZ(0) on Z_0: Z_0 → Z_0 (no change, since SZ doesn't affect Z)
         // SZ transforms: X -> iXZ, Z -> Z
@@ -1974,13 +1984,13 @@ mod tests {
         let col_i = col_only.stab_signs_i[0] & 1 != 0;
         let col_x = col_only.stab_col_x[0] & 1 != 0;
         let col_z = col_only.stab_col_z[0] & 1 != 0;
-        println!("  col_only S[0]: X={}, Z={}, minus={}, i={}", col_x, col_z, col_minus, col_i);
+        println!("  col_only S[0]: X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}");
 
         let sparse_minus = sparse.stabs.signs_minus.contains(0);
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("  sparse S[0]: X={}, Z={}, minus={}, i={}", sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!("  sparse S[0]: X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i}");
 
         col_only.sz(&[QubitId(0)]);
         sparse.sz(&[QubitId(0)]);
@@ -1989,13 +1999,13 @@ mod tests {
         let col_i = col_only.stab_signs_i[0] & 1 != 0;
         let col_x = col_only.stab_col_x[0] & 1 != 0;
         let col_z = col_only.stab_col_z[0] & 1 != 0;
-        println!("  col_only S[0]: X={}, Z={}, minus={}, i={}", col_x, col_z, col_minus, col_i);
+        println!("  col_only S[0]: X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}");
 
         let sparse_minus = sparse.stabs.signs_minus.contains(0);
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("  sparse S[0]: X={}, Z={}, minus={}, i={}", sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!("  sparse S[0]: X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i}");
 
         // Check they match
         assert_eq!(col_x, sparse_x, "X mismatch");
@@ -2020,8 +2030,9 @@ mod tests {
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("After H: col=(X={}, Z={}, minus={}, i={}), sparse=(X={}, Z={}, minus={}, i={})",
-            col_x, col_z, col_minus, col_i, sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!(
+            "After H: col=(X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}), sparse=(X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i})"
+        );
 
         col_only.sz(&[QubitId(0)]);
         sparse.sz(&[QubitId(0)]);
@@ -2033,8 +2044,9 @@ mod tests {
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("After SZ 1: col=(X={}, Z={}, minus={}, i={}), sparse=(X={}, Z={}, minus={}, i={})",
-            col_x, col_z, col_minus, col_i, sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!(
+            "After SZ 1: col=(X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}), sparse=(X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i})"
+        );
 
         col_only.sz(&[QubitId(0)]);
         sparse.sz(&[QubitId(0)]);
@@ -2046,8 +2058,9 @@ mod tests {
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("After SZ 2: col=(X={}, Z={}, minus={}, i={}), sparse=(X={}, Z={}, minus={}, i={})",
-            col_x, col_z, col_minus, col_i, sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!(
+            "After SZ 2: col=(X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}), sparse=(X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i})"
+        );
 
         col_only.sz(&[QubitId(0)]);
         sparse.sz(&[QubitId(0)]);
@@ -2059,8 +2072,9 @@ mod tests {
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("After SZ 3: col=(X={}, Z={}, minus={}, i={}), sparse=(X={}, Z={}, minus={}, i={})",
-            col_x, col_z, col_minus, col_i, sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!(
+            "After SZ 3: col=(X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}), sparse=(X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i})"
+        );
 
         col_only.h(&[QubitId(0)]);
         sparse.h(&[QubitId(0)]);
@@ -2072,12 +2086,13 @@ mod tests {
         let sparse_i = sparse.stabs.signs_i.contains(0);
         let sparse_x = sparse.stabs.row_x[0].contains(0);
         let sparse_z = sparse.stabs.row_z[0].contains(0);
-        println!("After H (final): col=(X={}, Z={}, minus={}, i={}), sparse=(X={}, Z={}, minus={}, i={})",
-            col_x, col_z, col_minus, col_i, sparse_x, sparse_z, sparse_minus, sparse_i);
+        println!(
+            "After H (final): col=(X={col_x}, Z={col_z}, minus={col_minus}, i={col_i}), sparse=(X={sparse_x}, Z={sparse_z}, minus={sparse_minus}, i={sparse_i})"
+        );
 
         // Should be Y = iXZ
-        assert_eq!(col_x, true, "Expected X=true");
-        assert_eq!(col_z, true, "Expected Z=true");
+        assert!(col_x, "Expected X=true");
+        assert!(col_z, "Expected Z=true");
         assert_eq!(col_minus, sparse_minus, "minus mismatch after SXdg");
         assert_eq!(col_i, sparse_i, "i mismatch after SXdg");
     }
@@ -2111,8 +2126,8 @@ mod tests {
 
         // Apply gates up to but not including gate 11 (SX(0)), tracing divergence
         for (i, gate) in gates.iter().take(11).enumerate() {
-            crate::stabilizer_test_utils::apply_circuit(&mut col_only, &[gate.clone()]);
-            crate::stabilizer_test_utils::apply_circuit(&mut sparse, &[gate.clone()]);
+            crate::stabilizer_test_utils::apply_circuit(&mut col_only, &[*gate]);
+            crate::stabilizer_test_utils::apply_circuit(&mut sparse, &[*gate]);
 
             // Check for any sign mismatches
             for g in 0..8 {
@@ -2120,8 +2135,7 @@ mod tests {
                 let sparse_minus = sparse.stabs.signs_minus.contains(g);
                 if col_minus != sparse_minus {
                     println!(
-                        "DIVERGENCE at gate {}: {:?} - S[{}] col_only.minus={}, sparse.minus={}",
-                        i, gate, g, col_minus, sparse_minus
+                        "DIVERGENCE at gate {i}: {gate:?} - S[{g}] col_only.minus={col_minus}, sparse.minus={sparse_minus}"
                     );
                 }
             }
@@ -2131,12 +2145,16 @@ mod tests {
         println!("Before SX(0):");
         let col_minus = col_only.stab_signs_minus[0] & (1u64 << 7) != 0;
         let sparse_minus = sparse.stabs.signs_minus.contains(7);
-        let col_x7: Vec<usize> = (0..8).filter(|&q| col_only.stab_col_x[q] & (1u64 << 7) != 0).collect();
-        let col_z7: Vec<usize> = (0..8).filter(|&q| col_only.stab_col_z[q] & (1u64 << 7) != 0).collect();
+        let col_x7: Vec<usize> = (0..8)
+            .filter(|&q| col_only.stab_col_x[q] & (1u64 << 7) != 0)
+            .collect();
+        let col_z7: Vec<usize> = (0..8)
+            .filter(|&q| col_only.stab_col_z[q] & (1u64 << 7) != 0)
+            .collect();
         let sparse_x7: Vec<usize> = sparse.stabs.row_x[7].iter().collect();
         let sparse_z7: Vec<usize> = sparse.stabs.row_z[7].iter().collect();
-        println!("  S[7] col_only: minus={}, X={:?}, Z={:?}", col_minus, col_x7, col_z7);
-        println!("  S[7] sparse:   minus={}, X={:?}, Z={:?}", sparse_minus, sparse_x7, sparse_z7);
+        println!("  S[7] col_only: minus={col_minus}, X={col_x7:?}, Z={col_z7:?}");
+        println!("  S[7] sparse:   minus={sparse_minus}, X={sparse_x7:?}, Z={sparse_z7:?}");
 
         // Manually apply SX(0) = H(0), SZ(0), H(0)
         println!("\nApplying SX(0) step-by-step:");
@@ -2146,44 +2164,56 @@ mod tests {
         sparse.h(&[QubitId(0)]);
         let col_minus = col_only.stab_signs_minus[0] & (1u64 << 7) != 0;
         let sparse_minus = sparse.stabs.signs_minus.contains(7);
-        let col_x7: Vec<usize> = (0..8).filter(|&q| col_only.stab_col_x[q] & (1u64 << 7) != 0).collect();
-        let col_z7: Vec<usize> = (0..8).filter(|&q| col_only.stab_col_z[q] & (1u64 << 7) != 0).collect();
+        let col_x7: Vec<usize> = (0..8)
+            .filter(|&q| col_only.stab_col_x[q] & (1u64 << 7) != 0)
+            .collect();
+        let col_z7: Vec<usize> = (0..8)
+            .filter(|&q| col_only.stab_col_z[q] & (1u64 << 7) != 0)
+            .collect();
         let sparse_x7: Vec<usize> = sparse.stabs.row_x[7].iter().collect();
         let sparse_z7: Vec<usize> = sparse.stabs.row_z[7].iter().collect();
         println!("After H(0):");
-        println!("  S[7] col_only: minus={}, X={:?}, Z={:?}", col_minus, col_x7, col_z7);
-        println!("  S[7] sparse:   minus={}, X={:?}, Z={:?}", sparse_minus, sparse_x7, sparse_z7);
+        println!("  S[7] col_only: minus={col_minus}, X={col_x7:?}, Z={col_z7:?}");
+        println!("  S[7] sparse:   minus={sparse_minus}, X={sparse_x7:?}, Z={sparse_z7:?}");
 
         // SZ(0)
         col_only.sz(&[QubitId(0)]);
         sparse.sz(&[QubitId(0)]);
         let col_minus = col_only.stab_signs_minus[0] & (1u64 << 7) != 0;
         let sparse_minus = sparse.stabs.signs_minus.contains(7);
-        let col_x7: Vec<usize> = (0..8).filter(|&q| col_only.stab_col_x[q] & (1u64 << 7) != 0).collect();
-        let col_z7: Vec<usize> = (0..8).filter(|&q| col_only.stab_col_z[q] & (1u64 << 7) != 0).collect();
+        let col_x7: Vec<usize> = (0..8)
+            .filter(|&q| col_only.stab_col_x[q] & (1u64 << 7) != 0)
+            .collect();
+        let col_z7: Vec<usize> = (0..8)
+            .filter(|&q| col_only.stab_col_z[q] & (1u64 << 7) != 0)
+            .collect();
         let sparse_x7: Vec<usize> = sparse.stabs.row_x[7].iter().collect();
         let sparse_z7: Vec<usize> = sparse.stabs.row_z[7].iter().collect();
         println!("After SZ(0):");
-        println!("  S[7] col_only: minus={}, X={:?}, Z={:?}", col_minus, col_x7, col_z7);
-        println!("  S[7] sparse:   minus={}, X={:?}, Z={:?}", sparse_minus, sparse_x7, sparse_z7);
+        println!("  S[7] col_only: minus={col_minus}, X={col_x7:?}, Z={col_z7:?}");
+        println!("  S[7] sparse:   minus={sparse_minus}, X={sparse_x7:?}, Z={sparse_z7:?}");
 
         // H(0)
         col_only.h(&[QubitId(0)]);
         sparse.h(&[QubitId(0)]);
         let col_minus = col_only.stab_signs_minus[0] & (1u64 << 7) != 0;
         let sparse_minus = sparse.stabs.signs_minus.contains(7);
-        let col_x7: Vec<usize> = (0..8).filter(|&q| col_only.stab_col_x[q] & (1u64 << 7) != 0).collect();
-        let col_z7: Vec<usize> = (0..8).filter(|&q| col_only.stab_col_z[q] & (1u64 << 7) != 0).collect();
+        let col_x7: Vec<usize> = (0..8)
+            .filter(|&q| col_only.stab_col_x[q] & (1u64 << 7) != 0)
+            .collect();
+        let col_z7: Vec<usize> = (0..8)
+            .filter(|&q| col_only.stab_col_z[q] & (1u64 << 7) != 0)
+            .collect();
         let sparse_x7: Vec<usize> = sparse.stabs.row_x[7].iter().collect();
         let sparse_z7: Vec<usize> = sparse.stabs.row_z[7].iter().collect();
         println!("After H(0) (final):");
-        println!("  S[7] col_only: minus={}, X={:?}, Z={:?}", col_minus, col_x7, col_z7);
-        println!("  S[7] sparse:   minus={}, X={:?}, Z={:?}", sparse_minus, sparse_x7, sparse_z7);
+        println!("  S[7] col_only: minus={col_minus}, X={col_x7:?}, Z={col_z7:?}");
+        println!("  S[7] sparse:   minus={sparse_minus}, X={sparse_x7:?}, Z={sparse_z7:?}");
 
         // Apply remaining gates
         for gate in gates.iter().skip(12) {
-            crate::stabilizer_test_utils::apply_circuit(&mut col_only, &[gate.clone()]);
-            crate::stabilizer_test_utils::apply_circuit(&mut sparse, &[gate.clone()]);
+            crate::stabilizer_test_utils::apply_circuit(&mut col_only, &[*gate]);
+            crate::stabilizer_test_utils::apply_circuit(&mut sparse, &[*gate]);
         }
 
         // Test Q3 deterministic measurement - should both return false but col_only returns true
@@ -2195,7 +2225,7 @@ mod tests {
         );
 
         // Compare the full state between implementations
-        let words_per_col = (8 + 63) / 64;
+        let words_per_col = 8_usize.div_ceil(64);
 
         println!("\n=== STABILIZER COMPARISON ===");
         for g in 0..8 {
@@ -2228,8 +2258,7 @@ mod tests {
             };
 
             println!(
-                "  S[{}]: col_only=(minus={}, X={:?}, Z={:?}), sparse=(minus={}, X={:?}, Z={:?}) {}",
-                g, col_minus, col_x, col_z, sparse_minus, sparse_x, sparse_z, match_str
+                "  S[{g}]: col_only=(minus={col_minus}, X={col_x:?}, Z={col_z:?}), sparse=(minus={sparse_minus}, X={sparse_x:?}, Z={sparse_z:?}) {match_str}"
             );
         }
 
@@ -2262,14 +2291,13 @@ mod tests {
             };
 
             println!(
-                "  D[{}]: col_only=(X={:?}, Z={:?}), sparse=(X={:?}, Z={:?}) {}",
-                g, col_x, col_z, sparse_x, sparse_z, match_str
+                "  D[{g}]: col_only=(X={col_x:?}, Z={col_z:?}), sparse=(X={sparse_x:?}, Z={sparse_z:?}) {match_str}"
             );
         }
 
         // Which destabilizers have X on Q3?
         let qubit = 3;
-        println!("\n=== DESTABS WITH X ON Q{} ===", qubit);
+        println!("\n=== DESTABS WITH X ON Q{qubit} ===");
         let col_base = qubit * words_per_col;
         let destab_mask = col_only.destab_col_x[col_base];
         let mut col_destab_ids: Vec<usize> = Vec::new();
@@ -2280,17 +2308,20 @@ mod tests {
             mask &= mask - 1;
         }
         let sparse_destab_ids: Vec<usize> = sparse.destabs.col_x[qubit].iter().collect();
-        println!("  col_only destab_ids: {:?}", col_destab_ids);
-        println!("  sparse destab_ids: {:?}", sparse_destab_ids);
+        println!("  col_only destab_ids: {col_destab_ids:?}");
+        println!("  sparse destab_ids: {sparse_destab_ids:?}");
 
-        assert_eq!(r1.is_deterministic, r2.is_deterministic, "Q3 determinism mismatch");
+        assert_eq!(
+            r1.is_deterministic, r2.is_deterministic,
+            "Q3 determinism mismatch"
+        );
         assert_eq!(r1.outcome, r2.outcome, "Q3 outcome mismatch");
     }
 
     #[test]
     fn test_col_only_simple_probability() {
-        use crate::stabilizer_test_utils::calculate_basis_probability;
         use crate::DensityMatrix;
+        use crate::stabilizer_test_utils::calculate_basis_probability;
 
         // Create 2-qubit simulator, apply H on qubit 0
         // After H(0), state is (|00> + |10>)/sqrt(2)
@@ -2308,16 +2339,10 @@ mod tests {
         for basis_state in 0..4 {
             let stab_prob = calculate_basis_probability(&sim, basis_state, 2);
             let dm_prob = dm.probability(basis_state);
-            println!(
-                "basis_state {}: stabilizer={}, density_matrix={}",
-                basis_state, stab_prob, dm_prob
-            );
+            println!("basis_state {basis_state}: stabilizer={stab_prob}, density_matrix={dm_prob}");
             assert!(
                 (stab_prob - dm_prob).abs() < 1e-10,
-                "Mismatch for basis_state {}: stabilizer={}, dm={}",
-                basis_state,
-                stab_prob,
-                dm_prob
+                "Mismatch for basis_state {basis_state}: stabilizer={stab_prob}, dm={dm_prob}"
             );
         }
     }

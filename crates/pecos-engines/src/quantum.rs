@@ -55,7 +55,7 @@ impl Engine for Box<dyn QuantumEngine> {
     }
 }
 
-/// Trait for simulators that can be used with StateVectorEngine.
+/// Trait for simulators that can be used with `StateVectorEngine`.
 ///
 /// This trait combines all the requirements for a state vector simulator.
 pub trait StateVectorSimulator:
@@ -182,14 +182,14 @@ where
     }
 }
 
-/// Type alias for state vector engine using the default StateVec simulator
-/// (sparse SoA, optimized for QEC workloads).
+/// Type alias for state vector engine using the default `StateVec` simulator
+/// (sparse `SoA`, optimized for QEC workloads).
 pub type StateVecEngine = StateVectorEngine<StateVec>;
 
-/// Type alias for state vector engine using the dense StateVecSoA simulator.
+/// Type alias for state vector engine using the dense `StateVecSoA` simulator.
 ///
-/// DenseStateVecEngine uses:
-/// - SoA (Structure of Arrays) layout for better SIMD performance
+/// `DenseStateVecEngine` uses:
+/// - `SoA` (Structure of Arrays) layout for better SIMD performance
 /// - Strided iteration for cache-efficient access patterns
 /// - Fused gate primitives for reduced memory bandwidth
 /// - Optional parallel execution for large state vectors

@@ -209,7 +209,10 @@ where
     }
 
     /// Helper to compute density matrix from a state vector.
-    fn density_matrix_from_state_vec(sv: &[Complex64], num_physical_qubits: usize) -> Vec<Vec<Complex64>> {
+    fn density_matrix_from_state_vec(
+        sv: &[Complex64],
+        num_physical_qubits: usize,
+    ) -> Vec<Vec<Complex64>> {
         let n = num_physical_qubits;
         let dim = 1 << n;
 

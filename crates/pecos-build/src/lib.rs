@@ -55,6 +55,7 @@
 
 pub mod cuda;
 pub mod cuquantum;
+pub mod cutensor;
 pub mod deps;
 pub mod download;
 pub mod errors;

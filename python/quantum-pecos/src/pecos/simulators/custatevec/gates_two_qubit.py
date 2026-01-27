@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import cmath
+
 import cupy as cp
 
 if TYPE_CHECKING:
@@ -292,24 +294,25 @@ def RZZ(
         raise ValueError(msg)
     theta = angles[0]
 
+    t = float(theta)
     matrix = cp.asarray(
         [
-            cp.exp(-1j * theta / 2),
+            cmath.exp(-1j * t / 2),
             0,
             0,
             0,
             0,
-            cp.exp(1j * theta / 2),
+            cmath.exp(1j * t / 2),
             0,
             0,
             0,
             0,
-            cp.exp(1j * theta / 2),
+            cmath.exp(1j * t / 2),
             0,
             0,
             0,
             0,
-            cp.exp(-1j * theta / 2),
+            cmath.exp(-1j * t / 2),
         ],
         dtype=state.cp_type,
     )

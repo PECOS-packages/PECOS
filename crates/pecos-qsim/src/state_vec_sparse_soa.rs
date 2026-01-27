@@ -10,21 +10,21 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Sparse State Vector Simulator (SoA Layout)
+//! Sparse State Vector Simulator (`SoA` Layout)
 //!
 //! Uses a Structure-of-Arrays layout with double buffering. This design
 //! is intended for scenarios where the state may grow large but starts sparse.
 //!
-//! **Note**: For typical sparse states (<1K amplitudes), the AoS version
+//! **Note**: For typical sparse states (<1K amplitudes), the `AoS` version
 //! (`SparseStateVecAoS`) is significantly faster (up to 10x) due to simpler
-//! code paths and better cache locality. Use this SoA version only when:
+//! code paths and better cache locality. Use this `SoA` version only when:
 //! - You expect the state to grow to thousands of amplitudes
 //! - You need the double-buffering pattern for other reasons
 //! - Future SIMD optimizations are planned
 //!
 //! ## Architecture
 //!
-//! 1. **SoA Layout**: Separate arrays for indices, real, imag parts
+//! 1. **`SoA` Layout**: Separate arrays for indices, real, imag parts
 //!    - Better for SIMD when amplitude count is large
 //!    - More cache misses for small states
 //!
@@ -32,9 +32,9 @@
 //!    - Avoids allocation during gate operations
 //!    - Adds complexity and cache pressure
 //!
-//! 3. **Binary Search**: Uses same algorithm as AoS for pair lookup
+//! 3. **Binary Search**: Uses same algorithm as `AoS` for pair lookup
 
-use crate::clifford_frame::{CliffordFrame, PauliAxis, ELEMENT_MATRIX, PHASE_COCYCLE, PHASE_ROOTS};
+use crate::clifford_frame::{CliffordFrame, ELEMENT_MATRIX, PHASE_COCYCLE, PHASE_ROOTS, PauliAxis};
 use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
@@ -43,7 +43,7 @@ use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
 use wide::f64x4;
 
-/// DOD-optimized sparse state vector using SoA layout and double buffering.
+/// DOD-optimized sparse state vector using `SoA` layout and double buffering.
 #[derive(Debug)]
 pub struct SparseStateVecSoA<R = PecosRng>
 where
@@ -74,7 +74,7 @@ where
     scratch_low: Vec<u32>,
     /// Positions of amplitudes with target bit=1 (reused across gates)
     scratch_high: Vec<u32>,
-    /// Reusable permutation buffer for sort_active
+    /// Reusable permutation buffer for `sort_active`
     sort_perm: Vec<usize>,
 
     // ===== MERGE BUFFERS - for sorted-merge gate output =====
@@ -87,7 +87,7 @@ where
     /// Per-qubit Clifford frame index (mod global phase) for Heisenberg lookups.
     frames: Vec<CliffordFrame>,
     /// Per-qubit accumulated phase as 8th-root-of-unity index (0-7).
-    /// Tracks the exact global phase: actual_matrix = e^{i*phase*π/4} * ELEMENT_MATRIX[frame].
+    /// Tracks the exact global phase: `actual_matrix` = e^{i*phase*π/4} * `ELEMENT_MATRIX`[frame].
     frame_phases: Vec<u8>,
 
     /// Deferred sorting flag. When true, indices may not be in sorted order.
@@ -232,7 +232,6 @@ impl<R: Rng> SparseStateVecSoA<R> {
             (&self.indices_b, &self.real_b, &self.imag_b)
         }
     }
-
 
     // =========================================================================
     // Rotation kernel helpers
@@ -470,20 +469,18 @@ impl<R: Rng> SparseStateVecSoA<R> {
                 )
             };
 
-            let (r_partner, im_partner) = if pair.partner_pos != u32::MAX {
-                if active {
-                    (
-                        self.real_a[pair.partner_pos as usize],
-                        self.imag_a[pair.partner_pos as usize],
-                    )
-                } else {
-                    (
-                        self.real_b[pair.partner_pos as usize],
-                        self.imag_b[pair.partner_pos as usize],
-                    )
-                }
-            } else {
+            let (r_partner, im_partner) = if pair.partner_pos == u32::MAX {
                 (0.0, 0.0)
+            } else if active {
+                (
+                    self.real_a[pair.partner_pos as usize],
+                    self.imag_a[pair.partner_pos as usize],
+                )
+            } else {
+                (
+                    self.real_b[pair.partner_pos as usize],
+                    self.imag_b[pair.partner_pos as usize],
+                )
             };
 
             // Select sign for this parity group
@@ -551,10 +548,14 @@ impl<R: Rng> SparseStateVecSoA<R> {
     fn apply_single_qubit_gate(
         &mut self,
         q: usize,
-        a_re: f64, a_im: f64,  // Gate matrix element [0,0]
-        b_re: f64, b_im: f64,  // Gate matrix element [0,1]
-        c_re: f64, c_im: f64,  // Gate matrix element [1,0]
-        d_re: f64, d_im: f64,  // Gate matrix element [1,1]
+        a_re: f64,
+        a_im: f64, // Gate matrix element [0,0]
+        b_re: f64,
+        b_im: f64, // Gate matrix element [0,1]
+        c_re: f64,
+        c_im: f64, // Gate matrix element [1,0]
+        d_re: f64,
+        d_im: f64, // Gate matrix element [1,1]
     ) {
         self.ensure_sorted();
         let mask = 1usize << q;
@@ -566,13 +567,21 @@ impl<R: Rng> SparseStateVecSoA<R> {
             let (src_indices, src_real, src_imag, dst_indices, dst_real, dst_imag) =
                 if self.active_a {
                     (
-                        &self.indices_a[..len], &self.real_a[..len], &self.imag_a[..len],
-                        &mut self.indices_b, &mut self.real_b, &mut self.imag_b,
+                        &self.indices_a[..len],
+                        &self.real_a[..len],
+                        &self.imag_a[..len],
+                        &mut self.indices_b,
+                        &mut self.real_b,
+                        &mut self.imag_b,
                     )
                 } else {
                     (
-                        &self.indices_b[..len], &self.real_b[..len], &self.imag_b[..len],
-                        &mut self.indices_a, &mut self.real_a, &mut self.imag_a,
+                        &self.indices_b[..len],
+                        &self.real_b[..len],
+                        &self.imag_b[..len],
+                        &mut self.indices_a,
+                        &mut self.real_a,
+                        &mut self.imag_a,
                     )
                 };
 
@@ -584,10 +593,22 @@ impl<R: Rng> SparseStateVecSoA<R> {
             dst_imag.reserve(len * 2);
 
             Self::apply_gate_binary_search(
-                src_indices, src_real, src_imag,
-                dst_indices, dst_real, dst_imag,
-                mask, epsilon,
-                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                src_indices,
+                src_real,
+                src_imag,
+                dst_indices,
+                dst_real,
+                dst_imag,
+                mask,
+                epsilon,
+                a_re,
+                a_im,
+                b_re,
+                b_im,
+                c_re,
+                c_im,
+                d_re,
+                d_im,
             );
 
             self.len = dst_indices.len();
@@ -598,8 +619,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
             // Produces two sorted streams and merges them in O(k),
             // avoiding the O(k log k) sort.
             self.apply_gate_sorted_merge(
-                mask, len, epsilon,
-                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                mask, len, epsilon, a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
             );
         }
     }
@@ -617,9 +637,17 @@ impl<R: Rng> SparseStateVecSoA<R> {
     #[allow(clippy::too_many_arguments)]
     fn apply_gate_sorted_merge(
         &mut self,
-        mask: usize, len: usize, epsilon: f64,
-        a_re: f64, a_im: f64, b_re: f64, b_im: f64,
-        c_re: f64, c_im: f64, d_re: f64, d_im: f64,
+        mask: usize,
+        len: usize,
+        epsilon: f64,
+        a_re: f64,
+        a_im: f64,
+        b_re: f64,
+        b_im: f64,
+        c_re: f64,
+        c_im: f64,
+        d_re: f64,
+        d_im: f64,
     ) {
         let active = self.active_a;
 
@@ -627,7 +655,11 @@ impl<R: Rng> SparseStateVecSoA<R> {
         self.scratch_low.clear();
         self.scratch_high.clear();
         for i in 0..len {
-            let idx = if active { self.indices_a[i] } else { self.indices_b[i] };
+            let idx = if active {
+                self.indices_a[i]
+            } else {
+                self.indices_b[i]
+            };
             if idx & mask == 0 {
                 self.scratch_low.push(i as u32);
             } else {
@@ -873,11 +905,22 @@ impl<R: Rng> SparseStateVecSoA<R> {
     /// Binary search path for small states (<= 8 amplitudes).
     #[inline]
     fn apply_gate_binary_search(
-        src_indices: &[usize], src_real: &[f64], src_imag: &[f64],
-        dst_indices: &mut Vec<usize>, dst_real: &mut Vec<f64>, dst_imag: &mut Vec<f64>,
-        mask: usize, epsilon: f64,
-        a_re: f64, a_im: f64, b_re: f64, b_im: f64,
-        c_re: f64, c_im: f64, d_re: f64, d_im: f64,
+        src_indices: &[usize],
+        src_real: &[f64],
+        src_imag: &[f64],
+        dst_indices: &mut Vec<usize>,
+        dst_real: &mut Vec<f64>,
+        dst_imag: &mut Vec<f64>,
+        mask: usize,
+        epsilon: f64,
+        a_re: f64,
+        a_im: f64,
+        b_re: f64,
+        b_im: f64,
+        c_re: f64,
+        c_im: f64,
+        d_re: f64,
+        d_im: f64,
     ) {
         let len = src_indices.len();
 
@@ -894,8 +937,9 @@ impl<R: Rng> SparseStateVecSoA<R> {
             let (paired_re, paired_im) = src_indices[i + 1..]
                 .binary_search(&paired_idx)
                 .ok()
-                .map(|offset| (src_real[i + 1 + offset], src_imag[i + 1 + offset]))
-                .unwrap_or((0.0, 0.0));
+                .map_or((0.0, 0.0), |offset| {
+                    (src_real[i + 1 + offset], src_imag[i + 1 + offset])
+                });
 
             let new_low_re = a_re * amp_re - a_im * amp_im + b_re * paired_re - b_im * paired_im;
             let new_low_im = a_re * amp_im + a_im * amp_re + b_re * paired_im + b_im * paired_re;
@@ -994,9 +1038,17 @@ impl<R: Rng> SparseStateVecSoA<R> {
     fn sort_active(&mut self) {
         let len = self.len;
         let (indices, real, imag) = if self.active_a {
-            (&mut self.indices_a[..len], &mut self.real_a[..len], &mut self.imag_a[..len])
+            (
+                &mut self.indices_a[..len],
+                &mut self.real_a[..len],
+                &mut self.imag_a[..len],
+            )
         } else {
-            (&mut self.indices_b[..len], &mut self.real_b[..len], &mut self.imag_b[..len])
+            (
+                &mut self.indices_b[..len],
+                &mut self.real_b[..len],
+                &mut self.imag_b[..len],
+            )
         };
 
         // Reuse the permutation buffer across calls
@@ -1111,9 +1163,9 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
     }
 
-    /// Apply SZZdg diagonal phase gate in-place.
+    /// Apply `SZZdg` diagonal phase gate in-place.
     ///
-    /// SZZdg = diag(e^{iπ/4}, e^{-iπ/4}, e^{-iπ/4}, e^{iπ/4}).
+    /// `SZZdg` = diag(e^{iπ/4}, e^{-iπ/4}, e^{-iπ/4}, e^{iπ/4}).
     /// Same parity → multiply by e^{iπ/4} = (1+i)/√2.
     /// Different parity → multiply by e^{-iπ/4} = (1-i)/√2.
     fn apply_szzdg_gate(&mut self, q1: usize, q2: usize) {
@@ -1225,9 +1277,9 @@ impl<R: Rng> SparseStateVecSoA<R> {
         //   B1: control=1, target=1 → clear target bit (index -= target_mask)
         //   B0: control=1, target=0 → set target bit   (index += target_mask)
         // Then 3-way merge produces sorted output in O(k).
-        self.scratch_low.clear();   // A positions
-        self.scratch_high.clear();  // B1 positions
-        self.sort_perm.clear();     // B0 positions
+        self.scratch_low.clear(); // A positions
+        self.scratch_high.clear(); // B1 positions
+        self.sort_perm.clear(); // B0 positions
 
         {
             let indices = if self.active_a {
@@ -1270,13 +1322,19 @@ impl<R: Rng> SparseStateVecSoA<R> {
             while a < a_len || b0 < b0_len || b1 < b1_len {
                 let a_val = if a < a_len {
                     self.indices_a[self.scratch_low[a] as usize]
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
                 let b1_val = if b1 < b1_len {
                     self.indices_a[self.scratch_high[b1] as usize] ^ target_mask
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
                 let b0_val = if b0 < b0_len {
                     self.indices_a[self.sort_perm[b0]] ^ target_mask
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
 
                 if a_val <= b1_val && a_val <= b0_val {
                     let pos = self.scratch_low[a] as usize;
@@ -1309,13 +1367,19 @@ impl<R: Rng> SparseStateVecSoA<R> {
             while a < a_len || b0 < b0_len || b1 < b1_len {
                 let a_val = if a < a_len {
                     self.indices_b[self.scratch_low[a] as usize]
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
                 let b1_val = if b1 < b1_len {
                     self.indices_b[self.scratch_high[b1] as usize] ^ target_mask
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
                 let b0_val = if b0 < b0_len {
                     self.indices_b[self.sort_perm[b0]] ^ target_mask
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
 
                 if a_val <= b1_val && a_val <= b0_val {
                     let pos = self.scratch_low[a] as usize;
@@ -1379,9 +1443,9 @@ impl<R: Rng> SparseStateVecSoA<R> {
         // Within each group, all entries share the same q1/q2 bit pattern, so
         // XOR with swap_mask is equivalent to a fixed add/subtract (no carry
         // interference), preserving relative order. 3-way merge -> O(k).
-        self.scratch_low.clear();   // A positions
-        self.scratch_high.clear();  // B01 positions
-        self.sort_perm.clear();     // B10 positions
+        self.scratch_low.clear(); // A positions
+        self.scratch_high.clear(); // B01 positions
+        self.sort_perm.clear(); // B10 positions
 
         {
             let indices = if self.active_a {
@@ -1393,11 +1457,11 @@ impl<R: Rng> SparseStateVecSoA<R> {
                 let bit1 = (indices[i] & mask1) != 0;
                 let bit2 = (indices[i] & mask2) != 0;
                 if bit1 == bit2 {
-                    self.scratch_low.push(i as u32);    // A: unchanged
+                    self.scratch_low.push(i as u32); // A: unchanged
                 } else if !bit1 {
-                    self.scratch_high.push(i as u32);   // B01: bit1=0, bit2=1
+                    self.scratch_high.push(i as u32); // B01: bit1=0, bit2=1
                 } else {
-                    self.sort_perm.push(i);             // B10: bit1=1, bit2=0
+                    self.sort_perm.push(i); // B10: bit1=1, bit2=0
                 }
             }
         }
@@ -1426,13 +1490,19 @@ impl<R: Rng> SparseStateVecSoA<R> {
             while a < a_len || b01 < b01_len || b10 < b10_len {
                 let a_val = if a < a_len {
                     self.indices_a[self.scratch_low[a] as usize]
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
                 let b01_val = if b01 < b01_len {
                     self.indices_a[self.scratch_high[b01] as usize] ^ swap_mask
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
                 let b10_val = if b10 < b10_len {
                     self.indices_a[self.sort_perm[b10]] ^ swap_mask
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
 
                 if a_val <= b01_val && a_val <= b10_val {
                     let pos = self.scratch_low[a] as usize;
@@ -1465,13 +1535,19 @@ impl<R: Rng> SparseStateVecSoA<R> {
             while a < a_len || b01 < b01_len || b10 < b10_len {
                 let a_val = if a < a_len {
                     self.indices_b[self.scratch_low[a] as usize]
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
                 let b01_val = if b01 < b01_len {
                     self.indices_b[self.scratch_high[b01] as usize] ^ swap_mask
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
                 let b10_val = if b10 < b10_len {
                     self.indices_b[self.sort_perm[b10]] ^ swap_mask
-                } else { usize::MAX };
+                } else {
+                    usize::MAX
+                };
 
                 if a_val <= b01_val && a_val <= b10_val {
                     let pos = self.scratch_low[a] as usize;
@@ -1601,7 +1677,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
         full
     }
 
-    /// Prepare a specific computational basis state |basis_state>.
+    /// Prepare a specific computational basis state |`basis_state`>.
     ///
     /// Resets the sparse state to contain exactly one amplitude at the given index.
     pub fn prepare_computational_basis(&mut self, basis_state: usize) -> &mut Self {
@@ -1655,9 +1731,17 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
 
         let (indices, real, imag) = if self.active_a {
-            (&mut self.indices_a[..], &mut self.real_a[..], &mut self.imag_a[..])
+            (
+                &mut self.indices_a[..],
+                &mut self.real_a[..],
+                &mut self.imag_a[..],
+            )
         } else {
-            (&mut self.indices_b[..], &mut self.real_b[..], &mut self.imag_b[..])
+            (
+                &mut self.indices_b[..],
+                &mut self.real_b[..],
+                &mut self.imag_b[..],
+            )
         };
         for i in 0..size {
             indices[i] = i;
@@ -1671,7 +1755,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     /// Apply a general 2-qubit unitary gate given by a 4x4 complex matrix.
     ///
     /// The matrix is indexed as `matrix[output_basis][input_basis]` where
-    /// basis index = (qubit1_bit << 1) | qubit2_bit.
+    /// basis index = (`qubit1_bit` << 1) | `qubit2_bit`.
     pub fn two_qubit_unitary(
         &mut self,
         qubit1: usize,
@@ -1697,8 +1781,8 @@ impl<R: Rng> SparseStateVecSoA<R> {
             std::collections::HashMap::new();
 
         for &(idx, amp) in &input {
-            let bit1 = ((idx & mask1) != 0) as usize;
-            let bit2 = ((idx & mask2) != 0) as usize;
+            let bit1 = usize::from((idx & mask1) != 0);
+            let bit2 = usize::from((idx & mask2) != 0);
             let input_basis = (bit1 << 1) | bit2;
 
             // Clear the two qubit bits from the index
@@ -1713,7 +1797,9 @@ impl<R: Rng> SparseStateVecSoA<R> {
                 let out_bit2 = out_basis & 1;
                 let out_idx = base_idx | (out_bit1 * mask1) | (out_bit2 * mask2);
                 let contribution = m_elem * amp;
-                *output_map.entry(out_idx).or_insert(Complex64::new(0.0, 0.0)) += contribution;
+                *output_map
+                    .entry(out_idx)
+                    .or_insert(Complex64::new(0.0, 0.0)) += contribution;
             }
         }
 
@@ -1736,9 +1822,17 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
 
         let (out_indices, out_real, out_imag) = if self.active_a {
-            (&mut self.indices_a[..], &mut self.real_a[..], &mut self.imag_a[..])
+            (
+                &mut self.indices_a[..],
+                &mut self.real_a[..],
+                &mut self.imag_a[..],
+            )
         } else {
-            (&mut self.indices_b[..], &mut self.real_b[..], &mut self.imag_b[..])
+            (
+                &mut self.indices_b[..],
+                &mut self.real_b[..],
+                &mut self.imag_b[..],
+            )
         };
         for (i, (idx, c)) in results.iter().enumerate() {
             out_indices[i] = *idx;
@@ -1927,7 +2021,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // SWAP can always swap frames without flushing.
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "CX requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
         if qubits.len() == 2 {
             // Single pair: fast path
             let (c, t) = (qubits[0].0, qubits[1].0);
@@ -1981,7 +2078,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "CZ requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
         if qubits.len() == 2 {
             // Single pair: fast path
             let (c, t) = (qubits[0].0, qubits[1].0);
@@ -2070,7 +2170,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "SWAP requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SWAP requires pairs of qubits"
+        );
         if qubits.len() == 2 {
             // Single pair: fast path
             let (c, t) = (qubits[0].0, qubits[1].0);
@@ -2118,7 +2221,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // (G P G† = phase* · P'). For 8th-root phases, conjugation is (8-k)%8.
 
     fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "SZZ requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZ requires pairs of qubits"
+        );
         if qubits.len() == 2 {
             let (q1, q2) = (qubits[0].0, qubits[1].0);
             let f1 = self.frames[q1];
@@ -2195,7 +2301,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "SZZdg requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZdg requires pairs of qubits"
+        );
         if qubits.len() == 2 {
             let (q1, q2) = (qubits[0].0, qubits[1].0);
             let f1 = self.frames[q1];
@@ -2272,7 +2381,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn iswap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len() % 2 == 0, "iSWAP requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "iSWAP requires pairs of qubits"
+        );
         if qubits.len() == 2 {
             let (q1, q2) = (qubits[0].0, qubits[1].0);
             let f1 = self.frames[q1];
@@ -2371,27 +2483,24 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         for &q in qubits {
             let z_img = self.frames[q.0].z_image();
 
-            match z_img.axis {
-                PauliAxis::Z => {
-                    // Z maps to +/-Z: can measure physically without flush.
-                    // The physical state collapses to a Z eigenstate, and the
-                    // frame remains in place (logical state = frame * physical).
-                    let result = self.physical_mz(q.0);
-                    let result = if z_img.positive {
-                        result
-                    } else {
-                        MeasurementResult {
-                            outcome: !result.outcome,
-                            is_deterministic: result.is_deterministic,
-                        }
-                    };
-                    results.push(result);
-                }
-                _ => {
-                    // Z maps to +/-X or +/-Y: must flush frame first
-                    self.flush_frame(q.0);
-                    results.push(self.physical_mz(q.0));
-                }
+            if z_img.axis == PauliAxis::Z {
+                // Z maps to +/-Z: can measure physically without flush.
+                // The physical state collapses to a Z eigenstate, and the
+                // frame remains in place (logical state = frame * physical).
+                let result = self.physical_mz(q.0);
+                let result = if z_img.positive {
+                    result
+                } else {
+                    MeasurementResult {
+                        outcome: !result.outcome,
+                        is_deterministic: result.is_deterministic,
+                    }
+                };
+                results.push(result);
+            } else {
+                // Z maps to +/-X or +/-Y: must flush frame first
+                self.flush_frame(q.0);
+                results.push(self.physical_mz(q.0));
             }
         }
 
@@ -2417,7 +2526,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
             p
         };
 
-        let is_deterministic = prob_one < 1e-10 || prob_one > 1.0 - 1e-10;
+        let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
         let outcome = self.rng.bernoulli(prob_one);
 
         let result = MeasurementResult {
@@ -2484,11 +2593,10 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             let cos = half.cos();
             let sin = half.sin();
             self.apply_single_qubit_gate(
-                q.0,
-                cos, 0.0,    // a = cos
-                0.0, -sin,   // b = -i*sin
-                0.0, -sin,   // c = -i*sin
-                cos, 0.0,    // d = cos
+                q.0, cos, 0.0, // a = cos
+                0.0, -sin, // b = -i*sin
+                0.0, -sin, // c = -i*sin
+                cos, 0.0, // d = cos
             );
         }
         self
@@ -2503,7 +2611,7 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         for &q in qubits {
             let effective_theta = if self.frames[q.0].is_pauli() {
                 let (has_x, has_z) = self.frames[q.0].pauli_xz_bits();
-                if has_x != has_z { -theta } else { theta }
+                if has_x == has_z { theta } else { -theta }
             } else {
                 self.flush_frame(q.0);
                 theta
@@ -2512,11 +2620,10 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             let cos = half.cos();
             let sin = half.sin();
             self.apply_single_qubit_gate(
-                q.0,
-                cos, 0.0,     // a = cos
-                -sin, 0.0,    // b = -sin
-                sin, 0.0,     // c = sin
-                cos, 0.0,     // d = cos
+                q.0, cos, 0.0, // a = cos
+                -sin, 0.0, // b = -sin
+                sin, 0.0, // c = sin
+                cos, 0.0, // d = cos
             );
         }
         self
@@ -2607,11 +2714,15 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             if self.frames[q1].is_pauli() && self.frames[q2].is_pauli() {
                 let mut flips = 0u32;
                 let (_, has_z) = self.frames[q1].pauli_xz_bits();
-                flips += has_z as u32;
+                flips += u32::from(has_z);
                 let (_, has_z) = self.frames[q2].pauli_xz_bits();
-                flips += has_z as u32;
+                flips += u32::from(has_z);
 
-                let effective_theta = if flips & 1 == 1 { -theta_rad } else { theta_rad };
+                let effective_theta = if flips & 1 == 1 {
+                    -theta_rad
+                } else {
+                    theta_rad
+                };
                 let half = effective_theta / 2.0;
                 let cos = half.cos();
                 let sin = half.sin();
@@ -2653,11 +2764,15 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             if self.frames[q1].is_pauli() && self.frames[q2].is_pauli() {
                 let mut flips = 0u32;
                 let (has_x, has_z) = self.frames[q1].pauli_xz_bits();
-                flips += (has_x != has_z) as u32;
+                flips += u32::from(has_x != has_z);
                 let (has_x, has_z) = self.frames[q2].pauli_xz_bits();
-                flips += (has_x != has_z) as u32;
+                flips += u32::from(has_x != has_z);
 
-                let effective_theta = if flips & 1 == 1 { -theta_rad } else { theta_rad };
+                let effective_theta = if flips & 1 == 1 {
+                    -theta_rad
+                } else {
+                    theta_rad
+                };
                 let half = effective_theta / 2.0;
                 let cos = half.cos();
                 let sin = half.sin();
@@ -2695,13 +2810,13 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             let mut flips = 0u32;
             if self.frames[q1].is_pauli() {
                 let (has_x, _) = self.frames[q1].pauli_xz_bits();
-                flips += has_x as u32;
+                flips += u32::from(has_x);
             } else {
                 self.flush_frame(q1);
             }
             if self.frames[q2].is_pauli() {
                 let (has_x, _) = self.frames[q2].pauli_xz_bits();
-                flips += has_x as u32;
+                flips += u32::from(has_x);
             } else {
                 self.flush_frame(q2);
             }
@@ -2716,7 +2831,13 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
         let theta = theta.to_radians_signed();
         let phi = phi.to_radians_signed();
         let lambda = lambda.to_radians_signed();
@@ -2738,11 +2859,7 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         for &q in qubits {
             self.flush_frame(q.0);
             self.apply_single_qubit_gate(
-                q.0,
-                u00_re, u00_im,
-                u01_re, u01_im,
-                u10_re, u10_im,
-                u11_re, u11_im,
+                q.0, u00_re, u00_im, u01_re, u01_im, u10_re, u10_im, u11_re, u11_im,
             );
         }
         self

@@ -3,14 +3,16 @@
 //! This module provides a safe Rust API for NVIDIA's cuStateVec library,
 //! which accelerates state vector quantum simulation on CUDA GPUs.
 
-use crate::error::{check_status, CuQuantumError, Result, TryClone};
+use crate::error::{CuQuantumError, Result, TryClone, check_status};
 use pecos_core::{Angle64, QubitId};
 use pecos_cuquantum_sys::{
-    cuDoubleComplex, custatevecCollapseOp_t, custatevecComputeType_t, custatevecHandle_t,
-    custatevecMatrixLayout_t, cudaDataType_t, cudaMemcpyKind_cudaMemcpyDeviceToDevice,
-    cudaMemcpyKind_cudaMemcpyHostToDevice,
+    cuDoubleComplex, cudaDataType_t, cudaMemcpyKind_cudaMemcpyDeviceToDevice,
+    cudaMemcpyKind_cudaMemcpyHostToDevice, custatevecCollapseOp_t, custatevecComputeType_t,
+    custatevecHandle_t, custatevecMatrixLayout_t,
 };
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator};
+use pecos_qsim::{
+    ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
+};
 use std::ffi::c_void;
 use std::ptr;
 
@@ -89,9 +91,7 @@ impl CuStateVec {
         let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
 
         let mut state_vector: *mut c_void = ptr::null_mut();
-        let cuda_result = unsafe {
-            pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes)
-        };
+        let cuda_result = unsafe { pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes) };
 
         if cuda_result != 0 {
             // Clean up handle if allocation failed
@@ -126,9 +126,8 @@ impl CuStateVec {
         let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
 
         // Zero out all memory
-        let cuda_result = unsafe {
-            pecos_cuquantum_sys::cudaMemset(self.state_vector, 0, size_bytes)
-        };
+        let cuda_result =
+            unsafe { pecos_cuquantum_sys::cudaMemset(self.state_vector, 0, size_bytes) };
         if cuda_result != 0 {
             return Err(CuQuantumError::Cuda(format!(
                 "cudaMemset failed with error code {cuda_result}"
@@ -209,10 +208,10 @@ impl CuStateVec {
                 custatevecMatrixLayout_t::CUSTATEVEC_MATRIX_LAYOUT_ROW,
                 0, // adjoint = false
                 targets.as_ptr(),
-                1, // num_targets
-                ptr::null(),     // no controls
-                ptr::null(),     // no control bit values
-                0,               // num_controls
+                1,           // num_targets
+                ptr::null(), // no controls
+                ptr::null(), // no control bit values
+                0,           // num_controls
                 custatevecComputeType_t::CUSTATEVEC_COMPUTE_64F,
                 ptr::null_mut(), // no extra workspace
                 0,               // workspace size = 0
@@ -234,26 +233,76 @@ impl CuStateVec {
 
         // Convert to cuDoubleComplex format
         let gate_matrix: [cuDoubleComplex; 16] = [
-            cuDoubleComplex { x: matrix[0][0], y: matrix[0][1] },
-            cuDoubleComplex { x: matrix[1][0], y: matrix[1][1] },
-            cuDoubleComplex { x: matrix[2][0], y: matrix[2][1] },
-            cuDoubleComplex { x: matrix[3][0], y: matrix[3][1] },
-            cuDoubleComplex { x: matrix[4][0], y: matrix[4][1] },
-            cuDoubleComplex { x: matrix[5][0], y: matrix[5][1] },
-            cuDoubleComplex { x: matrix[6][0], y: matrix[6][1] },
-            cuDoubleComplex { x: matrix[7][0], y: matrix[7][1] },
-            cuDoubleComplex { x: matrix[8][0], y: matrix[8][1] },
-            cuDoubleComplex { x: matrix[9][0], y: matrix[9][1] },
-            cuDoubleComplex { x: matrix[10][0], y: matrix[10][1] },
-            cuDoubleComplex { x: matrix[11][0], y: matrix[11][1] },
-            cuDoubleComplex { x: matrix[12][0], y: matrix[12][1] },
-            cuDoubleComplex { x: matrix[13][0], y: matrix[13][1] },
-            cuDoubleComplex { x: matrix[14][0], y: matrix[14][1] },
-            cuDoubleComplex { x: matrix[15][0], y: matrix[15][1] },
+            cuDoubleComplex {
+                x: matrix[0][0],
+                y: matrix[0][1],
+            },
+            cuDoubleComplex {
+                x: matrix[1][0],
+                y: matrix[1][1],
+            },
+            cuDoubleComplex {
+                x: matrix[2][0],
+                y: matrix[2][1],
+            },
+            cuDoubleComplex {
+                x: matrix[3][0],
+                y: matrix[3][1],
+            },
+            cuDoubleComplex {
+                x: matrix[4][0],
+                y: matrix[4][1],
+            },
+            cuDoubleComplex {
+                x: matrix[5][0],
+                y: matrix[5][1],
+            },
+            cuDoubleComplex {
+                x: matrix[6][0],
+                y: matrix[6][1],
+            },
+            cuDoubleComplex {
+                x: matrix[7][0],
+                y: matrix[7][1],
+            },
+            cuDoubleComplex {
+                x: matrix[8][0],
+                y: matrix[8][1],
+            },
+            cuDoubleComplex {
+                x: matrix[9][0],
+                y: matrix[9][1],
+            },
+            cuDoubleComplex {
+                x: matrix[10][0],
+                y: matrix[10][1],
+            },
+            cuDoubleComplex {
+                x: matrix[11][0],
+                y: matrix[11][1],
+            },
+            cuDoubleComplex {
+                x: matrix[12][0],
+                y: matrix[12][1],
+            },
+            cuDoubleComplex {
+                x: matrix[13][0],
+                y: matrix[13][1],
+            },
+            cuDoubleComplex {
+                x: matrix[14][0],
+                y: matrix[14][1],
+            },
+            cuDoubleComplex {
+                x: matrix[15][0],
+                y: matrix[15][1],
+            },
         ];
 
-        // Note: cuStateVec expects targets in a specific order
-        let targets = [qubit_a as i32, qubit_b as i32];
+        // cuStateVec maps targets[i] to bit i of the matrix index.
+        // Standard gate matrices use qubit_a as MSB (bit 1) and qubit_b as LSB (bit 0),
+        // so we reverse the order: targets[0] = qubit_b (LSB), targets[1] = qubit_a (MSB).
+        let targets = [qubit_b as i32, qubit_a as i32];
 
         // SAFETY: All pointers are valid, handle owns device memory
         let status = unsafe {
@@ -267,10 +316,10 @@ impl CuStateVec {
                 custatevecMatrixLayout_t::CUSTATEVEC_MATRIX_LAYOUT_ROW,
                 0, // adjoint = false
                 targets.as_ptr(),
-                2, // num_targets
-                ptr::null(),     // no controls
-                ptr::null(),     // no control bit values
-                0,               // num_controls
+                2,           // num_targets
+                ptr::null(), // no controls
+                ptr::null(), // no control bit values
+                0,           // num_controls
                 custatevecComputeType_t::CUSTATEVEC_COMPUTE_64F,
                 ptr::null_mut(), // no extra workspace
                 0,               // workspace size = 0
@@ -401,8 +450,7 @@ impl Clone for CuStateVec {
         let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
 
         let mut state_vector: *mut c_void = ptr::null_mut();
-        let cuda_result =
-            unsafe { pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes) };
+        let cuda_result = unsafe { pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes) };
 
         if cuda_result != 0 {
             // Clean up handle if allocation failed
@@ -465,8 +513,7 @@ impl TryClone for CuStateVec {
         let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
 
         let mut state_vector: *mut c_void = ptr::null_mut();
-        let cuda_result =
-            unsafe { pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes) };
+        let cuda_result = unsafe { pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes) };
 
         if cuda_result != 0 {
             // Clean up handle if allocation failed
@@ -549,10 +596,7 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len() % 2 == 0,
-            "CX requires pairs of qubits"
-        );
+        debug_assert!(qubits.len() % 2 == 0, "CX requires pairs of qubits");
         // CNOT matrix (4x4)
         // [[1,0,0,0], [0,1,0,0], [0,0,0,1], [0,0,1,0]]
         #[rustfmt::skip]
@@ -608,10 +652,7 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len() % 2 == 0,
-            "CZ requires pairs of qubits"
-        );
+        debug_assert!(qubits.len() % 2 == 0, "CZ requires pairs of qubits");
         // CZ matrix (4x4)
         // [[1,0,0,0], [0,1,0,0], [0,0,1,0], [0,0,0,-1]]
         #[rustfmt::skip]
@@ -628,10 +669,7 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len() % 2 == 0,
-            "SWAP requires pairs of qubits"
-        );
+        debug_assert!(qubits.len() % 2 == 0, "SWAP requires pairs of qubits");
         // SWAP matrix (4x4)
         // [[1,0,0,0], [0,0,1,0], [0,1,0,0], [0,0,0,1]]
         #[rustfmt::skip]
@@ -675,10 +713,7 @@ impl ArbitraryRotationGateable for CuStateVec {
 
     fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len() % 2 == 0,
-            "RZZ requires pairs of qubits"
-        );
+        debug_assert!(qubits.len() % 2 == 0, "RZZ requires pairs of qubits");
         // RZZ(theta) = diag(e^(-i*theta/2), e^(i*theta/2), e^(i*theta/2), e^(-i*theta/2))
         let c = (theta / 2.0).cos();
         let s = (theta / 2.0).sin();
@@ -750,7 +785,7 @@ mod tests {
         let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
 
         // H gate should have 1/sqrt(2) entries
-        assert!((inv_sqrt2 - 0.7071067811865476).abs() < 1e-10);
+        assert!((inv_sqrt2 - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-10);
     }
 
     #[test]

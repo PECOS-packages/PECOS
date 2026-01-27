@@ -1,6 +1,6 @@
 //! Benchmark comparing CPU vs GPU influence map sampling
 //!
-//! Run with: cargo run --example benchmark_influence_sampler --release
+//! Run with: cargo run --example `benchmark_influence_sampler` --release
 
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
 use std::time::Instant;
@@ -70,7 +70,7 @@ fn create_test_influence_map(num_locations: usize, num_detectors: usize) -> GpuI
     }
 }
 
-/// Simple CPU sampler for comparison (mirrors the pecos-qec NoisySampler logic)
+/// Simple CPU sampler for comparison (mirrors the pecos-qec `NoisySampler` logic)
 struct CpuSampler {
     num_locations: usize,
     num_detectors: usize,
@@ -113,7 +113,7 @@ impl CpuSampler {
     }
 
     fn sample(&mut self, num_shots: usize, p_error: f64) -> usize {
-        let threshold = (p_error * u32::MAX as f64) as u32;
+        let threshold = (p_error * f64::from(u32::MAX)) as u32;
         let mut logical_errors = 0;
 
         for _ in 0..num_shots {
@@ -168,7 +168,7 @@ impl CpuSampler {
                 }
             }
 
-            if logical_flips.iter().any(|&x| x == 1) {
+            if logical_flips.contains(&1) {
                 logical_errors += 1;
             }
         }
@@ -216,11 +216,11 @@ fn main() {
     // Total work items = num_locations * ceil(num_shots/32)
     // Max supported: ~65535 * 256 * 32 = ~537M work items
     let configs = [
-        (100, 50, 10_000),      // Small: 100 locations, 50 detectors, 10k shots
-        (500, 100, 50_000),     // Medium: 500 locations, 100 detectors, 50k shots
-        (1000, 200, 100_000),   // Large: 1000 locations, 200 detectors, 100k shots
-        (2000, 400, 200_000),   // XL: 2000 locations, 400 detectors, 200k shots
-        (5000, 500, 100_000),   // XXL: 5000 locations, 500 detectors, 100k shots (high location count)
+        (100, 50, 10_000),    // Small: 100 locations, 50 detectors, 10k shots
+        (500, 100, 50_000),   // Medium: 500 locations, 100 detectors, 50k shots
+        (1000, 200, 100_000), // Large: 1000 locations, 200 detectors, 100k shots
+        (2000, 400, 200_000), // XL: 2000 locations, 400 detectors, 200k shots
+        (5000, 500, 100_000), // XXL: 5000 locations, 500 detectors, 100k shots (high location count)
     ];
 
     let p_error = 0.001; // 0.1% error rate

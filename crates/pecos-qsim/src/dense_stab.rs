@@ -66,7 +66,6 @@ fn set_bit_row(data: &mut [u64], words_per_row: usize, row: usize, qubit: usize)
     data[word_idx] |= 1u64 << (qubit % 64);
 }
 
-
 #[inline(always)]
 fn set_bit_col(data: &mut [u64], words_per_col: usize, qubit: usize, row: usize) {
     let word_idx = qubit * words_per_col + row / 64;
@@ -78,7 +77,6 @@ fn clear_bit_col(data: &mut [u64], words_per_col: usize, qubit: usize, row: usiz
     let word_idx = qubit * words_per_col + row / 64;
     data[word_idx] &= !(1u64 << (row % 64));
 }
-
 
 #[inline(always)]
 fn toggle_sign(signs: &mut [u64], row: usize) {
@@ -655,9 +653,8 @@ impl<R: RngCore + SeedableRng + Rng + Debug> DenseStab<R> {
 
                 // Count overlap of stab_row_z[destab_id] with cumulative_x and XOR into scratch
                 for ww in 0..words_per_row {
-                    num_minuses +=
-                        (self.stab_row_z[row_base + ww] & self.scratch_row[ww]).count_ones()
-                            as usize;
+                    num_minuses += (self.stab_row_z[row_base + ww] & self.scratch_row[ww])
+                        .count_ones() as usize;
                     self.scratch_row[ww] ^= self.stab_row_x[row_base + ww];
                 }
 
@@ -1265,12 +1262,21 @@ mod tests {
 
         // Measure first qubit
         let r0 = sim.mz(&[QubitId(0)]);
-        assert!(!r0[0].is_deterministic, "First Bell measurement should be non-deterministic");
+        assert!(
+            !r0[0].is_deterministic,
+            "First Bell measurement should be non-deterministic"
+        );
 
         // Measure second qubit - should be deterministic and correlated
         let r1 = sim.mz(&[QubitId(1)]);
-        assert!(r1[0].is_deterministic, "Second Bell measurement should be deterministic");
-        assert_eq!(r0[0].outcome, r1[0].outcome, "Bell measurements should be correlated");
+        assert!(
+            r1[0].is_deterministic,
+            "Second Bell measurement should be deterministic"
+        );
+        assert_eq!(
+            r0[0].outcome, r1[0].outcome,
+            "Bell measurements should be correlated"
+        );
     }
 
     #[test]
@@ -1282,12 +1288,21 @@ mod tests {
 
         // Measure first qubit
         let r0 = sim.mz(&[QubitId(0)]);
-        assert!(!r0[0].is_deterministic, "First Bell measurement should be non-deterministic");
+        assert!(
+            !r0[0].is_deterministic,
+            "First Bell measurement should be non-deterministic"
+        );
 
         // Measure second qubit - should be deterministic and correlated
         let r1 = sim.mz(&[QubitId(1)]);
-        assert!(r1[0].is_deterministic, "Second Bell measurement should be deterministic");
-        assert_eq!(r0[0].outcome, r1[0].outcome, "Bell measurements should be correlated");
+        assert!(
+            r1[0].is_deterministic,
+            "Second Bell measurement should be deterministic"
+        );
+        assert_eq!(
+            r0[0].outcome, r1[0].outcome,
+            "Bell measurements should be correlated"
+        );
     }
 
     #[test]
@@ -1329,13 +1344,16 @@ mod tests {
         let mut sim: DenseStab = DenseStab::with_seed(1, 42);
         sim.sx(&[QubitId(0)]);
         let result = sim.mz_forced(0, false);
-        assert!(!result.is_deterministic, "SX|0> should be non-deterministic");
+        assert!(
+            !result.is_deterministic,
+            "SX|0> should be non-deterministic"
+        );
     }
 
     #[test]
     fn test_dense_stab_vs_sparse_stab_random_circuits() {
-        use crate::stabilizer_test_utils::compare_simulators_on_random_circuits;
         use crate::SparseStab;
+        use crate::stabilizer_test_utils::compare_simulators_on_random_circuits;
 
         let mut dense: DenseStab = DenseStab::with_seed(8, 42);
         let mut sparse = SparseStab::new(8);

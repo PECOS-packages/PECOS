@@ -9,7 +9,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use super::{
-    CUQUANTUM_VERSION, config, get_lib_dir, get_pecos_cuquantum_dir, is_valid_cuquantum_installation,
+    CUQUANTUM_VERSION, config, get_lib_dir, get_pecos_cuquantum_dir,
+    is_valid_cuquantum_installation,
 };
 
 /// cuQuantum download information
@@ -21,14 +22,14 @@ struct CuQuantumDownload {
 
 /// Detect CUDA major version from installed CUDA
 fn detect_cuda_version() -> u32 {
-    if let Some(cuda_path) = crate::cuda::find_cuda() {
-        if let Ok(version) = crate::cuda::get_cuda_version(&cuda_path) {
-            // Parse version like "12.4" or "11.8"
-            if let Some(major) = version.split('.').next() {
-                if let Ok(v) = major.parse::<u32>() {
-                    return v;
-                }
-            }
+    if let Some(cuda_path) = crate::cuda::find_cuda()
+        && let Ok(version) = crate::cuda::get_cuda_version(&cuda_path)
+    {
+        // Parse version like "12.4" or "11.8"
+        if let Some(major) = version.split('.').next()
+            && let Ok(v) = major.parse::<u32>()
+        {
+            return v;
         }
     }
     // Default to CUDA 12 if not detected (most modern systems)
@@ -52,7 +53,9 @@ fn get_download_info() -> Result<CuQuantumDownload> {
             url: format!(
                 "https://developer.download.nvidia.com/compute/cuquantum/redist/cuquantum/linux-x86_64/cuquantum-linux-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.tar.xz"
             ),
-            filename: format!("cuquantum-linux-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.tar.xz"),
+            filename: format!(
+                "cuquantum-linux-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.tar.xz"
+            ),
             // NVIDIA does not publish checksums; these would need manual verification
             sha256: None,
         }),
@@ -60,14 +63,18 @@ fn get_download_info() -> Result<CuQuantumDownload> {
             url: format!(
                 "https://developer.download.nvidia.com/compute/cuquantum/redist/cuquantum/linux-sbsa/cuquantum-linux-sbsa-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.tar.xz"
             ),
-            filename: format!("cuquantum-linux-sbsa-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.tar.xz"),
+            filename: format!(
+                "cuquantum-linux-sbsa-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.tar.xz"
+            ),
             sha256: None,
         }),
         ("windows", "x86_64") => Ok(CuQuantumDownload {
             url: format!(
                 "https://developer.download.nvidia.com/compute/cuquantum/redist/cuquantum/windows-x86_64/cuquantum-windows-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.zip"
             ),
-            filename: format!("cuquantum-windows-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.zip"),
+            filename: format!(
+                "cuquantum-windows-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.zip"
+            ),
             sha256: None,
         }),
         ("macos", _) => Err(Error::CuQuantum(
@@ -287,7 +294,10 @@ fn extract_cuquantum(archive: &Path, dest: &Path) -> Result<()> {
 
     if filename.ends_with(".tar.xz") {
         extract_tar_xz(archive, dest)
-    } else if filename.ends_with(".zip") {
+    } else if std::path::Path::new(filename)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+    {
         extract_zip(archive, dest)
     } else {
         Err(Error::Archive(format!(
@@ -353,16 +363,16 @@ fn extract_zip(archive: &Path, dest: &Path) -> Result<()> {
         // Move contents from subdirectory to dest
         let subdir = entries[0].path();
         for entry in fs::read_dir(&subdir)?.flatten() {
-            let src = entry.path();
-            let dst = dest.join(entry.file_name());
-            fs::rename(&src, &dst)?;
+            let source = entry.path();
+            let target = dest.join(entry.file_name());
+            fs::rename(&source, &target)?;
         }
     } else {
         // Move all entries to dest
         for entry in entries {
-            let src = entry.path();
-            let dst = dest.join(entry.file_name());
-            fs::rename(&src, &dst)?;
+            let source = entry.path();
+            let target = dest.join(entry.file_name());
+            fs::rename(&source, &target)?;
         }
     }
 
@@ -401,7 +411,6 @@ pub fn uninstall_cuquantum() -> Result<()> {
 /// Check if cuQuantum needs to be installed
 #[must_use]
 pub fn needs_install() -> bool {
-    !is_valid_cuquantum_installation(
-        &get_pecos_cuquantum_dir().unwrap_or_default(),
-    ) && super::find_cuquantum().is_none()
+    !is_valid_cuquantum_installation(&get_pecos_cuquantum_dir().unwrap_or_default())
+        && super::find_cuquantum().is_none()
 }

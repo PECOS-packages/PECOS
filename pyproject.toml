@@ -8,13 +8,20 @@ dependencies = [
     "stim>=1.15.0",
 ]
 
+[project.optional-dependencies]
+cuda = [
+    "quantum-pecos[cuda]",
+]
+
 [tool.uv.workspace]
 members = [
     "python/pecos-rslib",
-    "python/quantum-pecos"
+    "python/pecos-rslib-cuda",
+    "python/quantum-pecos",
 ]
 
 [tool.uv.sources]
+quantum-pecos = { workspace = true }
 # guppylang = { path = "../guppylang" }  # Commented out to use packaged version
 
 [dependency-groups]
@@ -53,7 +60,7 @@ default-groups = ["dev", "test"]
 # Prevent uv from caching pecos-rslib wheels - always use freshly built version
 # This fixes stale code issues when uv sync/run reinstalls cached old wheels
 # See: https://github.com/astral-sh/uv/issues/11390
-reinstall-package = ["pecos-rslib"]
+reinstall-package = ["pecos-rslib", "pecos-rslib-cuda"]
 
 [tool.pytest.ini_options]
 markers = [

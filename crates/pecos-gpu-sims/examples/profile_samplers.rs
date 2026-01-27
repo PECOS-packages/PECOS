@@ -1,11 +1,13 @@
 //! Profile CPU and GPU influence samplers to identify bottlenecks
 //!
-//! Run with: cargo run --example profile_samplers --release -p pecos-gpu-sims
+//! Run with: cargo run --example `profile_samplers` --release -p pecos-gpu-sims
 
 use bytemuck::{Pod, Zeroable};
 use pecos_gpu_sims::GpuInfluenceMapData;
-use pecos_qec::fault_tolerance::noisy_sampler::{FastNoisySampler, NoisySampler, UniformNoiseModel};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
+use pecos_qec::fault_tolerance::noisy_sampler::{
+    FastNoisySampler, NoisySampler, UniformNoiseModel,
+};
 use pecos_quantum::DagCircuit;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -102,7 +104,7 @@ struct CpuProfile {
     locations: usize,
 }
 
-/// Profile the optimized FastNoisySampler
+/// Profile the optimized `FastNoisySampler`
 fn profile_fast_cpu_sampler(
     influence_map: &pecos_qec::fault_tolerance::DagFaultInfluenceMap,
     p_error: f64,
@@ -138,7 +140,12 @@ struct SamplerParams {
 }
 
 /// Profile the GPU sampler with detailed timing for each phase
-fn profile_gpu_sampler(gpu_map: &GpuInfluenceMapData, p_error: f64, seed: u64, num_shots: u32) -> GpuProfile {
+fn profile_gpu_sampler(
+    gpu_map: &GpuInfluenceMapData,
+    p_error: f64,
+    seed: u64,
+    num_shots: u32,
+) -> GpuProfile {
     let mut rng = StdRng::seed_from_u64(seed);
 
     // Phase 1: GPU initialization (done once, amortized)
@@ -238,7 +245,7 @@ fn profile_gpu_sampler(gpu_map: &GpuInfluenceMapData, p_error: f64, seed: u64, n
     let params_start = Instant::now();
     let detector_words = gpu_map.num_detectors.div_ceil(32).max(1);
     let logical_words = gpu_map.num_logicals.div_ceil(32).max(1);
-    let p_threshold = (p_error * u32::MAX as f64) as u32;
+    let p_threshold = (p_error * f64::from(u32::MAX)) as u32;
     let params = SamplerParams {
         num_locations: gpu_map.num_locations,
         num_shots,
@@ -402,8 +409,20 @@ fn profile_gpu_sampler(gpu_map: &GpuInfluenceMapData, p_error: f64, seed: u64, n
     });
 
     let mut encoder = device.create_command_encoder(&Default::default());
-    encoder.copy_buffer_to_buffer(&detector_output_buffer, 0, &detector_staging, 0, detector_output_size.max(4));
-    encoder.copy_buffer_to_buffer(&logical_output_buffer, 0, &logical_staging, 0, logical_output_size.max(4));
+    encoder.copy_buffer_to_buffer(
+        &detector_output_buffer,
+        0,
+        &detector_staging,
+        0,
+        detector_output_size.max(4),
+    );
+    encoder.copy_buffer_to_buffer(
+        &logical_output_buffer,
+        0,
+        &logical_staging,
+        0,
+        logical_output_size.max(4),
+    );
     queue.submit(std::iter::once(encoder.finish()));
 
     // Map and read detector results
@@ -535,26 +554,12 @@ fn main() {
         ) = influence_map.export_csr();
 
         let gpu_map = GpuInfluenceMapData::from_csr(
-            num_loc,
-            num_det,
-            num_log,
-            det_off_x,
-            det_data_x,
-            det_off_y,
-            det_data_y,
-            det_off_z,
-            det_data_z,
-            log_off_x,
-            log_data_x,
-            log_off_y,
-            log_data_y,
-            log_off_z,
-            log_data_z,
+            num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
+            det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
         );
 
         println!(
-            "Surface code d={}, {} rounds, {} locations, {} shots",
-            distance, num_rounds, num_locations, num_shots
+            "Surface code d={distance}, {num_rounds} rounds, {num_locations} locations, {num_shots} shots"
         );
         println!("{:-<70}", "");
 
@@ -584,7 +589,7 @@ fn main() {
             cpu_fast.shots as f64 / cpu_fast.total_ms / 1000.0
         );
         let cpu_speedup = cpu.total_ms / cpu_fast.total_ms;
-        println!("  Speedup vs original:   {:>10.2}x", cpu_speedup);
+        println!("  Speedup vs original:   {cpu_speedup:>10.2}x");
 
         // GPU profile
         let gpu = profile_gpu_sampler(&gpu_map, p_error, seed, num_shots);
@@ -611,37 +616,16 @@ fn main() {
         );
 
         println!("\nComparison:");
-        println!(
-            "  CPU (original):        {:>10.2} ms",
-            cpu.total_ms
-        );
-        println!(
-            "  CPU (fast):            {:>10.2} ms",
-            cpu_fast.total_ms
-        );
-        println!(
-            "  GPU total (with init): {:>10.2} ms",
-            gpu.total_ms()
-        );
-        println!(
-            "  GPU per-call only:     {:>10.2} ms",
-            gpu.per_sample_ms()
-        );
+        println!("  CPU (original):        {:>10.2} ms", cpu.total_ms);
+        println!("  CPU (fast):            {:>10.2} ms", cpu_fast.total_ms);
+        println!("  GPU total (with init): {:>10.2} ms", gpu.total_ms());
+        println!("  GPU per-call only:     {:>10.2} ms", gpu.per_sample_ms());
         let speedup_fast_vs_orig = cpu.total_ms / cpu_fast.total_ms;
         let speedup_gpu_vs_orig = cpu.total_ms / gpu.per_sample_ms();
         let speedup_gpu_vs_fast = cpu_fast.total_ms / gpu.per_sample_ms();
-        println!(
-            "  Fast CPU vs Original:  {:>10.1}x",
-            speedup_fast_vs_orig
-        );
-        println!(
-            "  GPU vs Original CPU:   {:>10.1}x",
-            speedup_gpu_vs_orig
-        );
-        println!(
-            "  GPU vs Fast CPU:       {:>10.1}x",
-            speedup_gpu_vs_fast
-        );
+        println!("  Fast CPU vs Original:  {speedup_fast_vs_orig:>10.1}x");
+        println!("  GPU vs Original CPU:   {speedup_gpu_vs_orig:>10.1}x");
+        println!("  GPU vs Fast CPU:       {speedup_gpu_vs_fast:>10.1}x");
 
         println!("\n");
     }

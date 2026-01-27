@@ -10,10 +10,10 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Profile VecSet operations to identify optimization opportunities.
+//! Profile `VecSet` operations to identify optimization opportunities.
 //!
 //! Run with:
-//!   cargo run --release --example profile_vecset -p pecos-core
+//!   cargo run --release --example `profile_vecset` -p pecos-core
 
 use pecos_core::{Set, SortedVecSet, VecSet};
 use std::hint::black_box;
@@ -26,7 +26,7 @@ fn main() {
 
     // Test different set sizes
     for size in [4, 8, 16, 32, 64] {
-        println!("Set size: {}", size);
+        println!("Set size: {size}");
 
         // Create test sets - VecSet
         let set_a: VecSet<usize> = (0..size).collect();
@@ -72,7 +72,7 @@ fn main() {
         let start = std::time::Instant::now();
         for _ in 0..iterations / 10 {
             let mut sum = 0usize;
-            for &x in set_a.iter() {
+            for &x in &set_a {
                 sum = sum.wrapping_add(x);
             }
             black_box(sum);
@@ -146,7 +146,7 @@ fn main() {
     println!("========================\n");
 
     for size in [8, 16, 32, 64] {
-        println!("Set size: {}", size);
+        println!("Set size: {size}");
 
         // Unsorted
         let unsorted: Vec<usize> = (0..size).map(|i| (i * 7) % size).collect();
@@ -189,7 +189,7 @@ fn main() {
     println!("==========================\n");
 
     for size in [8, 16, 32, 64] {
-        println!("Set size: {}", size);
+        println!("Set size: {size}");
 
         let mut sorted_a: Vec<usize> = (0..size).collect();
         let mut sorted_b: Vec<usize> = (size / 2..size + size / 2).collect();

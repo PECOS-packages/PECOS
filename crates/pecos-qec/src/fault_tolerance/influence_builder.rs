@@ -27,7 +27,7 @@
 
 use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation};
 use super::propagator::types::{DetectorId, MeasurementId};
-use super::propagator::{apply_gate, DagFaultAnalyzer, DagPropagator, Direction, Pauli};
+use super::propagator::{DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply_gate};
 use pecos_core::QubitId;
 use pecos_qsim::{PauliProp, SymbolicSparseStab};
 use smallvec::SmallVec;
@@ -46,6 +46,7 @@ pub struct InfluenceBuilder<'a> {
 
 impl<'a> InfluenceBuilder<'a> {
     /// Create a new influence builder for the given circuit.
+    #[must_use]
     pub fn new(dag: &'a pecos_quantum::DagCircuit) -> Self {
         Self {
             dag,
@@ -57,6 +58,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// Add a logical X operator to track.
     ///
     /// The logical X is defined as X on all specified qubits.
+    #[must_use]
     pub fn with_logical_x(mut self, qubits: Vec<usize>) -> Self {
         self.logical_x_qubits = qubits;
         self
@@ -65,6 +67,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// Add a logical Z operator to track.
     ///
     /// The logical Z is defined as Z on all specified qubits.
+    #[must_use]
     pub fn with_logical_z(mut self, qubits: Vec<usize>) -> Self {
         self.logical_z_qubits = qubits;
         self
@@ -76,6 +79,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// 1. Forward symbolic simulation to get measurement correlations
     /// 2. Detector extraction from deterministic measurements
     /// 3. Backward propagation from detectors and logicals
+    #[must_use]
     pub fn build(&self) -> DagFaultInfluenceMap {
         // Step 1: Run forward symbolic simulation
         let measurement_info = self.run_symbolic_simulation();
@@ -96,7 +100,7 @@ impl<'a> InfluenceBuilder<'a> {
             .iter()
             .filter_map(|&node| self.dag.gate(node))
             .flat_map(|op| op.qubits.iter())
-            .map(|q| q.index())
+            .map(pecos_core::QubitId::index)
             .max()
             .unwrap_or(0);
 
@@ -110,7 +114,7 @@ impl<'a> InfluenceBuilder<'a> {
         // Execute circuit symbolically
         for &node in &self.dag.topological_order() {
             if let Some(op) = self.dag.gate(node) {
-                let qubits: Vec<usize> = op.qubits.iter().map(|q| q.index()).collect();
+                let qubits: Vec<usize> = op.qubits.iter().map(pecos_core::QubitId::index).collect();
 
                 match op.gate_type {
                     pecos_quantum::GateType::H => {
@@ -189,7 +193,7 @@ impl<'a> InfluenceBuilder<'a> {
                 measurement_indices.push(result.index);
 
                 // Add all its dependencies (the XOR terms)
-                for dep_idx in result.outcome.iter() {
+                for dep_idx in &result.outcome {
                     measurement_indices.push(dep_idx);
                 }
 
@@ -225,7 +229,7 @@ impl<'a> InfluenceBuilder<'a> {
         map.measurements = measurements.clone();
 
         // Create DetectorId entries for each detector
-        for (_det_idx, detector) in detectors.iter().enumerate() {
+        for detector in detectors {
             let meas_ids: SmallVec<[MeasurementId; 2]> = detector
                 .measurement_indices
                 .iter()
@@ -239,8 +243,7 @@ impl<'a> InfluenceBuilder<'a> {
                             let qubit = measurements
                                 .iter()
                                 .find(|&&(n, _, _)| n == node)
-                                .map(|&(_, q, _)| q)
-                                .unwrap_or(0);
+                                .map_or(0, |&(_, q, _)| q);
                             MeasurementId {
                                 tick: node,
                                 qubit,
@@ -380,12 +383,11 @@ impl<'a> InfluenceBuilder<'a> {
                     .node_to_meas_idx
                     .iter()
                     .position(|&opt| opt == Some(meas_idx))
+                    && let Some(gate) = propagator.gate(node)
                 {
-                    if let Some(gate) = propagator.gate(node) {
-                        for qubit in &gate.qubits {
-                            // Z-basis measurement means we propagate Z
-                            combined_prop.add_z(qubit.index());
-                        }
+                    for qubit in &gate.qubits {
+                        // Z-basis measurement means we propagate Z
+                        combined_prop.add_z(qubit.index());
                     }
                 }
             }

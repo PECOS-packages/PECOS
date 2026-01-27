@@ -456,7 +456,13 @@ impl ByteMessageBuilder {
     }
 
     /// Add a U gate
-    pub fn add_u(&mut self, theta: Angle64, phi: Angle64, lambda: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn add_u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[usize],
+    ) -> &mut Self {
         let gate = Gate::u(theta, phi, lambda, qubits);
         self.add_gate_command(&gate);
         self

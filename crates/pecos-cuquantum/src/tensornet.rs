@@ -6,7 +6,7 @@
 //! Tensor network methods are used for simulating quantum circuits by
 //! contracting tensor networks representing the circuit.
 
-use crate::error::{check_tensornet_status, Result};
+use crate::error::{Result, check_tensornet_status};
 use pecos_cuquantum_sys::cutensornetHandle_t;
 use std::ptr;
 

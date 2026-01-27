@@ -4,10 +4,10 @@
 //! with the PECOS engine system, allowing them to be used with the `sim()` API.
 
 use crate::{QuestDensityMatrix, QuestStateVec};
-#[cfg(feature = "cuda")]
-use pecos_core::{Angle64, QubitId};
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
+#[cfg(feature = "cuda")]
+use pecos_core::{Angle64, QubitId};
 use pecos_engines::{
     Engine, IntoQuantumEngineBuilder, QuantumEngine, QuantumEngineBuilder,
     byte_message::{ByteMessage, GateType},
@@ -883,11 +883,7 @@ impl Engine for QuestCudaStateVecEngine {
                         for q in &cmd.qubits {
                             let qubit = **q as i32;
                             unsafe {
-                                (self.backend.apply_rotation_x)(
-                                    self.qureg_handle,
-                                    qubit,
-                                    theta,
-                                );
+                                (self.backend.apply_rotation_x)(self.qureg_handle, qubit, theta);
                             }
                         }
                     }
@@ -898,11 +894,7 @@ impl Engine for QuestCudaStateVecEngine {
                         for q in &cmd.qubits {
                             let qubit = **q as i32;
                             unsafe {
-                                (self.backend.apply_rotation_y)(
-                                    self.qureg_handle,
-                                    qubit,
-                                    theta,
-                                );
+                                (self.backend.apply_rotation_y)(self.qureg_handle, qubit, theta);
                             }
                         }
                     }
@@ -913,11 +905,7 @@ impl Engine for QuestCudaStateVecEngine {
                         for q in &cmd.qubits {
                             let qubit = **q as i32;
                             unsafe {
-                                (self.backend.apply_rotation_z)(
-                                    self.qureg_handle,
-                                    qubit,
-                                    theta,
-                                );
+                                (self.backend.apply_rotation_z)(self.qureg_handle, qubit, theta);
                             }
                         }
                     }

@@ -124,8 +124,10 @@ impl SimulatorInterface for QulacsSimulator {
             ));
         }
 
-        self.simulator
-            .rz(Angle64::from_radians(theta), &[QubitId(self.convert_qubit(qubit))]);
+        self.simulator.rz(
+            Angle64::from_radians(theta),
+            &[QubitId(self.convert_qubit(qubit))],
+        );
         Ok(())
     }
 

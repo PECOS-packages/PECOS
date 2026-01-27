@@ -71,7 +71,7 @@ pub enum RustCommands {
 
     /// Run benchmarks with native CPU optimizations (AVX2, etc.)
     Bench {
-        /// Benchmark filter pattern (e.g., "SoA Comparison", "DOD")
+        /// Benchmark filter pattern (e.g., "`SoA` Comparison", "DOD")
         pattern: Option<String>,
     },
 }
@@ -176,7 +176,7 @@ pub enum CuQuantumCommands {
     /// Download and install cuQuantum SDK to ~/.pecos/cuquantum/
     ///
     /// Requires accepting NVIDIA's license terms.
-    /// See: https://docs.nvidia.com/cuda/cuquantum/latest/license.html
+    /// See: <https://docs.nvidia.com/cuda/cuquantum/latest/license.html>
     Install {
         /// Force reinstall even if already present
         #[arg(long)]
@@ -212,7 +212,7 @@ pub enum CuQuantumCommands {
     /// Configure .cargo/config.toml with cuQuantum path
     ///
     /// Automatically detects cuQuantum installation and updates
-    /// .cargo/config.toml with CUQUANTUM_ROOT.
+    /// .cargo/config.toml with `CUQUANTUM_ROOT`.
     Configure,
 }
 

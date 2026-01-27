@@ -2,7 +2,9 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use crate::cuquantum::{find_cuquantum, get_lib_dir, get_pecos_cuquantum_dir, is_valid_cuquantum_installation};
+use crate::cuquantum::{
+    find_cuquantum, get_lib_dir, get_pecos_cuquantum_dir, is_valid_cuquantum_installation,
+};
 use crate::errors::{Error, Result};
 use crate::llvm::find_cargo_project_root;
 use std::fs;
@@ -123,15 +125,15 @@ pub fn validate_cuquantum_config() -> ConfigValidation {
 /// Returns an error if no suitable cuQuantum installation could be found
 pub fn auto_configure_cuquantum(project_root: Option<PathBuf>) -> Result<PathBuf> {
     // Priority 1: Check ~/.pecos/cuquantum for PECOS-managed cuQuantum
-    if let Some(pecos_cuquantum) = get_pecos_cuquantum_dir() {
-        if is_valid_cuquantum_installation(&pecos_cuquantum) {
-            let project_root = project_root
-                .or_else(find_cargo_project_root)
-                .ok_or_else(|| Error::Config("Could not find Cargo project root".into()))?;
+    if let Some(pecos_cuquantum) = get_pecos_cuquantum_dir()
+        && is_valid_cuquantum_installation(&pecos_cuquantum)
+    {
+        let project_root = project_root
+            .or_else(find_cargo_project_root)
+            .ok_or_else(|| Error::Config("Could not find Cargo project root".into()))?;
 
-            write_cargo_config(&project_root, &pecos_cuquantum, true)?;
-            return Ok(pecos_cuquantum);
-        }
+        write_cargo_config(&project_root, &pecos_cuquantum, true)?;
+        return Ok(pecos_cuquantum);
     }
 
     // Priority 2: Check CUQUANTUM_ROOT env var
@@ -157,7 +159,9 @@ pub fn auto_configure_cuquantum(project_root: Option<PathBuf>) -> Result<PathBuf
         return Ok(detected_path);
     }
 
-    Err(Error::CuQuantum("No suitable cuQuantum installation found".into()))
+    Err(Error::CuQuantum(
+        "No suitable cuQuantum installation found".into(),
+    ))
 }
 
 /// Write or update `.cargo/config.toml` with cuQuantum configuration
@@ -294,7 +298,7 @@ pub fn write_cargo_config(project_root: &Path, cuquantum_path: &Path, force: boo
     Ok(())
 }
 
-/// Get the library path string for cuQuantum (for LD_LIBRARY_PATH hints)
+/// Get the library path string for cuQuantum (for `LD_LIBRARY_PATH` hints)
 #[must_use]
 pub fn get_library_path_hint(cuquantum_path: &Path) -> Option<String> {
     let lib_dir = get_lib_dir(cuquantum_path)?;
@@ -308,13 +312,6 @@ mod tests {
     #[test]
     fn test_validate_returns_struct() {
         // This test just verifies the function runs without panic
-        let validation = validate_cuquantum_config();
-        // Basic sanity check
-        if validation.configured_path.is_some() {
-            assert!(
-                validation.path_exists || !validation.path_exists,
-                "path_exists should be boolean"
-            );
-        }
+        let _validation = validate_cuquantum_config();
     }
 }

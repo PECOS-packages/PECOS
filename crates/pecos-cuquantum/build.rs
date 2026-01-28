@@ -5,18 +5,16 @@
 
 fn main() {
     // cuQuantum
-    if let Some(cuquantum_path) = pecos_build::cuquantum::find_cuquantum() {
-        if let Some(lib_dir) = pecos_build::cuquantum::get_lib_dir(&cuquantum_path) {
+    if let Some(cuquantum_path) = pecos_build::cuquantum::find_cuquantum()
+        && let Some(lib_dir) = pecos_build::cuquantum::get_lib_dir(&cuquantum_path) {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
         }
-    }
 
     // cuTensor (transitive dependency of cuTensorNet)
-    if let Ok(cutensor_path) = pecos_build::cutensor::ensure_cutensor() {
-        if let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
+    if let Ok(cutensor_path) = pecos_build::cutensor::ensure_cutensor()
+        && let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
         }
-    }
 
     // CUDA runtime
     if let Some(cuda_path) = pecos_build::cuda::find_cuda() {

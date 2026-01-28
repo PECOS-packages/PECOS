@@ -3249,7 +3249,7 @@ dependencies = [
 
 [[package]]
 name = "pecos-cuquantum-sys"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bindgen",
  "pecos-build",

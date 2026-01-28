@@ -4,9 +4,9 @@
 //! shared libraries can be found at runtime without requiring
 //! `LD_LIBRARY_PATH`.
 //!
-//! Uses `--disable-new-dtags` to emit DT_RPATH instead of DT_RUNPATH.
+//! Uses `--disable-new-dtags` to emit `DT_RPATH` instead of `DT_RUNPATH`.
 //! RPATH is inherited by transitive shared library dependencies, which is
-//! necessary because libcutensornet.so loads libcutensor.so at runtime
+//! necessary because `libcutensornet.so` loads `libcutensor.so` at runtime
 //! from a different directory.
 
 fn main() {
@@ -14,17 +14,17 @@ fn main() {
     println!("cargo:rustc-link-arg=-Wl,--disable-new-dtags");
 
     // cuQuantum
-    if let Some(cuquantum_path) = pecos_build::cuquantum::find_cuquantum() {
-        if let Some(lib_dir) = pecos_build::cuquantum::get_lib_dir(&cuquantum_path) {
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
-        }
+    if let Some(cuquantum_path) = pecos_build::cuquantum::find_cuquantum()
+        && let Some(lib_dir) = pecos_build::cuquantum::get_lib_dir(&cuquantum_path)
+    {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
     }
 
     // cuTensor (transitive dependency of cuTensorNet)
-    if let Ok(cutensor_path) = pecos_build::cutensor::ensure_cutensor() {
-        if let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
-        }
+    if let Ok(cutensor_path) = pecos_build::cutensor::ensure_cutensor()
+        && let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path)
+    {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
     }
 
     // CUDA runtime

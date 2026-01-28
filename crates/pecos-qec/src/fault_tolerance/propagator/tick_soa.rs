@@ -50,6 +50,7 @@ impl AnalyzerWorkBuffers {
     }
 
     /// Resizes buffers if needed.
+    #[allow(dead_code)]
     pub fn ensure_capacity(&mut self, max_qubit: usize, max_gate: usize) {
         if self.active_qubits.len() <= max_qubit {
             self.active_qubits.resize(max_qubit + 1, false);
@@ -157,7 +158,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
 
         // Extract all measurements from the circuit
         let measurements = self.extract_measurements();
-        map.measurements = measurements.clone();
+        map.measurements.clone_from(&measurements);
 
         // Create simple detectors (one per measurement)
         for m in &measurements {
@@ -409,20 +410,13 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 if let Some(qid) = qubits.first() {
                     let q = qid.index();
                     let has_x = prop.contains_x(q);
-                    let has_z = prop.contains_z(q);
 
-                    if has_x && !has_z {
-                        prop.add_z(q);
-                    } else if has_x && has_z {
+                    if has_x {
                         prop.add_z(q);
                     }
 
                     self.update_active_qubit(q, prop, buffers);
                 }
-            }
-
-            GateType::X | GateType::Y | GateType::Z => {
-                // Pauli gates are self-adjoint, no change
             }
 
             GateType::Prep | GateType::QAlloc => {
@@ -441,10 +435,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 }
             }
 
-            GateType::Measure | GateType::MeasureFree => {
-                // Already handled as start point
-            }
-
+            // Pauli gates (X,Y,Z), Measure, MeasureFree, and other gates - no change
             _ => {}
         }
     }
@@ -692,5 +683,4 @@ mod tests {
 
         assert_eq!(map.logicals.len(), 1);
     }
-
 }

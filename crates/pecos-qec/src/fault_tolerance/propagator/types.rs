@@ -276,6 +276,7 @@ impl DetectorId {
     }
 
     /// Adds a name to the detector.
+    #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self

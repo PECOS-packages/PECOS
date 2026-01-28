@@ -59,7 +59,6 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
     num_x_stab = len(geom.x_stabilizers)
     num_z_stab = len(geom.z_stabilizers)
     dx, dz = geom.dx, geom.dz
-    d = patch.distance
 
     lines = [
         f'"""Surface code patch (dx={dx}, dz={dz}) implementation in Guppy.',
@@ -138,15 +137,12 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
         ],
     )
 
-    for stab in geom.x_stabilizers:
-        lines.append(f"    ax{stab.index} = qubit()")
-    for stab in geom.z_stabilizers:
-        lines.append(f"    az{stab.index} = qubit()")
+    lines.extend(f"    ax{stab.index} = qubit()" for stab in geom.x_stabilizers)
+    lines.extend(f"    az{stab.index} = qubit()" for stab in geom.z_stabilizers)
 
     lines.append("")
     lines.append("    # Hadamard on X ancillas")
-    for stab in geom.x_stabilizers:
-        lines.append(f"    h(ax{stab.index})")
+    lines.extend(f"    h(ax{stab.index})" for stab in geom.x_stabilizers)
 
     # Emit 4 rounds of CX gates
     for rnd_idx, rnd_gates in enumerate(rounds):
@@ -160,16 +156,17 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
 
     lines.append("")
     lines.append("    # Hadamard on X ancillas")
-    for stab in geom.x_stabilizers:
-        lines.append(f"    h(ax{stab.index})")
+    lines.extend(f"    h(ax{stab.index})" for stab in geom.x_stabilizers)
 
     # Measure ancillas (destructive)
     lines.append("")
     lines.append("    # Measure ancillas")
-    for stab in geom.x_stabilizers:
-        lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
-    for stab in geom.z_stabilizers:
-        lines.append(f"    sz{stab.index} = measure(az{stab.index})")
+    lines.extend(
+        f"    sx{stab.index} = measure(ax{stab.index})" for stab in geom.x_stabilizers
+    )
+    lines.extend(
+        f"    sz{stab.index} = measure(az{stab.index})" for stab in geom.z_stabilizers
+    )
 
     x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
     z_calls = ", ".join(f"sz{s.index}" for s in geom.z_stabilizers)
@@ -255,7 +252,7 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
             "    @guppy",
             "    def memory_z() -> None:",
             f'        """Z-basis memory experiment for dx={dx}, dz={dz}."""',
-            f"        surf = prep_z_basis()",
+            "        surf = prep_z_basis()",
             "",
             "        for _t in range(comptime(num_rounds)):",
             "            syn = syndrome_extraction(surf)",
@@ -275,7 +272,7 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
             "    @guppy",
             "    def memory_x() -> None:",
             f'        """X-basis memory experiment for dx={dx}, dz={dz}."""',
-            f"        surf = prep_x_basis()",
+            "        surf = prep_x_basis()",
             "",
             "        for _t in range(comptime(num_rounds)):",
             "            syn = syndrome_extraction(surf)",

@@ -131,6 +131,7 @@ pub trait IndexSet: Clone + Default + Debug {
     /// set for implementations that have capacity (like [`BitSet`](crate::BitSet)).
     ///
     /// The default implementation uses `std::mem::take` which does not preserve capacity.
+    #[must_use]
     fn take_clearing(&mut self) -> Self {
         std::mem::take(self)
     }

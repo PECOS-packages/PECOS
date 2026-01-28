@@ -387,12 +387,12 @@ impl CuFrameSimulator {
         // Parse measurement results
         // m_table is measurement-major: m_table[meas_idx * stride + shot_byte]
         let mut measurements = vec![vec![false; num_measurements]; self.num_shots];
-        for shot in 0..self.num_shots {
-            for meas in 0..num_measurements {
+        for (shot, shot_measurements) in measurements.iter_mut().enumerate() {
+            for (meas, outcome) in shot_measurements.iter_mut().enumerate() {
                 let byte_idx = meas * self.table_stride + shot / 8;
                 let bit_idx = shot % 8;
                 let bit = (m_table_host[byte_idx] >> bit_idx) & 1;
-                measurements[shot][meas] = bit != 0;
+                *outcome = bit != 0;
             }
         }
 

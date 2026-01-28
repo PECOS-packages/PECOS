@@ -149,6 +149,7 @@ impl<E: Element> VecSet<E> {
     /// Unlike `std::mem::take`, this preserves the allocated capacity of the source
     /// set, which is important for performance when the set will be reused.
     #[inline]
+    #[must_use]
     pub fn take_clearing(&mut self) -> Self {
         // Drain elements into a new set, leaving self empty with capacity
         let taken_elements: SetBuffer<E> = self.elements.drain(..).collect();

@@ -1060,5 +1060,4 @@ mod tests {
         // Should have 2 measurements (2 rounds)
         assert_eq!(map.detectors.len(), 2);
     }
-
 }

@@ -4205,6 +4205,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn test_new_state() {
         let mut opt: StateVecSoA = StateVecSoA::new(3);
         assert_eq!(opt.num_qubits(), 3);
@@ -4413,6 +4414,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn test_reset() {
         let mut opt: StateVecSoA = StateVecSoA::new(3);
         opt.h(&[QubitId(0), QubitId(1), QubitId(2)]);

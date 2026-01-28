@@ -257,8 +257,8 @@ fn bench_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
                 b.iter(|| {
                     let mut v: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); size];
                     // Touch every element
-                    for i in 0..size {
-                        v[i] = Complex64::new(i as f64, 0.0);
+                    for (i, vi) in v.iter_mut().enumerate() {
+                        *vi = Complex64::new(i as f64, 0.0);
                     }
                     black_box(v);
                 });
@@ -274,8 +274,8 @@ fn bench_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
                 let mut buffer: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); size];
                 b.iter(|| {
                     // Just clear and iterate (no allocation)
-                    for i in 0..size {
-                        buffer[i] = Complex64::new(i as f64, 0.0);
+                    for (i, bi) in buffer.iter_mut().enumerate() {
+                        *bi = Complex64::new(i as f64, 0.0);
                     }
                     black_box(&buffer);
                 });

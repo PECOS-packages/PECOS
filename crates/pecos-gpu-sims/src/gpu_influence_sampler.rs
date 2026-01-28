@@ -186,8 +186,10 @@ impl GpuInfluenceSampler {
         }))
         .map_err(|_| "No GPU adapter found")?;
 
-        let mut limits = wgpu::Limits::default();
-        limits.max_storage_buffers_per_shader_stage = 16;
+        let limits = wgpu::Limits {
+            max_storage_buffers_per_shader_stage: 16,
+            ..wgpu::Limits::default()
+        };
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("InfluenceSampler Device"),
@@ -427,7 +429,7 @@ impl GpuInfluenceSampler {
             layout: Some(&pipeline_layout),
             module: &shader_module,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -634,7 +636,9 @@ impl GpuInfluenceSampler {
             mapped_at_creation: false,
         });
 
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, total_size);
         self.queue.submit(std::iter::once(encoder.finish()));
 

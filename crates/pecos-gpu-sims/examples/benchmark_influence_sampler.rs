@@ -57,8 +57,8 @@ fn create_test_influence_map(num_locations: usize, num_detectors: usize) -> GpuI
             if num_locations > 1 {
                 v[2] = 2;
             }
-            for i in 3..=num_locations {
-                v[i] = 2;
+            for vi in &mut v[3..=num_locations] {
+                *vi = 2;
             }
             v
         },
@@ -148,8 +148,8 @@ impl CpuSampler {
                     ),
                 };
 
-                for i in det_start..det_end {
-                    let det_idx = det_data[i] as usize;
+                for &det_val in &det_data[det_start..det_end] {
+                    let det_idx = det_val as usize;
                     if det_idx < detector_flips.len() {
                         detector_flips[det_idx] ^= 1;
                     }

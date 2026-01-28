@@ -158,8 +158,10 @@ fn profile_gpu_sampler(
     }))
     .expect("No GPU adapter found");
 
-    let mut limits = wgpu::Limits::default();
-    limits.max_storage_buffers_per_shader_stage = 16;
+    let limits = wgpu::Limits {
+        max_storage_buffers_per_shader_stage: 16,
+        ..wgpu::Limits::default()
+    };
 
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("Profiling Device"),
@@ -236,7 +238,7 @@ fn profile_gpu_sampler(
         layout: Some(&pipeline_layout),
         module: &shader_module,
         entry_point: Some("main"),
-        compilation_options: Default::default(),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
         cache: None,
     });
     let pipeline_time = pipeline_start.elapsed();
@@ -408,7 +410,7 @@ fn profile_gpu_sampler(
         mapped_at_creation: false,
     });
 
-    let mut encoder = device.create_command_encoder(&Default::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     encoder.copy_buffer_to_buffer(
         &detector_output_buffer,
         0,
@@ -481,6 +483,7 @@ struct GpuProfile {
     bind_group_ms: f64,
     dispatch_ms: f64,
     read_results_ms: f64,
+    #[allow(dead_code)]
     shots: usize,
     detector_output_bytes: usize,
     logical_output_bytes: usize,

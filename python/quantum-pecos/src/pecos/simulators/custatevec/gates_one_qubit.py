@@ -17,9 +17,8 @@ including Pauli gates, rotation gates, and other fundamental single-qubit operat
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import cmath
+from typing import TYPE_CHECKING
 
 import cupy as cp
 

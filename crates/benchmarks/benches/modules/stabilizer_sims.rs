@@ -95,7 +95,7 @@ fn bench_stabilizer_circuit_execution<M: Measurement>(c: &mut Criterion<M>) {
                     |b, ()| {
                         b.iter(|| {
                             let result = sim.run_circuit(&circuit, 42);
-                            black_box(result);
+                            let _ = black_box(result);
                         });
                     },
                 );
@@ -151,7 +151,7 @@ fn bench_stabilizer_scaling<M: Measurement>(c: &mut Criterion<M>) {
                     |b, ()| {
                         b.iter(|| {
                             let result = sim.run_circuit(&circuit, 42);
-                            black_box(result);
+                            let _ = black_box(result);
                         });
                     },
                 );

@@ -35,13 +35,16 @@ def init_zero(
     **_params: SimulatorGateParams,
 ) -> None:
     """Initialize qubit to |0> state."""
-    state.backend.reset()
+    result = meas_z(state, qubit)
+    if result:
+        X(state, qubit)
 
 
 def init_one(state: CudaStabilizer, qubit: int, **_params: SimulatorGateParams) -> None:
     """Initialize qubit to |1> state."""
-    state.backend.reset()
-    state.backend.x([qubit])
+    result = meas_z(state, qubit)
+    if not result:
+        X(state, qubit)
 
 
 # =============================================================================

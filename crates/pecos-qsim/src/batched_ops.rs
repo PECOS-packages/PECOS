@@ -376,6 +376,7 @@ impl<S: IndexSet, R: RngCore + SeedableRng + Rng + Debug> RawOps for SparseStabG
 /// buffer.flush(&mut sim);
 /// ```
 #[derive(Debug, Default)]
+#[allow(clippy::struct_field_names)]
 pub struct CommandBuffer {
     /// Accumulated H gate qubits
     h_qubits: Vec<usize>,
@@ -610,5 +611,4 @@ mod tests {
 
         assert_eq!(format!("{:?}", sim1.stabs), format!("{:?}", sim2.stabs));
     }
-
 }

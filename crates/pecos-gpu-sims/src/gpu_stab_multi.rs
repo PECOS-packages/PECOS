@@ -44,7 +44,8 @@ pub struct GpuStabMulti<R: RngCore + SeedableRng = StdRng> {
     main_bind_group: wgpu::BindGroup,
     gate_pipeline: wgpu::ComputePipeline,
 
-    // GPU-side measurement buffers and pipelines
+    // GPU-side measurement buffers and pipelines (kept alive for GPU bind group)
+    #[allow(dead_code)]
     meas_data_buffer: wgpu::Buffer,
     meas_random_buffer: wgpu::Buffer,
     meas_results_buffer: wgpu::Buffer,
@@ -1139,7 +1140,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStabMulti<R> {
         let meas_base_idx = self.measurement_count;
 
         for (meas_idx, &qubit) in qubits.iter().enumerate() {
-            for shot_id in 0..batch_shots {
+            for (shot_id, shot_results) in results.iter_mut().enumerate() {
                 let shot_tableau_base = shot_id * single_tableau_size;
                 let shot_sign_base = shot_id * gen_words;
 
@@ -1214,7 +1215,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStabMulti<R> {
                     outcome
                 };
 
-                results[shot_id][meas_idx] = final_outcome;
+                shot_results[meas_idx] = final_outcome;
             }
         }
 
@@ -2120,9 +2121,8 @@ fn perform_non_deterministic_measurement(
         }
     }
 
-    let chosen_gen = match chosen_gen {
-        Some(g) => g,
-        None => return, // Should not happen if measurement is truly non-deterministic
+    let Some(chosen_gen) = chosen_gen else {
+        return; // Should not happen if measurement is truly non-deterministic
     };
 
     // Step 2: XOR all other anticommuting stabilizers with the chosen one

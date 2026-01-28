@@ -131,7 +131,12 @@ def plot_patch(
 def _annotate_cnot_order(ax: plt.Axes, stabilizers: list, d: int) -> None:
     """Add numbered labels showing CNOT round (1-4) for each data qubit in each stabilizer."""
     for stab in stabilizers:
-        schedule = get_stab_schedule(stab.stab_type, stab.data_qubits, stab.is_boundary, d)
+        schedule = get_stab_schedule(
+            stab.stab_type,
+            stab.data_qubits,
+            stab.is_boundary,
+            d,
+        )
 
         # Compute centroid of the stabilizer
         positions = [rotated_id_to_position(q, d) for q in stab.data_qubits]
@@ -153,7 +158,12 @@ def _annotate_cnot_order(ax: plt.Axes, stabilizers: list, d: int) -> None:
                 ha="center",
                 va="center",
                 zorder=5,
-                bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "alpha": 0.7, "edgecolor": "none"},
+                bbox={
+                    "boxstyle": "round,pad=0.1",
+                    "facecolor": "white",
+                    "alpha": 0.7,
+                    "edgecolor": "none",
+                },
             )
 
 

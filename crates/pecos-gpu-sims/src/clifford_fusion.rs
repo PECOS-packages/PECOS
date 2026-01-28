@@ -30,6 +30,7 @@ struct GateSequence {
 }
 
 impl GateSequence {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self { gates: Vec::new() }
     }
@@ -64,6 +65,7 @@ impl GateSequence {
 /// - Some(None) if they cancel to identity
 /// - Some(Some(gate)) if they simplify to a single gate
 /// - None if they can't be simplified
+#[allow(clippy::option_option)]
 fn simplify_pair(first: u32, second: u32) -> Option<Option<u32>> {
     match (first, second) {
         // Self-inverse gates: H*H = I, X*X = I, Y*Y = I, Z*Z = I
@@ -72,7 +74,10 @@ fn simplify_pair(first: u32, second: u32) -> Option<Option<u32>> {
         }
 
         // S gates: S*S = Z, Sdg*Sdg = Z, S*Sdg = I, Sdg*S = I
-        (GATE_S, GATE_S) | (GATE_SDG, GATE_SDG) => Some(Some(GATE_Z)),
+        // X and Y: X*Y = Z, Y*X = Z (up to global phase)
+        (GATE_S, GATE_S) | (GATE_SDG, GATE_SDG) | (GATE_X, GATE_Y) | (GATE_Y, GATE_X) => {
+            Some(Some(GATE_Z))
+        }
         (GATE_S, GATE_SDG) | (GATE_SDG, GATE_S) => Some(None),
 
         // S and Z: S*Z = Sdg, Sdg*Z = S, Z*S = Sdg, Z*Sdg = S
@@ -82,9 +87,6 @@ fn simplify_pair(first: u32, second: u32) -> Option<Option<u32>> {
         // X and Z: X*Z = Y (up to phase), Z*X = Y
         // Actually XZ = -iY, ZX = iY - for Clifford simulation phases don't matter
         (GATE_X, GATE_Z) | (GATE_Z, GATE_X) => Some(Some(GATE_Y)),
-
-        // X and Y: X*Y = Z, Y*X = Z
-        (GATE_X, GATE_Y) | (GATE_Y, GATE_X) => Some(Some(GATE_Z)),
 
         // Y and Z: Y*Z = X, Z*Y = X
         (GATE_Y, GATE_Z) | (GATE_Z, GATE_Y) => Some(Some(GATE_X)),

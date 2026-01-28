@@ -41,9 +41,6 @@ use pecos_core::{QubitId, RngManageable};
 use pecos_rng::rng_ext::RngProbabilityExt;
 use pecos_rng::{PecosRng, SeedableRng};
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
 /// Parallel stabilizer simulator using row-based threading.
 #[derive(Clone)]
 pub struct GpuStabParallel {
@@ -512,10 +509,9 @@ impl GpuStabParallel {
 
             if destab_has_x == 1 {
                 // Count overlap of stab_row_z with cumulative_x (contributes phase)
-                for w in 0..self.words_per_row {
-                    num_minuses +=
-                        (self.stab_row_z[row_base + w] & cumulative_x[w]).count_ones() as usize;
-                    cumulative_x[w] ^= self.stab_row_x[row_base + w];
+                for (w, cx) in cumulative_x.iter_mut().enumerate() {
+                    num_minuses += (self.stab_row_z[row_base + w] & *cx).count_ones() as usize;
+                    *cx ^= self.stab_row_x[row_base + w];
                 }
             }
         }

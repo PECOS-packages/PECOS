@@ -27,3 +27,5 @@ nd = "nd"
 delocate = "delocate"
 # Short for "numerator" in fraction/ratio macros
 numer = "numer"
+# Quantum gate sequence: S gate, H gate, S gate
+SHS = "SHS"

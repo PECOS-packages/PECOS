@@ -17,9 +17,8 @@ including CNOT gates, controlled gates, and other entangling operations using CU
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import cmath
+from typing import TYPE_CHECKING
 
 import cupy as cp
 

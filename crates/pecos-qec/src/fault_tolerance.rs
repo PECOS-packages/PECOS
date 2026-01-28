@@ -338,6 +338,7 @@ impl FaultConfiguration {
 
 /// Configuration for fault tolerance checking.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct FaultCheckConfig {
     /// Maximum weight of faults to check.
     pub max_weight: usize,

@@ -104,7 +104,7 @@ impl<'a> TickFaultAnalyzer<'a> {
 
         // Extract all measurements from the circuit
         let measurements = self.extract_measurements();
-        map.measurements = measurements.clone();
+        map.measurements.clone_from(&measurements);
 
         // Create simple detectors (one per measurement for now)
         // TODO: Support comparison detectors for multi-round circuits
@@ -570,12 +570,6 @@ impl<'a> TickFaultAnalyzer<'a> {
                 }
             }
 
-            GateType::X | GateType::Y | GateType::Z => {
-                // Pauli gates are self-adjoint, and Paulis commute with themselves
-                // X commutes with X, anticommutes with Y, Z (but we're tracking stabilizer)
-                // For stabilizer tracking, Pauli gates don't change the Pauli frame
-            }
-
             GateType::Prep | GateType::QAlloc => {
                 // Preparation resets the qubit - backward propagation stops here
                 // Any Pauli on a prepared qubit doesn't propagate further back
@@ -591,13 +585,8 @@ impl<'a> TickFaultAnalyzer<'a> {
                 }
             }
 
-            GateType::Measure | GateType::MeasureFree => {
-                // Measurement - we've already started from here, nothing to do
-            }
-
-            _ => {
-                // Other gates - treat as identity for now
-            }
+            // Pauli gates (X,Y,Z), Measure, MeasureFree, and other gates - no Pauli frame change
+            _ => {}
         }
     }
 

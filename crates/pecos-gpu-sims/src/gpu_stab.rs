@@ -159,6 +159,7 @@ const GATE_QUEUE_BUFFER_SIZE: usize = 256 * 1024; // 256K gates
 ///
 /// When subgroup operations are available (most modern GPUs), uses optimized
 /// subgroup-based measurement reduction for improved performance.
+#[allow(clippy::struct_excessive_bools)]
 pub struct GpuStab<R: RngCore + SeedableRng = rand::rngs::StdRng> {
     num_qubits: u32,
     gen_words: u32,
@@ -2604,8 +2605,6 @@ mod tests {
     /// Test simpler circuits to find where divergence occurs
     #[test]
     fn test_gpu_vs_cpu_simpler_debug() {
-        use pecos_qsim::stabilizer_test_utils::ForcedMeasurement;
-
         let Some(mut gpu) = gpu_sim(2, 42) else {
             return;
         };
@@ -4233,5 +4232,4 @@ mod tests {
             "Qubits 2,3 (Bell state) should be correlated"
         );
     }
-
 }

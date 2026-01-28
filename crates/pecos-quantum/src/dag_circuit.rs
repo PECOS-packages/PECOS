@@ -81,7 +81,6 @@ impl DagTraversalIndex {
     }
 
     /// Returns the topological order reversed (for backward traversal).
-    #[must_use]
     pub fn topo_order_reversed(&self) -> impl Iterator<Item = usize> + '_ {
         self.topo_order.iter().copied().rev()
     }
@@ -102,7 +101,6 @@ impl DagTraversalIndex {
     }
 
     /// Returns gates on a qubit in reverse topological order (for backward traversal).
-    #[must_use]
     pub fn qubit_gates_reversed(&self, qubit: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
         self.qubit_gates[qubit].iter().copied().rev()
     }

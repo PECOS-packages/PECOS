@@ -708,6 +708,7 @@ impl SoARecorderBuilder {
 /// Unlike a sorting approach, this uses per-location buckets (`SmallVecs`) to collect
 /// detector indices, then flattens to CSR format. This is O(n) in the number of
 /// influences, avoiding the O(n log n) sort overhead.
+#[allow(clippy::struct_field_names)]
 pub struct BucketRecorder {
     /// Per-location detector indices for X faults.
     x_buckets: Vec<SmallVec<[u32; 4]>>,
@@ -914,7 +915,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
         // Extract measurements and create detectors
         let measurements = self.extract_measurements();
-        map.measurements = measurements.clone();
+        map.measurements.clone_from(&measurements);
 
         for &(node, qubit, basis) in &measurements {
             let measurement_id = MeasurementId {
@@ -1272,8 +1273,8 @@ mod tests {
         for a in 0..ancilla_qubits {
             dag.pz(data_qubits + a);
         }
-        for a in 0..ancilla_qubits {
-            for &d in &ancilla_neighbors[a] {
+        for (a, neighbors) in ancilla_neighbors.iter().enumerate() {
+            for &d in neighbors {
                 dag.cx(d, data_qubits + a);
             }
         }

@@ -418,9 +418,9 @@ impl<R: RngCore + SeedableRng + Rng + Debug> DenseStabColOnly<R> {
         // Get mask of all destabilizers with X on the measured qubit
         let mut destab_mask = vec![0u64; words_per_col];
         let mut has_destab = false;
-        for w in 0..words_per_col {
-            destab_mask[w] = self.destab_col_x[col_base + w];
-            if destab_mask[w] != 0 {
+        for (w, dm) in destab_mask.iter_mut().enumerate() {
+            *dm = self.destab_col_x[col_base + w];
+            if *dm != 0 {
                 has_destab = true;
             }
         }
@@ -436,15 +436,15 @@ impl<R: RngCore + SeedableRng + Rng + Debug> DenseStabColOnly<R> {
         // Count minus signs from destabilizers
         let mut num_minuses: usize = 0;
         let mut num_is: usize = 0;
-        for w in 0..words_per_col {
-            num_minuses += (destab_mask[w] & self.stab_signs_minus[w]).count_ones() as usize;
-            num_is += (destab_mask[w] & self.stab_signs_i[w]).count_ones() as usize;
+        for (w, &dm) in destab_mask.iter().enumerate() {
+            num_minuses += (dm & self.stab_signs_minus[w]).count_ones() as usize;
+            num_is += (dm & self.stab_signs_i[w]).count_ones() as usize;
         }
 
         // Collect destabilizer IDs with X on this qubit
         let mut destab_ids = Vec::new();
-        for w in 0..words_per_col {
-            let mut mask = destab_mask[w];
+        for (w, &dm) in destab_mask.iter().enumerate() {
+            let mut mask = dm;
             while mask != 0 {
                 let bit = mask.trailing_zeros() as usize;
                 destab_ids.push(w * 64 + bit);
@@ -468,21 +468,21 @@ impl<R: RngCore + SeedableRng + Rng + Debug> DenseStabColOnly<R> {
 
             // Count overlap: positions where this stabilizer has Z and cumulative has X
             // This gives phase contribution from X*Z = iY (previous X, current Z)
-            for q in 0..n {
+            for (q, cx) in cumulative_x.iter().enumerate() {
                 let q_base = q * words_per_col;
                 // Check if this stabilizer has Z on qubit q
                 let has_z = self.stab_col_z[q_base + stab_word] & stab_bit != 0;
-                if has_z && cumulative_x[q] {
+                if has_z && *cx {
                     num_minuses += 1; // XZ = iY contributes +i phase
                 }
             }
 
             // XOR this stabilizer's X pattern into cumulative X
-            for q in 0..n {
+            for (q, cx) in cumulative_x.iter_mut().enumerate() {
                 let q_base = q * words_per_col;
                 let has_x = self.stab_col_x[q_base + stab_word] & stab_bit != 0;
                 if has_x {
-                    cumulative_x[q] = !cumulative_x[q];
+                    *cx = !*cx;
                 }
             }
         }
@@ -1033,14 +1033,13 @@ impl<R: RngCore + SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
             let row_base = g * words_per_row;
 
             // Count overlap: positions where this stabilizer has Z and cumulative has X
-            for w in 0..words_per_row {
-                num_minuses +=
-                    (self.stab_row_z[row_base + w] & cumulative_x[w]).count_ones() as usize;
+            for (w, cx) in cumulative_x.iter().enumerate() {
+                num_minuses += (self.stab_row_z[row_base + w] & *cx).count_ones() as usize;
             }
 
             // XOR this stabilizer's X row into cumulative
-            for w in 0..words_per_row {
-                cumulative_x[w] ^= self.stab_row_x[row_base + w];
+            for (w, cx) in cumulative_x.iter_mut().enumerate() {
+                *cx ^= self.stab_row_x[row_base + w];
             }
         }
 
@@ -1424,18 +1423,18 @@ impl SparseColOnly {
 
         for &g in &destab_ids {
             // Count overlap: positions where this stabilizer has Z and cumulative has X
-            for q in 0..self.num_qubits {
+            for (q, cx) in cumulative_x.iter().enumerate() {
                 let has_z = Self::contains(&self.stab_col_z[q], g);
-                if has_z && cumulative_x[q] {
+                if has_z && *cx {
                     num_minuses += 1;
                 }
             }
 
             // XOR this stabilizer's X pattern into cumulative X
-            for q in 0..self.num_qubits {
+            for (q, cx) in cumulative_x.iter_mut().enumerate() {
                 let has_x = Self::contains(&self.stab_col_x[q], g);
                 if has_x {
-                    cumulative_x[q] = !cumulative_x[q];
+                    *cx = !*cx;
                 }
             }
         }

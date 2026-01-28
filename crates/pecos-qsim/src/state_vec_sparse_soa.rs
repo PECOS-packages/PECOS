@@ -722,89 +722,97 @@ impl<R: Rng> SparseStateVecSoA<R> {
 
             let high_partner = high_idx & !mask;
 
-            if low_idx == high_partner {
-                // Paired: apply full 2x2 gate matrix
-                let new_low_re = a_re * low_re - a_im * low_im + b_re * high_re - b_im * high_im;
-                let new_low_im = a_re * low_im + a_im * low_re + b_re * high_im + b_im * high_re;
-                let new_high_re = c_re * low_re - c_im * low_im + d_re * high_re - d_im * high_im;
-                let new_high_im = c_re * low_im + c_im * low_re + d_re * high_im + d_im * high_re;
+            match low_idx.cmp(&high_partner) {
+                std::cmp::Ordering::Equal => {
+                    // Paired: apply full 2x2 gate matrix
+                    let new_low_re =
+                        a_re * low_re - a_im * low_im + b_re * high_re - b_im * high_im;
+                    let new_low_im =
+                        a_re * low_im + a_im * low_re + b_re * high_im + b_im * high_re;
+                    let new_high_re =
+                        c_re * low_re - c_im * low_im + d_re * high_re - d_im * high_im;
+                    let new_high_im =
+                        c_re * low_im + c_im * low_re + d_re * high_im + d_im * high_re;
 
-                let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
-                let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
+                    let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
+                    let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
 
-                if norm_low > epsilon {
-                    self.merge_idx.push(low_idx);
-                    self.merge_re.push(new_low_re);
-                    self.merge_im.push(new_low_im);
-                }
-                if norm_high > epsilon {
-                    if active {
-                        self.indices_b.push(high_idx);
-                        self.real_b.push(new_high_re);
-                        self.imag_b.push(new_high_im);
-                    } else {
-                        self.indices_a.push(high_idx);
-                        self.real_a.push(new_high_re);
-                        self.imag_a.push(new_high_im);
+                    if norm_low > epsilon {
+                        self.merge_idx.push(low_idx);
+                        self.merge_re.push(new_low_re);
+                        self.merge_im.push(new_low_im);
                     }
-                }
-                low_ptr += 1;
-                high_ptr += 1;
-            } else if low_idx < high_partner {
-                // Unpaired low: pair with implicit zero high
-                let new_low_re = a_re * low_re - a_im * low_im;
-                let new_low_im = a_re * low_im + a_im * low_re;
-                let new_high_re = c_re * low_re - c_im * low_im;
-                let new_high_im = c_re * low_im + c_im * low_re;
-
-                let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
-                let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
-
-                if norm_low > epsilon {
-                    self.merge_idx.push(low_idx);
-                    self.merge_re.push(new_low_re);
-                    self.merge_im.push(new_low_im);
-                }
-                if norm_high > epsilon {
-                    let high_result_idx = low_idx | mask;
-                    if active {
-                        self.indices_b.push(high_result_idx);
-                        self.real_b.push(new_high_re);
-                        self.imag_b.push(new_high_im);
-                    } else {
-                        self.indices_a.push(high_result_idx);
-                        self.real_a.push(new_high_re);
-                        self.imag_a.push(new_high_im);
+                    if norm_high > epsilon {
+                        if active {
+                            self.indices_b.push(high_idx);
+                            self.real_b.push(new_high_re);
+                            self.imag_b.push(new_high_im);
+                        } else {
+                            self.indices_a.push(high_idx);
+                            self.real_a.push(new_high_re);
+                            self.imag_a.push(new_high_im);
+                        }
                     }
+                    low_ptr += 1;
+                    high_ptr += 1;
                 }
-                low_ptr += 1;
-            } else {
-                // Unpaired high: pair with implicit zero low
-                let new_low_re = b_re * high_re - b_im * high_im;
-                let new_low_im = b_re * high_im + b_im * high_re;
-                let new_high_re = d_re * high_re - d_im * high_im;
-                let new_high_im = d_re * high_im + d_im * high_re;
+                std::cmp::Ordering::Less => {
+                    // Unpaired low: pair with implicit zero high
+                    let new_low_re = a_re * low_re - a_im * low_im;
+                    let new_low_im = a_re * low_im + a_im * low_re;
+                    let new_high_re = c_re * low_re - c_im * low_im;
+                    let new_high_im = c_re * low_im + c_im * low_re;
 
-                let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
-                let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
+                    let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
+                    let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
 
-                if norm_low > epsilon {
-                    self.merge_idx.push(high_partner);
-                    self.merge_re.push(new_low_re);
-                    self.merge_im.push(new_low_im);
-                }
-                if norm_high > epsilon {
-                    if active {
-                        self.indices_b.push(high_idx);
-                        self.real_b.push(new_high_re);
-                        self.imag_b.push(new_high_im);
-                    } else {
-                        self.indices_a.push(high_idx);
-                        self.real_a.push(new_high_re);
-                        self.imag_a.push(new_high_im);
+                    if norm_low > epsilon {
+                        self.merge_idx.push(low_idx);
+                        self.merge_re.push(new_low_re);
+                        self.merge_im.push(new_low_im);
                     }
+                    if norm_high > epsilon {
+                        let high_result_idx = low_idx | mask;
+                        if active {
+                            self.indices_b.push(high_result_idx);
+                            self.real_b.push(new_high_re);
+                            self.imag_b.push(new_high_im);
+                        } else {
+                            self.indices_a.push(high_result_idx);
+                            self.real_a.push(new_high_re);
+                            self.imag_a.push(new_high_im);
+                        }
+                    }
+                    low_ptr += 1;
                 }
-                high_ptr += 1;
+                std::cmp::Ordering::Greater => {
+                    // Unpaired high: pair with implicit zero low
+                    let new_low_re = b_re * high_re - b_im * high_im;
+                    let new_low_im = b_re * high_im + b_im * high_re;
+                    let new_high_re = d_re * high_re - d_im * high_im;
+                    let new_high_im = d_re * high_im + d_im * high_re;
+
+                    let norm_low = new_low_re * new_low_re + new_low_im * new_low_im;
+                    let norm_high = new_high_re * new_high_re + new_high_im * new_high_im;
+
+                    if norm_low > epsilon {
+                        self.merge_idx.push(high_partner);
+                        self.merge_re.push(new_low_re);
+                        self.merge_im.push(new_low_im);
+                    }
+                    if norm_high > epsilon {
+                        if active {
+                            self.indices_b.push(high_idx);
+                            self.real_b.push(new_high_re);
+                            self.imag_b.push(new_high_im);
+                        } else {
+                            self.indices_a.push(high_idx);
+                            self.real_a.push(new_high_re);
+                            self.imag_a.push(new_high_im);
+                        }
+                    }
+                    high_ptr += 1;
+                }
             }
         }
 
@@ -1261,9 +1269,9 @@ impl<R: Rng> SparseStateVecSoA<R> {
             } else {
                 &mut self.indices_b[..len]
             };
-            for i in 0..len {
-                if indices[i] & control_mask != 0 {
-                    indices[i] ^= target_mask;
+            for idx in indices.iter_mut() {
+                if *idx & control_mask != 0 {
+                    *idx ^= target_mask;
                 }
             }
             self.sort_active_if_needed();
@@ -1287,10 +1295,10 @@ impl<R: Rng> SparseStateVecSoA<R> {
             } else {
                 &self.indices_b[..len]
             };
-            for i in 0..len {
-                if indices[i] & control_mask == 0 {
+            for (i, &idx) in indices.iter().enumerate() {
+                if idx & control_mask == 0 {
                     self.scratch_low.push(i as u32);
-                } else if indices[i] & target_mask != 0 {
+                } else if idx & target_mask != 0 {
                     self.scratch_high.push(i as u32);
                 } else {
                     self.sort_perm.push(i);
@@ -1423,11 +1431,11 @@ impl<R: Rng> SparseStateVecSoA<R> {
             } else {
                 &mut self.indices_b[..len]
             };
-            for i in 0..len {
-                let bit1 = (indices[i] & mask1) != 0;
-                let bit2 = (indices[i] & mask2) != 0;
+            for idx in indices.iter_mut() {
+                let bit1 = (*idx & mask1) != 0;
+                let bit2 = (*idx & mask2) != 0;
                 if bit1 != bit2 {
-                    indices[i] ^= swap_mask;
+                    *idx ^= swap_mask;
                 }
             }
             self.sort_active_if_needed();
@@ -1453,9 +1461,9 @@ impl<R: Rng> SparseStateVecSoA<R> {
             } else {
                 &self.indices_b[..len]
             };
-            for i in 0..len {
-                let bit1 = (indices[i] & mask1) != 0;
-                let bit2 = (indices[i] & mask2) != 0;
+            for (i, &idx) in indices.iter().enumerate() {
+                let bit1 = (idx & mask1) != 0;
+                let bit2 = (idx & mask2) != 0;
                 if bit1 == bit2 {
                     self.scratch_low.push(i as u32); // A: unchanged
                 } else if !bit1 {
@@ -1788,8 +1796,8 @@ impl<R: Rng> SparseStateVecSoA<R> {
             // Clear the two qubit bits from the index
             let base_idx = idx & !mask1 & !mask2;
 
-            for out_basis in 0..4 {
-                let m_elem = matrix[out_basis][input_basis];
+            for (out_basis, row) in matrix.iter().enumerate() {
+                let m_elem = row[input_basis];
                 if m_elem.norm_sqr() < 1e-30 {
                     continue;
                 }
@@ -2061,16 +2069,16 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             } else {
                 &mut self.indices_b[..len]
             };
-            for i in 0..len {
+            for idx in indices.iter_mut() {
                 let mut xor_mask = 0usize;
                 for pair in qubits.chunks_exact(2) {
                     let control_mask = 1usize << pair[0].0;
                     let target_mask = 1usize << pair[1].0;
-                    if indices[i] & control_mask != 0 {
+                    if *idx & control_mask != 0 {
                         xor_mask ^= target_mask;
                     }
                 }
-                indices[i] ^= xor_mask;
+                *idx ^= xor_mask;
             }
             self.sort_active_if_needed();
         }
@@ -2194,14 +2202,14 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             } else {
                 &mut self.indices_b[..len]
             };
-            for i in 0..len {
+            for idx in indices.iter_mut() {
                 for pair in qubits.chunks_exact(2) {
                     let mask1 = 1usize << pair[0].0;
                     let mask2 = 1usize << pair[1].0;
-                    let bit1 = (indices[i] & mask1) != 0;
-                    let bit2 = (indices[i] & mask2) != 0;
+                    let bit1 = (*idx & mask1) != 0;
+                    let bit2 = (*idx & mask2) != 0;
                     if bit1 != bit2 {
-                        indices[i] ^= mask1 | mask2;
+                        *idx ^= mask1 | mask2;
                     }
                 }
             }

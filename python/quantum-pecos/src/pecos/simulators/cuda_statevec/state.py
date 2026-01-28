@@ -27,6 +27,8 @@ from pecos.simulators.sim_class_types import StateVector
 if TYPE_CHECKING:
     import sys
 
+    from pecos.typing import SimulatorGateParams
+
     # Handle Python 3.10 compatibility for Self type
     if sys.version_info >= (3, 11):
         from typing import Self
@@ -85,7 +87,7 @@ class CudaStateVec(StateVector):
         self,
         symbol: str,
         locations: list | None = None,
-        **params,
+        **params: SimulatorGateParams,
     ) -> dict:
         """Run a quantum gate operation.
 

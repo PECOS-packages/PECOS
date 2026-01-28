@@ -28,10 +28,6 @@ from pecos.qec.surface.layouts import (
     get_rotated_logical_x,
     get_rotated_logical_z,
 )
-from pecos.qec.surface.schedule import (
-    compute_cnot_schedule,
-    get_stab_schedule,
-)
 from pecos.qec.surface.parity import (
     parity_matrix_x,
     parity_matrix_z,
@@ -45,6 +41,10 @@ from pecos.qec.surface.patch import (
     SurfacePatchBuilder,
 )
 from pecos.qec.surface.plot import plot_patch, plot_surface_code
+from pecos.qec.surface.schedule import (
+    compute_cnot_schedule,
+    get_stab_schedule,
+)
 
 __all__ = [  # noqa: RUF022
     # Rotated lattice (most common, default)

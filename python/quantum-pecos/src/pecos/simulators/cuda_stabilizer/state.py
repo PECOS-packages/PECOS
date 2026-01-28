@@ -27,6 +27,8 @@ from pecos.simulators.sim_class_types import Stabilizer
 if TYPE_CHECKING:
     import sys
 
+    from pecos.typing import SimulatorGateParams
+
     # Handle Python 3.10 compatibility for Self type
     if sys.version_info >= (3, 11):
         from typing import Self
@@ -90,7 +92,7 @@ class CudaStabilizer(Stabilizer):
         self,
         symbol: str,
         locations: list | None = None,
-        **params,
+        **params: SimulatorGateParams,
     ) -> dict:
         """Run a quantum gate operation.
 
@@ -125,7 +127,10 @@ class CudaStabilizer(Stabilizer):
                     "RYY",
                     "RZZ",
                 ):
-                    msg = f"Gate '{symbol}' is not a Clifford gate and is not supported by CudaStabilizer. Use CudaStateVec for non-Clifford gates."
+                    msg = (
+                        f"Gate '{symbol}' is not a Clifford gate and is not supported by "
+                        "CudaStabilizer. Use CudaStateVec for non-Clifford gates."
+                    )
                     raise ValueError(msg)
 
         return output

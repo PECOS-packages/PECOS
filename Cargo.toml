@@ -219,3 +219,24 @@ cargo = { level = "warn", priority = -1 }
 multiple-crate-versions = "allow"         # TODO: remove when possible
 # Allow more function arguments for PyO3 bindings (many parameters needed for Python interop)
 too-many-arguments = "allow"
+# Numeric casts are pervasive in quantum sim code; values are known to fit
+cast-possible-truncation = "allow"
+cast-precision-loss = "allow"
+cast-sign-loss = "allow"
+cast-possible-wrap = "allow"
+# Math/physics code uses short, similar variable names (sx/sz, stab/destab, x/z/r/s/p)
+similar-names = "allow"
+many-single-char-names = "allow"
+# Complex quantum algorithms are inherently long
+too-many-lines = "allow"
+# Often needed for trait conformance or API consistency
+needless-pass-by-value = "allow"
+# Error conditions and panics are self-evident from types
+missing-errors-doc = "allow"
+missing-panics-doc = "allow"
+# Common pattern in this codebase for local helpers
+items-after-statements = "allow"
+# Trait implementations require &self even when unused
+unused-self = "allow"
+# Prevents false positives on type names matching module
+module-name-repetitions = "allow"

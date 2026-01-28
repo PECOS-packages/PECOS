@@ -518,9 +518,9 @@ impl GpuStabOpt {
                 let row_base = generator * self.words_per_row;
 
                 // Count overlap of stab Z-row with cumulative X (SIMD-friendly!)
-                for ww in 0..self.words_per_row {
-                    num_minuses += (self.stab_row_z[row_base + ww] & cumulative_x[ww]).count_ones();
-                    cumulative_x[ww] ^= self.stab_row_x[row_base + ww];
+                for (ww, cx) in cumulative_x.iter_mut().enumerate() {
+                    num_minuses += (self.stab_row_z[row_base + ww] & *cx).count_ones();
+                    *cx ^= self.stab_row_x[row_base + ww];
                 }
 
                 mask &= mask - 1;

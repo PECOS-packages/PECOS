@@ -92,21 +92,21 @@ macro_rules! state_vector_test_suite {
         paste::paste! {
             #[test]
             fn [<test_ $sim_type:snake _basic_suite>]() {
-                use $crate::state_vector_test_utils::{run_basic_state_vector_test_suite, StateVectorSimulator};
+                use $crate::state_vector_test_utils::run_basic_state_vector_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_basic_state_vector_test_suite(&mut sim);
             }
 
             #[test]
             fn [<test_ $sim_type:snake _clifford_suite>]() {
-                use $crate::state_vector_test_utils::{run_clifford_test_suite, StateVectorSimulator};
+                use $crate::state_vector_test_utils::run_clifford_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_clifford_test_suite(&mut sim);
             }
 
             #[test]
             fn [<test_ $sim_type:snake _measurement_suite>]() {
-                use $crate::state_vector_test_utils::{run_measurement_test_suite, StateVectorSimulator};
+                use $crate::state_vector_test_utils::run_measurement_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_measurement_test_suite(&mut sim);
             }
@@ -145,7 +145,7 @@ macro_rules! full_state_vector_test_suite {
         paste::paste! {
             #[test]
             fn [<test_ $sim_type:snake _rotation_suite>]() {
-                use $crate::state_vector_test_utils::{run_rotation_test_suite, StateVectorSimulator};
+                use $crate::state_vector_test_utils::run_rotation_test_suite;
 
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_rotation_test_suite(&mut sim);
@@ -153,7 +153,7 @@ macro_rules! full_state_vector_test_suite {
 
             #[test]
             fn [<test_ $sim_type:snake _full_suite>]() {
-                use $crate::state_vector_test_utils::{run_full_state_vector_test_suite, StateVectorSimulator};
+                use $crate::state_vector_test_utils::run_full_state_vector_test_suite;
 
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_full_state_vector_test_suite(&mut sim);
@@ -331,6 +331,7 @@ pub fn verify_unitarity<S: StateVectorSimulator>(sim: &mut S) {
     let dim = 1 << sim.num_qubits();
 
     // Test various gate sequences
+    #[allow(clippy::type_complexity)]
     let test_sequences: Vec<Box<dyn Fn(&mut S)>> = vec![
         Box::new(|s: &mut S| {
             s.h(&qid(0));
@@ -2244,9 +2245,8 @@ pub fn verify_face_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.f(&qid(0));
     // Check global phase equivalence
     let mut phase_ratio = None;
-    for i in 0..n {
+    for (i, &bef) in before.iter().enumerate() {
         let after = sim.get_amplitude(i);
-        let bef = before[i];
         if bef.norm() < TOLERANCE && after.norm() < TOLERANCE {
             continue;
         }
@@ -2342,9 +2342,8 @@ pub fn verify_hadamard_variants<S: StateVectorSimulator>(sim: &mut S) {
         }
         // Verify states differ by at most a global phase
         let mut phase_ratio = None;
-        for i in 0..n {
+        for (i, &bef) in before.iter().enumerate() {
             let after = sim.get_amplitude(i);
-            let bef = before[i];
             if bef.norm() < TOLERANCE && after.norm() < TOLERANCE {
                 continue;
             }

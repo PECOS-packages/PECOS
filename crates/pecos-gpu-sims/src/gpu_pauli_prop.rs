@@ -81,7 +81,8 @@ pub struct GpuPauliProp {
     x_faults_buffer: wgpu::Buffer,
     z_faults_buffer: wgpu::Buffer,
 
-    // Parameters uniform buffer
+    // Parameters uniform buffer (kept alive for GPU bind group)
+    #[allow(dead_code)]
     params_buffer: wgpu::Buffer,
 
     // Gate queue buffer
@@ -309,7 +310,7 @@ impl GpuPauliProp {
             layout: Some(&pipeline_layout),
             module: &shader_module,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -487,8 +488,6 @@ impl GpuPauliProp {
         let mut i = 0;
         while i < self.gate_queue.len() {
             let gate_type = self.gate_queue[i];
-            let _qubit1 = self.gate_queue[i + 1];
-            let _qubit2 = self.gate_queue[i + 2];
 
             // Check if this is a 2Q gate
             let is_2q = matches!(gate_type, GATE_CX | GATE_CZ | GATE_SWAP);
@@ -602,11 +601,11 @@ impl GpuPauliProp {
 
         for (meas_idx, &qubit) in qubits.iter().enumerate() {
             let base = qubit * self.shot_words as usize;
-            for shot in 0..self.num_shots as usize {
+            for (shot, result) in results.iter_mut().enumerate() {
                 let word_idx = shot / 32;
                 let bit_idx = shot % 32;
                 let has_x = (x_faults[base + word_idx] >> bit_idx) & 1 != 0;
-                results[shot][meas_idx] = has_x;
+                result[meas_idx] = has_x;
             }
         }
 
@@ -623,11 +622,11 @@ impl GpuPauliProp {
 
         for (meas_idx, &qubit) in qubits.iter().enumerate() {
             let base = qubit * self.shot_words as usize;
-            for shot in 0..self.num_shots as usize {
+            for (shot, result) in results.iter_mut().enumerate() {
                 let word_idx = shot / 32;
                 let bit_idx = shot % 32;
                 let has_z = (z_faults[base + word_idx] >> bit_idx) & 1 != 0;
-                results[shot][meas_idx] = has_z;
+                result[meas_idx] = has_z;
             }
         }
 
@@ -678,7 +677,7 @@ impl GpuPauliProp {
 
         let mut results = vec![false; self.num_shots as usize];
 
-        for shot in 0..self.num_shots as usize {
+        for (shot, result) in results.iter_mut().enumerate() {
             let word_idx = shot / 32;
             let bit_idx = shot % 32;
 
@@ -701,7 +700,7 @@ impl GpuPauliProp {
             }
 
             // Odd number of anticommutations = overall anticommutes
-            results[shot] = anticom_count % 2 == 1;
+            *result = anticom_count % 2 == 1;
         }
 
         results
@@ -737,7 +736,9 @@ impl GpuPauliProp {
             mapped_at_creation: false,
         });
 
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, (table_size * 4) as u64);
         self.queue.submit(std::iter::once(encoder.finish()));
 

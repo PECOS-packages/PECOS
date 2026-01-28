@@ -127,8 +127,8 @@ struct BenchmarkResult {
     build_time: Duration,
     cpu_time: Duration,
     gpu_time: Duration,
-    cpu_logical_errors: usize,
-    gpu_logical_errors: usize,
+    _cpu_logical_errors: usize,
+    _gpu_logical_errors: usize,
 }
 
 impl BenchmarkResult {
@@ -216,8 +216,8 @@ fn benchmark_circuit(
         build_time,
         cpu_time,
         gpu_time,
-        cpu_logical_errors,
-        gpu_logical_errors,
+        _cpu_logical_errors: cpu_logical_errors,
+        _gpu_logical_errors: gpu_logical_errors,
     }
 }
 

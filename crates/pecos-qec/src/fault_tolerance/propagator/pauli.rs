@@ -131,18 +131,9 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
             }
         }
 
-        // State preparation - no transformation in either direction
-        // For Pauli propagation purposes, prep gates are transparent
-        GateType::Prep | GateType::QAlloc => {
-            // No-op: Pauli propagation passes through prep gates unchanged
-        }
-
-        // Measurements don't transform Paulis for propagation purposes
-        GateType::Measure | GateType::MeasureFree => {}
-
-        _ => {
-            // Unsupported gate type - no transformation
-        }
+        // No-op: Prep, QAlloc, Measure, MeasureFree, and other unsupported gate types
+        // don't transform Paulis for propagation purposes
+        _ => {}
     }
 }
 

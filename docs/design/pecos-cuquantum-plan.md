@@ -124,7 +124,7 @@ impl CuStateVec {
 
 // Implement PECOS traits
 impl CliffordGateable for CuStateVec { ... }
-impl Measureable for CuStateVec { ... }
+impl Measurable for CuStateVec { ... }
 ```
 
 ### CuStabilizer (if SDK includes it)

@@ -10,6 +10,7 @@
 # specific language governing permissions and limitations under the License.
 
 """Integration tests for state vector quantum simulators using pure PECOS (no NumPy)."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -259,6 +260,100 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     sim_instance.run_circuit(qc)
 
 
+def _apply_gate_and_compare(
+    qc: QuantumCircuit,
+    ref_sim: StateVector,
+    test_sim: StateVector,
+    simulator: str,
+    gate: dict,
+    **params: object,
+) -> None:
+    """Apply gate to circuit and both sims, then compare state vectors."""
+    qc.append(gate, **params)
+    symbol = next(iter(gate))
+    locations = gate[symbol]
+    ref_sim.run_gate(symbol, locations, **params)
+    test_sim.run_gate(symbol, locations, **params)
+    _compare_vectors(test_sim.vector, ref_sim.vector, simulator)
+
+
+def _test_all_gates_incremental(
+    simulator: str,
+    qc: QuantumCircuit,
+    sim_kwargs: dict,
+) -> None:
+    """Apply gates incrementally to persistent sims and compare after each."""
+    num_qubits = len(qc.qudits)
+    ref_sim = StateVec(num_qubits)
+    ref_sim.run_circuit(qc)
+    test_sim = check_dependencies(simulator, **sim_kwargs)(num_qubits)
+    test_sim.run_circuit(qc)
+
+    def _apply(gate: dict, **params: object) -> None:
+        _apply_gate_and_compare(qc, ref_sim, test_sim, simulator, gate, **params)
+
+    _apply({"SZZ": {(3, 2)}})
+    _apply({"RX": {0, 2}}, angles=(pc.f64.frac_pi_4,))
+    _apply({"SXXdg": {(0, 3)}})
+    _apply({"RY": {0, 3}}, angles=(pc.f64.pi / 8,))
+    _apply({"RZZ": {(0, 3)}}, angles=(pc.f64.pi / 16,))
+    _apply({"RZ": {1, 3}}, angles=(pc.f64.pi / 16,))
+    _apply({"R1XY": {2}}, angles=(pc.f64.pi / 16, pc.f64.frac_pi_2))
+    _apply({"I": {0, 1, 3}})
+    _apply({"X": {1, 2}})
+    _apply({"Y": {2, 3}})
+    _apply({"CY": {(2, 3), (0, 1)}})
+    _apply({"SYY": {(1, 2)}})
+    _apply({"Z": {2, 0}})
+    _apply({"H": {3, 1}})
+    _apply({"RYY": {(2, 1)}}, angles=(pc.f64.pi / 8,))
+    _apply({"SZZdg": {(3, 1)}})
+    _apply({"F": {0, 1, 2}})
+    _apply({"CX": {(0, 1), (3, 2)}})
+    _apply({"Fdg": {3, 1}})
+    _apply({"SYYdg": {(1, 3)}})
+    _apply({"SX": {1, 2}})
+    _apply(
+        {"R2XXYYZZ": {(0, 3)}},
+        angles=(pc.f64.frac_pi_4, pc.f64.pi / 16, pc.f64.frac_pi_2),
+    )
+    _apply({"SY": {2, 3}})
+    _apply({"SZ": {2, 0}})
+    _apply({"SZdg": {1, 2}})
+    _apply({"CZ": {(1, 3)}})
+    _apply({"SXdg": {2, 3}})
+    _apply({"SYdg": {2, 0}})
+    _apply({"T": {0, 1, 2}})
+    _apply({"SXX": {(0, 2)}})
+    _apply({"SWAP": {(3, 0)}})
+    _apply({"Tdg": {3, 1}})
+    _apply({"RXX": {(1, 3)}}, angles=(pc.f64.frac_pi_4,))
+    _apply({"Q": {0, 1, 2}})
+    _apply({"Qd": {0, 3}})
+    _apply({"R": {0}})
+    _apply({"Rd": {0, 1, 2}})
+    _apply({"S": {0, 3}})
+    _apply({"Sd": {0}})
+    _apply({"H2": {2, 3}})
+    _apply({"H3": {0, 1, 2}})
+    _apply({"H4": {2, 3}})
+    _apply({"H5": {0, 3}})
+    _apply({"H6": {0, 1, 2}})
+    _apply({"F2": {0, 1, 2}})
+    _apply({"F2d": {0, 3}})
+    _apply({"F3": {2, 3}})
+    _apply({"F3d": {0, 1, 2}})
+    _apply({"F4": {2, 3}})
+    _apply({"F4d": {0, 3}})
+    _apply({"CNOT": {(0, 1)}})
+    _apply({"G": {(1, 3)}})
+    _apply({"II": {(3, 2)}})
+
+    # Measure
+    qc.append({"Measure": {0, 1, 2, 3}})
+    check_measurement(simulator, qc)
+
+
 @pytest.mark.parametrize(
     "simulator",
     [
@@ -297,81 +392,7 @@ def test_all_gate_circ(simulator: str) -> None:
     # Uses persistent simulators with incremental gate application to avoid
     # replaying the full circuit from scratch on every comparison.
     for qc in qcs:
-        num_qubits = len(qc.qudits)
-        ref_sim = StateVec(num_qubits)
-        ref_sim.run_circuit(qc)
-        test_sim = check_dependencies(simulator, **sim_kwargs)(num_qubits)
-        test_sim.run_circuit(qc)
-
-        def _apply(gate: dict, **params: object) -> None:
-            """Apply gate to circuit and both sims, then compare vectors."""
-            qc.append(gate, **params)
-            symbol = next(iter(gate))
-            locations = gate[symbol]
-            ref_sim.run_gate(symbol, locations, **params)
-            test_sim.run_gate(symbol, locations, **params)
-            _compare_vectors(test_sim.vector, ref_sim.vector, simulator)
-
-        _apply({"SZZ": {(3, 2)}})
-        _apply({"RX": {0, 2}}, angles=(pc.f64.frac_pi_4,))
-        _apply({"SXXdg": {(0, 3)}})
-        _apply({"RY": {0, 3}}, angles=(pc.f64.pi / 8,))
-        _apply({"RZZ": {(0, 3)}}, angles=(pc.f64.pi / 16,))
-        _apply({"RZ": {1, 3}}, angles=(pc.f64.pi / 16,))
-        _apply({"R1XY": {2}}, angles=(pc.f64.pi / 16, pc.f64.frac_pi_2))
-        _apply({"I": {0, 1, 3}})
-        _apply({"X": {1, 2}})
-        _apply({"Y": {2, 3}})
-        _apply({"CY": {(2, 3), (0, 1)}})
-        _apply({"SYY": {(1, 2)}})
-        _apply({"Z": {2, 0}})
-        _apply({"H": {3, 1}})
-        _apply({"RYY": {(2, 1)}}, angles=(pc.f64.pi / 8,))
-        _apply({"SZZdg": {(3, 1)}})
-        _apply({"F": {0, 1, 2}})
-        _apply({"CX": {(0, 1), (3, 2)}})
-        _apply({"Fdg": {3, 1}})
-        _apply({"SYYdg": {(1, 3)}})
-        _apply({"SX": {1, 2}})
-        _apply(
-            {"R2XXYYZZ": {(0, 3)}},
-            angles=(pc.f64.frac_pi_4, pc.f64.pi / 16, pc.f64.frac_pi_2),
-        )
-        _apply({"SY": {2, 3}})
-        _apply({"SZ": {2, 0}})
-        _apply({"SZdg": {1, 2}})
-        _apply({"CZ": {(1, 3)}})
-        _apply({"SXdg": {2, 3}})
-        _apply({"SYdg": {2, 0}})
-        _apply({"T": {0, 1, 2}})
-        _apply({"SXX": {(0, 2)}})
-        _apply({"SWAP": {(3, 0)}})
-        _apply({"Tdg": {3, 1}})
-        _apply({"RXX": {(1, 3)}}, angles=(pc.f64.frac_pi_4,))
-        _apply({"Q": {0, 1, 2}})
-        _apply({"Qd": {0, 3}})
-        _apply({"R": {0}})
-        _apply({"Rd": {0, 1, 2}})
-        _apply({"S": {0, 3}})
-        _apply({"Sd": {0}})
-        _apply({"H2": {2, 3}})
-        _apply({"H3": {0, 1, 2}})
-        _apply({"H4": {2, 3}})
-        _apply({"H5": {0, 3}})
-        _apply({"H6": {0, 1, 2}})
-        _apply({"F2": {0, 1, 2}})
-        _apply({"F2d": {0, 3}})
-        _apply({"F3": {2, 3}})
-        _apply({"F3d": {0, 1, 2}})
-        _apply({"F4": {2, 3}})
-        _apply({"F4d": {0, 3}})
-        _apply({"CNOT": {(0, 1)}})
-        _apply({"G": {(1, 3)}})
-        _apply({"II": {(3, 2)}})
-
-        # Measure
-        qc.append({"Measure": {0, 1, 2, 3}})
-        check_measurement(simulator, qc)
+        _test_all_gates_incremental(simulator, qc, sim_kwargs)
 
 
 @pytest.mark.parametrize(

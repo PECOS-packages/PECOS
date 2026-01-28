@@ -152,7 +152,7 @@ impl SortedVecSet {
 
         // Fast path for empty self
         if self.is_empty() {
-            self.elements = other.elements.clone();
+            self.elements.clone_from(&other.elements);
             return;
         }
 
@@ -208,6 +208,7 @@ impl SortedVecSet {
 
     /// Take the contents, leaving self empty but with capacity preserved.
     #[inline]
+    #[must_use]
     pub fn take_clearing(&mut self) -> Self {
         let taken: SortedBuffer = self.elements.drain(..).collect();
         Self { elements: taken }

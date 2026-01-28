@@ -163,7 +163,7 @@ const fn all_images(i: usize) -> [(u8, bool); 3] {
 }
 
 /// Apply a Clifford's Heisenberg action to a signed Pauli.
-const fn apply_action(imgs: &[(u8, bool); 3], p_axis: u8, p_neg: bool) -> (u8, bool) {
+const fn apply_action(imgs: [(u8, bool); 3], p_axis: u8, p_neg: bool) -> (u8, bool) {
     let (img_axis, img_neg) = imgs[p_axis as usize];
     (img_axis, p_neg != img_neg)
 }
@@ -196,8 +196,8 @@ const fn compute_compose() -> [[u8; 24]; 24] {
         let mut j = 0;
         while j < 24 {
             let (jx, jxn, jz, jzn) = HEIS[j];
-            let rx = apply_action(&i_imgs, jx, jxn);
-            let rz = apply_action(&i_imgs, jz, jzn);
+            let rx = apply_action(i_imgs, jx, jxn);
+            let rz = apply_action(i_imgs, jz, jzn);
             table[i][j] = find_element(rx.0, rx.1, rz.0, rz.1);
             j += 1;
         }
@@ -717,6 +717,7 @@ const fn axis_from_u8(a: u8) -> PauliAxis {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
     use num_complex::Complex64;
@@ -798,8 +799,8 @@ mod tests {
         let gens = [mat_h(), mat_s()];
         let len = GEN_LENS[idx] as usize;
         let mut result = mat_i();
-        for k in 0..len {
-            let g = GENERATORS[idx][k] as usize;
+        for &generator in &GENERATORS[idx][..len] {
+            let g = generator as usize;
             result = mat_mul(&result, &gens[g]);
         }
         result
@@ -1738,7 +1739,6 @@ mod tests {
         cz[3 * 4 + 3] = [-1.0, 0.0];
 
         // H⊗H: tensor product of H with itself
-        let _r = std::f64::consts::FRAC_1_SQRT_2;
         let mut hh = mat4_zero();
         // H = [[r,r],[r,-r]]
         // H⊗H = [[r*r, r*r, r*r, r*r],

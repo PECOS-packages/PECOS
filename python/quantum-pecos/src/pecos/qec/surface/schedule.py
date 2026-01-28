@@ -79,8 +79,7 @@ def get_stab_schedule(
         tl, tr, bl, br = data_qubits
         if stab_type == "X":
             return [(0, tr), (1, tl), (2, br), (3, bl)]
-        else:
-            return [(0, tr), (1, br), (2, tl), (3, bl)]
+        return [(0, tr), (1, br), (2, tl), (3, bl)]
 
     # Boundary weight-2 stabilizer
     boundary = _classify_boundary(stab_type, data_qubits, d)
@@ -89,15 +88,15 @@ def get_stab_schedule(
         # Bottom X: rounds 0,1 -- right first then left
         q_left, q_right = data_qubits
         return [(0, q_right), (1, q_left)]
-    elif boundary == "top":
+    if boundary == "top":
         # Top X: rounds 2,3 -- right first then left
         q_left, q_right = data_qubits
         return [(2, q_right), (3, q_left)]
-    elif boundary == "left":
+    if boundary == "left":
         # Left Z: rounds 0,1 -- top first then bottom
         q_top, q_bottom = data_qubits
         return [(0, q_top), (1, q_bottom)]
-    elif boundary == "right":
+    if boundary == "right":
         # Right Z: rounds 2,3 -- top first then bottom
         q_top, q_bottom = data_qubits
         return [(2, q_top), (3, q_bottom)]

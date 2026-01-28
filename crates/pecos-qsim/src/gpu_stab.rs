@@ -790,5 +790,4 @@ mod tests {
         let mut sim = GpuStab::with_seed(8, 42);
         run_full_stabilizer_test_suite(&mut sim, 8);
     }
-
 }

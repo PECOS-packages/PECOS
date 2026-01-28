@@ -575,6 +575,7 @@ mod tests {
     use super::*;
 
     // Mock influence map for testing
+    #[allow(dead_code)]
     fn create_test_influence_map() -> DagFaultInfluenceMap {
         DagFaultInfluenceMap::with_capacity(0)
     }

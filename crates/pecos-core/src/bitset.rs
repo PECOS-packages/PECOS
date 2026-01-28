@@ -220,6 +220,7 @@ impl BitSet {
     /// This is used in measurement operations where we take a row's contents
     /// but the row will be populated again in subsequent operations.
     #[inline]
+    #[must_use]
     pub fn take_clearing(&mut self) -> Self {
         // Swap words with an empty Vec, leaving capacity in self
         let taken_words = std::mem::take(&mut self.words);

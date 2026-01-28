@@ -318,5 +318,4 @@ mod tests {
 
         assert_eq!(measurements.len(), 2);
     }
-
 }

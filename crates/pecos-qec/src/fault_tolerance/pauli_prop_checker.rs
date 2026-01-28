@@ -171,6 +171,7 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
 ///
 /// This is an internal type - use the accessor methods on the checkers instead.
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct CircuitIO {
     /// Qubits used but never prepared (carry data from previous stage)
     pub(crate) input_qubits: Vec<usize>,
@@ -1083,15 +1084,6 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
                         prop.h(&[*q]);
                     }
                 }
-                GateType::X | GateType::RX => {
-                    // X gates don't change Pauli frame
-                }
-                GateType::Y | GateType::RY => {
-                    // Y gates don't change Pauli frame
-                }
-                GateType::Z | GateType::RZ => {
-                    // Z gates don't change Pauli frame
-                }
                 GateType::SZ | GateType::SZdg => {
                     for q in &qubits {
                         prop.sz(&[*q]);
@@ -1864,7 +1856,7 @@ impl<'a> PauliPropChecker<'a> {
         }
 
         // Sort syndromes by total fault count (most common first)
-        syndromes.sort_by(|a, b| b.total_faults().cmp(&a.total_faults()));
+        syndromes.sort_by_key(|s| std::cmp::Reverse(s.total_faults()));
 
         DecoderAnalysis {
             syndromes,
@@ -2378,7 +2370,7 @@ impl<'a> PauliPropChecker<'a> {
         }
 
         // Sort by total fault count
-        syndromes.sort_by(|a, b| b.total_faults().cmp(&a.total_faults()));
+        syndromes.sort_by_key(|s| std::cmp::Reverse(s.total_faults()));
 
         DecoderAnalysis {
             syndromes,
@@ -3647,6 +3639,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::naive_bytecount)]
     fn test_pauli_combinations_x_only() {
         let qubits = vec![0, 1, 2];
         let config = FaultCheckConfig::new().x_only();

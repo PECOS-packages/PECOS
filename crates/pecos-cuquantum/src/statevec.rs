@@ -170,7 +170,7 @@ impl CuStateVec {
     /// # Arguments
     /// * `qubit` - Target qubit index
     /// * `matrix` - 2x2 unitary matrix in row-major order [a, b, c, d]
-    ///              Each element is [real, imag]
+    ///   Each element is [real, imag]
     fn apply_matrix_1q(&mut self, qubit: usize, matrix: &[[f64; 2]; 4]) {
         debug_assert!(qubit < self.num_qubits, "qubit index out of range");
 

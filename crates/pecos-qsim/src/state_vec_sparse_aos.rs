@@ -370,43 +370,47 @@ impl<R: Rng> SparseStateVecAoS<R> {
 
             let high_partner = high_idx & !mask;
 
-            if low_idx == high_partner {
-                // Paired: process both together
-                let new_low = a * low_amp + b * high_amp;
-                let new_high = c * low_amp + d * high_amp;
+            match low_idx.cmp(&high_partner) {
+                std::cmp::Ordering::Equal => {
+                    // Paired: process both together
+                    let new_low = a * low_amp + b * high_amp;
+                    let new_high = c * low_amp + d * high_amp;
 
-                if new_low.norm_sqr() > self.epsilon {
-                    self.scratch.push((low_idx, new_low));
+                    if new_low.norm_sqr() > self.epsilon {
+                        self.scratch.push((low_idx, new_low));
+                    }
+                    if new_high.norm_sqr() > self.epsilon {
+                        self.scratch.push((high_idx, new_high));
+                    }
+                    low_ptr += 1;
+                    high_ptr += 1;
                 }
-                if new_high.norm_sqr() > self.epsilon {
-                    self.scratch.push((high_idx, new_high));
-                }
-                low_ptr += 1;
-                high_ptr += 1;
-            } else if low_idx < high_partner {
-                // Unpaired low
-                let new_low = a * low_amp;
-                let new_high = c * low_amp;
+                std::cmp::Ordering::Less => {
+                    // Unpaired low
+                    let new_low = a * low_amp;
+                    let new_high = c * low_amp;
 
-                if new_low.norm_sqr() > self.epsilon {
-                    self.scratch.push((low_idx, new_low));
+                    if new_low.norm_sqr() > self.epsilon {
+                        self.scratch.push((low_idx, new_low));
+                    }
+                    if new_high.norm_sqr() > self.epsilon {
+                        self.scratch.push((low_idx | mask, new_high));
+                    }
+                    low_ptr += 1;
                 }
-                if new_high.norm_sqr() > self.epsilon {
-                    self.scratch.push((low_idx | mask, new_high));
-                }
-                low_ptr += 1;
-            } else {
-                // Unpaired high
-                let new_low = b * high_amp;
-                let new_high = d * high_amp;
+                std::cmp::Ordering::Greater => {
+                    // Unpaired high
+                    let new_low = b * high_amp;
+                    let new_high = d * high_amp;
 
-                if new_low.norm_sqr() > self.epsilon {
-                    self.scratch.push((high_partner, new_low));
+                    if new_low.norm_sqr() > self.epsilon {
+                        self.scratch.push((high_partner, new_low));
+                    }
+                    if new_high.norm_sqr() > self.epsilon {
+                        self.scratch.push((high_idx, new_high));
+                    }
+                    high_ptr += 1;
                 }
-                if new_high.norm_sqr() > self.epsilon {
-                    self.scratch.push((high_idx, new_high));
-                }
-                high_ptr += 1;
             }
         }
 
@@ -553,71 +557,76 @@ impl<R: Rng> SparseStateVecAoS<R> {
 
             let high_partner = high_idx & !mask;
 
-            if low_idx == high_partner {
-                // Paired: add to batch
-                pair_batch[batch_count] = (low_idx, high_idx, low_amp, high_amp);
-                batch_count += 1;
+            match low_idx.cmp(&high_partner) {
+                std::cmp::Ordering::Equal => {
+                    // Paired: add to batch
+                    pair_batch[batch_count] = (low_idx, high_idx, low_amp, high_amp);
+                    batch_count += 1;
 
-                if batch_count == 2 {
-                    // Process batch of 2 pairs with SIMD
-                    let (li0, hi0, la0, ha0) = pair_batch[0];
-                    let (li1, hi1, la1, ha1) = pair_batch[1];
+                    if batch_count == 2 {
+                        // Process batch of 2 pairs with SIMD
+                        let (li0, hi0, la0, ha0) = pair_batch[0];
+                        let (li1, hi1, la1, ha1) = pair_batch[1];
 
-                    let low_vec = f64x4::new([la0.re, la0.im, la1.re, la1.im]);
-                    let high_vec = f64x4::new([ha0.re, ha0.im, ha1.re, ha1.im]);
+                        let low_vec = f64x4::new([la0.re, la0.im, la1.re, la1.im]);
+                        let high_vec = f64x4::new([ha0.re, ha0.im, ha1.re, ha1.im]);
 
-                    let sum = (low_vec + high_vec) * scale;
-                    let diff = (low_vec - high_vec) * scale;
+                        let sum = (low_vec + high_vec) * scale;
+                        let diff = (low_vec - high_vec) * scale;
 
-                    let sum_arr = sum.to_array();
-                    let diff_arr = diff.to_array();
+                        let sum_arr = sum.to_array();
+                        let diff_arr = diff.to_array();
 
-                    let new_low0 = Complex64::new(sum_arr[0], sum_arr[1]);
-                    let new_high0 = Complex64::new(diff_arr[0], diff_arr[1]);
-                    let new_low1 = Complex64::new(sum_arr[2], sum_arr[3]);
-                    let new_high1 = Complex64::new(diff_arr[2], diff_arr[3]);
+                        let new_low0 = Complex64::new(sum_arr[0], sum_arr[1]);
+                        let new_high0 = Complex64::new(diff_arr[0], diff_arr[1]);
+                        let new_low1 = Complex64::new(sum_arr[2], sum_arr[3]);
+                        let new_high1 = Complex64::new(diff_arr[2], diff_arr[3]);
 
-                    if new_low0.norm_sqr() > self.epsilon {
-                        self.scratch.push((li0, new_low0));
+                        if new_low0.norm_sqr() > self.epsilon {
+                            self.scratch.push((li0, new_low0));
+                        }
+                        if new_high0.norm_sqr() > self.epsilon {
+                            self.scratch.push((hi0, new_high0));
+                        }
+                        if new_low1.norm_sqr() > self.epsilon {
+                            self.scratch.push((li1, new_low1));
+                        }
+                        if new_high1.norm_sqr() > self.epsilon {
+                            self.scratch.push((hi1, new_high1));
+                        }
+
+                        batch_count = 0;
                     }
-                    if new_high0.norm_sqr() > self.epsilon {
-                        self.scratch.push((hi0, new_high0));
+
+                    low_ptr += 1;
+                    high_ptr += 1;
+                }
+                std::cmp::Ordering::Less => {
+                    // Unpaired low
+                    let scaled =
+                        Complex64::new(low_amp.re * FRAC_1_SQRT_2, low_amp.im * FRAC_1_SQRT_2);
+
+                    if scaled.norm_sqr() > self.epsilon {
+                        self.scratch.push((low_idx, scaled));
+                        self.scratch.push((low_idx | mask, scaled));
                     }
-                    if new_low1.norm_sqr() > self.epsilon {
-                        self.scratch.push((li1, new_low1));
+                    low_ptr += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    // Unpaired high
+                    let new_low =
+                        Complex64::new(high_amp.re * FRAC_1_SQRT_2, high_amp.im * FRAC_1_SQRT_2);
+                    let new_high =
+                        Complex64::new(-high_amp.re * FRAC_1_SQRT_2, -high_amp.im * FRAC_1_SQRT_2);
+
+                    if new_low.norm_sqr() > self.epsilon {
+                        self.scratch.push((high_partner, new_low));
                     }
-                    if new_high1.norm_sqr() > self.epsilon {
-                        self.scratch.push((hi1, new_high1));
+                    if new_high.norm_sqr() > self.epsilon {
+                        self.scratch.push((high_idx, new_high));
                     }
-
-                    batch_count = 0;
+                    high_ptr += 1;
                 }
-
-                low_ptr += 1;
-                high_ptr += 1;
-            } else if low_idx < high_partner {
-                // Unpaired low
-                let scaled = Complex64::new(low_amp.re * FRAC_1_SQRT_2, low_amp.im * FRAC_1_SQRT_2);
-
-                if scaled.norm_sqr() > self.epsilon {
-                    self.scratch.push((low_idx, scaled));
-                    self.scratch.push((low_idx | mask, scaled));
-                }
-                low_ptr += 1;
-            } else {
-                // Unpaired high
-                let new_low =
-                    Complex64::new(high_amp.re * FRAC_1_SQRT_2, high_amp.im * FRAC_1_SQRT_2);
-                let new_high =
-                    Complex64::new(-high_amp.re * FRAC_1_SQRT_2, -high_amp.im * FRAC_1_SQRT_2);
-
-                if new_low.norm_sqr() > self.epsilon {
-                    self.scratch.push((high_partner, new_low));
-                }
-                if new_high.norm_sqr() > self.epsilon {
-                    self.scratch.push((high_idx, new_high));
-                }
-                high_ptr += 1;
             }
         }
 
@@ -1374,10 +1383,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
 
         // Build results using pre-computed marginals
         let mut results = Vec::with_capacity(n);
-        for i in 0..n {
+        for (i, &prob_one) in marginals.iter().enumerate() {
             let outcome = (sampled_outcome >> i) & 1 == 1;
             // Use pre-computed marginal probability for determinism check
-            let prob_one = marginals[i];
             let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
             results.push(MeasurementResult {
                 outcome,

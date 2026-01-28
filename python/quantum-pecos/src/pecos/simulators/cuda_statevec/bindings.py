@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 
 
-def _to_list(q) -> list[int]:
+def _to_list(q: int | tuple[int, ...]) -> list[int]:
     """Convert qubit location to list."""
     if isinstance(q, int):
         return [q]
@@ -34,13 +34,16 @@ def _to_list(q) -> list[int]:
 
 def init_zero(state: CudaStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
     """Initialize qubit to |0> state."""
-    state.backend.reset()
+    result = meas_z(state, qubit)
+    if result:
+        X(state, qubit)
 
 
 def init_one(state: CudaStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
     """Initialize qubit to |1> state."""
-    state.backend.reset()
-    state.backend.x([qubit])
+    result = meas_z(state, qubit)
+    if not result:
+        X(state, qubit)
 
 
 # =============================================================================

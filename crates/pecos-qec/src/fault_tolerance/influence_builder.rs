@@ -147,21 +147,13 @@ impl<'a> InfluenceBuilder<'a> {
                         sim.cx(qubits[0], qubits[1]);
                         sim.h(qubits[1]);
                     }
-                    pecos_quantum::GateType::Prep => {
-                        // Preparation in Z basis resets the qubit
-                        // For symbolic simulation, we treat this as measuring (to collapse)
-                        // and then reinitializing. Since it's a reset to |0>, we use H+mz+H
-                        // Actually for symbolic stab, we can use the reset method if available
-                        // For now, skip - the simulator starts in |0> state
-                    }
                     pecos_quantum::GateType::Measure | pecos_quantum::GateType::MeasureFree => {
                         sim.mz(qubits[0]);
                         node_to_meas_idx[node] = Some(meas_idx);
                         meas_idx += 1;
                     }
-                    _ => {
-                        // Skip other gates (identity, barriers, etc.)
-                    }
+                    // Skip other gates (identity, barriers, Prep, etc.)
+                    _ => {}
                 }
             }
         }
@@ -226,7 +218,7 @@ impl<'a> InfluenceBuilder<'a> {
 
         // Build measurement node lookup
         let measurements = self.extract_measurements(propagator);
-        map.measurements = measurements.clone();
+        map.measurements.clone_from(&measurements);
 
         // Create DetectorId entries for each detector
         for detector in detectors {
@@ -477,9 +469,9 @@ impl<'a> InfluenceBuilder<'a> {
         let mut prop = initial_prop.clone();
 
         // Initialize active qubits from the observable
-        for q in 0..active_qubits.len() {
+        for (q, is_active) in active_qubits.iter_mut().enumerate() {
             if prop.contains_x(q) || prop.contains_z(q) {
-                active_qubits[q] = true;
+                *is_active = true;
 
                 // Add all gates on this qubit to the heap
                 for (topo_pos, node) in propagator.qubit_gates_backward(q) {

@@ -154,8 +154,8 @@ class PatchGeometry:
 
     @property
     def num_ancilla(self) -> int:
-        """Number of ancilla qubits."""
-        return 2
+        """Number of ancilla qubits (one per stabilizer)."""
+        return self.num_x_stab + self.num_z_stab
 
     @property
     def num_qubits(self) -> int:

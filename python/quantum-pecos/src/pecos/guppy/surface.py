@@ -6,6 +6,9 @@
 This module generates Guppy quantum code from the geometry stored
 in a SurfacePatch. The geometry is computed once and stored, then
 used to generate code on demand.
+
+The generated syndrome extraction uses a 4-round parallel CNOT
+schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 """
 
 import importlib.util
@@ -13,6 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from pecos.qec.surface.schedule import compute_cnot_schedule
 
 if TYPE_CHECKING:
     from pecos.qec.surface import SurfacePatch
@@ -40,6 +45,9 @@ def _get_temp_dir() -> Path:
 def generate_guppy_source(patch: "SurfacePatch") -> str:
     """Generate Guppy source code for a surface code patch.
 
+    Uses a 4-round parallel CNOT schedule with dedicated per-stabilizer
+    ancillas for syndrome extraction.
+
     Args:
         patch: SurfacePatch with geometry configuration
 
@@ -51,6 +59,7 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
     num_x_stab = len(geom.x_stabilizers)
     num_z_stab = len(geom.z_stabilizers)
     dx, dz = geom.dx, geom.dz
+    d = patch.distance
 
     lines = [
         f'"""Surface code patch (dx={dx}, dz={dz}) implementation in Guppy.',
@@ -60,12 +69,12 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
         f"Data qubits: {num_data}",
         f"X stabilizers: {num_x_stab}",
         f"Z stabilizers: {num_z_stab}",
+        f"Ancilla qubits: {num_x_stab + num_z_stab} (one per stabilizer)",
         '"""',
         "",
         "from guppylang import guppy",
         "from guppylang.std.builtins import array, owned, result",
         "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x",
-        "from guppylang.std.qsystem import measure_and_reset",
         "",
         "",
     ]
@@ -91,83 +100,79 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
         ],
     )
 
-    # Generate X stabilizer measurement functions
-    lines.append("# === X Stabilizer Measurements ===")
-    lines.append("")
+    # Generate state preparation functions
+    lines.extend(
+        [
+            "# === State Preparation ===",
+            "",
+            "@guppy",
+            f"def prep_z_basis() -> SurfaceCode_{dx}x{dz}:",
+            '    """Prepare logical |0_L> state."""',
+            f"    data = array(qubit() for _ in range({num_data}))",
+            f"    return SurfaceCode_{dx}x{dz}(data)",
+            "",
+            "",
+            "@guppy",
+            f"def prep_x_basis() -> SurfaceCode_{dx}x{dz}:",
+            '    """Prepare logical |+_L> state."""',
+            f"    data = array(qubit() for _ in range({num_data}))",
+            f"    for i in range({num_data}):",
+            "        h(data[i])",
+            f"    return SurfaceCode_{dx}x{dz}(data)",
+            "",
+            "",
+        ],
+    )
 
-    for stab in geom.x_stabilizers:
-        weight = "boundary" if stab.is_boundary else "bulk"
-        lines.extend(
-            [
-                "@guppy",
-                f"def measure_x_stab_{stab.index}(ax: qubit, data: array[qubit, {num_data}]) -> bool:",
-                f'    """Measure X stabilizer {stab.index} ({weight}): {list(stab.data_qubits)}."""',
-                "    h(ax)",
-            ],
-        )
-        lines.extend(f"    cx(ax, data[{q}])" for q in stab.data_qubits)
-        lines.extend(
-            [
-                "    h(ax)",
-                "    return measure_and_reset(ax)",
-                "",
-                "",
-            ],
-        )
-
-    # Generate Z stabilizer measurement functions
-    lines.append("# === Z Stabilizer Measurements ===")
-    lines.append("")
-
-    for stab in geom.z_stabilizers:
-        weight = "boundary" if stab.is_boundary else "bulk"
-        lines.extend(
-            [
-                "@guppy",
-                f"def measure_z_stab_{stab.index}(az: qubit, data: array[qubit, {num_data}]) -> bool:",
-                f'    """Measure Z stabilizer {stab.index} ({weight}): {list(stab.data_qubits)}."""',
-            ],
-        )
-        lines.extend(f"    cx(data[{q}], az)" for q in stab.data_qubits)
-        lines.extend(
-            [
-                "    return measure_and_reset(az)",
-                "",
-                "",
-            ],
-        )
-
-    # Generate syndrome extraction
-    x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
-    z_calls = ", ".join(f"sz{s.index}" for s in geom.z_stabilizers)
+    # Generate syndrome extraction with parallel CNOT schedule
+    rounds = compute_cnot_schedule(patch)
 
     lines.extend(
         [
             "# === Syndrome Extraction ===",
             "",
             "@guppy",
-            "def syndrome_extraction(",
-            f"    surf: SurfaceCode_{dx}x{dz},",
-            "    ax: qubit,",
-            "    az: qubit,",
-            f") -> Syndrome_{dx}x{dz}:",
-            '    """Extract full syndrome."""',
-            "    # Z stabilizers",
+            f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}) -> Syndrome_{dx}x{dz}:",
+            '    """Extract full syndrome using 4-round parallel CNOT schedule."""',
+            "    # Allocate ancilla qubits (one per stabilizer)",
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)"
-        for stab in geom.z_stabilizers
-    )
+    for stab in geom.x_stabilizers:
+        lines.append(f"    ax{stab.index} = qubit()")
+    for stab in geom.z_stabilizers:
+        lines.append(f"    az{stab.index} = qubit()")
 
     lines.append("")
-    lines.append("    # X stabilizers")
+    lines.append("    # Hadamard on X ancillas")
+    for stab in geom.x_stabilizers:
+        lines.append(f"    h(ax{stab.index})")
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
-        for stab in geom.x_stabilizers
-    )
+    # Emit 4 rounds of CX gates
+    for rnd_idx, rnd_gates in enumerate(rounds):
+        lines.append("")
+        lines.append(f"    # Round {rnd_idx + 1}")
+        for stab_type, stab_idx, data_q in rnd_gates:
+            if stab_type == "X":
+                lines.append(f"    cx(ax{stab_idx}, surf.data[{data_q}])")
+            else:
+                lines.append(f"    cx(surf.data[{data_q}], az{stab_idx})")
+
+    lines.append("")
+    lines.append("    # Hadamard on X ancillas")
+    for stab in geom.x_stabilizers:
+        lines.append(f"    h(ax{stab.index})")
+
+    # Measure ancillas (destructive)
+    lines.append("")
+    lines.append("    # Measure ancillas")
+    for stab in geom.x_stabilizers:
+        lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
+    for stab in geom.z_stabilizers:
+        lines.append(f"    sz{stab.index} = measure(az{stab.index})")
+
+    x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
+    z_calls = ", ".join(f"sz{s.index}" for s in geom.z_stabilizers)
 
     lines.extend(
         [
@@ -176,51 +181,6 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
             f"    synz = array({z_calls})",
             "",
             f"    return Syndrome_{dx}x{dz}(synx, synz)",
-            "",
-            "",
-        ],
-    )
-
-    # Generate initialization
-    lines.extend(
-        [
-            "# === Initialization ===",
-            "",
-            "@guppy",
-            f"def init_z_basis(surf: SurfaceCode_{dx}x{dz}, ax: qubit) -> array[bool, {num_x_stab}]:",
-            '    """Initialize logical |0_L> and extract initial X syndrome."""',
-        ],
-    )
-
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
-        for stab in geom.x_stabilizers
-    )
-
-    lines.extend(
-        [
-            "",
-            f"    return array({x_calls})",
-            "",
-            "",
-            "@guppy",
-            f"def init_x_basis(surf: SurfaceCode_{dx}x{dz}, az: qubit) -> array[bool, {num_z_stab}]:",
-            '    """Initialize logical |+_L> and extract initial Z syndrome."""',
-            f"    for i in range({num_data}):",
-            "        h(surf.data[i])",
-            "",
-        ],
-    )
-
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)"
-        for stab in geom.z_stabilizers
-    )
-
-    lines.extend(
-        [
-            "",
-            f"    return array({z_calls})",
             "",
             "",
         ],
@@ -295,25 +255,15 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
             "    @guppy",
             "    def memory_z() -> None:",
             f'        """Z-basis memory experiment for dx={dx}, dz={dz}."""',
-            f"        data = array(qubit() for _ in range({num_data}))",
-            "        ax = qubit()",
-            "        az = qubit()",
-            "",
-            f"        surf = SurfaceCode_{dx}x{dz}(data)",
-            "",
-            "        init_syn = init_z_basis(surf, ax)",
-            '        result("init_synx", init_syn)',
+            f"        surf = prep_z_basis()",
             "",
             "        for _t in range(comptime(num_rounds)):",
-            "            syn = syndrome_extraction(surf, ax, az)",
+            "            syn = syndrome_extraction(surf)",
             '            result("synx", syn.synx)',
             '            result("synz", syn.synz)',
             "",
             "        final = measure_z_basis(surf)",
             '        result("final", final)',
-            "",
-            "        discard(ax)",
-            "        discard(az)",
             "",
             "    return memory_z",
             "",
@@ -325,25 +275,15 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
             "    @guppy",
             "    def memory_x() -> None:",
             f'        """X-basis memory experiment for dx={dx}, dz={dz}."""',
-            f"        data = array(qubit() for _ in range({num_data}))",
-            "        ax = qubit()",
-            "        az = qubit()",
-            "",
-            f"        surf = SurfaceCode_{dx}x{dz}(data)",
-            "",
-            "        init_syn = init_x_basis(surf, az)",
-            '        result("init_synz", init_syn)',
+            f"        surf = prep_x_basis()",
             "",
             "        for _t in range(comptime(num_rounds)):",
-            "            syn = syndrome_extraction(surf, ax, az)",
+            "            syn = syndrome_extraction(surf)",
             '            result("synx", syn.synx)',
             '            result("synz", syn.synz)',
             "",
             "        final = measure_x_basis(surf)",
             '        result("final", final)',
-            "",
-            "        discard(ax)",
-            "        discard(az)",
             "",
             "    return memory_x",
             "",
@@ -421,13 +361,15 @@ def generate_memory_experiment(
 def get_num_qubits(d: int) -> int:
     """Get total number of qubits for a distance-d surface code.
 
+    Peak qubit count: d^2 data qubits + (d^2 - 1) ancilla qubits.
+
     Args:
         d: Code distance
 
     Returns:
-        Total qubits (d^2 data + 2 ancilla)
+        Total qubits (2 * d^2 - 1)
     """
-    return d * d + 2
+    return 2 * d * d - 1
 
 
 def generate_surface_code_module(d: int) -> str:

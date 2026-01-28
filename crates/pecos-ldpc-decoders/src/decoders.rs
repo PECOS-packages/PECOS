@@ -45,6 +45,22 @@ pub struct BpOsdDecoder {
 }
 
 impl BpOsdDecoder {
+    /// Create a builder for configuring a new BP+OSD decoder
+    ///
+    /// This is the recommended way to construct a decoder:
+    ///
+    /// ```rust,ignore
+    /// let decoder = BpOsdDecoder::builder(&pcm)
+    ///     .error_rate(0.01)
+    ///     .max_iter(100)
+    ///     .osd_method(OsdMethod::Osd0)
+    ///     .build()?;
+    /// ```
+    #[must_use]
+    pub fn builder(pcm: &SparseMatrix) -> crate::builders::BpOsdBuilder<'_> {
+        crate::builders::BpOsdBuilder::new(pcm)
+    }
+
     /// Create a new BP+OSD decoder
     ///
     /// # Errors
@@ -260,6 +276,22 @@ pub struct BpLsdDecoder {
 }
 
 impl BpLsdDecoder {
+    /// Create a builder for configuring a new BP+LSD decoder
+    ///
+    /// This is the recommended way to construct a decoder:
+    ///
+    /// ```rust,ignore
+    /// let decoder = BpLsdDecoder::builder(&pcm)
+    ///     .error_rate(0.01)
+    ///     .max_iter(100)
+    ///     .lsd_method(OsdMethod::Osd0)
+    ///     .build()?;
+    /// ```
+    #[must_use]
+    pub fn builder(pcm: &SparseMatrix) -> crate::builders::BpLsdBuilder<'_> {
+        crate::builders::BpLsdBuilder::new(pcm)
+    }
+
     /// Create a new BP+LSD decoder
     ///
     /// # Errors
@@ -532,6 +564,12 @@ pub struct SoftInfoBpDecoder {
 }
 
 impl SoftInfoBpDecoder {
+    /// Create a builder for configuring a new Soft Information BP decoder
+    #[must_use]
+    pub fn builder(pcm: &SparseMatrix) -> crate::builders::SoftInfoBpBuilder<'_> {
+        crate::builders::SoftInfoBpBuilder::new(pcm)
+    }
+
     /// Create a new Soft Information BP decoder
     ///
     /// # Errors
@@ -703,6 +741,12 @@ pub struct FlipDecoder {
 }
 
 impl FlipDecoder {
+    /// Create a builder for configuring a new Flip decoder
+    #[must_use]
+    pub fn builder(pcm: &SparseMatrix) -> crate::builders::FlipBuilder<'_> {
+        crate::builders::FlipBuilder::new(pcm)
+    }
+
     /// Create a new Flip decoder
     ///
     /// # Arguments
@@ -818,6 +862,12 @@ impl UfMethod {
 }
 
 impl UnionFindDecoder {
+    /// Create a builder for configuring a new Union-Find decoder
+    #[must_use]
+    pub fn builder(pcm: &SparseMatrix) -> crate::builders::UnionFindBuilder<'_> {
+        crate::builders::UnionFindBuilder::new(pcm)
+    }
+
     /// Create a new Union Find decoder
     ///
     /// # Errors
@@ -905,6 +955,15 @@ pub struct BeliefFindDecoder {
 }
 
 impl BeliefFindDecoder {
+    /// Create a builder for configuring a new BeliefFind decoder
+    ///
+    /// BeliefFind combines BP with Union-Find: it first tries BP, and if that
+    /// fails to converge, it falls back to Union-Find using soft information from BP.
+    #[must_use]
+    pub fn builder(pcm: &SparseMatrix) -> crate::builders::BeliefFindBuilder<'_> {
+        crate::builders::BeliefFindBuilder::new(pcm)
+    }
+
     /// Create a new `BeliefFind` decoder
     ///
     /// # Errors

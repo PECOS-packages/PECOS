@@ -22,6 +22,7 @@ mod byte_message_bindings;
 mod coin_toss_bindings;
 mod cpp_sparse_sim_bindings;
 mod dag_circuit_bindings;
+mod decoder_bindings;
 mod dtypes;
 mod engine_bindings;
 mod engine_builders;
@@ -259,6 +260,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register graph module (graph algorithms for MWPM)
     graph_bindings::register_graph_module(m)?;
+
+    // Register decoders module (QEC decoders: PyMatching, Fusion Blossom, LDPC, etc.)
+    decoder_bindings::register_decoders_module(m)?;
 
     // Register quantum circuit types (DagCircuit, Gate, GateType, QubitId)
     dag_circuit_bindings::register_quantum_circuit_types(m)?;

@@ -654,7 +654,14 @@ pub mod dag {
 /// use pecos::decoders::{Decoder, BpOsdDecoder};
 /// # }
 /// ```
-#[cfg(any(feature = "ldpc", feature = "all-decoders"))]
+#[cfg(any(
+    feature = "ldpc",
+    feature = "pymatching",
+    feature = "fusion-blossom",
+    feature = "tesseract",
+    feature = "chromobius",
+    feature = "all-decoders"
+))]
 pub mod decoders {
     pub use pecos_decoders::*;
 }

@@ -7,7 +7,6 @@ from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 
-@pytest.mark.skip(reason="Integer arithmetic conditionals not fully supported by HUGR interpreter")
 def test_integer_arithmetic() -> None:
     """Test integer arithmetic operations."""
 
@@ -62,7 +61,6 @@ def test_boolean_operations() -> None:
     assert len(measurements) == 10
 
 
-@pytest.mark.skip(reason="Integer comparison conditionals not fully supported by HUGR interpreter")
 def test_integer_comparisons() -> None:
     """Test integer comparison operations."""
 
@@ -88,7 +86,6 @@ def test_integer_comparisons() -> None:
     assert 1 in measurements
 
 
-@pytest.mark.skip(reason="While loop with integer conditionals not fully supported by HUGR interpreter")
 def test_arithmetic_in_loop() -> None:
     """Test arithmetic in loop control."""
 
@@ -116,7 +113,6 @@ def test_arithmetic_in_loop() -> None:
     assert 1 in measurements
 
 
-@pytest.mark.skip(reason="Chained integer comparisons not fully supported by HUGR interpreter")
 def test_chained_comparisons() -> None:
     """Test multiple chained comparisons."""
 

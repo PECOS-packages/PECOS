@@ -65,7 +65,6 @@ impl HugrEngine {
             debug!(
                 "Completing Call {call_node:?} after FuncDefn {func_defn_node:?} CFG {cfg_node:?} finished"
             );
-            eprintln!("[DEBUG] Completing Call {call_node:?} after FuncDefn {func_defn_node:?} CFG {cfg_node:?} finished");
 
             if let Some(func_info) = self.func_defns.get(&func_defn_node).cloned() {
                 // Propagate wires from FuncDefn Output node to Call output ports
@@ -79,12 +78,21 @@ impl HugrEngine {
                         hugr.single_linked_output(func_info.output_node, output_in_port)
                     {
                         let src_wire = (src_node, src_port.index());
+                        // Map qubits
                         if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                            // Map to Call output port
                             let call_output_wire = (call_node, port);
                             self.wire_state.wire_to_qubit.insert(call_output_wire, qubit_id);
                             debug!(
                                 "Call {call_node:?}: mapped FuncDefn output {port} qubit {qubit_id:?} to Call output"
+                            );
+                        }
+                        // Map classical values (including arrays)
+                        if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                            let call_output_wire = (call_node, port);
+                            self.wire_state.classical_values.insert(call_output_wire, value.clone());
+                            debug!(
+                                "Call {call_node:?}: mapped FuncDefn output {port} classical value {:?} to Call output",
+                                value
                             );
                         }
                     }

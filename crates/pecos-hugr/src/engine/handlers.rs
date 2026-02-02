@@ -22,6 +22,7 @@
 //! - [`classical`]: Classical logic operations (`tket.bool`)
 //! - [`arithmetic`]: Arithmetic operations (`arithmetic.float`, `arithmetic.int`, `arithmetic.conversions`)
 //! - [`array`]: Array operations (`collections.array`)
+//! - [`borrow_arr`]: Borrow array operations (`collections.borrow_arr`)
 //! - [`quantum`]: Quantum extension operations (`tket.quantum`, `tket.rotation`, `tket.modifier`, `tket.global_phase`)
 //! - [`wasm`]: WebAssembly operations (`tket.wasm`)
 //! - [`guppy`]: Guppy-specific operations (`tket.guppy`, `guppylang`)
@@ -46,6 +47,7 @@
 
 mod arithmetic;
 mod array;
+mod borrow_arr;
 mod classical;
 mod debug;
 mod futures;
@@ -82,6 +84,7 @@ impl HugrEngine {
     /// - `tket.quantum`: Quantum non-gate operations
     /// - `guppylang`: Guppy language operations
     /// - `collections.array`: Array operations
+    /// - `collections.borrow_arr`: Borrow array operations
     /// - `arithmetic.float`: Float arithmetic
     /// - `arithmetic.int`: Integer arithmetic
     /// - `arithmetic.conversions`: Type conversions
@@ -115,6 +118,7 @@ impl HugrEngine {
             "tket.quantum" => self.handle_quantum_extension_op(hugr, node, &op_name),
             "guppylang" => self.handle_guppylang_op(hugr, node, &op_name),
             "collections.array" => self.handle_array_op(hugr, node, &op_name),
+            "collections.borrow_arr" => self.handle_borrow_arr_op(hugr, node, &op_name),
             "arithmetic.float" => self.handle_float_op(hugr, node, &op_name),
             "arithmetic.int" => self.handle_int_op(hugr, node, &op_name),
             "arithmetic.conversions" => self.handle_conversions_op(hugr, node, &op_name),

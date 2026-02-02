@@ -274,7 +274,7 @@ class TestQubitAllocationLimits:
                 isinstance(m, bool | int) for m in measurements
             ), "Measurements should be bool/int"
 
-    @pytest.mark.skip(reason="Array return type not properly handled by HUGR interpreter")
+    @pytest.mark.skip(reason="Array values not propagating through CFG blocks inside TailLoops")
     def test_qubit_array_allocation(self) -> None:
         """Test allocation of qubit arrays using Guppy's array type with proper ownership."""
         from guppylang.std.builtins import owned

@@ -18,7 +18,6 @@ from pecos_rslib import state_vector
 class TestDynamicCircuitExecution:
     """Test cases for dynamic circuit execution."""
 
-    @pytest.mark.skip(reason="Conditional X gate from |0⟩ not working correctly - HUGR interpreter issue")
     def test_conditional_x_gate_deterministic(self) -> None:
         """Test that conditional X gate based on measurement works correctly.
 
@@ -52,13 +51,13 @@ class TestDynamicCircuitExecution:
             .run(100)
         )
 
-        # Extract measurements
+        # Extract the return value (last measurement in each shot)
+        # Results format: [[m1, m2], [m1, m2], ...] where m2 is the return value
         measurements = results.get("measurements", [])
-        if not measurements and "measurement_0" in results:
-            measurements = results["measurement_0"]
+        return_values = [shot[-1] for shot in measurements]
 
         # All results should be False since q1 is |0>, so X is never applied to q2
-        ones_count = sum(1 for m in measurements if m)
+        ones_count = sum(1 for m in return_values if m)
         assert (
             ones_count == 0
         ), f"Conditional X from |0> should never trigger, but got {ones_count}/100 ones"
@@ -156,7 +155,6 @@ class TestDynamicCircuitExecution:
             f"but got {mismatches}/100 mismatches"
         )
 
-    @pytest.mark.skip(reason="Register count mismatch in conditional circuit - HUGR interpreter issue")
     def test_teleportation_like_protocol(self) -> None:
         """Test a simplified teleportation-like protocol with measurement feedback.
 
@@ -202,20 +200,13 @@ class TestDynamicCircuitExecution:
             sim(Guppy(teleport_one)).qubits(3).quantum(state_vector()).seed(42).run(100)
         )
 
-        # Extract measurements
+        # Extract the return value (last measurement in each shot)
+        # Results format: [[m0, m1, m2], ...] where m2 is the return value
         measurements = results.get("measurements", [])
-        if not measurements and "measurement_0" in results:
-            # The last measurement is the teleported qubit
-            # For this simplified protocol, we check if teleportation worked
-            # by verifying the output is |1>
-            # Note: due to the protocol we designed, we need to find the right measurement
-            # The function returns a single bool (the final measurement of q2)
-            measurements = results.get("measurement_0", [])
-            if "measurement_2" in results:
-                measurements = results["measurement_2"]
+        return_values = [shot[-1] for shot in measurements]
 
         # The teleported state should be |1>, so we expect all True
-        ones_count = sum(1 for m in measurements if m)
+        ones_count = sum(1 for m in return_values if m)
         assert ones_count > 95, (
             f"Teleportation of |1> should succeed with high probability, "
             f"got {ones_count}/100 ones"

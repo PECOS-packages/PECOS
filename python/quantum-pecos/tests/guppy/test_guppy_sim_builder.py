@@ -145,7 +145,6 @@ class TestGuppySimBuilder:
         correlated = sum(1 for m in raw_measurements if m[0] == m[1])
         assert correlated == len(raw_measurements), "Bell state should be 100% correlated"
 
-    @pytest.mark.skip(reason="HugrSimulation object has no temp_dir attribute - API mismatch")
     def test_keep_intermediate_files(self) -> None:
         """Test keeping intermediate compilation files."""
         import shutil

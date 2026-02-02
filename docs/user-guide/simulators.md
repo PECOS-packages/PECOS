@@ -1,5 +1,45 @@
 # Simulators
 
+PECOS provides multiple quantum simulation backends optimized for different use cases. This guide helps you choose the right simulator for your needs.
+
+## Setup
+
+Examples in this guide use a Bell state circuit:
+
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos import sim, Qasm
+
+    circuit = """
+    OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    creg c[2];
+    h q[0];
+    cx q[0], q[1];
+    measure q -> c;
+    """
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    <!--skip-->
+    ```rust
+    use pecos::prelude::*;
+
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+    let program = Qasm::from_string(qasm_code);
+    ```
+
 ```hidden-python
 from pecos import sim, Qasm
 
@@ -32,8 +72,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
-
-PECOS provides multiple quantum simulation backends optimized for different use cases. This guide helps you choose the right simulator for your needs.
 
 ## Quick Reference
 

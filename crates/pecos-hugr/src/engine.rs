@@ -985,13 +985,23 @@ impl HugrEngine {
                             hugr.single_linked_output(current_node, call_in_port)
                         {
                             let src_wire = (src_node, src_port.index());
+
+                            // Map qubits
                             if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                                // Map to FuncDefn Input node output
                                 let func_input_wire = (func_info.input_node, in_port);
                                 self.wire_state.wire_to_qubit.insert(func_input_wire, qubit_id);
                                 debug!(
                                     "Call {:?}: mapped input {} qubit {:?} to FuncDefn Input {:?}",
                                     current_node, in_port, qubit_id, func_info.input_node
+                                );
+                            }
+                            // Map classical values (including arrays)
+                            if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                                let func_input_wire = (func_info.input_node, in_port);
+                                self.wire_state.classical_values.insert(func_input_wire, value.clone());
+                                debug!(
+                                    "Call {:?}: mapped input {} classical value to FuncDefn Input {:?}",
+                                    current_node, in_port, func_info.input_node
                                 );
                             }
                         }

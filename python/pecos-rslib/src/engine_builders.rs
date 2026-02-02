@@ -419,6 +419,8 @@ impl PyHugrEngineBuilder {
                 noise_builder: None,
                 explicit_num_qubits: None,
                 foreign_object: None,
+                keep_intermediate_files: false,
+                hugr_bytes: None,
             }),
         })
     }
@@ -433,12 +435,16 @@ pub struct PyHugrSimBuilder {
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) foreign_object: Option<Py<PyAny>>,
+    pub(crate) keep_intermediate_files: bool,
+    pub(crate) hugr_bytes: Option<Vec<u8>>,
 }
 
 /// Python wrapper for built HUGR simulation
 #[pyclass(name = "HugrSimulation")]
 pub struct PyHugrSimulation {
     pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
+    /// Path to temp directory containing intermediate files (if `keep_intermediate_files` was true)
+    pub(crate) temp_dir: Option<String>,
 }
 
 #[pymethods]
@@ -459,6 +465,12 @@ impl PyHugrSimulation {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
         }
+    }
+
+    /// Get the temp directory path (if `keep_intermediate_files` was enabled)
+    #[getter]
+    fn temp_dir(&self) -> Option<String> {
+        self.temp_dir.clone()
     }
 }
 

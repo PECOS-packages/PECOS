@@ -249,23 +249,35 @@ pub fn extract_dataflow_block_info(
     }
 }
 
-/// Find successor blocks for a `DataflowBlock`.
+/// Find successor blocks for a `DataflowBlock`, ordered by output port.
+///
+/// This is critical for CFG branching: port 0 corresponds to branch index 0, etc.
+/// The Sum type at the block's Output determines which branch is taken:
+/// - Sum tag 0 -> successor at port 0
+/// - Sum tag 1 -> successor at port 1
+/// - etc.
 pub fn find_block_successors(hugr: &Hugr, block: Node, num_successors: usize) -> Vec<Node> {
-    let mut successors = Vec::with_capacity(num_successors);
+    use tket::hugr::OutgoingPort;
 
-    // DataflowBlock outputs are connected to successor blocks
-    // The block node itself has outgoing edges to successor nodes
-    for succ in hugr.output_neighbours(block) {
-        // Filter to only CFG-related nodes (DataflowBlock or ExitBlock)
-        match hugr.get_optype(succ) {
-            OpType::DataflowBlock(_) | OpType::ExitBlock(_) => {
-                successors.push(succ);
+    let mut successors = vec![None; num_successors];
+
+    // Iterate over each output port and find what CFG-related node it connects to
+    for port_idx in 0..num_successors {
+        let out_port = OutgoingPort::from(port_idx);
+        // linked_inputs returns an iterator over (Node, IncomingPort) connected to this output
+        for (target_node, _) in hugr.linked_inputs(block, out_port) {
+            match hugr.get_optype(target_node) {
+                OpType::DataflowBlock(_) | OpType::ExitBlock(_) => {
+                    successors[port_idx] = Some(target_node);
+                    break; // Only expect one CFG successor per port
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
-    successors
+    // Convert Option<Node> to Node, filtering out None entries
+    successors.into_iter().flatten().collect()
 }
 
 /// Find all nodes inside CFG blocks (should be deferred until block is active).
@@ -901,7 +913,7 @@ pub fn get_container_type(hugr: &Hugr, node: Node) -> ContainerType {
 }
 
 /// Check if all quantum predecessors of a node have been processed.
-/// This includes quantum operations, Conditionals, CFGs, and Call nodes.
+/// This includes quantum operations, Conditionals, CFGs, TailLoops, and Call nodes.
 pub fn all_predecessors_ready(
     hugr: &Hugr,
     node: Node,
@@ -923,10 +935,9 @@ pub fn all_predecessors_ready(
         if cfgs.contains_key(&pred_node) && !processed.contains(&pred_node) {
             return false;
         }
-        // Check Call nodes (they also produce qubit outputs after function returns)
-        // We identify Call nodes by checking if they're in OpType::Call
+        // Check Call nodes and TailLoop nodes (they also produce qubit/array outputs)
         let op = hugr.get_optype(pred_node);
-        if matches!(op, OpType::Call(_)) && !processed.contains(&pred_node) {
+        if matches!(op, OpType::Call(_) | OpType::TailLoop(_)) && !processed.contains(&pred_node) {
             return false;
         }
     }

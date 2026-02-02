@@ -394,6 +394,8 @@ pub enum ClassicalValue {
     Rotation(f64),
     /// RNG context handle
     RngContext(RngContextId),
+    /// Qubit reference (for storing qubits in arrays)
+    QubitRef(QubitId),
 }
 
 impl ClassicalValue {
@@ -409,7 +411,8 @@ impl ClassicalValue {
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
-            | Self::RngContext(_) => None,
+            | Self::RngContext(_)
+            | Self::QubitRef(_) => None,
         }
     }
 
@@ -427,7 +430,8 @@ impl ClassicalValue {
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
-            | Self::RngContext(_) => None,
+            | Self::RngContext(_)
+            | Self::QubitRef(_) => None,
         }
     }
 
@@ -446,7 +450,8 @@ impl ClassicalValue {
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
-            | Self::RngContext(_) => None,
+            | Self::RngContext(_)
+            | Self::QubitRef(_) => None,
         }
     }
 
@@ -465,7 +470,8 @@ impl ClassicalValue {
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
-            | Self::RngContext(_) => None,
+            | Self::RngContext(_)
+            | Self::QubitRef(_) => None,
         }
     }
 
@@ -481,7 +487,11 @@ impl ClassicalValue {
             Self::UInt(u) => Some(*u as f64),
             Self::Float(f) => Some(*f),
             Self::Rotation(r) => Some(*r), // Rotation can be interpreted as float (half-turns)
-            Self::Tuple(_) | Self::Array(_) | Self::Future(_) | Self::RngContext(_) => None,
+            Self::Tuple(_)
+            | Self::Array(_)
+            | Self::Future(_)
+            | Self::RngContext(_)
+            | Self::QubitRef(_) => None,
         }
     }
 

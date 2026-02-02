@@ -436,7 +436,6 @@ class TestLinearTypeSystem:
         decoded_results = get_decoded_results(results, n_bits=1)
         assert all(r for r in decoded_results)
 
-    @pytest.mark.skip(reason="Conditional linear flow returns empty results in HUGR interpreter")
     def test_conditional_linear_flow(self) -> None:
         """Test qubits in conditional control flow."""
 
@@ -531,7 +530,6 @@ class TestQuantumClassicalHybrid:
         # Just check that we got results
         assert len(measurements) == 10
 
-    @pytest.mark.skip(reason="Integer conditional quantum ops returns empty results in HUGR interpreter")
     def test_conditional_quantum_ops(self) -> None:
         """Test conditional quantum operations based on classical values."""
         # Fixed: Using @owned annotation for qubit parameters

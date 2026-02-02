@@ -32,13 +32,8 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
 === ":fontawesome-brands-python: Python"
 
-    ```hidden-python
-    import os
-    # Create shared directory for HUGR files that Rust tests can use
-    os.makedirs("/tmp/pecos-doc-tests", exist_ok=True)
-    ```
-
     ```python
+    import os
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
     from pecos import sim, Guppy
@@ -68,7 +63,8 @@ Let's create a Bell state using Guppy. First, define a quantum function:
     print(results.to_dict())
     # Results: always correlated (00 or 11)
 
-    # Save compiled HUGR for other examples
+    # Save compiled HUGR for later examples
+    os.makedirs("/tmp/pecos-doc-tests", exist_ok=True)
     _hugr = bell_state.compile()
     with open("/tmp/pecos-doc-tests/bell_state.hugr", "w") as f:
         f.write(_hugr.to_str())
@@ -130,35 +126,41 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 === ":fontawesome-brands-python: Python"
 
-    ```hidden-python
-    import os
-    # Ensure circuit.hugr doesn't exist so we get FileNotFoundError
-    if os.path.exists("circuit.hugr"):
-        os.remove("circuit.hugr")
-    ```
+    First, let's compile a Guppy function to a HUGR file:
 
-    <!--expect-error: FileNotFoundError.*circuit\.hugr-->
     ```python
-    from pecos import sim, Hugr
+    from guppylang import guppy
+    from guppylang.std.quantum import h, cx, measure, qubit
 
-    # From file (will fail if file doesn't exist)
-    results = sim(Hugr.from_file("circuit.hugr")).run(1000)
+    @guppy
+    def my_circuit() -> tuple[bool, bool]:
+        q0, q1 = qubit(), qubit()
+        h(q0)
+        cx(q0, q1)
+        return measure(q0), measure(q1)
+
+    # Compile and save to file
+    hugr = my_circuit.compile()
+    with open("circuit.hugr", "w") as f:
+        f.write(hugr.to_str())
     ```
-
-    With an actual HUGR file:
 
     ```hidden-python
     import shutil
-    from pecos import sim, Hugr
-    from pecos_rslib import state_vector
-    # Use the bell_state.hugr generated earlier
-    shutil.copy("/tmp/pecos-doc-tests/bell_state.hugr", "circuit.hugr")
-    # Also save as circuit.hugr for Rust tests
-    shutil.copy("/tmp/pecos-doc-tests/bell_state.hugr", "/tmp/pecos-doc-tests/circuit.hugr")
+    # Also save for Rust tests
+    shutil.copy("circuit.hugr", "/tmp/pecos-doc-tests/circuit.hugr")
     ```
 
+    Now load and run the pre-compiled HUGR:
+
     ```python
-    # From bytes
+    from pecos import sim, Hugr
+    from pecos_rslib import state_vector
+
+    # From file
+    results = sim(Hugr.from_file("circuit.hugr")).qubits(2).quantum(state_vector()).run(1000)
+
+    # Or from bytes
     with open("circuit.hugr", "rb") as f:
         hugr_bytes = f.read()
     results = sim(Hugr(hugr_bytes)).qubits(2).quantum(state_vector()).run(1000)
@@ -334,9 +336,11 @@ HUGR programs work with different quantum backends:
 
 === ":fontawesome-brands-python: Python"
 
-    ```hidden-python
+    ```python
     from guppylang import guppy
-    from guppylang.std.quantum import h, cx, measure, qubit
+    from guppylang.std.quantum import h, measure, qubit
+    from pecos import sim, Guppy
+    from pecos_rslib import state_vector, sparse_stabilizer
 
     @guppy
     def my_circuit() -> bool:
@@ -344,24 +348,11 @@ HUGR programs work with different quantum backends:
         h(q)
         return measure(q)
 
-    @guppy
-    def clifford_circuit() -> bool:
-        q = qubit()
-        h(q)
-        return measure(q)
-    ```
-
-    ```python
-    from pecos import sim, Guppy
-    from pecos_rslib import state_vector, sparse_stabilizer
-
     # State vector - required for non-Clifford gates (T, rotations)
     results = sim(Guppy(my_circuit)).qubits(5).quantum(state_vector()).run(100)
 
     # Sparse stabilizer - efficient for Clifford circuits
-    results = (
-        sim(Guppy(clifford_circuit)).qubits(5).quantum(sparse_stabilizer()).run(100)
-    )
+    results = sim(Guppy(my_circuit)).qubits(5).quantum(sparse_stabilizer()).run(100)
     ```
 
 | Engine | Best For | Gates Supported |
@@ -446,7 +437,8 @@ Results from Guppy simulations work the same as QASM:
 
 === ":fontawesome-brands-python: Python"
 
-    ```hidden-python
+    ```python
+    from collections import Counter
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
     from pecos import sim, Guppy
@@ -458,10 +450,6 @@ Results from Guppy simulations work the same as QASM:
         h(q0)
         cx(q0, q1)
         return measure(q0), measure(q1)
-    ```
-
-    ```python
-    from collections import Counter
 
     results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(1000)
 

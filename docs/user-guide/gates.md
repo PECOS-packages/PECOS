@@ -1,5 +1,36 @@
 # Gate Reference
 
+This guide provides a comprehensive reference for all quantum gates supported by PECOS simulators.
+
+## Setup
+
+All examples in this guide use the following setup:
+
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos.simulators import SparseSim
+
+    # Create a stabilizer simulator with 5 qubits
+    state = SparseSim(num_qubits=5)
+
+    # Qubit indices for examples
+    q = 0
+    q0, q1 = 0, 1
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    <!--skip-->
+    ```rust
+    use pecos::prelude::*;
+
+    let mut sim = StdSparseStab::new(5);
+    let q: usize = 0;
+    let q0: usize = 0;
+    let q1: usize = 1;
+    ```
+
 ```hidden-python
 from pecos.simulators import SparseSim
 
@@ -25,8 +56,6 @@ fn main() {
     // CODE
 }
 ```
-
-This guide provides a comprehensive reference for all quantum gates supported by PECOS simulators.
 
 ## Overview
 

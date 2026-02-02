@@ -144,7 +144,8 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
         );
 
         // Create HUGR engine builder with the HUGR bytes
-        let engine_builder = pecos::hugr_engine().hugr_bytes(hugr_prog.inner.hugr.clone());
+        let hugr_bytes = hugr_prog.inner.hugr.clone();
+        let engine_builder = pecos::hugr_engine().hugr_bytes(hugr_bytes.clone());
         log::info!("HUGR program loaded successfully via direct interpreter");
 
         Ok(PySimBuilder {
@@ -156,6 +157,8 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
                 noise_builder: None,
                 explicit_num_qubits: None,
                 foreign_object: None,
+                keep_intermediate_files: false,
+                hugr_bytes: Some(hugr_bytes),
             }),
         })
     } else if let Ok(phir_prog) = program.extract::<PyPhirJson>(py) {
@@ -423,10 +426,10 @@ impl PySimBuilder {
             SimBuilderInner::QisControl(builder) => {
                 builder.keep_intermediate_files = keep;
             }
-            SimBuilderInner::Qasm(_)
-            | SimBuilderInner::Hugr(_)
-            | SimBuilderInner::PhirJson(_)
-            | SimBuilderInner::Empty => {
+            SimBuilderInner::Hugr(builder) => {
+                builder.keep_intermediate_files = keep;
+            }
+            SimBuilderInner::Qasm(_) | SimBuilderInner::PhirJson(_) | SimBuilderInner::Empty => {
                 // These engine types don't support keep_intermediate_files yet
                 // Just ignore silently for now
             }
@@ -1088,10 +1091,54 @@ impl PySimBuilder {
                         PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
                     })?;
 
+                    // Handle intermediate file saving if requested
+                    let temp_dir = if builder.keep_intermediate_files {
+                        // Create a persistent temp directory
+                        let temp_dir = tempfile::Builder::new()
+                            .prefix("pecos_hugr_sim_")
+                            .tempdir()
+                            .map_err(|e| {
+                                PyRuntimeError::new_err(format!(
+                                    "Failed to create temp directory: {e}"
+                                ))
+                            })?;
+
+                        let temp_path = temp_dir.path();
+
+                        // Save HUGR bytes if available
+                        if let Some(ref hugr_bytes) = builder.hugr_bytes {
+                            let hugr_file = temp_path.join("program.hugr");
+                            std::fs::write(&hugr_file, hugr_bytes).map_err(|e| {
+                                PyRuntimeError::new_err(format!("Failed to write HUGR file: {e}"))
+                            })?;
+
+                            // Also compile and save LLVM IR for debugging (graceful failure)
+                            match compile_hugr_bytes_to_string(hugr_bytes) {
+                                Ok(llvm_ir) => {
+                                    let ll_file = temp_path.join("program.ll");
+                                    if let Err(e) = std::fs::write(&ll_file, llvm_ir) {
+                                        log::warn!("Could not write LLVM IR file: {e}");
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("Could not compile HUGR to LLVM IR for saving: {e}");
+                                }
+                            }
+                        }
+
+                        // Keep the directory (don't let it be deleted on drop)
+                        let path_str = temp_path.to_string_lossy().to_string();
+                        let _ = temp_dir.keep(); // Prevents cleanup
+                        Some(path_str)
+                    } else {
+                        None
+                    };
+
                     Ok(Py::new(
                         py,
                         crate::engine_builders::PyHugrSimulation {
                             inner: Arc::new(Mutex::new(engine)),
+                            temp_dir,
                         },
                     )?
                     .into_any())
@@ -1157,6 +1204,8 @@ impl Clone for SimBuilderInner {
                 noise_builder: builder.noise_builder.as_ref().map(|obj| obj.clone_ref(py)),
                 explicit_num_qubits: builder.explicit_num_qubits,
                 foreign_object: builder.foreign_object.as_ref().map(|obj| obj.clone_ref(py)),
+                keep_intermediate_files: builder.keep_intermediate_files,
+                hugr_bytes: builder.hugr_bytes.clone(),
             }),
             SimBuilderInner::Empty => SimBuilderInner::Empty,
         })

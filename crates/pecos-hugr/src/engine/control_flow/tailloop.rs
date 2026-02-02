@@ -391,11 +391,20 @@ impl HugrEngine {
             {
                 let src_wire = (src_node, src_port.index());
 
+                // Map qubits
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
                     self.wire_state.wire_to_qubit
                         .insert((tailloop_node, tailloop_output_idx), qubit_id);
                     debug!(
                         "TailLoop {tailloop_node:?} output {tailloop_output_idx}: mapped rest qubit {qubit_id:?}"
+                    );
+                }
+                // Map classical values (including arrays)
+                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                    self.wire_state.classical_values
+                        .insert((tailloop_node, tailloop_output_idx), value);
+                    debug!(
+                        "TailLoop {tailloop_node:?} output {tailloop_output_idx}: mapped rest classical value"
                     );
                 }
             }
@@ -413,11 +422,20 @@ impl HugrEngine {
                 if let Some((src_node, src_port)) = hugr.single_linked_output(tag_node, tag_in_port)
                 {
                     let src_wire = (src_node, src_port.index());
+                    // Map qubits
                     if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
                         self.wire_state.wire_to_qubit
                             .insert((tailloop_node, port_idx), qubit_id);
                         debug!(
                             "TailLoop {tailloop_node:?} output {port_idx}: mapped just_output qubit {qubit_id:?}"
+                        );
+                    }
+                    // Map classical values
+                    if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                        self.wire_state.classical_values
+                            .insert((tailloop_node, port_idx), value);
+                        debug!(
+                            "TailLoop {tailloop_node:?} output {port_idx}: mapped just_output classical value"
                         );
                     }
                 }

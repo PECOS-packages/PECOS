@@ -538,8 +538,11 @@ You can limit the memory available to WASM modules:
 
 WASM foreign objects support Python pickling for distributed execution:
 
-```hidden-python
-# Create a simple math.wat file for the pickling example
+```python
+import pickle
+from pecos_rslib import WasmForeignObject
+
+# First, create a simple WASM module
 math_wat = """
 (module
   (func (export "add") (param i64 i64) (result i64)
@@ -551,11 +554,6 @@ math_wat = """
 """
 with open("math.wat", "w") as f:
     f.write(math_wat)
-```
-
-```python
-import pickle
-from pecos_rslib import WasmForeignObject
 
 # Create and configure
 wasm = WasmForeignObject.from_file("math.wat", timeout=5.0)
@@ -575,25 +573,10 @@ assert result == 3
 
 You can also use the explicit `to_dict()` and `from_dict()` methods:
 
-```hidden-python
-# Create a simple math.wat file for the to_dict/from_dict example
-math_wat = """
-(module
-  (func (export "add") (param i64 i64) (result i64)
-    local.get 0
-    local.get 1
-    i64.add)
-  (func (export "init"))
-)
-"""
-with open("math.wat", "w") as f:
-    f.write(math_wat)
-```
-
 ```python
 from pecos_rslib import WasmForeignObject
 
-# Create WASM object
+# Create WASM object (using math.wat from previous example)
 wasm = WasmForeignObject.from_file("math.wat")
 
 # Serialize to dict

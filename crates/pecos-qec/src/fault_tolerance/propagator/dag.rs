@@ -1465,7 +1465,7 @@ mod tests {
         // Both qubits should be represented
         let qubit_set: std::collections::HashSet<_> = cx_locations
             .iter()
-            .flat_map(|loc| loc.qubits.iter().map(|q| q.index()))
+            .flat_map(|loc| loc.qubits.iter().map(pecos_core::QubitId::index))
             .collect();
         assert!(qubit_set.contains(&0), "Should have location for qubit 0");
         assert!(qubit_set.contains(&1), "Should have location for qubit 1");

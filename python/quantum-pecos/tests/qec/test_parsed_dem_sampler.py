@@ -19,7 +19,7 @@ stim = pytest.importorskip("stim")
 class TestParsedDemBasics:
     """Basic ParsedDem functionality tests."""
 
-    def test_parse_simple_dem(self):
+    def test_parse_simple_dem(self) -> None:
         """ParsedDem should correctly parse simple DEM strings."""
         from pecos_rslib.qec import ParsedDem
 
@@ -29,7 +29,7 @@ class TestParsedDemBasics:
         assert parsed.num_mechanisms == 1
         assert parsed.num_detectors == 2
 
-    def test_parse_with_observable(self):
+    def test_parse_with_observable(self) -> None:
         """ParsedDem should correctly parse DEMs with observables."""
         from pecos_rslib.qec import ParsedDem
 
@@ -40,7 +40,7 @@ class TestParsedDemBasics:
         assert parsed.num_detectors == 1
         assert parsed.num_observables == 1
 
-    def test_parse_decomposed_dem(self):
+    def test_parse_decomposed_dem(self) -> None:
         """ParsedDem should correctly parse decomposed DEMs."""
         from pecos_rslib.qec import ParsedDem
 
@@ -51,7 +51,7 @@ class TestParsedDemBasics:
         assert parsed.num_mechanisms == 1
         assert parsed.num_detectors == 3
 
-    def test_parse_stim_surface_code_dem(self):
+    def test_parse_stim_surface_code_dem(self) -> None:
         """ParsedDem should correctly parse Stim-generated DEMs."""
         from pecos_rslib.qec import ParsedDem
 
@@ -74,7 +74,7 @@ class TestParsedDemBasics:
 class TestParsedDemDecomposedSemantics:
     """Test that decomposed errors are handled correctly (Stim semantics)."""
 
-    def test_decomposed_all_fire_together(self):
+    def test_decomposed_all_fire_together(self) -> None:
         """Decomposed errors should fire all components together."""
         from pecos_rslib.qec import ParsedDem
 
@@ -93,7 +93,7 @@ class TestParsedDemDecomposedSemantics:
         assert abs(both_fire - 0.5) < 0.05, "Both should fire ~50% of the time"
         assert exactly_one < 0.01, "Exactly one should almost never fire"
 
-    def test_xor_cancellation(self):
+    def test_xor_cancellation(self) -> None:
         """error(p) D0 ^ D0 should result in no effect (XOR cancellation)."""
         from pecos_rslib.qec import ParsedDem
 
@@ -106,7 +106,7 @@ class TestParsedDemDecomposedSemantics:
 
         assert d0_fires == 0, "D0 should never fire due to XOR cancellation"
 
-    def test_decomposed_matches_stim_semantics(self):
+    def test_decomposed_matches_stim_semantics(self) -> None:
         """Decomposed error sampling should match Stim's semantics."""
         # Generate identical samples from Stim and PECOS
         from pecos_rslib.qec import ParsedDem
@@ -127,15 +127,15 @@ class TestParsedDemDecomposedSemantics:
         stim_both = (stim_det[:, 0] & stim_det[:, 1]).mean()
         pecos_both = (pecos_det[:, 0] & pecos_det[:, 1]).mean()
 
-        assert abs(stim_both - pecos_both) < 0.05, (
-            f"Stim and PECOS should match: Stim={stim_both:.4f}, PECOS={pecos_both:.4f}"
-        )
+        assert (
+            abs(stim_both - pecos_both) < 0.05
+        ), f"Stim and PECOS should match: Stim={stim_both:.4f}, PECOS={pecos_both:.4f}"
 
 
 class TestParsedDemOptimizedSampler:
     """Test ParsedDem.to_dem_sampler() optimized path."""
 
-    def test_optimized_sampler_creation(self):
+    def test_optimized_sampler_creation(self) -> None:
         """to_dem_sampler() should create a valid DemSampler."""
         from pecos_rslib.qec import ParsedDem
 
@@ -146,7 +146,7 @@ class TestParsedDemOptimizedSampler:
         assert sampler.num_mechanisms == 1
         assert sampler.num_detectors == 2
 
-    def test_optimized_matches_naive_sampler(self):
+    def test_optimized_matches_naive_sampler(self) -> None:
         """Optimized sampler should produce same statistics as naive sampler."""
         from pecos_rslib.qec import ParsedDem
 
@@ -167,11 +167,11 @@ error(0.02) D1
         opt_rate = stats["syndrome_rate"]
 
         # Should be within statistical tolerance
-        assert abs(naive_rate - opt_rate) < 0.02, (
-            f"Naive and optimized should match: naive={naive_rate:.4f}, opt={opt_rate:.4f}"
-        )
+        assert (
+            abs(naive_rate - opt_rate) < 0.02
+        ), f"Naive and optimized should match: naive={naive_rate:.4f}, opt={opt_rate:.4f}"
 
-    def test_optimized_matches_stim_surface_code(self):
+    def test_optimized_matches_stim_surface_code(self) -> None:
         """Optimized sampler should match Stim for surface code DEMs."""
         from pecos_rslib.qec import ParsedDem
 
@@ -217,7 +217,7 @@ class TestParsedDemVsStimComprehensive:
     @pytest.mark.parametrize("distance", [3, 5])
     @pytest.mark.parametrize("rounds", [1, 3])
     @pytest.mark.parametrize("p", [0.001, 0.01])
-    def test_syndrome_rate_matches_stim(self, distance, rounds, p):
+    def test_syndrome_rate_matches_stim(self, distance, rounds, p) -> None:
         """Syndrome rate should match Stim for various configurations."""
         from pecos_rslib.qec import ParsedDem
 
@@ -256,7 +256,7 @@ class TestParsedDemVsStimComprehensive:
             f"Stim={stim_rate:.4f}, PECOS={pecos_rate:.4f}, diff={diff:.4f}"
         )
 
-    def test_high_error_rate_matching(self):
+    def test_high_error_rate_matching(self) -> None:
         """PECOS should match Stim even at high error rates."""
         from pecos_rslib.qec import ParsedDem
 
@@ -287,15 +287,15 @@ class TestParsedDemVsStimComprehensive:
         pecos_rate = pecos_stats["syndrome_rate"]
 
         # At high error rates, syndrome rate should be ~1.0 for both
-        assert abs(stim_rate - pecos_rate) < 0.02, (
-            f"High error rate: Stim={stim_rate:.4f}, PECOS={pecos_rate:.4f}"
-        )
+        assert (
+            abs(stim_rate - pecos_rate) < 0.02
+        ), f"High error rate: Stim={stim_rate:.4f}, PECOS={pecos_rate:.4f}"
 
 
 class TestParsedDemPerformance:
     """Verify the optimized sampler is actually faster."""
 
-    def test_optimized_faster_than_naive(self):
+    def test_optimized_faster_than_naive(self) -> None:
         """Optimized sampler should be faster than naive for large shots."""
         import time
 
@@ -326,9 +326,9 @@ class TestParsedDemPerformance:
         opt_time = time.perf_counter() - start
 
         # Optimized should be significantly faster
-        assert opt_time < naive_time, (
-            f"Optimized ({opt_time:.3f}s) should be faster than naive ({naive_time:.3f}s)"
-        )
+        assert (
+            opt_time < naive_time
+        ), f"Optimized ({opt_time:.3f}s) should be faster than naive ({naive_time:.3f}s)"
 
 
 if __name__ == "__main__":

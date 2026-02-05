@@ -925,12 +925,11 @@ fn trace_qubit_source(
         if ext_name == "collections.borrow_arr" && op_name == "return" && port == 0 {
             // Check input port 1 (the qubit being returned)
             let qubit_port = IncomingPort::from(1);
-            if let Some((src_node, src_port)) = hugr.single_linked_output(node, qubit_port) {
-                if let Some(qubit_id) =
+            if let Some((src_node, src_port)) = hugr.single_linked_output(node, qubit_port)
+                && let Some(qubit_id) =
                     trace_qubit_source(hugr, src_node, src_port.index(), wire_to_qubit, depth + 1)
-                {
-                    return Some(qubit_id);
-                }
+            {
+                return Some(qubit_id);
             }
             // Fall back to tracing through the array input
             let array_port = IncomingPort::from(0);
@@ -984,16 +983,16 @@ fn trace_qubit_source(
             let num_inputs = hugr.num_inputs(node);
             for input_idx in 0..num_inputs {
                 let in_port = IncomingPort::from(input_idx);
-                if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
-                    if let Some(qubit_id) = trace_qubit_source(
+                if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port)
+                    && let Some(qubit_id) = trace_qubit_source(
                         hugr,
                         src_node,
                         src_port.index(),
                         wire_to_qubit,
                         depth + 1,
-                    ) {
-                        return Some(qubit_id);
-                    }
+                    )
+                {
+                    return Some(qubit_id);
                 }
             }
         }
@@ -1004,12 +1003,11 @@ fn trace_qubit_source(
     let num_inputs = hugr.num_inputs(node);
     for input_idx in 0..num_inputs {
         let in_port = IncomingPort::from(input_idx);
-        if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
-            if let Some(qubit_id) =
+        if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port)
+            && let Some(qubit_id) =
                 trace_qubit_source(hugr, src_node, src_port.index(), wire_to_qubit, depth + 1)
-            {
-                return Some(qubit_id);
-            }
+        {
+            return Some(qubit_id);
         }
     }
 

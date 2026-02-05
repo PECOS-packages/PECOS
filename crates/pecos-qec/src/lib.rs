@@ -74,6 +74,10 @@ pub use distance::{
     DistanceResult, DistanceSearchConfig, LogicalOperatorInfo, WeightedPauliIterator,
     calculate_distance, find_min_weight_logicals, find_min_weight_logicals_with_info,
 };
+pub use fault_tolerance::dem_builder::{
+    DecomposedError, DemBuilder, DemBuilderError, DetectorDef, DetectorErrorModel, ErrorMechanism,
+    LogicalObservable, NoiseConfig, combine_probabilities,
+};
 pub use fault_tolerance::{
     CorrectionResult, DecoderAnalysis, ErrorClass, ErrorCorrectionChecker, ErrorCorrectionConfig,
     ErrorCorrectionResult, FaultCheckConfig, FaultCheckResult, FaultChecker, FaultClass,
@@ -84,10 +88,6 @@ pub use fault_tolerance::{
     SyndromeHistoryResult, anticommutes_with_logical, apply_recovery, classify_fault,
     extract_measurement_rounds, extract_spacetime_locations, extract_syndrome, get_syndrome_flips,
     has_syndrome, propagate_fault, propagate_faults, run_circuit_with_faults, run_correction_cycle,
-};
-pub use fault_tolerance::dem_builder::{
-    DecomposedError, DemBuilder, DemBuilderError, DetectorDef, DetectorErrorModel,
-    ErrorMechanism, LogicalObservable, NoiseConfig, combine_probabilities,
 };
 pub use geometry::{CheckSchedule, LogicalOperator, PauliOp, StabilizerCheck, StabilizerColor};
 pub use logical_discovery::{

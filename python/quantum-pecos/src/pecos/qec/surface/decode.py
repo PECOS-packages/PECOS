@@ -87,7 +87,12 @@ class NoiseModel:
     @property
     def is_noiseless(self) -> bool:
         """True if all error rates are zero."""
-        return self.p1 == 0.0 and self.p2 == 0.0 and self.p_meas == 0.0 and self.p_init == 0.0
+        return (
+            self.p1 == 0.0
+            and self.p2 == 0.0
+            and self.p_meas == 0.0
+            and self.p_init == 0.0
+        )
 
     @property
     def physical_error_rate(self) -> float:
@@ -239,10 +244,14 @@ def generate_surface_code_dem(
     # So Z errors on logical_X qubits flip both the stabilizers AND the logical observable
     if stab_type == "X":
         stabilizers = geom.x_stabilizers
-        logical_op = geom.logical_x  # X checks detect Z errors; Z errors on logical_X flip logical
+        logical_op = (
+            geom.logical_x
+        )  # X checks detect Z errors; Z errors on logical_X flip logical
     else:
         stabilizers = geom.z_stabilizers
-        logical_op = geom.logical_z  # Z checks detect X errors; X errors on logical_Z flip logical
+        logical_op = (
+            geom.logical_z
+        )  # Z checks detect X errors; X errors on logical_Z flip logical
 
     num_stab = len(stabilizers)
 
@@ -289,9 +298,13 @@ def generate_surface_code_dem(
                 # Internal data qubit - edge between two stabilizers
                 s1, s2 = stab_indices
                 if affects_logical:
-                    lines.append(f"error({p_data:.6f}) D{det_id(r, s1)} D{det_id(r, s2)} L0")
+                    lines.append(
+                        f"error({p_data:.6f}) D{det_id(r, s1)} D{det_id(r, s2)} L0",
+                    )
                 else:
-                    lines.append(f"error({p_data:.6f}) D{det_id(r, s1)} D{det_id(r, s2)}")
+                    lines.append(
+                        f"error({p_data:.6f}) D{det_id(r, s1)} D{det_id(r, s2)}",
+                    )
 
     # Timelike edges (measurement errors)
     # For multi-round: measurement errors create edges between same stabilizer in consecutive rounds
@@ -299,7 +312,9 @@ def generate_surface_code_dem(
     if num_rounds > 1:
         for r in range(num_rounds - 1):
             for stab in stabilizers:
-                lines.append(f"error({p_meas:.6f}) D{det_id(r, stab.index)} D{det_id(r + 1, stab.index)}")
+                lines.append(
+                    f"error({p_meas:.6f}) D{det_id(r, stab.index)} D{det_id(r + 1, stab.index)}",
+                )
     else:
         # Single round: measurement errors are boundary edges
         for stab in stabilizers:
@@ -317,7 +332,7 @@ def generate_surface_code_dem(
 
 
 def generate_circuit_level_dem_from_builder(
-    patch: "SurfacePatch",
+    patch: SurfacePatch,
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
@@ -347,10 +362,11 @@ def generate_circuit_level_dem_from_builder(
         >>> from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
         >>> patch = SurfacePatch.create(distance=3)
         >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
-        >>> dem = generate_circuit_level_dem_from_builder(patch, num_rounds=3, noise=noise)
+        >>> dem = generate_circuit_level_dem_from_builder(
+        ...     patch, num_rounds=3, noise=noise
+        ... )
     """
-    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
-
+    from pecos.qec import DagFaultAnalyzer, DemBuilder
     from pecos.qec.surface.circuit_builder import (
         _extract_measurement_order,
         generate_tick_circuit_from_patch,
@@ -412,15 +428,18 @@ def generate_circuit_level_dem(
     Example:
         >>> from pecos.qec.surface import generate_circuit_level_dem, NoiseModel
         >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
-        >>> dem = generate_circuit_level_dem(distance=3, num_rounds=3, noise=noise, basis="Z")
+        >>> dem = generate_circuit_level_dem(
+        ...     distance=3, num_rounds=3, noise=noise, basis="Z"
+        ... )
     """
     import stim
 
     # Map basis to Stim's circuit type
-    if basis.upper() == "X":
-        circuit_type = "surface_code:rotated_memory_x"
-    else:
-        circuit_type = "surface_code:rotated_memory_z"
+    circuit_type = (
+        "surface_code:rotated_memory_x"
+        if basis.upper() == "X"
+        else "surface_code:rotated_memory_z"
+    )
 
     # Generate circuit with noise
     # Stim uses:
@@ -447,7 +466,7 @@ def build_stim_circuit_from_patch(
     num_rounds: int,
     noise: NoiseModel | None = None,
     basis: str = "Z",
-) -> "stim.Circuit":
+) -> stim.Circuit:
     """Build a Stim circuit from our patch geometry and CNOT schedule.
 
     This converts our Guppy-style surface code circuit to Stim format,
@@ -474,7 +493,11 @@ def build_stim_circuit_from_patch(
         stim.Circuit object with DETECTOR and OBSERVABLE_INCLUDE annotations
 
     Example:
-        >>> from pecos.qec.surface import SurfacePatch, NoiseModel, build_stim_circuit_from_patch
+        >>> from pecos.qec.surface import (
+        ...     SurfacePatch,
+        ...     NoiseModel,
+        ...     build_stim_circuit_from_patch,
+        ... )
         >>> patch = SurfacePatch.create(distance=3)
         >>> noise = NoiseModel(p2=0.01, p_meas=0.01)
         >>> circuit = build_stim_circuit_from_patch(patch, num_rounds=3, noise=noise)
@@ -501,7 +524,7 @@ def build_stim_circuit_from_patch(
         return num_data + num_x_anc + stab_idx
 
     # Compute stabilizer positions from data qubits (center of support)
-    def stab_coords(stab: "Stabilizer") -> tuple[float, float]:
+    def stab_coords(stab: Stabilizer) -> tuple[float, float]:
         """Compute stabilizer coordinates as center of its data qubits."""
         rows = [dq // d for dq in stab.data_qubits]
         cols = [dq % d for dq in stab.data_qubits]
@@ -597,20 +620,42 @@ def build_stim_circuit_from_patch(
                 # Z-basis: Z stabilizers are deterministic (Z parity of |0⟩ states)
                 for i, stab in enumerate(geom.z_stabilizers):
                     cx, cy = stab_coords(stab)
-                    circuit.append("DETECTOR", [stim.target_rec(-num_stab + num_x_anc + i)], [cx, cy, rnd])
+                    circuit.append(
+                        "DETECTOR",
+                        [stim.target_rec(-num_stab + num_x_anc + i)],
+                        [cx, cy, rnd],
+                    )
             else:
                 # X-basis: X stabilizers are deterministic (X parity of |+⟩ states)
                 for i, stab in enumerate(geom.x_stabilizers):
                     cx, cy = stab_coords(stab)
-                    circuit.append("DETECTOR", [stim.target_rec(-num_stab + i)], [cx, cy, rnd])
+                    circuit.append(
+                        "DETECTOR",
+                        [stim.target_rec(-num_stab + i)],
+                        [cx, cy, rnd],
+                    )
         else:
             # Subsequent rounds: XOR with previous round (both X and Z stabilizers)
             for i, stab in enumerate(geom.x_stabilizers):
                 cx, cy = stab_coords(stab)
-                circuit.append("DETECTOR", [stim.target_rec(-num_stab + i), stim.target_rec(-2 * num_stab + i)], [cx, cy, rnd])
+                circuit.append(
+                    "DETECTOR",
+                    [
+                        stim.target_rec(-num_stab + i),
+                        stim.target_rec(-2 * num_stab + i),
+                    ],
+                    [cx, cy, rnd],
+                )
             for i, stab in enumerate(geom.z_stabilizers):
                 cx, cy = stab_coords(stab)
-                circuit.append("DETECTOR", [stim.target_rec(-num_stab + num_x_anc + i), stim.target_rec(-2 * num_stab + num_x_anc + i)], [cx, cy, rnd])
+                circuit.append(
+                    "DETECTOR",
+                    [
+                        stim.target_rec(-num_stab + num_x_anc + i),
+                        stim.target_rec(-2 * num_stab + num_x_anc + i),
+                    ],
+                    [cx, cy, rnd],
+                )
 
         circuit.append("TICK")
 
@@ -634,17 +679,25 @@ def build_stim_circuit_from_patch(
         # Z stabilizers: check parity of Z measurements matches last syndrome
         for i, stab in enumerate(geom.z_stabilizers):
             cx, cy = stab_coords(stab)
-            rec_targets = [stim.target_rec(-num_data - num_stab + num_x_anc + i)]  # Last Z ancilla measurement
+            rec_targets = [
+                stim.target_rec(-num_data - num_stab + num_x_anc + i),
+            ]  # Last Z ancilla measurement
             for dq in stab.data_qubits:
-                rec_targets.append(stim.target_rec(-num_data + dq))  # Final data measurements
+                rec_targets.append(
+                    stim.target_rec(-num_data + dq),
+                )  # Final data measurements
             circuit.append("DETECTOR", rec_targets, [cx, cy, num_rounds])
     else:
         # X stabilizers: check parity of X measurements (after H) matches last syndrome
         for i, stab in enumerate(geom.x_stabilizers):
             cx, cy = stab_coords(stab)
-            rec_targets = [stim.target_rec(-num_data - num_stab + i)]  # Last X ancilla measurement
+            rec_targets = [
+                stim.target_rec(-num_data - num_stab + i),
+            ]  # Last X ancilla measurement
             for dq in stab.data_qubits:
-                rec_targets.append(stim.target_rec(-num_data + dq))  # Final data measurements
+                rec_targets.append(
+                    stim.target_rec(-num_data + dq),
+                )  # Final data measurements
             circuit.append("DETECTOR", rec_targets, [cx, cy, num_rounds])
 
     # OBSERVABLE_INCLUDE: logical operator parity from final measurements
@@ -677,7 +730,11 @@ def generate_dem_from_patch(
         DEM string in Stim format
 
     Example:
-        >>> from pecos.qec.surface import SurfacePatch, NoiseModel, generate_dem_from_patch
+        >>> from pecos.qec.surface import (
+        ...     SurfacePatch,
+        ...     NoiseModel,
+        ...     generate_dem_from_patch,
+        ... )
         >>> patch = SurfacePatch.create(distance=3)
         >>> noise = NoiseModel(p2=0.01, p_meas=0.01)
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
@@ -697,7 +754,9 @@ class SurfaceDecoder:
         >>> from pecos.qec.surface import SurfacePatch, SurfaceDecoder
         >>> patch = SurfacePatch.create(distance=3)
         >>> # Default: PyMatching MWPM
-        >>> decoder = SurfaceDecoder(patch, num_rounds=3, noise=NoiseModel(p2=0.01, p_meas=0.01))
+        >>> decoder = SurfaceDecoder(
+        ...     patch, num_rounds=3, noise=NoiseModel(p2=0.01, p_meas=0.01)
+        ... )
         >>> # Alternative: FusionBlossom MWPM
         >>> decoder = SurfaceDecoder(patch, num_rounds=3, decoder_type="fusion_blossom")
         >>> # Alternative: BP+OSD (LDPC)
@@ -710,7 +769,14 @@ class SurfaceDecoder:
         patch: SurfacePatch,
         num_rounds: int = 1,
         noise: NoiseModel | None = None,
-        decoder_type: Literal["pymatching", "fusion_blossom", "bp_osd", "bp_lsd", "union_find", "tesseract"] = "pymatching",
+        decoder_type: Literal[
+            "pymatching",
+            "fusion_blossom",
+            "bp_osd",
+            "bp_lsd",
+            "union_find",
+            "tesseract",
+        ] = "pymatching",
         *,
         use_circuit_level_dem: bool = True,
     ) -> None:
@@ -808,7 +874,8 @@ class SurfaceDecoder:
         if self._z_decoder is None:
             # For PyMatching and Tesseract with circuit-level DEMs, use DEM directly
             if self.use_circuit_level_dem and self.decoder_type in (
-                DecoderType.PYMATCHING, DecoderType.TESSERACT
+                DecoderType.PYMATCHING,
+                DecoderType.TESSERACT,
             ):
                 self._z_decoder = self._create_decoder_from_dem("Z")
             else:
@@ -856,7 +923,11 @@ class SurfaceDecoder:
             # For multi-round, build space-time graph
             return self._create_fusion_blossom_spacetime(H, data_weight, meas_weight)
 
-        if self.decoder_type in (DecoderType.BP_OSD, DecoderType.BP_LSD, DecoderType.UNION_FIND):
+        if self.decoder_type in (
+            DecoderType.BP_OSD,
+            DecoderType.BP_LSD,
+            DecoderType.UNION_FIND,
+        ):
             # LDPC decoders work per-round, not on space-time graph
             return self._create_ldpc_decoder(H, p_data)
 
@@ -901,7 +972,8 @@ class SurfaceDecoder:
             # DEM_LOGICAL_OBSERVABLE instructions. Filter them out - the
             # observable info is encoded in error edges via L0 references.
             dem_filtered = "\n".join(
-                line for line in dem.split("\n")
+                line
+                for line in dem.split("\n")
                 if not line.startswith("logical_observable")
             )
             return TesseractDecoder.from_dem(dem_filtered, preset="fast")
@@ -909,7 +981,12 @@ class SurfaceDecoder:
         msg = f"Decoder type {self.decoder_type} does not support DEM initialization"
         raise ValueError(msg)
 
-    def _create_fusion_blossom_spacetime(self, H: NDArray[np.uint8], data_weight: float, meas_weight: float):
+    def _create_fusion_blossom_spacetime(
+        self,
+        H: NDArray[np.uint8],
+        data_weight: float,
+        meas_weight: float,
+    ):
         """Create FusionBlossom decoder with space-time matching graph."""
         from pecos_rslib.decoders import FusionBlossomDecoder
 
@@ -940,12 +1017,21 @@ class SurfaceDecoder:
                 if len(stab_indices) == 1:
                     # Boundary edge
                     node = r * num_stab + stab_indices[0]
-                    decoder.add_boundary_edge(node, observables=[data_idx], weight=data_weight)
+                    decoder.add_boundary_edge(
+                        node,
+                        observables=[data_idx],
+                        weight=data_weight,
+                    )
                 elif len(stab_indices) == 2:
                     # Internal edge
                     node1 = r * num_stab + stab_indices[0]
                     node2 = r * num_stab + stab_indices[1]
-                    decoder.add_edge(node1, node2, observables=[data_idx], weight=data_weight)
+                    decoder.add_edge(
+                        node1,
+                        node2,
+                        observables=[data_idx],
+                        weight=data_weight,
+                    )
 
         # Add timelike edges (measurement errors)
         for r in range(num_rounds - 1):
@@ -993,26 +1079,39 @@ class SurfaceDecoder:
         msg = f"Unknown LDPC decoder type: {self.decoder_type}"
         raise ValueError(msg)
 
-    def _create_tesseract_decoder(self, H: NDArray[np.uint8], p_data: float, p_meas: float):
+    def _create_tesseract_decoder(
+        self,
+        H: NDArray[np.uint8],
+        p_data: float,
+        p_meas: float,
+    ):
         """Create Tesseract decoder from check matrix by generating DEM."""
         from pecos_rslib.decoders import TesseractDecoder
 
         # Determine stabilizer type based on check matrix shape
         z_check = self._get_z_check_matrix()
-        if H.shape == z_check.shape and np.array_equal(H, z_check):
-            stab_type = "Z"
-        else:
-            stab_type = "X"
+        stab_type = (
+            "Z" if H.shape == z_check.shape and np.array_equal(H, z_check) else "X"
+        )
 
         # Generate DEM using the full surface code DEM generator
-        dem = generate_surface_code_dem(self.patch, self.num_rounds, self.noise, stab_type)
+        dem = generate_surface_code_dem(
+            self.patch,
+            self.num_rounds,
+            self.noise,
+            stab_type,
+        )
 
         # Tesseract's remove_zero_probability_errors() function doesn't handle
         # DEM_LOGICAL_OBSERVABLE instructions - it only supports DEM_ERROR, DEM_DETECTOR,
         # and DEM_SHIFT_DETECTORS. See tesseract/src/common.cc line 104-106.
         # The logical observable info is encoded in the error edges via L0 references,
         # so the standalone 'logical_observable L0' declaration is redundant for Tesseract.
-        dem_lines = [line for line in dem.split("\n") if not line.startswith("logical_observable")]
+        dem_lines = [
+            line
+            for line in dem.split("\n")
+            if not line.startswith("logical_observable")
+        ]
         dem = "\n".join(dem_lines)
 
         return TesseractDecoder.from_dem(dem, preset="fast")
@@ -1031,7 +1130,9 @@ class SurfaceDecoder:
         Returns:
             DEM string in Stim format
         """
-        use_circuit = circuit_level if circuit_level is not None else self.use_circuit_level_dem
+        use_circuit = (
+            circuit_level if circuit_level is not None else self.use_circuit_level_dem
+        )
 
         if use_circuit:
             # Return cached DEM if available
@@ -1048,14 +1149,20 @@ class SurfaceDecoder:
         # Z-basis memory -> Z stabilizers detect X errors
         # X-basis memory -> X stabilizers detect Z errors
         stab_type = basis.upper()
-        return generate_surface_code_dem(self.patch, self.num_rounds, self.noise, stab_type)
+        return generate_surface_code_dem(
+            self.patch,
+            self.num_rounds,
+            self.noise,
+            stab_type,
+        )
 
     def _get_x_decoder(self):
         """Get or create decoder for X-basis memory (decodes X syndromes for Z errors)."""
         if self._x_decoder is None:
             # For PyMatching and Tesseract with circuit-level DEMs, use DEM directly
             if self.use_circuit_level_dem and self.decoder_type in (
-                DecoderType.PYMATCHING, DecoderType.TESSERACT
+                DecoderType.PYMATCHING,
+                DecoderType.TESSERACT,
             ):
                 self._x_decoder = self._create_decoder_from_dem("X")
             else:
@@ -1064,7 +1171,11 @@ class SurfaceDecoder:
 
     def _is_mwpm_decoder(self) -> bool:
         """Check if using an MWPM or Tesseract decoder (vs LDPC)."""
-        return self.decoder_type in (DecoderType.PYMATCHING, DecoderType.FUSION_BLOSSOM, DecoderType.TESSERACT)
+        return self.decoder_type in (
+            DecoderType.PYMATCHING,
+            DecoderType.FUSION_BLOSSOM,
+            DecoderType.TESSERACT,
+        )
 
     def decode_z_syndrome(
         self,
@@ -1250,7 +1361,11 @@ class SurfaceDecoder:
         logical_x_flip = correction_parity != 0
 
         result = DecodingResult(
-            x_correction=x_correction if len(x_correction) == self.patch.num_data else np.zeros(self.patch.num_data, dtype=np.uint8),
+            x_correction=(
+                x_correction
+                if len(x_correction) == self.patch.num_data
+                else np.zeros(self.patch.num_data, dtype=np.uint8)
+            ),
             z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
             logical_x_flip=logical_x_flip,
             logical_z_flip=False,
@@ -1326,7 +1441,11 @@ class SurfaceDecoder:
 
         result = DecodingResult(
             x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
-            z_correction=z_correction if len(z_correction) == self.patch.num_data else np.zeros(self.patch.num_data, dtype=np.uint8),
+            z_correction=(
+                z_correction
+                if len(z_correction) == self.patch.num_data
+                else np.zeros(self.patch.num_data, dtype=np.uint8)
+            ),
             logical_x_flip=False,
             logical_z_flip=logical_z_flip,
             decoding_weight=weight,
@@ -1539,7 +1658,7 @@ class NativeSampler:
         num_observables: Number of observables
     """
 
-    mnm: "MeasurementNoiseModel"
+    mnm: MeasurementNoiseModel
     detectors_json: str
     observables_json: str
     num_detectors: int
@@ -1564,13 +1683,16 @@ class NativeSampler:
             - observable_flips: shape (num_shots, num_observables)
         """
         det_events, obs_flips = self.mnm.sample_batch_for_decoding(
-            num_shots, self.detectors_json, self.observables_json, seed
+            num_shots,
+            self.detectors_json,
+            self.observables_json,
+            seed,
         )
         return np.array(det_events, dtype=bool), np.array(obs_flips, dtype=bool)
 
 
 def build_native_sampler(
-    patch: "SurfacePatch",
+    patch: SurfacePatch,
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
@@ -1602,8 +1724,7 @@ def build_native_sampler(
     """
     import json
 
-    from pecos_rslib.qec import DagFaultAnalyzer, MemBuilder
-
+    from pecos.qec import DagFaultAnalyzer, MemBuilder
     from pecos.qec.surface.circuit_builder import (
         _extract_measurement_order,
         generate_tick_circuit_from_patch,

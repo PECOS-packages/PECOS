@@ -37,11 +37,14 @@ pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Create a realistic DEM sampler from a surface-code-like circuit.
-fn create_surface_code_sampler(distance: usize, rounds: usize) -> pecos_qec::fault_tolerance::dem_builder::DemSampler {
+fn create_surface_code_sampler(
+    distance: usize,
+    rounds: usize,
+) -> pecos_qec::fault_tolerance::dem_builder::DemSampler {
     // Create a simplified surface code circuit
     let num_data = distance * distance;
     let num_ancilla = num_data - 1;
-    let num_qubits = num_data + num_ancilla;
+    let _num_qubits = num_data + num_ancilla;
 
     let mut dag = DagCircuit::new();
 
@@ -80,7 +83,8 @@ fn create_surface_code_sampler(distance: usize, rounds: usize) -> pecos_qec::fau
     // Create detector definitions (one per ancilla measurement)
     let num_measurements = num_ancilla * rounds;
     let mut detector_records = Vec::new();
-    for i in 0..num_measurements.min(50) {  // Limit to 50 detectors for benchmark
+    for i in 0..num_measurements.min(50) {
+        // Limit to 50 detectors for benchmark
         detector_records.push(vec![-(i as i32 + 1)]);
     }
 
@@ -103,22 +107,18 @@ fn bench_sampler_comparison<M: Measurement>(c: &mut Criterion<M>) {
 
         // Test different shot counts
         for shots in [1_000, 10_000, 100_000] {
-            let label = format!("d{}_r{}_{}", distance, rounds, shots);
+            let label = format!("d{distance}_r{rounds}_{shots}");
 
             group.throughput(Throughput::Elements((num_mechanisms * shots) as u64));
 
             // Original row-major sampling
-            group.bench_with_input(
-                BenchmarkId::new("row_major", &label),
-                &(),
-                |b, ()| {
-                    let mut rng = PecosRng::seed_from_u64(42);
-                    b.iter(|| {
-                        let result = sampler.sample_batch(shots, &mut rng);
-                        black_box(result)
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("row_major", &label), &(), |b, ()| {
+                let mut rng = PecosRng::seed_from_u64(42);
+                b.iter(|| {
+                    let result = sampler.sample_batch(shots, &mut rng);
+                    black_box(result)
+                });
+            });
 
             // Columnar sampling (accurate - one random per shot per mechanism)
             group.bench_with_input(
@@ -136,8 +136,7 @@ fn bench_sampler_comparison<M: Measurement>(c: &mut Criterion<M>) {
 
         // Print info
         println!(
-            "  d={} r={}: {} mechanisms, {} detectors",
-            distance, rounds, num_mechanisms, num_detectors
+            "  d={distance} r={rounds}: {num_mechanisms} mechanisms, {num_detectors} detectors"
         );
     }
 
@@ -152,7 +151,7 @@ fn bench_statistics_comparison<M: Measurement>(c: &mut Criterion<M>) {
     let num_mechanisms = sampler.num_mechanisms();
 
     for shots in [10_000, 100_000, 1_000_000] {
-        let label = format!("{}shots", shots);
+        let label = format!("{shots}shots");
 
         group.throughput(Throughput::Elements((num_mechanisms * shots) as u64));
 
@@ -170,17 +169,13 @@ fn bench_statistics_comparison<M: Measurement>(c: &mut Criterion<M>) {
         );
 
         // Columnar statistics
-        group.bench_with_input(
-            BenchmarkId::new("columnar", &label),
-            &shots,
-            |b, &shots| {
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    let result = sampler.sample_statistics_columnar(shots, &mut rng);
-                    black_box(result)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("columnar", &label), &shots, |b, &shots| {
+            let mut rng = PecosRng::seed_from_u64(42);
+            b.iter(|| {
+                let result = sampler.sample_statistics_columnar(shots, &mut rng);
+                black_box(result)
+            });
+        });
     }
 
     group.finish();
@@ -285,47 +280,35 @@ fn bench_parallel_scaling<M: Measurement>(c: &mut Criterion<M>) {
     for (distance, rounds) in [(3, 2), (5, 3), (7, 5)] {
         let sampler = create_surface_code_sampler(distance, rounds);
         let num_mechanisms = sampler.num_mechanisms();
-        let label = format!("d{}_r{}_{}mech", distance, rounds, num_mechanisms);
+        let label = format!("d{distance}_r{rounds}_{num_mechanisms}mech");
 
         group.throughput(Throughput::Elements((num_mechanisms * shots) as u64));
 
         // Sequential geometric (baseline)
-        group.bench_with_input(
-            BenchmarkId::new("sequential", &label),
-            &(),
-            |b, ()| {
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    let result = sampler.sample_statistics_geometric(shots, &mut rng);
-                    black_box(result)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("sequential", &label), &(), |b, ()| {
+            let mut rng = PecosRng::seed_from_u64(42);
+            b.iter(|| {
+                let result = sampler.sample_statistics_geometric(shots, &mut rng);
+                black_box(result)
+            });
+        });
 
         // Parallel
-        group.bench_with_input(
-            BenchmarkId::new("parallel", &label),
-            &(),
-            |b, ()| {
-                b.iter(|| {
-                    let result = sampler.sample_statistics_parallel(shots, 42);
-                    black_box(result)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("parallel", &label), &(), |b, ()| {
+            b.iter(|| {
+                let result = sampler.sample_statistics_parallel(shots, 42);
+                black_box(result)
+            });
+        });
 
         // Auto (should pick geometric for low p)
-        group.bench_with_input(
-            BenchmarkId::new("auto", &label),
-            &(),
-            |b, ()| {
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    let result = sampler.sample_statistics_with_rng(shots, &mut rng);
-                    black_box(result)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("auto", &label), &(), |b, ()| {
+            let mut rng = PecosRng::seed_from_u64(42);
+            b.iter(|| {
+                let result = sampler.sample_statistics_with_rng(shots, &mut rng);
+                black_box(result)
+            });
+        });
     }
 
     group.finish();
@@ -336,7 +319,7 @@ fn create_synthetic_dem(num_mechanisms: usize, num_detectors: usize, prob: f64) 
     let mut dem = String::new();
 
     for i in 0..num_detectors {
-        dem.push_str(&format!("detector({}, 0, 0) D{}\n", i, i));
+        dem.push_str(&format!("detector({i}, 0, 0) D{i}\n"));
     }
 
     for i in 0..num_mechanisms {
@@ -345,16 +328,16 @@ fn create_synthetic_dem(num_mechanisms: usize, num_detectors: usize, prob: f64) 
         let d3 = (i + 2) % num_detectors;
 
         match i % 3 {
-            0 => dem.push_str(&format!("error({}) D{}\n", prob, d1)),
-            1 => dem.push_str(&format!("error({}) D{} D{}\n", prob, d1, d2)),
-            _ => dem.push_str(&format!("error({}) D{} D{} D{}\n", prob, d1, d2, d3)),
+            0 => dem.push_str(&format!("error({prob}) D{d1}\n")),
+            1 => dem.push_str(&format!("error({prob}) D{d1} D{d2}\n")),
+            _ => dem.push_str(&format!("error({prob}) D{d1} D{d2} D{d3}\n")),
         }
     }
 
     dem
 }
 
-/// Benchmark ParsedDem sampling (used by equivalence testing).
+/// Benchmark `ParsedDem` sampling (used by equivalence testing).
 fn bench_parsed_dem_sampling<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("ParsedDem - Sampling");
 
@@ -362,7 +345,10 @@ fn bench_parsed_dem_sampling<M: Measurement>(c: &mut Criterion<M>) {
     let complex_dem = create_synthetic_dem(200, 96, 0.01);
 
     let dems: [(&str, &str); 3] = [
-        ("simple", "error(0.01) D0\nerror(0.01) D1\nerror(0.01) D0 D1"),
+        (
+            "simple",
+            "error(0.01) D0\nerror(0.01) D1\nerror(0.01) D0 D1",
+        ),
         ("medium", &medium_dem),
         ("complex", &complex_dem),
     ];
@@ -389,7 +375,6 @@ fn bench_parsed_dem_sampling<M: Measurement>(c: &mut Criterion<M>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_sampler_creation() {

@@ -40,7 +40,7 @@ def parse_dem(dem_str: str) -> dict:
         prob = float(match.group(1))
 
         # Parse targets
-        rest = line[match.end():].strip()
+        rest = line[match.end() :].strip()
 
         # Handle decomposition syntax: D0 D1 ^ D2 D3
         if "^" in rest:
@@ -95,24 +95,26 @@ def analyze_dem_differences(pecos_dem: str, stim_dem: str) -> dict:
             diff = pecos_prob - stim_prob
             rel_diff = diff / max(pecos_prob, stim_prob, 1e-10)
             if abs(rel_diff) > 0.001:  # > 0.1% relative difference
-                results["differences"].append({
-                    "target": target_str,
-                    "pecos": pecos_prob,
-                    "stim": stim_prob,
-                    "diff": diff,
-                    "rel_diff": rel_diff,
-                })
+                results["differences"].append(
+                    {
+                        "target": target_str,
+                        "pecos": pecos_prob,
+                        "stim": stim_prob,
+                        "diff": diff,
+                        "rel_diff": rel_diff,
+                    },
+                )
 
     return results
 
 
-def print_dem_analysis(results: dict):
+def print_dem_analysis(results: dict) -> None:
     """Print analysis results in a readable format."""
     print("=" * 60)
     print("DEM Probability Analysis: PECOS vs Stim")
     print("=" * 60)
 
-    print(f"\nError counts:")
+    print("\nError counts:")
     print(f"  PECOS: {results['pecos_count']} error mechanisms")
     print(f"  Stim:  {results['stim_count']} error mechanisms")
     print(f"  Matched: {results['matched']}")
@@ -133,8 +135,10 @@ def print_dem_analysis(results: dict):
         sorted_diffs = sorted(results["differences"], key=lambda x: -abs(x["diff"]))
         for item in sorted_diffs[:10]:
             print(f"  {item['target']}:")
-            print(f"    PECOS={item['pecos']:.6f} Stim={item['stim']:.6f} "
-                  f"diff={item['diff']:.6f} ({item['rel_diff']*100:.2f}%)")
+            print(
+                f"    PECOS={item['pecos']:.6f} Stim={item['stim']:.6f} "
+                f"diff={item['diff']:.6f} ({item['rel_diff']*100:.2f}%)",
+            )
 
 
 def trace_error_sources(tc, p2: float = 0.01):
@@ -143,7 +147,8 @@ def trace_error_sources(tc, p2: float = 0.01):
     This helps understand why PECOS and Stim might differ in probability.
     """
     import json
-    from pecos_rslib.qec import DagFaultAnalyzer, PAULI_X, PAULI_Y, PAULI_Z
+
+    from pecos_rslib.qec import PAULI_X, PAULI_Y, PAULI_Z, DagFaultAnalyzer
 
     dag = tc.to_dag_circuit()
     analyzer = DagFaultAnalyzer(dag)
@@ -195,18 +200,20 @@ def trace_error_sources(tc, p2: float = 0.01):
 
             key = (tuple(sorted(triggered_dets)), ())
             prob = p2 / 15.0  # Two-qubit depolarizing
-            contributions[key].append({
-                "loc_idx": loc_idx,
-                "gate_type": gate_type,
-                "qubits": qubits,
-                "pauli": pauli_name,
-                "prob": prob,
-            })
+            contributions[key].append(
+                {
+                    "loc_idx": loc_idx,
+                    "gate_type": gate_type,
+                    "qubits": qubits,
+                    "pauli": pauli_name,
+                    "prob": prob,
+                },
+            )
 
     return contributions
 
 
-def test_dem_comparison_d3():
+def test_dem_comparison_d3() -> None:
     """Compare DEM generation for d=3 surface code."""
     from pecos.qec.surface import (
         SurfacePatch,
@@ -229,10 +236,19 @@ def test_dem_comparison_d3():
 
     # Generate DEMs
     pecos_dem = generate_dem_from_tick_circuit(
-        tc, p1=p1, p2=p2, p_meas=p_meas, p_init=p_init, decompose_errors=False
+        tc,
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_init=p_init,
+        decompose_errors=False,
     )
     stim_dem = generate_dem_from_tick_circuit_via_stim(
-        tc, p1=p1, p2=p2, p_meas=p_meas, p_init=p_init
+        tc,
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_init=p_init,
     )
 
     print("\n--- PECOS DEM (raw, no decomposition) ---")
@@ -261,13 +277,15 @@ def test_dem_comparison_d3():
         if key in contributions:
             print(f"\nContributions to {target}:")
             for contrib in contributions[key]:
-                print(f"  loc={contrib['loc_idx']} gate={contrib['gate_type']} "
-                      f"qubits={contrib['qubits']} pauli={contrib['pauli']} prob={contrib['prob']:.6f}")
+                print(
+                    f"  loc={contrib['loc_idx']} gate={contrib['gate_type']} "
+                    f"qubits={contrib['qubits']} pauli={contrib['pauli']} prob={contrib['prob']:.6f}",
+                )
             print(f"  PECOS combined: {item['pecos']:.6f}")
             print(f"  Stim:           {item['stim']:.6f}")
 
 
-def test_simple_cx_error_analysis():
+def test_simple_cx_error_analysis() -> None:
     """Analyze error contributions from a single CX gate.
 
     This helps understand the fundamental difference between PECOS and Stim
@@ -277,7 +295,8 @@ def test_simple_cx_error_analysis():
     print("Single CX Gate Error Analysis")
     print("=" * 60)
 
-    print("""
+    print(
+        """
 For a CX gate with depolarizing noise (p2 = 0.01):
 
 PECOS model (per-qubit faults, 15 non-identity Paulis):
@@ -303,10 +322,11 @@ The probability differences we see are likely from:
 1. Different gate counting between PECOS DAG and Stim circuit
 2. Different treatment of before/after fault locations
 3. Edge effects at circuit boundaries
-""")
+""",
+    )
 
 
-def test_probability_combination():
+def test_probability_combination() -> None:
     """Test the probability combination formula."""
     print("\n" + "=" * 60)
     print("Probability Combination Test")
@@ -351,15 +371,19 @@ def parse_stim_dem_with_decomposed(dem_str: str) -> tuple[dict, list]:
         prob = float(match.group(1))
 
         # Parse targets
-        rest = line[match.end():].strip()
+        rest = line[match.end() :].strip()
 
         # Handle decomposition syntax: D0 D1 ^ D2 D3
         if "^" in rest:
             components = []
             for part in rest.split("^"):
                 part = part.strip()
-                dets = tuple(sorted(int(m.group(1)) for m in re.finditer(r"D(\d+)", part)))
-                logs = tuple(sorted(int(m.group(1)) for m in re.finditer(r"L(\d+)", part)))
+                dets = tuple(
+                    sorted(int(m.group(1)) for m in re.finditer(r"D(\d+)", part)),
+                )
+                logs = tuple(
+                    sorted(int(m.group(1)) for m in re.finditer(r"L(\d+)", part)),
+                )
                 components.append((dets, logs))
             decomposed.append((prob, components))
         else:
@@ -371,7 +395,7 @@ def parse_stim_dem_with_decomposed(dem_str: str) -> tuple[dict, list]:
     return errors, decomposed
 
 
-def analyze_decomposition_pattern():
+def analyze_decomposition_pattern() -> None:
     """Analyze how Stim's decomposition affects probabilities."""
     from pecos.qec.surface import (
         SurfacePatch,
@@ -392,12 +416,18 @@ def analyze_decomposition_pattern():
     p1, p2, p_meas, p_init = 0.01, 0.01, 0.01, 0.01
 
     stim_dem = generate_dem_from_tick_circuit_via_stim(
-        tc, p1=p1, p2=p2, p_meas=p_meas, p_init=p_init
+        tc,
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_init=p_init,
     )
 
     errors, decomposed = parse_stim_dem_with_decomposed(stim_dem)
 
-    print(f"\nStim DEM has {len(errors)} direct errors and {len(decomposed)} decomposed errors")
+    print(
+        f"\nStim DEM has {len(errors)} direct errors and {len(decomposed)} decomposed errors",
+    )
 
     print("\nDecomposed errors (Y = X^Z pattern):")
     for prob, components in decomposed:
@@ -421,7 +451,12 @@ def analyze_decomposition_pattern():
 
     # Calculate total probability mass
     pecos_dem = generate_dem_from_tick_circuit(
-        tc, p1=p1, p2=p2, p_meas=p_meas, p_init=p_init, decompose_errors=False
+        tc,
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_init=p_init,
+        decompose_errors=False,
     )
     pecos_errors = parse_dem(pecos_dem)
 
@@ -430,7 +465,7 @@ def analyze_decomposition_pattern():
     stim_decomposed_total = sum(prob for prob, _ in decomposed)
     stim_total = stim_direct_total + stim_decomposed_total
 
-    print(f"\nTotal probability mass:")
+    print("\nTotal probability mass:")
     print(f"  PECOS:             {pecos_total:.6f}")
     print(f"  Stim (direct):     {stim_direct_total:.6f}")
     print(f"  Stim (decomposed): {stim_decomposed_total:.6f}")
@@ -472,13 +507,14 @@ def analyze_decomposition_pattern():
         print(f"    Diff from PECOS: {(combined - pecos_prob)*100:.4f}%")
 
 
-def print_summary():
+def print_summary() -> None:
     """Print final summary of PECOS vs Stim DEM comparison."""
     print("\n" + "=" * 60)
     print("SUMMARY: PECOS vs Stim DEM Generation")
     print("=" * 60)
 
-    print("""
+    print(
+        """
 KEY FINDINGS:
 
 1. TOTAL PROBABILITY MASS MATCHES
@@ -505,7 +541,8 @@ KEY FINDINGS:
    - Likely due to edge effects at circuit boundaries
    - Different gate ordering between DAG and Stim circuit
    - Not significant for practical decoding applications
-""")
+""",
+    )
 
 
 if __name__ == "__main__":

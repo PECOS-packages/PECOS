@@ -43,12 +43,12 @@
 //! ```
 
 use pecos::qec::fault_tolerance::dem_builder::{
-    compare_dems_exact as rust_compare_dems_exact,
+    ComparisonMethod as RustComparisonMethod, DemBuilder as RustDemBuilder,
+    DetectorErrorModel as RustDetectorErrorModel, EquivalenceResult as RustEquivalenceResult,
+    MeasurementNoiseModel as RustMeasurementNoiseModel, MemBuilder as RustMemBuilder,
+    ParsedDem as RustParsedDem, compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
-    verify_dem_equivalence as rust_verify_dem_equivalence, ComparisonMethod as RustComparisonMethod,
-    DemBuilder as RustDemBuilder, DetectorErrorModel as RustDetectorErrorModel,
-    EquivalenceResult as RustEquivalenceResult, MemBuilder as RustMemBuilder,
-    MeasurementNoiseModel as RustMeasurementNoiseModel, ParsedDem as RustParsedDem,
+    verify_dem_equivalence as rust_verify_dem_equivalence,
 };
 use pecos::qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
 use pecos::qec::fault_tolerance::propagator::{
@@ -56,8 +56,8 @@ use pecos::qec::fault_tolerance::propagator::{
     DagSpacetimeLocation, Pauli,
 };
 use pecos::quantum::DagCircuit;
-use pyo3::prelude::*;
 use pyo3::Py;
+use pyo3::prelude::*;
 
 // =============================================================================
 // Fault Location Types
@@ -122,7 +122,7 @@ impl From<&DagSpacetimeLocation> for PyFaultLocation {
     fn from(loc: &DagSpacetimeLocation) -> Self {
         Self {
             node: loc.node,
-            qubits: loc.qubits.iter().map(|q| q.index()).collect(),
+            qubits: loc.qubits.iter().map(pecos::QubitId::index).collect(),
             before: loc.before,
             gate_type: format!("{:?}", loc.gate_type),
         }
@@ -184,18 +184,22 @@ impl PyDagFaultInfluenceMap {
     /// Get all fault locations.
     ///
     /// Returns:
-    ///     List of FaultLocation objects.
+    ///     List of `FaultLocation` objects.
     fn get_locations(&self) -> Vec<PyFaultLocation> {
-        self.inner.locations.iter().map(PyFaultLocation::from).collect()
+        self.inner
+            .locations
+            .iter()
+            .map(PyFaultLocation::from)
+            .collect()
     }
 
     /// Get a specific fault location by index.
     ///
     /// Args:
-    ///     loc_idx: Location index.
+    ///     `loc_idx`: Location index.
     ///
     /// Returns:
-    ///     FaultLocation object or None if index is out of range.
+    ///     `FaultLocation` object or None if index is out of range.
     fn get_location(&self, loc_idx: usize) -> Option<PyFaultLocation> {
         self.inner.get_location(loc_idx).map(PyFaultLocation::from)
     }
@@ -203,13 +207,13 @@ impl PyDagFaultInfluenceMap {
     /// Classify a fault at the given location.
     ///
     /// Args:
-    ///     loc_idx: Location index.
+    ///     `loc_idx`: Location index.
     ///     pauli: Pauli type (1=X, 2=Y, 3=Z).
     ///
     /// Returns:
-    ///     Tuple (has_syndrome, causes_logical_error).
-    ///     - has_syndrome: True if the fault flips at least one detector.
-    ///     - causes_logical_error: True if the fault flips the logical observable.
+    ///     Tuple (`has_syndrome`, `causes_logical_error`).
+    ///     - `has_syndrome`: True if the fault flips at least one detector.
+    ///     - `causes_logical_error`: True if the fault flips the logical observable.
     fn classify_fault(&self, loc_idx: usize, pauli: u8) -> (bool, bool) {
         self.inner.classify_fault(loc_idx, pauli)
     }
@@ -217,7 +221,7 @@ impl PyDagFaultInfluenceMap {
     /// Get detector indices flipped by a fault.
     ///
     /// Args:
-    ///     loc_idx: Location index.
+    ///     `loc_idx`: Location index.
     ///     pauli: Pauli type (1=X, 2=Y, 3=Z).
     ///
     /// Returns:
@@ -229,7 +233,7 @@ impl PyDagFaultInfluenceMap {
     /// Get logical indices flipped by a fault.
     ///
     /// Args:
-    ///     loc_idx: Location index.
+    ///     `loc_idx`: Location index.
     ///     pauli: Pauli type (1=X, 2=Y, 3=Z).
     ///
     /// Returns:
@@ -241,7 +245,7 @@ impl PyDagFaultInfluenceMap {
     /// Check if a fault at the given location flips any detector.
     ///
     /// Args:
-    ///     loc_idx: Location index.
+    ///     `loc_idx`: Location index.
     ///     pauli: Pauli type (1=X, 2=Y, 3=Z).
     ///
     /// Returns:
@@ -255,7 +259,7 @@ impl PyDagFaultInfluenceMap {
     /// Check if a fault at the given location flips a logical observable.
     ///
     /// Args:
-    ///     loc_idx: Location index.
+    ///     `loc_idx`: Location index.
     ///     pauli: Pauli type (1=X, 2=Y, 3=Z).
     ///
     /// Returns:
@@ -286,13 +290,13 @@ impl PyDagFaultInfluenceMap {
     ///
     /// Returns:
     ///     Dictionary containing all CSR arrays:
-    ///     - num_locations, num_detectors, num_logicals
-    ///     - detector_offsets_x, detector_data_x
-    ///     - detector_offsets_y, detector_data_y
-    ///     - detector_offsets_z, detector_data_z
-    ///     - logical_offsets_x, logical_data_x
-    ///     - logical_offsets_y, logical_data_y
-    ///     - logical_offsets_z, logical_data_z
+    ///     - `num_locations`, `num_detectors`, `num_logicals`
+    ///     - `detector_offsets_x`, `detector_data_x`
+    ///     - `detector_offsets_y`, `detector_data_y`
+    ///     - `detector_offsets_z`, `detector_data_z`
+    ///     - `logical_offsets_x`, `logical_data_x`
+    ///     - `logical_offsets_y`, `logical_data_y`
+    ///     - `logical_offsets_z`, `logical_data_z`
     fn export_csr(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
         let (
             num_locations,
@@ -334,7 +338,7 @@ impl PyDagFaultInfluenceMap {
     /// Get the measurements in order (node, qubit, basis).
     ///
     /// Returns:
-    ///     List of (node_id, qubit, basis) tuples representing measurements
+    ///     List of (`node_id`, qubit, basis) tuples representing measurements
     ///     in the order used by the influence map.
     fn measurements(&self) -> Vec<(usize, usize, u8)> {
         self.inner
@@ -403,7 +407,7 @@ impl PyDagFaultAnalyzer {
     /// Create a new DAG fault analyzer.
     ///
     /// Args:
-    ///     dag: A DagCircuit to analyze.
+    ///     dag: A `DagCircuit` to analyze.
     #[new]
     fn new(dag: &crate::dag_circuit_bindings::PyDagCircuit) -> Self {
         Self {
@@ -417,7 +421,7 @@ impl PyDagFaultAnalyzer {
     /// lookup table for fault classification.
     ///
     /// Returns:
-    ///     DagFaultInfluenceMap with O(1) fault classification.
+    ///     `DagFaultInfluenceMap` with O(1) fault classification.
     fn build_influence_map(&self) -> PyDagFaultInfluenceMap {
         let analyzer = RustDagFaultAnalyzer::new(&self.dag);
         let inner = analyzer.build_influence_map();
@@ -487,7 +491,7 @@ impl PyInfluenceBuilder {
     /// Create a new influence builder for the given circuit.
     ///
     /// Args:
-    ///     dag: A DagCircuit to analyze.
+    ///     dag: A `DagCircuit` to analyze.
     #[new]
     fn new(dag: &crate::dag_circuit_bindings::PyDagCircuit) -> Self {
         Self {
@@ -535,7 +539,7 @@ impl PyInfluenceBuilder {
     /// 3. Backward propagation to build the influence map
     ///
     /// Returns:
-    ///     DagFaultInfluenceMap with proper detector definitions and logical tracking.
+    ///     `DagFaultInfluenceMap` with proper detector definitions and logical tracking.
     fn build(&self) -> PyDagFaultInfluenceMap {
         let builder = RustInfluenceBuilder::new(&self.dag)
             .with_logical_x(self.logical_x_qubits.clone())
@@ -697,7 +701,7 @@ pub struct PyDemBuilder {
     detectors_json: Option<String>,
     observables_json: Option<String>,
     num_measurements: Option<usize>,
-    /// Measurement order: list of qubits in TickCircuit measurement execution order.
+    /// Measurement order: list of qubits in `TickCircuit` measurement execution order.
     /// This allows proper mapping between record offsets and influence map indices.
     measurement_order: Option<Vec<usize>>,
 }
@@ -707,7 +711,7 @@ impl PyDemBuilder {
     /// Create a new DEM builder from a fault influence map.
     ///
     /// Args:
-    ///     influence_map: A DagFaultInfluenceMap from DagFaultAnalyzer.
+    ///     `influence_map`: A `DagFaultInfluenceMap` from `DagFaultAnalyzer`.
     #[new]
     fn new(influence_map: &PyDagFaultInfluenceMap) -> Self {
         Self {
@@ -728,8 +732,8 @@ impl PyDemBuilder {
     /// Args:
     ///     p1: Single-qubit depolarizing error rate.
     ///     p2: Two-qubit depolarizing error rate.
-    ///     p_meas: Measurement error rate.
-    ///     p_init: Initialization (prep) error rate.
+    ///     `p_meas`: Measurement error rate.
+    ///     `p_init`: Initialization (prep) error rate.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -788,17 +792,20 @@ impl PyDemBuilder {
     /// Set the measurement order from the original circuit.
     ///
     /// The measurement order is a list of qubits in the order they were measured
-    /// in the original circuit (e.g., TickCircuit). This allows proper mapping
-    /// between record offsets (which use TickCircuit order) and influence map
+    /// in the original circuit (e.g., `TickCircuit`). This allows proper mapping
+    /// between record offsets (which use `TickCircuit` order) and influence map
     /// indices (which may use a different order based on DAG topology).
     ///
     /// Args:
     ///     order: List of qubit indices in measurement execution order.
-    ///            order[i] is the qubit measured at TickCircuit measurement index i.
+    ///            order[i] is the qubit measured at `TickCircuit` measurement index i.
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_measurement_order(mut slf: PyRefMut<'_, Self>, order: Vec<usize>) -> PyRefMut<'_, Self> {
+    fn with_measurement_order(
+        mut slf: PyRefMut<'_, Self>,
+        order: Vec<usize>,
+    ) -> PyRefMut<'_, Self> {
         slf.measurement_order = Some(order);
         slf
     }
@@ -806,13 +813,17 @@ impl PyDemBuilder {
     /// Build the Detector Error Model.
     ///
     /// Returns:
-    ///     A DetectorErrorModel that can be converted to string format.
+    ///     A `DetectorErrorModel` that can be converted to string format.
     ///
     /// Raises:
-    ///     ValueError: If the detector or observable JSON is malformed.
+    ///     `ValueError`: If the detector or observable JSON is malformed.
     fn build(&self) -> PyResult<PyDetectorErrorModel> {
-        let mut builder = RustDemBuilder::new(&self.influence_map)
-            .with_noise(self.p1, self.p2, self.p_meas, self.p_init);
+        let mut builder = RustDemBuilder::new(&self.influence_map).with_noise(
+            self.p1,
+            self.p2,
+            self.p_meas,
+            self.p_init,
+        );
 
         if let Some(num) = self.num_measurements {
             builder = builder.with_num_measurements(num);
@@ -838,7 +849,7 @@ impl PyDemBuilder {
         Ok(PyDetectorErrorModel { inner })
     }
 
-    /// Alias for build() - provided for backward compatibility.
+    /// Alias for `build()` - provided for backward compatibility.
     fn build_with_source_tracking(&self) -> PyResult<PyDetectorErrorModel> {
         self.build()
     }
@@ -879,11 +890,9 @@ fn parse_detector_records(detectors_json: &str) -> PyResult<Vec<Vec<i32>>> {
         let offsets: Vec<i32> = records
             .iter()
             .map(|r| {
-                r.as_i64()
-                    .map(|v| v as i32)
-                    .ok_or_else(|| {
-                        pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
-                    })
+                r.as_i64().map(|v| v as i32).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
+                })
             })
             .collect::<PyResult<Vec<_>>>()?;
 
@@ -917,11 +926,9 @@ fn parse_observable_records(observables_json: &str) -> PyResult<Vec<Vec<i32>>> {
         let offsets: Vec<i32> = records
             .iter()
             .map(|r| {
-                r.as_i64()
-                    .map(|v| v as i32)
-                    .ok_or_else(|| {
-                        pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
-                    })
+                r.as_i64().map(|v| v as i32).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
+                })
             })
             .collect::<PyResult<Vec<_>>>()?;
 
@@ -1005,7 +1012,7 @@ impl PyMeasurementNoiseModel {
     /// Sample multiple shots of measurement outcomes.
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
+    ///     `num_shots`: Number of shots to sample.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
@@ -1042,12 +1049,12 @@ impl PyMeasurementNoiseModel {
     /// detectors fire by XOR'ing the specified measurement records for each detector.
     ///
     /// If measurement order was provided when building the MNM, outcomes are first
-    /// reordered from influence map order to TickCircuit order before applying
+    /// reordered from influence map order to `TickCircuit` order before applying
     /// detector records.
     ///
     /// Args:
-    ///     outcomes: List of boolean measurement outcomes (from sample()).
-    ///     detectors_json: JSON string with detector definitions.
+    ///     outcomes: List of boolean measurement outcomes (from `sample()`).
+    ///     `detectors_json`: JSON string with detector definitions.
     ///         Format: [{"id": 0, "records": [-1, -5]}, ...]
     ///         Records are negative offsets from end of measurement list.
     ///
@@ -1055,8 +1062,8 @@ impl PyMeasurementNoiseModel {
     ///     List of boolean detection events (True = detector fired).
     ///
     /// Example:
-    ///     >>> outcomes = mnm.sample()
-    ///     >>> detection_events = mnm.to_detection_events(outcomes, detectors_json)
+    ///     >>> outcomes = `mnm.sample()`
+    ///     >>> `detection_events` = `mnm.to_detection_events(outcomes`, `detectors_json`)
     fn to_detection_events(
         &self,
         outcomes: Vec<bool>,
@@ -1064,19 +1071,21 @@ impl PyMeasurementNoiseModel {
     ) -> PyResult<Vec<bool>> {
         let detector_records = parse_detector_records(detectors_json)?;
         // Use instance method which applies im_to_tc reordering if set
-        Ok(self.inner.compute_detection_events(&outcomes, &detector_records))
+        Ok(self
+            .inner
+            .compute_detection_events(&outcomes, &detector_records))
     }
 
     /// Sample and convert to detection events in one step.
     ///
-    /// This is a convenience method that combines sample() and to_detection_events().
+    /// This is a convenience method that combines `sample()` and `to_detection_events()`.
     ///
     /// Args:
-    ///     detectors_json: JSON string with detector definitions.
+    ///     `detectors_json`: JSON string with detector definitions.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
-    ///     Tuple of (measurement_outcomes, detection_events).
+    ///     Tuple of (`measurement_outcomes`, `detection_events`).
     #[pyo3(signature = (detectors_json, seed=None))]
     fn sample_with_detectors(
         &self,
@@ -1093,19 +1102,21 @@ impl PyMeasurementNoiseModel {
             None => PecosRng::seed_from_u64(rand::rng().random()),
         };
 
-        let (outcomes, detection_events) = self.inner.sample_with_detectors(&detector_records, &mut rng);
+        let (outcomes, detection_events) = self
+            .inner
+            .sample_with_detectors(&detector_records, &mut rng);
         Ok((outcomes, detection_events))
     }
 
     /// Sample multiple shots and convert to detection events.
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
-    ///     detectors_json: JSON string with detector definitions.
+    ///     `num_shots`: Number of shots to sample.
+    ///     `detectors_json`: JSON string with detector definitions.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
-    ///     List of (measurement_outcomes, detection_events) tuples.
+    ///     List of (`measurement_outcomes`, `detection_events`) tuples.
     #[pyo3(signature = (num_shots, detectors_json, seed=None))]
     fn sample_batch_with_detectors(
         &self,
@@ -1124,7 +1135,10 @@ impl PyMeasurementNoiseModel {
         };
 
         let results: Vec<_> = (0..num_shots)
-            .map(|_| self.inner.sample_with_detectors(&detector_records, &mut rng))
+            .map(|_| {
+                self.inner
+                    .sample_with_detectors(&detector_records, &mut rng)
+            })
             .collect();
 
         Ok(results)
@@ -1136,12 +1150,12 @@ impl PyMeasurementNoiseModel {
     /// needed for decoding and logical error rate computation.
     ///
     /// Args:
-    ///     detectors_json: JSON string with detector definitions.
-    ///     observables_json: JSON string with observable definitions.
+    ///     `detectors_json`: JSON string with detector definitions.
+    ///     `observables_json`: JSON string with observable definitions.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
-    ///     Tuple of (detection_events, observable_flips).
+    ///     Tuple of (`detection_events`, `observable_flips`).
     #[pyo3(signature = (detectors_json, observables_json, seed=None))]
     fn sample_for_decoding(
         &self,
@@ -1160,11 +1174,9 @@ impl PyMeasurementNoiseModel {
             None => PecosRng::seed_from_u64(rand::rng().random()),
         };
 
-        let (detection_events, observable_flips) = self.inner.sample_for_decoding(
-            &detector_records,
-            &observable_records,
-            &mut rng,
-        );
+        let (detection_events, observable_flips) =
+            self.inner
+                .sample_for_decoding(&detector_records, &observable_records, &mut rng);
         Ok((detection_events, observable_flips))
     }
 
@@ -1174,13 +1186,13 @@ impl PyMeasurementNoiseModel {
     /// flips for each shot. This is the PECOS native alternative to Stim's DEM sampler.
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
-    ///     detectors_json: JSON string with detector definitions.
-    ///     observables_json: JSON string with observable definitions.
+    ///     `num_shots`: Number of shots to sample.
+    ///     `detectors_json`: JSON string with detector definitions.
+    ///     `observables_json`: JSON string with observable definitions.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
-    ///     Tuple of (detection_events_per_shot, observable_flips_per_shot) as numpy-compatible lists.
+    ///     Tuple of (`detection_events_per_shot`, `observable_flips_per_shot`) as numpy-compatible lists.
     #[pyo3(signature = (num_shots, detectors_json, observables_json, seed=None))]
     fn sample_batch_for_decoding(
         &self,
@@ -1232,7 +1244,7 @@ impl PyMeasurementNoiseModel {
 ///
 /// Two modes are supported:
 /// - Uniform noise: Same error probability at all locations (fast)
-/// - Circuit-level noise: Per-gate-type probabilities (p1, p2, p_meas, p_init)
+/// - Circuit-level noise: Per-gate-type probabilities (p1, p2, `p_meas`, `p_init`)
 ///
 /// # Example
 ///
@@ -1269,8 +1281,8 @@ impl PyNoisySampler {
     /// Create a new noisy sampler with uniform error probability.
     ///
     /// Args:
-    ///     influence_map: A DagFaultInfluenceMap from DagFaultAnalyzer or InfluenceBuilder.
-    ///     p_error: Uniform depolarizing error probability per fault location.
+    ///     `influence_map`: A `DagFaultInfluenceMap` from `DagFaultAnalyzer` or `InfluenceBuilder`.
+    ///     `p_error`: Uniform depolarizing error probability per fault location.
     ///     seed: Random seed for reproducibility.
     #[new]
     #[pyo3(signature = (influence_map, p_error, seed=None))]
@@ -1287,15 +1299,15 @@ impl PyNoisySampler {
 
     /// Create a sampler with circuit-level noise (different rates per gate type).
     ///
-    /// This matches the noise model used by DemBuilder and Stim, with different
+    /// This matches the noise model used by `DemBuilder` and Stim, with different
     /// error probabilities for different gate types.
     ///
     /// Args:
-    ///     influence_map: A DagFaultInfluenceMap from DagFaultAnalyzer or InfluenceBuilder.
+    ///     `influence_map`: A `DagFaultInfluenceMap` from `DagFaultAnalyzer` or `InfluenceBuilder`.
     ///     p1: Single-qubit gate error probability.
     ///     p2: Two-qubit gate error probability.
-    ///     p_meas: Measurement error probability.
-    ///     p_init: Initialization/prep error probability.
+    ///     `p_meas`: Measurement error probability.
+    ///     `p_init`: Initialization/prep error probability.
     ///     seed: Random seed for reproducibility.
     #[staticmethod]
     #[pyo3(signature = (influence_map, p1, p2, p_meas, p_init, seed=None))]
@@ -1313,17 +1325,31 @@ impl PyNoisySampler {
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
 
         // Build per-location probabilities based on gate type
-        let per_location_probs: Vec<f64> = influence_map.inner.locations.iter().map(|loc| {
-            match loc.gate_type {
-                GateType::Prep | GateType::QAlloc => p_init,
-                GateType::Measure | GateType::MeasureFree => p_meas,
-                GateType::CX | GateType::CZ | GateType::CY | GateType::SWAP => p2,
-                GateType::H | GateType::SZ | GateType::SZdg | GateType::SX | GateType::SXdg
-                | GateType::SY | GateType::SYdg | GateType::X | GateType::Y | GateType::Z
-                | GateType::T | GateType::Tdg => p1,
-                _ => p1, // Default to p1 for unknown gates
-            }
-        }).collect();
+        let per_location_probs: Vec<f64> = influence_map
+            .inner
+            .locations
+            .iter()
+            .map(|loc| {
+                match loc.gate_type {
+                    GateType::Prep | GateType::QAlloc => p_init,
+                    GateType::Measure | GateType::MeasureFree => p_meas,
+                    GateType::CX | GateType::CZ | GateType::CY | GateType::SWAP => p2,
+                    GateType::H
+                    | GateType::SZ
+                    | GateType::SZdg
+                    | GateType::SX
+                    | GateType::SXdg
+                    | GateType::SY
+                    | GateType::SYdg
+                    | GateType::X
+                    | GateType::Y
+                    | GateType::Z
+                    | GateType::T
+                    | GateType::Tdg => p1,
+                    _ => p1, // Default to p1 for unknown gates
+                }
+            })
+            .collect();
 
         Self {
             influence_map: influence_map.inner.clone(),
@@ -1335,7 +1361,7 @@ impl PyNoisySampler {
     /// Sample a single shot.
     ///
     /// Returns:
-    ///     Tuple of (detector_flips, logical_flips) where each is a list of
+    ///     Tuple of (`detector_flips`, `logical_flips`) where each is a list of
     ///     indices that flipped.
     fn sample_one(&mut self) -> (Vec<u32>, Vec<u32>) {
         use pecos::qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
@@ -1354,19 +1380,20 @@ impl PyNoisySampler {
     /// events and observable flips in the same format as Stim's DEM sampler.
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
+    ///     `num_shots`: Number of shots to sample.
     ///
     /// Returns:
-    ///     Tuple of (detection_events, observable_flips) where:
-    ///     - detection_events: List of lists, each inner list contains bool per detector
-    ///     - observable_flips: List of lists, each inner list contains bool per observable
+    ///     Tuple of (`detection_events`, `observable_flips`) where:
+    ///     - `detection_events`: List of lists, each inner list contains bool per detector
+    ///     - `observable_flips`: List of lists, each inner list contains bool per observable
     fn sample_batch(&mut self, num_shots: usize) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
         use pecos::qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
 
         let noise_model = PerLocationNoiseModel::new(self.per_location_probs.clone());
         let mut sampler = NoisySampler::new(&self.influence_map, noise_model, self.seed);
         let num_detectors = self.influence_map.detectors.len();
-        let num_logicals = self.influence_map
+        let num_logicals = self
+            .influence_map
             .influences
             .max_logical_index()
             .map_or(1, |i| i + 1);
@@ -1409,17 +1436,21 @@ impl PyNoisySampler {
     /// when you only need aggregate statistics.
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
+    ///     `num_shots`: Number of shots to sample.
     ///
     /// Returns:
     ///     Dictionary with statistics:
-    ///     - total_shots: Number of shots
-    ///     - logical_error_count: Shots with logical errors
-    ///     - syndrome_count: Shots with non-trivial syndrome
-    ///     - undetectable_count: Shots with undetectable logical errors
-    ///     - logical_error_rate: Fraction with logical errors
-    ///     - syndrome_rate: Fraction with syndromes
-    fn sample_statistics(&mut self, num_shots: usize, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
+    ///     - `total_shots`: Number of shots
+    ///     - `logical_error_count`: Shots with logical errors
+    ///     - `syndrome_count`: Shots with non-trivial syndrome
+    ///     - `undetectable_count`: Shots with undetectable logical errors
+    ///     - `logical_error_rate`: Fraction with logical errors
+    ///     - `syndrome_rate`: Fraction with syndromes
+    fn sample_statistics(
+        &mut self,
+        num_shots: usize,
+        py: Python<'_>,
+    ) -> PyResult<Py<pyo3::types::PyDict>> {
         use pecos::qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
 
         let noise_model = PerLocationNoiseModel::new(self.per_location_probs.clone());
@@ -1464,21 +1495,21 @@ impl PyNoisySampler {
 
     /// Sample with explicit detector and observable definitions.
     ///
-    /// This combines NoisySampler's fast per-location sampling with explicit
+    /// This combines `NoisySampler`'s fast per-location sampling with explicit
     /// detector/observable definitions (like MNM uses). This gives the best of
     /// both worlds: fast Rust-side sampling with Stim-compatible output.
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
-    ///     detectors_json: JSON string with detector definitions.
-    ///     observables_json: JSON string with observable definitions.
-    ///     measurement_order: Optional list of qubit indices in TickCircuit measurement
-    ///         execution order. Required when detector definitions use TickCircuit
+    ///     `num_shots`: Number of shots to sample.
+    ///     `detectors_json`: JSON string with detector definitions.
+    ///     `observables_json`: JSON string with observable definitions.
+    ///     `measurement_order`: Optional list of qubit indices in `TickCircuit` measurement
+    ///         execution order. Required when detector definitions use `TickCircuit`
     ///         measurement indices but the influence map uses a different ordering.
-    ///         measurement_order[i] is the qubit measured at TickCircuit index i.
+    ///         measurement_order[i] is the qubit measured at `TickCircuit` index i.
     ///
     /// Returns:
-    ///     Tuple of (detection_events, observable_flips) matching Stim's format.
+    ///     Tuple of (`detection_events`, `observable_flips`) matching Stim's format.
     #[pyo3(signature = (num_shots, detectors_json, observables_json, measurement_order=None))]
     fn sample_with_definitions(
         &mut self,
@@ -1525,7 +1556,9 @@ impl PyNoisySampler {
                 .collect()
         });
 
-        let num_tc_measurements = measurement_order.as_ref().map_or(num_im_measurements, |o| o.len());
+        let num_tc_measurements = measurement_order
+            .as_ref()
+            .map_or(num_im_measurements, std::vec::Vec::len);
 
         let mut all_det_events = Vec::with_capacity(num_shots);
         let mut all_obs_flips = Vec::with_capacity(num_shots);
@@ -1663,7 +1696,7 @@ impl PyMemBuilder {
     /// Create a new MNM builder from a fault influence map.
     ///
     /// Args:
-    ///     influence_map: A DagFaultInfluenceMap from DagFaultAnalyzer.
+    ///     `influence_map`: A `DagFaultInfluenceMap` from `DagFaultAnalyzer`.
     #[new]
     fn new(influence_map: &PyDagFaultInfluenceMap) -> Self {
         Self {
@@ -1681,8 +1714,8 @@ impl PyMemBuilder {
     /// Args:
     ///     p1: Single-qubit depolarizing error rate.
     ///     p2: Two-qubit depolarizing error rate.
-    ///     p_meas: Measurement error rate.
-    ///     p_init: Initialization (prep) error rate.
+    ///     `p_meas`: Measurement error rate.
+    ///     `p_init`: Initialization (prep) error rate.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -1700,18 +1733,21 @@ impl PyMemBuilder {
         slf
     }
 
-    /// Set the measurement order from the original circuit (e.g., TickCircuit).
+    /// Set the measurement order from the original circuit (e.g., `TickCircuit`).
     ///
-    /// This is needed when detector definitions use TickCircuit measurement indices
+    /// This is needed when detector definitions use `TickCircuit` measurement indices
     /// but the influence map uses a different ordering based on DAG topology.
     ///
     /// Args:
     ///     order: List of qubit indices in measurement execution order.
-    ///            order[i] is the qubit measured at TickCircuit measurement index i.
+    ///            order[i] is the qubit measured at `TickCircuit` measurement index i.
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_measurement_order(mut slf: PyRefMut<'_, Self>, order: Vec<usize>) -> PyRefMut<'_, Self> {
+    fn with_measurement_order(
+        mut slf: PyRefMut<'_, Self>,
+        order: Vec<usize>,
+    ) -> PyRefMut<'_, Self> {
         slf.measurement_order = Some(order);
         slf
     }
@@ -1723,10 +1759,14 @@ impl PyMemBuilder {
     /// probabilities combined using the independent error formula.
     ///
     /// Returns:
-    ///     A MeasurementNoiseModel for fast approximate sampling.
+    ///     A `MeasurementNoiseModel` for fast approximate sampling.
     fn build(&self) -> PyMeasurementNoiseModel {
-        let mut builder = RustMemBuilder::new(&self.influence_map)
-            .with_noise(self.p1, self.p2, self.p_meas, self.p_init);
+        let mut builder = RustMemBuilder::new(&self.influence_map).with_noise(
+            self.p1,
+            self.p2,
+            self.p_meas,
+            self.p_init,
+        );
 
         if let Some(ref order) = self.measurement_order {
             builder = builder.with_measurement_order(order.clone());
@@ -1809,7 +1849,7 @@ impl PyDemSampler {
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
-    ///     Tuple of (detection_events, observable_flips) as boolean lists.
+    ///     Tuple of (`detection_events`, `observable_flips`) as boolean lists.
     #[pyo3(signature = (seed=None))]
     fn sample(&self, seed: Option<u64>) -> (Vec<bool>, Vec<bool>) {
         use pecos_rng::PecosRng;
@@ -1826,13 +1866,17 @@ impl PyDemSampler {
     /// Sample multiple shots.
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
+    ///     `num_shots`: Number of shots to sample.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
-    ///     Tuple of (all_detection_events, all_observable_flips).
+    ///     Tuple of (`all_detection_events`, `all_observable_flips`).
     #[pyo3(signature = (num_shots, seed=None))]
-    fn sample_batch(&self, num_shots: usize, seed: Option<u64>) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
+    fn sample_batch(
+        &self,
+        num_shots: usize,
+        seed: Option<u64>,
+    ) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
         use pecos_rng::PecosRng;
         use rand::Rng;
 
@@ -1850,20 +1894,25 @@ impl PyDemSampler {
     /// only need aggregate statistics (logical error rate, syndrome rate).
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
+    ///     `num_shots`: Number of shots to sample.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
     ///     Dictionary with statistics:
-    ///     - total_shots: Number of shots
-    ///     - logical_error_count: Shots with logical errors
-    ///     - syndrome_count: Shots with non-trivial syndrome
-    ///     - undetectable_count: Shots with undetectable logical errors
-    ///     - logical_error_rate: Fraction with logical errors
-    ///     - syndrome_rate: Fraction with syndromes
-    ///     - undetectable_rate: Fraction with undetectable errors
+    ///     - `total_shots`: Number of shots
+    ///     - `logical_error_count`: Shots with logical errors
+    ///     - `syndrome_count`: Shots with non-trivial syndrome
+    ///     - `undetectable_count`: Shots with undetectable logical errors
+    ///     - `logical_error_rate`: Fraction with logical errors
+    ///     - `syndrome_rate`: Fraction with syndromes
+    ///     - `undetectable_rate`: Fraction with undetectable errors
     #[pyo3(signature = (num_shots, seed=None))]
-    fn sample_statistics(&self, num_shots: usize, seed: Option<u64>, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
+    fn sample_statistics(
+        &self,
+        num_shots: usize,
+        seed: Option<u64>,
+        py: Python<'_>,
+    ) -> PyResult<Py<pyo3::types::PyDict>> {
         use rand::Rng;
 
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
@@ -1890,9 +1939,9 @@ impl PyDemSampler {
     }
 }
 
-/// Builder for DemSampler.
+/// Builder for `DemSampler`.
 ///
-/// Constructs a DemSampler from a fault influence map, noise parameters,
+/// Constructs a `DemSampler` from a fault influence map, noise parameters,
 /// and explicit detector/observable definitions.
 #[pyclass(name = "DemSamplerBuilder", module = "pecos_rslib.qec")]
 pub struct PyDemSamplerBuilder {
@@ -1950,29 +1999,36 @@ impl PyDemSamplerBuilder {
         slf
     }
 
-    /// Set the measurement order mapping from TickCircuit.
-    fn with_measurement_order(mut slf: PyRefMut<'_, Self>, order: Vec<usize>) -> PyRefMut<'_, Self> {
+    /// Set the measurement order mapping from `TickCircuit`.
+    fn with_measurement_order(
+        mut slf: PyRefMut<'_, Self>,
+        order: Vec<usize>,
+    ) -> PyRefMut<'_, Self> {
         slf.measurement_order = Some(order);
         slf
     }
 
-    /// Build the DemSampler.
+    /// Build the `DemSampler`.
     fn build(&self) -> PyResult<PyDemSampler> {
         use pecos::qec::fault_tolerance::dem_builder::DemSamplerBuilder;
 
-        let mut builder = DemSamplerBuilder::new(&self.influence_map)
-            .with_noise(self.p1, self.p2, self.p_meas, self.p_init);
+        let mut builder = DemSamplerBuilder::new(&self.influence_map).with_noise(
+            self.p1,
+            self.p2,
+            self.p_meas,
+            self.p_init,
+        );
 
         if let Some(ref json) = self.detectors_json {
             builder = builder
                 .with_detectors_json(json)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
         }
 
         if let Some(ref json) = self.observables_json {
             builder = builder
                 .with_observables_json(json)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
         }
 
         if let Some(ref order) = self.measurement_order {
@@ -2089,8 +2145,14 @@ impl PyEquivalenceResult {
     /// Get comparison details as a dictionary.
     fn details(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
         let dict = pyo3::types::PyDict::new(py);
-        dict.set_item("dem1_mechanism_count", self.inner.details.dem1_mechanism_count)?;
-        dict.set_item("dem2_mechanism_count", self.inner.details.dem2_mechanism_count)?;
+        dict.set_item(
+            "dem1_mechanism_count",
+            self.inner.details.dem1_mechanism_count,
+        )?;
+        dict.set_item(
+            "dem2_mechanism_count",
+            self.inner.details.dem2_mechanism_count,
+        )?;
         dict.set_item("only_in_dem1", self.inner.details.only_in_dem1.clone())?;
         dict.set_item("only_in_dem2", self.inner.details.only_in_dem2.clone())?;
 
@@ -2099,14 +2161,7 @@ impl PyEquivalenceResult {
             .details
             .prob_mismatches
             .iter()
-            .map(|m| {
-                (
-                    m.target.clone(),
-                    m.dem1_prob,
-                    m.dem2_prob,
-                    m.difference,
-                )
-            })
+            .map(|m| (m.target.clone(), m.dem1_prob, m.dem2_prob, m.difference))
             .collect();
         dict.set_item("prob_mismatches", mismatches)?;
 
@@ -2145,13 +2200,13 @@ impl PyParsedDem {
     /// Parse a DEM from a string.
     ///
     /// Args:
-    ///     dem_str: DEM string in Stim/PECOS format.
+    ///     `dem_str`: DEM string in Stim/PECOS format.
     ///
     /// Returns:
-    ///     ParsedDem object.
+    ///     `ParsedDem` object.
     ///
     /// Raises:
-    ///     ValueError: If the DEM string is malformed.
+    ///     `ValueError`: If the DEM string is malformed.
     #[staticmethod]
     fn from_string(dem_str: &str) -> PyResult<Self> {
         let inner = RustParsedDem::from_str(dem_str)
@@ -2179,7 +2234,7 @@ impl PyParsedDem {
 
     /// Aggregate mechanisms by their effect.
     ///
-    /// Returns a dictionary mapping (detector_tuple, observable_tuple) to
+    /// Returns a dictionary mapping (`detector_tuple`, `observable_tuple`) to
     /// combined probability. Probabilities are combined using the independent
     /// error formula: p1*(1-p2) + p2*(1-p1).
     ///
@@ -2192,7 +2247,8 @@ impl PyParsedDem {
         for (key, prob) in agg {
             let det_tuple = pyo3::types::PyTuple::new(py, key.detectors.iter())?;
             let obs_tuple = pyo3::types::PyTuple::new(py, key.observables.iter())?;
-            let key_tuple = pyo3::types::PyTuple::new(py, [det_tuple.as_any(), obs_tuple.as_any()])?;
+            let key_tuple =
+                pyo3::types::PyTuple::new(py, [det_tuple.as_any(), obs_tuple.as_any()])?;
             dict.set_item(key_tuple, prob)?;
         }
 
@@ -2205,7 +2261,7 @@ impl PyParsedDem {
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
-    ///     Tuple of (detector_events, observable_flips) as boolean lists.
+    ///     Tuple of (`detector_events`, `observable_flips`) as boolean lists.
     #[pyo3(signature = (seed=None))]
     fn sample(&self, seed: Option<u64>) -> (Vec<bool>, Vec<bool>) {
         use pecos_rng::PecosRng;
@@ -2222,11 +2278,11 @@ impl PyParsedDem {
     /// Sample multiple shots from this DEM.
     ///
     /// Args:
-    ///     num_shots: Number of shots to sample.
+    ///     `num_shots`: Number of shots to sample.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
-    ///     Tuple of (all_detector_events, all_observable_flips).
+    ///     Tuple of (`all_detector_events`, `all_observable_flips`).
     #[pyo3(signature = (num_shots, seed=None))]
     fn sample_batch(
         &self,
@@ -2244,19 +2300,19 @@ impl PyParsedDem {
         self.inner.sample_batch(num_shots, &mut rng)
     }
 
-    /// Convert to an optimized DemSampler for fast batch sampling.
+    /// Convert to an optimized `DemSampler` for fast batch sampling.
     ///
-    /// The DemSampler uses geometric skip sampling and parallel chunked
-    /// processing, which is significantly faster than sample_batch for
+    /// The `DemSampler` uses geometric skip sampling and parallel chunked
+    /// processing, which is significantly faster than `sample_batch` for
     /// large shot counts and low error rates.
     ///
     /// Returns:
-    ///     DemSampler: Optimized sampler for this DEM.
+    ///     `DemSampler`: Optimized sampler for this DEM.
     ///
     /// Example:
-    ///     >>> dem = ParsedDem.from_string("error(0.01) D0 D1")
-    ///     >>> sampler = dem.to_dem_sampler()
-    ///     >>> stats = sampler.sample_statistics(100000, seed=42)
+    ///     >>> dem = `ParsedDem.from_string("error(0.01)` D0 D1")
+    ///     >>> sampler = `dem.to_dem_sampler()`
+    ///     >>> stats = `sampler.sample_statistics(100000`, seed=42)
     fn to_dem_sampler(&self) -> PyDemSampler {
         PyDemSampler {
             inner: self.inner.to_dem_sampler(),
@@ -2279,24 +2335,28 @@ impl PyParsedDem {
 /// Appropriate for non-decomposed DEMs or when exact match is required.
 ///
 /// Args:
-///     dem1: First DEM string or ParsedDem.
-///     dem2: Second DEM string or ParsedDem.
-///     prob_tolerance: Relative tolerance for probability comparison (default 1e-6).
+///     dem1: First DEM string or `ParsedDem`.
+///     dem2: Second DEM string or `ParsedDem`.
+///     `prob_tolerance`: Relative tolerance for probability comparison (default 1e-6).
 ///
 /// Returns:
-///     EquivalenceResult with comparison statistics.
+///     `EquivalenceResult` with comparison statistics.
 ///
 /// Example:
-///     >>> result = compare_dems_exact(dem1_str, dem2_str, prob_tolerance=0.001)
+///     >>> result = `compare_dems_exact(dem1_str`, `dem2_str`, `prob_tolerance=0.001`)
 ///     >>> if result.equivalent:
 ///     ...     print("DEMs are equivalent")
 #[pyfunction]
 #[pyo3(signature = (dem1, dem2, prob_tolerance=1e-6))]
-fn compare_dems_exact(dem1: &str, dem2: &str, prob_tolerance: f64) -> PyResult<PyEquivalenceResult> {
+fn compare_dems_exact(
+    dem1: &str,
+    dem2: &str,
+    prob_tolerance: f64,
+) -> PyResult<PyEquivalenceResult> {
     let parsed1 = RustParsedDem::from_str(dem1)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {}", e)))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {e}")))?;
     let parsed2 = RustParsedDem::from_str(dem2)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {}", e)))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {e}")))?;
 
     let inner = rust_compare_dems_exact(&parsed1, &parsed2, prob_tolerance);
     Ok(PyEquivalenceResult { inner })
@@ -2309,17 +2369,17 @@ fn compare_dems_exact(dem1: &str, dem2: &str, prob_tolerance: f64) -> PyResult<P
 /// the joint distribution of syndrome patterns, not just marginal rates.
 ///
 /// Args:
-///     dem1: First DEM string or ParsedDem.
-///     dem2: Second DEM string or ParsedDem.
-///     num_shots: Number of shots for sampling (default 100,000).
+///     dem1: First DEM string or `ParsedDem`.
+///     dem2: Second DEM string or `ParsedDem`.
+///     `num_shots`: Number of shots for sampling (default 100,000).
 ///     seed: Random seed (default 42).
 ///     tolerance: Maximum relative difference to consider equivalent (default 0.05).
 ///
 /// Returns:
-///     EquivalenceResult with comparison statistics.
+///     `EquivalenceResult` with comparison statistics.
 ///
 /// Example:
-///     >>> result = compare_dems_statistical(dem1_str, dem2_str, num_shots=50000)
+///     >>> result = `compare_dems_statistical(dem1_str`, `dem2_str`, `num_shots=50000`)
 ///     >>> print(f"Correlation: {result.correlation}")
 #[pyfunction]
 #[pyo3(signature = (dem1, dem2, num_shots=100_000, seed=42, tolerance=0.05))]
@@ -2331,9 +2391,9 @@ fn compare_dems_statistical(
     tolerance: f64,
 ) -> PyResult<PyEquivalenceResult> {
     let parsed1 = RustParsedDem::from_str(dem1)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {}", e)))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {e}")))?;
     let parsed2 = RustParsedDem::from_str(dem2)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {}", e)))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {e}")))?;
 
     let inner = rust_compare_dems_statistical(&parsed1, &parsed2, num_shots, seed, tolerance);
     Ok(PyEquivalenceResult { inner })
@@ -2345,8 +2405,8 @@ fn compare_dems_statistical(
 ///     dem1: First DEM string.
 ///     dem2: Second DEM string.
 ///     method: Comparison method - "exact" or "statistical" (default "exact").
-///     prob_tolerance: For exact: probability tolerance (default 1e-6).
-///     num_shots: For statistical: number of shots (default 100,000).
+///     `prob_tolerance`: For exact: probability tolerance (default 1e-6).
+///     `num_shots`: For statistical: number of shots (default 100,000).
 ///     tolerance: For statistical: rate tolerance (default 0.05).
 ///     seed: For statistical: random seed (default 42).
 ///
@@ -2354,7 +2414,7 @@ fn compare_dems_statistical(
 ///     True if DEMs are equivalent within tolerance.
 ///
 /// Example:
-///     >>> if verify_dem_equivalence(dem1, dem2, method="exact"):
+///     >>> if `verify_dem_equivalence(dem1`, dem2, method="exact"):
 ///     ...     print("DEMs match exactly")
 #[pyfunction]
 #[pyo3(signature = (dem1, dem2, method="exact", prob_tolerance=1e-6, num_shots=100_000, tolerance=0.05, seed=42))]
@@ -2377,7 +2437,7 @@ fn verify_dem_equivalence(
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "method must be 'exact' or 'statistical'",
-            ))
+            ));
         }
     };
 
@@ -2387,23 +2447,23 @@ fn verify_dem_equivalence(
 
 /// Assert that two DEMs are equivalent, raising an error if not.
 ///
-/// This is a convenience function for testing that raises AssertionError
+/// This is a convenience function for testing that raises `AssertionError`
 /// if the DEMs are not equivalent.
 ///
 /// Args:
 ///     dem1: First DEM string.
 ///     dem2: Second DEM string.
 ///     method: Comparison method - "exact" or "statistical" (default "exact").
-///     prob_tolerance: For exact: probability tolerance (default 1e-6).
-///     num_shots: For statistical: number of shots (default 100,000).
+///     `prob_tolerance`: For exact: probability tolerance (default 1e-6).
+///     `num_shots`: For statistical: number of shots (default 100,000).
 ///     tolerance: For statistical: rate tolerance (default 0.05).
 ///     seed: For statistical: random seed (default 42).
 ///
 /// Raises:
-///     AssertionError: If DEMs are not equivalent.
+///     `AssertionError`: If DEMs are not equivalent.
 ///
 /// Example:
-///     >>> assert_dems_equivalent(dem1, dem2, method="exact")  # Raises if not equivalent
+///     >>> `assert_dems_equivalent(dem1`, dem2, method="exact")  # Raises if not equivalent
 #[pyfunction]
 #[pyo3(signature = (dem1, dem2, method="exact", prob_tolerance=1e-6, num_shots=100_000, tolerance=0.05, seed=42))]
 fn assert_dems_equivalent(
@@ -2416,17 +2476,19 @@ fn assert_dems_equivalent(
     seed: u64,
 ) -> PyResult<()> {
     let parsed1 = RustParsedDem::from_str(dem1)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {}", e)))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {e}")))?;
     let parsed2 = RustParsedDem::from_str(dem2)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {}", e)))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {e}")))?;
 
     let result = match method {
         "exact" => rust_compare_dems_exact(&parsed1, &parsed2, prob_tolerance),
-        "statistical" => rust_compare_dems_statistical(&parsed1, &parsed2, num_shots, seed, tolerance),
+        "statistical" => {
+            rust_compare_dems_statistical(&parsed1, &parsed2, num_shots, seed, tolerance)
+        }
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "method must be 'exact' or 'statistical'",
-            ))
+            ));
         }
     };
 
@@ -2435,9 +2497,7 @@ fn assert_dems_equivalent(
     } else {
         let msg = format!(
             "DEMs are not equivalent: max_rate_diff={:.6}, only_in_dem1={:?}, only_in_dem2={:?}",
-            result.max_rate_difference,
-            result.details.only_in_dem1,
-            result.details.only_in_dem2
+            result.max_rate_difference, result.details.only_in_dem1, result.details.only_in_dem2
         );
         Err(pyo3::exceptions::PyAssertionError::new_err(msg))
     }

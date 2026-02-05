@@ -13,19 +13,19 @@
 //! Python bindings for PECOS decoders.
 //!
 //! This module provides Python bindings for quantum error correction decoders,
-//! including PyMatching, Fusion Blossom, LDPC decoders, and more.
+//! including `PyMatching`, Fusion Blossom, LDPC decoders, and more.
 //!
 //! # API Design
 //!
 //! The API is designed to be:
 //! - **Consistent**: All decoders have similar construction patterns and decode methods
-//! - **Familiar**: Inspired by original library APIs (PyMatching, ldpc, fusion-blossom)
+//! - **Familiar**: Inspired by original library APIs (`PyMatching`, ldpc, fusion-blossom)
 //! - **Unified**: Common result types where appropriate
 //!
 //! # Decoder Categories
 //!
 //! ## MWPM Decoders (Minimum Weight Perfect Matching)
-//! - `PyMatchingDecoder` - Fast MWPM using PyMatching library
+//! - `PyMatchingDecoder` - Fast MWPM using `PyMatching` library
 //! - `FusionBlossomDecoder` - Pure Rust MWPM implementation
 //!
 //! ## LDPC Decoders (Low-Density Parity Check)
@@ -42,7 +42,7 @@ use pyo3::prelude::*;
 
 /// Result from MWPM (Minimum Weight Perfect Matching) decoders.
 ///
-/// This unified result type is returned by both PyMatching and Fusion Blossom decoders.
+/// This unified result type is returned by both `PyMatching` and Fusion Blossom decoders.
 ///
 /// # Attributes
 ///
@@ -71,12 +71,12 @@ impl PyMwpmResult {
     /// The decoded correction (observable flips) as a Python list.
     #[getter]
     fn correction(&self) -> Vec<i32> {
-        self.correction_data.iter().map(|&x| x as i32).collect()
+        self.correction_data.iter().map(|&x| i32::from(x)).collect()
     }
 
     /// Get the correction as a list (alias for correction attribute).
     ///
-    /// This mirrors PyMatching's decode() return value.
+    /// This mirrors `PyMatching`'s `decode()` return value.
     fn to_list(&self) -> Vec<i32> {
         self.correction()
     }
@@ -95,7 +95,7 @@ impl PyMwpmResult {
     fn __getitem__(&self, idx: usize) -> PyResult<i32> {
         self.correction_data
             .get(idx)
-            .map(|&x| x as i32)
+            .map(|&x| i32::from(x))
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyIndexError, _>("index out of range"))
     }
 }
@@ -133,7 +133,7 @@ impl PyBpResult {
     /// The decoded error vector as a Python list.
     #[getter]
     fn decoding(&self) -> Vec<i32> {
-        self.decoding_data.iter().map(|&x| x as i32).collect()
+        self.decoding_data.iter().map(|&x| i32::from(x)).collect()
     }
 
     /// Get the decoding as a list.
@@ -157,7 +157,7 @@ impl PyBpResult {
     fn __getitem__(&self, idx: usize) -> PyResult<i32> {
         self.decoding_data
             .get(idx)
-            .map(|&x| x as i32)
+            .map(|&x| i32::from(x))
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyIndexError, _>("index out of range"))
     }
 }
@@ -220,7 +220,7 @@ impl PyCheckMatrix {
 
     /// Create from a dense 2D matrix.
     ///
-    /// This mirrors PyMatching's Matching(H) constructor.
+    /// This mirrors `PyMatching`'s Matching(H) constructor.
     ///
     /// # Arguments
     ///
@@ -242,7 +242,7 @@ impl PyCheckMatrix {
 
     /// Set weights for each column (error).
     ///
-    /// This mirrors PyMatching's weights parameter.
+    /// This mirrors `PyMatching`'s weights parameter.
     ///
     /// # Arguments
     ///
@@ -250,7 +250,7 @@ impl PyCheckMatrix {
     ///
     /// # Returns
     ///
-    /// A new CheckMatrix with weights set.
+    /// A new `CheckMatrix` with weights set.
     fn with_weights(&self, weights: Vec<f64>) -> PyResult<Self> {
         self.inner
             .clone()
@@ -278,7 +278,7 @@ impl PyCheckMatrix {
 
     /// Get weights if set, None otherwise.
     fn weights(&self) -> Option<Vec<f64>> {
-        self.inner.weights().map(|w| w.to_vec())
+        self.inner.weights().map(<[f64]>::to_vec)
     }
 
     fn __repr__(&self) -> String {
@@ -291,9 +291,9 @@ impl PyCheckMatrix {
     }
 }
 
-/// PyMatching MWPM decoder.
+/// `PyMatching` MWPM decoder.
 ///
-/// Fast minimum-weight perfect matching decoder using the PyMatching library.
+/// Fast minimum-weight perfect matching decoder using the `PyMatching` library.
 /// This is the recommended MWPM decoder for most use cases.
 ///
 /// # Construction
@@ -322,7 +322,11 @@ impl PyCheckMatrix {
 /// print(f"Correction: {result.correction}, Weight: {result.weight}")
 /// ```
 // Note: unsendable because contains FFI pointers (cxx UniquePtr)
-#[pyclass(name = "PyMatchingDecoder", module = "pecos_rslib.decoders", unsendable)]
+#[pyclass(
+    name = "PyMatchingDecoder",
+    module = "pecos_rslib.decoders",
+    unsendable
+)]
 pub struct PyPyMatchingDecoder {
     inner: RustPyMatchingDecoder,
 }
@@ -331,7 +335,7 @@ pub struct PyPyMatchingDecoder {
 impl PyPyMatchingDecoder {
     /// Create decoder for manual graph construction.
     ///
-    /// Use add_edge() and add_boundary_edge() to build the matching graph.
+    /// Use `add_edge()` and `add_boundary_edge()` to build the matching graph.
     ///
     /// # Arguments
     ///
@@ -353,7 +357,7 @@ impl PyPyMatchingDecoder {
 
     /// Create decoder from a check matrix.
     ///
-    /// This mirrors PyMatching's `Matching(H)` constructor.
+    /// This mirrors `PyMatching`'s `Matching(H)` constructor.
     ///
     /// # Arguments
     ///
@@ -402,7 +406,7 @@ impl PyPyMatchingDecoder {
 
     /// Create decoder from a Stim Detector Error Model.
     ///
-    /// This mirrors PyMatching's `Matching.from_detector_error_model()`.
+    /// This mirrors `PyMatching`'s `Matching.from_detector_error_model()`.
     ///
     /// # Arguments
     ///
@@ -423,14 +427,14 @@ impl PyPyMatchingDecoder {
 
     /// Add an edge between two detector nodes.
     ///
-    /// This mirrors PyMatching's `Matching.add_edge()`.
+    /// This mirrors `PyMatching`'s `Matching.add_edge()`.
     ///
     /// # Arguments
     ///
     /// * `node1` - First detector node index
     /// * `node2` - Second detector node index
     /// * `observables` - List of observable indices this edge affects when flipped
-    /// * `weight` - Edge weight (default: computed from error_probability)
+    /// * `weight` - Edge weight (default: computed from `error_probability`)
     /// * `error_probability` - Error probability for this edge
     #[pyo3(signature = (node1, node2, observables, weight=None, error_probability=None))]
     fn add_edge(
@@ -449,7 +453,7 @@ impl PyPyMatchingDecoder {
     /// Add a boundary edge from a detector node.
     ///
     /// Boundary edges connect a detector to the boundary (virtual node).
-    /// This mirrors PyMatching's `Matching.add_boundary_edge()`.
+    /// This mirrors `PyMatching`'s `Matching.add_boundary_edge()`.
     ///
     /// # Arguments
     ///
@@ -472,7 +476,7 @@ impl PyPyMatchingDecoder {
 
     /// Decode a syndrome to find the most likely error.
     ///
-    /// This mirrors PyMatching's `Matching.decode()`.
+    /// This mirrors `PyMatching`'s `Matching.decode()`.
     ///
     /// # Arguments
     ///
@@ -596,7 +600,7 @@ impl PyFusionBlossomDecoder {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "solver must be 'serial' or 'parallel'",
-                ))
+                ));
             }
         };
 
@@ -616,7 +620,7 @@ impl PyFusionBlossomDecoder {
     ///
     /// # Arguments
     ///
-    /// * `check_matrix` - Dense 2D matrix (list of lists) or CheckMatrix
+    /// * `check_matrix` - Dense 2D matrix (list of lists) or `CheckMatrix`
     /// * `weights` - Optional weights for each column
     /// * `num_observables` - Number of observables (default: num columns)
     ///
@@ -657,14 +661,14 @@ impl PyFusionBlossomDecoder {
 
     /// Create decoder for a standard QEC code.
     ///
-    /// This mirrors fusion-blossom's CodeCapacityPlanarCode, etc.
+    /// This mirrors fusion-blossom's `CodeCapacityPlanarCode`, etc.
     ///
     /// # Arguments
     ///
     /// * `code_type` - Code type string:
-    ///   - "code_capacity_planar" / "code_capacity_rotated"
-    ///   - "phenomenological_planar" / "phenomenological_rotated"
-    ///   - "circuit_level_planar"
+    ///   - "`code_capacity_planar`" / "`code_capacity_rotated`"
+    ///   - "`phenomenological_planar`" / "`phenomenological_rotated`"
+    ///   - "`circuit_level_planar`"
     /// * `distance` - Code distance
     /// * `error_rate` - Physical error rate
     /// * `max_half_weight` - Maximum half-weight for discretization (default: 500)
@@ -718,7 +722,7 @@ impl PyFusionBlossomDecoder {
                     "Unknown code_type: '{code_type}'. Valid: code_capacity_planar, \
                      code_capacity_rotated, phenomenological_planar, phenomenological_rotated, \
                      circuit_level_planar"
-                )))
+                )));
             }
         };
 
@@ -899,7 +903,7 @@ impl PySparseMatrix {
     ) -> PyResult<Self> {
         RustSparseMatrix::from_coo(rows, cols, row_indices, col_indices)
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
     }
 
     #[getter]
@@ -929,7 +933,7 @@ impl PySparseMatrix {
 /// BP+OSD decoder for LDPC codes.
 ///
 /// Belief Propagation with Ordered Statistics Decoding post-processing.
-/// This mirrors the ldpc library's BpOsdDecoder.
+/// This mirrors the ldpc library's `BpOsdDecoder`.
 ///
 /// # Construction
 ///
@@ -971,9 +975,9 @@ impl PyBpOsdDecoder {
     /// * `pcm` - Parity check matrix
     /// * `error_rate` - Channel error probability (or use `channel_probs` for per-qubit rates)
     /// * `max_iter` - Maximum BP iterations (default: 100, 0 = use n)
-    /// * `bp_method` - BP algorithm: "product_sum" or "minimum_sum" (default: "product_sum")
+    /// * `bp_method` - BP algorithm: "`product_sum`" or "`minimum_sum`" (default: "`product_sum`")
     /// * `schedule` - Update schedule: "parallel" or "serial" (default: "parallel")
-    /// * `osd_method` - OSD variant: "off", "osd0", "osd_e", "osd_cs" (default: "osd0")
+    /// * `osd_method` - OSD variant: "off", "osd0", "`osd_e`", "`osd_cs`" (default: "osd0")
     /// * `osd_order` - OSD order parameter (default: 0)
     #[new]
     #[pyo3(signature = (pcm, error_rate, max_iter=100, bp_method="product_sum", schedule="parallel", osd_method="osd0", osd_order=0))]
@@ -992,7 +996,7 @@ impl PyBpOsdDecoder {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "bp_method must be 'product_sum' or 'minimum_sum'",
-                ))
+                ));
             }
         };
 
@@ -1002,7 +1006,7 @@ impl PyBpOsdDecoder {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "schedule must be 'parallel' or 'serial'",
-                ))
+                ));
             }
         };
 
@@ -1014,7 +1018,7 @@ impl PyBpOsdDecoder {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "osd_method must be 'off', 'osd0', 'osd_e', or 'osd_cs'",
-                ))
+                ));
             }
         };
 
@@ -1099,7 +1103,7 @@ impl PyBpLsdDecoder {
     /// * `pcm` - Parity check matrix
     /// * `error_rate` - Channel error probability
     /// * `max_iter` - Maximum BP iterations (default: 100)
-    /// * `bp_method` - "product_sum" or "minimum_sum" (default: "product_sum")
+    /// * `bp_method` - "`product_sum`" or "`minimum_sum`" (default: "`product_sum`")
     /// * `schedule` - "parallel" or "serial" (default: "parallel")
     /// * `lsd_order` - LSD order parameter (default: 0, recommended starting point)
     #[new]
@@ -1118,7 +1122,7 @@ impl PyBpLsdDecoder {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "bp_method must be 'product_sum' or 'minimum_sum'",
-                ))
+                ));
             }
         };
 
@@ -1128,7 +1132,7 @@ impl PyBpLsdDecoder {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "schedule must be 'parallel' or 'serial'",
-                ))
+                ));
             }
         };
 
@@ -1206,7 +1210,7 @@ impl PyUnionFindDecoder {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "method must be 'inversion' or 'peeling'",
-                ))
+                ));
             }
         };
 
@@ -1251,7 +1255,9 @@ impl PyUnionFindDecoder {
 // Tesseract Decoder
 // =============================================================================
 
-use pecos::decoders::{TesseractConfig as RustTesseractConfig, TesseractDecoder as RustTesseractDecoder};
+use pecos::decoders::{
+    TesseractConfig as RustTesseractConfig, TesseractDecoder as RustTesseractDecoder,
+};
 
 /// Result from Tesseract decoder.
 ///
@@ -1331,7 +1337,7 @@ impl PyTesseractDecoder {
     ///
     /// * `dem` - Detector error model in Stim format
     /// * `preset` - Configuration preset: "default", "fast", or "accurate"
-    /// * `det_beam` - Detector beam size (default: u16::MAX for infinite)
+    /// * `det_beam` - Detector beam size (default: `u16::MAX` for infinite)
     /// * `beam_climbing` - Enable beam climbing heuristic
     /// * `verbose` - Enable verbose output
     ///

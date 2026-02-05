@@ -95,37 +95,37 @@ impl<'a> BpOsdBuilder<'a> {
         self
     }
 
-    /// Set the BP method (ProductSum or MinimumSum)
+    /// Set the BP method (`ProductSum` or `MinimumSum`)
     pub fn bp_method(mut self, method: BpMethod) -> Self {
         self.bp_method = method;
         self
     }
 
-    /// Set the BP schedule (Serial, Parallel, or SerialRelative)
+    /// Set the BP schedule (Serial, Parallel, or `SerialRelative`)
     pub fn bp_schedule(mut self, schedule: BpSchedule) -> Self {
         self.bp_schedule = schedule;
         self
     }
 
-    /// Set the minimum-sum scaling factor (only used with MinimumSum)
+    /// Set the minimum-sum scaling factor (only used with `MinimumSum`)
     pub fn ms_scaling_factor(mut self, factor: f64) -> Self {
         self.ms_scaling_factor = factor;
         self
     }
 
-    /// Set the OSD method (Off, Osd0, OsdE, or OsdCs)
+    /// Set the OSD method (Off, Osd0, `OsdE`, or `OsdCs`)
     pub fn osd_method(mut self, method: OsdMethod) -> Self {
         self.osd_method = method;
         self
     }
 
-    /// Set the OSD order (only used with OsdE or OsdCs)
+    /// Set the OSD order (only used with `OsdE` or `OsdCs`)
     pub fn osd_order(mut self, order: usize) -> Self {
         self.osd_order = order;
         self
     }
 
-    /// Set the input vector type (Syndrome, ReceivedVector, or Auto)
+    /// Set the input vector type (Syndrome, `ReceivedVector`, or Auto)
     pub fn input_vector_type(mut self, input_type: InputVectorType) -> Self {
         self.input_vector_type = input_type;
         self
@@ -540,7 +540,7 @@ impl<'a> UnionFindBuilder<'a> {
 
 /// Builder for `BeliefFindDecoder`
 ///
-/// BeliefFind combines BP with Union-Find: it first tries BP, and if that fails
+/// `BeliefFind` combines BP with Union-Find: it first tries BP, and if that fails
 /// to converge, it falls back to Union-Find using the soft information from BP.
 #[must_use]
 pub struct BeliefFindBuilder<'a> {

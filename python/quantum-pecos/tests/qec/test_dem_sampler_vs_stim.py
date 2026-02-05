@@ -112,7 +112,9 @@ def compare_dems(pecos_dem: str, stim_dem: str, rtol: float = 0.05) -> dict:
         pecos_prob = pecos_errors.get(key)
         stim_prob = stim_errors.get(key)
 
-        target_str = " ".join(f"D{d}" for d in dets) + " " + " ".join(f"L{l}" for l in logs)
+        target_str = (
+            " ".join(f"D{d}" for d in dets) + " " + " ".join(f"L{l}" for l in logs)
+        )
         target_str = target_str.strip()
 
         if pecos_prob is None:
@@ -129,7 +131,7 @@ def compare_dems(pecos_dem: str, stim_dem: str, rtol: float = 0.05) -> dict:
                         "pecos": pecos_prob,
                         "stim": stim_prob,
                         "rel_diff": rel_diff,
-                    }
+                    },
                 )
 
     return results
@@ -152,16 +154,20 @@ class TestDemSamplerVsStim:
         """Standard noise parameters for testing."""
         return {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
 
-    def test_dem_mechanism_counts_match(self, surface_code_d3, noise_params):
+    def test_dem_mechanism_counts_match(self, surface_code_d3, noise_params) -> None:
         """DemSampler should produce same number of mechanisms as Stim."""
         from pecos.qec.surface.circuit_builder import (
             generate_dem_from_tick_circuit,
             generate_dem_from_tick_circuit_via_stim,
         )
 
-        patch, tc = surface_code_d3
+        _patch, tc = surface_code_d3
 
-        pecos_dem = generate_dem_from_tick_circuit(tc, **noise_params, decompose_errors=False)
+        pecos_dem = generate_dem_from_tick_circuit(
+            tc,
+            **noise_params,
+            decompose_errors=False,
+        )
         stim_dem = generate_dem_from_tick_circuit_via_stim(tc, **noise_params)
 
         comparison = compare_dems(pecos_dem, stim_dem)
@@ -177,7 +183,7 @@ class TestDemSamplerVsStim:
             f"PECOS: {comparison['pecos_count']}, Stim: {comparison['stim_count']}"
         )
 
-    def test_dem_probabilities_close(self, surface_code_d3, noise_params):
+    def test_dem_probabilities_close(self, surface_code_d3, noise_params) -> None:
         """DemSampler probabilities should be reasonably close to Stim's.
 
         Note: PECOS and Stim have known differences in DEM generation due to:
@@ -193,31 +199,42 @@ class TestDemSamplerVsStim:
             generate_dem_from_tick_circuit_via_stim,
         )
 
-        patch, tc = surface_code_d3
+        _patch, tc = surface_code_d3
 
-        pecos_dem = generate_dem_from_tick_circuit(tc, **noise_params, decompose_errors=False)
+        pecos_dem = generate_dem_from_tick_circuit(
+            tc,
+            **noise_params,
+            decompose_errors=False,
+        )
         stim_dem = generate_dem_from_tick_circuit_via_stim(tc, **noise_params)
 
         comparison = compare_dems(pecos_dem, stim_dem, rtol=0.05)
 
         # Most mechanisms should exist in both (may differ in probability)
         match_ratio = comparison["matched_count"] / max(comparison["stim_count"], 1)
-        assert match_ratio > 0.5, f"Only {match_ratio:.0%} of mechanisms matched by target"
+        assert (
+            match_ratio > 0.5
+        ), f"Only {match_ratio:.0%} of mechanisms matched by target"
 
         # Log mismatches for debugging but don't fail on probability differences
         # The sampling tests are the ground truth for equivalence
         if comparison["prob_mismatches"]:
-            print(f"\nDEM probability mismatches ({len(comparison['prob_mismatches'])} total):")
+            print(
+                f"\nDEM probability mismatches ({len(comparison['prob_mismatches'])} total):",
+            )
             for m in comparison["prob_mismatches"][:5]:
-                print(f"  {m['target']}: PECOS={m['pecos']:.6f} Stim={m['stim']:.6f} diff={m['rel_diff']:.1%}")
+                print(
+                    f"  {m['target']}: PECOS={m['pecos']:.6f} Stim={m['stim']:.6f} diff={m['rel_diff']:.1%}",
+                )
 
-    def test_sampling_statistics_match_stim(self, surface_code_d3, noise_params):
+    def test_sampling_statistics_match_stim(
+        self, surface_code_d3, noise_params
+    ) -> None:
         """DemSampler sampling statistics should match Stim's DEM sampler."""
+        from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
         from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
-        from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
-
-        patch, tc = surface_code_d3
+        _patch, tc = surface_code_d3
 
         # Build PECOS DemSampler from TickCircuit's DagCircuit
         dag = tc.to_dag_circuit()
@@ -281,17 +298,18 @@ class TestDemSamplerVsStim:
             f"Stim={stim_logical_rate:.4f}, rel_diff={logical_rel_diff:.1%}"
         )
 
-    def test_detector_firing_rates_correlate(self, surface_code_d3, noise_params):
+    def test_detector_firing_rates_correlate(
+        self, surface_code_d3, noise_params
+    ) -> None:
         """Detector firing rates should be correlated between PECOS and Stim.
 
         This test validates that individual detector firing rates match between
         PECOS and Stim when the measurement order mapping is provided correctly.
         """
+        from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
         from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
-        from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
-
-        patch, tc = surface_code_d3
+        _patch, tc = surface_code_d3
 
         # Build PECOS DemSampler
         dag = tc.to_dag_circuit()
@@ -329,17 +347,19 @@ class TestDemSamplerVsStim:
         stim_det_rates = stim_det_events.mean(axis=0)
 
         # Check same number of detectors
-        assert len(pecos_det_rates) == len(stim_det_rates), (
-            f"Detector count mismatch: PECOS={len(pecos_det_rates)}, Stim={len(stim_det_rates)}"
-        )
+        assert len(pecos_det_rates) == len(
+            stim_det_rates,
+        ), f"Detector count mismatch: PECOS={len(pecos_det_rates)}, Stim={len(stim_det_rates)}"
 
         # Check correlation is positive (rates should trend together)
         correlation = np.corrcoef(pecos_det_rates, stim_det_rates)[0, 1]
-        assert correlation > 0.5, f"Detector rate correlation too low: {correlation:.2f}"
+        assert (
+            correlation > 0.5
+        ), f"Detector rate correlation too low: {correlation:.2f}"
 
         # Print differences for debugging
         print(f"\nDetector rate comparison (correlation={correlation:.2f}):")
-        for i, (p, s) in enumerate(zip(pecos_det_rates, stim_det_rates)):
+        for i, (p, s) in enumerate(zip(pecos_det_rates, stim_det_rates, strict=False)):
             rel_diff = abs(p - s) / max(p, s, 0.001)
             print(f"  D{i}: PECOS={p:.4f} Stim={s:.4f} diff={rel_diff:.0%}")
 
@@ -347,12 +367,11 @@ class TestDemSamplerVsStim:
 class TestDemSamplerMultiRound:
     """Test DemSampler with multiple syndrome rounds."""
 
-    def test_multi_round_d3_r3(self):
+    def test_multi_round_d3_r3(self) -> None:
         """Test d=3, 3 rounds against Stim."""
-        from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
-
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
+        from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
         patch = SurfacePatch.create(distance=3)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=3, basis="Z")
@@ -387,7 +406,7 @@ class TestDemSamplerMultiRound:
 
         pecos_stats = pecos_sampler.sample_statistics(num_shots, seed=seed)
 
-        stim_det_events, stim_obs_flips, _ = stim_sampler.sample(num_shots)
+        _stim_det_events, stim_obs_flips, _ = stim_sampler.sample(num_shots)
         stim_logical_rate = np.any(stim_obs_flips, axis=1).mean()
 
         # Logical error rates should be within 50% relative (known differences)
@@ -404,11 +423,10 @@ class TestDemSamplerHigherDistance:
     """Test DemSampler at higher distances."""
 
     @pytest.mark.parametrize("distance", [3, 5])
-    def test_logical_error_rate_scales(self, distance):
+    def test_logical_error_rate_scales(self, distance) -> None:
         """Logical error rate should decrease with distance (suppression)."""
-        from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
-
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
+        from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
         patch = SurfacePatch.create(distance=distance)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=1, basis="Z")
@@ -435,15 +453,15 @@ class TestDemSamplerHigherDistance:
 
         # At low noise, logical error rate should be very low
         # Higher distance should have lower rate
-        assert stats["logical_error_rate"] < 0.1, (
-            f"d={distance}: Logical error rate {stats['logical_error_rate']:.4f} too high"
-        )
+        assert (
+            stats["logical_error_rate"] < 0.1
+        ), f"d={distance}: Logical error rate {stats['logical_error_rate']:.4f} too high"
 
 
 class TestXBasisMemory:
     """Test X-basis memory experiments."""
 
-    def test_x_basis_dem_matches_stim(self):
+    def test_x_basis_dem_matches_stim(self) -> None:
         """X-basis memory DEM should match Stim."""
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import (
@@ -477,27 +495,28 @@ class TestXBasisMemory:
         pecos_errors = extract_errors(pecos_dem)
         stim_errors = extract_errors(stim_dem)
 
-        assert len(pecos_errors) == len(stim_errors), (
-            f"Mechanism count mismatch: PECOS={len(pecos_errors)}, Stim={len(stim_errors)}"
-        )
+        assert len(pecos_errors) == len(
+            stim_errors,
+        ), f"Mechanism count mismatch: PECOS={len(pecos_errors)}, Stim={len(stim_errors)}"
 
         # Check all probabilities match
         for target in pecos_errors:
             assert target in stim_errors, f"PECOS has {target} but Stim doesn't"
             rel_diff = abs(pecos_errors[target] - stim_errors[target]) / max(
-                pecos_errors[target], stim_errors[target], 1e-10
+                pecos_errors[target],
+                stim_errors[target],
+                1e-10,
             )
             assert rel_diff < 0.01, (
                 f"Probability mismatch for {target}: "
                 f"PECOS={pecos_errors[target]:.6f}, Stim={stim_errors[target]:.6f}"
             )
 
-    def test_x_basis_sampling_matches_stim(self):
+    def test_x_basis_sampling_matches_stim(self) -> None:
         """X-basis sampling statistics should match Stim."""
-        from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
-
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
+        from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
         patch = SurfacePatch.create(distance=3)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
@@ -527,7 +546,7 @@ class TestXBasisMemory:
         stim_det, stim_obs, _ = stim_sampler.sample(num_shots)
 
         stim_syndrome_rate = np.any(stim_det, axis=1).mean()
-        stim_logical_rate = np.any(stim_obs, axis=1).mean()
+        np.any(stim_obs, axis=1).mean()
 
         # Should be within 20% relative
         syndrome_diff = abs(pecos_stats["syndrome_rate"] - stim_syndrome_rate)
@@ -545,11 +564,21 @@ class TestAsymmetricNoise:
         [
             {"p1": 0.001, "p2": 0.01, "p_meas": 0.005, "p_init": 0.002},  # p2 dominant
             {"p1": 0.02, "p2": 0.001, "p_meas": 0.001, "p_init": 0.001},  # p1 dominant
-            {"p1": 0.001, "p2": 0.001, "p_meas": 0.05, "p_init": 0.001},  # p_meas dominant
-            {"p1": 0.001, "p2": 0.001, "p_meas": 0.001, "p_init": 0.05},  # p_init dominant
+            {
+                "p1": 0.001,
+                "p2": 0.001,
+                "p_meas": 0.05,
+                "p_init": 0.001,
+            },  # p_meas dominant
+            {
+                "p1": 0.001,
+                "p2": 0.001,
+                "p_meas": 0.001,
+                "p_init": 0.05,
+            },  # p_init dominant
         ],
     )
-    def test_asymmetric_noise_dem_matches_stim(self, noise_params):
+    def test_asymmetric_noise_dem_matches_stim(self, noise_params) -> None:
         """Asymmetric noise DEMs should match Stim."""
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import (
@@ -561,7 +590,11 @@ class TestAsymmetricNoise:
         tc = generate_tick_circuit_from_patch(patch, num_rounds=1, basis="Z")
 
         # Generate DEMs (non-decomposed)
-        pecos_dem = generate_dem_from_tick_circuit(tc, **noise_params, decompose_errors=False)
+        pecos_dem = generate_dem_from_tick_circuit(
+            tc,
+            **noise_params,
+            decompose_errors=False,
+        )
         stim_str = tick_circuit_to_stim(tc, **noise_params)
         stim_circuit = stim.Circuit(stim_str)
         stim_dem = str(stim_circuit.detector_error_model(decompose_errors=False))
@@ -579,14 +612,16 @@ class TestAsymmetricNoise:
         stim_errors = extract_errors(stim_dem)
 
         # All mechanisms should match
-        assert set(pecos_errors.keys()) == set(stim_errors.keys()), (
-            f"Mechanism mismatch with noise {noise_params}"
-        )
+        assert set(pecos_errors.keys()) == set(
+            stim_errors.keys(),
+        ), f"Mechanism mismatch with noise {noise_params}"
 
         # All probabilities should match (within numerical precision)
         for target in pecos_errors:
             rel_diff = abs(pecos_errors[target] - stim_errors[target]) / max(
-                pecos_errors[target], stim_errors[target], 1e-10
+                pecos_errors[target],
+                stim_errors[target],
+                1e-10,
             )
             assert rel_diff < 0.01, (
                 f"Probability mismatch for {target} with noise {noise_params}: "
@@ -672,7 +707,11 @@ class TestRandomCliffordFuzzing:
 
         return dag
 
-    def _add_noise_to_stim(self, stim_circuit: stim.Circuit, noise: dict) -> stim.Circuit:
+    def _add_noise_to_stim(
+        self,
+        stim_circuit: stim.Circuit,
+        noise: dict,
+    ) -> stim.Circuit:
         """Add noise to a Stim circuit."""
         noisy = stim.Circuit()
 
@@ -710,7 +749,7 @@ class TestRandomCliffordFuzzing:
         return noisy
 
     @pytest.mark.parametrize("seed", range(10))
-    def test_random_circuit_fault_locations_match(self, seed):
+    def test_random_circuit_fault_locations_match(self, seed) -> None:
         """Random circuits should have same fault location count in PECOS and Stim."""
         from pecos_rslib.qec import DagFaultAnalyzer
 
@@ -747,7 +786,7 @@ class TestRandomCliffordFuzzing:
         assert pecos_loc_count > 0, f"PECOS should find fault locations (seed={seed})"
 
     @pytest.mark.parametrize("seed", [42, 123, 456, 789, 1000])
-    def test_random_circuit_sampling_produces_valid_results(self, seed):
+    def test_random_circuit_sampling_produces_valid_results(self, seed) -> None:
         """Random circuit sampling should produce valid statistics."""
         from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
@@ -781,11 +820,12 @@ class TestRandomCliffordFuzzing:
         assert 0.0 <= stats["logical_error_rate"] <= 1.0
         assert stats["total_shots"] == 10_000
 
+
 class TestDemEquivalenceComprehensive:
     """Comprehensive DEM equivalence tests."""
 
     @pytest.mark.parametrize(
-        "distance,num_rounds,basis",
+        ("distance", "num_rounds", "basis"),
         [
             (3, 1, "Z"),
             (3, 1, "X"),
@@ -795,7 +835,7 @@ class TestDemEquivalenceComprehensive:
             (5, 2, "Z"),
         ],
     )
-    def test_dem_exact_match(self, distance, num_rounds, basis):
+    def test_dem_exact_match(self, distance, num_rounds, basis) -> None:
         """DEMs should exactly match Stim for all configurations."""
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import (
@@ -836,7 +876,9 @@ class TestDemEquivalenceComprehensive:
         # Exact probability match (within floating point tolerance)
         for target in pecos_errors:
             rel_diff = abs(pecos_errors[target] - stim_errors[target]) / max(
-                pecos_errors[target], stim_errors[target], 1e-10
+                pecos_errors[target],
+                stim_errors[target],
+                1e-10,
             )
             assert rel_diff < 0.001, (
                 f"Probability mismatch for {target} (d={distance}, r={num_rounds}, "

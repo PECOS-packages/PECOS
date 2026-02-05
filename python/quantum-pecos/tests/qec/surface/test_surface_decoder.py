@@ -12,11 +12,10 @@ These tests verify:
 
 import numpy as np
 import pytest
-
 from pecos.qec.surface import (
     NoiseModel,
-    SurfacePatch,
     SurfaceDecoder,
+    SurfacePatch,
     generate_surface_code_dem,
     syndromes_to_detection_events,
 )
@@ -53,45 +52,70 @@ class TestSyndromeConversion:
     def test_single_round_trivial(self) -> None:
         """Single round trivial syndrome."""
         syndromes = np.array([[0, 0, 0, 0]], dtype=np.uint8)
-        events = syndromes_to_detection_events(syndromes, num_rounds=1, num_detectors_per_round=4)
+        events = syndromes_to_detection_events(
+            syndromes,
+            num_rounds=1,
+            num_detectors_per_round=4,
+        )
         np.testing.assert_array_equal(events, [[0, 0, 0, 0]])
 
     def test_single_round_with_errors(self) -> None:
         """Single round with syndrome bits set."""
         syndromes = np.array([[1, 0, 1, 0]], dtype=np.uint8)
-        events = syndromes_to_detection_events(syndromes, num_rounds=1, num_detectors_per_round=4)
+        events = syndromes_to_detection_events(
+            syndromes,
+            num_rounds=1,
+            num_detectors_per_round=4,
+        )
         np.testing.assert_array_equal(events, [[1, 0, 1, 0]])
 
     def test_multi_round_xor(self) -> None:
         """Multi-round syndrome should XOR consecutive rounds."""
-        syndromes = np.array([
-            [1, 0, 0, 0],  # Round 0
-            [1, 1, 0, 0],  # Round 1
-            [0, 1, 0, 0],  # Round 2
-        ], dtype=np.uint8)
-        events = syndromes_to_detection_events(syndromes, num_rounds=3, num_detectors_per_round=4)
+        syndromes = np.array(
+            [
+                [1, 0, 0, 0],  # Round 0
+                [1, 1, 0, 0],  # Round 1
+                [0, 1, 0, 0],  # Round 2
+            ],
+            dtype=np.uint8,
+        )
+        events = syndromes_to_detection_events(
+            syndromes,
+            num_rounds=3,
+            num_detectors_per_round=4,
+        )
 
         # Round 0: same as syndrome (compare to zero)
         # Round 1: XOR with round 0 -> [0, 1, 0, 0]
         # Round 2: XOR with round 1 -> [1, 0, 0, 0]
-        expected = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [1, 0, 0, 0],
-        ], dtype=np.uint8)
+        expected = np.array(
+            [
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [1, 0, 0, 0],
+            ],
+            dtype=np.uint8,
+        )
         np.testing.assert_array_equal(events, expected)
 
     def test_flat_input(self) -> None:
         """Test with flat (1D) input array."""
         syndromes = np.array([1, 0, 0, 1, 1, 0], dtype=np.uint8)
-        events = syndromes_to_detection_events(syndromes, num_rounds=2, num_detectors_per_round=3)
+        events = syndromes_to_detection_events(
+            syndromes,
+            num_rounds=2,
+            num_detectors_per_round=3,
+        )
 
         # Round 0: [1, 0, 0] (same as first round syndrome)
         # Round 1: [1, 1, 0] XOR [1, 0, 0] = [0, 1, 0]
-        expected = np.array([
-            [1, 0, 0],
-            [0, 1, 0],
-        ], dtype=np.uint8)
+        expected = np.array(
+            [
+                [1, 0, 0],
+                [0, 1, 0],
+            ],
+            dtype=np.uint8,
+        )
         np.testing.assert_array_equal(events, expected)
 
 
@@ -168,7 +192,7 @@ class TestSurfaceDecoder:
         synz_list = [np.zeros(num_z_stab, dtype=np.uint8)]
         final = np.zeros(patch.num_data, dtype=np.uint8)
 
-        is_error, result = decoder.decode_memory_z(synx_list, synz_list, final)
+        is_error, _result = decoder.decode_memory_z(synx_list, synz_list, final)
 
         # No errors should be detected
         assert not is_error
@@ -186,7 +210,7 @@ class TestSurfaceDecoder:
         synz_list = [np.zeros(num_z_stab, dtype=np.uint8)]
         final = np.zeros(patch.num_data, dtype=np.uint8)
 
-        is_error, result = decoder.decode_memory_x(synx_list, synz_list, final)
+        is_error, _result = decoder.decode_memory_x(synx_list, synz_list, final)
 
         # No errors should be detected
         assert not is_error
@@ -223,7 +247,12 @@ class TestDemGeneration:
         noise = NoiseModel(p2=0.01, p_meas=0.01)
         num_rounds = 3
 
-        dem = generate_surface_code_dem(patch, num_rounds=num_rounds, noise=noise, stab_type="Z")
+        dem = generate_surface_code_dem(
+            patch,
+            num_rounds=num_rounds,
+            noise=noise,
+            stab_type="Z",
+        )
 
         # Count detector declarations
         num_detectors = dem.count("detector(")
@@ -247,10 +276,11 @@ class TestNoisySimulation:
     """Integration tests for noisy simulation (requires selene_sim)."""
 
     @pytest.fixture
-    def check_selene(self):
+    def check_selene(self) -> bool | None:
         """Check if selene_sim is available."""
         try:
-            import selene_sim  # noqa: F401
+            import selene_sim
+
             return True
         except ImportError:
             pytest.skip("selene_sim not available")
@@ -285,11 +315,10 @@ class TestNoisySimulation:
 
     def test_noiseless_simulation(self, check_selene) -> None:
         """Noiseless simulation should have zero logical error rate."""
-        from selene_sim import IdealErrorModel, SimpleRuntime, Stim, build
-
         from pecos.compilation_pipeline import compile_guppy_to_hugr
         from pecos.guppy.surface import get_num_qubits, make_surface_code
         from pecos.qec.surface import SurfacePatch
+        from selene_sim import IdealErrorModel, SimpleRuntime, Stim, build
 
         distance = 3
         num_rounds = 1

@@ -25,7 +25,7 @@ from pecos.qec.surface.schedule import compute_cnot_schedule
 
 
 def generate_stim_circuit(
-    patch: "SurfacePatch",
+    patch: SurfacePatch,
     num_rounds: int,
     basis: str = "Z",
     *,
@@ -80,8 +80,12 @@ def generate_stim_circuit(
 
     lines = []
     lines.append(f"# Surface code d={d} {basis}-basis memory experiment")
-    lines.append(f"# Mirrors Guppy structure: prep_{basis.lower()}_basis -> syndrome_extraction x{num_rounds} -> measure_{basis.lower()}_basis")
-    lines.append(f"# Qubits: {num_data} data + {num_x_anc} X ancilla + {num_z_anc} Z ancilla = {total_qubits}")
+    lines.append(
+        f"# Mirrors Guppy structure: prep_{basis.lower()}_basis -> syndrome_extraction x{num_rounds} -> measure_{basis.lower()}_basis",
+    )
+    lines.append(
+        f"# Qubits: {num_data} data + {num_x_anc} X ancilla + {num_z_anc} Z ancilla = {total_qubits}",
+    )
     lines.append("")
 
     # Get CNOT schedule (same as Guppy generator uses)
@@ -210,7 +214,9 @@ def generate_stim_circuit(
                 # Compare to previous round
                 prev_idx = stab_meas_record[("X", s.index, rnd - 1)]
                 prev_offset = meas_count - prev_idx
-                lines.append(f"DETECTOR({s.index}, 0, {rnd}) rec[{-curr_offset}] rec[{-prev_offset}]")
+                lines.append(
+                    f"DETECTOR({s.index}, 0, {rnd}) rec[{-curr_offset}] rec[{-prev_offset}]",
+                )
 
         for s in geom.z_stabilizers:
             curr_idx = stab_meas_record[("Z", s.index, rnd)]
@@ -221,7 +227,9 @@ def generate_stim_circuit(
             else:
                 prev_idx = stab_meas_record[("Z", s.index, rnd - 1)]
                 prev_offset = meas_count - prev_idx
-                lines.append(f"DETECTOR({det_x}, 1, {rnd}) rec[{-curr_offset}] rec[{-prev_offset}]")
+                lines.append(
+                    f"DETECTOR({det_x}, 1, {rnd}) rec[{-curr_offset}] rec[{-prev_offset}]",
+                )
 
         lines.append("")
 
@@ -263,7 +271,9 @@ def generate_stim_circuit(
         stab_type = "X"
         logical_qubits = list(geom.logical_x.data_qubits) if geom.logical_x else []
 
-    lines.append("# Final detectors: compare final data measurement parity to last syndrome")
+    lines.append(
+        "# Final detectors: compare final data measurement parity to last syndrome",
+    )
     for s in stabilizers:
         # Get final measurement values for data qubits in this stabilizer
         data_rec_offsets = []
@@ -279,7 +289,9 @@ def generate_stim_circuit(
         rec_str = " ".join(f"rec[{-off}]" for off in data_rec_offsets)
         det_x = s.index if stab_type == "X" else num_x_anc + s.index
         det_y = 0 if stab_type == "X" else 1
-        lines.append(f"DETECTOR({det_x}, {det_y}, {num_rounds}) {rec_str} rec[{-syn_offset}]")
+        lines.append(
+            f"DETECTOR({det_x}, {det_y}, {num_rounds}) {rec_str} rec[{-syn_offset}]",
+        )
 
     # Observable: parity of logical operator measurements
     lines.append("")
@@ -292,7 +304,7 @@ def generate_stim_circuit(
 
 
 def generate_circuit_level_dem(
-    patch: "SurfacePatch",
+    patch: SurfacePatch,
     num_rounds: int,
     basis: str = "Z",
     *,
@@ -320,8 +332,13 @@ def generate_circuit_level_dem(
 
     # Generate circuit with noise
     circuit_str = generate_stim_circuit(
-        patch, num_rounds, basis,
-        p1=p, p2=p, p_meas=p, p_init=p,
+        patch,
+        num_rounds,
+        basis,
+        p1=p,
+        p2=p,
+        p_meas=p,
+        p_init=p,
     )
 
     # Parse and generate DEM
@@ -332,10 +349,10 @@ def generate_circuit_level_dem(
 
 
 def generate_dag_circuit(
-    patch: "SurfacePatch",
+    patch: SurfacePatch,
     num_rounds: int,
     basis: str = "Z",
-) -> "DagCircuit":
+) -> DagCircuit:
     """Generate a PECOS DagCircuit from SurfacePatch geometry.
 
     This creates a memory experiment circuit matching the Stim circuit
@@ -428,7 +445,7 @@ def generate_dag_circuit(
 
 
 def compare_dems(
-    patch: "SurfacePatch",
+    patch: SurfacePatch,
     num_rounds: int,
     basis: str = "Z",
     p: float = 0.01,
@@ -461,10 +478,16 @@ def compare_dems(
     # Parse and compare
     def parse_dem(dem_str: str) -> dict:
         """Parse DEM to extract statistics."""
-        lines = [l.strip() for l in dem_str.split("\n") if l.strip() and not l.startswith("#")]
+        lines = [
+            l.strip()
+            for l in dem_str.split("\n")
+            if l.strip() and not l.startswith("#")
+        ]
         errors = [l for l in lines if l.startswith("error")]
         detectors = [l for l in lines if l.startswith("detector")]
-        observables = [l for l in lines if "logical" in l.lower() or "observable" in l.lower()]
+        observables = [
+            l for l in lines if "logical" in l.lower() or "observable" in l.lower()
+        ]
         return {
             "error_count": len(errors),
             "detector_count": len(detectors),

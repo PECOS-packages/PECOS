@@ -24,7 +24,7 @@ import pytest
 class TestMwpmResult:
     """Tests for unified MwpmResult type."""
 
-    def test_result_attributes(self):
+    def test_result_attributes(self) -> None:
         """Test that MwpmResult has the expected attributes."""
         from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
@@ -40,7 +40,7 @@ class TestMwpmResult:
         assert isinstance(result.correction, list)
         assert isinstance(result.weight, float)
 
-    def test_result_to_list(self):
+    def test_result_to_list(self) -> None:
         """Test MwpmResult.to_list() method."""
         from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
@@ -50,7 +50,7 @@ class TestMwpmResult:
 
         assert result.to_list() == result.correction
 
-    def test_result_indexing(self):
+    def test_result_indexing(self) -> None:
         """Test MwpmResult supports indexing like a list."""
         from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
@@ -66,7 +66,7 @@ class TestMwpmResult:
 class TestCheckMatrix:
     """Tests for CheckMatrix (used by PyMatching)."""
 
-    def test_create_from_dense(self):
+    def test_create_from_dense(self) -> None:
         """Test creating from dense matrix (like PyMatching's Matching(H))."""
         from pecos_rslib.decoders import CheckMatrix
 
@@ -78,16 +78,21 @@ class TestCheckMatrix:
         assert matrix.cols == 3
         assert matrix.nnz() == 4
 
-    def test_create_from_coo(self):
+    def test_create_from_coo(self) -> None:
         """Test creating from COO format."""
         from pecos_rslib.decoders import CheckMatrix
 
-        matrix = CheckMatrix(rows=2, cols=3, row_indices=[0, 0, 1, 1], col_indices=[0, 1, 1, 2])
+        matrix = CheckMatrix(
+            rows=2,
+            cols=3,
+            row_indices=[0, 0, 1, 1],
+            col_indices=[0, 1, 1, 2],
+        )
 
         assert matrix.rows == 2
         assert matrix.cols == 3
 
-    def test_with_weights(self):
+    def test_with_weights(self) -> None:
         """Test adding weights (like PyMatching's weights parameter)."""
         from pecos_rslib.decoders import CheckMatrix
 
@@ -103,7 +108,7 @@ class TestCheckMatrix:
 class TestPyMatchingDecoder:
     """Tests for PyMatchingDecoder (mirrors pymatching.Matching)."""
 
-    def test_from_check_matrix(self):
+    def test_from_check_matrix(self) -> None:
         """Test construction from check matrix (like Matching(H))."""
         from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
@@ -112,7 +117,7 @@ class TestPyMatchingDecoder:
 
         assert decoder.num_detectors == 2
 
-    def test_decode_trivial(self):
+    def test_decode_trivial(self) -> None:
         """Test decoding trivial (all-zero) syndrome."""
         from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
@@ -124,7 +129,7 @@ class TestPyMatchingDecoder:
         # No errors - should have zero weight
         assert result.weight == 0.0
 
-    def test_decode_single_error(self):
+    def test_decode_single_error(self) -> None:
         """Test decoding syndrome from single error."""
         from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
@@ -136,7 +141,7 @@ class TestPyMatchingDecoder:
         assert result is not None
         assert result.weight > 0
 
-    def test_manual_graph_construction(self):
+    def test_manual_graph_construction(self) -> None:
         """Test building graph manually (like Matching.add_edge)."""
         from pecos_rslib.decoders import PyMatchingDecoder
 
@@ -153,14 +158,14 @@ class TestPyMatchingDecoder:
 class TestFusionBlossomDecoder:
     """Tests for FusionBlossomDecoder (mirrors fusion_blossom)."""
 
-    def test_create_decoder(self):
+    def test_create_decoder(self) -> None:
         """Test basic construction."""
         from pecos_rslib.decoders import FusionBlossomDecoder
 
         decoder = FusionBlossomDecoder(num_nodes=4, num_observables=1)
         assert decoder.num_nodes == 4
 
-    def test_from_check_matrix(self):
+    def test_from_check_matrix(self) -> None:
         """Test construction from check matrix."""
         from pecos_rslib.decoders import FusionBlossomDecoder
 
@@ -169,7 +174,7 @@ class TestFusionBlossomDecoder:
 
         assert decoder.num_nodes == 2
 
-    def test_decode_trivial(self):
+    def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
         from pecos_rslib.decoders import FusionBlossomDecoder
 
@@ -178,17 +183,19 @@ class TestFusionBlossomDecoder:
 
         assert result.weight == 0.0
 
-    def test_from_standard_code(self):
+    def test_from_standard_code(self) -> None:
         """Test construction for standard codes (like CodeCapacityPlanarCode)."""
         from pecos_rslib.decoders import FusionBlossomDecoder
 
         decoder = FusionBlossomDecoder.from_standard_code(
-            code_type="code_capacity_rotated", distance=3, error_rate=0.01
+            code_type="code_capacity_rotated",
+            distance=3,
+            error_rate=0.01,
         )
         assert decoder is not None
         assert decoder.num_nodes > 0
 
-    def test_clear_for_reuse(self):
+    def test_clear_for_reuse(self) -> None:
         """Test clear() for efficient decoder reuse."""
         from pecos_rslib.decoders import FusionBlossomDecoder
 
@@ -204,7 +211,7 @@ class TestFusionBlossomDecoder:
 class TestBpResult:
     """Tests for unified BpResult type."""
 
-    def test_result_attributes(self):
+    def test_result_attributes(self) -> None:
         """Test that BpResult has expected attributes."""
         from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
 
@@ -224,7 +231,7 @@ class TestBpResult:
 class TestSparseMatrix:
     """Tests for SparseMatrix (used by LDPC decoders)."""
 
-    def test_create_from_dense(self):
+    def test_create_from_dense(self) -> None:
         """Test creation from dense matrix."""
         from pecos_rslib.decoders import SparseMatrix
 
@@ -235,12 +242,15 @@ class TestSparseMatrix:
         assert matrix.cols == 4
         assert matrix.nnz() == 6
 
-    def test_create_from_coo(self):
+    def test_create_from_coo(self) -> None:
         """Test creation from COO format."""
         from pecos_rslib.decoders import SparseMatrix
 
         matrix = SparseMatrix.from_coo(
-            rows=2, cols=3, row_indices=[0, 0, 1, 1], col_indices=[0, 1, 1, 2]
+            rows=2,
+            cols=3,
+            row_indices=[0, 0, 1, 1],
+            col_indices=[0, 1, 1, 2],
         )
 
         assert matrix.rows == 2
@@ -250,16 +260,21 @@ class TestSparseMatrix:
 class TestBpOsdDecoder:
     """Tests for BpOsdDecoder (mirrors ldpc.bposd_decoder)."""
 
-    def test_create_decoder(self):
+    def test_create_decoder(self) -> None:
         """Test construction (like ldpc's BpOsdDecoder)."""
         from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = BpOsdDecoder(H, error_rate=0.01, bp_method="product_sum", osd_method="osd0")
+        decoder = BpOsdDecoder(
+            H,
+            error_rate=0.01,
+            bp_method="product_sum",
+            osd_method="osd0",
+        )
 
         assert decoder is not None
 
-    def test_decode_trivial(self):
+    def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
         from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
 
@@ -269,7 +284,7 @@ class TestBpOsdDecoder:
         result = decoder.decode([0, 0, 0])
         assert result.converged
 
-    def test_bp_methods(self):
+    def test_bp_methods(self) -> None:
         """Test different BP methods."""
         from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
 
@@ -289,7 +304,7 @@ class TestBpOsdDecoder:
 class TestBpLsdDecoder:
     """Tests for BpLsdDecoder (mirrors ldpc.bplsd_decoder)."""
 
-    def test_create_decoder(self):
+    def test_create_decoder(self) -> None:
         """Test construction."""
         from pecos_rslib.decoders import BpLsdDecoder, SparseMatrix
 
@@ -298,7 +313,7 @@ class TestBpLsdDecoder:
 
         assert decoder is not None
 
-    def test_decode_trivial(self):
+    def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
         from pecos_rslib.decoders import BpLsdDecoder, SparseMatrix
 
@@ -312,7 +327,7 @@ class TestBpLsdDecoder:
 class TestUnionFindDecoder:
     """Tests for UnionFindDecoder."""
 
-    def test_create_decoder(self):
+    def test_create_decoder(self) -> None:
         """Test construction."""
         from pecos_rslib.decoders import SparseMatrix, UnionFindDecoder
 
@@ -321,7 +336,7 @@ class TestUnionFindDecoder:
 
         assert decoder is not None
 
-    def test_decode_trivial(self):
+    def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
         from pecos_rslib.decoders import SparseMatrix, UnionFindDecoder
 
@@ -331,7 +346,7 @@ class TestUnionFindDecoder:
         result = decoder.decode([0, 0, 0])
         assert result is not None
 
-    def test_methods(self):
+    def test_methods(self) -> None:
         """Test different UF methods."""
         from pecos_rslib.decoders import SparseMatrix, UnionFindDecoder
 

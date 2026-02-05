@@ -32,7 +32,7 @@
 //! let outcomes = mnm.sample(&mut rng);
 //! ```
 
-use super::types::{MeasurementNoiseModel, MeasurementMechanism, NoiseConfig};
+use super::types::{MeasurementMechanism, MeasurementNoiseModel, NoiseConfig};
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
 use smallvec::SmallVec;
@@ -56,10 +56,10 @@ pub struct MemBuilder<'a> {
     influence_map: &'a DagFaultInfluenceMap,
     /// Noise configuration.
     noise: NoiseConfig,
-    /// Measurement order from the original circuit (e.g., TickCircuit).
+    /// Measurement order from the original circuit (e.g., `TickCircuit`).
     /// This is a list of qubits in the order they were measured.
     /// `measurement_order[tc_idx] = qubit` means the tc_idx-th measurement
-    /// in the TickCircuit was on this qubit.
+    /// in the `TickCircuit` was on this qubit.
     measurement_order: Option<Vec<usize>>,
 }
 
@@ -81,15 +81,15 @@ impl<'a> MemBuilder<'a> {
         self
     }
 
-    /// Sets the measurement order from the original circuit (e.g., TickCircuit).
+    /// Sets the measurement order from the original circuit (e.g., `TickCircuit`).
     ///
-    /// This is needed when detector definitions use TickCircuit measurement indices
+    /// This is needed when detector definitions use `TickCircuit` measurement indices
     /// but the influence map uses a different ordering based on DAG topology.
     ///
     /// # Arguments
     ///
     /// * `order` - List of qubit indices in measurement execution order.
-    ///   `order[tc_idx] = qubit` means the tc_idx-th measurement in the TickCircuit
+    ///   `order[tc_idx] = qubit` means the tc_idx-th measurement in the `TickCircuit`
     ///   was on this qubit.
     #[must_use]
     pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
@@ -97,10 +97,10 @@ impl<'a> MemBuilder<'a> {
         self
     }
 
-    /// Computes the mapping from influence map measurement indices to TickCircuit indices.
+    /// Computes the mapping from influence map measurement indices to `TickCircuit` indices.
     ///
     /// Returns a vector where `result[im_idx] = tc_idx`, mapping each influence map
-    /// measurement to its corresponding TickCircuit measurement.
+    /// measurement to its corresponding `TickCircuit` measurement.
     fn compute_im_to_tc_mapping(&self, tc_order: &[usize]) -> Vec<usize> {
         let im_measurements = &self.influence_map.measurements;
         let num_measurements = im_measurements.len();
@@ -241,12 +241,7 @@ impl<'a> MemBuilder<'a> {
     }
 
     /// Processes a two-qubit gate fault (CX or CZ).
-    fn process_two_qubit_fault(
-        &self,
-        loc1: usize,
-        loc2: usize,
-        mem: &mut MeasurementNoiseModel,
-    ) {
+    fn process_two_qubit_fault(&self, loc1: usize, loc2: usize, mem: &mut MeasurementNoiseModel) {
         // Two-qubit depolarizing: 15 non-identity Pauli combinations with p2/15 each
         let prob = self.noise.p2 / 15.0;
 
@@ -291,9 +286,11 @@ impl<'a> MemBuilder<'a> {
     /// Computes the measurement mechanism for a fault at the given location and Pauli type.
     fn compute_mechanism(&self, loc_idx: usize, pauli: Pauli) -> MeasurementMechanism {
         // Get the measurement indices that this fault flips
-        let measurements = self.influence_map.get_detector_indices(loc_idx, pauli.as_u8());
+        let measurements = self
+            .influence_map
+            .get_detector_indices(loc_idx, pauli.as_u8());
 
-        let mut meas_vec: SmallVec<[u32; 4]> = measurements.iter().map(|&m| m as u32).collect();
+        let mut meas_vec: SmallVec<[u32; 4]> = measurements.iter().copied().collect();
         meas_vec.sort_unstable();
 
         MeasurementMechanism::from_sorted(meas_vec)
@@ -385,7 +382,7 @@ mod tests {
         // Count how many mechanisms flip measurement 0
         let single_meas_mechanisms: Vec<_> = mem
             .iter()
-            .filter(|(m, _)| m.measurements.as_slice() == &[0])
+            .filter(|(m, _)| m.measurements.as_slice() == [0])
             .collect();
 
         // Should have aggregated multiple sources into one mechanism

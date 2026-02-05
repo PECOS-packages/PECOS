@@ -22,32 +22,32 @@ pub use pecos_decoder_core::{
 pub use pecos_ldpc_decoders::{
     // Builders
     BeliefFindBuilder,
-    BpLsdBuilder,
-    BpOsdBuilder,
-    FlipBuilder,
-    SoftInfoBpBuilder,
-    UnionFindBuilder,
     // Decoders
     BeliefFindDecoder,
+    BpLsdBuilder,
     BpLsdDecoder,
-    BpOsdDecoder,
-    FlipDecoder,
-    SoftInfoBpDecoder,
-    UnionFindDecoder,
     // Types
     BpMethod,
+    BpOsdBuilder,
+    BpOsdDecoder,
     BpSchedule,
     ClusterStatistics,
     CssCode,
     DecodingResult as LdpcDecodingResult,
+    FlipBuilder,
+    FlipDecoder,
     InputVectorType,
     // Errors
     LdpcError,
     LsdStatistics,
     MbpDecoder,
     OsdMethod,
+    SoftInfoBpBuilder,
+    SoftInfoBpDecoder,
     SparseMatrix,
     UfMethod,
+    UnionFindBuilder,
+    UnionFindDecoder,
 };
 
 // Re-export Fusion Blossom decoder when feature is enabled

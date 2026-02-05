@@ -955,9 +955,9 @@ pub struct BeliefFindDecoder {
 }
 
 impl BeliefFindDecoder {
-    /// Create a builder for configuring a new BeliefFind decoder
+    /// Create a builder for configuring a new `BeliefFind` decoder
     ///
-    /// BeliefFind combines BP with Union-Find: it first tries BP, and if that
+    /// `BeliefFind` combines BP with Union-Find: it first tries BP, and if that
     /// fails to converge, it falls back to Union-Find using soft information from BP.
     #[must_use]
     pub fn builder(pcm: &SparseMatrix) -> crate::builders::BeliefFindBuilder<'_> {

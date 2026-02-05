@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Integration tests for DemSampler.
+//! Integration tests for `DemSampler`.
 //!
 //! These tests verify:
 //! 1. Correct mechanism aggregation
@@ -21,8 +21,8 @@
 use pecos_qec::fault_tolerance::dem_builder::{DemSamplerBuilder, MemBuilder};
 use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::DagCircuit;
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
 
 // ============================================================================
 // Test Helpers
@@ -55,7 +55,6 @@ fn build_repetition_code_circuit() -> DagCircuit {
     dag.mz(4);
     dag
 }
-
 
 // ============================================================================
 // Basic Functionality Tests
@@ -460,8 +459,7 @@ fn test_batch_sampling_performance() {
     // Should complete in reasonable time (< 1 second for 100k shots)
     assert!(
         elapsed.as_secs() < 1,
-        "100k shots took {:?}, should be < 1s",
-        elapsed
+        "100k shots took {elapsed:?}, should be < 1s"
     );
 }
 
@@ -505,8 +503,7 @@ fn test_statistics_vs_batch_consistency() {
     let rel_diff = (stats_rate - batch_rate).abs() / stats_rate.max(batch_rate).max(0.001);
     assert!(
         rel_diff < 0.1,
-        "Syndrome rates should be similar: stats={:.4} batch={:.4} rel_diff={:.2}",
-        stats_rate, batch_rate, rel_diff
+        "Syndrome rates should be similar: stats={stats_rate:.4} batch={batch_rate:.4} rel_diff={rel_diff:.2}"
     );
 
     let stats_logical_rate = stats.logical_error_count as f64 / num_shots as f64;
@@ -515,7 +512,6 @@ fn test_statistics_vs_batch_consistency() {
         / stats_logical_rate.max(batch_logical_rate).max(0.001);
     assert!(
         logical_rel_diff < 0.1,
-        "Logical error rates should be similar: stats={:.4} batch={:.4} rel_diff={:.2}",
-        stats_logical_rate, batch_logical_rate, logical_rel_diff
+        "Logical error rates should be similar: stats={stats_logical_rate:.4} batch={batch_logical_rate:.4} rel_diff={logical_rel_diff:.2}"
     );
 }

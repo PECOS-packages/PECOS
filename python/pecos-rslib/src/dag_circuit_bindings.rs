@@ -2047,12 +2047,12 @@ impl PyTickCircuit {
     /// modifies the tick in place.
     ///
     /// Args:
-    ///     tick_idx: The index of the tick.
+    ///     `tick_idx`: The index of the tick.
     ///     key: The metadata key.
     ///     value: The metadata value.
     ///
     /// Raises:
-    ///     IndexError: If tick_idx is out of bounds.
+    ///     `IndexError`: If `tick_idx` is out of bounds.
     fn set_tick_meta(
         &mut self,
         py: Python<'_>,
@@ -2074,11 +2074,11 @@ impl PyTickCircuit {
     /// Get tick-level metadata from a specific tick by index.
     ///
     /// Args:
-    ///     tick_idx: The index of the tick.
+    ///     `tick_idx`: The index of the tick.
     ///     key: The metadata key.
     ///
     /// Returns:
-    ///     The metadata value, or None if not found or tick_idx is out of bounds.
+    ///     The metadata value, or None if not found or `tick_idx` is out of bounds.
     fn get_tick_meta(&self, py: Python<'_>, tick_idx: usize, key: &str) -> Option<Py<PyAny>> {
         self.inner
             .get_tick(tick_idx)
@@ -2092,13 +2092,13 @@ impl PyTickCircuit {
     /// modifies the tick in place.
     ///
     /// Args:
-    ///     tick_idx: The index of the tick.
-    ///     gate_idx: The index of the gate within the tick.
+    ///     `tick_idx`: The index of the tick.
+    ///     `gate_idx`: The index of the gate within the tick.
     ///     key: The metadata key.
     ///     value: The metadata value.
     ///
     /// Raises:
-    ///     IndexError: If tick_idx is out of bounds.
+    ///     `IndexError`: If `tick_idx` is out of bounds.
     fn set_gate_meta(
         &mut self,
         py: Python<'_>,
@@ -2121,8 +2121,8 @@ impl PyTickCircuit {
     /// Get gate-level metadata from a specific gate within a tick.
     ///
     /// Args:
-    ///     tick_idx: The index of the tick.
-    ///     gate_idx: The index of the gate within the tick.
+    ///     `tick_idx`: The index of the tick.
+    ///     `gate_idx`: The index of the gate within the tick.
     ///     key: The metadata key.
     ///
     /// Returns:

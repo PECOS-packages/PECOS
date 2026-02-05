@@ -10,7 +10,7 @@ Ancilla qubits: 48 (one per stabilizer)
 
 from guppylang import guppy
 from guppylang.std.builtins import array, owned, result
-from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x
+from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
 
 
 @guppy.struct
@@ -30,6 +30,7 @@ class Syndrome_7x7:
 
 # === State Preparation ===
 
+
 @guppy
 def prep_z_basis() -> SurfaceCode_7x7:
     """Prepare logical |0_L> state."""
@@ -47,6 +48,7 @@ def prep_x_basis() -> SurfaceCode_7x7:
 
 
 # === Syndrome Extraction ===
+
 
 @guppy
 def syndrome_extraction(surf: SurfaceCode_7x7) -> Syndrome_7x7:
@@ -379,13 +381,64 @@ def syndrome_extraction(surf: SurfaceCode_7x7) -> Syndrome_7x7:
     sz22 = measure(az22)
     sz23 = measure(az23)
 
-    synx = array(sx0, sx1, sx2, sx3, sx4, sx5, sx6, sx7, sx8, sx9, sx10, sx11, sx12, sx13, sx14, sx15, sx16, sx17, sx18, sx19, sx20, sx21, sx22, sx23)
-    synz = array(sz0, sz1, sz2, sz3, sz4, sz5, sz6, sz7, sz8, sz9, sz10, sz11, sz12, sz13, sz14, sz15, sz16, sz17, sz18, sz19, sz20, sz21, sz22, sz23)
+    synx = array(
+        sx0,
+        sx1,
+        sx2,
+        sx3,
+        sx4,
+        sx5,
+        sx6,
+        sx7,
+        sx8,
+        sx9,
+        sx10,
+        sx11,
+        sx12,
+        sx13,
+        sx14,
+        sx15,
+        sx16,
+        sx17,
+        sx18,
+        sx19,
+        sx20,
+        sx21,
+        sx22,
+        sx23,
+    )
+    synz = array(
+        sz0,
+        sz1,
+        sz2,
+        sz3,
+        sz4,
+        sz5,
+        sz6,
+        sz7,
+        sz8,
+        sz9,
+        sz10,
+        sz11,
+        sz12,
+        sz13,
+        sz14,
+        sz15,
+        sz16,
+        sz17,
+        sz18,
+        sz19,
+        sz20,
+        sz21,
+        sz22,
+        sz23,
+    )
 
     return Syndrome_7x7(synx, synz)
 
 
 # === Measurement ===
+
 
 @guppy
 def measure_z_basis(surf: SurfaceCode_7x7 @ owned) -> array[bool, 49]:
@@ -402,6 +455,7 @@ def measure_x_basis(surf: SurfaceCode_7x7 @ owned) -> array[bool, 49]:
 
 
 # === Logical Operators ===
+
 
 @guppy
 def apply_logical_x(surf: SurfaceCode_7x7) -> None:
@@ -430,6 +484,7 @@ def apply_logical_z(surf: SurfaceCode_7x7) -> None:
 
 
 # === Memory Experiments ===
+
 
 def make_memory_z(num_rounds: int):
     """Create Z-basis memory experiment."""

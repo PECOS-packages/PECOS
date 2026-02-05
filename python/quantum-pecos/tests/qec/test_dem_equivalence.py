@@ -5,7 +5,6 @@
 
 import numpy as np
 import pytest
-
 from pecos_rslib.qec import (
     ParsedDem,
     assert_dems_equivalent,
@@ -18,7 +17,7 @@ from pecos_rslib.qec import (
 class TestErrorMechanismParsing:
     """Test parsing of error mechanisms."""
 
-    def test_parse_simple_mechanism(self):
+    def test_parse_simple_mechanism(self) -> None:
         """Parse a simple error mechanism."""
         dem_str = "error(0.01) D0 D1"
         dem = ParsedDem.from_string(dem_str)
@@ -27,7 +26,7 @@ class TestErrorMechanismParsing:
         assert dem.num_detectors == 2
         assert dem.num_observables == 0
 
-    def test_parse_mechanism_with_observable(self):
+    def test_parse_mechanism_with_observable(self) -> None:
         """Parse mechanism with observable."""
         dem_str = "error(0.02) D0 L0"
         dem = ParsedDem.from_string(dem_str)
@@ -36,7 +35,7 @@ class TestErrorMechanismParsing:
         assert dem.num_detectors == 1
         assert dem.num_observables == 1
 
-    def test_parse_decomposed_mechanism(self):
+    def test_parse_decomposed_mechanism(self) -> None:
         """Parse a decomposed mechanism (XOR chain)."""
         dem_str = "error(0.01) D0 ^ D1 D2"
         dem = ParsedDem.from_string(dem_str)
@@ -45,7 +44,7 @@ class TestErrorMechanismParsing:
         # Decomposed mechanism has detectors from all components
         assert dem.num_detectors == 3
 
-    def test_parse_multiple_mechanisms(self):
+    def test_parse_multiple_mechanisms(self) -> None:
         """Parse multiple mechanisms."""
         dem_str = """
 error(0.01) D0
@@ -58,7 +57,7 @@ error(0.03) D0 D1 L0
         assert dem.num_detectors == 3
         assert dem.num_observables == 1
 
-    def test_parse_detector_declarations(self):
+    def test_parse_detector_declarations(self) -> None:
         """Parse detector declarations."""
         dem_str = """
 detector(0, 0, 0) D0
@@ -70,7 +69,7 @@ error(0.01) D0 D1
         assert dem.num_detectors == 2
         assert dem.num_mechanisms == 1
 
-    def test_skip_comments(self):
+    def test_skip_comments(self) -> None:
         """Comments should be skipped."""
         dem_str = """
 # This is a comment
@@ -85,7 +84,7 @@ error(0.02) D1
 class TestSampling:
     """Test DEM sampling."""
 
-    def test_sample_simple_dem(self):
+    def test_sample_simple_dem(self) -> None:
         """Sample from a simple DEM."""
         dem_str = "error(0.5) D0"
         dem = ParsedDem.from_string(dem_str)
@@ -100,12 +99,12 @@ class TestSampling:
         rate = det_array[:, 0].mean()
         assert 0.45 < rate < 0.55
 
-    def test_sample_decomposed_dem(self):
+    def test_sample_decomposed_dem(self) -> None:
         """Sample from a decomposed DEM."""
         dem_str = "error(0.1) D0 ^ D1"
         dem = ParsedDem.from_string(dem_str)
 
-        det_events, obs_flips = dem.sample_batch(50000, seed=42)
+        det_events, _obs_flips = dem.sample_batch(50000, seed=42)
 
         det_array = np.array(det_events)
         # Each sub-mechanism fires independently at p=0.1
@@ -115,7 +114,7 @@ class TestSampling:
         assert 0.08 < d0_rate < 0.12
         assert 0.08 < d1_rate < 0.12
 
-    def test_sample_deterministic(self):
+    def test_sample_deterministic(self) -> None:
         """Sampling should be deterministic with same seed."""
         dem_str = "error(0.5) D0 D1"
         dem = ParsedDem.from_string(dem_str)
@@ -130,7 +129,7 @@ class TestSampling:
 class TestAggregation:
     """Test mechanism aggregation."""
 
-    def test_aggregate_same_effect(self):
+    def test_aggregate_same_effect(self) -> None:
         """Mechanisms with same effect should be aggregated."""
         dem_str = """
 error(0.1) D0
@@ -146,7 +145,7 @@ error(0.2) D0
         # Combined probability: 0.1*(1-0.2) + 0.2*(1-0.1) = 0.08 + 0.18 = 0.26
         assert agg[key] == pytest.approx(0.26)
 
-    def test_aggregate_different_effects(self):
+    def test_aggregate_different_effects(self) -> None:
         """Mechanisms with different effects stay separate."""
         dem_str = """
 error(0.1) D0
@@ -163,7 +162,7 @@ error(0.2) D1
 class TestExactComparison:
     """Test exact DEM comparison."""
 
-    def test_identical_dems(self):
+    def test_identical_dems(self) -> None:
         """Identical DEMs should be equivalent."""
         dem_str = """
 error(0.01) D0 D1
@@ -174,7 +173,7 @@ error(0.02) D1 D2
         assert result.equivalent
         assert result.max_rate_difference == pytest.approx(0.0)
 
-    def test_different_probabilities(self):
+    def test_different_probabilities(self) -> None:
         """DEMs with different probabilities should not be equivalent."""
         dem1 = "error(0.01) D0"
         dem2 = "error(0.02) D0"
@@ -184,7 +183,7 @@ error(0.02) D1 D2
         assert not result.equivalent
         assert result.max_rate_difference == pytest.approx(0.01)
 
-    def test_different_mechanisms(self):
+    def test_different_mechanisms(self) -> None:
         """DEMs with different mechanisms should not be equivalent."""
         dem1 = "error(0.01) D0 D1"
         dem2 = "error(0.01) D0 D2"
@@ -195,7 +194,7 @@ error(0.02) D1 D2
         assert len(result.only_in_dem1) == 1
         assert len(result.only_in_dem2) == 1
 
-    def test_aggregated_equivalence(self):
+    def test_aggregated_equivalence(self) -> None:
         """Two mechanisms that aggregate to same effect should match."""
         # Two 0.1 errors on D0 combine to 0.1*(1-0.1) + 0.1*(1-0.1) = 0.18
         dem1 = """
@@ -212,7 +211,7 @@ error(0.1) D0
 class TestStatisticalComparison:
     """Test statistical DEM comparison."""
 
-    def test_identical_dems_statistical(self):
+    def test_identical_dems_statistical(self) -> None:
         """Identical DEMs should be statistically equivalent."""
         dem_str = """
 error(0.01) D0 D1
@@ -223,7 +222,7 @@ error(0.02) D1 D2
         assert result.equivalent
         assert result.correlation > 0.9
 
-    def test_similar_dems_statistical(self):
+    def test_similar_dems_statistical(self) -> None:
         """Similar DEMs should be statistically equivalent within tolerance."""
         dem1 = "error(0.10) D0"
         dem2 = "error(0.11) D0"  # 10% difference
@@ -234,7 +233,7 @@ error(0.02) D1 D2
         # Should be equivalent within 10% tolerance
         assert result.equivalent
 
-    def test_decomposition_equivalence(self):
+    def test_decomposition_equivalence(self) -> None:
         """Decomposed (^) and non-decomposed with same effect ARE equivalent.
 
         In Stim DEM format, `error(p) D0 ^ D1` is a decomposition representation
@@ -255,7 +254,7 @@ error(0.02) D1 D2
         # These SHOULD be equivalent - both represent the same error mechanism
         assert result.equivalent
 
-    def test_independent_vs_correlated_not_equivalent(self):
+    def test_independent_vs_correlated_not_equivalent(self) -> None:
         """Independent detector errors should NOT be equivalent to correlated errors.
 
         This test verifies that:
@@ -280,7 +279,10 @@ error(0.02) D1 D2
 error(0.1) D1"""
 
         result = compare_dems_statistical(
-            dem_correlated, dem_independent, num_shots=50000, tolerance=0.05
+            dem_correlated,
+            dem_independent,
+            num_shots=50000,
+            tolerance=0.05,
         )
 
         # These should NOT be equivalent - very different joint distributions
@@ -290,21 +292,26 @@ error(0.1) D1"""
 class TestConvenienceFunctions:
     """Test convenience functions."""
 
-    def test_verify_dem_equivalence(self):
+    def test_verify_dem_equivalence(self) -> None:
         """Test verify_dem_equivalence function."""
         dem_str = "error(0.01) D0 D1"
 
         assert verify_dem_equivalence(dem_str, dem_str, method="exact")
-        assert verify_dem_equivalence(dem_str, dem_str, method="statistical", num_shots=50000)
+        assert verify_dem_equivalence(
+            dem_str,
+            dem_str,
+            method="statistical",
+            num_shots=50000,
+        )
 
-    def test_assert_dems_equivalent_pass(self):
+    def test_assert_dems_equivalent_pass(self) -> None:
         """assert_dems_equivalent should pass for equivalent DEMs."""
         dem_str = "error(0.01) D0 D1"
 
         # Should not raise
         assert_dems_equivalent(dem_str, dem_str, method="exact")
 
-    def test_assert_dems_equivalent_fail(self):
+    def test_assert_dems_equivalent_fail(self) -> None:
         """assert_dems_equivalent should fail for non-equivalent DEMs."""
         dem1 = "error(0.01) D0"
         dem2 = "error(0.01) D1"
@@ -342,7 +349,7 @@ class TestIntegrationWithPecos:
 
         return pecos_dem, stim_dem
 
-    def test_pecos_stim_exact_equivalence(self, surface_code_dem):
+    def test_pecos_stim_exact_equivalence(self, surface_code_dem) -> None:
         """PECOS and Stim non-decomposed DEMs should be exactly equivalent."""
         pecos_dem, stim_dem = surface_code_dem
 
@@ -354,12 +361,15 @@ class TestIntegrationWithPecos:
             f"only in Stim: {result.only_in_dem2}"
         )
 
-    def test_pecos_stim_statistical_equivalence(self, surface_code_dem):
+    def test_pecos_stim_statistical_equivalence(self, surface_code_dem) -> None:
         """PECOS and Stim DEMs should be statistically equivalent."""
         pecos_dem, stim_dem = surface_code_dem
 
         result = compare_dems_statistical(
-            pecos_dem, stim_dem, num_shots=100000, tolerance=0.05
+            pecos_dem,
+            stim_dem,
+            num_shots=100000,
+            tolerance=0.05,
         )
 
         assert result.equivalent, (
@@ -390,11 +400,15 @@ class TestPecosDecompositionEquivalence:
         noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
 
         raw_dem = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=False)
-        decomposed_dem = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=True)
+        decomposed_dem = generate_dem_from_tick_circuit(
+            tc,
+            **noise,
+            decompose_errors=True,
+        )
 
         return raw_dem, decomposed_dem
 
-    def test_raw_decomposed_syndrome_rates_match(self, surface_code_dem_pair):
+    def test_raw_decomposed_syndrome_rates_match(self, surface_code_dem_pair) -> None:
         """Raw and decomposed DEMs should have same syndrome rates."""
         raw_dem_str, decomposed_dem_str = surface_code_dem_pair
 
@@ -404,8 +418,8 @@ class TestPecosDecompositionEquivalence:
         num_shots = 100_000
         seed = 42
 
-        raw_dets, raw_obs = raw_dem.sample_batch(num_shots, seed=seed)
-        decomp_dets, decomp_obs = decomposed_dem.sample_batch(num_shots, seed=seed)
+        raw_dets, _raw_obs = raw_dem.sample_batch(num_shots, seed=seed)
+        decomp_dets, _decomp_obs = decomposed_dem.sample_batch(num_shots, seed=seed)
 
         raw_array = np.array(raw_dets)
         decomp_array = np.array(decomp_dets)
@@ -423,7 +437,9 @@ class TestPecosDecompositionEquivalence:
             f"tolerance={tolerance:.4f}"
         )
 
-    def test_raw_decomposed_per_detector_rates_match(self, surface_code_dem_pair):
+    def test_raw_decomposed_per_detector_rates_match(
+        self, surface_code_dem_pair
+    ) -> None:
         """Raw and decomposed DEMs should have similar per-detector rates."""
         raw_dem_str, decomposed_dem_str = surface_code_dem_pair
 
@@ -451,7 +467,7 @@ class TestPecosDecompositionEquivalence:
             f"tolerance {tolerance:.4f}"
         )
 
-    def test_raw_decomposed_logical_rates_match(self, surface_code_dem_pair):
+    def test_raw_decomposed_logical_rates_match(self, surface_code_dem_pair) -> None:
         """Raw and decomposed DEMs should have same logical error rates."""
         raw_dem_str, decomposed_dem_str = surface_code_dem_pair
 
@@ -481,7 +497,9 @@ class TestPecosDecompositionEquivalence:
 
     @pytest.mark.parametrize("distance", [3, 5])
     @pytest.mark.parametrize("num_rounds", [1, 2])
-    def test_decomposition_equivalence_various_sizes(self, distance, num_rounds):
+    def test_decomposition_equivalence_various_sizes(
+        self, distance, num_rounds
+    ) -> None:
         """Decomposition should be equivalent for various code sizes."""
         pytest.importorskip("stim")
 
@@ -493,9 +511,15 @@ class TestPecosDecompositionEquivalence:
 
         noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
 
-        raw_dem_str = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=False)
+        raw_dem_str = generate_dem_from_tick_circuit(
+            tc,
+            **noise,
+            decompose_errors=False,
+        )
         decomposed_dem_str = generate_dem_from_tick_circuit(
-            tc, **noise, decompose_errors=True
+            tc,
+            **noise,
+            decompose_errors=True,
         )
 
         raw_dem = ParsedDem.from_string(raw_dem_str)

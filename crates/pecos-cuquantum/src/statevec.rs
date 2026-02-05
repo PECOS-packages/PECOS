@@ -596,7 +596,10 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len().is_multiple_of(2), "CX requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CX requires pairs of qubits"
+        );
         // CNOT matrix (4x4)
         // [[1,0,0,0], [0,1,0,0], [0,0,0,1], [0,0,1,0]]
         #[rustfmt::skip]
@@ -652,7 +655,10 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len().is_multiple_of(2), "CZ requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "CZ requires pairs of qubits"
+        );
         // CZ matrix (4x4)
         // [[1,0,0,0], [0,1,0,0], [0,0,1,0], [0,0,0,-1]]
         #[rustfmt::skip]
@@ -669,7 +675,10 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len().is_multiple_of(2), "SWAP requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SWAP requires pairs of qubits"
+        );
         // SWAP matrix (4x4)
         // [[1,0,0,0], [0,0,1,0], [0,1,0,0], [0,0,0,1]]
         #[rustfmt::skip]
@@ -713,7 +722,10 @@ impl ArbitraryRotationGateable for CuStateVec {
 
     fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(qubits.len().is_multiple_of(2), "RZZ requires pairs of qubits");
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "RZZ requires pairs of qubits"
+        );
         // RZZ(theta) = diag(e^(-i*theta/2), e^(i*theta/2), e^(i*theta/2), e^(-i*theta/2))
         let c = (theta / 2.0).cos();
         let s = (theta / 2.0).sin();

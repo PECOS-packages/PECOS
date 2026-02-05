@@ -18,8 +18,8 @@
 //! # Key Concepts
 //!
 //! - Two DEMs are equivalent if they produce the same probability distribution
-//!   over (detector_events, observable_flips) patterns.
-//! - Decomposed DEMs (using ^) create independent error channels that are XORed.
+//!   over (`detector_events`, `observable_flips`) patterns.
+//! - Decomposed DEMs (using ^) create independent error channels that are `XORed`.
 //! - Different decomposition strategies can produce equivalent sampling results.
 //! - For non-decomposed DEMs, mechanisms must match exactly.
 //!
@@ -74,19 +74,25 @@ pub struct ParsedMechanism {
 
 impl ParsedMechanism {
     /// Creates a new simple mechanism (no decomposition).
+    #[must_use]
     pub fn simple(probability: f64, detectors: Vec<u32>, observables: Vec<u32>) -> Self {
         Self {
             probability,
-            components: vec![MechanismComponent { detectors, observables }],
+            components: vec![MechanismComponent {
+                detectors,
+                observables,
+            }],
         }
     }
 
     /// Returns true if this mechanism is decomposed (has multiple components).
+    #[must_use]
     pub fn is_decomposed(&self) -> bool {
         self.components.len() > 1
     }
 
     /// Returns the combined effect of this mechanism (XOR of all components).
+    #[must_use]
     pub fn combined_effect(&self) -> (Vec<u32>, Vec<u32>) {
         let mut all_dets: BTreeSet<u32> = BTreeSet::new();
         let mut all_obs: BTreeSet<u32> = BTreeSet::new();
@@ -115,9 +121,13 @@ impl ParsedMechanism {
     }
 
     /// Creates an effect key for this mechanism (for aggregation).
+    #[must_use]
     pub fn effect_key(&self) -> EffectKey {
         let (dets, obs) = self.combined_effect();
-        EffectKey { detectors: dets, observables: obs }
+        EffectKey {
+            detectors: dets,
+            observables: obs,
+        }
     }
 }
 
@@ -141,20 +151,25 @@ pub struct EffectKey {
 
 impl EffectKey {
     /// Creates a new effect key.
+    #[must_use]
     pub fn new(mut detectors: Vec<u32>, mut observables: Vec<u32>) -> Self {
-        detectors.sort();
-        observables.sort();
-        Self { detectors, observables }
+        detectors.sort_unstable();
+        observables.sort_unstable();
+        Self {
+            detectors,
+            observables,
+        }
     }
 
     /// Formats this key as a string (e.g., "D0 D1 L0").
+    #[must_use]
     pub fn to_string(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         for &d in &self.detectors {
-            parts.push(format!("D{}", d));
+            parts.push(format!("D{d}"));
         }
         for &o in &self.observables {
-            parts.push(format!("L{}", o));
+            parts.push(format!("L{o}"));
         }
         if parts.is_empty() {
             "(empty)".to_string()
@@ -180,7 +195,8 @@ pub struct ParsedDem {
 }
 
 impl ParsedDem {
-    /// Creates an empty ParsedDem.
+    /// Creates an empty `ParsedDem`.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mechanisms: Vec::new(),
@@ -228,10 +244,10 @@ impl ParsedDem {
                 }
             }
             // Parse observable declarations
-            else if line.starts_with("logical_observable") {
-                if let Some(id) = Self::extract_observable_id(line) {
-                    max_obs = max_obs.max(id as i32);
-                }
+            else if line.starts_with("logical_observable")
+                && let Some(id) = Self::extract_observable_id(line)
+            {
+                max_obs = max_obs.max(id as i32);
             }
         }
 
@@ -245,11 +261,13 @@ impl ParsedDem {
     /// Parses a single error line.
     fn parse_error_line(line: &str) -> Result<ParsedMechanism, DemParseError> {
         // Extract probability: error(0.01) ...
-        let prob_end = line.find(')')
+        let prob_end = line
+            .find(')')
             .ok_or_else(|| DemParseError::InvalidFormat("Missing closing parenthesis".into()))?;
 
         let prob_str = &line[6..prob_end]; // Skip "error("
-        let probability: f64 = prob_str.parse()
+        let probability: f64 = prob_str
+            .parse()
             .map_err(|_| DemParseError::InvalidProbability(prob_str.to_string()))?;
 
         // Get targets after probability
@@ -266,7 +284,10 @@ impl ParsedDem {
                 components.push(comp);
             }
 
-            Ok(ParsedMechanism { probability, components })
+            Ok(ParsedMechanism {
+                probability,
+                components,
+            })
         } else {
             // Simple mechanism
             let comp = Self::parse_component(rest)?;
@@ -284,21 +305,26 @@ impl ParsedDem {
 
         for token in s.split_whitespace() {
             if token.starts_with('D') {
-                let id: u32 = token[1..].parse()
+                let id: u32 = token[1..]
+                    .parse()
                     .map_err(|_| DemParseError::InvalidDetectorId(token.to_string()))?;
                 detectors.push(id);
             } else if token.starts_with('L') {
-                let id: u32 = token[1..].parse()
+                let id: u32 = token[1..]
+                    .parse()
                     .map_err(|_| DemParseError::InvalidObservableId(token.to_string()))?;
                 observables.push(id);
             }
             // Skip unknown tokens
         }
 
-        detectors.sort();
-        observables.sort();
+        detectors.sort_unstable();
+        observables.sort_unstable();
 
-        Ok(MechanismComponent { detectors, observables })
+        Ok(MechanismComponent {
+            detectors,
+            observables,
+        })
     }
 
     /// Extracts detector ID from a detector declaration line.
@@ -306,7 +332,9 @@ impl ParsedDem {
         // Look for D followed by digits
         let d_pos = line.find('D')?;
         let rest = &line[d_pos + 1..];
-        let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
         rest[..end].parse().ok()
     }
 
@@ -314,13 +342,16 @@ impl ParsedDem {
     fn extract_observable_id(line: &str) -> Option<u32> {
         let l_pos = line.find('L')?;
         let rest = &line[l_pos + 1..];
-        let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
         rest[..end].parse().ok()
     }
 
     /// Aggregates mechanisms by their effect, combining probabilities.
     ///
     /// Returns a map from effect key to aggregated probability.
+    #[must_use]
     pub fn aggregate(&self) -> BTreeMap<EffectKey, f64> {
         let mut aggregated: BTreeMap<EffectKey, f64> = BTreeMap::new();
 
@@ -349,7 +380,7 @@ impl ParsedDem {
 
     /// Samples from this DEM.
     ///
-    /// Returns (detector_events, observable_flips).
+    /// Returns (`detector_events`, `observable_flips`).
     ///
     /// # Semantics
     ///
@@ -385,7 +416,7 @@ impl ParsedDem {
 
     /// Samples multiple shots from this DEM.
     ///
-    /// Returns (detector_events_per_shot, observable_flips_per_shot).
+    /// Returns (`detector_events_per_shot`, `observable_flips_per_shot`).
     pub fn sample_batch<R: Rng>(
         &self,
         num_shots: usize,
@@ -403,9 +434,9 @@ impl ParsedDem {
         (det_batches, obs_batches)
     }
 
-    /// Convert to an optimized DemSampler for fast batch sampling.
+    /// Convert to an optimized `DemSampler` for fast batch sampling.
     ///
-    /// The DemSampler uses:
+    /// The `DemSampler` uses:
     /// - Geometric skip sampling for low error rates
     /// - Bit-packed arrays for efficient XOR operations
     /// - Parallel chunked processing for large DEMs
@@ -418,6 +449,7 @@ impl ParsedDem {
     /// (with probability p), BOTH D0 and D1 flip together. The `^` separator is
     /// used for error tracking/decomposition but doesn't affect sampling - all
     /// components fire together.
+    #[must_use]
     pub fn to_dem_sampler(&self) -> super::dem_sampler::DemSampler {
         // Convert mechanisms to the format expected by DemSampler::from_mechanisms
         // Use combined_effect() to get the union of all detectors/observables
@@ -461,10 +493,10 @@ pub enum DemParseError {
 impl std::fmt::Display for DemParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidFormat(msg) => write!(f, "Invalid DEM format: {}", msg),
-            Self::InvalidProbability(s) => write!(f, "Invalid probability: {}", s),
-            Self::InvalidDetectorId(s) => write!(f, "Invalid detector ID: {}", s),
-            Self::InvalidObservableId(s) => write!(f, "Invalid observable ID: {}", s),
+            Self::InvalidFormat(msg) => write!(f, "Invalid DEM format: {msg}"),
+            Self::InvalidProbability(s) => write!(f, "Invalid probability: {s}"),
+            Self::InvalidDetectorId(s) => write!(f, "Invalid detector ID: {s}"),
+            Self::InvalidObservableId(s) => write!(f, "Invalid observable ID: {s}"),
         }
     }
 }
@@ -539,7 +571,7 @@ pub struct ProbabilityMismatch {
 ///
 /// # Returns
 ///
-/// EquivalenceResult with comparison statistics.
+/// `EquivalenceResult` with comparison statistics.
 pub fn compare_dems_exact(
     dem1: &ParsedDem,
     dem2: &ParsedDem,
@@ -580,8 +612,8 @@ pub fn compare_dems_exact(
         }
     }
 
-    let max_prob_diff = prob_diffs.iter().cloned().fold(0.0_f64, f64::max);
-    let max_rel_diff = rel_diffs.iter().cloned().fold(0.0_f64, f64::max);
+    let max_prob_diff = prob_diffs.iter().copied().fold(0.0_f64, f64::max);
+    let max_rel_diff = rel_diffs.iter().copied().fold(0.0_f64, f64::max);
 
     // Equivalence requires same mechanism sets and all probabilities match
     let equivalent = only_in_1.is_empty() && only_in_2.is_empty() && max_rel_diff <= prob_tolerance;
@@ -596,8 +628,8 @@ pub fn compare_dems_exact(
         details: ComparisonDetails {
             dem1_mechanism_count: agg1.len(),
             dem2_mechanism_count: agg2.len(),
-            only_in_dem1: only_in_1.iter().map(|k| k.to_string()).collect(),
-            only_in_dem2: only_in_2.iter().map(|k| k.to_string()).collect(),
+            only_in_dem1: only_in_1.iter().map(EffectKey::to_string).collect(),
+            only_in_dem2: only_in_2.iter().map(EffectKey::to_string).collect(),
             prob_mismatches: mismatches,
         },
     }
@@ -620,7 +652,7 @@ pub fn compare_dems_exact(
 ///
 /// # Returns
 ///
-/// EquivalenceResult with comparison statistics.
+/// `EquivalenceResult` with comparison statistics.
 pub fn compare_dems_statistical(
     dem1: &ParsedDem,
     dem2: &ParsedDem,
@@ -675,17 +707,27 @@ pub fn compare_dems_statistical(
 
     // Normalize to rates
     let n = num_shots as f64;
-    for r in &mut det_rates1 { *r /= n; }
-    for r in &mut det_rates2 { *r /= n; }
-    for r in &mut obs_rates1 { *r /= n; }
-    for r in &mut obs_rates2 { *r /= n; }
+    for r in &mut det_rates1 {
+        *r /= n;
+    }
+    for r in &mut det_rates2 {
+        *r /= n;
+    }
+    for r in &mut obs_rates1 {
+        *r /= n;
+    }
+    for r in &mut obs_rates2 {
+        *r /= n;
+    }
 
     // Compute marginal rate differences
-    let det_diffs: Vec<f64> = det_rates1.iter()
+    let det_diffs: Vec<f64> = det_rates1
+        .iter()
         .zip(&det_rates2)
         .map(|(a, b)| (a - b).abs())
         .collect();
-    let obs_diffs: Vec<f64> = obs_rates1.iter()
+    let obs_diffs: Vec<f64> = obs_rates1
+        .iter()
         .zip(&obs_rates2)
         .map(|(a, b)| (a - b).abs())
         .collect();
@@ -708,7 +750,8 @@ pub fn compare_dems_statistical(
     }
 
     // Collect all patterns seen in either DEM
-    let all_patterns: BTreeSet<_> = pattern_counts1.keys()
+    let all_patterns: BTreeSet<_> = pattern_counts1
+        .keys()
         .chain(pattern_counts2.keys())
         .cloned()
         .collect();
@@ -738,15 +781,22 @@ pub fn compare_dems_statistical(
     // For tolerance comparison, use absolute difference with statistical margin
     let statistical_margin = 3.0 / (num_shots as f64).sqrt(); // 3-sigma
 
-    let max_abs_diff = det_diffs.iter().cloned().fold(0.0_f64, f64::max)
-        .max(obs_diffs.iter().cloned().fold(0.0_f64, f64::max));
+    let max_abs_diff = det_diffs
+        .iter()
+        .copied()
+        .fold(0.0_f64, f64::max)
+        .max(obs_diffs.iter().copied().fold(0.0_f64, f64::max));
 
     // Compute correlation of detector rates (for reporting)
     let correlation = if num_det > 1 {
         compute_correlation(&det_rates1, &det_rates2)
     } else if !det_rates1.is_empty() {
         // For single detector, use pattern match quality
-        if max_pattern_diff < statistical_margin { 1.0 } else { 0.0 }
+        if max_pattern_diff < statistical_margin {
+            1.0
+        } else {
+            0.0
+        }
     } else {
         1.0
     };
@@ -802,7 +852,10 @@ fn compute_correlation(a: &[f64], b: &[f64]) -> f64 {
 
     if std_a < 1e-10 || std_b < 1e-10 {
         // Near-zero variance - check if values are equal
-        if a.iter().zip(b.iter()).all(|(ai, bi)| (ai - bi).abs() < 0.01) {
+        if a.iter()
+            .zip(b.iter())
+            .all(|(ai, bi)| (ai - bi).abs() < 0.01)
+        {
             1.0
         } else {
             0.0
@@ -827,9 +880,11 @@ pub fn verify_dem_equivalence(
         ComparisonMethod::Exact { prob_tolerance } => {
             compare_dems_exact(&dem1, &dem2, prob_tolerance)
         }
-        ComparisonMethod::Statistical { num_shots, seed, tolerance } => {
-            compare_dems_statistical(&dem1, &dem2, num_shots, seed, tolerance)
-        }
+        ComparisonMethod::Statistical {
+            num_shots,
+            seed,
+            tolerance,
+        } => compare_dems_statistical(&dem1, &dem2, num_shots, seed, tolerance),
     };
 
     Ok(result.equivalent)
@@ -856,7 +911,9 @@ pub enum ComparisonMethod {
 
 impl Default for ComparisonMethod {
     fn default() -> Self {
-        Self::Exact { prob_tolerance: 1e-6 }
+        Self::Exact {
+            prob_tolerance: 1e-6,
+        }
     }
 }
 
@@ -899,10 +956,10 @@ mod tests {
 
     #[test]
     fn test_aggregate() {
-        let dem_str = r#"
+        let dem_str = r"
 error(0.1) D0
 error(0.2) D0
-"#;
+";
         let dem = ParsedDem::from_str(dem_str).unwrap();
         let agg = dem.aggregate();
 
@@ -913,10 +970,10 @@ error(0.2) D0
 
     #[test]
     fn test_compare_identical_dems() {
-        let dem_str = r#"
+        let dem_str = r"
 error(0.01) D0 D1
 error(0.02) D1 D2
-"#;
+";
         let dem = ParsedDem::from_str(dem_str).unwrap();
         let result = compare_dems_exact(&dem, &dem, 1e-6);
 

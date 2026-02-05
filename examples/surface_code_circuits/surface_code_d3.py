@@ -10,7 +10,7 @@ Ancilla qubits: 8 (one per stabilizer)
 
 from guppylang import guppy
 from guppylang.std.builtins import array, owned, result
-from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x
+from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
 
 
 @guppy.struct
@@ -30,6 +30,7 @@ class Syndrome_3x3:
 
 # === State Preparation ===
 
+
 @guppy
 def prep_z_basis() -> SurfaceCode_3x3:
     """Prepare logical |0_L> state."""
@@ -47,6 +48,7 @@ def prep_x_basis() -> SurfaceCode_3x3:
 
 
 # === Syndrome Extraction ===
+
 
 @guppy
 def syndrome_extraction(surf: SurfaceCode_3x3) -> Syndrome_3x3:
@@ -123,6 +125,7 @@ def syndrome_extraction(surf: SurfaceCode_3x3) -> Syndrome_3x3:
 
 # === Measurement ===
 
+
 @guppy
 def measure_z_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
     """Destructively measure in Z basis."""
@@ -138,6 +141,7 @@ def measure_x_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
 
 
 # === Logical Operators ===
+
 
 @guppy
 def apply_logical_x(surf: SurfaceCode_3x3) -> None:
@@ -158,6 +162,7 @@ def apply_logical_z(surf: SurfaceCode_3x3) -> None:
 
 
 # === Memory Experiments ===
+
 
 def make_memory_z(num_rounds: int):
     """Create Z-basis memory experiment."""

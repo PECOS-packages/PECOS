@@ -10,7 +10,7 @@ The bulk of algorithmic testing is done in Rust (crates/pecos-qec/tests/dem_samp
 import pytest
 
 
-def test_dem_sampler_builder_basic():
+def test_dem_sampler_builder_basic() -> None:
     """Test basic DemSamplerBuilder usage."""
     from pecos_rslib import DagCircuit
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
@@ -40,7 +40,7 @@ def test_dem_sampler_builder_basic():
     assert sampler.num_mechanisms > 0
 
 
-def test_dem_sampler_sampling():
+def test_dem_sampler_sampling() -> None:
     """Test DemSampler sampling methods."""
     from pecos_rslib import DagCircuit
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
@@ -73,7 +73,7 @@ def test_dem_sampler_sampling():
     assert len(obs_batch) == 100
 
 
-def test_dem_sampler_determinism():
+def test_dem_sampler_determinism() -> None:
     """Test that sampling is deterministic with same seed."""
     from pecos_rslib import DagCircuit
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
@@ -100,7 +100,7 @@ def test_dem_sampler_determinism():
     assert obs1 == obs2
 
 
-def test_dem_sampler_statistics():
+def test_dem_sampler_statistics() -> None:
     """Test DemSampler.sample_statistics method."""
     from pecos_rslib import DagCircuit
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
@@ -135,7 +135,7 @@ def test_dem_sampler_statistics():
     assert 0.0 <= stats["syndrome_rate"] <= 1.0
 
 
-def test_dem_sampler_zero_noise():
+def test_dem_sampler_zero_noise() -> None:
     """Test that zero noise produces no errors."""
     from pecos_rslib import DagCircuit
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
@@ -161,7 +161,7 @@ def test_dem_sampler_zero_noise():
     assert stats["logical_error_count"] == 0
 
 
-def test_dem_sampler_repr():
+def test_dem_sampler_repr() -> None:
     """Test DemSampler __repr__."""
     from pecos_rslib import DagCircuit
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder

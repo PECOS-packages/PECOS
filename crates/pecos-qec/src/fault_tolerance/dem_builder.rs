@@ -101,9 +101,9 @@ mod types;
 pub use builder::{DemBuilder, DemBuilderError};
 pub use dem_sampler::{DemSampler, DemSamplerBuilder, SamplingStatistics};
 pub use equivalence::{
-    compare_dems_exact, compare_dems_statistical, verify_dem_equivalence, ComparisonDetails,
-    ComparisonMethod, DemParseError, EffectKey, EquivalenceResult, MechanismComponent,
-    ParsedDem, ParsedMechanism, ProbabilityMismatch,
+    ComparisonDetails, ComparisonMethod, DemParseError, EffectKey, EquivalenceResult,
+    MechanismComponent, ParsedDem, ParsedMechanism, ProbabilityMismatch, compare_dems_exact,
+    compare_dems_statistical, verify_dem_equivalence,
 };
 pub use mem_builder::MemBuilder;
 pub use types::{

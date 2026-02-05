@@ -177,7 +177,10 @@ impl ErrorMechanism {
 
     /// Creates a mechanism from unsorted detector and logical indices.
     #[must_use]
-    pub fn from_unsorted(detectors: impl IntoIterator<Item = u32>, logicals: impl IntoIterator<Item = u32>) -> Self {
+    pub fn from_unsorted(
+        detectors: impl IntoIterator<Item = u32>,
+        logicals: impl IntoIterator<Item = u32>,
+    ) -> Self {
         let mut dets: SmallVec<[u32; 4]> = detectors.into_iter().collect();
         let mut logs: SmallVec<[u32; 2]> = logicals.into_iter().collect();
         dets.sort_unstable();
@@ -191,9 +194,18 @@ impl ErrorMechanism {
     /// Creates a mechanism from pre-sorted detector and logical indices.
     #[must_use]
     pub fn from_sorted(detectors: SmallVec<[u32; 4]>, logicals: SmallVec<[u32; 2]>) -> Self {
-        debug_assert!(detectors.windows(2).all(|w| w[0] <= w[1]), "detectors must be sorted");
-        debug_assert!(logicals.windows(2).all(|w| w[0] <= w[1]), "logicals must be sorted");
-        Self { detectors, logicals }
+        debug_assert!(
+            detectors.windows(2).all(|w| w[0] <= w[1]),
+            "detectors must be sorted"
+        );
+        debug_assert!(
+            logicals.windows(2).all(|w| w[0] <= w[1]),
+            "logicals must be sorted"
+        );
+        Self {
+            detectors,
+            logicals,
+        }
     }
 
     /// Returns true if this mechanism has no effect (empty).
@@ -330,14 +342,20 @@ impl PartialOrd for ErrorMechanism {
 
 impl Ord for ErrorMechanism {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.detectors.cmp(&other.detectors)
+        self.detectors
+            .cmp(&other.detectors)
             .then_with(|| self.logicals.cmp(&other.logicals))
     }
 }
 
 impl fmt::Debug for ErrorMechanism {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ErrorMechanism(dets={:?}, logs={:?})", self.detectors.as_slice(), self.logicals.as_slice())
+        write!(
+            f,
+            "ErrorMechanism(dets={:?}, logs={:?})",
+            self.detectors.as_slice(),
+            self.logicals.as_slice()
+        )
     }
 }
 
@@ -702,13 +720,23 @@ impl NoiseConfig {
     /// Creates a new noise configuration.
     #[must_use]
     pub fn new(p1: f64, p2: f64, p_meas: f64, p_init: f64) -> Self {
-        Self { p1, p2, p_meas, p_init }
+        Self {
+            p1,
+            p2,
+            p_meas,
+            p_init,
+        }
     }
 
     /// Creates a uniform noise configuration.
     #[must_use]
     pub fn uniform(p: f64) -> Self {
-        Self { p1: p, p2: p, p_meas: p, p_init: p }
+        Self {
+            p1: p,
+            p2: p,
+            p_meas: p,
+            p_init: p,
+        }
     }
 }
 
@@ -741,7 +769,7 @@ impl NoiseConfig {
 /// 1. They help MWPM decoders understand correlation structure
 /// 2. They preserve information about fault sources
 ///
-/// When a Y fault has X-effect {D_x} and Z-effect {D_z} where both are non-empty
+/// When a Y fault has X-effect {`D_x`} and Z-effect {`D_z`} where both are non-empty
 /// and different, it can be represented as `{D_x} ^ {D_z}` instead of XOR-ing
 /// into a single mechanism.
 #[derive(Debug, Clone)]
@@ -843,12 +871,15 @@ impl DetectorErrorModel {
                         )
                     }
                 };
-                lines.push(format!("  {}: prob={:.6}", source_type, contrib.probability));
+                lines.push(format!(
+                    "  {}: prob={:.6}",
+                    source_type, contrib.probability
+                ));
             }
         }
 
         if lines.is_empty() {
-            format!("No contributions found for {:?}", detectors)
+            format!("No contributions found for {detectors:?}")
         } else {
             format!(
                 "Contributions for {:?} ({} total):\n{}",
@@ -867,10 +898,27 @@ impl DetectorErrorModel {
         let mut by_effect: BTreeMap<String, (usize, f64)> = BTreeMap::new();
 
         for contrib in &self.contributions {
-            let det_str: Vec<_> = contrib.effect.detectors.iter().map(|d| format!("D{d}")).collect();
-            let log_str: Vec<_> = contrib.effect.logicals.iter().map(|l| format!("L{l}")).collect();
-            let key = format!("{}{}", det_str.join(" "),
-                if log_str.is_empty() { String::new() } else { format!(" {}", log_str.join(" ")) });
+            let det_str: Vec<_> = contrib
+                .effect
+                .detectors
+                .iter()
+                .map(|d| format!("D{d}"))
+                .collect();
+            let log_str: Vec<_> = contrib
+                .effect
+                .logicals
+                .iter()
+                .map(|l| format!("L{l}"))
+                .collect();
+            let key = format!(
+                "{}{}",
+                det_str.join(" "),
+                if log_str.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", log_str.join(" "))
+                }
+            );
 
             by_effect
                 .entry(key)
@@ -883,10 +931,17 @@ impl DetectorErrorModel {
 
         let lines: Vec<_> = by_effect
             .into_iter()
-            .map(|(effect, (count, prob))| format!("  {}: {} contrib(s), total_prob={:.6}", effect, count, prob))
+            .map(|(effect, (count, prob))| {
+                format!("  {effect}: {count} contrib(s), total_prob={prob:.6}")
+            })
             .collect();
 
-        format!("Total contributions: {}\nUnique effects: {}\n{}", self.contributions.len(), lines.len(), lines.join("\n"))
+        format!(
+            "Total contributions: {}\nUnique effects: {}\n{}",
+            self.contributions.len(),
+            lines.len(),
+            lines.join("\n")
+        )
     }
 
     /// Adds a direct error contribution (X or Z channel).
@@ -934,8 +989,12 @@ impl DetectorErrorModel {
 
         // Always record as YDecomposed since the source is a Y-containing channel.
         // The distinction between Direct and YDecomposed affects output form selection.
-        self.contributions
-            .push(ErrorContribution::y_decomposed(combined, x_effect, z_effect, probability));
+        self.contributions.push(ErrorContribution::y_decomposed(
+            combined,
+            x_effect,
+            z_effect,
+            probability,
+        ));
     }
 
     /// Marks a 2-detector mechanism as having a graphlike decomposable source.
@@ -955,9 +1014,13 @@ impl DetectorErrorModel {
     }
 
     /// Returns the number of graphlike decomposable sources for a 2-detector mechanism.
+    #[must_use]
     pub fn graphlike_decomposable_count(&self, d0: u32, d1: u32) -> u32 {
         let key = if d0 < d1 { (d0, d1) } else { (d1, d0) };
-        self.graphlike_decomposable_counts.get(&key).copied().unwrap_or(0)
+        self.graphlike_decomposable_counts
+            .get(&key)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Adds a detector definition.
@@ -1017,7 +1080,11 @@ impl DetectorErrorModel {
 
             let targets = format_mechanism_targets(&effect);
             if !targets.is_empty() {
-                lines.push(format!("error({}) {}", format_probability(total_prob), targets));
+                lines.push(format!(
+                    "error({}) {}",
+                    format_probability(total_prob),
+                    targets
+                ));
             }
         }
 
@@ -1045,7 +1112,7 @@ impl DetectorErrorModel {
     /// - Otherwise, outputs decomposed forms (Di ^ Dj, Dj ^ Di) with probability split.
     ///
     /// This provides representation diversity for decoders, similar to Stim's
-    /// decompose_errors=True behavior.
+    /// `decompose_errors=True` behavior.
     #[must_use]
     pub fn to_string_decomposed(&self) -> String {
         let mut lines = Vec::new();
@@ -1188,13 +1255,17 @@ impl DetectorErrorModel {
             } else if effect.is_hyperedge() {
                 // Hyperedge (3+ detectors or 2+ logicals): try to decompose
                 let graphlike_set = self.collect_graphlike_mechanisms();
-                let decompositions = find_hyperedge_decompositions(&effect, &graphlike_set);
+                let decompositions = find_hyperedge_decompositions(effect, &graphlike_set);
 
                 if decompositions.is_empty() {
                     // No valid decomposition found - output as direct form
-                    let targets = format_mechanism_targets(&effect);
+                    let targets = format_mechanism_targets(effect);
                     if !targets.is_empty() {
-                        lines.push(format!("error({}) {}", format_probability(*total_prob), targets));
+                        lines.push(format!(
+                            "error({}) {}",
+                            format_probability(*total_prob),
+                            targets
+                        ));
                     }
                 } else {
                     // Split probability across decompositions
@@ -1205,7 +1276,11 @@ impl DetectorErrorModel {
                             .map(format_mechanism_targets)
                             .collect::<Vec<_>>()
                             .join(" ^ ");
-                        lines.push(format!("error({}) {}", format_probability(split_prob), targets));
+                        lines.push(format!(
+                            "error({}) {}",
+                            format_probability(split_prob),
+                            targets
+                        ));
                     }
                 }
             } else if effect.num_detectors() == 2 && effect.num_logicals() == 1 {
@@ -1223,8 +1298,10 @@ impl DetectorErrorModel {
                 let comp_d1 = ErrorMechanism::from_unsorted([d1], std::iter::empty());
                 let comp_d0_l0 = ErrorMechanism::from_unsorted([d0], [l0]);
 
-                let can_decompose_1 = graphlike_set.contains(&comp_d0) && graphlike_set.contains(&comp_d1_l0);
-                let can_decompose_2 = graphlike_set.contains(&comp_d1) && graphlike_set.contains(&comp_d0_l0);
+                let can_decompose_1 =
+                    graphlike_set.contains(&comp_d0) && graphlike_set.contains(&comp_d1_l0);
+                let can_decompose_2 =
+                    graphlike_set.contains(&comp_d1) && graphlike_set.contains(&comp_d0_l0);
 
                 if can_decompose_1 || can_decompose_2 {
                     // Output decomposed form
@@ -1232,27 +1309,39 @@ impl DetectorErrorModel {
                         lines.push(format!(
                             "error({}) D{} ^ D{} L{}",
                             format_probability(*total_prob),
-                            d0, d1, l0
+                            d0,
+                            d1,
+                            l0
                         ));
                     } else {
                         lines.push(format!(
                             "error({}) D{} ^ D{} L{}",
                             format_probability(*total_prob),
-                            d1, d0, l0
+                            d1,
+                            d0,
+                            l0
                         ));
                     }
                 } else {
                     // Can't decompose - output as direct form
-                    let targets = format_mechanism_targets(&effect);
+                    let targets = format_mechanism_targets(effect);
                     if !targets.is_empty() {
-                        lines.push(format!("error({}) {}", format_probability(*total_prob), targets));
+                        lines.push(format!(
+                            "error({}) {}",
+                            format_probability(*total_prob),
+                            targets
+                        ));
                     }
                 }
             } else {
                 // Other graphlike mechanism - output as direct form
-                let targets = format_mechanism_targets(&effect);
+                let targets = format_mechanism_targets(effect);
                 if !targets.is_empty() {
-                    lines.push(format!("error({}) {}", format_probability(*total_prob), targets));
+                    lines.push(format!(
+                        "error({}) {}",
+                        format_probability(*total_prob),
+                        targets
+                    ));
                 }
             }
         }
@@ -1273,7 +1362,6 @@ impl DetectorErrorModel {
         }
         graphlike
     }
-
 }
 
 impl Default for DetectorErrorModel {
@@ -1367,7 +1455,11 @@ impl Ord for MeasurementMechanism {
 
 impl fmt::Debug for MeasurementMechanism {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "MeasurementMechanism({:?})", self.measurements.as_slice())
+        write!(
+            f,
+            "MeasurementMechanism({:?})",
+            self.measurements.as_slice()
+        )
     }
 }
 
@@ -1394,16 +1486,16 @@ impl fmt::Debug for MeasurementMechanism {
 /// let mut outcomes = vec![false; num_measurements];
 /// mnm.sample_into(&mut outcomes, &mut rng);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MeasurementNoiseModel {
     /// Error mechanisms mapped to their probabilities.
-    /// Uses BTreeMap for deterministic iteration order.
+    /// Uses `BTreeMap` for deterministic iteration order.
     pub mechanisms: BTreeMap<MeasurementMechanism, f64>,
     /// Total number of measurements in the circuit.
     pub num_measurements: usize,
-    /// Optional mapping from influence map index to TickCircuit index.
+    /// Optional mapping from influence map index to `TickCircuit` index.
     /// If set, outcomes are reordered before detection event conversion.
-    /// im_to_tc[im_idx] = tc_idx
+    /// `im_to_tc`[`im_idx`] = `tc_idx`
     pub im_to_tc_order: Option<Vec<usize>>,
 }
 
@@ -1418,14 +1510,15 @@ impl MeasurementNoiseModel {
         }
     }
 
-    /// Sets the measurement order mapping from influence map to TickCircuit order.
+    /// Sets the measurement order mapping from influence map to `TickCircuit` order.
     ///
-    /// This is needed when detector definitions use TickCircuit measurement indices
+    /// This is needed when detector definitions use `TickCircuit` measurement indices
     /// but the influence map uses a different ordering.
     ///
     /// # Arguments
     ///
     /// * `im_to_tc` - Mapping where `im_to_tc[im_idx] = tc_idx`
+    #[must_use]
     pub fn with_measurement_order(mut self, im_to_tc: Vec<usize>) -> Self {
         self.im_to_tc_order = Some(im_to_tc);
         self
@@ -1501,14 +1594,14 @@ impl MeasurementNoiseModel {
     /// computes which detectors fire by XOR'ing the specified measurements for each detector.
     ///
     /// If `im_to_tc_order` is set, outcomes are first reordered from influence map
-    /// order to TickCircuit order before applying detector records.
+    /// order to `TickCircuit` order before applying detector records.
     ///
     /// # Arguments
     ///
-    /// * `outcomes` - Raw measurement outcomes in influence map order (from sample())
+    /// * `outcomes` - Raw measurement outcomes in influence map order (from `sample()`)
     /// * `detector_records` - For each detector, the list of measurement indices to XOR.
     ///   Indices can be negative (offset from end) or positive (absolute).
-    ///   These indices refer to TickCircuit measurement order.
+    ///   These indices refer to `TickCircuit` measurement order.
     ///
     /// # Returns
     ///
@@ -1536,10 +1629,7 @@ impl MeasurementNoiseModel {
     }
 
     /// Internal static helper for detection event conversion.
-    fn to_detection_events_internal(
-        outcomes: &[bool],
-        detector_records: &[Vec<i32>],
-    ) -> Vec<bool> {
+    fn to_detection_events_internal(outcomes: &[bool], detector_records: &[Vec<i32>]) -> Vec<bool> {
         let num_measurements = outcomes.len();
         let mut detection_events = Vec::with_capacity(detector_records.len());
 
@@ -1565,10 +1655,7 @@ impl MeasurementNoiseModel {
 
     /// Static version without reordering (for backwards compatibility).
     #[must_use]
-    pub fn to_detection_events(
-        outcomes: &[bool],
-        detector_records: &[Vec<i32>],
-    ) -> Vec<bool> {
+    pub fn to_detection_events(outcomes: &[bool], detector_records: &[Vec<i32>]) -> Vec<bool> {
         Self::to_detection_events_internal(outcomes, detector_records)
     }
 
@@ -1581,7 +1668,7 @@ impl MeasurementNoiseModel {
     ///
     /// # Returns
     ///
-    /// Tuple of (measurement_outcomes_in_im_order, detection_events)
+    /// Tuple of (`measurement_outcomes_in_im_order`, `detection_events`)
     pub fn sample_with_detectors<R: rand::Rng>(
         &self,
         detector_records: &[Vec<i32>],
@@ -1594,17 +1681,17 @@ impl MeasurementNoiseModel {
 
     /// Computes observable flips from measurement outcomes.
     ///
-    /// This works identically to `compute_detection_events` - XORing measurement
+    /// This works identically to `compute_detection_events` - `XORing` measurement
     /// outcomes at the specified record positions. The difference is semantic:
     /// - Detection events indicate which detectors fired (syndrome)
     /// - Observable flips indicate which logical observables were flipped
     ///
     /// # Arguments
     ///
-    /// * `outcomes` - Raw measurement outcomes in influence map order (from sample())
+    /// * `outcomes` - Raw measurement outcomes in influence map order (from `sample()`)
     /// * `observable_records` - For each observable, the list of measurement indices to XOR.
     ///   Indices can be negative (offset from end) or positive (absolute).
-    ///   These indices refer to TickCircuit measurement order.
+    ///   These indices refer to `TickCircuit` measurement order.
     ///
     /// # Returns
     ///
@@ -1632,7 +1719,7 @@ impl MeasurementNoiseModel {
     ///
     /// # Returns
     ///
-    /// Tuple of (detection_events, observable_flips)
+    /// Tuple of (`detection_events`, `observable_flips`)
     pub fn sample_for_decoding<R: rand::Rng>(
         &self,
         detector_records: &[Vec<i32>],
@@ -1659,7 +1746,7 @@ impl MeasurementNoiseModel {
     ///
     /// # Returns
     ///
-    /// Tuple of (detection_events_per_shot, observable_flips_per_shot)
+    /// Tuple of (`detection_events_per_shot`, `observable_flips_per_shot`)
     pub fn sample_batch_for_decoding<R: rand::Rng>(
         &self,
         num_shots: usize,
@@ -1671,22 +1758,13 @@ impl MeasurementNoiseModel {
         let mut all_observable_flips = Vec::with_capacity(num_shots);
 
         for _ in 0..num_shots {
-            let (det_events, obs_flips) = self.sample_for_decoding(detector_records, observable_records, rng);
+            let (det_events, obs_flips) =
+                self.sample_for_decoding(detector_records, observable_records, rng);
             all_detection_events.push(det_events);
             all_observable_flips.push(obs_flips);
         }
 
         (all_detection_events, all_observable_flips)
-    }
-}
-
-impl Default for MeasurementNoiseModel {
-    fn default() -> Self {
-        Self {
-            mechanisms: BTreeMap::new(),
-            num_measurements: 0,
-            im_to_tc_order: None,
-        }
     }
 }
 
@@ -1707,7 +1785,6 @@ pub fn combine_probabilities(p1: f64, p2: f64) -> f64 {
     p1 * (1.0 - p2) + p2 * (1.0 - p1)
 }
 
-
 /// Formats an error mechanism's targets as a string (e.g., "D0 D1 L0").
 fn format_mechanism_targets(mechanism: &ErrorMechanism) -> String {
     let mut targets = Vec::new();
@@ -1724,7 +1801,7 @@ fn format_mechanism_targets(mechanism: &ErrorMechanism) -> String {
 ///
 /// For two independent errors with probabilities p1 and p2, the combined
 /// probability of having an odd number of errors (i.e., the XOR of the effects) is:
-/// p_combined = p1*(1-p2) + p2*(1-p1)
+/// `p_combined` = p1*(1-p2) + p2*(1-p1)
 fn combine_independent_probs(p1: f64, p2: f64) -> f64 {
     // For DEM probability aggregation, we use XOR combination because
     // errors toggle detector bits - if two errors both flip the same detector,
@@ -1743,14 +1820,14 @@ fn format_probability(p: f64) -> String {
     let abs_p = p.abs();
 
     // Use scientific notation for very small or very large values
-    if abs_p < 1e-4 || abs_p >= 1e6 {
+    if (1e-4..1e6).contains(&abs_p) {
+        // Regular decimal notation
+        let formatted = format!("{p:.6}");
+        trim_trailing_zeros(&formatted)
+    } else {
         // Format with up to 6 significant figures in scientific notation
         let formatted = format!("{p:.6e}");
         // Trim trailing zeros after decimal point
-        trim_trailing_zeros(&formatted)
-    } else {
-        // Regular decimal notation
-        let formatted = format!("{p:.6}");
         trim_trailing_zeros(&formatted)
     }
 }

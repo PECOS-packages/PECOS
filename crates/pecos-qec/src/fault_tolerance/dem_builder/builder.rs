@@ -79,7 +79,7 @@ pub struct DemBuilder<'a> {
     observables: Vec<ParsedObservable>,
     /// Total number of measurements in the circuit.
     num_measurements: usize,
-    /// Optional measurement order: maps TickCircuit measurement index -> qubit.
+    /// Optional measurement order: maps `TickCircuit` measurement index -> qubit.
     /// This allows proper mapping between record offsets and influence map indices.
     measurement_order: Option<Vec<usize>>,
 }
@@ -115,14 +115,14 @@ impl<'a> DemBuilder<'a> {
     /// Sets the measurement order from the original circuit.
     ///
     /// The measurement order is a list of qubits in the order they were measured
-    /// in the original circuit (e.g., TickCircuit). This allows proper mapping
-    /// between record offsets (which use TickCircuit order) and influence map
+    /// in the original circuit (e.g., `TickCircuit`). This allows proper mapping
+    /// between record offsets (which use `TickCircuit` order) and influence map
     /// indices (which may use a different order based on DAG topology).
     ///
     /// # Arguments
     ///
     /// * `order` - List of qubit indices in measurement execution order.
-    ///             `order[i]` is the qubit measured at TickCircuit measurement index `i`.
+    ///             `order[i]` is the qubit measured at `TickCircuit` measurement index `i`.
     #[must_use]
     pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
@@ -172,10 +172,8 @@ impl<'a> DemBuilder<'a> {
     /// Use `dem.to_string()` or `dem.to_string_decomposed()` for output.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
-        let mut dem = DetectorErrorModel::with_capacity(
-            self.detectors.len(),
-            self.observables.len(),
-        );
+        let mut dem =
+            DetectorErrorModel::with_capacity(self.detectors.len(), self.observables.len());
 
         // Add detector definitions
         for det in &self.detectors {
@@ -189,8 +187,7 @@ impl<'a> DemBuilder<'a> {
 
         // Add observable definitions
         for obs in &self.observables {
-            let def = LogicalObservable::new(obs.id)
-                .with_records(obs.records.iter().copied());
+            let def = LogicalObservable::new(obs.id).with_records(obs.records.iter().copied());
             dem.add_observable(def);
         }
 
@@ -198,7 +195,11 @@ impl<'a> DemBuilder<'a> {
         let (meas_to_detectors, meas_to_observables) = self.build_measurement_mappings();
 
         // Process all fault locations with source tracking
-        self.process_fault_locations_source_tracked(&mut dem, &meas_to_detectors, &meas_to_observables);
+        self.process_fault_locations_source_tracked(
+            &mut dem,
+            &meas_to_detectors,
+            &meas_to_observables,
+        );
 
         dem
     }
@@ -222,12 +223,22 @@ impl<'a> DemBuilder<'a> {
             match loc.gate_type {
                 GateType::Prep | GateType::QAlloc => {
                     if self.noise.p_init > 0.0 && !loc.before {
-                        self.process_prep_fault_source_tracked(loc_idx, dem, meas_to_detectors, meas_to_observables);
+                        self.process_prep_fault_source_tracked(
+                            loc_idx,
+                            dem,
+                            meas_to_detectors,
+                            meas_to_observables,
+                        );
                     }
                 }
                 GateType::Measure | GateType::MeasureFree => {
                     if self.noise.p_meas > 0.0 && loc.before {
-                        self.process_meas_fault_source_tracked(loc_idx, dem, meas_to_detectors, meas_to_observables);
+                        self.process_meas_fault_source_tracked(
+                            loc_idx,
+                            dem,
+                            meas_to_detectors,
+                            meas_to_observables,
+                        );
                     }
                 }
                 GateType::CX | GateType::CZ => {
@@ -235,10 +246,23 @@ impl<'a> DemBuilder<'a> {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
                 }
-                GateType::H | GateType::SZ | GateType::SZdg | GateType::SX | GateType::SXdg
-                | GateType::SY | GateType::SYdg | GateType::X | GateType::Y | GateType::Z => {
+                GateType::H
+                | GateType::SZ
+                | GateType::SZdg
+                | GateType::SX
+                | GateType::SXdg
+                | GateType::SY
+                | GateType::SYdg
+                | GateType::X
+                | GateType::Y
+                | GateType::Z => {
                     if self.noise.p1 > 0.0 && !loc.before {
-                        self.process_single_qubit_fault_source_tracked(loc_idx, dem, meas_to_detectors, meas_to_observables);
+                        self.process_single_qubit_fault_source_tracked(
+                            loc_idx,
+                            dem,
+                            meas_to_detectors,
+                            meas_to_observables,
+                        );
                     }
                 }
                 _ => {}
@@ -270,7 +294,8 @@ impl<'a> DemBuilder<'a> {
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
         // For Z-basis prep, X error matters - this is a direct source
-        let mechanism = self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
+        let mechanism =
+            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
             dem.add_direct_contribution(mechanism, self.noise.p_init);
         }
@@ -285,7 +310,8 @@ impl<'a> DemBuilder<'a> {
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
         // Measurement error is a bit flip (X error) - this is a direct source
-        let mechanism = self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
+        let mechanism =
+            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
             dem.add_direct_contribution(mechanism, self.noise.p_meas);
         }
@@ -301,8 +327,10 @@ impl<'a> DemBuilder<'a> {
     ) {
         let prob = per_channel_probability(self.noise.p1, 3);
 
-        let x_effect = self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
-        let z_effect = self.compute_mechanism(loc_idx, Pauli::Z, meas_to_detectors, meas_to_observables);
+        let x_effect =
+            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
+        let z_effect =
+            self.compute_mechanism(loc_idx, Pauli::Z, meas_to_detectors, meas_to_observables);
 
         // X error: direct source
         if !x_effect.is_empty() {
@@ -396,10 +424,7 @@ impl<'a> DemBuilder<'a> {
                     && e1.num_detectors() <= 2
                     && e2.num_detectors() <= 2
                 {
-                    dem.mark_graphlike_decomposable(
-                        effect.detectors[0],
-                        effect.detectors[1],
-                    );
+                    dem.mark_graphlike_decomposable(effect.detectors[0], effect.detectors[1]);
                 }
 
                 // Check for intra-channel decomposition (Y-containing cases)
@@ -425,8 +450,8 @@ impl<'a> DemBuilder<'a> {
     /// Builds mappings from measurement indices to detector/observable IDs.
     ///
     /// When `measurement_order` is provided, this properly maps between
-    /// TickCircuit measurement indices (used in record offsets) and influence
-    /// map measurement indices (used in detector_idx).
+    /// `TickCircuit` measurement indices (used in record offsets) and influence
+    /// map measurement indices (used in `detector_idx`).
     ///
     /// For multi-round circuits where the same qubit is measured multiple times,
     /// we match measurements by their relative order within each qubit's measurement
@@ -437,48 +462,50 @@ impl<'a> DemBuilder<'a> {
 
         // Build a mapping from (qubit, occurrence_index) to influence_map_index
         // This handles multi-round circuits where the same qubit is measured multiple times
-        let tc_to_influence: BTreeMap<usize, usize> = if let Some(ref order) = self.measurement_order
-        {
-            // Count occurrences of each qubit in TickCircuit order
-            let mut tc_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
-            let mut tc_qubit_occurrence: Vec<(usize, usize)> = Vec::with_capacity(order.len());
+        let tc_to_influence: BTreeMap<usize, usize> =
+            if let Some(ref order) = self.measurement_order {
+                // Count occurrences of each qubit in TickCircuit order
+                let mut tc_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut tc_qubit_occurrence: Vec<(usize, usize)> = Vec::with_capacity(order.len());
 
-            for &qubit in order {
-                let count = tc_qubit_counts.entry(qubit).or_insert(0);
-                tc_qubit_occurrence.push((qubit, *count));
-                *count += 1;
-            }
+                for &qubit in order {
+                    let count = tc_qubit_counts.entry(qubit).or_insert(0);
+                    tc_qubit_occurrence.push((qubit, *count));
+                    *count += 1;
+                }
 
-            // Count occurrences of each qubit in influence map order
-            let mut im_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
-            let mut im_qubit_occurrence: Vec<(usize, usize)> =
-                Vec::with_capacity(self.influence_map.measurements.len());
+                // Count occurrences of each qubit in influence map order
+                let mut im_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut im_qubit_occurrence: Vec<(usize, usize)> =
+                    Vec::with_capacity(self.influence_map.measurements.len());
 
-            for &(_, qubit, _) in &self.influence_map.measurements {
-                let count = im_qubit_counts.entry(qubit).or_insert(0);
-                im_qubit_occurrence.push((qubit, *count));
-                *count += 1;
-            }
+                for &(_, qubit, _) in &self.influence_map.measurements {
+                    let count = im_qubit_counts.entry(qubit).or_insert(0);
+                    im_qubit_occurrence.push((qubit, *count));
+                    *count += 1;
+                }
 
-            // Build (qubit, occurrence) -> influence_map_index mapping
-            let qubit_occ_to_im: BTreeMap<(usize, usize), usize> = im_qubit_occurrence
-                .iter()
-                .enumerate()
-                .map(|(idx, &(qubit, occ))| ((qubit, occ), idx))
-                .collect();
+                // Build (qubit, occurrence) -> influence_map_index mapping
+                let qubit_occ_to_im: BTreeMap<(usize, usize), usize> = im_qubit_occurrence
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, &(qubit, occ))| ((qubit, occ), idx))
+                    .collect();
 
-            // Build TickCircuit index -> influence map index mapping
-            tc_qubit_occurrence
-                .iter()
-                .enumerate()
-                .filter_map(|(tc_idx, &(qubit, occ))| {
-                    qubit_occ_to_im.get(&(qubit, occ)).map(|&im_idx| (tc_idx, im_idx))
-                })
-                .collect()
-        } else {
-            // No measurement order provided, assume indices match
-            (0..self.num_measurements).map(|i| (i, i)).collect()
-        };
+                // Build TickCircuit index -> influence map index mapping
+                tc_qubit_occurrence
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(tc_idx, &(qubit, occ))| {
+                        qubit_occ_to_im
+                            .get(&(qubit, occ))
+                            .map(|&im_idx| (tc_idx, im_idx))
+                    })
+                    .collect()
+            } else {
+                // No measurement order provided, assume indices match
+                (0..self.num_measurements).map(|i| (i, i)).collect()
+            };
 
         for det in &self.detectors {
             for &rec in &det.records {
@@ -487,7 +514,10 @@ impl<'a> DemBuilder<'a> {
 
                 // Map to influence map index
                 if let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx) {
-                    meas_to_detectors.entry(influence_idx).or_default().push(det.id);
+                    meas_to_detectors
+                        .entry(influence_idx)
+                        .or_default()
+                        .push(det.id);
                 }
             }
         }
@@ -497,14 +527,16 @@ impl<'a> DemBuilder<'a> {
                 let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
 
                 if let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx) {
-                    meas_to_observables.entry(influence_idx).or_default().push(obs.id);
+                    meas_to_observables
+                        .entry(influence_idx)
+                        .or_default()
+                        .push(obs.id);
                 }
             }
         }
 
         (meas_to_detectors, meas_to_observables)
     }
-
 
     /// Computes the error mechanism for a fault at the given location and Pauli type.
     fn compute_mechanism(
@@ -515,7 +547,9 @@ impl<'a> DemBuilder<'a> {
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) -> ErrorMechanism {
         // Get the Rust detector indices that this fault flips
-        let rust_dets = self.influence_map.get_detector_indices(loc_idx, pauli.as_u8());
+        let rust_dets = self
+            .influence_map
+            .get_detector_indices(loc_idx, pauli.as_u8());
 
         // Convert to pre-defined detector IDs using XOR
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
@@ -631,7 +665,7 @@ fn get_y_decomposition(p1: u8, p2: u8) -> Option<(u8, u8, u8, u8)> {
         (2, 2) => Some((1, 1, 3, 3)), // YY -> XX ^ ZZ
         (2, 3) => Some((1, 3, 3, 0)), // YZ -> XZ ^ ZI
         (3, 2) => Some((3, 1, 0, 3)), // ZY -> ZX ^ IZ
-        _ => None,                     // No Y involved
+        _ => None,                    // No Y involved
     }
 }
 
@@ -691,7 +725,11 @@ fn parse_single_detector(json: &str) -> Result<ParsedDetector, DemBuilderError> 
     let coords = extract_coords(json);
     let records = extract_records(json);
 
-    Ok(ParsedDetector { id, coords, records })
+    Ok(ParsedDetector {
+        id,
+        coords,
+        records,
+    })
 }
 
 /// Parses observable definitions from JSON.
@@ -779,14 +817,14 @@ fn extract_coords(json: &str) -> Option<[f64; 3]> {
 fn extract_records(json: &str) -> Vec<i32> {
     if let Some(pos) = json.find("\"records\"") {
         let rest = &json[pos..];
-        if let Some(bracket_start) = rest.find('[') {
-            if let Some(bracket_end) = rest.find(']') {
-                let array_str = &rest[bracket_start + 1..bracket_end];
-                return array_str
-                    .split(',')
-                    .filter_map(|s| s.trim().parse().ok())
-                    .collect();
-            }
+        if let Some(bracket_start) = rest.find('[')
+            && let Some(bracket_end) = rest.find(']')
+        {
+            let array_str = &rest[bracket_start + 1..bracket_end];
+            return array_str
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
         }
     }
     Vec::new()
@@ -862,10 +900,10 @@ mod tests {
         xor_toggle_4(&mut vec, 2);
         assert_eq!(vec.as_slice(), &[1, 2]);
 
-        xor_toggle_4(&mut vec, 1);  // Toggle off
+        xor_toggle_4(&mut vec, 1); // Toggle off
         assert_eq!(vec.as_slice(), &[2]);
 
-        xor_toggle_4(&mut vec, 2);  // Toggle off
+        xor_toggle_4(&mut vec, 2); // Toggle off
         assert!(vec.is_empty());
     }
 

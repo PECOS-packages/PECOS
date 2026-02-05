@@ -17,16 +17,28 @@ Functions:
     parity_matrix_z: Generate Z parity check matrix
 """
 
-from pecos.qec.surface.layouts import (
-    StabilizerSupport,
-    compute_rotated_x_stabilizers,
-    compute_rotated_z_stabilizers,
-    compute_x_stabilizer_supports,
-    compute_z_stabilizer_supports,
-    generate_nonrotated_surface_layout,
-    generate_surface_layout,
-    get_rotated_logical_x,
-    get_rotated_logical_z,
+# Circuit generation from geometry (unified abstraction)
+from pecos.qec.surface.circuit_builder import (
+    CircuitOp,
+    DagCircuitRenderer,
+    GuppyRenderer,
+    OpType,
+    QubitAllocation,
+    StimRenderer,
+    TickCircuitRenderer,
+    build_surface_code_circuit,
+    generate_dag_circuit_from_patch,
+    generate_dem_from_tick_circuit,
+    generate_dem_from_tick_circuit_via_autodetection,
+    generate_dem_from_tick_circuit_via_pauli_frame,
+    generate_dem_from_tick_circuit_via_stim,
+    generate_guppy_from_patch,
+    generate_stim_from_patch,
+    generate_tick_circuit_from_patch,
+    tick_circuit_to_stim,
+)
+from pecos.qec.surface.circuit_builder import (
+    generate_dem_from_patch as generate_dem_from_patch_stim,
 )
 from pecos.qec.surface.decode import (
     DecoderType,
@@ -44,6 +56,17 @@ from pecos.qec.surface.decode import (
     run_noisy_memory_experiment,
     syndromes_to_detection_events,
 )
+from pecos.qec.surface.layouts import (
+    StabilizerSupport,
+    compute_rotated_x_stabilizers,
+    compute_rotated_z_stabilizers,
+    compute_x_stabilizer_supports,
+    compute_z_stabilizer_supports,
+    generate_nonrotated_surface_layout,
+    generate_surface_layout,
+    get_rotated_logical_x,
+    get_rotated_logical_z,
+)
 from pecos.qec.surface.parity import (
     parity_matrix_x,
     parity_matrix_z,
@@ -60,28 +83,6 @@ from pecos.qec.surface.plot import plot_patch, plot_surface_code
 from pecos.qec.surface.schedule import (
     compute_cnot_schedule,
     get_stab_schedule,
-)
-
-# Circuit generation from geometry (unified abstraction)
-from pecos.qec.surface.circuit_builder import (
-    CircuitOp,
-    DagCircuitRenderer,
-    GuppyRenderer,
-    OpType,
-    QubitAllocation,
-    StimRenderer,
-    TickCircuitRenderer,
-    build_surface_code_circuit,
-    generate_dag_circuit_from_patch,
-    generate_dem_from_patch as generate_dem_from_patch_stim,
-    generate_dem_from_tick_circuit,
-    generate_dem_from_tick_circuit_via_autodetection,
-    generate_dem_from_tick_circuit_via_pauli_frame,
-    generate_dem_from_tick_circuit_via_stim,
-    generate_guppy_from_patch,
-    generate_stim_from_patch,
-    generate_tick_circuit_from_patch,
-    tick_circuit_to_stim,
 )
 
 __all__ = [  # noqa: RUF022
@@ -127,4 +128,22 @@ __all__ = [  # noqa: RUF022
     # Visualization
     "plot_patch",
     "plot_surface_code",
+    # Circuit generation (unified abstraction)
+    "CircuitOp",
+    "DagCircuitRenderer",
+    "GuppyRenderer",
+    "OpType",
+    "QubitAllocation",
+    "StimRenderer",
+    "TickCircuitRenderer",
+    "build_surface_code_circuit",
+    "generate_dag_circuit_from_patch",
+    "generate_dem_from_tick_circuit",
+    "generate_dem_from_tick_circuit_via_autodetection",
+    "generate_dem_from_tick_circuit_via_pauli_frame",
+    "generate_dem_from_tick_circuit_via_stim",
+    "generate_guppy_from_patch",
+    "generate_stim_from_patch",
+    "generate_tick_circuit_from_patch",
+    "tick_circuit_to_stim",
 ]

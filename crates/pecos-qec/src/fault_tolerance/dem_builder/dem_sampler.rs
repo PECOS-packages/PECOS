@@ -74,7 +74,10 @@ impl DemMechanism {
     fn new(mut detectors: SmallVec<[u32; 4]>, mut observables: SmallVec<[u32; 2]>) -> Self {
         detectors.sort_unstable();
         observables.sort_unstable();
-        Self { detectors, observables }
+        Self {
+            detectors,
+            observables,
+        }
     }
 
     fn empty() -> Self {
@@ -522,7 +525,11 @@ impl DemSampler {
 
             let valid_bits = if word_idx == num_words - 1 {
                 let remaining = num_shots % BITS_PER_WORD;
-                if remaining == 0 { !0u64 } else { (1u64 << remaining) - 1 }
+                if remaining == 0 {
+                    !0u64
+                } else {
+                    (1u64 << remaining) - 1
+                }
             } else {
                 !0u64
             };
@@ -776,7 +783,11 @@ impl DemSampler {
                 // Check threshold for each bit position in the word
                 let shots_in_word = if word_idx == num_words - 1 {
                     let remaining = num_shots % BITS_PER_WORD;
-                    if remaining == 0 { BITS_PER_WORD } else { remaining }
+                    if remaining == 0 {
+                        BITS_PER_WORD
+                    } else {
+                        remaining
+                    }
                 } else {
                     BITS_PER_WORD
                 };
@@ -936,7 +947,11 @@ impl DemSampler {
                     // Determine shots in this word
                     let shots_in_word = if word_idx == num_words - 1 {
                         let remaining = num_shots % BITS_PER_WORD;
-                        if remaining == 0 { BITS_PER_WORD } else { remaining }
+                        if remaining == 0 {
+                            BITS_PER_WORD
+                        } else {
+                            remaining
+                        }
                     } else {
                         BITS_PER_WORD
                     };
@@ -1180,7 +1195,8 @@ impl DemSampler {
                 }
 
                 // Create thread-local RNG with deterministic seed based on chunk
-                let chunk_seed = seed.wrapping_add((chunk_idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                let chunk_seed =
+                    seed.wrapping_add((chunk_idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
                 let mut rng = PecosRng::seed_from_u64(chunk_seed);
 
                 // Use geometric sampling for this chunk
@@ -1244,7 +1260,11 @@ impl DemSampler {
 
             let valid_bits = if word_idx == num_words - 1 {
                 let remaining = num_shots % BITS_PER_WORD;
-                if remaining == 0 { !0u64 } else { (1u64 << remaining) - 1 }
+                if remaining == 0 {
+                    !0u64
+                } else {
+                    (1u64 << remaining) - 1
+                }
             } else {
                 !0u64
             };
@@ -1618,8 +1638,10 @@ impl<'a> DemSamplerBuilder<'a> {
         let mut effects2: [Option<DemMechanism>; 4] = [None, None, None, None];
 
         for &p in &[Pauli::X, Pauli::Y, Pauli::Z] {
-            effects1[p as usize] = Some(self.compute_mechanism(loc1, p, im_to_tc, num_tc_measurements));
-            effects2[p as usize] = Some(self.compute_mechanism(loc2, p, im_to_tc, num_tc_measurements));
+            effects1[p as usize] =
+                Some(self.compute_mechanism(loc1, p, im_to_tc, num_tc_measurements));
+            effects2[p as usize] =
+                Some(self.compute_mechanism(loc2, p, im_to_tc, num_tc_measurements));
         }
 
         // Process all 15 non-trivial Pauli combinations
@@ -1631,10 +1653,14 @@ impl<'a> DemSamplerBuilder<'a> {
 
                 let mechanism = if p1 == Pauli::I {
                     // IX, IY, IZ - only second qubit
-                    effects2[p2 as usize].clone().unwrap_or_else(DemMechanism::empty)
+                    effects2[p2 as usize]
+                        .clone()
+                        .unwrap_or_else(DemMechanism::empty)
                 } else if p2 == Pauli::I {
                     // XI, YI, ZI - only first qubit
-                    effects1[p1 as usize].clone().unwrap_or_else(DemMechanism::empty)
+                    effects1[p1 as usize]
+                        .clone()
+                        .unwrap_or_else(DemMechanism::empty)
                 } else {
                     // Correlated: XOR the detector/observable effects
                     let e1 = effects1[p1 as usize].as_ref();
@@ -1659,7 +1685,9 @@ impl<'a> DemSamplerBuilder<'a> {
         num_tc_measurements: usize,
     ) -> DemMechanism {
         // Get measurement indices that flip (in IM order)
-        let im_meas_flips = self.influence_map.get_detector_indices(loc_idx, pauli as u8);
+        let im_meas_flips = self
+            .influence_map
+            .get_detector_indices(loc_idx, pauli as u8);
 
         // Convert to TC order measurement outcomes
         let mut tc_outcomes = vec![false; num_tc_measurements];
@@ -1739,7 +1767,10 @@ fn xor_mechanisms(a: Option<&DemMechanism>, b: Option<&DemMechanism>) -> DemMech
         (Some(m1), Some(m2)) => {
             let detectors = xor_u32_vecs::<4>(&m1.detectors, &m2.detectors);
             let observables = xor_u32_vecs::<2>(&m1.observables, &m2.observables);
-            DemMechanism { detectors, observables }
+            DemMechanism {
+                detectors,
+                observables,
+            }
         }
         (Some(m), None) | (None, Some(m)) => m.clone(),
         (None, None) => DemMechanism::empty(),
@@ -1979,7 +2010,7 @@ mod tests {
 
         // Define detector on the measurement
         let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
-        let observables_json = r#"[]"#;
+        let observables_json = r"[]";
 
         let sampler = DemSamplerBuilder::new(&influence_map)
             .with_noise(0.1, 0.1, 0.1, 0.1)
@@ -2041,9 +2072,7 @@ mod tests {
         // Allow 5% tolerance for statistical variance
         assert!(
             (rate1 - rate2).abs() < 0.05,
-            "Syndrome rates differ too much: {} vs {}",
-            rate1,
-            rate2
+            "Syndrome rates differ too much: {rate1} vs {rate2}"
         );
     }
 
@@ -2064,7 +2093,7 @@ mod tests {
         let influence_map = analyzer.build_influence_map();
 
         let sampler = DemSamplerBuilder::new(&influence_map)
-            .with_noise(0.5, 0.0, 0.0, 0.0)  // High noise rate for testing
+            .with_noise(0.5, 0.0, 0.0, 0.0) // High noise rate for testing
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![])
             .build();
@@ -2074,8 +2103,8 @@ mod tests {
         let (det_cols, obs_cols) = sampler.sample_batch_columnar_accurate(num_shots, &mut rng);
 
         // Verify output dimensions
-        assert_eq!(det_cols.len(), 1);  // 1 detector
-        assert_eq!(obs_cols.len(), 0);  // 0 observables
+        assert_eq!(det_cols.len(), 1); // 1 detector
+        assert_eq!(obs_cols.len(), 0); // 0 observables
 
         // Each column should have ceil(100/64) = 2 words
         assert_eq!(det_cols[0].len(), 2);
@@ -2117,9 +2146,7 @@ mod tests {
         let rate2 = stats2.syndrome_rate();
         assert!(
             (rate1 - rate2).abs() < 0.05,
-            "SIMD syndrome rates differ too much: {} vs {}",
-            rate1,
-            rate2
+            "SIMD syndrome rates differ too much: {rate1} vs {rate2}"
         );
     }
 
@@ -2166,10 +2193,7 @@ mod tests {
         };
         assert!(
             relative_diff < 0.2,
-            "Geometric syndrome rates differ too much: {} vs {} (rel diff: {})",
-            rate1,
-            rate2,
-            relative_diff
+            "Geometric syndrome rates differ too much: {rate1} vs {rate2} (rel diff: {relative_diff})"
         );
     }
 
@@ -2276,10 +2300,7 @@ mod tests {
         };
         assert!(
             relative_diff < 0.3,
-            "Parallel syndrome rates differ too much: {} vs {} (rel diff: {})",
-            rate_seq,
-            rate_par,
-            relative_diff
+            "Parallel syndrome rates differ too much: {rate_seq} vs {rate_par} (rel diff: {relative_diff})"
         );
     }
 
@@ -2313,18 +2334,14 @@ mod tests {
         let rate = stats.syndrome_rate();
         assert!(
             (rate - 0.5).abs() < 0.05,
-            "Syndrome rate {} should be close to 0.5",
-            rate
+            "Syndrome rate {rate} should be close to 0.5"
         );
     }
 
     #[test]
     fn test_from_mechanisms_multiple_detectors() {
         // Two mechanisms: D0 with p=0.1, D1 with p=0.2
-        let mechanisms = vec![
-            (0.1, vec![0u32], vec![]),
-            (0.2, vec![1u32], vec![]),
-        ];
+        let mechanisms = vec![(0.1, vec![0u32], vec![]), (0.2, vec![1u32], vec![])];
         let sampler = DemSampler::from_mechanisms(mechanisms, 2, 0);
 
         assert_eq!(sampler.num_mechanisms(), 2);
@@ -2335,8 +2352,7 @@ mod tests {
         let rate = stats.syndrome_rate();
         assert!(
             (rate - 0.28).abs() < 0.05,
-            "Syndrome rate {} should be close to 0.28",
-            rate
+            "Syndrome rate {rate} should be close to 0.28"
         );
     }
 
@@ -2354,8 +2370,7 @@ mod tests {
         let rate = stats.syndrome_rate();
         assert!(
             (rate - 0.3).abs() < 0.05,
-            "Syndrome rate {} should be close to 0.3",
-            rate
+            "Syndrome rate {rate} should be close to 0.3"
         );
     }
 
@@ -2363,10 +2378,7 @@ mod tests {
     fn test_from_mechanisms_xor_cancellation() {
         // Two mechanisms that both flip D0 with the same probability
         // When both fire, they XOR and cancel
-        let mechanisms = vec![
-            (0.5, vec![0u32], vec![]),
-            (0.5, vec![0u32], vec![]),
-        ];
+        let mechanisms = vec![(0.5, vec![0u32], vec![]), (0.5, vec![0u32], vec![])];
         let sampler = DemSampler::from_mechanisms(mechanisms, 1, 0);
 
         // With two independent p=0.5 mechanisms that both flip D0:
@@ -2375,8 +2387,7 @@ mod tests {
         let rate = stats.syndrome_rate();
         assert!(
             (rate - 0.5).abs() < 0.05,
-            "Syndrome rate {} should be close to 0.5 due to XOR",
-            rate
+            "Syndrome rate {rate} should be close to 0.5 due to XOR"
         );
     }
 
@@ -2393,8 +2404,7 @@ mod tests {
         let logical_rate = stats.logical_error_rate();
         assert!(
             (logical_rate - 0.1).abs() < 0.03,
-            "Logical error rate {} should be close to 0.1",
-            logical_rate
+            "Logical error rate {logical_rate} should be close to 0.1"
         );
     }
 
@@ -2409,8 +2419,7 @@ mod tests {
         let rate = stats.syndrome_rate();
         assert!(
             (rate - 0.0001).abs() < 0.001,
-            "Syndrome rate {} should be close to 0.0001",
-            rate
+            "Syndrome rate {rate} should be close to 0.0001"
         );
     }
 

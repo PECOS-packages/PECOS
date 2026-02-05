@@ -35,7 +35,7 @@ use pecos_core::gate_type::GateType;
 use pecos_quantum::hugr_convert::{
     hugr_op_to_gate_type, is_rotation_gate, try_extract_rotation_angle,
 };
-use tket::hugr::ops::OpType;
+use tket::hugr::ops::{DataflowOpTrait, OpType};
 use tket::hugr::{Hugr, HugrView, Node};
 
 use super::types::{
@@ -334,14 +334,20 @@ pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
             // Find quantum operations inside the TailLoop
             let quantum_ops = find_quantum_ops_in_block(hugr, node);
             let call_nodes = find_call_nodes_in_block(hugr, node);
+            let extension_ops: BTreeSet<Node> = find_extension_ops_in_block(hugr, node)
+                .into_iter()
+                .collect();
+            let classical_ops = find_classical_ops_in_block(hugr, node);
 
             debug!(
-                "Found TailLoop node {:?} with {} inputs, {} outputs, {} quantum ops, {} calls",
+                "Found TailLoop node {:?} with {} inputs, {} outputs, {} quantum ops, {} calls, {} extension ops, {} classical ops",
                 node,
                 num_inputs,
                 num_outputs,
                 quantum_ops.len(),
-                call_nodes.len()
+                call_nodes.len(),
+                extension_ops.len(),
+                classical_ops.len()
             );
 
             tailloops.insert(
@@ -355,6 +361,8 @@ pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
                     rest_count,
                     quantum_ops,
                     call_nodes,
+                    extension_ops,
+                    classical_ops,
                     num_inputs,
                     num_outputs,
                 },
@@ -650,11 +658,14 @@ pub fn extract_classical_ops(hugr: &Hugr) -> BTreeMap<Node, ClassicalOp> {
             },
             // Prelude extension (tuples, etc.)
             "prelude" => {
-                let num_inputs = hugr.num_inputs(node);
-                let num_outputs = hugr.num_outputs(node);
+                // Use signature for dataflow port counts, not hugr.num_inputs/outputs
+                // which may include order edges
+                let sig = ext_op.signature();
+                let sig_inputs = sig.input().len();
+                let sig_outputs = sig.output().len();
                 match op_name.as_str() {
-                    "MakeTuple" => (ClassicalOpType::MakeTuple, num_inputs, 1, None),
-                    "UnpackTuple" => (ClassicalOpType::UnpackTuple, 1, num_outputs, None),
+                    "MakeTuple" => (ClassicalOpType::MakeTuple, sig_inputs, 1, None),
+                    "UnpackTuple" => (ClassicalOpType::UnpackTuple, 1, sig_outputs, None),
                     _ => continue,
                 }
             }

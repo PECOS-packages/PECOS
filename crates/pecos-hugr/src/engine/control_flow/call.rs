@@ -106,6 +106,10 @@ impl HugrEngine {
                 // This is critical for nested function calls
                 self.check_cfg_block_completion(hugr, call_node);
 
+                // Check if this Call completion allows a TailLoop body to complete
+                // This is critical for Calls inside TailLoops (e.g., range functions)
+                self.check_tailloop_body_completion(hugr, call_node);
+
                 // Add Call's successors to work queue
                 for succ_node in hugr.output_neighbours(call_node) {
                     if (self.quantum_ops.contains_key(&succ_node)

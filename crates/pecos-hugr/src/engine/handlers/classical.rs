@@ -525,13 +525,13 @@ impl HugrEngine {
                 // Convert opaque bool to Sum type
                 let input_value = self.get_input_value(hugr, node, 0);
                 debug!("tket.bool.read at {:?}: input_value={:?}", node, input_value);
-                
+
                 // If the input value is not available (e.g., measurement result pending),
                 // defer this operation by returning false. It will be retried later
                 // when the measurement result is available.
                 let Some(input_val) = input_value else {
                     debug!("tket.bool.read at {:?}: deferring - input not ready", node);
-                                        // Track this node so it can be retried when measurement results arrive
+                    // Track this node so it can be retried when measurement results arrive
                     self.pending_bool_reads.insert(node);
                     return false;
                 };
@@ -543,7 +543,7 @@ impl HugrEngine {
                 self.wire_state.classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
                 debug!("tket.bool.read: {value}");
-                                true
+                true
             }
             _ => {
                 debug!("Unknown tket.bool operation: {op_name}");

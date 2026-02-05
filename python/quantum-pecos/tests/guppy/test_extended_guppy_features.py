@@ -393,7 +393,7 @@ class TestControlFlow:
                     expected_pattern,
                 ), f"Pattern mismatch: {shot_result}"
 
-    @pytest.mark.skip(reason="While loops with quantum ops return empty results in HUGR interpreter")
+    @pytest.mark.skip(reason="While loops with compound conditions need more work in HUGR interpreter")
     def test_while_with_quantum(self, tester: ExtendedGuppyTester) -> None:
         """Test while loops with quantum operations."""
 

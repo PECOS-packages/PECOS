@@ -52,6 +52,7 @@ mod classical;
 mod debug;
 mod futures;
 mod guppy;
+mod prelude;
 mod quantum;
 mod qsystem;
 mod result;
@@ -122,6 +123,7 @@ impl HugrEngine {
             "arithmetic.float" => self.handle_float_op(hugr, node, &op_name),
             "arithmetic.int" => self.handle_int_op(hugr, node, &op_name),
             "arithmetic.conversions" => self.handle_conversions_op(hugr, node, &op_name),
+            "prelude" => self.handle_prelude_op(hugr, node, &op_name),
             _ => false,
         }
     }

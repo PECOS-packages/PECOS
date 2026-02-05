@@ -310,8 +310,6 @@ impl HugrEngine {
         // Find which CFG block (if any) this node belongs to
         let mut block_completions = Vec::new();
 
-        eprintln!("[DEBUG] check_cfg_block_completion: processed_node={processed_node:?}, active_cfgs={}", self.active_cfgs.len());
-
         for (cfg_node, active_cfg) in &self.active_cfgs {
             let cfg_info = match self.cfgs.get(cfg_node) {
                 Some(info) => info.clone(),
@@ -320,37 +318,32 @@ impl HugrEngine {
 
             // Check the current block
             if let Some(block_info) = cfg_info.blocks.get(&active_cfg.current_block) {
-                eprintln!("[DEBUG] Checking block {:?}: bool_ops={:?}", active_cfg.current_block, block_info.bool_ops);
-
-                // Check if this block has tracked ops (quantum, call, conditional, bool, extension, tailloop)
-                let has_tracked_ops = !block_info.quantum_ops.is_empty()
+                // Check if this block has "heavyweight" tracked ops that drive completion
+                // Quantum, calls, conditionals, bool, and tailloops are heavyweight
+                // Extension_ops alone with classical_ops should wait for classical_ops
+                let has_heavyweight_ops = !block_info.quantum_ops.is_empty()
                     || !block_info.call_nodes.is_empty()
                     || !block_info.conditional_nodes.is_empty()
                     || !block_info.bool_ops.is_empty()
-                    || !block_info.extension_ops.is_empty()
                     || !block_info.tailloop_nodes.is_empty();
 
                 // Check if the processed node is in this block
-                // For blocks with tracked ops, we check all tracked categories
-                // For blocks with ONLY classical ops, we track classical ops
-                let is_in_block = if has_tracked_ops {
+                let is_in_block = if has_heavyweight_ops {
                     block_info.quantum_ops.contains(&processed_node)
                         || block_info.call_nodes.contains(&processed_node)
                         || block_info.conditional_nodes.contains(&processed_node)
                         || block_info.bool_ops.contains(&processed_node)
-                        || block_info.extension_ops.contains(&processed_node)
                         || block_info.tailloop_nodes.contains(&processed_node)
                 } else {
-                    // Block has only classical ops - track those for completion
-                    block_info.classical_ops.contains(&processed_node)
+                    // Blocks with only extension_ops and/or classical_ops
+                    block_info.extension_ops.contains(&processed_node)
+                        || block_info.classical_ops.contains(&processed_node)
                 };
 
-                eprintln!("[DEBUG] is_in_block={is_in_block} for {processed_node:?}");
-
                 if is_in_block {
-                    // Check completion based on what type of block this is
-                    let block_complete = if has_tracked_ops {
-                        // Block with tracked ops: wait for all tracked op types
+                    // Check completion based on block type
+                    let block_complete = if has_heavyweight_ops {
+                        // Heavyweight ops drive completion - don't wait for classical_ops
                         let all_quantum_done = block_info
                             .quantum_ops
                             .iter()
@@ -376,19 +369,25 @@ impl HugrEngine {
                             .iter()
                             .all(|tl| self.processed.contains(tl));
 
-                        eprintln!("[DEBUG] Block completion check: quantum={all_quantum_done}, calls={all_calls_done}, conds={all_conditionals_done}, bools={all_bools_done}, exts={all_extensions_done}, tailloops={all_tailloops_done}");
-                        eprintln!("[DEBUG] processed contains {processed_node:?}? {}", self.processed.contains(&processed_node));
-
-                        all_quantum_done && all_calls_done && all_conditionals_done && all_bools_done && all_extensions_done && all_tailloops_done
+                        all_quantum_done
+                            && all_calls_done
+                            && all_conditionals_done
+                            && all_bools_done
+                            && all_extensions_done
+                            && all_tailloops_done
                     } else {
-                        // Classical-only block: wait for classical ops
-                        block_info
+                        // Extension_ops and/or classical_ops only - wait for all
+                        let all_extensions_done = block_info
+                            .extension_ops
+                            .iter()
+                            .all(|op| self.processed.contains(op));
+                        let all_classical_done = block_info
                             .classical_ops
                             .iter()
-                            .all(|op| self.processed.contains(op))
-                    };
+                            .all(|op| self.processed.contains(op));
 
-                    eprintln!("[DEBUG] block_complete={block_complete}");
+                        all_extensions_done && all_classical_done
+                    };
 
                     if block_complete {
                         block_completions.push((
@@ -402,7 +401,6 @@ impl HugrEngine {
         }
 
         // Handle block completions
-        eprintln!("[DEBUG] block_completions.len() = {}", block_completions.len());
         for (cfg_node, completed_block, successors) in block_completions {
             debug!(
                 "CFG {:?} block {:?} complete, {} successors",
@@ -410,8 +408,6 @@ impl HugrEngine {
                 completed_block,
                 successors.len()
             );
-            eprintln!("[DEBUG] Block {completed_block:?} complete, {} successors: {successors:?}", successors.len());
-
             debug!(
                 "[TRACE] Block {:?} complete, {} successors: {:?}",
                 completed_block,
@@ -421,23 +417,18 @@ impl HugrEngine {
 
             if successors.is_empty() {
                 // No successors - this block leads to exit
-                eprintln!("[DEBUG] No successors, completing CFG");
                 self.complete_cfg_execution(hugr, cfg_node, completed_block);
             } else if successors.len() == 1 {
                 // Single successor - no branching needed
                 debug!(" Single successor, transitioning to {:?}", successors[0]);
-                eprintln!("[DEBUG] Single successor, transitioning to {:?}", successors[0]);
                 self.transition_to_cfg_successor(hugr, cfg_node, completed_block, successors[0]);
             } else {
                 // Multiple successors - need to resolve branch
                 let branch_result = self.try_resolve_cfg_block_branch(hugr, completed_block);
                 debug!(" Resolving branch for {completed_block:?}: {branch_result:?}");
-                eprintln!("[DEBUG] Resolving branch for {completed_block:?}: {branch_result:?}");
                 if let Some(branch_idx) = branch_result {
-                    eprintln!("[DEBUG] Branch resolved to {branch_idx}, successors.len()={}", successors.len());
                     if branch_idx < successors.len() {
                         let next_block = successors[branch_idx];
-                        eprintln!("[DEBUG] Transitioning to {next_block:?}");
                         self.transition_to_cfg_successor(
                             hugr,
                             cfg_node,
@@ -464,7 +455,6 @@ impl HugrEngine {
                     debug!(
                         "[TRACE] Adding block {completed_block:?} to pending_cfg_branches (branch not resolved)"
                     );
-                    eprintln!("[DEBUG] Branch not resolved for {completed_block:?}, adding to pending");
                     let block_key = (cfg_node, completed_block);
                     self.pending_cfg_branches
                         .insert(block_key, successors.clone());
@@ -639,18 +629,15 @@ impl HugrEngine {
             let num_bool_ops = block_info.bool_ops.len();
             let num_tailloops = block_info.tailloop_nodes.len();
             debug!("[TRACE] Activated block {to_block:?} with {num_ops} ops, {num_calls} calls, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops");
-            eprintln!("[DEBUG] Activated block {to_block:?}: quantum={num_ops}, calls={num_calls}, conds={num_conditionals}, bools={num_bool_ops}, tailloops={num_tailloops}");
 
             // Handle blocks with no operations - immediately complete and transition
             // IMPORTANT: Also check for extension_ops and classical_ops, not just quantum/bool/conditional
             let has_extension_ops = !extension_ops.is_empty();
             let has_classical_ops = !block_info.classical_ops.is_empty();
             let has_tailloops = !block_info.tailloop_nodes.is_empty();
-            eprintln!("[DEBUG] Block {to_block:?}: extension_ops={has_extension_ops}, classical_ops={has_classical_ops}, tailloops={has_tailloops}");
 
             if num_ops == 0 && num_calls == 0 && num_conditionals == 0 && num_bool_ops == 0
                 && !has_extension_ops && !has_classical_ops && !has_tailloops {
-                eprintln!("[DEBUG] Block {to_block:?} is empty, successors={:?}, exit_block={:?}", block_info.successors, cfg_info.exit_block);
                 debug!(
                     "[TRACE] Block {to_block:?} has 0 ops and 0 calls, trying to resolve branch"
                 );
@@ -662,24 +649,19 @@ impl HugrEngine {
 
                 // Get successors for this block
                 let successors = block_info.successors.clone();
-                eprintln!("[DEBUG] Empty block {to_block:?}: successors.len()={}", successors.len());
                 if successors.is_empty() {
                     // No successors - exit block
-                    eprintln!("[DEBUG] Empty block {to_block:?}: no successors, completing CFG");
                     self.complete_cfg_execution(hugr, cfg_node, to_block);
                 } else if successors.len() == 1 {
                     // Single successor - transition immediately
                     let next_block = successors[0];
-                    eprintln!("[DEBUG] Empty block {to_block:?}: single successor {next_block:?}, exit_block={:?}", cfg_info.exit_block);
                     // Check if successor is exit block
                     if next_block == cfg_info.exit_block {
-                        eprintln!("[DEBUG] Empty block {to_block:?}: successor is exit block, completing CFG");
                         self.complete_cfg_execution(hugr, cfg_node, to_block);
                     } else {
                         debug!(
                             "[TRACE] Empty block {to_block:?} transitioning to single successor {next_block:?}"
                         );
-                        eprintln!("[DEBUG] Empty block {to_block:?}: transitioning to non-exit successor {next_block:?}");
                         self.propagate_block_outputs_to_successor(hugr, to_block, next_block);
 
                         // Update current block
@@ -689,7 +671,6 @@ impl HugrEngine {
 
                         // Recursively activate the next block - add all ops to work queue
                         let next_block_info = cfg_info.blocks.get(&next_block).cloned();
-                        eprintln!("[DEBUG] next_block_info for {next_block:?}: {:?}", next_block_info.as_ref().map(|bi| (bi.quantum_ops.len(), bi.bool_ops.len(), bi.successors.len())));
                         if let Some(next_info) = next_block_info {
                             // Quantum ops
                             for &op_node in &next_info.quantum_ops {
@@ -730,6 +711,24 @@ impl HugrEngine {
                                     self.work_queue.push_back(tl_node);
                                 }
                             }
+                            // Call nodes
+                            for &call_node in &next_info.call_nodes {
+                                self.processed.remove(&call_node);
+                                self.nodes_inside_cfg_blocks.remove(&call_node);
+                                if !self.work_queue.contains(&call_node)
+                                    && !self.processed.contains(&call_node)
+                                    && all_predecessors_ready(
+                                        hugr,
+                                        call_node,
+                                        &self.quantum_ops,
+                                        &self.conditionals,
+                                        &self.cfgs,
+                                        &self.processed,
+                                    )
+                                {
+                                    self.work_queue.push_back(call_node);
+                                }
+                            }
                             // Also find and add classical ops and extension ops
                             for child in hugr.children(next_block) {
                                 let op = hugr.get_optype(child);
@@ -768,12 +767,10 @@ impl HugrEngine {
                                 && next_info.tailloop_nodes.is_empty()
                             {
                                 // Next block is also empty - need to continue transitioning
-                                eprintln!("[DEBUG] Next block {next_block:?} is also empty, continuing recursively");
                                 let next_successors = next_info.successors.clone();
                                 if next_successors.len() == 1 {
                                     let next_next_block = next_successors[0];
                                     if next_next_block == cfg_info.exit_block {
-                                        eprintln!("[DEBUG] Next block {next_block:?} leads to exit, completing CFG");
                                         self.complete_cfg_execution(hugr, cfg_node, next_block);
                                     } else {
                                         // Recursively transition

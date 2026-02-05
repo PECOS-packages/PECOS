@@ -439,6 +439,43 @@ impl HugrEngine {
                 }
             }
 
+            // usize conversions
+            "ifromusize" => {
+                // Convert usize to 64-bit integer
+                if let Some(value) = self
+                    .get_input_value(hugr, node, 0)
+                    .and_then(|v| v.as_uint())
+                {
+                    self.wire_state.classical_values
+                        .insert((node, 0), ClassicalValue::Int(value as i64));
+                    debug!("ifromusize: {value} -> {value}");
+                }
+            }
+            "ifrombool" => {
+                // Convert bool to integer
+                if let Some(value) = self
+                    .get_input_value(hugr, node, 0)
+                    .and_then(|v| v.as_bool())
+                {
+                    let result = if value { 1i64 } else { 0i64 };
+                    self.wire_state.classical_values
+                        .insert((node, 0), ClassicalValue::Int(result));
+                    debug!("ifrombool: {value} -> {result}");
+                }
+            }
+            "itobool" => {
+                // Convert integer to bool (non-zero is true)
+                if let Some(value) = self
+                    .get_input_value(hugr, node, 0)
+                    .and_then(|v| v.as_int())
+                {
+                    let result = value != 0;
+                    self.wire_state.classical_values
+                        .insert((node, 0), ClassicalValue::Bool(result));
+                    debug!("itobool: {value} -> {result}");
+                }
+            }
+
             _ => {
                 debug!("Unknown arithmetic.conversions operation: {op_name}");
                 return false;

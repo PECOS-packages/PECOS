@@ -54,7 +54,7 @@ def sim(
         ...
         >>> results = sim(my_circuit).run(100)
     """
-    from pecos.programs import (  # noqa: PLC0415
+    from pecos.programs import (
         Guppy,
     )
 
@@ -64,7 +64,7 @@ def sim(
 
     # If it's a Python wrapper, extract the underlying Rust type
     if hasattr(program, "_to_program"):
-        return pecos_rslib.sim(program._to_program())  # noqa: SLF001
+        return pecos_rslib.sim(program._to_program())
     # It's already a Rust type (from pecos_rslib), pass directly
     return pecos_rslib.sim(program)
 

@@ -22,7 +22,7 @@ class BlockWithAnnotationOnly(Block):
 
     block_returns = (Array[QubitType, 7],)
 
-    def __init__(self, q: QReg) -> None:  # noqa: ARG002
+    def __init__(self, _q: QReg) -> None:
         """Initialize block without return statement."""
         super().__init__()
 
@@ -39,7 +39,7 @@ class BlockWithReturnOnly(Block):
 class BlockWithNeither(Block):
     """Block with neither annotation nor Return() statement."""
 
-    def __init__(self, q: QReg) -> None:  # noqa: ARG002
+    def __init__(self, _q: QReg) -> None:
         """Initialize procedural block."""
         super().__init__()
 

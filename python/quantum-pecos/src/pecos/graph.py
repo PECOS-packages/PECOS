@@ -58,7 +58,7 @@ from pecos_rslib.graph import (
     NodeAttrsView,
 )
 
-__all__ = [  # noqa: RUF022
+__all__ = [
     # Undirected Graph
     "Graph",
     "EdgeAttrsView",

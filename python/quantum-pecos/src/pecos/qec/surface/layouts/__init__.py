@@ -25,7 +25,7 @@ from pecos.qec.surface.layouts.square_lattice import (
     get_stabilizer_counts,
 )
 
-__all__ = [  # noqa: RUF022
+__all__ = [
     # Rotated lattice (most common, default)
     "RotatedPosition",
     "compute_rotated_x_stabilizers",

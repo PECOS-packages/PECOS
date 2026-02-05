@@ -122,7 +122,7 @@ impl<'a> DemBuilder<'a> {
     /// # Arguments
     ///
     /// * `order` - List of qubit indices in measurement execution order.
-    ///             `order[i]` is the qubit measured at `TickCircuit` measurement index `i`.
+    ///   `order[i]` is the qubit measured at `TickCircuit` measurement index `i`.
     #[must_use]
     pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
@@ -384,7 +384,7 @@ impl<'a> DemBuilder<'a> {
                 1 => x.clone(),             // X
                 2 => x.xor(z),              // Y = X XOR Z
                 3 => z.clone(),             // Z
-                _ => ErrorMechanism::new(),
+                _ => unreachable!("Pauli index must be 0-3"),
             }
         };
 
@@ -912,7 +912,7 @@ mod tests {
         // Test DEPOLARIZE1: p=0.01, n=3
         let p1 = per_channel_probability(0.01, 3);
         // Should be 1 - (1-0.01)^(1/3) = 0.003344...
-        assert!((p1 - 0.003344506).abs() < 1e-6);
+        assert!((p1 - 0.003_344_506).abs() < 1e-6);
 
         // Verify: combining 3 channels gives back ~p
         let combined = 1.0 - (1.0 - p1).powi(3);
@@ -921,16 +921,16 @@ mod tests {
         // Test DEPOLARIZE2: p=0.02, n=15
         let p2 = per_channel_probability(0.02, 15);
         // Should be 1 - (1-0.02)^(1/15) = 0.001346...
-        assert!((p2 - 0.001345941).abs() < 1e-6);
+        assert!((p2 - 0.001_345_941).abs() < 1e-6);
 
         // Verify: combining 15 channels gives back ~p
         let combined2 = 1.0 - (1.0 - p2).powi(15);
         assert!((combined2 - 0.02).abs() < 1e-10);
 
         // Edge cases
-        assert_eq!(per_channel_probability(0.0, 3), 0.0);
-        assert_eq!(per_channel_probability(1.0, 3), 1.0);
-        assert_eq!(per_channel_probability(-0.1, 3), 0.0);
+        assert!((per_channel_probability(0.0, 3) - 0.0).abs() < f64::EPSILON);
+        assert!((per_channel_probability(1.0, 3) - 1.0).abs() < f64::EPSILON);
+        assert!((per_channel_probability(-0.1, 3) - 0.0).abs() < f64::EPSILON);
 
         // For small p, should be close to p/n
         let small_p = per_channel_probability(0.001, 15);

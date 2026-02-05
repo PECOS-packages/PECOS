@@ -47,7 +47,7 @@ from pecos.guppy.transversal import (
     make_surface_transversal_cnot_with_x,
 )
 
-__all__ = [  # noqa: RUF022
+__all__ = [
     # Surface code
     "generate_guppy_source",
     "generate_memory_experiment",

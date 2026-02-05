@@ -217,7 +217,12 @@ class TestParsedDemVsStimComprehensive:
     @pytest.mark.parametrize("distance", [3, 5])
     @pytest.mark.parametrize("rounds", [1, 3])
     @pytest.mark.parametrize("p", [0.001, 0.01])
-    def test_syndrome_rate_matches_stim(self, distance, rounds, p) -> None:
+    def test_syndrome_rate_matches_stim(
+        self,
+        distance: int,
+        rounds: int,
+        p: float,
+    ) -> None:
         """Syndrome rate should match Stim for various configurations."""
         from pecos_rslib.qec import ParsedDem
 

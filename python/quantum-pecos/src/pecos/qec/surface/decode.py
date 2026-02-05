@@ -45,14 +45,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
 if TYPE_CHECKING:
+    import stim
     from numpy.typing import NDArray
+    from pecos_rslib.qec import MeasurementNoiseModel
 
-    from pecos.qec.surface.patch import SurfacePatch
+    from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
 
 class DecoderType(str, Enum):
@@ -179,22 +181,28 @@ def generate_repetition_code_dem(
         lines.append(f"error({p_data:.6f}) D{det_id(r, 0)} L0")
 
         # Internal edges
-        for c in range(num_checks - 1):
-            lines.append(f"error({p_data:.6f}) D{det_id(r, c)} D{det_id(r, c + 1)}")
+        lines.extend(
+            f"error({p_data:.6f}) D{det_id(r, c)} D{det_id(r, c + 1)}"
+            for c in range(num_checks - 1)
+        )
 
         # Last boundary
         lines.append(f"error({p_data:.6f}) D{det_id(r, num_checks - 1)} L0")
 
     # Timelike edges (measurement errors)
     if num_rounds > 1:
-        for r in range(num_rounds - 1):
-            for c in range(num_checks):
-                lines.append(f"error({p_meas:.6f}) D{det_id(r, c)} D{det_id(r + 1, c)}")
+        lines.extend(
+            f"error({p_meas:.6f}) D{det_id(r, c)} D{det_id(r + 1, c)}"
+            for r in range(num_rounds - 1)
+            for c in range(num_checks)
+        )
 
     # Detector coordinates
-    for r in range(num_rounds):
-        for c in range(num_checks):
-            lines.append(f"detector({c}, 0, {r}) D{det_id(r, c)}")
+    lines.extend(
+        f"detector({c}, 0, {r}) D{det_id(r, c)}"
+        for r in range(num_rounds)
+        for c in range(num_checks)
+    )
 
     lines.append("logical_observable L0")
 
@@ -310,21 +318,24 @@ def generate_surface_code_dem(
     # For multi-round: measurement errors create edges between same stabilizer in consecutive rounds
     # For single-round: measurement errors are boundary edges (flip one detector)
     if num_rounds > 1:
-        for r in range(num_rounds - 1):
-            for stab in stabilizers:
-                lines.append(
-                    f"error({p_meas:.6f}) D{det_id(r, stab.index)} D{det_id(r + 1, stab.index)}",
-                )
+        lines.extend(
+            f"error({p_meas:.6f}) D{det_id(r, stab.index)} D{det_id(r + 1, stab.index)}"
+            for r in range(num_rounds - 1)
+            for stab in stabilizers
+        )
     else:
         # Single round: measurement errors are boundary edges
-        for stab in stabilizers:
-            lines.append(f"error({p_meas:.6f}) D{det_id(0, stab.index)}")
+        lines.extend(
+            f"error({p_meas:.6f}) D{det_id(0, stab.index)}" for stab in stabilizers
+        )
 
     # Detector coordinates (x, y, t)
     # Use stabilizer index as spatial coordinate
-    for r in range(num_rounds):
-        for stab in stabilizers:
-            lines.append(f"detector({stab.index}, 0, {r}) D{det_id(r, stab.index)}")
+    lines.extend(
+        f"detector({stab.index}, 0, {r}) D{det_id(r, stab.index)}"
+        for r in range(num_rounds)
+        for stab in stabilizers
+    )
 
     lines.append("logical_observable L0")
 
@@ -679,25 +690,21 @@ def build_stim_circuit_from_patch(
         # Z stabilizers: check parity of Z measurements matches last syndrome
         for i, stab in enumerate(geom.z_stabilizers):
             cx, cy = stab_coords(stab)
+            # Last Z ancilla measurement + final data measurements
             rec_targets = [
                 stim.target_rec(-num_data - num_stab + num_x_anc + i),
-            ]  # Last Z ancilla measurement
-            for dq in stab.data_qubits:
-                rec_targets.append(
-                    stim.target_rec(-num_data + dq),
-                )  # Final data measurements
+                *[stim.target_rec(-num_data + dq) for dq in stab.data_qubits],
+            ]
             circuit.append("DETECTOR", rec_targets, [cx, cy, num_rounds])
     else:
         # X stabilizers: check parity of X measurements (after H) matches last syndrome
         for i, stab in enumerate(geom.x_stabilizers):
             cx, cy = stab_coords(stab)
+            # Last X ancilla measurement + final data measurements
             rec_targets = [
                 stim.target_rec(-num_data - num_stab + i),
-            ]  # Last X ancilla measurement
-            for dq in stab.data_qubits:
-                rec_targets.append(
-                    stim.target_rec(-num_data + dq),
-                )  # Final data measurements
+                *[stim.target_rec(-num_data + dq) for dq in stab.data_qubits],
+            ]
             circuit.append("DETECTOR", rec_targets, [cx, cy, num_rounds])
 
     # OBSERVABLE_INCLUDE: logical operator parity from final measurements
@@ -846,6 +853,7 @@ class SurfaceDecoder:
             num_stab = len(geom.z_stabilizers)
             num_data = geom.num_data
 
+            # H is standard notation for parity check matrix in coding theory
             H = np.zeros((num_stab, num_data), dtype=np.uint8)
             for stab in geom.z_stabilizers:
                 for q in stab.data_qubits:
@@ -861,6 +869,7 @@ class SurfaceDecoder:
             num_stab = len(geom.x_stabilizers)
             num_data = geom.num_data
 
+            # H is standard notation for parity check matrix in coding theory
             H = np.zeros((num_stab, num_data), dtype=np.uint8)
             for stab in geom.x_stabilizers:
                 for q in stab.data_qubits:
@@ -869,7 +878,7 @@ class SurfaceDecoder:
             self._x_check_matrix = H
         return self._x_check_matrix
 
-    def _get_z_decoder(self):
+    def _get_z_decoder(self) -> Any:
         """Get or create decoder for Z-basis memory (decodes Z syndromes for X errors)."""
         if self._z_decoder is None:
             # For PyMatching and Tesseract with circuit-level DEMs, use DEM directly
@@ -882,7 +891,7 @@ class SurfaceDecoder:
                 self._z_decoder = self._create_decoder(self._get_z_check_matrix())
         return self._z_decoder
 
-    def _create_decoder(self, H: NDArray[np.uint8]):
+    def _create_decoder(self, H: NDArray[np.uint8]) -> Any:
         """Create decoder instance based on decoder_type."""
         num_data = H.shape[1]
         num_stab = H.shape[0]
@@ -938,7 +947,7 @@ class SurfaceDecoder:
         msg = f"Unknown decoder type: {self.decoder_type}"
         raise ValueError(msg)
 
-    def _create_decoder_from_dem(self, basis: str):
+    def _create_decoder_from_dem(self, basis: str) -> Any:
         """Create decoder from circuit-level DEM.
 
         Uses our abstracted circuit builder to generate a Stim circuit with
@@ -986,7 +995,7 @@ class SurfaceDecoder:
         H: NDArray[np.uint8],
         data_weight: float,
         meas_weight: float,
-    ):
+    ) -> Any:
         """Create FusionBlossom decoder with space-time matching graph."""
         from pecos_rslib.decoders import FusionBlossomDecoder
 
@@ -1042,7 +1051,11 @@ class SurfaceDecoder:
 
         return decoder
 
-    def _create_ldpc_decoder(self, H: NDArray[np.uint8], p_data: float):
+    def _create_ldpc_decoder(
+        self,
+        H: NDArray[np.uint8],
+        p_data: float,
+    ) -> Any:
         """Create LDPC decoder (BP+OSD, BP+LSD, or UnionFind)."""
         from pecos_rslib.decoders import SparseMatrix
 
@@ -1082,9 +1095,9 @@ class SurfaceDecoder:
     def _create_tesseract_decoder(
         self,
         H: NDArray[np.uint8],
-        p_data: float,
-        p_meas: float,
-    ):
+        _p_data: float,
+        _p_meas: float,
+    ) -> Any:
         """Create Tesseract decoder from check matrix by generating DEM."""
         from pecos_rslib.decoders import TesseractDecoder
 
@@ -1156,7 +1169,7 @@ class SurfaceDecoder:
             stab_type,
         )
 
-    def _get_x_decoder(self):
+    def _get_x_decoder(self) -> Any:
         """Get or create decoder for X-basis memory (decodes X syndromes for Z errors)."""
         if self._x_decoder is None:
             # For PyMatching and Tesseract with circuit-level DEMs, use DEM directly
@@ -1296,7 +1309,7 @@ class SurfaceDecoder:
 
     def decode_memory_z(
         self,
-        synx_list: list[NDArray[np.uint8]],
+        _synx_list: list[NDArray[np.uint8]],
         synz_list: list[NDArray[np.uint8]],
         final: NDArray[np.uint8],
     ) -> tuple[bool, DecodingResult]:
@@ -1377,7 +1390,7 @@ class SurfaceDecoder:
     def decode_memory_x(
         self,
         synx_list: list[NDArray[np.uint8]],
-        synz_list: list[NDArray[np.uint8]],
+        _synz_list: list[NDArray[np.uint8]],
         final: NDArray[np.uint8],
     ) -> tuple[bool, DecodingResult]:
         """Decode an X-basis memory experiment.

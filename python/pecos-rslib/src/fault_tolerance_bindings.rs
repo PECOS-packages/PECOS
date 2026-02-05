@@ -59,6 +59,9 @@ use pecos::quantum::DagCircuit;
 use pyo3::Py;
 use pyo3::prelude::*;
 
+/// Type alias for batch sampling results: (`detection_events_per_shot`, `observable_flips_per_shot`)
+type BatchSampleResult = (Vec<Vec<bool>>, Vec<Vec<bool>>);
+
 // =============================================================================
 // Fault Location Types
 // =============================================================================
@@ -608,6 +611,7 @@ impl PyDetectorErrorModel {
     ///
     /// Returns:
     ///     A string in DEM format with one entry per mechanism.
+    #[allow(clippy::inherent_to_string)] // PyO3 binding - two string formats
     fn to_string(&self) -> String {
         self.inner.to_string()
     }
@@ -1200,7 +1204,7 @@ impl PyMeasurementNoiseModel {
         detectors_json: &str,
         observables_json: &str,
         seed: Option<u64>,
-    ) -> PyResult<(Vec<Vec<bool>>, Vec<Vec<bool>>)> {
+    ) -> PyResult<BatchSampleResult> {
         use pecos_rng::PecosRng;
         use rand::Rng;
 
@@ -1330,6 +1334,7 @@ impl PyNoisySampler {
             .locations
             .iter()
             .map(|loc| {
+                #[allow(clippy::match_same_arms)] // Explicitly list known single-qubit gates
                 match loc.gate_type {
                     GateType::Prep | GateType::QAlloc => p_init,
                     GateType::Measure | GateType::MeasureFree => p_meas,
@@ -1517,7 +1522,7 @@ impl PyNoisySampler {
         detectors_json: &str,
         observables_json: &str,
         measurement_order: Option<Vec<usize>>,
-    ) -> PyResult<(Vec<Vec<bool>>, Vec<Vec<bool>>)> {
+    ) -> PyResult<BatchSampleResult> {
         use pecos::qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
         use std::collections::HashMap;
 
@@ -2209,7 +2214,8 @@ impl PyParsedDem {
     ///     `ValueError`: If the DEM string is malformed.
     #[staticmethod]
     fn from_string(dem_str: &str) -> PyResult<Self> {
-        let inner = RustParsedDem::from_str(dem_str)
+        let inner = dem_str
+            .parse::<RustParsedDem>()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(Self { inner })
     }
@@ -2353,9 +2359,11 @@ fn compare_dems_exact(
     dem2: &str,
     prob_tolerance: f64,
 ) -> PyResult<PyEquivalenceResult> {
-    let parsed1 = RustParsedDem::from_str(dem1)
+    let parsed1 = dem1
+        .parse::<RustParsedDem>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {e}")))?;
-    let parsed2 = RustParsedDem::from_str(dem2)
+    let parsed2 = dem2
+        .parse::<RustParsedDem>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {e}")))?;
 
     let inner = rust_compare_dems_exact(&parsed1, &parsed2, prob_tolerance);
@@ -2390,9 +2398,11 @@ fn compare_dems_statistical(
     seed: u64,
     tolerance: f64,
 ) -> PyResult<PyEquivalenceResult> {
-    let parsed1 = RustParsedDem::from_str(dem1)
+    let parsed1 = dem1
+        .parse::<RustParsedDem>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {e}")))?;
-    let parsed2 = RustParsedDem::from_str(dem2)
+    let parsed2 = dem2
+        .parse::<RustParsedDem>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {e}")))?;
 
     let inner = rust_compare_dems_statistical(&parsed1, &parsed2, num_shots, seed, tolerance);
@@ -2475,9 +2485,11 @@ fn assert_dems_equivalent(
     tolerance: f64,
     seed: u64,
 ) -> PyResult<()> {
-    let parsed1 = RustParsedDem::from_str(dem1)
+    let parsed1 = dem1
+        .parse::<RustParsedDem>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM1 parse error: {e}")))?;
-    let parsed2 = RustParsedDem::from_str(dem2)
+    let parsed2 = dem2
+        .parse::<RustParsedDem>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("DEM2 parse error: {e}")))?;
 
     let result = match method {

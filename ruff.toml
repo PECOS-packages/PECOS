@@ -104,12 +104,96 @@ ignore = [
 
 # Main pecos __init__.py - special case for module initialization
 "python/quantum-pecos/src/pecos/__init__.py" = [
+    "A004",     # Import shadows builtin - intentional numpy-like API (abs, all, any, max, min, sum, round)
     "E402",     # Module level import not at top - intentional for module setup
     "SLF001",   # Private member access - accessing _to_program() on program wrappers
     "ANN",      # Missing annotations - legacy code with duck typing for program wrappers
     "PLC0415",  # Import inside function - optional guppylang check
 ]
-
+# Deprecated API wrappers - preserve old names and forward *args/**kwargs
+"python/quantum-pecos/src/pecos/_deprecated.py" = [
+    "N802",     # Function name BinArray preserves old API name
+    "ANN401",   # Any for *args/**kwargs - deprecated wrapper forwards all arguments
+]
+# Engine builders - access _to_program() on program wrappers
+"python/quantum-pecos/src/pecos/_engine_builders.py" = [
+    "SLF001",   # Private member access - accessing _to_program() on program wrappers
+]
+# Sim entry point - lazy import of optional guppylang
+"python/quantum-pecos/src/pecos/_sim.py" = [
+    "PLC0415",  # Import inside function - optional guppylang check
+    "SLF001",   # Private member access - accessing _to_program() on program wrappers
+]
+# HUGR to DAG converter - lazy hugr imports, hugr private API access
+"python/quantum-pecos/src/pecos/circuit_converters/hugr_to_dag.py" = [
+    "PLC0415",  # Import inside function - hugr not always available
+    "SLF001",   # Private member access - hugr._extension is the only way to get extension name
+]
+# QuantumCircuit - internal API access for tick/gate management
+"python/quantum-pecos/src/pecos/circuits/quantum_circuit.py" = [
+    "SLF001",   # Private member access - accessing internal _inner, _iter_tick, _add_gate_to_tick
+    "PERF203",  # try-except in loop - needed for idempotent prep/measure (no API to query tick state)
+]
+# Graph module - __all__ grouped by type (undirected, directed, DAG)
+"python/quantum-pecos/src/pecos/graph.py" = [
+    "RUF022",   # __all__ not sorted - intentionally grouped by graph type
+]
+# Guppy code generation - lazy imports for optional deps, __all__ grouped by code type
+"python/quantum-pecos/src/pecos/guppy/__init__.py" = [
+    "RUF022",   # __all__ not sorted - grouped by code type (surface, color, transversal)
+]
+"python/quantum-pecos/src/pecos/guppy/color.py" = [
+    "PLC0415",  # Import inside function - lazy loading of qec.color
+]
+"python/quantum-pecos/src/pecos/guppy/surface.py" = [
+    "PLC0415",  # Import inside function - lazy loading of qec.surface
+]
+"python/quantum-pecos/src/pecos/guppy/transversal.py" = [
+    "PLC0415",  # Import inside function - lazy loading of qec modules
+]
+# QEC modules - __all__ grouped by category, lazy imports
+"python/quantum-pecos/src/pecos/qec/__init__.py" = [
+    "RUF022",   # __all__ not sorted - grouped by category (submodules, DEM, protocols)
+]
+"python/quantum-pecos/src/pecos/qec/surface/__init__.py" = [
+    "RUF022",   # __all__ not sorted - grouped by category
+]
+"python/quantum-pecos/src/pecos/qec/surface/layouts/__init__.py" = [
+    "RUF022",   # __all__ not sorted - grouped by lattice type
+]
+"python/quantum-pecos/src/pecos/qec/surface/decode.py" = [
+    "PLC0415",  # Import inside function - lazy loading of optional dependencies
+    "N803",     # H parameter name - standard parity check matrix notation
+    "N806",     # H variable name - standard parity check matrix notation
+    "SLF001",   # Private member access - accessing internal decoder APIs
+    "ANN401",   # Any types - required for optional dependency types (pymatching, stim)
+]
+"python/quantum-pecos/src/pecos/qec/surface/plot.py" = [
+    "PLC0415",  # Import inside function - lazy loading of qec.surface
+]
+"python/quantum-pecos/src/pecos/qec/surface/circuit_gen.py" = [
+    "PLC0415",  # Import inside function - lazy loading of stim, pecos_rslib
+    "SLF001",   # Private member access - accessing patch internal data structures
+]
+"python/quantum-pecos/src/pecos/qec/surface/circuit_builder.py" = [
+    "PLC0415",  # Import inside function - lazy loading of guppy, stim, json
+    "SLF001",   # Private member access - accessing patch and circuit internals
+]
+# QEC analysis modules
+"python/quantum-pecos/src/pecos/qec/analysis/dem_builder.py" = [
+    "SLF001",   # Private member access - accessing internal circuit/tick data
+]
+"python/quantum-pecos/src/pecos/qec/analysis/influence.py" = [
+    "SLF001",   # Private member access - accessing internal circuit/tick data
+    "PLW0127",  # Self-assignment - intentional pattern for influence propagation
+]
+# SLR qeclib visualization - matplotlib lazy imports
+"python/quantum-pecos/src/pecos/slr/qeclib/color488/plot_layout.py" = [
+    "PLC0415",  # Import inside function - matplotlib optional
+]
+"python/quantum-pecos/src/pecos/slr/qeclib/surface/visualization/lattice_2d.py" = [
+    "PLC0415",  # Import inside function - matplotlib optional
+]
 
 # Test files
 "python/*/tests/**/*.py" = [
@@ -148,9 +232,15 @@ ignore = [
 "examples/**/*.py" = ["INP001", "BLE001"]  # Example files don't need __init__.py and can use broad exception handling
 
 
-# Jupyter notebooks
+# Jupyter notebooks - exploratory code, less strict than library code
 "**/*.ipynb" = [
-    "S101",  # Use of `assert` detected - Assert is appropriate for Jupyter notebook demonstrations
+    "S101",     # Use of `assert` - appropriate for demonstrations
+    "E402",     # Import not at top of cell - common notebook pattern
+    "E501",     # Line too long - titles and display strings in notebooks
+    "FBT003",   # Boolean positional - standard matplotlib API (grid(True), show(True))
+    "ARG001",   # Unused argument - prototype/placeholder functions in notebooks
+    "PERF401",  # List append in loop - step-by-step code aids notebook readability
+    "ANN",      # Type annotations - not required in notebooks
 ]
 
 # Simulator files

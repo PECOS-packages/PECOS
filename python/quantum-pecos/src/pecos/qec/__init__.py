@@ -94,7 +94,7 @@ from pecos.qec.surface import (
     parity_matrix_z,
 )
 
-__all__ = [  # noqa: RUF022
+__all__ = [
     # Submodules
     "analysis",
     "color",

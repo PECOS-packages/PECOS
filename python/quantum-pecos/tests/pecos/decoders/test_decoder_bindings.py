@@ -10,6 +10,9 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
+# ruff: noqa: N806
+# H is standard notation for parity check matrix in coding theory
+
 """Tests for PECOS decoder bindings exposed via pecos_rslib.decoders.
 
 The API is designed to mirror the original library APIs:

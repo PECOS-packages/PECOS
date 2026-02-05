@@ -21,12 +21,13 @@
 //! - **DEM Sampler - Statistics**: Compare statistics-only methods
 //! - **DEM Sampler - Scaling**: How different methods scale with DEM size
 
+use std::str::FromStr;
+
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos_qec::fault_tolerance::dem_builder::{DemSamplerBuilder, ParsedDem};
 use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::DagCircuit;
 use pecos_rng::PecosRng;
-use rand::SeedableRng;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
@@ -44,7 +45,6 @@ fn create_surface_code_sampler(
     // Create a simplified surface code circuit
     let num_data = distance * distance;
     let num_ancilla = num_data - 1;
-    let _num_qubits = num_data + num_ancilla;
 
     let mut dag = DagCircuit::new();
 
@@ -316,10 +316,12 @@ fn bench_parallel_scaling<M: Measurement>(c: &mut Criterion<M>) {
 
 /// Create a synthetic DEM string for benchmarking.
 fn create_synthetic_dem(num_mechanisms: usize, num_detectors: usize, prob: f64) -> String {
+    use std::fmt::Write;
+
     let mut dem = String::new();
 
     for i in 0..num_detectors {
-        dem.push_str(&format!("detector({i}, 0, 0) D{i}\n"));
+        writeln!(dem, "detector({i}, 0, 0) D{i}").unwrap();
     }
 
     for i in 0..num_mechanisms {
@@ -328,9 +330,9 @@ fn create_synthetic_dem(num_mechanisms: usize, num_detectors: usize, prob: f64) 
         let d3 = (i + 2) % num_detectors;
 
         match i % 3 {
-            0 => dem.push_str(&format!("error({prob}) D{d1}\n")),
-            1 => dem.push_str(&format!("error({prob}) D{d1} D{d2}\n")),
-            _ => dem.push_str(&format!("error({prob}) D{d1} D{d2} D{d3}\n")),
+            0 => writeln!(dem, "error({prob}) D{d1}").unwrap(),
+            1 => writeln!(dem, "error({prob}) D{d1} D{d2}").unwrap(),
+            _ => writeln!(dem, "error({prob}) D{d1} D{d2} D{d3}").unwrap(),
         }
     }
 

@@ -213,7 +213,6 @@ impl FusionBlossomDecoder {
     ///     .add_edge(1, 2, vec![1], Some(1.0))
     ///     .build()?;
     /// ```
-    #[must_use]
     pub fn builder() -> crate::builder::FusionBlossomBuilder {
         crate::builder::FusionBlossomBuilder::new()
     }

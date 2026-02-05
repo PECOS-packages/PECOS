@@ -11,7 +11,7 @@ import importlib.util
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from pecos.qec.color import ColorCode488
@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 class _ModuleState:
     """Container for module-level mutable state."""
 
-    temp_dir: Path | None = None
-    module_cache: dict[int, dict] = {}  # noqa: RUF012
+    temp_dir: ClassVar[Path | None] = None
+    module_cache: ClassVar[dict[int, dict]] = {}
 
 
 _state = _ModuleState()
@@ -363,7 +363,7 @@ def _load_color_code_module(d: int) -> dict:
     if d in _state.module_cache:
         return _state.module_cache[d]
 
-    from pecos.qec.color import ColorCode488  # noqa: PLC0415
+    from pecos.qec.color import ColorCode488
 
     code = ColorCode488.create(distance=d)
     source = generate_color_code_source(code)
@@ -397,7 +397,7 @@ def get_color_code_module(d: int) -> dict:
     Returns:
         Dictionary with module contents and metadata
     """
-    from pecos.qec.color import ColorCode488  # noqa: PLC0415
+    from pecos.qec.color import ColorCode488
 
     module = _load_color_code_module(d)
 
@@ -420,7 +420,7 @@ def get_num_qubits_color(d: int) -> int:
     Returns:
         Total qubits (num_data + 2 ancilla)
     """
-    from pecos.qec.color import ColorCode488  # noqa: PLC0415
+    from pecos.qec.color import ColorCode488
 
     code = ColorCode488.create(distance=d)
     return code.num_data + 2
@@ -463,7 +463,7 @@ def generate_color_code_module(d: int) -> str:
         msg = f"Distance must be odd >= 3, got {d}"
         raise ValueError(msg)
 
-    from pecos.qec.color import ColorCode488  # noqa: PLC0415
+    from pecos.qec.color import ColorCode488
 
     code = ColorCode488.create(distance=d)
     return generate_color_code_source(code)

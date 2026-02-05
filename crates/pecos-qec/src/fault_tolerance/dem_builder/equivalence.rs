@@ -53,6 +53,9 @@
 use pecos_rng::{PecosRng, Rng};
 use std::collections::{BTreeMap, BTreeSet};
 
+use std::fmt;
+use std::str::FromStr;
+
 use super::types::combine_probabilities;
 
 // ============================================================================
@@ -160,10 +163,10 @@ impl EffectKey {
             observables,
         }
     }
+}
 
-    /// Formats this key as a string (e.g., "D0 D1 L0").
-    #[must_use]
-    pub fn to_string(&self) -> String {
+impl fmt::Display for EffectKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts: Vec<String> = Vec::new();
         for &d in &self.detectors {
             parts.push(format!("D{d}"));
@@ -172,9 +175,9 @@ impl EffectKey {
             parts.push(format!("L{o}"));
         }
         if parts.is_empty() {
-            "(empty)".to_string()
+            write!(f, "(empty)")
         } else {
-            parts.join(" ")
+            write!(f, "{}", parts.join(" "))
         }
     }
 }
@@ -208,54 +211,12 @@ impl ParsedDem {
     /// Parses a DEM from a string.
     ///
     /// Supports both Stim and PECOS DEM formats.
-    pub fn from_str(dem_str: &str) -> Result<Self, DemParseError> {
-        let mut mechanisms = Vec::new();
-        let mut max_det: i32 = -1;
-        let mut max_obs: i32 = -1;
-
-        for line in dem_str.lines() {
-            let line = line.trim();
-
-            // Skip empty lines and comments
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            // Parse error lines
-            if line.starts_with("error(") {
-                let mech = Self::parse_error_line(line)?;
-
-                // Update max IDs
-                for comp in &mech.components {
-                    for &d in &comp.detectors {
-                        max_det = max_det.max(d as i32);
-                    }
-                    for &o in &comp.observables {
-                        max_obs = max_obs.max(o as i32);
-                    }
-                }
-
-                mechanisms.push(mech);
-            }
-            // Parse detector declarations
-            else if line.starts_with("detector") {
-                if let Some(id) = Self::extract_detector_id(line) {
-                    max_det = max_det.max(id as i32);
-                }
-            }
-            // Parse observable declarations
-            else if line.starts_with("logical_observable")
-                && let Some(id) = Self::extract_observable_id(line)
-            {
-                max_obs = max_obs.max(id as i32);
-            }
-        }
-
-        Ok(Self {
-            mechanisms,
-            num_detectors: if max_det >= 0 { max_det as u32 + 1 } else { 0 },
-            num_observables: if max_obs >= 0 { max_obs as u32 + 1 } else { 0 },
-        })
+    ///
+    /// # Errors
+    ///
+    /// Returns `DemParseError` if the string cannot be parsed.
+    pub fn parse(dem_str: &str) -> Result<Self, DemParseError> {
+        dem_str.parse()
     }
 
     /// Parses a single error line.
@@ -304,13 +265,13 @@ impl ParsedDem {
         let mut observables = Vec::new();
 
         for token in s.split_whitespace() {
-            if token.starts_with('D') {
-                let id: u32 = token[1..]
+            if let Some(id_str) = token.strip_prefix('D') {
+                let id: u32 = id_str
                     .parse()
                     .map_err(|_| DemParseError::InvalidDetectorId(token.to_string()))?;
                 detectors.push(id);
-            } else if token.starts_with('L') {
-                let id: u32 = token[1..]
+            } else if let Some(id_str) = token.strip_prefix('L') {
+                let id: u32 = id_str
                     .parse()
                     .map_err(|_| DemParseError::InvalidObservableId(token.to_string()))?;
                 observables.push(id);
@@ -470,6 +431,60 @@ impl ParsedDem {
 impl Default for ParsedDem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl FromStr for ParsedDem {
+    type Err = DemParseError;
+
+    fn from_str(dem_str: &str) -> Result<Self, Self::Err> {
+        let mut mechanisms = Vec::new();
+        let mut max_det: i32 = -1;
+        let mut max_obs: i32 = -1;
+
+        for line in dem_str.lines() {
+            let line = line.trim();
+
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            // Parse error lines
+            if line.starts_with("error(") {
+                let mech = Self::parse_error_line(line)?;
+
+                // Update max IDs
+                for comp in &mech.components {
+                    for &d in &comp.detectors {
+                        max_det = max_det.max(d as i32);
+                    }
+                    for &o in &comp.observables {
+                        max_obs = max_obs.max(o as i32);
+                    }
+                }
+
+                mechanisms.push(mech);
+            }
+            // Parse detector declarations
+            else if line.starts_with("detector") {
+                if let Some(id) = Self::extract_detector_id(line) {
+                    max_det = max_det.max(id as i32);
+                }
+            }
+            // Parse observable declarations
+            else if line.starts_with("logical_observable")
+                && let Some(id) = Self::extract_observable_id(line)
+            {
+                max_obs = max_obs.max(id as i32);
+            }
+        }
+
+        Ok(Self {
+            mechanisms,
+            num_detectors: if max_det >= 0 { max_det as u32 + 1 } else { 0 },
+            num_observables: if max_obs >= 0 { max_obs as u32 + 1 } else { 0 },
+        })
     }
 }
 
@@ -928,7 +943,7 @@ mod tests {
 
         assert_eq!(dem.mechanisms.len(), 1);
         assert!(!dem.mechanisms[0].is_decomposed());
-        assert_eq!(dem.mechanisms[0].probability, 0.01);
+        assert!((dem.mechanisms[0].probability - 0.01).abs() < f64::EPSILON);
         assert_eq!(dem.mechanisms[0].components[0].detectors, vec![0, 1]);
     }
 

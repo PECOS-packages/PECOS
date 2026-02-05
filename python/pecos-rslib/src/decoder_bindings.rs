@@ -1361,7 +1361,7 @@ impl PyTesseractDecoder {
         let mut config = match preset {
             "fast" => RustTesseractConfig::fast(),
             "accurate" => RustTesseractConfig::accurate(),
-            "default" | _ => RustTesseractConfig::default(),
+            _ => RustTesseractConfig::default(),
         };
 
         // Override with explicit parameters

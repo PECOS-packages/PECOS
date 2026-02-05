@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pecos.qec.surface.patch import SurfacePatch
+    from pecos.quantum import DagCircuit
 
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
@@ -80,8 +81,10 @@ def generate_stim_circuit(
 
     lines = []
     lines.append(f"# Surface code d={d} {basis}-basis memory experiment")
+    basis_lower = basis.lower()
     lines.append(
-        f"# Mirrors Guppy structure: prep_{basis.lower()}_basis -> syndrome_extraction x{num_rounds} -> measure_{basis.lower()}_basis",
+        f"# Mirrors Guppy: prep_{basis_lower}_basis -> syndrome_extraction x{num_rounds} "
+        f"-> measure_{basis_lower}_basis",
     )
     lines.append(
         f"# Qubits: {num_data} data + {num_x_anc} X ancilla + {num_z_anc} Z ancilla = {total_qubits}",
@@ -479,14 +482,16 @@ def compare_dems(
     def parse_dem(dem_str: str) -> dict:
         """Parse DEM to extract statistics."""
         lines = [
-            l.strip()
-            for l in dem_str.split("\n")
-            if l.strip() and not l.startswith("#")
+            line.strip()
+            for line in dem_str.split("\n")
+            if line.strip() and not line.startswith("#")
         ]
-        errors = [l for l in lines if l.startswith("error")]
-        detectors = [l for l in lines if l.startswith("detector")]
+        errors = [line for line in lines if line.startswith("error")]
+        detectors = [line for line in lines if line.startswith("detector")]
         observables = [
-            l for l in lines if "logical" in l.lower() or "observable" in l.lower()
+            line
+            for line in lines
+            if "logical" in line.lower() or "observable" in line.lower()
         ]
         return {
             "error_count": len(errors),

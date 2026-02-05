@@ -324,7 +324,7 @@ class TestIntegrationWithPecos:
     """Integration tests with PECOS DEM generation."""
 
     @pytest.fixture
-    def surface_code_dem(self):
+    def surface_code_dem(self) -> tuple[str, str]:
         """Generate a surface code DEM pair (PECOS and Stim)."""
         pytest.importorskip("stim")
 
@@ -349,7 +349,10 @@ class TestIntegrationWithPecos:
 
         return pecos_dem, stim_dem
 
-    def test_pecos_stim_exact_equivalence(self, surface_code_dem) -> None:
+    def test_pecos_stim_exact_equivalence(
+        self,
+        surface_code_dem: tuple[str, str],
+    ) -> None:
         """PECOS and Stim non-decomposed DEMs should be exactly equivalent."""
         pecos_dem, stim_dem = surface_code_dem
 
@@ -361,7 +364,10 @@ class TestIntegrationWithPecos:
             f"only in Stim: {result.only_in_dem2}"
         )
 
-    def test_pecos_stim_statistical_equivalence(self, surface_code_dem) -> None:
+    def test_pecos_stim_statistical_equivalence(
+        self,
+        surface_code_dem: tuple[str, str],
+    ) -> None:
         """PECOS and Stim DEMs should be statistically equivalent."""
         pecos_dem, stim_dem = surface_code_dem
 
@@ -387,7 +393,7 @@ class TestPecosDecompositionEquivalence:
     """
 
     @pytest.fixture
-    def surface_code_dem_pair(self):
+    def surface_code_dem_pair(self) -> tuple[str, str]:
         """Generate both raw and decomposed DEMs from PECOS."""
         pytest.importorskip("stim")
 
@@ -408,7 +414,10 @@ class TestPecosDecompositionEquivalence:
 
         return raw_dem, decomposed_dem
 
-    def test_raw_decomposed_syndrome_rates_match(self, surface_code_dem_pair) -> None:
+    def test_raw_decomposed_syndrome_rates_match(
+        self,
+        surface_code_dem_pair: tuple[str, str],
+    ) -> None:
         """Raw and decomposed DEMs should have same syndrome rates."""
         raw_dem_str, decomposed_dem_str = surface_code_dem_pair
 
@@ -438,7 +447,8 @@ class TestPecosDecompositionEquivalence:
         )
 
     def test_raw_decomposed_per_detector_rates_match(
-        self, surface_code_dem_pair
+        self,
+        surface_code_dem_pair: tuple[str, str],
     ) -> None:
         """Raw and decomposed DEMs should have similar per-detector rates."""
         raw_dem_str, decomposed_dem_str = surface_code_dem_pair
@@ -467,7 +477,10 @@ class TestPecosDecompositionEquivalence:
             f"tolerance {tolerance:.4f}"
         )
 
-    def test_raw_decomposed_logical_rates_match(self, surface_code_dem_pair) -> None:
+    def test_raw_decomposed_logical_rates_match(
+        self,
+        surface_code_dem_pair: tuple[str, str],
+    ) -> None:
         """Raw and decomposed DEMs should have same logical error rates."""
         raw_dem_str, decomposed_dem_str = surface_code_dem_pair
 
@@ -498,7 +511,9 @@ class TestPecosDecompositionEquivalence:
     @pytest.mark.parametrize("distance", [3, 5])
     @pytest.mark.parametrize("num_rounds", [1, 2])
     def test_decomposition_equivalence_various_sizes(
-        self, distance, num_rounds
+        self,
+        distance: int,
+        num_rounds: int,
     ) -> None:
         """Decomposition should be equivalent for various code sizes."""
         pytest.importorskip("stim")

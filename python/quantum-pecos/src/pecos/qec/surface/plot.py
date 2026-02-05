@@ -185,7 +185,7 @@ def plot_surface_code(
     Returns:
         Tuple of (Figure, Axes) from matplotlib.
     """
-    from pecos.qec.surface.patch import SurfacePatch  # noqa: PLC0415
+    from pecos.qec.surface.patch import SurfacePatch
 
     patch = SurfacePatch.create(distance=d)
     return plot_patch(patch, show_cnot_order=show_cnot_order, config=config)

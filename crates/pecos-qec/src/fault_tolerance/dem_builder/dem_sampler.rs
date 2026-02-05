@@ -595,9 +595,8 @@ impl DemSampler {
         num_shots: usize,
         rng: &mut R,
     ) -> SamplingStatistics {
-        let chunk_size = match self.optimal_chunk_size(num_shots) {
-            Some(size) => size,
-            None => return self.sample_statistics_direct(num_shots, rng),
+        let Some(chunk_size) = self.optimal_chunk_size(num_shots) else {
+            return self.sample_statistics_direct(num_shots, rng);
         };
 
         let mut total_stats = SamplingStatistics::new(num_shots);
@@ -2177,10 +2176,10 @@ mod tests {
 
         // Compare geometric to baseline with many shots for statistical significance
         let mut rng1 = SmallRng::seed_from_u64(42);
-        let stats1 = sampler.sample_statistics_columnar(100000, &mut rng1);
+        let stats1 = sampler.sample_statistics_columnar(100_000, &mut rng1);
 
         let mut rng2 = SmallRng::seed_from_u64(42);
-        let stats2 = sampler.sample_statistics_geometric(100000, &mut rng2);
+        let stats2 = sampler.sample_statistics_geometric(100_000, &mut rng2);
 
         // Statistics should be similar
         let rate1 = stats1.syndrome_rate();
@@ -2283,11 +2282,11 @@ mod tests {
 
         // Compare parallel to sequential
         let mut rng = SmallRng::seed_from_u64(42);
-        let stats_seq = sampler.sample_statistics_geometric(100000, &mut rng);
+        let stats_seq = sampler.sample_statistics_geometric(100_000, &mut rng);
 
         // Parallel uses different RNG seeds per chunk, so results won't match exactly
         // but should be statistically similar
-        let stats_par = sampler.sample_statistics_parallel(100000, 42);
+        let stats_par = sampler.sample_statistics_parallel(100_000, 42);
 
         let rate_seq = stats_seq.syndrome_rate();
         let rate_par = stats_par.syndrome_rate();
@@ -2415,7 +2414,7 @@ mod tests {
         let sampler = DemSampler::from_mechanisms(mechanisms, 1, 0);
 
         // Should still work correctly
-        let stats = sampler.sample_statistics(100000, 42);
+        let stats = sampler.sample_statistics(100_000, 42);
         let rate = stats.syndrome_rate();
         assert!(
             (rate - 0.0001).abs() < 0.001,

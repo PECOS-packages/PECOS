@@ -19,6 +19,10 @@ The root cause appears to be how Y errors are handled:
 
 import re
 from collections import defaultdict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pecos_rslib.quantum import TickCircuit
 
 
 def parse_dem(dem_str: str) -> dict:
@@ -28,8 +32,8 @@ def parse_dem(dem_str: str) -> dict:
         Dict mapping (detectors_tuple, logicals_tuple) -> probability
     """
     errors = {}
-    for line in dem_str.strip().split("\n"):
-        line = line.strip()
+    for raw_line in dem_str.strip().split("\n"):
+        line = raw_line.strip()
         if not line.startswith("error("):
             continue
 
@@ -83,7 +87,7 @@ def analyze_dem_differences(pecos_dem: str, stim_dem: str) -> dict:
 
         dets, logs = key
         det_str = " ".join(f"D{d}" for d in dets)
-        log_str = " ".join(f"L{l}" for l in logs)
+        log_str = " ".join(f"L{log_idx}" for log_idx in logs)
         target_str = f"{det_str} {log_str}".strip()
 
         if pecos_prob is None:
@@ -141,7 +145,7 @@ def print_dem_analysis(results: dict) -> None:
             )
 
 
-def trace_error_sources(tc, p2: float = 0.01):
+def trace_error_sources(tc: "TickCircuit", p2: float = 0.01) -> None:
     """Trace which fault locations contribute to a specific error mechanism.
 
     This helps understand why PECOS and Stim might differ in probability.
@@ -334,9 +338,9 @@ def test_probability_combination() -> None:
 
     p = 0.01 / 15.0  # p2/15 for one Pauli combination
 
-    def combine(p1, p2):
+    def combine(prob1: float, prob2: float) -> float:
         """Independent error probability combination."""
-        return p1 * (1 - p2) + p2 * (1 - p1)
+        return prob1 * (1 - prob2) + prob2 * (1 - prob1)
 
     # If same detector signature is hit by N independent error sources
     print(f"\nBase probability per error source: {p:.6f}")
@@ -359,8 +363,8 @@ def parse_stim_dem_with_decomposed(dem_str: str) -> tuple[dict, list]:
     errors = {}
     decomposed = []
 
-    for line in dem_str.strip().split("\n"):
-        line = line.strip()
+    for raw_line in dem_str.strip().split("\n"):
+        line = raw_line.strip()
         if not line.startswith("error("):
             continue
 
@@ -376,8 +380,8 @@ def parse_stim_dem_with_decomposed(dem_str: str) -> tuple[dict, list]:
         # Handle decomposition syntax: D0 D1 ^ D2 D3
         if "^" in rest:
             components = []
-            for part in rest.split("^"):
-                part = part.strip()
+            for raw_part in rest.split("^"):
+                part = raw_part.strip()
                 dets = tuple(
                     sorted(int(m.group(1)) for m in re.finditer(r"D(\d+)", part)),
                 )
@@ -432,7 +436,7 @@ def analyze_decomposition_pattern() -> None:
     print("\nDecomposed errors (Y = X^Z pattern):")
     for prob, components in decomposed:
         comp_strs = [
-            f"({' '.join(f'D{d}' for d in dets)} {' '.join(f'L{l}' for l in logs)})".strip()
+            f"({' '.join(f'D{d}' for d in dets)} {' '.join(f'L{log_idx}' for log_idx in logs)})".strip()
             for dets, logs in components
         ]
         print(f"  prob={prob:.6f}: {' ^ '.join(comp_strs)}")
@@ -484,18 +488,18 @@ def analyze_decomposition_pattern() -> None:
                     syndrome.remove(d)
                 else:
                     syndrome.add(d)
-            for l in ls:
-                if l in logs:
-                    logs.remove(l)
+            for log_id in ls:
+                if log_id in logs:
+                    logs.remove(log_id)
                 else:
-                    logs.add(l)
+                    logs.add(log_id)
 
         key = (tuple(sorted(syndrome)), tuple(sorted(logs)))
         pecos_prob = pecos_errors.get(key, 0)
         stim_direct_prob = errors.get(key, 0)
 
         det_str = " ".join(f"D{d}" for d in sorted(syndrome))
-        log_str = " ".join(f"L{l}" for l in sorted(logs))
+        log_str = " ".join(f"L{log_idx}" for log_idx in sorted(logs))
         target_str = f"{det_str} {log_str}".strip()
 
         combined = stim_direct_prob + prob

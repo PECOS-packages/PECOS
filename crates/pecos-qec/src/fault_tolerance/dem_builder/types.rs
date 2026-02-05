@@ -1042,16 +1042,14 @@ impl DetectorErrorModel {
     /// Requires source tracking to be enabled and contributions to be populated.
     /// Use `build_with_source_tracking()` to create a DEM with contributions.
     #[must_use]
+    #[allow(clippy::inherent_to_string)] // Intentional: we have two string formats
     pub fn to_string(&self) -> String {
         let mut lines = Vec::new();
 
         // Add detector coordinate annotations
         for det in &self.detectors {
-            if let Some(coords) = det.coords {
-                lines.push(format!(
-                    "detector({}, {}, {}) D{}",
-                    coords[0], coords[1], coords[2], det.id
-                ));
+            if let Some([x, y, z]) = det.coords {
+                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -1119,11 +1117,8 @@ impl DetectorErrorModel {
 
         // Add detector coordinate annotations
         for det in &self.detectors {
-            if let Some(coords) = det.coords {
-                lines.push(format!(
-                    "detector({}, {}, {}) D{}",
-                    coords[0], coords[1], coords[2], det.id
-                ));
+            if let Some([x, y, z]) = det.coords {
+                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }

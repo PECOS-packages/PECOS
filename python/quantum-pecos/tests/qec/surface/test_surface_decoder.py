@@ -286,8 +286,12 @@ class TestNoisySimulation:
             pytest.skip("selene_sim not available")
             return False
 
-    def test_run_noisy_memory_experiment_import(self, check_selene) -> None:
+    def test_run_noisy_memory_experiment_import(
+        self,
+        check_selene: bool,
+    ) -> None:
         """Test that run_noisy_memory_experiment can be imported."""
+        _ = check_selene  # Fixture triggers skip if unavailable
         from pecos.qec.surface import run_noisy_memory_experiment
 
         assert callable(run_noisy_memory_experiment)
@@ -313,8 +317,9 @@ class TestNoisySimulation:
         assert result.num_shots == 100
         assert result.logical_error_rate == 0.05
 
-    def test_noiseless_simulation(self, check_selene) -> None:
+    def test_noiseless_simulation(self, check_selene: bool) -> None:
         """Noiseless simulation should have zero logical error rate."""
+        _ = check_selene  # Fixture triggers skip if unavailable
         from pecos.compilation_pipeline import compile_guppy_to_hugr
         from pecos.guppy.surface import get_num_qubits, make_surface_code
         from pecos.qec.surface import SurfacePatch

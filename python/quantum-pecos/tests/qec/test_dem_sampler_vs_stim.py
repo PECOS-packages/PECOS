@@ -8,15 +8,19 @@ results to Stim's DEM sampler. This is the ground truth validation.
 """
 
 import re
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    from pecos.quantum import DagCircuit, TickCircuit
 
 # Skip all tests if stim is not installed
 stim = pytest.importorskip("stim")
 
 
-def extract_measurement_order(tc) -> list[int]:
+def extract_measurement_order(tc: "TickCircuit") -> list[int]:
     """Extract measurement order from TickCircuit.
 
     Returns a list of qubit indices in the order they were measured.
@@ -57,8 +61,8 @@ def parse_dem_string(dem_str: str) -> dict[tuple, float]:
         Dict mapping (detector_tuple, logical_tuple) -> probability
     """
     errors = {}
-    for line in dem_str.strip().split("\n"):
-        line = line.strip()
+    for raw_line in dem_str.strip().split("\n"):
+        line = raw_line.strip()
         if not line.startswith("error("):
             continue
 
@@ -113,7 +117,9 @@ def compare_dems(pecos_dem: str, stim_dem: str, rtol: float = 0.05) -> dict:
         stim_prob = stim_errors.get(key)
 
         target_str = (
-            " ".join(f"D{d}" for d in dets) + " " + " ".join(f"L{l}" for l in logs)
+            " ".join(f"D{d}" for d in dets)
+            + " "
+            + " ".join(f"L{log_idx}" for log_idx in logs)
         )
         target_str = target_str.strip()
 
@@ -141,7 +147,7 @@ class TestDemSamplerVsStim:
     """Compare PECOS DemSampler against Stim's DEM sampler."""
 
     @pytest.fixture
-    def surface_code_d3(self):
+    def surface_code_d3(self) -> tuple:
         """Create a d=3 surface code patch and circuit."""
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
 
@@ -150,11 +156,15 @@ class TestDemSamplerVsStim:
         return patch, tc
 
     @pytest.fixture
-    def noise_params(self):
+    def noise_params(self) -> dict[str, float]:
         """Standard noise parameters for testing."""
         return {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
 
-    def test_dem_mechanism_counts_match(self, surface_code_d3, noise_params) -> None:
+    def test_dem_mechanism_counts_match(
+        self,
+        surface_code_d3: tuple,
+        noise_params: dict[str, float],
+    ) -> None:
         """DemSampler should produce same number of mechanisms as Stim."""
         from pecos.qec.surface.circuit_builder import (
             generate_dem_from_tick_circuit,
@@ -183,7 +193,11 @@ class TestDemSamplerVsStim:
             f"PECOS: {comparison['pecos_count']}, Stim: {comparison['stim_count']}"
         )
 
-    def test_dem_probabilities_close(self, surface_code_d3, noise_params) -> None:
+    def test_dem_probabilities_close(
+        self,
+        surface_code_d3: tuple,
+        noise_params: dict[str, float],
+    ) -> None:
         """DemSampler probabilities should be reasonably close to Stim's.
 
         Note: PECOS and Stim have known differences in DEM generation due to:
@@ -228,7 +242,9 @@ class TestDemSamplerVsStim:
                 )
 
     def test_sampling_statistics_match_stim(
-        self, surface_code_d3, noise_params
+        self,
+        surface_code_d3: tuple,
+        noise_params: dict[str, float],
     ) -> None:
         """DemSampler sampling statistics should match Stim's DEM sampler."""
         from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
@@ -299,7 +315,9 @@ class TestDemSamplerVsStim:
         )
 
     def test_detector_firing_rates_correlate(
-        self, surface_code_d3, noise_params
+        self,
+        surface_code_d3: tuple,
+        noise_params: dict[str, float],
     ) -> None:
         """Detector firing rates should be correlated between PECOS and Stim.
 
@@ -423,7 +441,7 @@ class TestDemSamplerHigherDistance:
     """Test DemSampler at higher distances."""
 
     @pytest.mark.parametrize("distance", [3, 5])
-    def test_logical_error_rate_scales(self, distance) -> None:
+    def test_logical_error_rate_scales(self, distance: int) -> None:
         """Logical error rate should decrease with distance (suppression)."""
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
@@ -481,8 +499,8 @@ class TestXBasisMemory:
         stim_dem = str(stim_circuit.detector_error_model(decompose_errors=False))
 
         # Parse and compare
-        def extract_errors(dem_str):
-            errors = {}
+        def extract_errors(dem_str: str) -> dict[str, float]:
+            errors: dict[str, float] = {}
             for line in dem_str.strip().split("\n"):
                 if line.strip().startswith("error("):
                     match = re.match(r"error\(([^)]+)\)\s*(.*)", line.strip())
@@ -578,7 +596,10 @@ class TestAsymmetricNoise:
             },  # p_init dominant
         ],
     )
-    def test_asymmetric_noise_dem_matches_stim(self, noise_params) -> None:
+    def test_asymmetric_noise_dem_matches_stim(
+        self,
+        noise_params: dict[str, float],
+    ) -> None:
         """Asymmetric noise DEMs should match Stim."""
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import (
@@ -599,8 +620,8 @@ class TestAsymmetricNoise:
         stim_circuit = stim.Circuit(stim_str)
         stim_dem = str(stim_circuit.detector_error_model(decompose_errors=False))
 
-        def extract_errors(dem_str):
-            errors = {}
+        def extract_errors(dem_str: str) -> dict[str, float]:
+            errors: dict[str, float] = {}
             for line in dem_str.strip().split("\n"):
                 if line.strip().startswith("error("):
                     match = re.match(r"error\(([^)]+)\)\s*(.*)", line.strip())
@@ -636,7 +657,12 @@ class TestRandomCliffordFuzzing:
     and verify that the DEM analysis produces equivalent results.
     """
 
-    def _build_random_circuit(self, num_qubits: int, depth: int, seed: int):
+    def _build_random_circuit(
+        self,
+        num_qubits: int,
+        depth: int,
+        seed: int,
+    ) -> stim.Circuit:
         """Build a random circuit with gates supported by both PECOS and Stim.
 
         Uses only: H, S, S_DAG, CX (no CZ since DagCircuit doesn't support it).
@@ -675,7 +701,7 @@ class TestRandomCliffordFuzzing:
 
         return stim_circuit
 
-    def _stim_to_dag_circuit(self, stim_circuit: stim.Circuit):
+    def _stim_to_dag_circuit(self, stim_circuit: stim.Circuit) -> "DagCircuit":
         """Convert Stim circuit to PECOS DagCircuit."""
         from pecos_rslib import DagCircuit
 
@@ -749,7 +775,7 @@ class TestRandomCliffordFuzzing:
         return noisy
 
     @pytest.mark.parametrize("seed", range(10))
-    def test_random_circuit_fault_locations_match(self, seed) -> None:
+    def test_random_circuit_fault_locations_match(self, seed: int) -> None:
         """Random circuits should have same fault location count in PECOS and Stim."""
         from pecos_rslib.qec import DagFaultAnalyzer
 
@@ -786,7 +812,7 @@ class TestRandomCliffordFuzzing:
         assert pecos_loc_count > 0, f"PECOS should find fault locations (seed={seed})"
 
     @pytest.mark.parametrize("seed", [42, 123, 456, 789, 1000])
-    def test_random_circuit_sampling_produces_valid_results(self, seed) -> None:
+    def test_random_circuit_sampling_produces_valid_results(self, seed: int) -> None:
         """Random circuit sampling should produce valid statistics."""
         from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
@@ -835,7 +861,7 @@ class TestDemEquivalenceComprehensive:
             (5, 2, "Z"),
         ],
     )
-    def test_dem_exact_match(self, distance, num_rounds, basis) -> None:
+    def test_dem_exact_match(self, distance: int, num_rounds: int, basis: str) -> None:
         """DEMs should exactly match Stim for all configurations."""
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import (
@@ -854,8 +880,8 @@ class TestDemEquivalenceComprehensive:
         stim_circuit = stim.Circuit(stim_str)
         stim_dem = str(stim_circuit.detector_error_model(decompose_errors=False))
 
-        def extract_errors(dem_str):
-            errors = {}
+        def extract_errors(dem_str: str) -> dict[str, float]:
+            errors: dict[str, float] = {}
             for line in dem_str.strip().split("\n"):
                 if line.strip().startswith("error("):
                     match = re.match(r"error\(([^)]+)\)\s*(.*)", line.strip())

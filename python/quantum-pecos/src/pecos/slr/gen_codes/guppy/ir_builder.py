@@ -9711,8 +9711,8 @@ class IRBuilder:
     def _infer_current_array_size_from_fresh_var(
         self,
         var: str,
-        actual_var: str,  # noqa: ARG002
-        func_name: str | None,  # noqa: ARG002
+        _actual_var: str,
+        _func_name: str | None,
         expected_size: int,
     ) -> int | None:
         """Infer the current size of a refreshed array by checking what function produced it.
@@ -9879,7 +9879,7 @@ class IRBuilder:
     def _infer_refreshed_array_size(
         self,
         var: str,
-        actual_var: str,  # noqa: ARG002
+        _actual_var: str,
         expected_size: int,
     ) -> int | None:
         """Infer the size of a refreshed array from function return types.

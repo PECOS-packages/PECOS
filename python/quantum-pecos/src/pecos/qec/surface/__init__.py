@@ -85,7 +85,7 @@ from pecos.qec.surface.schedule import (
     get_stab_schedule,
 )
 
-__all__ = [  # noqa: RUF022
+__all__ = [
     # Rotated lattice (most common, default)
     "compute_rotated_x_stabilizers",
     "compute_rotated_z_stabilizers",

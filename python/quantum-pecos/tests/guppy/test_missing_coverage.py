@@ -56,12 +56,12 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
     return decoded
 
 
-def get_measurements(results: dict, expected_count: int = 1) -> list:  # noqa: ARG001
+def get_measurements(results: dict, _expected_count: int = 1) -> list:
     """Extract measurements from results dict, handling new format.
 
     Args:
         results: The results dict from sim().run()
-        expected_count: Expected number of measurements (for tuple returns)
+        _expected_count: Expected number of measurements (for tuple returns)
 
     Returns:
         List of measurements (either single values or tuples)

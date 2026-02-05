@@ -142,7 +142,7 @@ def _check_for_unsupported_structures(hugr: Hugr, quantum_op_parents: set[int]) 
 
         while current_idx is not None and current_idx not in visited:
             visited.add(current_idx)
-            from hugr import Node  # noqa: PLC0415
+            from hugr import Node
 
             node = Node(current_idx)
             try:
@@ -206,7 +206,7 @@ def _extract_quantum_operations(hugr: Hugr) -> list[dict]:
 
         op_def = data.op.op_def()
         # _extension is the only public way to access the extension name
-        ext_name = op_def._extension.name if op_def._extension else None  # noqa: SLF001
+        ext_name = op_def._extension.name if op_def._extension else None
 
         if ext_name not in QUANTUM_EXTENSIONS:
             continue
@@ -220,24 +220,20 @@ def _extract_quantum_operations(hugr: Hugr) -> list[dict]:
         if parent_idx is not None:
             quantum_op_parents.add(parent_idx)
 
-        # Extract connectivity
-        incoming = []
-        for in_port, out_ports in hugr.incoming_links(node):
-            for out_port in out_ports:
-                # Skip order edges (port offset -1)
-                if in_port.offset >= 0 and out_port.offset >= 0:
-                    incoming.append(  # noqa: PERF401
-                        (out_port.node.idx, out_port.offset, in_port.offset),
-                    )
+        # Extract connectivity (skip order edges with port offset -1)
+        incoming = [
+            (out_port.node.idx, out_port.offset, in_port.offset)
+            for in_port, out_ports in hugr.incoming_links(node)
+            for out_port in out_ports
+            if in_port.offset >= 0 and out_port.offset >= 0
+        ]
 
-        outgoing = []
-        for out_port, in_ports in hugr.outgoing_links(node):
-            for in_port in in_ports:
-                # Skip order edges
-                if out_port.offset >= 0 and in_port.offset >= 0:
-                    outgoing.append(  # noqa: PERF401
-                        (out_port.offset, in_port.node.idx, in_port.offset),
-                    )
+        outgoing = [
+            (out_port.offset, in_port.node.idx, in_port.offset)
+            for out_port, in_ports in hugr.outgoing_links(node)
+            for in_port in in_ports
+            if out_port.offset >= 0 and in_port.offset >= 0
+        ]
 
         operations.append(
             {
@@ -316,7 +312,7 @@ def _trace_back_to_quantum_op(
     Returns:
         The operation list index of the source quantum op, or None if not found.
     """
-    from hugr import Node  # noqa: PLC0415
+    from hugr import Node
 
     visited: set[tuple[int, int]] = set()
     stack = [(node_idx, port)]

@@ -58,7 +58,7 @@ class QasmEngineBuilder:
         """
         # If it's a Python wrapper, extract the underlying Rust type
         if hasattr(program, "_to_program"):
-            self._builder = self._builder.program(program._to_program())  # noqa: SLF001
+            self._builder = self._builder.program(program._to_program())
         else:
             # It's already a Rust type
             self._builder = self._builder.program(program)
@@ -111,7 +111,7 @@ class PhirJsonEngineBuilder:
         """
         # If it's a Python wrapper, extract the underlying Rust type
         if hasattr(program, "_to_program"):
-            self._builder = self._builder.program(program._to_program())  # noqa: SLF001
+            self._builder = self._builder.program(program._to_program())
         else:
             # It's already a Rust type
             self._builder = self._builder.program(program)
@@ -159,7 +159,7 @@ class QisEngineBuilder:
         """
         # If it's a Python wrapper, extract the underlying Rust type
         if hasattr(program, "_to_program"):
-            self._builder = self._builder.program(program._to_program())  # noqa: SLF001
+            self._builder = self._builder.program(program._to_program())
         else:
             # It's already a Rust type
             self._builder = self._builder.program(program)

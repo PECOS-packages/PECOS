@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pecos.qec.surface.patch import SurfacePatch
+    from pecos.quantum import DagCircuit, TickCircuit, TickHandle
 
 
 class OpType(Enum):
@@ -131,13 +132,13 @@ def build_surface_code_circuit(
     ops.append(CircuitOp(OpType.COMMENT, label=f"prep_{basis.lower()}_basis"))
 
     # Allocate and reset data qubits
-    for i in range(num_data):
-        ops.append(CircuitOp(OpType.ALLOC, [data_q(i)], f"data[{i}]"))
+    ops.extend(
+        CircuitOp(OpType.ALLOC, [data_q(i)], f"data[{i}]") for i in range(num_data)
+    )
 
     # For X-basis: H on each data qubit
     if basis.upper() == "X":
-        for i in range(num_data):
-            ops.append(CircuitOp(OpType.H, [data_q(i)]))
+        ops.extend(CircuitOp(OpType.H, [data_q(i)]) for i in range(num_data))
 
     ops.append(CircuitOp(OpType.TICK))
 
@@ -150,17 +151,20 @@ def build_surface_code_circuit(
         )
 
         # Allocate X ancillas: ax{i} = qubit()
-        for s in geom.x_stabilizers:
-            ops.append(CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}"))
+        ops.extend(
+            CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}")
+            for s in geom.x_stabilizers
+        )
 
         # Allocate Z ancillas: az{i} = qubit()
-        for s in geom.z_stabilizers:
-            ops.append(CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}"))
+        ops.extend(
+            CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}")
+            for s in geom.z_stabilizers
+        )
 
         # H on X ancillas
         ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
-        for s in geom.x_stabilizers:
-            ops.append(CircuitOp(OpType.H, [x_anc_q(s.index)]))
+        ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)]) for s in geom.x_stabilizers)
 
         ops.append(CircuitOp(OpType.TICK))
 
@@ -182,17 +186,20 @@ def build_surface_code_circuit(
 
         # H on X ancillas (second time)
         ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
-        for s in geom.x_stabilizers:
-            ops.append(CircuitOp(OpType.H, [x_anc_q(s.index)]))
+        ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)]) for s in geom.x_stabilizers)
 
         # Measure X ancillas: sx{i} = measure(ax{i})
         ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
-        for s in geom.x_stabilizers:
-            ops.append(CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}"))
+        ops.extend(
+            CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}")
+            for s in geom.x_stabilizers
+        )
 
         # Measure Z ancillas: sz{i} = measure(az{i})
-        for s in geom.z_stabilizers:
-            ops.append(CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}"))
+        ops.extend(
+            CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}")
+            for s in geom.z_stabilizers
+        )
 
         ops.append(CircuitOp(OpType.TICK))
 
@@ -203,12 +210,12 @@ def build_surface_code_circuit(
 
     # For X-basis: H on each data qubit first
     if basis.upper() == "X":
-        for i in range(num_data):
-            ops.append(CircuitOp(OpType.H, [data_q(i)]))
+        ops.extend(CircuitOp(OpType.H, [data_q(i)]) for i in range(num_data))
 
     # Measure all data qubits
-    for i in range(num_data):
-        ops.append(CircuitOp(OpType.MEASURE, [data_q(i)], f"final[{i}]"))
+    ops.extend(
+        CircuitOp(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data)
+    )
 
     return ops, allocation
 
@@ -427,11 +434,11 @@ class GuppyRenderer(CircuitRenderer):
 
     def render(
         self,
-        ops: list[CircuitOp],
-        allocation: QubitAllocation,
+        _ops: list[CircuitOp],
+        _allocation: QubitAllocation,
         patch: SurfacePatch,
-        num_rounds: int,
-        basis: str,
+        _num_rounds: int,
+        _basis: str,
     ) -> str:
         """Render to Guppy source code.
 
@@ -455,10 +462,10 @@ class DagCircuitRenderer(CircuitRenderer):
     def render(
         self,
         ops: list[CircuitOp],
-        allocation: QubitAllocation,
-        patch: SurfacePatch,
-        num_rounds: int,
-        basis: str,
+        _allocation: QubitAllocation,
+        _patch: SurfacePatch,
+        _num_rounds: int,
+        _basis: str,
     ) -> DagCircuit:
         """Render to PECOS DagCircuit."""
         from pecos_rslib import DagCircuit
@@ -594,7 +601,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 return f"Z{stab_idx}"
             return ""
 
-        def new_tick():
+        def new_tick() -> TickHandle:
             nonlocal current_tick_handle, current_tick_idx, qubits_in_current_tick
             current_tick_handle = circuit.tick()
             # Use next_tick_index() - 1 instead of num_ticks() - 1 because
@@ -610,12 +617,12 @@ class TickCircuitRenderer(CircuitRenderer):
             }
             return current_tick_handle
 
-        def ensure_tick():
+        def ensure_tick() -> TickHandle:
             if current_tick_handle is None:
                 return new_tick()
             return current_tick_handle
 
-        def get_tick_for_qubits(qubits: list[int]):
+        def get_tick_for_qubits(qubits: list[int]) -> TickHandle:
             """Get a tick that can accept these qubits (no conflicts)."""
             if qubits_in_current_tick & set(qubits):
                 return new_tick()
@@ -897,8 +904,8 @@ def generate_stim_from_patch(
 
 def generate_guppy_from_patch(
     patch: SurfacePatch,
-    num_rounds: int = 1,  # noqa: ARG001
-    basis: str = "Z",  # noqa: ARG001
+    _num_rounds: int = 1,
+    _basis: str = "Z",
 ) -> str:
     """Generate Guppy code from SurfacePatch.
 
@@ -912,8 +919,8 @@ def generate_guppy_from_patch(
 
     Args:
         patch: Surface code patch
-        num_rounds: Unused (factory functions accept this at runtime)
-        basis: Unused (module includes both Z and X basis functions)
+        _num_rounds: Unused (factory functions accept this at runtime)
+        _basis: Unused (module includes both Z and X basis functions)
 
     Returns:
         Guppy source code string (full module)
@@ -1338,7 +1345,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     ]
 
     # Process each gate as a potential error location
-    for op_idx, (tick_idx, gate_name, qubits, meas_idx) in enumerate(circuit_ops):
+    for op_idx, (_tick_idx, gate_name, qubits, meas_idx) in enumerate(circuit_ops):
 
         if gate_name in ("QAlloc", "Prep") and p_init > 0:
             # Initialization error: X error after prep
@@ -1397,8 +1404,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         lines.append(f"detector({coord_str}) D{det['id']}")
 
     # Add logical observable
-    for obs in observables:
-        lines.append(f"logical_observable L{obs['id']}")
+    lines.extend(f"logical_observable L{obs['id']}" for obs in observables)
 
     # Add error mechanisms (combine same-effect errors)
     for (dets, obs), prob in sorted(
@@ -1671,15 +1677,11 @@ def generate_dem_from_tick_circuit_via_autodetection(
                     error_mechanisms[key] += p1 / 3
 
     # Generate DEM output
-    lines = []
-
     # Add detector declarations (auto-discovered, no coordinates)
-    for det_idx in range(num_detectors):
-        lines.append(f"detector D{det_idx}")
+    lines = [f"detector D{det_idx}" for det_idx in range(num_detectors)]
 
     # Add logical observables
-    for log_idx in range(num_logicals):
-        lines.append(f"logical_observable L{log_idx}")
+    lines.extend(f"logical_observable L{log_idx}" for log_idx in range(num_logicals))
 
     # Add error mechanisms
     for (dets, logs), prob in sorted(
@@ -1688,7 +1690,7 @@ def generate_dem_from_tick_circuit_via_autodetection(
     ):
         if prob > 0 and (dets or logs):
             det_str = " ".join(f"D{d}" for d in sorted(dets))
-            log_str = " ".join(f"L{l}" for l in sorted(logs))
+            log_str = " ".join(f"L{log_idx}" for log_idx in sorted(logs))
             targets = f"{det_str} {log_str}".strip()
             lines.append(f"error({prob:.6g}) {targets}")
 

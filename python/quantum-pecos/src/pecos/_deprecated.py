@@ -23,7 +23,7 @@ from typing import Any
 from pecos_rslib import BitInt
 
 
-def BinArray(*args: Any, **kwargs: Any) -> BitInt:  # noqa: N802, ANN401
+def BinArray(*args: Any, **kwargs: Any) -> BitInt:
     """Deprecated: Use BitInt instead.
 
     BinArray is a deprecated alias for BitInt. It will be removed in a future version.

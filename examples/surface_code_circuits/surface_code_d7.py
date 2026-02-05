@@ -1,3 +1,5 @@
+# ruff: noqa: N801
+# Class names like SurfaceCode_7x7 clearly communicate the code dimensions
 """Surface code patch (dx=7, dz=7) implementation in Guppy.
 
 Auto-generated from SurfacePatch geometry.
@@ -7,6 +9,8 @@ X stabilizers: 24
 Z stabilizers: 24
 Ancilla qubits: 48 (one per stabilizer)
 """
+
+from collections.abc import Callable
 
 from guppylang import guppy
 from guppylang.std.builtins import array, owned, result
@@ -486,7 +490,7 @@ def apply_logical_z(surf: SurfaceCode_7x7) -> None:
 # === Memory Experiments ===
 
 
-def make_memory_z(num_rounds: int):
+def make_memory_z(num_rounds: int) -> Callable[[], None]:
     """Create Z-basis memory experiment."""
     from guppylang.std.builtins import comptime
 
@@ -506,7 +510,7 @@ def make_memory_z(num_rounds: int):
     return memory_z
 
 
-def make_memory_x(num_rounds: int):
+def make_memory_x(num_rounds: int) -> Callable[[], None]:
     """Create X-basis memory experiment."""
     from guppylang.std.builtins import comptime
 

@@ -76,7 +76,7 @@ error(0.00096) D0 D2
 error(0.000533) D0 D2 ^ D39
 error(0.000839) D0 D12
 error(0.00028) D0 L0 ^ D12 L0
-error(0.000267) D0 D39 L0 ^ D12 L0
+error(0.000267) D0 D12 ^ D39
 error(0.000267) D0 D14
 error(0.000267) D0 D14 ^ D39
 error(0.0002) D0 D16
@@ -121,9 +121,9 @@ error(0.001585) D3
 error(0.000693) D3 D5
 error(0.001452) D3 ^ D15
 error(0.0002) D3 D15 ^ D43
-error(0.0001) D3 D43 ^ D15 D45
-error(0.0001) D3 ^ D15 D45 ^ D43
-error(6.66978e-5) D3 D45 ^ D15
+error(0.0001) D3 D15 ^ D43 D45
+error(0.0001) D3 ^ D15 ^ D43 D45
+error(6.66978e-5) D3 D15 ^ D45
 error(0.0006) D3 D17
 error(0.0002) D3 D17 ^ D43
 error(0.0001) D3 D17 ^ D43 D45
@@ -131,21 +131,21 @@ error(0.0001) D3 D17 ^ D43 ^ D45
 error(6.66978e-5) D3 D17 ^ D45
 error(0.0002) D3 ^ D19
 error(6.66978e-5) D3 D19 ^ D43
-error(3.33489e-5) D3 D43 ^ D19 D45
+error(3.33489e-5) D3 D19 ^ D43 D45
 error(3.33489e-5) D3 ^ D19 ^ D43 D45
-error(0.0002) D3 D45 ^ D19
+error(0.0002) D3 D19 ^ D45
 error(6.66978e-5) D3 ^ D43
-error(6.66978e-5) D3 D45 ^ D43
+error(6.66978e-5) D3 ^ D43 D45
 error(0.000467) D3 D45
 error(0.001718) D4 L0
 error(0.00096) D4 D6
 error(0.000533) D4 D6 ^ D38
 error(0.001089) D4 D16
 error(0.000363) D4 L0 ^ D16 L0
-error(0.0002) D4 L0 ^ D16 D37 L0
-error(0.0001) D4 D16 ^ D37 D38
-error(0.0001) D4 L0 ^ D16 D37 L0 ^ D38
-error(6.66978e-5) D4 D38 L0 ^ D16 L0
+error(0.0002) D4 D37 L0 ^ D16 L0
+error(0.0001) D4 D38 L0 ^ D16 D37 L0
+error(0.0001) D4 L0 ^ D16 L0 ^ D37 D38
+error(6.66978e-5) D4 D16 ^ D38
 error(0.0002) D4 D18
 error(6.66978e-5) D4 D18 ^ D37
 error(3.33489e-5) D4 D18 ^ D37 D38
@@ -153,10 +153,10 @@ error(3.33489e-5) D4 D18 ^ D37 ^ D38
 error(0.0002) D4 D18 ^ D38
 error(0.00015) D4 D20
 error(5.001668e-5) D4 L0 ^ D20 L0
-error(6.66978e-5) D4 D20 ^ D37
+error(6.66978e-5) D4 D37 L0 ^ D20 L0
 error(3.33489e-5) D4 D37 L0 ^ D20 D38 L0
-error(3.33489e-5) D4 D37 L0 ^ D20 L0 ^ D38
-error(0.0002) D4 L0 ^ D20 D38 L0
+error(3.33489e-5) D4 D20 ^ D37 ^ D38
+error(0.0002) D4 D38 L0 ^ D20 L0
 error(0.000733) D37 ^ D4 L0
 error(0.0002) D4 L0 ^ D37 D38
 error(6.66978e-5) D38 ^ D4 L0
@@ -209,8 +209,8 @@ error(0.0002) D6 D22 ^ D40
 error(0.001585) D7
 error(0.000693) D7 D9
 error(0.001452) D7 ^ D19
-error(0.0002) D7 ^ D19 D42
-error(0.0001) D7 D19 ^ D42 D44
+error(0.0002) D7 D19 ^ D42
+error(0.0001) D7 D42 ^ D19 D44
 error(0.0001) D7 D19 ^ D42 ^ D44
 error(6.66978e-5) D7 ^ D19 D44
 error(0.0006) D7 D21
@@ -219,10 +219,10 @@ error(0.0001) D7 D21 ^ D42 D44
 error(0.0001) D7 D21 ^ D42 ^ D44
 error(6.66978e-5) D7 D21 ^ D44
 error(0.0002) D7 ^ D23
-error(6.66978e-5) D7 D42 ^ D23
-error(3.33489e-5) D7 D23 ^ D42 D44
-error(3.33489e-5) D7 ^ D23 ^ D42 D44
-error(0.0002) D7 ^ D23 D44
+error(6.66978e-5) D7 D23 ^ D42
+error(3.33489e-5) D7 D42 ^ D23 D44
+error(3.33489e-5) D7 ^ D23 D44 ^ D42
+error(0.0002) D7 D44 ^ D23
 error(6.66978e-5) D7 ^ D42
 error(6.66978e-5) D7 D44 ^ D42
 error(0.000467) D7 D44
@@ -268,14 +268,14 @@ error(3.33489e-5) D12 D26 ^ D43 ^ D51
 error(0.0002) D12 D26 ^ D51
 error(0.0001) D12 D28
 error(3.334667e-5) D12 L0 ^ D28 L0
-error(6.66978e-5) D12 L0 ^ D28 D39 L0
+error(6.66978e-5) D12 D39 L0 ^ D28 L0
 error(3.33489e-5) D12 D28 ^ D39 D41
 error(3.33489e-5) D12 D28 ^ D39 ^ D41
-error(6.669335e-5) D12 D39 L0 ^ D28 D51 L0
+error(6.669335e-5) D12 D28 ^ D39 D51
 error(6.669335e-5) D12 L0 ^ D28 L0 ^ D39 D51
 error(3.33489e-5) D12 D28 ^ D41 D51
 error(3.33489e-5) D12 D28 ^ D41 ^ D51
-error(6.66978e-5) D12 L0 ^ D28 D51 L0
+error(6.66978e-5) D12 D28 ^ D51
 error(0.0002) D39 ^ D12 L0
 error(6.66978e-5) D12 L0 ^ D39 D51
 error(0.0002) D51 ^ D12 L0
@@ -384,11 +384,11 @@ error(0.000267) D15 D17
 error(0.000133) D15 D17 ^ D43 D45
 error(0.000133) D15 D17 ^ D43 ^ D45
 error(0.001252) D15 ^ D27
-error(0.0002) D15 ^ D27 D47
+error(0.0002) D15 D47 ^ D27
 error(6.669335e-5) D15 D27 ^ D47 D55
-error(6.669335e-5) D15 ^ D27 D47 ^ D55
+error(6.669335e-5) D15 D27 ^ D47 ^ D55
 error(3.33489e-5) D15 D47 ^ D27 D57
-error(3.33489e-5) D15 ^ D27 D57 ^ D47
+error(3.33489e-5) D15 D47 ^ D27 ^ D57
 error(6.66978e-5) D15 D27 ^ D55
 error(0.0001) D15 D27 ^ D55 D57
 error(0.0001) D15 ^ D27 ^ D55 D57
@@ -409,21 +409,21 @@ error(3.33489e-5) D15 D31 ^ D45 ^ D46
 error(3.33489e-5) D15 D31 ^ D45 D55
 error(3.33489e-5) D15 ^ D31 ^ D45 D55
 error(6.669335e-5) D15 D31 ^ D45 D57
-error(6.669335e-5) D15 D31 ^ D45 ^ D57
+error(6.669335e-5) D15 ^ D31 ^ D45 D57
 error(3.33489e-5) D15 D31 ^ D46 D57
 error(3.33489e-5) D15 D31 ^ D46 ^ D57
 error(3.33489e-5) D15 D31 ^ D55 D57
-error(3.33489e-5) D15 D31 ^ D55 ^ D57
+error(3.33489e-5) D15 ^ D31 ^ D55 D57
 error(6.66978e-5) D15 ^ D43
 error(6.66978e-5) D15 ^ D43 D45
 error(0.0002) D15 ^ D45
-error(6.66978e-5) D15 D45 ^ D46
+error(6.66978e-5) D15 ^ D45 D46
 error(0.000267) D15 D45 ^ D47
 error(0.0002) D15 D45 ^ D57
 error(6.66978e-5) D15 ^ D46 D57
 error(0.000533) D15 D47
 error(6.66978e-5) D15 ^ D47 D55
-error(0.0002) D15 D47 ^ D57
+error(0.0002) D15 ^ D47 D57
 error(6.66978e-5) D15 ^ D55 D57
 error(0.001066) D16 L0
 error(0.000533) D16 D18
@@ -452,15 +452,15 @@ error(3.33489e-5) D16 D18 ^ D42 ^ D50
 error(0.000939) D16 D28
 error(0.000313) D16 L0 ^ D28 L0
 error(0.0001) D16 D28 ^ D39 D41
-error(0.0001) D16 D28 ^ D39 ^ D41
-error(3.33489e-5) D16 D39 L0 ^ D28 D49 L0
+error(0.0001) D16 L0 ^ D28 L0 ^ D39 D41
+error(3.33489e-5) D16 D28 ^ D39 D49
 error(3.33489e-5) D16 L0 ^ D28 L0 ^ D39 D49
 error(6.669335e-5) D16 D28 ^ D41 D49
-error(6.669335e-5) D16 L0 ^ D28 L0 ^ D41 D49
+error(6.669335e-5) D16 D28 ^ D41 ^ D49
 error(3.33489e-5) D16 D28 ^ D41 D50
-error(3.33489e-5) D16 L0 ^ D28 L0 ^ D41 D50
+error(3.33489e-5) D16 L0 ^ D28 D50 L0 ^ D41
 error(0.0001) D16 D28 ^ D49 D50
-error(0.0001) D16 L0 ^ D28 D50 L0 ^ D49
+error(0.0001) D16 D28 ^ D49 ^ D50
 error(0.000133) D16 D30
 error(3.33489e-5) D16 D30 ^ D41 D42
 error(3.33489e-5) D16 D30 ^ D41 ^ D42
@@ -475,19 +475,19 @@ error(3.33489e-5) D16 D30 ^ D49 ^ D50
 error(0.0001) D16 D32
 error(3.334667e-5) D16 L0 ^ D32 L0
 error(3.33489e-5) D16 D32 ^ D38 D40
-error(3.33489e-5) D16 L0 ^ D32 L0 ^ D38 D40
+error(3.33489e-5) D16 D32 ^ D38 ^ D40
 error(3.33489e-5) D16 D32 ^ D38 D49
 error(3.33489e-5) D16 L0 ^ D32 L0 ^ D38 D49
 error(6.669335e-5) D16 D32 ^ D38 D50
-error(6.669335e-5) D16 D32 ^ D38 ^ D50
+error(6.669335e-5) D16 L0 ^ D32 L0 ^ D38 D50
 error(3.33489e-5) D16 D32 ^ D40 D50
-error(3.33489e-5) D16 D32 ^ D40 ^ D50
+error(3.33489e-5) D16 L0 ^ D32 L0 ^ D40 D50
 error(3.33489e-5) D16 D32 ^ D49 D50
 error(3.33489e-5) D16 L0 ^ D32 L0 ^ D49 D50
 error(0.000267) D37 ^ D16 L0
-error(0.000267) D16 D37 L0 ^ D38
-error(0.000267) D16 L0 ^ D37 D39
-error(0.000267) D16 D37 L0 ^ D49
+error(0.000267) D16 L0 ^ D37 D38
+error(0.000267) D16 D37 L0 ^ D39
+error(0.000267) D16 L0 ^ D37 D49
 error(0.0002) D16 L0 ^ D38 D49
 error(6.66978e-5) D16 L0 ^ D38 D50
 error(0.000267) D39 ^ D16 L0
@@ -636,15 +636,15 @@ error(0.000133) D19 D21 ^ D42 D44
 error(0.000133) D19 D21 ^ D42 ^ D44
 error(0.001252) D19 ^ D31
 error(0.0001) D19 D31 ^ D45 D46
-error(0.0001) D19 D31 ^ D45 ^ D46
+error(0.0001) D19 D46 ^ D31 ^ D45
 error(3.33489e-5) D19 D31 ^ D45 D54
 error(3.33489e-5) D19 ^ D31 ^ D45 D54
 error(6.669335e-5) D19 D31 ^ D46 D54
-error(6.669335e-5) D19 D31 ^ D46 ^ D54
-error(3.33489e-5) D19 D31 ^ D46 D56
-error(3.33489e-5) D19 D31 ^ D46 ^ D56
+error(6.669335e-5) D19 D46 ^ D31 ^ D54
+error(3.33489e-5) D19 D46 ^ D31 D56
+error(3.33489e-5) D19 ^ D31 ^ D46 D56
 error(0.0001) D19 D31 ^ D54 D56
-error(0.0001) D19 D31 ^ D54 ^ D56
+error(0.0001) D19 ^ D31 ^ D54 D56
 error(0.0004) D19 D33
 error(0.0001) D19 D33 ^ D42 D44
 error(0.0001) D19 D33 ^ D42 ^ D44
@@ -657,24 +657,24 @@ error(3.33489e-5) D19 D33 ^ D44 ^ D56
 error(0.0001) D19 D33 ^ D54 D56
 error(0.0001) D19 D33 ^ D54 ^ D56
 error(0.000133) D19 ^ D35
-error(6.66978e-5) D19 D35 ^ D44
+error(6.66978e-5) D19 ^ D35 D44
 error(3.33489e-5) D19 D35 ^ D44 D54
-error(3.33489e-5) D19 ^ D35 D44 ^ D54
-error(6.669335e-5) D19 D56 ^ D35 D44
+error(3.33489e-5) D19 D35 ^ D44 ^ D54
+error(6.669335e-5) D19 D35 ^ D44 D56
 error(6.669335e-5) D19 D35 ^ D44 ^ D56
 error(3.33489e-5) D19 D35 ^ D54 D56
-error(3.33489e-5) D19 ^ D35 D56 ^ D54
-error(6.66978e-5) D19 ^ D35 D56
+error(3.33489e-5) D19 D35 ^ D54 ^ D56
+error(6.66978e-5) D19 D35 ^ D56
 error(6.66978e-5) D19 ^ D42
 error(6.66978e-5) D19 D42 ^ D44
 error(0.000267) D19 ^ D44
 error(0.000267) D19 ^ D44 D46
-error(0.0002) D19 D44 ^ D56
+error(0.0002) D19 ^ D44 D56
 error(0.000267) D19 D45
-error(0.000267) D19 D45 ^ D46
+error(0.000267) D19 D46 ^ D45
 error(0.000267) D19 D46
-error(6.66978e-5) D19 ^ D46 D54
-error(0.0002) D19 D46 ^ D56
+error(6.66978e-5) D19 D46 ^ D54
+error(0.0002) D19 D56 ^ D46
 error(6.66978e-5) D19 D56 ^ D54
 error(6.66978e-5) D19 ^ D56
 error(0.000933) D20 L0
@@ -687,23 +687,23 @@ error(0.000467) D20 D22 ^ D40
 error(0.000939) D20 D32
 error(0.000313) D20 L0 ^ D32 L0
 error(0.0001) D20 D32 ^ D38 D40
-error(0.0001) D20 D32 ^ D38 ^ D40
+error(0.0001) D20 D38 L0 ^ D32 L0 ^ D40
 error(3.33489e-5) D20 D38 L0 ^ D32 D48 L0
-error(3.33489e-5) D20 D32 ^ D38 ^ D48
+error(3.33489e-5) D20 L0 ^ D32 L0 ^ D38 D48
 error(6.66978e-5) D20 D32 ^ D40
 error(6.669335e-5) D20 D32 ^ D40 D48
-error(6.669335e-5) D20 L0 ^ D32 L0 ^ D40 D48
-error(0.0002) D20 L0 ^ D32 D48 L0
+error(6.669335e-5) D20 D48 L0 ^ D32 L0 ^ D40
+error(0.0002) D20 D32 ^ D48
 error(0.0002) D20 D34
 error(0.0002) D20 D34 ^ D40
 error(3.33489e-5) D20 D34 ^ D40 D48
 error(3.33489e-5) D20 D34 ^ D40 ^ D48
 error(6.66978e-5) D20 D34 ^ D48
 error(0.000533) D36 ^ D20 L0
-error(0.000267) D20 D36 L0 ^ D38
+error(0.000267) D20 D38 L0 ^ D36
 error(0.000267) D20 D48 L0 ^ D36
 error(6.66978e-5) D37 ^ D20 L0
-error(6.66978e-5) D20 L0 ^ D37 D38
+error(6.66978e-5) D20 D38 L0 ^ D37
 error(0.0002) D38 ^ D20 L0
 error(6.66978e-5) D20 D38 L0 ^ D40
 error(0.0002) D20 D38 L0 ^ D48
@@ -740,7 +740,7 @@ error(0.001119) D22 D34
 error(0.000267) D22 D34 ^ D40
 error(0.000533) D23
 error(0.001119) D23 ^ D35
-error(0.000267) D23 D44 ^ D35
+error(0.000267) D23 D35 ^ D44
 error(0.000267) D23 D44
 error(0.000533) D24 L0
 error(0.0006) D24 D26
@@ -752,8 +752,8 @@ error(0.000133) D24 D26 ^ D55
 error(0.000267) D51 ^ D24 L0
 error(3.33489e-5) D24 D64 ^ D51 D53
 error(3.33489e-5) D24 D51 L0 ^ D53 ^ D64 L0
-error(0.0002) D24 L0 ^ D51 D64 L0
-error(6.66978e-5) D24 D64 ^ D53
+error(0.0002) D24 D64 ^ D51
+error(6.66978e-5) D24 L0 ^ D53 D64 L0
 error(0.000133) D24 D62 ^ D55
 error(0.001039) D24 D60
 error(0.000346) D24 L0 ^ D60 L0
@@ -825,20 +825,20 @@ error(0.000133) D27 D29 ^ D55 ^ D57
 error(0.000267) D27 D47
 error(6.66978e-5) D27 D47 ^ D55
 error(0.0002) D27 ^ D47 D57
-error(0.000267) D27 ^ D47 D59
+error(0.000267) D27 D59 ^ D47
 error(6.66978e-5) D27 ^ D55 D57
 error(0.0001) D27 D65 ^ D55 D57
 error(0.0001) D27 D65 ^ D55 ^ D57
 error(6.66978e-5) D27 D65 ^ D55
 error(0.0002) D27 ^ D57
-error(6.66978e-5) D27 D57 ^ D58
+error(6.66978e-5) D27 ^ D57 D58
 error(3.33489e-5) D27 D58 ^ D57 D67
-error(3.33489e-5) D27 ^ D57 D58 ^ D67
-error(0.000267) D27 ^ D57 D59
+error(3.33489e-5) D27 D67 ^ D57 ^ D58
+error(0.000267) D27 D59 ^ D57
 error(0.0002) D27 D65 ^ D57
-error(0.0002) D27 ^ D57 D67
+error(0.0002) D27 D67 ^ D57
 error(6.66978e-5) D27 ^ D58
-error(6.66978e-5) D27 ^ D58 D67
+error(6.66978e-5) D27 D58 ^ D67
 error(0.000533) D27 D59
 error(0.0004) D27 D59 ^ D63
 error(0.001518) D27 ^ D63
@@ -869,27 +869,27 @@ error(3.33489e-5) D28 D30 ^ D53 D54
 error(3.33489e-5) D28 D30 ^ D53 ^ D54
 error(6.66978e-5) D28 D30 ^ D54
 error(6.66978e-5) D39 ^ D28 L0
-error(6.66978e-5) D28 L0 ^ D39 D41
-error(0.0002) D28 D39 L0 ^ D49
-error(0.0002) D28 D51 L0 ^ D39
+error(6.66978e-5) D28 D39 L0 ^ D41
+error(0.0002) D28 L0 ^ D39 D49
+error(0.0002) D28 D39 L0 ^ D51
 error(6.66978e-5) D28 L0 ^ D41 D49
 error(0.000267) D49 ^ D28 L0
 error(0.000267) D28 L0 ^ D49 D50
-error(0.000267) D28 D49 L0 ^ D51
+error(0.000267) D28 L0 ^ D49 D51
 error(0.000267) D50 ^ D28 L0
-error(3.33489e-5) D28 D68 ^ D50 D52
+error(3.33489e-5) D28 D50 L0 ^ D52 D68 L0
 error(3.33489e-5) D28 D68 ^ D50 ^ D52
 error(0.0002) D28 D50 L0 ^ D68 L0
 error(0.000267) D51 ^ D28 L0
-error(6.66978e-5) D28 L0 ^ D51 D53
+error(6.66978e-5) D28 D53 L0 ^ D51
 error(0.0001) D28 D53 L0 ^ D51 D64 L0
-error(0.0001) D28 D51 L0 ^ D53 ^ D64 L0
-error(6.66978e-5) D28 D64 ^ D51
+error(0.0001) D28 L0 ^ D51 D64 L0 ^ D53
+error(6.66978e-5) D28 D51 L0 ^ D64 L0
 error(6.66978e-5) D28 D68 ^ D52
 error(6.66978e-5) D53 ^ D28 L0
 error(3.33489e-5) D28 D66 ^ D53 D54
 error(3.33489e-5) D28 D66 ^ D53 ^ D54
-error(0.0002) D28 L0 ^ D53 D64 L0
+error(0.0002) D28 D53 L0 ^ D64 L0
 error(0.0002) D28 D66 ^ D53
 error(6.66978e-5) D28 D66 ^ D54
 error(0.001089) D28 D64
@@ -990,9 +990,9 @@ error(0.000133) D31 D33 ^ D54 ^ D56
 error(0.0002) D31 ^ D45 D46
 error(6.66978e-5) D31 ^ D45 D57
 error(6.66978e-5) D31 ^ D46 D54
-error(0.0002) D31 ^ D46 D56
+error(0.0002) D31 D56 ^ D46
 error(0.0002) D31 ^ D46 D57
-error(0.000267) D31 ^ D46 D58
+error(0.000267) D31 D58 ^ D46
 error(6.66978e-5) D31 D56 ^ D54
 error(0.0001) D31 D69 ^ D54 D56
 error(0.0001) D31 D69 ^ D54 ^ D56
@@ -1003,10 +1003,10 @@ error(0.0002) D31 D69 ^ D56
 error(0.000267) D31 D71 ^ D56
 error(0.000267) D31 D58 ^ D57
 error(0.0001) D31 D67 ^ D57 D58
-error(0.0001) D31 D58 ^ D57 ^ D67
-error(6.66978e-5) D31 ^ D57 D67
+error(0.0001) D31 ^ D57 D58 ^ D67
+error(6.66978e-5) D31 D67 ^ D57
 error(0.000267) D31 D58
-error(0.0002) D31 D58 ^ D67
+error(0.0002) D31 ^ D58 D67
 error(0.001452) D31 ^ D67
 error(0.0006) D31 D69
 error(0.000267) D31 D71
@@ -1027,17 +1027,17 @@ error(6.66978e-5) D32 L0 ^ D38 D40
 error(0.0002) D32 L0 ^ D38 D48
 error(6.66978e-5) D32 L0 ^ D38 D49
 error(0.0002) D32 L0 ^ D38 D50
-error(6.66978e-5) D32 D48 L0 ^ D40
+error(6.66978e-5) D32 L0 ^ D40 D48
 error(0.000533) D48 ^ D32 L0
-error(0.000267) D32 L0 ^ D48 D50
+error(0.000267) D32 D48 L0 ^ D50
 error(6.66978e-5) D32 L0 ^ D49 D50
 error(0.0002) D50 ^ D32 L0
-error(6.66978e-5) D32 L0 ^ D50 D52
-error(0.0001) D32 D68 ^ D50 D52
-error(0.0001) D32 D68 ^ D50 ^ D52
-error(6.66978e-5) D32 L0 ^ D50 D68 L0
+error(6.66978e-5) D32 D50 L0 ^ D52
+error(0.0001) D32 D50 L0 ^ D52 D68 L0
+error(0.0001) D32 D50 L0 ^ D52 ^ D68 L0
+error(6.66978e-5) D32 D68 ^ D50
 error(6.66978e-5) D52 ^ D32 L0
-error(0.0002) D32 D52 L0 ^ D68 L0
+error(0.0002) D32 L0 ^ D52 D68 L0
 error(0.000267) D32 D70 ^ D52
 error(0.001089) D32 D68
 error(0.000363) D32 L0 ^ D68 L0
@@ -1171,7 +1171,7 @@ error(0.000533) D56 ^ D69 D71
 error(0.000267) D56 D71
 error(0.001864) D57
 error(0.0004) D57 D58
-error(0.0002) D57 D67 ^ D58
+error(0.0002) D57 D58 ^ D67
 error(0.000267) D57 D59
 error(0.000533) D57 ^ D65 D67
 error(6.66978e-5) D57 ^ D67

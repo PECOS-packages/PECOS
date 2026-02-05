@@ -14,6 +14,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 mod modules {
     pub mod allocation_overhead;
+    pub mod dem_sampler;
     pub mod dod_statevec;
     // TODO: pub mod hadamard_ops;
     #[cfg(feature = "gpu-sims")]
@@ -33,12 +34,13 @@ mod modules {
 #[cfg(feature = "gpu-sims")]
 use modules::gpu_influence_sampler;
 use modules::{
-    allocation_overhead, dod_statevec, measurement_sampling, noise_models, rng, set_ops,
-    sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code, trig,
+    allocation_overhead, dem_sampler, dod_statevec, measurement_sampling, noise_models, rng,
+    set_ops, sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
     allocation_overhead::benchmarks(c);
+    dem_sampler::benchmarks(c);
     dod_statevec::benchmarks(c);
     #[cfg(feature = "gpu-sims")]
     gpu_influence_sampler::benchmarks(c);

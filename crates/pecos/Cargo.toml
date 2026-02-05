@@ -60,6 +60,9 @@ pecos-wasm = { workspace = true, optional = true }
 # Decoder backends (optional)
 pecos-decoders = { workspace = true, optional = true }
 
+# Quantum error correction (fault tolerance analysis)
+pecos-qec = { workspace = true, optional = true }
+
 [features]
 # Default: CLI dev tools + core types for library users
 default = ["cli", "core"]
@@ -123,8 +126,11 @@ tesseract = ["sim", "dep:pecos-decoders", "pecos-decoders/tesseract"]
 chromobius = ["sim", "dep:pecos-decoders", "pecos-decoders/chromobius"]
 all-decoders = ["ldpc", "pymatching", "fusion-blossom", "tesseract", "chromobius"]
 
+# Quantum error correction (fault tolerance analysis)
+qec = ["quantum", "dep:pecos-qec"]
+
 # Everything
-full = ["runtime", "all-simulators", "all-decoders", "hugr", "wasm"]
+full = ["runtime", "all-simulators", "all-decoders", "hugr", "wasm", "qec"]
 
 [dev-dependencies]
 tempfile.workspace = true

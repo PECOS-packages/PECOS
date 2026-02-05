@@ -128,6 +128,7 @@
 
 pub mod circuit_runner;
 pub mod decoder_integration;
+pub mod dem_builder;
 pub mod gadget_checker;
 pub mod influence_builder;
 pub mod noisy_sampler;

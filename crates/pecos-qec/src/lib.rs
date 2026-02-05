@@ -85,6 +85,10 @@ pub use fault_tolerance::{
     extract_measurement_rounds, extract_spacetime_locations, extract_syndrome, get_syndrome_flips,
     has_syndrome, propagate_fault, propagate_faults, run_circuit_with_faults, run_correction_cycle,
 };
+pub use fault_tolerance::dem_builder::{
+    DecomposedError, DemBuilder, DemBuilderError, DetectorDef, DetectorErrorModel,
+    ErrorMechanism, LogicalObservable, NoiseConfig, combine_probabilities,
+};
 pub use geometry::{CheckSchedule, LogicalOperator, PauliOp, StabilizerCheck, StabilizerColor};
 pub use logical_discovery::{
     LogicalDiscoveryError, LogicalDiscoveryResult, discover_logical_operators,

@@ -1248,6 +1248,209 @@ impl PyUnionFindDecoder {
 }
 
 // =============================================================================
+// Tesseract Decoder
+// =============================================================================
+
+use pecos::decoders::{TesseractConfig as RustTesseractConfig, TesseractDecoder as RustTesseractDecoder};
+
+/// Result from Tesseract decoder.
+///
+/// # Attributes
+///
+/// * `observables_mask` - Bitwise XOR of observables affected by predicted errors
+/// * `cost` - Total cost of the solution
+/// * `low_confidence` - Whether this is a low-confidence prediction
+#[pyclass(name = "TesseractResult", module = "pecos_rslib.decoders")]
+#[derive(Clone)]
+pub struct PyTesseractResult {
+    #[pyo3(get)]
+    observables_mask: u64,
+    #[pyo3(get)]
+    cost: f64,
+    #[pyo3(get)]
+    low_confidence: bool,
+}
+
+#[pymethods]
+impl PyTesseractResult {
+    /// Get the observable predictions as a list of bits.
+    fn observable_bits(&self, num_observables: usize) -> Vec<i32> {
+        (0..num_observables)
+            .map(|i| ((self.observables_mask >> i) & 1) as i32)
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TesseractResult(observables_mask={}, cost={:.4}, low_confidence={})",
+            self.observables_mask, self.cost, self.low_confidence
+        )
+    }
+}
+
+/// Tesseract search-based decoder for quantum error correction.
+///
+/// Uses A* search with pruning heuristics to find the most likely error
+/// configuration consistent with observed syndromes. Particularly effective
+/// for LDPC quantum codes.
+///
+/// # Construction
+///
+/// ```python
+/// from pecos_rslib.decoders import TesseractDecoder
+///
+/// # From Stim Detector Error Model string
+/// dem = '''
+/// error(0.1) D0 D1
+/// error(0.05) D1 D2 L0
+/// '''
+/// decoder = TesseractDecoder.from_dem(dem)
+///
+/// # With configuration
+/// decoder = TesseractDecoder.from_dem(dem, preset="fast")
+/// ```
+///
+/// # Decoding
+///
+/// ```python
+/// # Detection events as list of detector indices that fired
+/// detection_indices = [0, 2]
+/// result = decoder.decode(detection_indices)
+/// print(f"Observable mask: {result.observables_mask}, Cost: {result.cost}")
+/// ```
+#[pyclass(name = "TesseractDecoder", module = "pecos_rslib.decoders", unsendable)]
+pub struct PyTesseractDecoder {
+    inner: RustTesseractDecoder,
+}
+
+#[pymethods]
+impl PyTesseractDecoder {
+    /// Create Tesseract decoder from a Detector Error Model string.
+    ///
+    /// # Arguments
+    ///
+    /// * `dem` - Detector error model in Stim format
+    /// * `preset` - Configuration preset: "default", "fast", or "accurate"
+    /// * `det_beam` - Detector beam size (default: u16::MAX for infinite)
+    /// * `beam_climbing` - Enable beam climbing heuristic
+    /// * `verbose` - Enable verbose output
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// dem = "error(0.1) D0 D1\\nerror(0.05) D1 D2 L0"
+    /// decoder = TesseractDecoder.from_dem(dem)
+    /// # Or with fast preset
+    /// decoder = TesseractDecoder.from_dem(dem, preset="fast")
+    /// ```
+    #[staticmethod]
+    #[pyo3(signature = (dem, preset="default", det_beam=None, beam_climbing=None, verbose=false))]
+    fn from_dem(
+        dem: &str,
+        preset: &str,
+        det_beam: Option<u16>,
+        beam_climbing: Option<bool>,
+        verbose: bool,
+    ) -> PyResult<Self> {
+        let mut config = match preset {
+            "fast" => RustTesseractConfig::fast(),
+            "accurate" => RustTesseractConfig::accurate(),
+            "default" | _ => RustTesseractConfig::default(),
+        };
+
+        // Override with explicit parameters
+        if let Some(beam) = det_beam {
+            config.det_beam = beam;
+        }
+        if let Some(climbing) = beam_climbing {
+            config.beam_climbing = climbing;
+        }
+        config.verbose = verbose;
+
+        RustTesseractDecoder::new(dem, config)
+            .map(|inner| Self { inner })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// Decode detection events to find the most likely error configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `detections` - List of detector indices that fired (sparse representation)
+    ///
+    /// # Returns
+    ///
+    /// `TesseractResult` with observables mask, cost, and confidence info.
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// # Detectors 0 and 2 fired
+    /// result = decoder.decode([0, 2])
+    /// print(f"Observable prediction: {result.observable_bits(1)}")
+    /// ```
+    fn decode(&mut self, detections: Vec<u64>) -> PyResult<PyTesseractResult> {
+        let detections_arr = ndarray::Array1::from_vec(detections);
+
+        self.inner
+            .decode_detections(&detections_arr.view())
+            .map(|result| PyTesseractResult {
+                observables_mask: result.observables_mask,
+                cost: result.cost,
+                low_confidence: result.low_confidence,
+            })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// Decode a dense syndrome vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `syndrome` - Dense syndrome vector (0 or 1 for each detector)
+    ///
+    /// # Returns
+    ///
+    /// `TesseractResult` with observables mask and cost.
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyTesseractResult> {
+        // Convert dense syndrome to sparse detection indices
+        let detections: Vec<u64> = syndrome
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &val)| if val != 0 { Some(i as u64) } else { None })
+            .collect();
+
+        self.decode(detections)
+    }
+
+    /// Number of detectors in the error model.
+    #[getter]
+    fn num_detectors(&self) -> usize {
+        self.inner.num_detectors()
+    }
+
+    /// Number of errors in the error model.
+    #[getter]
+    fn num_errors(&self) -> usize {
+        self.inner.num_errors()
+    }
+
+    /// Number of observables in the error model.
+    #[getter]
+    fn num_observables(&self) -> usize {
+        self.inner.num_observables()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TesseractDecoder(detectors={}, errors={}, observables={})",
+            self.inner.num_detectors(),
+            self.inner.num_errors(),
+            self.inner.num_observables()
+        )
+    }
+}
+
+// =============================================================================
 // Module Registration
 // =============================================================================
 
@@ -1272,6 +1475,10 @@ pub fn register_decoders_module(parent_module: &Bound<'_, PyModule>) -> PyResult
     decoders_module.add_class::<PyBpOsdDecoder>()?;
     decoders_module.add_class::<PyBpLsdDecoder>()?;
     decoders_module.add_class::<PyUnionFindDecoder>()?;
+
+    // Search-based decoders
+    decoders_module.add_class::<PyTesseractResult>()?;
+    decoders_module.add_class::<PyTesseractDecoder>()?;
 
     // Add submodule to parent
     parent_module.add_submodule(&decoders_module)?;

@@ -27,6 +27,7 @@ mod dtypes;
 mod engine_bindings;
 mod engine_builders;
 mod experimental_bindings;
+mod fault_tolerance_bindings;
 mod graph_bindings;
 mod noise_helpers;
 mod num_bindings;
@@ -325,6 +326,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register experimental submodule (symbolic HUGR execution)
     experimental_bindings::register_experimental_module(m)?;
+
+    // Register QEC fault tolerance submodule
+    fault_tolerance_bindings::register_qec_module(m)?;
 
     // =========================================================================
     // Top-level numerical function exports (NumPy-like API)

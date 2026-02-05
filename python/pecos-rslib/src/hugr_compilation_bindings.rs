@@ -54,6 +54,7 @@ pub fn get_compilation_backends(py: Python<'_>) -> PyResult<Py<PyDict>> {
 
 /// Register HUGR compilation functions with the Python module
 pub fn register_hugr_compilation_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // HUGR to QIS compilation
     m.add_function(wrap_pyfunction!(py_compile_hugr_to_qis, m)?)?;
     m.add_function(wrap_pyfunction!(get_compilation_backends, m)?)?;
 

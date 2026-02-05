@@ -1011,6 +1011,16 @@ impl PyDagCircuit {
         slf
     }
 
+    /// Apply a CZ (controlled-Z) gate.
+    ///
+    /// Args:
+    ///     q1: First qubit.
+    ///     q2: Second qubit.
+    fn cz(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> Py<Self> {
+        slf.borrow_mut(py).inner.cz(q1, q2);
+        slf
+    }
+
     /// Apply a sqrt(ZZ) gate.
     fn szz(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> Py<Self> {
         slf.borrow_mut(py).inner.szz(q1, q2);
@@ -2025,6 +2035,109 @@ impl PyTickCircuit {
     ///     2
     fn discard(&mut self, qubits: Vec<usize>, tick_idx: usize) -> Option<usize> {
         self.inner.discard(&qubits, tick_idx)
+    }
+
+    // =========================================================================
+    // Tick-level and gate-level metadata setters (by index)
+    // =========================================================================
+
+    /// Set tick-level metadata on a specific tick by index.
+    ///
+    /// Unlike `get_tick().meta()` which operates on a copy, this method
+    /// modifies the tick in place.
+    ///
+    /// Args:
+    ///     tick_idx: The index of the tick.
+    ///     key: The metadata key.
+    ///     value: The metadata value.
+    ///
+    /// Raises:
+    ///     IndexError: If tick_idx is out of bounds.
+    fn set_tick_meta(
+        &mut self,
+        py: Python<'_>,
+        tick_idx: usize,
+        key: &str,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let attr = py_to_attribute(py, value)?;
+        if let Some(tick) = self.inner.get_tick_mut(tick_idx) {
+            tick.set_attr(key, attr);
+            Ok(())
+        } else {
+            Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "tick index {tick_idx} out of bounds"
+            )))
+        }
+    }
+
+    /// Get tick-level metadata from a specific tick by index.
+    ///
+    /// Args:
+    ///     tick_idx: The index of the tick.
+    ///     key: The metadata key.
+    ///
+    /// Returns:
+    ///     The metadata value, or None if not found or tick_idx is out of bounds.
+    fn get_tick_meta(&self, py: Python<'_>, tick_idx: usize, key: &str) -> Option<Py<PyAny>> {
+        self.inner
+            .get_tick(tick_idx)
+            .and_then(|tick| tick.get_attr(key))
+            .map(|attr| attribute_to_py(py, attr))
+    }
+
+    /// Set gate-level metadata on a specific gate within a tick.
+    ///
+    /// Unlike `get_tick().set_gate_attr()` which operates on a copy, this method
+    /// modifies the tick in place.
+    ///
+    /// Args:
+    ///     tick_idx: The index of the tick.
+    ///     gate_idx: The index of the gate within the tick.
+    ///     key: The metadata key.
+    ///     value: The metadata value.
+    ///
+    /// Raises:
+    ///     IndexError: If tick_idx is out of bounds.
+    fn set_gate_meta(
+        &mut self,
+        py: Python<'_>,
+        tick_idx: usize,
+        gate_idx: usize,
+        key: &str,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let attr = py_to_attribute(py, value)?;
+        if let Some(tick) = self.inner.get_tick_mut(tick_idx) {
+            tick.set_gate_attr(gate_idx, key, attr);
+            Ok(())
+        } else {
+            Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "tick index {tick_idx} out of bounds"
+            )))
+        }
+    }
+
+    /// Get gate-level metadata from a specific gate within a tick.
+    ///
+    /// Args:
+    ///     tick_idx: The index of the tick.
+    ///     gate_idx: The index of the gate within the tick.
+    ///     key: The metadata key.
+    ///
+    /// Returns:
+    ///     The metadata value, or None if not found or indices are out of bounds.
+    fn get_gate_meta(
+        &self,
+        py: Python<'_>,
+        tick_idx: usize,
+        gate_idx: usize,
+        key: &str,
+    ) -> Option<Py<PyAny>> {
+        self.inner
+            .get_tick(tick_idx)
+            .and_then(|tick| tick.get_gate_attr(gate_idx, key))
+            .map(|attr| attribute_to_py(py, attr))
     }
 
     /// Convert this `TickCircuit` to a `DagCircuit`.

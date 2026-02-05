@@ -1154,52 +1154,20 @@ impl DetectorErrorModel {
                         ));
                     }
                 } else if standalone_detectors.contains(&d0) && standalone_detectors.contains(&d1) {
-                    // Both detectors have standalone mechanisms - use standard decomposition
+                    // Both detectors have standalone mechanisms - use compact decomposition
+                    // (matching Stim's approach of minimal entries)
                     let graphlike_count = self.graphlike_decomposable_count(d0, d1);
 
                     if graphlike_count >= 2 {
-                        // 3 forms with equal probability
-                        let split_prob = total_prob / 3.0;
-
-                        // Direct form
+                        // Direct form only - both detectors flip together
                         lines.push(format!(
                             "error({}) D{} D{}",
-                            format_probability(split_prob),
+                            format_probability(*total_prob),
                             d0,
                             d1
-                        ));
-
-                        // Decomposed forms
-                        lines.push(format!(
-                            "error({}) D{} ^ D{}",
-                            format_probability(split_prob),
-                            d0,
-                            d1
-                        ));
-                        lines.push(format!(
-                            "error({}) D{} ^ D{}",
-                            format_probability(split_prob),
-                            d1,
-                            d0
-                        ));
-                    } else if graphlike_count == 1 {
-                        // 2 forms (decomposed only, no direct)
-                        let split_prob = total_prob / 2.0;
-
-                        lines.push(format!(
-                            "error({}) D{} ^ D{}",
-                            format_probability(split_prob),
-                            d0,
-                            d1
-                        ));
-                        lines.push(format!(
-                            "error({}) D{} ^ D{}",
-                            format_probability(split_prob),
-                            d1,
-                            d0
                         ));
                     } else {
-                        // 0 graphlike sources but both standalone: 1 decomposed form
+                        // Decomposed form - one ordering only
                         lines.push(format!(
                             "error({}) D{} ^ D{}",
                             format_probability(*total_prob),

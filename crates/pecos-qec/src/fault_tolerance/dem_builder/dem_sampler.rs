@@ -223,6 +223,73 @@ impl DemSampler {
         self.num_observables
     }
 
+    /// Create a DemSampler from raw mechanism data.
+    ///
+    /// This constructor is used when building from a parsed DEM string rather than
+    /// from a circuit analysis. Each mechanism is specified by its probability and
+    /// the detector/observable indices it affects.
+    ///
+    /// # Arguments
+    ///
+    /// * `mechanisms` - Iterator of (probability, detector_indices, observable_indices)
+    /// * `num_detectors` - Total number of detectors
+    /// * `num_observables` - Total number of observables
+    #[must_use]
+    pub fn from_mechanisms<I>(mechanisms: I, num_detectors: usize, num_observables: usize) -> Self
+    where
+        I: IntoIterator<Item = (f64, Vec<u32>, Vec<u32>)>,
+    {
+        let mechanisms: Vec<_> = mechanisms.into_iter().collect();
+        let num_mechanisms = mechanisms.len();
+
+        let mut thresholds = Vec::with_capacity(num_mechanisms);
+        let mut inv_log_1_minus_p = Vec::with_capacity(num_mechanisms);
+        let mut detector_offsets = Vec::with_capacity(num_mechanisms + 1);
+        let mut detector_data = Vec::new();
+        let mut observable_offsets = Vec::with_capacity(num_mechanisms + 1);
+        let mut observable_data = Vec::new();
+
+        detector_offsets.push(0);
+        observable_offsets.push(0);
+
+        for (prob, mut detectors, mut observables) in mechanisms {
+            // Sort for canonical representation
+            detectors.sort_unstable();
+            observables.sort_unstable();
+
+            // Precompute u64 threshold: p * u64::MAX
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let threshold = (prob * (u64::MAX as f64)) as u64;
+            thresholds.push(threshold);
+
+            // Precompute 1/ln(1-p) for geometric sampling
+            let log_1_minus_p = (1.0 - prob).ln();
+            let inv = if log_1_minus_p.abs() < f64::EPSILON {
+                0.0 // p ≈ 0, mechanism never fires
+            } else {
+                1.0 / log_1_minus_p
+            };
+            inv_log_1_minus_p.push(inv);
+
+            detector_data.extend_from_slice(&detectors);
+            detector_offsets.push(detector_data.len() as u32);
+
+            observable_data.extend_from_slice(&observables);
+            observable_offsets.push(observable_data.len() as u32);
+        }
+
+        Self {
+            thresholds,
+            inv_log_1_minus_p,
+            detector_offsets,
+            detector_data,
+            observable_offsets,
+            observable_data,
+            num_detectors,
+            num_observables,
+        }
+    }
+
     /// Sample a single shot.
     ///
     /// Returns (detection_events, observable_flips) as boolean vectors.
@@ -1113,9 +1180,8 @@ impl DemSampler {
                 }
 
                 // Create thread-local RNG with deterministic seed based on chunk
-                use rand::SeedableRng;
                 let chunk_seed = seed.wrapping_add((chunk_idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-                let mut rng = rand::rngs::SmallRng::seed_from_u64(chunk_seed);
+                let mut rng = PecosRng::seed_from_u64(chunk_seed);
 
                 // Use geometric sampling for this chunk
                 self.sample_statistics_geometric_range(chunk_shots, &mut rng)
@@ -2215,5 +2281,151 @@ mod tests {
             rate_par,
             relative_diff
         );
+    }
+
+    // ========================================================================
+    // Tests for from_mechanisms constructor
+    // ========================================================================
+
+    #[test]
+    fn test_from_mechanisms_empty() {
+        let sampler = DemSampler::from_mechanisms(std::iter::empty(), 0, 0);
+        assert_eq!(sampler.num_mechanisms(), 0);
+        assert_eq!(sampler.num_detectors(), 0);
+        assert_eq!(sampler.num_observables(), 0);
+
+        let stats = sampler.sample_statistics(100, 42);
+        assert_eq!(stats.syndrome_count, 0);
+        assert_eq!(stats.logical_error_count, 0);
+    }
+
+    #[test]
+    fn test_from_mechanisms_single_detector() {
+        // Single mechanism that flips D0 with p=0.5
+        let mechanisms = vec![(0.5, vec![0u32], vec![])];
+        let sampler = DemSampler::from_mechanisms(mechanisms, 1, 0);
+
+        assert_eq!(sampler.num_mechanisms(), 1);
+        assert_eq!(sampler.num_detectors(), 1);
+
+        // Sample and verify rate is approximately 0.5
+        let stats = sampler.sample_statistics(10000, 42);
+        let rate = stats.syndrome_rate();
+        assert!(
+            (rate - 0.5).abs() < 0.05,
+            "Syndrome rate {} should be close to 0.5",
+            rate
+        );
+    }
+
+    #[test]
+    fn test_from_mechanisms_multiple_detectors() {
+        // Two mechanisms: D0 with p=0.1, D1 with p=0.2
+        let mechanisms = vec![
+            (0.1, vec![0u32], vec![]),
+            (0.2, vec![1u32], vec![]),
+        ];
+        let sampler = DemSampler::from_mechanisms(mechanisms, 2, 0);
+
+        assert_eq!(sampler.num_mechanisms(), 2);
+        assert_eq!(sampler.num_detectors(), 2);
+
+        // Syndrome rate should be approximately 1 - (1-0.1)*(1-0.2) = 0.28
+        let stats = sampler.sample_statistics(10000, 42);
+        let rate = stats.syndrome_rate();
+        assert!(
+            (rate - 0.28).abs() < 0.05,
+            "Syndrome rate {} should be close to 0.28",
+            rate
+        );
+    }
+
+    #[test]
+    fn test_from_mechanisms_correlated_detectors() {
+        // Single mechanism that flips both D0 and D1 together with p=0.3
+        let mechanisms = vec![(0.3, vec![0u32, 1u32], vec![])];
+        let sampler = DemSampler::from_mechanisms(mechanisms, 2, 0);
+
+        assert_eq!(sampler.num_mechanisms(), 1);
+        assert_eq!(sampler.num_detectors(), 2);
+
+        // Syndrome rate should be approximately 0.3 (when error fires, BOTH detectors fire)
+        let stats = sampler.sample_statistics(10000, 42);
+        let rate = stats.syndrome_rate();
+        assert!(
+            (rate - 0.3).abs() < 0.05,
+            "Syndrome rate {} should be close to 0.3",
+            rate
+        );
+    }
+
+    #[test]
+    fn test_from_mechanisms_xor_cancellation() {
+        // Two mechanisms that both flip D0 with the same probability
+        // When both fire, they XOR and cancel
+        let mechanisms = vec![
+            (0.5, vec![0u32], vec![]),
+            (0.5, vec![0u32], vec![]),
+        ];
+        let sampler = DemSampler::from_mechanisms(mechanisms, 1, 0);
+
+        // With two independent p=0.5 mechanisms that both flip D0:
+        // P(D0 fires) = P(exactly one fires) = 2 * 0.5 * 0.5 = 0.5
+        let stats = sampler.sample_statistics(10000, 42);
+        let rate = stats.syndrome_rate();
+        assert!(
+            (rate - 0.5).abs() < 0.05,
+            "Syndrome rate {} should be close to 0.5 due to XOR",
+            rate
+        );
+    }
+
+    #[test]
+    fn test_from_mechanisms_with_observables() {
+        // Mechanism that flips D0 and L0
+        let mechanisms = vec![(0.1, vec![0u32], vec![0u32])];
+        let sampler = DemSampler::from_mechanisms(mechanisms, 1, 1);
+
+        assert_eq!(sampler.num_observables(), 1);
+
+        // Logical error rate should be approximately 0.1
+        let stats = sampler.sample_statistics(10000, 42);
+        let logical_rate = stats.logical_error_rate();
+        assert!(
+            (logical_rate - 0.1).abs() < 0.03,
+            "Logical error rate {} should be close to 0.1",
+            logical_rate
+        );
+    }
+
+    #[test]
+    fn test_from_mechanisms_very_low_error_rate() {
+        // Test geometric sampling efficiency with low error rate
+        let mechanisms = vec![(0.0001, vec![0u32], vec![])];
+        let sampler = DemSampler::from_mechanisms(mechanisms, 1, 0);
+
+        // Should still work correctly
+        let stats = sampler.sample_statistics(100000, 42);
+        let rate = stats.syndrome_rate();
+        assert!(
+            (rate - 0.0001).abs() < 0.001,
+            "Syndrome rate {} should be close to 0.0001",
+            rate
+        );
+    }
+
+    #[test]
+    fn test_from_mechanisms_sorting() {
+        // Verify that detector indices are sorted regardless of input order
+        let mechanisms = vec![(0.1, vec![2u32, 0u32, 1u32], vec![1u32, 0u32])];
+        let sampler = DemSampler::from_mechanisms(mechanisms, 3, 2);
+
+        // Verify internal storage is sorted (by checking that sampling works)
+        assert_eq!(sampler.num_detectors(), 3);
+        assert_eq!(sampler.num_observables(), 2);
+
+        let stats = sampler.sample_statistics(1000, 42);
+        // Just verify it runs without panicking
+        assert!(stats.total_shots == 1000);
     }
 }

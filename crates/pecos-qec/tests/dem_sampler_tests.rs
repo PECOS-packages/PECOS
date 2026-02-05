@@ -467,6 +467,9 @@ fn test_batch_sampling_performance() {
 
 #[test]
 fn test_statistics_vs_batch_consistency() {
+    // Note: sample_statistics uses geometric skip sampling while sample_batch uses
+    // per-shot threshold sampling. These are different algorithms that produce
+    // statistically equivalent but not bit-identical results, even with the same seed.
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
     let influence_map = analyzer.build_influence_map();
@@ -482,28 +485,37 @@ fn test_statistics_vs_batch_consistency() {
         .unwrap()
         .build();
 
-    // Use same seed for both methods
     let num_shots = 10000;
 
+    // Sample with statistics method (uses geometric skip)
     let mut rng1 = SmallRng::seed_from_u64(42);
     let stats = sampler.sample_statistics_with_rng(num_shots, &mut rng1);
 
-    let mut rng2 = SmallRng::seed_from_u64(42);
+    // Sample with batch method (uses per-shot threshold)
+    let mut rng2 = SmallRng::seed_from_u64(123); // Different seed since algorithms differ
     let (det_events, obs_flips) = sampler.sample_batch(num_shots, &mut rng2);
 
     // Count from batch results
     let batch_syndromes = det_events.iter().filter(|d| d.iter().any(|&x| x)).count();
     let batch_logical = obs_flips.iter().filter(|o| o.iter().any(|&x| x)).count();
 
-    // Should match exactly (same seed, same algorithm)
-    assert_eq!(
-        stats.syndrome_count, batch_syndromes,
-        "Syndrome counts should match: stats={} batch={}",
-        stats.syndrome_count, batch_syndromes
+    // Should be statistically similar (within 10% relative difference)
+    let stats_rate = stats.syndrome_count as f64 / num_shots as f64;
+    let batch_rate = batch_syndromes as f64 / num_shots as f64;
+    let rel_diff = (stats_rate - batch_rate).abs() / stats_rate.max(batch_rate).max(0.001);
+    assert!(
+        rel_diff < 0.1,
+        "Syndrome rates should be similar: stats={:.4} batch={:.4} rel_diff={:.2}",
+        stats_rate, batch_rate, rel_diff
     );
-    assert_eq!(
-        stats.logical_error_count, batch_logical,
-        "Logical error counts should match: stats={} batch={}",
-        stats.logical_error_count, batch_logical
+
+    let stats_logical_rate = stats.logical_error_count as f64 / num_shots as f64;
+    let batch_logical_rate = batch_logical as f64 / num_shots as f64;
+    let logical_rel_diff = (stats_logical_rate - batch_logical_rate).abs()
+        / stats_logical_rate.max(batch_logical_rate).max(0.001);
+    assert!(
+        logical_rel_diff < 0.1,
+        "Logical error rates should be similar: stats={:.4} batch={:.4} rel_diff={:.2}",
+        stats_logical_rate, batch_logical_rate, logical_rel_diff
     );
 }

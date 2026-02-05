@@ -350,40 +350,30 @@ impl ParsedDem {
     /// Samples from this DEM.
     ///
     /// Returns (detector_events, observable_flips).
+    ///
+    /// # Semantics
+    ///
+    /// In Stim's DEM format, `error(p) A ^ B` means that when the error fires
+    /// (with probability p), ALL components (A and B) flip together. The `^`
+    /// separator is used for error tracking/decomposition but doesn't create
+    /// independent firing - all components fire together as a single error.
     pub fn sample<R: Rng>(&self, rng: &mut R) -> (Vec<bool>, Vec<bool>) {
         let mut det_events = vec![false; self.num_detectors as usize];
         let mut obs_flips = vec![false; self.num_observables as usize];
 
         for mech in &self.mechanisms {
-            if mech.is_decomposed() {
-                // Each component fires independently
+            // Single random check for the entire mechanism
+            // All components fire together when the error occurs
+            if rng.random::<f64>() < mech.probability {
                 for comp in &mech.components {
-                    if rng.random::<f64>() < mech.probability {
-                        for &d in &comp.detectors {
-                            if (d as usize) < det_events.len() {
-                                det_events[d as usize] ^= true;
-                            }
-                        }
-                        for &o in &comp.observables {
-                            if (o as usize) < obs_flips.len() {
-                                obs_flips[o as usize] ^= true;
-                            }
+                    for &d in &comp.detectors {
+                        if (d as usize) < det_events.len() {
+                            det_events[d as usize] ^= true;
                         }
                     }
-                }
-            } else {
-                // Simple mechanism
-                if rng.random::<f64>() < mech.probability {
-                    for comp in &mech.components {
-                        for &d in &comp.detectors {
-                            if (d as usize) < det_events.len() {
-                                det_events[d as usize] ^= true;
-                            }
-                        }
-                        for &o in &comp.observables {
-                            if (o as usize) < obs_flips.len() {
-                                obs_flips[o as usize] ^= true;
-                            }
+                    for &o in &comp.observables {
+                        if (o as usize) < obs_flips.len() {
+                            obs_flips[o as usize] ^= true;
                         }
                     }
                 }
@@ -411,6 +401,37 @@ impl ParsedDem {
         }
 
         (det_batches, obs_batches)
+    }
+
+    /// Convert to an optimized DemSampler for fast batch sampling.
+    ///
+    /// The DemSampler uses:
+    /// - Geometric skip sampling for low error rates
+    /// - Bit-packed arrays for efficient XOR operations
+    /// - Parallel chunked processing for large DEMs
+    ///
+    /// This is significantly faster than `sample_batch` for large shot counts.
+    ///
+    /// # Note on decomposed errors
+    ///
+    /// In Stim's DEM format, `error(p) D0 ^ D1` means that when the error fires
+    /// (with probability p), BOTH D0 and D1 flip together. The `^` separator is
+    /// used for error tracking/decomposition but doesn't affect sampling - all
+    /// components fire together.
+    pub fn to_dem_sampler(&self) -> super::dem_sampler::DemSampler {
+        // Convert mechanisms to the format expected by DemSampler::from_mechanisms
+        // Use combined_effect() to get the union of all detectors/observables
+        // since all components fire together when the error occurs
+        let mechanisms = self.mechanisms.iter().map(|mech| {
+            let (dets, obs) = mech.combined_effect();
+            (mech.probability, dets, obs)
+        });
+
+        super::dem_sampler::DemSampler::from_mechanisms(
+            mechanisms,
+            self.num_detectors as usize,
+            self.num_observables as usize,
+        )
     }
 }
 
@@ -935,14 +956,46 @@ error(0.02) D1 D2
     }
 
     #[test]
-    fn test_decomposition_not_equivalent() {
-        // D0 and D1 flip together
+    fn test_decomposed_equivalent_to_simple() {
+        // In Stim's DEM format, these should be equivalent for sampling:
+        // - error(0.1) D0 D1: D0 and D1 flip together with p=0.1
+        // - error(0.1) D0 ^ D1: D0 and D1 flip together with p=0.1 (^ is for decomposition tracking)
         let dem1 = ParsedDem::from_str("error(0.1) D0 D1").unwrap();
-        // D0 and D1 flip independently
         let dem2 = ParsedDem::from_str("error(0.1) D0 ^ D1").unwrap();
 
         let result = compare_dems_statistical(&dem1, &dem2, 50_000, 42, 0.05);
+        // These SHOULD be equivalent (both flip D0 and D1 together)
+        assert!(result.equivalent);
+    }
+
+    #[test]
+    fn test_truly_independent_not_equivalent() {
+        // D0 and D1 flip together (correlated)
+        let dem1 = ParsedDem::from_str("error(0.1) D0 D1").unwrap();
+        // D0 and D1 flip independently (two separate errors)
+        let dem2 = ParsedDem::from_str("error(0.1) D0\nerror(0.1) D1").unwrap();
+
+        let result = compare_dems_statistical(&dem1, &dem2, 50_000, 42, 0.05);
         // These should NOT be equivalent
+        // dem1: P(D0 fires) = P(D1 fires) = P(both fire) = 0.1
+        // dem2: P(D0 fires) = P(D1 fires) = 0.1, P(both fire) = 0.01
         assert!(!result.equivalent);
+    }
+
+    #[test]
+    fn test_xor_cancellation() {
+        // error(p) D0 ^ D0 should result in no net effect (XOR cancellation)
+        let dem = ParsedDem::from_str("error(0.5) D0 ^ D0").unwrap();
+
+        // The combined effect should be empty
+        let (dets, obs) = dem.mechanisms[0].combined_effect();
+        assert!(dets.is_empty());
+        assert!(obs.is_empty());
+
+        // Sample and verify D0 never fires
+        let mut rng = PecosRng::seed_from_u64(42);
+        let (det_events, _) = dem.sample_batch(10_000, &mut rng);
+        let d0_fires: usize = det_events.iter().filter(|e| !e.is_empty() && e[0]).count();
+        assert_eq!(d0_fires, 0, "D0 should never fire due to XOR cancellation");
     }
 }

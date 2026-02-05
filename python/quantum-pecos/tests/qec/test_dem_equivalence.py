@@ -235,23 +235,55 @@ error(0.02) D1 D2
         assert result.equivalent
 
     def test_decomposition_equivalence(self):
-        """Decomposed and non-decomposed with same effect should NOT be equivalent.
+        """Decomposed (^) and non-decomposed with same effect ARE equivalent.
 
-        This is a key test: error(p) D0 D1 means both flip together,
-        while error(p) D0 ^ D1 means they flip independently.
-        These are NOT equivalent for the same p!
+        In Stim DEM format, `error(p) D0 ^ D1` is a decomposition representation
+        of a 2-detector error for MWPM decoders. It does NOT mean D0 and D1 flip
+        independently - both still flip together with probability p.
+
+        The ^ syntax means XOR: when the error fires, D0 XOR true and D1 XOR true
+        are applied, which is the same effect as `D0 D1`.
         """
-        # D0 and D1 flip together
+        # D0 and D1 flip together (direct form)
         dem1 = "error(0.1) D0 D1"
 
-        # D0 and D1 flip independently (each with p=0.1)
+        # D0 and D1 flip together (decomposed form - same semantics)
         dem2 = "error(0.1) D0 ^ D1"
 
         result = compare_dems_statistical(dem1, dem2, num_shots=50000, tolerance=0.05)
 
-        # These should NOT be equivalent
-        # In dem1: P(D0=1, D1=1) = 0.1, P(D0=1, D1=0) = 0
-        # In dem2: P(D0=1, D1=1) = 0.01, P(D0=1, D1=0) = 0.09
+        # These SHOULD be equivalent - both represent the same error mechanism
+        assert result.equivalent
+
+    def test_independent_vs_correlated_not_equivalent(self):
+        """Independent detector errors should NOT be equivalent to correlated errors.
+
+        This test verifies that:
+        - error(0.1) D0 D1: Both flip together with probability 0.1
+        - error(0.1) D0 + error(0.1) D1: Each flips independently with probability 0.1
+
+        Expected probabilities for independent case:
+        - P(D0=0, D1=0) = 0.9 * 0.9 = 0.81
+        - P(D0=1, D1=0) = 0.1 * 0.9 = 0.09
+        - P(D0=0, D1=1) = 0.9 * 0.1 = 0.09
+        - P(D0=1, D1=1) = 0.1 * 0.1 = 0.01
+
+        Expected probabilities for correlated case:
+        - P(D0=0, D1=0) = 0.9
+        - P(D0=1, D1=1) = 0.1
+        """
+        # D0 and D1 flip together
+        dem_correlated = "error(0.1) D0 D1"
+
+        # D0 and D1 flip independently (separate error lines)
+        dem_independent = """error(0.1) D0
+error(0.1) D1"""
+
+        result = compare_dems_statistical(
+            dem_correlated, dem_independent, num_shots=50000, tolerance=0.05
+        )
+
+        # These should NOT be equivalent - very different joint distributions
         assert not result.equivalent
 
 
@@ -334,6 +366,159 @@ class TestIntegrationWithPecos:
             f"PECOS and Stim DEMs not statistically equivalent: "
             f"max diff={result.max_rate_difference:.4f}, "
             f"correlation={result.correlation:.4f}"
+        )
+
+
+class TestPecosDecompositionEquivalence:
+    """Test that PECOS raw and decomposed DEMs are statistically equivalent.
+
+    This validates that the decomposition logic in DemBuilder produces DEMs
+    that sample identically to the raw (non-decomposed) DEMs.
+    """
+
+    @pytest.fixture
+    def surface_code_dem_pair(self):
+        """Generate both raw and decomposed DEMs from PECOS."""
+        pytest.importorskip("stim")
+
+        from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
+        from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
+
+        patch = SurfacePatch.create(distance=3)
+        tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="Z")
+
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+
+        raw_dem = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=False)
+        decomposed_dem = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=True)
+
+        return raw_dem, decomposed_dem
+
+    def test_raw_decomposed_syndrome_rates_match(self, surface_code_dem_pair):
+        """Raw and decomposed DEMs should have same syndrome rates."""
+        raw_dem_str, decomposed_dem_str = surface_code_dem_pair
+
+        raw_dem = ParsedDem.from_string(raw_dem_str)
+        decomposed_dem = ParsedDem.from_string(decomposed_dem_str)
+
+        num_shots = 100_000
+        seed = 42
+
+        raw_dets, raw_obs = raw_dem.sample_batch(num_shots, seed=seed)
+        decomp_dets, decomp_obs = decomposed_dem.sample_batch(num_shots, seed=seed)
+
+        raw_array = np.array(raw_dets)
+        decomp_array = np.array(decomp_dets)
+
+        raw_syndrome_rate = np.any(raw_array, axis=1).mean()
+        decomp_syndrome_rate = np.any(decomp_array, axis=1).mean()
+
+        # 3-sigma statistical tolerance
+        tolerance = 3.0 / np.sqrt(num_shots)
+        diff = abs(raw_syndrome_rate - decomp_syndrome_rate)
+
+        assert diff < tolerance + 0.01, (
+            f"Syndrome rate mismatch: raw={raw_syndrome_rate:.4f}, "
+            f"decomposed={decomp_syndrome_rate:.4f}, diff={diff:.4f}, "
+            f"tolerance={tolerance:.4f}"
+        )
+
+    def test_raw_decomposed_per_detector_rates_match(self, surface_code_dem_pair):
+        """Raw and decomposed DEMs should have similar per-detector rates."""
+        raw_dem_str, decomposed_dem_str = surface_code_dem_pair
+
+        raw_dem = ParsedDem.from_string(raw_dem_str)
+        decomposed_dem = ParsedDem.from_string(decomposed_dem_str)
+
+        num_shots = 100_000
+        seed = 42
+
+        raw_dets, _ = raw_dem.sample_batch(num_shots, seed=seed)
+        decomp_dets, _ = decomposed_dem.sample_batch(num_shots, seed=seed)
+
+        raw_array = np.array(raw_dets)
+        decomp_array = np.array(decomp_dets)
+
+        raw_rates = raw_array.mean(axis=0)
+        decomp_rates = decomp_array.mean(axis=0)
+
+        # Per-detector rates should match within statistical tolerance
+        max_diff = np.abs(raw_rates - decomp_rates).max()
+        tolerance = 3.0 / np.sqrt(num_shots) + 0.01
+
+        assert max_diff < tolerance, (
+            f"Max per-detector rate difference {max_diff:.4f} exceeds "
+            f"tolerance {tolerance:.4f}"
+        )
+
+    def test_raw_decomposed_logical_rates_match(self, surface_code_dem_pair):
+        """Raw and decomposed DEMs should have same logical error rates."""
+        raw_dem_str, decomposed_dem_str = surface_code_dem_pair
+
+        raw_dem = ParsedDem.from_string(raw_dem_str)
+        decomposed_dem = ParsedDem.from_string(decomposed_dem_str)
+
+        num_shots = 100_000
+        seed = 42
+
+        _, raw_obs = raw_dem.sample_batch(num_shots, seed=seed)
+        _, decomp_obs = decomposed_dem.sample_batch(num_shots, seed=seed)
+
+        raw_obs_array = np.array(raw_obs)
+        decomp_obs_array = np.array(decomp_obs)
+
+        raw_logical_rate = np.any(raw_obs_array, axis=1).mean()
+        decomp_logical_rate = np.any(decomp_obs_array, axis=1).mean()
+
+        # 3-sigma statistical tolerance
+        tolerance = 3.0 / np.sqrt(num_shots)
+        diff = abs(raw_logical_rate - decomp_logical_rate)
+
+        assert diff < tolerance + 0.01, (
+            f"Logical error rate mismatch: raw={raw_logical_rate:.4f}, "
+            f"decomposed={decomp_logical_rate:.4f}, diff={diff:.4f}"
+        )
+
+    @pytest.mark.parametrize("distance", [3, 5])
+    @pytest.mark.parametrize("num_rounds", [1, 2])
+    def test_decomposition_equivalence_various_sizes(self, distance, num_rounds):
+        """Decomposition should be equivalent for various code sizes."""
+        pytest.importorskip("stim")
+
+        from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
+        from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
+
+        patch = SurfacePatch.create(distance=distance)
+        tc = generate_tick_circuit_from_patch(patch, num_rounds=num_rounds, basis="Z")
+
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+
+        raw_dem_str = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=False)
+        decomposed_dem_str = generate_dem_from_tick_circuit(
+            tc, **noise, decompose_errors=True
+        )
+
+        raw_dem = ParsedDem.from_string(raw_dem_str)
+        decomposed_dem = ParsedDem.from_string(decomposed_dem_str)
+
+        num_shots = 50_000
+        seed = 123
+
+        raw_dets, _ = raw_dem.sample_batch(num_shots, seed=seed)
+        decomp_dets, _ = decomposed_dem.sample_batch(num_shots, seed=seed)
+
+        raw_array = np.array(raw_dets)
+        decomp_array = np.array(decomp_dets)
+
+        raw_rate = np.any(raw_array, axis=1).mean()
+        decomp_rate = np.any(decomp_array, axis=1).mean()
+
+        tolerance = 3.0 / np.sqrt(num_shots) + 0.01
+        diff = abs(raw_rate - decomp_rate)
+
+        assert diff < tolerance, (
+            f"d={distance}, r={num_rounds}: syndrome rate mismatch "
+            f"raw={raw_rate:.4f}, decomposed={decomp_rate:.4f}"
         )
 
 

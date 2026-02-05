@@ -1864,15 +1864,10 @@ impl PyDemSampler {
     ///     - undetectable_rate: Fraction with undetectable errors
     #[pyo3(signature = (num_shots, seed=None))]
     fn sample_statistics(&self, num_shots: usize, seed: Option<u64>, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
-        use pecos_rng::PecosRng;
         use rand::Rng;
 
-        let mut rng = match seed {
-            Some(s) => PecosRng::seed_from_u64(s),
-            None => PecosRng::seed_from_u64(rand::rng().random()),
-        };
-
-        let stats = self.inner.sample_statistics(num_shots, &mut rng);
+        let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
+        let stats = self.inner.sample_statistics(num_shots, actual_seed);
 
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("total_shots", stats.total_shots)?;
@@ -2247,6 +2242,25 @@ impl PyParsedDem {
         };
 
         self.inner.sample_batch(num_shots, &mut rng)
+    }
+
+    /// Convert to an optimized DemSampler for fast batch sampling.
+    ///
+    /// The DemSampler uses geometric skip sampling and parallel chunked
+    /// processing, which is significantly faster than sample_batch for
+    /// large shot counts and low error rates.
+    ///
+    /// Returns:
+    ///     DemSampler: Optimized sampler for this DEM.
+    ///
+    /// Example:
+    ///     >>> dem = ParsedDem.from_string("error(0.01) D0 D1")
+    ///     >>> sampler = dem.to_dem_sampler()
+    ///     >>> stats = sampler.sample_statistics(100000, seed=42)
+    fn to_dem_sampler(&self) -> PyDemSampler {
+        PyDemSampler {
+            inner: self.inner.to_dem_sampler(),
+        }
     }
 
     fn __repr__(&self) -> String {

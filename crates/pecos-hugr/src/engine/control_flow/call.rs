@@ -106,8 +106,8 @@ impl HugrEngine {
                 // This is critical for nested function calls
                 self.check_cfg_block_completion(hugr, call_node);
 
-                // Check if this Call completion allows a TailLoop body to complete
-                // This is critical for Calls inside TailLoops (e.g., range functions)
+                // Check if this Call completion allows a parent TailLoop to complete
+                // This is critical for function calls inside TailLoop bodies
                 self.check_tailloop_body_completion(hugr, call_node);
 
                 // Add Call's successors to work queue

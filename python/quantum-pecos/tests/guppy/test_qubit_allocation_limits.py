@@ -274,7 +274,7 @@ class TestQubitAllocationLimits:
                 isinstance(m, bool | int) for m in measurements
             ), "Measurements should be bool/int"
 
-    @pytest.mark.skip(reason="Array values not propagating through CFG blocks inside TailLoops")
+    @pytest.mark.skip(reason="TailLoop control flow resolution needs work - ige_s results not propagating")
     def test_qubit_array_allocation(self) -> None:
         """Test allocation of qubit arrays using Guppy's array type with proper ownership."""
         from guppylang.std.builtins import owned

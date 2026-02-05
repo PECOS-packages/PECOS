@@ -865,8 +865,6 @@ pub struct TailLoopInfo {
     pub call_nodes: BTreeSet<Node>,
     /// All extension operation nodes inside this TailLoop body.
     pub extension_ops: BTreeSet<Node>,
-    /// All classical operation nodes inside this TailLoop body.
-    pub classical_ops: BTreeSet<Node>,
     /// Total number of TailLoop input ports.
     pub num_inputs: usize,
     /// Total number of TailLoop output ports.

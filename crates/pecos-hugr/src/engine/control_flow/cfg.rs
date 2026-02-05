@@ -318,32 +318,33 @@ impl HugrEngine {
 
             // Check the current block
             if let Some(block_info) = cfg_info.blocks.get(&active_cfg.current_block) {
-                // Check if this block has "heavyweight" tracked ops that drive completion
-                // Quantum, calls, conditionals, bool, and tailloops are heavyweight
-                // Extension_ops alone with classical_ops should wait for classical_ops
-                let has_heavyweight_ops = !block_info.quantum_ops.is_empty()
+                // Check if this block has tracked ops that drive completion
+                // Quantum, calls, conditionals, bool, extension, and tailloops are tracked
+                // Classical_ops are not tracked (they complete when their inputs are ready)
+                let has_tracked_ops = !block_info.quantum_ops.is_empty()
                     || !block_info.call_nodes.is_empty()
                     || !block_info.conditional_nodes.is_empty()
                     || !block_info.bool_ops.is_empty()
+                    || !block_info.extension_ops.is_empty()
                     || !block_info.tailloop_nodes.is_empty();
 
                 // Check if the processed node is in this block
-                let is_in_block = if has_heavyweight_ops {
+                let is_in_block = if has_tracked_ops {
                     block_info.quantum_ops.contains(&processed_node)
                         || block_info.call_nodes.contains(&processed_node)
                         || block_info.conditional_nodes.contains(&processed_node)
                         || block_info.bool_ops.contains(&processed_node)
+                        || block_info.extension_ops.contains(&processed_node)
                         || block_info.tailloop_nodes.contains(&processed_node)
                 } else {
-                    // Blocks with only extension_ops and/or classical_ops
-                    block_info.extension_ops.contains(&processed_node)
-                        || block_info.classical_ops.contains(&processed_node)
+                    // Block has only classical ops - track those for completion
+                    block_info.classical_ops.contains(&processed_node)
                 };
 
                 if is_in_block {
                     // Check completion based on block type
-                    let block_complete = if has_heavyweight_ops {
-                        // Heavyweight ops drive completion - don't wait for classical_ops
+                    let block_complete = if has_tracked_ops {
+                        // Block with tracked ops: wait for all tracked op types
                         let all_quantum_done = block_info
                             .quantum_ops
                             .iter()
@@ -376,17 +377,11 @@ impl HugrEngine {
                             && all_extensions_done
                             && all_tailloops_done
                     } else {
-                        // Extension_ops and/or classical_ops only - wait for all
-                        let all_extensions_done = block_info
-                            .extension_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op));
-                        let all_classical_done = block_info
+                        // Classical-only block: wait for classical ops
+                        block_info
                             .classical_ops
                             .iter()
-                            .all(|op| self.processed.contains(op));
-
-                        all_extensions_done && all_classical_done
+                            .all(|op| self.processed.contains(op))
                     };
 
                     if block_complete {
@@ -526,6 +521,10 @@ impl HugrEngine {
             }
             for &op_node in &block_info.quantum_ops {
                 self.nodes_inside_cfg_blocks.remove(&op_node);
+                // Skip ops inside TailLoops - they'll be added when the loop expands
+                if self.nodes_inside_tailloops.contains(&op_node) {
+                    continue;
+                }
                 if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node) {
                     self.work_queue.push_back(op_node);
                 }
@@ -533,6 +532,10 @@ impl HugrEngine {
             // Also activate Call nodes in this block
             for &call_node in &block_info.call_nodes {
                 self.nodes_inside_cfg_blocks.remove(&call_node);
+                // Skip Call nodes inside TailLoops
+                if self.nodes_inside_tailloops.contains(&call_node) {
+                    continue;
+                }
                 if !self.work_queue.contains(&call_node)
                     && !self.processed.contains(&call_node)
                     && all_predecessors_ready(
@@ -555,6 +558,10 @@ impl HugrEngine {
             }
             for &cond_node in &block_info.conditional_nodes {
                 self.nodes_inside_cfg_blocks.remove(&cond_node);
+                // Skip Conditional nodes inside TailLoops
+                if self.nodes_inside_tailloops.contains(&cond_node) {
+                    continue;
+                }
                 if !self.work_queue.contains(&cond_node) && !self.processed.contains(&cond_node) {
                     self.work_queue.push_back(cond_node);
                 }
@@ -567,6 +574,10 @@ impl HugrEngine {
             for &op_node in &extension_ops {
                 self.processed.remove(&op_node);
                 self.nodes_inside_cfg_blocks.remove(&op_node);
+                // Skip extension ops inside TailLoops
+                if self.nodes_inside_tailloops.contains(&op_node) {
+                    continue;
+                }
                 if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node) {
                     self.work_queue.push_back(op_node);
                 }
@@ -578,6 +589,10 @@ impl HugrEngine {
                 if matches!(op, OpType::LoadConstant(_)) {
                     self.processed.remove(&child);
                     self.nodes_inside_cfg_blocks.remove(&child);
+                    // Skip nodes inside TailLoops
+                    if self.nodes_inside_tailloops.contains(&child) {
+                        continue;
+                    }
                     if !self.work_queue.contains(&child) && !self.processed.contains(&child) {
                         self.work_queue.push_back(child);
                     }
@@ -586,6 +601,10 @@ impl HugrEngine {
                 if self.classical_ops.contains_key(&child) {
                     self.processed.remove(&child);
                     self.nodes_inside_cfg_blocks.remove(&child);
+                    // Skip nodes inside TailLoops
+                    if self.nodes_inside_tailloops.contains(&child) {
+                        continue;
+                    }
                     if !self.work_queue.contains(&child)
                         && !self.processed.contains(&child)
                         && all_predecessors_ready(
@@ -609,6 +628,10 @@ impl HugrEngine {
             }
             for &op_node in &block_info.bool_ops {
                 self.nodes_inside_cfg_blocks.remove(&op_node);
+                // Skip bool ops inside TailLoops
+                if self.nodes_inside_tailloops.contains(&op_node) {
+                    continue;
+                }
                 if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node) {
                     self.work_queue.push_back(op_node);
                 }

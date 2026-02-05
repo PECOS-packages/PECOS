@@ -143,64 +143,56 @@ impl HugrEngine {
             },
         );
 
-        // Check if this is a heavyweight or lightweight TailLoop
-        let has_heavyweight_ops =
-            !tailloop_info.quantum_ops.is_empty() || !tailloop_info.call_nodes.is_empty();
-
+        // Activate quantum ops in the body
         let mut entry_nodes = Vec::new();
-
-        if has_heavyweight_ops {
-            // Activate quantum ops in the body
-            for &op_node in &tailloop_info.quantum_ops {
-                self.nodes_inside_tailloops.remove(&op_node);
-                let preds_ready = all_predecessors_ready(
-                    hugr,
-                    op_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.processed,
-                );
-                if preds_ready {
-                    entry_nodes.push(op_node);
-                }
+        for &op_node in &tailloop_info.quantum_ops {
+            self.nodes_inside_tailloops.remove(&op_node);
+            let preds_ready = all_predecessors_ready(
+                hugr,
+                op_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            );
+            if preds_ready {
+                entry_nodes.push(op_node);
             }
+        }
 
-            // Also activate Call nodes
-            for &call_node in &tailloop_info.call_nodes {
-                self.nodes_inside_tailloops.remove(&call_node);
-                if all_predecessors_ready(
-                    hugr,
-                    call_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.processed,
-                ) {
-                    entry_nodes.push(call_node);
-                }
+        // Also activate Call nodes
+        for &call_node in &tailloop_info.call_nodes {
+            self.nodes_inside_tailloops.remove(&call_node);
+            if all_predecessors_ready(
+                hugr,
+                call_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) {
+                entry_nodes.push(call_node);
             }
-        } else {
-            // Lightweight TailLoop: activate extension_ops
-            for &op_node in &tailloop_info.extension_ops {
-                self.nodes_inside_tailloops.remove(&op_node);
-                if all_predecessors_ready(
-                    hugr,
-                    op_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.processed,
-                ) {
-                    entry_nodes.push(op_node);
-                }
+        }
+
+        // Also activate extension ops
+        for &op_node in &tailloop_info.extension_ops {
+            self.nodes_inside_tailloops.remove(&op_node);
+            if all_predecessors_ready(
+                hugr,
+                op_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) {
+                entry_nodes.push(op_node);
             }
         }
 
         debug!(
-            "TailLoop {tailloop_node:?}: activated body with {} entry nodes (heavyweight={})",
-            entry_nodes.len(),
-            has_heavyweight_ops
+            "TailLoop {tailloop_node:?}: activated body with {} entry nodes",
+            entry_nodes.len()
         );
 
         entry_nodes
@@ -254,10 +246,6 @@ impl HugrEngine {
 
         debug!("TailLoop {tailloop_node:?}: continuing to iteration {new_iteration}");
 
-        // Check if this is a heavyweight or lightweight TailLoop
-        let has_heavyweight_ops =
-            !tailloop_info.quantum_ops.is_empty() || !tailloop_info.call_nodes.is_empty();
-
         // Clear processed state for body nodes so they can be re-executed
         for &op_node in &tailloop_info.quantum_ops {
             self.processed.remove(&op_node);
@@ -265,14 +253,8 @@ impl HugrEngine {
         for &call_node in &tailloop_info.call_nodes {
             self.processed.remove(&call_node);
         }
-        // Also clear extension_ops and classical_ops for lightweight TailLoops
-        if !has_heavyweight_ops {
-            for &op_node in &tailloop_info.extension_ops {
-                self.processed.remove(&op_node);
-            }
-            for &op_node in &tailloop_info.classical_ops {
-                self.processed.remove(&op_node);
-            }
+        for &op_node in &tailloop_info.extension_ops {
+            self.processed.remove(&op_node);
         }
 
         // Propagate iteration values from Output to Input
@@ -284,48 +266,44 @@ impl HugrEngine {
             active_info.body_active = true;
         }
 
-        // Re-activate body operations based on TailLoop type
-        if has_heavyweight_ops {
-            for &op_node in &tailloop_info.quantum_ops {
-                if all_predecessors_ready(
-                    hugr,
-                    op_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.processed,
-                ) && !self.work_queue.contains(&op_node)
-                {
-                    self.work_queue.push_back(op_node);
-                }
+        // Re-activate body operations
+        for &op_node in &tailloop_info.quantum_ops {
+            if all_predecessors_ready(
+                hugr,
+                op_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) && !self.work_queue.contains(&op_node)
+            {
+                self.work_queue.push_back(op_node);
             }
-            for &call_node in &tailloop_info.call_nodes {
-                if all_predecessors_ready(
-                    hugr,
-                    call_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.processed,
-                ) && !self.work_queue.contains(&call_node)
-                {
-                    self.work_queue.push_back(call_node);
-                }
+        }
+        for &call_node in &tailloop_info.call_nodes {
+            if all_predecessors_ready(
+                hugr,
+                call_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) && !self.work_queue.contains(&call_node)
+            {
+                self.work_queue.push_back(call_node);
             }
-        } else {
-            // Lightweight TailLoop: re-activate extension_ops
-            for &op_node in &tailloop_info.extension_ops {
-                if all_predecessors_ready(
-                    hugr,
-                    op_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.processed,
-                ) && !self.work_queue.contains(&op_node)
-                {
-                    self.work_queue.push_back(op_node);
-                }
+        }
+        for &op_node in &tailloop_info.extension_ops {
+            if all_predecessors_ready(
+                hugr,
+                op_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) && !self.work_queue.contains(&op_node)
+            {
+                self.work_queue.push_back(op_node);
             }
         }
     }
@@ -509,50 +487,27 @@ impl HugrEngine {
                 continue;
             };
 
-            // Check if this TailLoop has "heavyweight" tracked ops that drive completion.
-            // Quantum ops and calls are heavyweight; extension_ops and classical_ops are lightweight.
-            let has_heavyweight_ops = !tailloop_info.quantum_ops.is_empty()
-                || !tailloop_info.call_nodes.is_empty();
-
             // Check if processed node is in this TailLoop
-            let is_in_loop = if has_heavyweight_ops {
-                tailloop_info.quantum_ops.contains(&processed_node)
-                    || tailloop_info.call_nodes.contains(&processed_node)
-            } else {
-                // Lightweight-only TailLoop: check extension_ops and classical_ops
-                tailloop_info.extension_ops.contains(&processed_node)
-                    || tailloop_info.classical_ops.contains(&processed_node)
-            };
+            let is_in_loop = tailloop_info.quantum_ops.contains(&processed_node)
+                || tailloop_info.call_nodes.contains(&processed_node)
+                || tailloop_info.extension_ops.contains(&processed_node);
 
             if is_in_loop {
-                // Check completion based on TailLoop type
-                let body_complete = if has_heavyweight_ops {
-                    // Heavyweight ops drive completion
-                    let all_quantum_done = tailloop_info
-                        .quantum_ops
-                        .iter()
-                        .all(|op| self.processed.contains(op));
-                    let all_calls_done = tailloop_info
-                        .call_nodes
-                        .iter()
-                        .all(|call| self.processed.contains(call));
+                // Check if all ops are processed
+                let all_quantum_done = tailloop_info
+                    .quantum_ops
+                    .iter()
+                    .all(|op| self.processed.contains(op));
+                let all_calls_done = tailloop_info
+                    .call_nodes
+                    .iter()
+                    .all(|call| self.processed.contains(call));
+                let all_extension_done = tailloop_info
+                    .extension_ops
+                    .iter()
+                    .all(|op| self.processed.contains(op));
 
-                    all_quantum_done && all_calls_done
-                } else {
-                    // Lightweight-only: wait for all extension_ops and classical_ops
-                    let all_extensions_done = tailloop_info
-                        .extension_ops
-                        .iter()
-                        .all(|op| self.processed.contains(op));
-                    let all_classical_done = tailloop_info
-                        .classical_ops
-                        .iter()
-                        .all(|op| self.processed.contains(op));
-
-                    all_extensions_done && all_classical_done
-                };
-
-                if body_complete {
+                if all_quantum_done && all_calls_done && all_extension_done {
                     completions.push(*tailloop_node);
                 }
             }

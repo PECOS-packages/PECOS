@@ -313,7 +313,7 @@ impl HugrEngine {
         // Extract TailLoop control flow structures
         self.tailloops = extract_tailloops(&hugr);
         debug!("Extracted {} TailLoop nodes", self.tailloops.len());
-        debug!("Extracted {} TailLoop nodes", self.tailloops.len());
+        eprintln!("[DEBUG] Extracted {} TailLoop nodes", self.tailloops.len());
 
         // Track nodes inside TailLoop bodies (should not be processed until loop is active)
         self.nodes_inside_tailloops = find_nodes_inside_tailloops(&hugr, &self.tailloops);
@@ -325,7 +325,7 @@ impl HugrEngine {
         // Extract quantum operations (but we'll skip case/CFG-internal ones in work queue)
         self.quantum_ops = extract_quantum_ops(&hugr);
         debug!("Extracted {} quantum operations", self.quantum_ops.len());
-        debug!("Extracted {} quantum ops, {} cfgs, {} func_defns, {} call_targets",
+        eprintln!("[DEBUG] Extracted {} quantum ops, {} cfgs, {} func_defns, {} call_targets",
             self.quantum_ops.len(), self.cfgs.len(), self.func_defns.len(), self.call_targets.len());
 
         // Extract classical operations (arithmetic, logic, etc.)
@@ -630,14 +630,16 @@ impl HugrEngine {
 
         if self.work_queue.is_empty() && self.quantum_ops.is_empty() {
             debug!("Empty HUGR, no commands to generate");
+            eprintln!("[DEBUG] Empty HUGR, no commands to generate");
             return Ok(None);
         }
 
         if self.work_queue.is_empty() {
             debug!("Work queue empty, processing complete");
+            eprintln!("[DEBUG] Work queue empty, processing complete");
             return Ok(None);
         }
-        debug!("Work queue has {} items", self.work_queue.len());
+        eprintln!("[DEBUG] Work queue has {} items", self.work_queue.len());
 
         let mut operation_count = 0;
         let mut hit_measurement = false;
@@ -647,7 +649,7 @@ impl HugrEngine {
                 continue;
             }
             let node_op = hugr.get_optype(current_node);
-            debug!("Processing node {current_node:?}: {:?}", node_op);
+            eprintln!("[DEBUG] Processing node {current_node:?}: {:?}", node_op);
 
             // Check batch size
             if operation_count >= Self::MAX_BATCH_SIZE {
@@ -691,7 +693,9 @@ impl HugrEngine {
             // Control Flow: CFG
             // =================================================================
             if let Some(cfg_info) = self.cfgs.get(&current_node).cloned() {
-                debug!("Starting CFG {current_node:?} execution, entry_block={:?}", cfg_info.entry_block);
+                debug!("Starting CFG {current_node:?} execution");
+                debug!("[TRACE] Starting CFG {current_node:?}");
+                eprintln!("[DEBUG] Starting CFG {current_node:?}, entry_block={:?}", cfg_info.entry_block);
 
                 // Start CFG execution by activating the entry block's operations
                 let entry_block = cfg_info.entry_block;
@@ -711,14 +715,12 @@ impl HugrEngine {
 
                     // Remove entry block's quantum ops from nodes_inside_cfg_blocks
                     // and add ops whose predecessors are ready to the work queue
-                    // IMPORTANT: Don't activate quantum ops that are inside TailLoops -
-                    // they should only be activated when the TailLoop is expanded.
                     for &op_node in &block_info.quantum_ops {
+                        self.nodes_inside_cfg_blocks.remove(&op_node);
+                        // Skip ops inside TailLoops - they'll be added when the loop expands
                         if self.nodes_inside_tailloops.contains(&op_node) {
-                            // Skip - will be activated when TailLoop is expanded
                             continue;
                         }
-                        self.nodes_inside_cfg_blocks.remove(&op_node);
                         let preds_ready = all_predecessors_ready(
                             &hugr,
                             op_node,
@@ -736,14 +738,14 @@ impl HugrEngine {
                     }
 
                     // Also activate Call nodes in the entry block
-                    // (but not those inside TailLoops)
                     for child in hugr.children(entry_block) {
-                        if self.nodes_inside_tailloops.contains(&child) {
-                            continue;
-                        }
                         let op = hugr.get_optype(child);
                         if matches!(op, OpType::Call(_)) {
                             self.nodes_inside_cfg_blocks.remove(&child);
+                            // Skip Call nodes inside TailLoops - they'll be added when the loop expands
+                            if self.nodes_inside_tailloops.contains(&child) {
+                                continue;
+                            }
                             if !self.work_queue.contains(&child)
                                 && !self.processed.contains(&child)
                                 && all_predecessors_ready(
@@ -763,6 +765,10 @@ impl HugrEngine {
                     // Also activate Conditional nodes in the entry block
                     for &cond_node in &block_info.conditional_nodes {
                         self.nodes_inside_cfg_blocks.remove(&cond_node);
+                        // Skip Conditional nodes inside TailLoops
+                        if self.nodes_inside_tailloops.contains(&cond_node) {
+                            continue;
+                        }
                         if !self.work_queue.contains(&cond_node)
                             && !self.processed.contains(&cond_node)
                         {
@@ -773,6 +779,10 @@ impl HugrEngine {
                     // Also activate bool ops in the entry block
                     for &op_node in &block_info.bool_ops {
                         self.nodes_inside_cfg_blocks.remove(&op_node);
+                        // Skip bool ops inside TailLoops
+                        if self.nodes_inside_tailloops.contains(&op_node) {
+                            continue;
+                        }
                         if !self.work_queue.contains(&op_node)
                             && !self.processed.contains(&op_node)
                         {
@@ -785,6 +795,10 @@ impl HugrEngine {
                         let op = hugr.get_optype(child);
                         if matches!(op, OpType::LoadConstant(_)) {
                             self.nodes_inside_cfg_blocks.remove(&child);
+                            // Skip nodes inside TailLoops
+                            if self.nodes_inside_tailloops.contains(&child) {
+                                continue;
+                            }
                             if !self.work_queue.contains(&child)
                                 && !self.processed.contains(&child)
                             {
@@ -794,6 +808,10 @@ impl HugrEngine {
                         // Check for classical ops (extension ops in arithmetic.int, etc.)
                         if self.classical_ops.contains_key(&child) {
                             self.nodes_inside_cfg_blocks.remove(&child);
+                            // Skip nodes inside TailLoops
+                            if self.nodes_inside_tailloops.contains(&child) {
+                                continue;
+                            }
                             // Classical ops need their inputs ready
                             if !self.work_queue.contains(&child)
                                 && !self.processed.contains(&child)
@@ -816,34 +834,32 @@ impl HugrEngine {
                     // quantum_ops, bool_ops, and classical_ops (those are handled above).
                     for &op_node in &block_info.extension_ops {
                         self.nodes_inside_cfg_blocks.remove(&op_node);
-                        let preds_ready = all_predecessors_ready(
-                            &hugr,
-                            op_node,
-                            &self.quantum_ops,
-                            &self.conditionals,
-                            &self.cfgs,
-                            &self.processed,
-                        );
-                        let in_queue = self.work_queue.contains(&op_node);
-                        let is_processed = self.processed.contains(&op_node);
-                        if !in_queue && !is_processed && preds_ready {
-                            self.work_queue.push_back(op_node);
+                        // Skip extension ops inside TailLoops
+                        if self.nodes_inside_tailloops.contains(&op_node) {
+                            continue;
                         }
-                    }
-
-                    // Also activate TailLoop nodes in the entry block
-                    for &tl_node in &block_info.tailloop_nodes {
-                        self.nodes_inside_cfg_blocks.remove(&tl_node);
-                        if !self.work_queue.contains(&tl_node)
-                            && !self.processed.contains(&tl_node)
+                        if !self.work_queue.contains(&op_node)
+                            && !self.processed.contains(&op_node)
                             && all_predecessors_ready(
                                 &hugr,
-                                tl_node,
+                                op_node,
                                 &self.quantum_ops,
                                 &self.conditionals,
                                 &self.cfgs,
                                 &self.processed,
                             )
+                        {
+                            self.work_queue.push_back(op_node);
+                        }
+                    }
+
+                    // Also activate TailLoop nodes in the entry block
+                    // NOTE: Don't check preds_ready for TailLoops - they handle input
+                    // propagation separately during expansion.
+                    for &tl_node in &block_info.tailloop_nodes {
+                        self.nodes_inside_cfg_blocks.remove(&tl_node);
+                        if !self.work_queue.contains(&tl_node)
+                            && !self.processed.contains(&tl_node)
                         {
                             self.work_queue.push_back(tl_node);
                         }
@@ -854,14 +870,12 @@ impl HugrEngine {
                     let num_conditionals = block_info.conditional_nodes.len();
                     let num_bool_ops = block_info.bool_ops.len();
                     let num_tailloops = block_info.tailloop_nodes.len();
-                    let num_extensions = block_info.extension_ops.len();
-                    let num_classical = block_info.classical_ops.len();
                     debug!(
-                        "CFG {current_node:?}: activated entry block {entry_block:?} with {num_ops} ops, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops, {num_extensions} extension_ops, {num_classical} classical_ops"
+                        "CFG {current_node:?}: activated entry block {entry_block:?} with {num_ops} ops, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops"
                     );
 
                     // If entry block has no operations, immediately transition to successor
-                    if num_ops == 0 && num_calls == 0 && num_conditionals == 0 && num_bool_ops == 0 && num_tailloops == 0 && num_extensions == 0 && num_classical == 0 {
+                    if num_ops == 0 && num_calls == 0 && num_conditionals == 0 && num_bool_ops == 0 && num_tailloops == 0 {
                         debug!(
                             "[TRACE] Entry block {:?} has 0 ops and 0 calls, successors: {:?}",
                             entry_block, block_info.successors
@@ -964,6 +978,7 @@ impl HugrEngine {
                 }
 
                 debug!("Processing Call {current_node:?} to FuncDefn {func_defn_node:?}");
+                eprintln!("[DEBUG] Processing Call {current_node:?} to FuncDefn {func_defn_node:?}");
 
                 // Check if there's already an active call to this FuncDefn
                 // If so, queue this call to wait
@@ -1048,82 +1063,18 @@ impl HugrEngine {
                         }
                     } else {
                         debug!("Call {current_node:?}: FuncDefn has no CFG, passing through");
-                        // No CFG - this is a simple/identity function
-                        // Pass through both qubits and classical values from Call inputs to Call outputs
-                        let num_inputs = hugr.num_inputs(current_node);
-                        let num_outputs = hugr.num_outputs(current_node);
-                        for port in 0..num_inputs.min(num_outputs) {
-                            let call_in_port = IncomingPort::from(port);
-                            if let Some((src_node, src_port)) =
-                                hugr.single_linked_output(current_node, call_in_port)
-                            {
-                                let src_wire = (src_node, src_port.index());
-                                // Pass through qubits
-                                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                                    self.wire_state.wire_to_qubit.insert((current_node, port), qubit_id);
-                                }
-                                // Pass through classical values
-                                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                                    self.wire_state.classical_values.insert((current_node, port), value);
-                                }
-                            }
-                        }
-
-                        // Mark Call as processed immediately (no CFG to wait for)
-                        self.processed.insert(current_node);
-
-                        // Check if this Call completion allows a CFG block to complete
-                        self.check_cfg_block_completion(&hugr, current_node);
-
-                        // Check if this Call completion allows a TailLoop body to complete
-                        self.check_tailloop_body_completion(&hugr, current_node);
-
-                        // Add ready successors to work queue
-                        self.queue_ready_successors(&hugr, current_node);
-
-                        continue;
-                    }
-                } else {
-                    // FuncDefn not found in our map - this might be an external/builtin function
-                    // Try to propagate inputs to outputs as best effort, then mark as processed
-                    debug!("Call {current_node:?}: FuncDefn {func_defn_node:?} not found, treating as pass-through");
-
-                    // Propagate inputs to outputs (best effort)
-                    let num_inputs = hugr.num_inputs(current_node);
-                    let num_outputs = hugr.num_outputs(current_node);
-                    for port in 0..num_inputs.min(num_outputs) {
-                        let call_in_port = IncomingPort::from(port);
-                        if let Some((src_node, src_port)) =
-                            hugr.single_linked_output(current_node, call_in_port)
-                        {
-                            let src_wire = (src_node, src_port.index());
-                            // Pass through qubits
-                            if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                                self.wire_state.wire_to_qubit.insert((current_node, port), qubit_id);
-                            }
-                            // Pass through classical values
-                            if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                                self.wire_state.classical_values.insert((current_node, port), value);
+                        // No CFG - just pass through qubits (identity function)
+                        for port in 0..func_info.num_outputs {
+                            let func_input_wire = (func_info.input_node, port);
+                            if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&func_input_wire) {
+                                let call_output_wire = (current_node, port);
+                                self.wire_state.wire_to_qubit.insert(call_output_wire, qubit_id);
                             }
                         }
                     }
-
-                    // Mark Call as processed
-                    self.processed.insert(current_node);
-
-                    // Check if this Call completion allows a CFG block to complete
-                    self.check_cfg_block_completion(&hugr, current_node);
-
-                    // Check if this Call completion allows a TailLoop body to complete
-                    self.check_tailloop_body_completion(&hugr, current_node);
-
-                    // Add ready successors to work queue
-                    self.queue_ready_successors(&hugr, current_node);
-
-                    continue;
                 }
 
-                // Call has a CFG - don't mark as processed yet, wait for FuncDefn CFG to complete
+                // Don't mark Call as processed yet - wait for FuncDefn to complete
                 // The Call will be marked as processed in complete_func_call_if_needed
                 continue;
             }
@@ -1490,7 +1441,15 @@ impl HugrEngine {
             let succ_op = hugr.get_optype(succ_node);
             let is_extension = succ_op.as_extension_op().is_some();
 
+            // Skip nodes that are inside control flow structures - they should only
+            // be processed after their parent control flow structure is expanded
+            let inside_control_flow = self.nodes_inside_cases.contains(&succ_node)
+                || self.nodes_inside_cfg_blocks.contains(&succ_node)
+                || self.nodes_inside_func_defns.contains(&succ_node)
+                || self.nodes_inside_tailloops.contains(&succ_node);
+
             if (is_relevant || is_extension)
+                && !inside_control_flow
                 && !self.processed.contains(&succ_node)
                 && !self.work_queue.contains(&succ_node)
                 && all_predecessors_ready(

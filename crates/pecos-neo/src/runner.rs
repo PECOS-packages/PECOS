@@ -19,6 +19,7 @@ use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use pecos_core::rng::rng_manageable::{derive_seed, RngManageable};
 use pecos_core::{Angle64, QubitId};
+use smallvec::SmallVec;
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_rng::PecosRng;
 use rand_core::SeedableRng;
@@ -153,7 +154,8 @@ impl<S: CliffordGateable> ShotRunner<S> {
     /// Non-Clifford gates (rotations) are skipped. Use `execute_all()` with
     /// an `ArbitraryRotationGateable` simulator to include rotation gates.
     fn execute_command(&mut self, command: &GateCommand) {
-        let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
+        // Use as_slice() instead of collecting into Vec - zero allocation
+        let qubits = command.qubits.as_slice();
 
         // Emit before-gate event for noise - may skip the gate (e.g., for leaked qubits)
         if self.emit_before_gate(command) {
@@ -169,23 +171,24 @@ impl<S: CliffordGateable> ShotRunner<S> {
         match command.gate_type {
             // Preparation
             GateType::Prep | GateType::QAlloc => {
-                self.simulator.pz(&qubits);
-                self.emit_after_preparation(&qubits);
+                self.simulator.pz(qubits);
+                self.emit_after_preparation(qubits);
             }
 
             // Measurement
             GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
-                self.emit_before_measurement(&qubits);
-                let results = self.simulator.mz(&qubits);
-                let outcomes: Vec<bool> = results.iter().map(|r| r.outcome).collect();
-                self.record_measurements(command.gate_type, &qubits, &results);
-                self.emit_after_measurement(&qubits, &outcomes);
+                self.emit_before_measurement(qubits);
+                let results = self.simulator.mz(qubits);
+                // Pre-size outcomes array based on results length (stack allocation for small cases)
+                let outcomes: SmallVec<[bool; 4]> = results.iter().map(|r| r.outcome).collect();
+                self.record_measurements(command.gate_type, qubits, &results);
+                self.emit_after_measurement(qubits, outcomes.as_slice());
             }
 
             // Idle - emit idle time event for noise
             GateType::Idle => {
                 if let Some(duration) = command.get_idle_duration() {
-                    self.emit_idle_time(&qubits, duration);
+                    self.emit_idle_time(qubits, duration);
                 }
             }
 
@@ -210,12 +213,11 @@ impl<S: CliffordGateable> ShotRunner<S> {
     /// Returns `true` if the gate should be skipped (e.g., for leaked qubits).
     fn emit_before_gate(&mut self, command: &GateCommand) -> bool {
         if let Some(ref mut noise) = self.noise {
-            let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
-            let angles: Vec<pecos_core::Angle64> = command.angles.iter().copied().collect();
+            // Use as_slice() for zero-allocation access
             let event = NoiseEvent::BeforeGate {
                 gate_type: command.gate_type,
-                qubits: &qubits,
-                angles: &angles,
+                qubits: command.qubits.as_slice(),
+                angles: command.angles.as_slice(),
             };
             let response = noise.emit(event, &mut self.rng);
             let should_skip = response.should_skip_gate();
@@ -228,12 +230,11 @@ impl<S: CliffordGateable> ShotRunner<S> {
     /// Emit an after-gate noise event and apply any responses.
     fn emit_after_gate(&mut self, command: &GateCommand) {
         if let Some(ref mut noise) = self.noise {
-            let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
-            let angles: Vec<pecos_core::Angle64> = command.angles.iter().copied().collect();
+            // Use as_slice() for zero-allocation access
             let event = NoiseEvent::AfterGate {
                 gate_type: command.gate_type,
-                qubits: &qubits,
-                angles: &angles,
+                qubits: command.qubits.as_slice(),
+                angles: command.angles.as_slice(),
             };
             let response = noise.emit(event, &mut self.rng);
             self.apply_noise_response(response);
@@ -361,17 +362,18 @@ impl<S: CliffordGateable> ShotRunner<S> {
 
     /// Execute a noise gate (injected Pauli error).
     fn execute_noise_gate(&mut self, gate: &GateCommand) {
-        let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
+        // Use as_slice() for zero-allocation access
+        let qubits = gate.qubits.as_slice();
 
         match gate.gate_type {
             GateType::X => {
-                self.simulator.x(&qubits);
+                self.simulator.x(qubits);
             }
             GateType::Y => {
-                self.simulator.y(&qubits);
+                self.simulator.y(qubits);
             }
             GateType::Z => {
-                self.simulator.z(&qubits);
+                self.simulator.z(qubits);
             }
             _ => {
                 // Other gates shouldn't appear as noise, but handle gracefully
@@ -383,64 +385,65 @@ impl<S: CliffordGateable> ShotRunner<S> {
     ///
     /// Returns `true` if the gate was handled, `false` if it's a non-Clifford gate.
     fn execute_clifford_gate(&mut self, command: &GateCommand) -> bool {
-        let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
+        // Use as_slice() for zero-allocation access
+        let qubits = command.qubits.as_slice();
 
         match command.gate_type {
             // Single-qubit Paulis
             GateType::I => {
-                self.simulator.identity(&qubits);
+                self.simulator.identity(qubits);
             }
             GateType::X => {
-                self.simulator.x(&qubits);
+                self.simulator.x(qubits);
             }
             GateType::Y => {
-                self.simulator.y(&qubits);
+                self.simulator.y(qubits);
             }
             GateType::Z => {
-                self.simulator.z(&qubits);
+                self.simulator.z(qubits);
             }
 
             // Single-qubit Cliffords
             GateType::H => {
-                self.simulator.h(&qubits);
+                self.simulator.h(qubits);
             }
             GateType::SX => {
-                self.simulator.sx(&qubits);
+                self.simulator.sx(qubits);
             }
             GateType::SXdg => {
-                self.simulator.sxdg(&qubits);
+                self.simulator.sxdg(qubits);
             }
             GateType::SY => {
-                self.simulator.sy(&qubits);
+                self.simulator.sy(qubits);
             }
             GateType::SYdg => {
-                self.simulator.sydg(&qubits);
+                self.simulator.sydg(qubits);
             }
             GateType::SZ => {
-                self.simulator.sz(&qubits);
+                self.simulator.sz(qubits);
             }
             GateType::SZdg => {
-                self.simulator.szdg(&qubits);
+                self.simulator.szdg(qubits);
             }
 
             // Two-qubit gates
             GateType::CX => {
-                self.simulator.cx(&qubits);
+                self.simulator.cx(qubits);
             }
             GateType::CY => {
-                self.simulator.cy(&qubits);
+                self.simulator.cy(qubits);
             }
             GateType::CZ => {
-                self.simulator.cz(&qubits);
+                self.simulator.cz(qubits);
             }
             GateType::SZZ => {
-                self.simulator.szz(&qubits);
+                self.simulator.szz(qubits);
             }
             GateType::SZZdg => {
-                self.simulator.szzdg(&qubits);
+                self.simulator.szzdg(qubits);
             }
             GateType::SWAP => {
-                self.simulator.swap(&qubits);
+                self.simulator.swap(qubits);
             }
 
             // Non-Clifford gates - not handled here
@@ -568,7 +571,8 @@ impl<S: ArbitraryRotationGateable> ShotRunner<S> {
 
     /// Execute a single command including rotation gates.
     fn execute_command_universal(&mut self, command: &GateCommand) {
-        let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
+        // Use as_slice() for zero-allocation access
+        let qubits = command.qubits.as_slice();
 
         // Emit before-gate event for noise - may skip the gate (e.g., for leaked qubits)
         if self.emit_before_gate(command) {
@@ -584,23 +588,24 @@ impl<S: ArbitraryRotationGateable> ShotRunner<S> {
         match command.gate_type {
             // Preparation
             GateType::Prep | GateType::QAlloc => {
-                self.simulator.pz(&qubits);
-                self.emit_after_preparation(&qubits);
+                self.simulator.pz(qubits);
+                self.emit_after_preparation(qubits);
             }
 
             // Measurement
             GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
-                self.emit_before_measurement(&qubits);
-                let results = self.simulator.mz(&qubits);
-                let outcomes: Vec<bool> = results.iter().map(|r| r.outcome).collect();
-                self.record_measurements(command.gate_type, &qubits, &results);
-                self.emit_after_measurement(&qubits, &outcomes);
+                self.emit_before_measurement(qubits);
+                let results = self.simulator.mz(qubits);
+                // Pre-size outcomes array based on results length (stack allocation for small cases)
+                let outcomes: SmallVec<[bool; 4]> = results.iter().map(|r| r.outcome).collect();
+                self.record_measurements(command.gate_type, qubits, &results);
+                self.emit_after_measurement(qubits, outcomes.as_slice());
             }
 
             // Idle - emit idle time event for noise
             GateType::Idle => {
                 if let Some(duration) = command.get_idle_duration() {
-                    self.emit_idle_time(&qubits, duration);
+                    self.emit_idle_time(qubits, duration);
                 }
             }
 
@@ -608,7 +613,7 @@ impl<S: ArbitraryRotationGateable> ShotRunner<S> {
             _ => {
                 if !self.execute_clifford_gate(command) {
                     // Handle rotation and other non-Clifford gates
-                    self.execute_rotation_gate(command, &qubits);
+                    self.execute_rotation_gate(command, qubits);
                 }
             }
         }

@@ -31,10 +31,8 @@
 use crate::GpuStab;
 use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, QuantumSimulator};
-use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use pecos_rng::{time_seed, PecosRng};
 use std::fmt::Debug;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Represents a Pauli operator for noise injection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +87,7 @@ pub struct DepolarizingNoiseSampler {
     p1: f64,
     p2: f64,
     p_meas: f64,
-    rng: StdRng,
+    rng: PecosRng,
 }
 
 impl DepolarizingNoiseSampler {
@@ -100,12 +98,7 @@ impl DepolarizingNoiseSampler {
             p1,
             p2,
             p_meas,
-            rng: StdRng::seed_from_u64(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(42),
-            ),
+            rng: PecosRng::seed_from_u64(time_seed()),
         }
     }
 
@@ -116,7 +109,7 @@ impl DepolarizingNoiseSampler {
             p1,
             p2,
             p_meas,
-            rng: StdRng::seed_from_u64(seed),
+            rng: PecosRng::seed_from_u64(seed),
         }
     }
 
@@ -172,7 +165,7 @@ impl NoiseSampler for DepolarizingNoiseSampler {
     }
 
     fn reseed(&mut self, seed: u64) {
-        self.rng = StdRng::seed_from_u64(seed);
+        self.rng = PecosRng::seed_from_u64(seed);
     }
 
     fn clone_box(&self) -> Box<dyn NoiseSampler> {
@@ -187,7 +180,7 @@ pub struct BiasedDepolarizingNoiseSampler {
     p2: f64,
     p_meas_0: f64, // Probability of flipping 0 -> 1
     p_meas_1: f64, // Probability of flipping 1 -> 0
-    rng: StdRng,
+    rng: PecosRng,
     /// Cached measurement outcomes for biased flip (set during measurement)
     pending_meas_outcomes: Vec<bool>,
 }
@@ -201,12 +194,7 @@ impl BiasedDepolarizingNoiseSampler {
             p2,
             p_meas_0,
             p_meas_1,
-            rng: StdRng::seed_from_u64(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(42),
-            ),
+            rng: PecosRng::seed_from_u64(time_seed()),
             pending_meas_outcomes: Vec::new(),
         }
     }
@@ -219,7 +207,7 @@ impl BiasedDepolarizingNoiseSampler {
             p2,
             p_meas_0,
             p_meas_1,
-            rng: StdRng::seed_from_u64(seed),
+            rng: PecosRng::seed_from_u64(seed),
             pending_meas_outcomes: Vec::new(),
         }
     }
@@ -296,7 +284,7 @@ impl NoiseSampler for BiasedDepolarizingNoiseSampler {
     }
 
     fn reseed(&mut self, seed: u64) {
-        self.rng = StdRng::seed_from_u64(seed);
+        self.rng = PecosRng::seed_from_u64(seed);
         self.pending_meas_outcomes.clear();
     }
 
@@ -441,7 +429,7 @@ pub struct ShotResult {
 pub struct GpuNoisySampler<N: NoiseSampler> {
     num_qubits: usize,
     noise_sampler: N,
-    master_rng: StdRng,
+    master_rng: PecosRng,
 }
 
 impl<N: NoiseSampler> GpuNoisySampler<N> {
@@ -450,12 +438,7 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
         Self {
             num_qubits,
             noise_sampler,
-            master_rng: StdRng::seed_from_u64(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(42),
-            ),
+            master_rng: PecosRng::seed_from_u64(time_seed()),
         }
     }
 
@@ -464,7 +447,7 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
         Self {
             num_qubits,
             noise_sampler,
-            master_rng: StdRng::seed_from_u64(seed),
+            master_rng: PecosRng::seed_from_u64(seed),
         }
     }
 
@@ -485,7 +468,7 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
 
         // Create GPU simulator once and reuse - avoids expensive GPU resource creation per shot
         let initial_seed = self.master_rng.next_u64();
-        let mut sim = GpuStab::<StdRng>::with_seed(self.num_qubits, initial_seed)
+        let mut sim = GpuStab::<PecosRng>::with_seed(self.num_qubits, initial_seed)
             .map_err(|e| format!("Failed to create GPU simulator: {e}"))?;
 
         for _ in 0..shots {

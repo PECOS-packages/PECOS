@@ -35,7 +35,7 @@ pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
 pub use bit::{Bit, Bits};
 pub use bit_int::BitInt;
 pub use bitset::BitSet;
-pub use duration::{Nanoseconds, TimeUnits};
+pub use duration::{TimeScale, TimeUnits};
 pub use element::Element;
 pub use index_set::IndexSet;
 pub use phase::GlobalPhase;

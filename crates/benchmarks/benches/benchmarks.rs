@@ -21,6 +21,7 @@ mod modules {
     pub mod measurement_sampling;
     pub mod noise_models;
     // TODO: pub mod pauli_ops;
+    pub mod pecos_neo_comparison;
     pub mod rng;
     pub mod set_ops;
     pub mod sparse_state_vec;
@@ -33,8 +34,8 @@ mod modules {
 #[cfg(feature = "gpu-sims")]
 use modules::gpu_influence_sampler;
 use modules::{
-    allocation_overhead, dod_statevec, measurement_sampling, noise_models, rng, set_ops,
-    sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code, trig,
+    allocation_overhead, dod_statevec, measurement_sampling, noise_models, pecos_neo_comparison,
+    rng, set_ops, sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
@@ -44,6 +45,7 @@ fn all_benchmarks(c: &mut Criterion) {
     gpu_influence_sampler::benchmarks(c);
     measurement_sampling::benchmarks(c);
     noise_models::benchmarks(c);
+    pecos_neo_comparison::benchmarks(c);
     rng::benchmarks(c);
     set_ops::benchmarks(c);
     sparse_state_vec::benchmarks(c);

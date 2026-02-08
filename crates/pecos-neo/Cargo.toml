@@ -1,0 +1,53 @@
+[package]
+name = "pecos-neo"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Composable quantum simulation with event-driven noise modeling"
+readme = "README.md"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+pecos-core.workspace = true
+pecos-quantum.workspace = true
+pecos-qsim.workspace = true
+pecos-rng.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+rand_core.workspace = true
+rayon.workspace = true
+num_cpus = "1.16"
+
+# Optional: for adapter to wrap classical engines
+pecos-engines = { workspace = true, optional = true }
+# Optional: for program types (Qasm, Program enum, etc.)
+pecos-programs = { workspace = true, optional = true }
+# Optional: for QASM support
+pecos-qasm = { workspace = true, optional = true }
+
+[dev-dependencies]
+rand.workspace = true
+pecos-engines.workspace = true
+pecos-qasm.workspace = true
+criterion.workspace = true
+proptest = "1.4"
+
+[[bench]]
+name = "hot_path"
+harness = false
+
+[features]
+default = []
+engines-adapter = ["dep:pecos-engines", "dep:pecos-programs"]
+qasm = ["engines-adapter", "dep:pecos-qasm"]
+
+[lints]
+workspace = true

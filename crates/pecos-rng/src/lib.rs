@@ -11,7 +11,7 @@ pub use quality_rng::{PecosQualityRng, SimdXoshiro256PlusPlus};
 pub use rand_core::{RngCore, SeedableRng};
 pub use rng::{ParallelRapidRng, PecosRng};
 pub use rng_ext::{RngBulkExt, RngProbabilityExt};
-pub use rng_manageable::{RngManageable, derive_seed};
+pub use rng_manageable::{RngManageable, derive_seed, resolve_seed, time_seed};
 pub use rng_pcg::{PCG64Fast, PCGRandom};
 pub use scalar_rng::PecosScalarRng;
 

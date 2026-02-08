@@ -61,7 +61,7 @@
 //! ```
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, GateQubits, Nanoseconds, QubitId};
+use pecos_core::{Angle64, Gate, GateQubits, QubitId, TimeUnits};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Attribute;
@@ -1422,23 +1422,26 @@ impl<'a> TickHandle<'a> {
 
     /// Insert an idle (wait) operation for one or more qubits.
     ///
+    /// Duration is in abstract time units. The interpretation (nanoseconds,
+    /// clock cycles, etc.) is defined by your noise model or timing configuration.
+    ///
     /// # Examples
     ///
     /// ```
     /// use pecos_quantum::TickCircuit;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// // Idle for 100 nanoseconds
+    /// // Idle for 100 time units
     /// circuit.tick().idle(100, &[0, 1, 2]);
     /// ```
     pub fn idle(
         &mut self,
-        duration: impl Into<Nanoseconds>,
+        duration: impl Into<TimeUnits>,
         qubits: &[impl Into<QubitId> + Copy],
     ) -> &mut Self {
-        let ns: Nanoseconds = duration.into();
+        let units: TimeUnits = duration.into();
         self.add_gate(Gate::idle(
-            ns.as_f64(),
+            units.as_f64(),
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         ))
     }

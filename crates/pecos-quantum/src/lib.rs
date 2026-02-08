@@ -86,7 +86,7 @@ pub use tick_circuit_soa::{
 
 // Re-export commonly used types from dependencies
 pub use pecos_core::gate_type::GateType;
-pub use pecos_core::{Gate, Nanoseconds, QubitId};
+pub use pecos_core::{Gate, QubitId, TimeScale, TimeUnits};
 pub use pecos_num::dag::DagWouldCycleError;
 
 // Re-export operator matrix trait for convenient method-style matrix conversion

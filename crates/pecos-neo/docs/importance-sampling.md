@@ -11,6 +11,54 @@ Importance sampling instead:
 2. Reweights samples by the likelihood ratio P(X)/Q(X)
 3. The weighted average is an unbiased estimator with (potentially) lower variance
 
+## Quick Start with sim_neo
+
+The easiest way to use importance sampling is via the `sim_neo` Tool API with the `importance_sampling()` builder:
+
+```rust
+use pecos_neo::tool::{sim_neo, importance_sampling};
+use pecos_neo::command::CommandBuilder;
+use pecos_core::QubitId;
+
+let circuit = CommandBuilder::new()
+    .prep(0).prep(1)
+    .h(0).cx(0, 1)
+    .measure(0).measure(1)
+    .build();
+
+// Run with importance sampling
+let results = sim_neo(circuit)
+    .orchestrator(importance_sampling()
+        .with_p1(0.001)      // Single-qubit error rate
+        .with_p2(0.01)       // Two-qubit error rate
+        .with_p_meas(0.001)  // Measurement error rate
+        .with_boost(10.0))   // Boost factor
+    .shots(10000)
+    .seed(42)
+    .run();
+
+// Compute weighted statistics
+if let Some(error_rate) = results.weighted_mean(|outcome| {
+    // Your failure indicator function
+    if check_logical_error(outcome) { 1.0 } else { 0.0 }
+}) {
+    println!("Estimated error rate: {:.2e}", error_rate);
+}
+```
+
+For uniform error rates, use the `with_uniform_error()` method:
+
+```rust
+let results = sim_neo(circuit)
+    .orchestrator(importance_sampling()
+        .with_uniform_error(0.001)  // Same rate for all gate types
+        .with_boost(10.0))
+    .shots(10000)
+    .run();
+```
+
+The results include importance weights that can be used with `weighted_mean()` or `weighted_stats()` to compute unbiased estimates.
+
 ## API Components
 
 ### ImportanceSamplingRunner

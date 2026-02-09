@@ -59,7 +59,7 @@ fn bench_noise_emission(c: &mut Criterion) {
                 gate_type: GateType::H,
                 qubits: &qubits,
                 angles: &[],
-            };
+            gate_id: None, };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -70,7 +70,7 @@ fn bench_noise_emission(c: &mut Criterion) {
                 gate_type: GateType::CX,
                 qubits: &qubits_2q,
                 angles: &[],
-            };
+            gate_id: None, };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -841,7 +841,7 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
                 gate_type: GateType::H,
                 qubits: &qubits,
                 angles: &[],
-            };
+            gate_id: None, };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -859,7 +859,7 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
                 gate_type: GateType::H,
                 qubits: &qubits,
                 angles: &[],
-            };
+            gate_id: None, };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -877,7 +877,7 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
                 gate_type: GateType::CX,
                 qubits: &qubits,
                 angles: &[],
-            };
+            gate_id: None, };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -895,7 +895,7 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
                 gate_type: GateType::CX,
                 qubits: &qubits,
                 angles: &[],
-            };
+            gate_id: None, };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -1198,7 +1198,7 @@ fn bench_batch_processor(c: &mut Criterion) {
                     gate_type: GateType::H,
                     qubits: &qubits,
                     angles: &angles,
-                };
+                gate_id: None, };
                 b.iter(|| {
                     black_box(batch_channel.apply(&event, &mut ctx, &mut rng))
                 });
@@ -1218,7 +1218,7 @@ fn bench_batch_processor(c: &mut Criterion) {
                     gate_type: GateType::H,
                     qubits: &qubits,
                     angles: &angles,
-                };
+                gate_id: None, };
                 b.iter(|| {
                     black_box(flow_with_prob.apply(&event, &mut ctx, &mut rng))
                 });
@@ -1237,7 +1237,7 @@ fn bench_batch_processor(c: &mut Criterion) {
                         gate_type: GateType::H,
                         qubits: &qubits,
                         angles: &angles,
-                    };
+                    gate_id: None, };
                     b.iter(|| {
                         black_box(flow_channel.apply(&event, &mut ctx, &mut rng))
                     });

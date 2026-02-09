@@ -18,7 +18,7 @@ fn bench_scale(num_qubits: usize, prob: f64, iterations: usize) {
         gate_type: GateType::H,
         qubits: &qubits,
         angles: &angles,
-    };
+    gate_id: None, };
     
     let mut ctx = NoiseContext::new();
     let mut rng = PecosRng::seed_from_u64(42);

@@ -141,6 +141,37 @@ impl ComposableNoiseModel {
         self.time_scale
     }
 
+    /// Set gate definitions for this noise model.
+    ///
+    /// When set, noise channels can query gate metadata (category, arity, etc.)
+    /// via the `NoiseContext`. This enables category-based noise filtering and
+    /// uniform treatment of core and custom gates.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use pecos_neo::noise::ComposableNoiseModel;
+    /// use pecos_neo::extensible::GateDefinitions;
+    ///
+    /// let gates = GateDefinitions::builder()
+    ///     .define_gate("MyGate", GateSpec::new("MyGate").with_quantum_arity(2))
+    ///     .with_category_noise(GateCategory::TwoQubitUnitary, 0.02)
+    ///     .build()?;
+    ///
+    /// let noise = ComposableNoiseModel::new()
+    ///     .with_gate_definitions(gates);
+    /// ```
+    #[must_use]
+    pub fn with_gate_definitions(mut self, defs: crate::extensible::GateDefinitions) -> Self {
+        self.context.set_gate_definitions(defs);
+        self
+    }
+
+    /// Get gate definitions if set.
+    #[must_use]
+    pub fn gate_definitions(&self) -> Option<&crate::extensible::GateDefinitions> {
+        self.context.gate_definitions()
+    }
+
     /// Add a plugin to the model.
     ///
     /// Plugins can register event handlers, channels, and observers.
@@ -523,7 +554,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let mut rng = PecosRng::seed_from_u64(42);
         let response = model.emit(event, &mut rng);

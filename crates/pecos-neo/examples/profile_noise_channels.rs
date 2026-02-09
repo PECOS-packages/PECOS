@@ -56,7 +56,7 @@ fn main() {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
         let response = noise.emit(event, &mut rng);
         black_box(response);
     }
@@ -81,7 +81,7 @@ fn main() {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
         let response = noise.emit(event, &mut rng);
         black_box(response);
     }

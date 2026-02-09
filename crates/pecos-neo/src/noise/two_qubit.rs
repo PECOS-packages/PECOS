@@ -467,6 +467,7 @@ impl NoiseChannel for TwoQubitChannel {
                 gate_type,
                 qubits,
                 angles,
+                ..
             } => {
                 // Skip noise for noiseless gates
                 if ctx.is_noiseless(*gate_type) {
@@ -507,6 +508,7 @@ impl NoiseChannel for TwoQubitChannel {
                 gate_type,
                 qubits,
                 angles,
+                ..
             } => {
                 if !gate_type.is_two_qubit() {
                     return None;
@@ -679,7 +681,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         assert!(channel.responds_to(&event));
 
@@ -701,7 +703,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         assert!(!channel.responds_to(&event));
     }
@@ -793,7 +795,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(0));
@@ -818,7 +820,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);

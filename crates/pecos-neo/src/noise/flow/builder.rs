@@ -1544,7 +1544,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &[],
-        };
+        gate_id: None, };
 
         // Check that the channel responds to this event
         assert!(

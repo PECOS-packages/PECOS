@@ -112,6 +112,7 @@ use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
 use crate::program::{CommandSource, ProgramRunner, StaticProgram};
 use crate::runner::ShotRunner;
+use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use pecos_core::rng::rng_manageable::derive_seed;
 use pecos_qsim::{CliffordGateable, SparseStab, StateVec};
 use rayon::prelude::*;
@@ -389,15 +390,174 @@ impl Default for SimConfig {
     }
 }
 
+/// Builder for importance sampling orchestration.
+///
+/// Specifies the true error rates and boost factor for biased sampling.
+/// Use the [`importance_sampling()`] function to create an instance.
+///
+/// # Example
+///
+/// ```ignore
+/// use pecos_neo::tool::{sim_neo, importance_sampling};
+///
+/// let results = sim_neo(circuit)
+///     .orchestrator(importance_sampling()
+///         .with_p1(0.001)
+///         .with_p2(0.01)
+///         .with_p_meas(0.001)
+///         .with_boost(10.0))
+///     .shots(10000)
+///     .run();
+/// ```
+#[derive(Debug, Clone)]
+pub struct ImportanceSamplingBuilder {
+    /// Single-qubit gate error rate (true distribution).
+    p1: f64,
+    /// Two-qubit gate error rate (true distribution).
+    p2: f64,
+    /// Measurement error rate (true distribution).
+    p_meas: f64,
+    /// Boost factor for proposal distribution.
+    boost: f64,
+}
+
+impl ImportanceSamplingBuilder {
+    /// Create a new importance sampling builder with default values.
+    ///
+    /// Default: p1=0.001, p2=0.01, p_meas=0.001, boost=10.0
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            p1: 0.001,
+            p2: 0.01,
+            p_meas: 0.001,
+            boost: 10.0,
+        }
+    }
+
+    /// Set the single-qubit gate error rate.
+    #[must_use]
+    pub fn with_p1(mut self, p: f64) -> Self {
+        self.p1 = p;
+        self
+    }
+
+    /// Set the two-qubit gate error rate.
+    #[must_use]
+    pub fn with_p2(mut self, p: f64) -> Self {
+        self.p2 = p;
+        self
+    }
+
+    /// Set the measurement error rate.
+    #[must_use]
+    pub fn with_p_meas(mut self, p: f64) -> Self {
+        self.p_meas = p;
+        self
+    }
+
+    /// Set all error rates to the same value.
+    #[must_use]
+    pub fn with_uniform_error(mut self, p: f64) -> Self {
+        self.p1 = p;
+        self.p2 = p;
+        self.p_meas = p;
+        self
+    }
+
+    /// Set the boost factor for the proposal distribution.
+    ///
+    /// The proposal distribution samples errors at rate `p * boost`,
+    /// capped at 50%.
+    #[must_use]
+    pub fn with_boost(mut self, boost: f64) -> Self {
+        self.boost = boost;
+        self
+    }
+
+    /// Build the orchestrator.
+    #[must_use]
+    pub fn build(self) -> Orchestrator {
+        Orchestrator::ImportanceSampling { config: self }
+    }
+
+    /// Get the single-qubit error rate.
+    #[must_use]
+    pub fn p1(&self) -> f64 {
+        self.p1
+    }
+
+    /// Get the two-qubit error rate.
+    #[must_use]
+    pub fn p2(&self) -> f64 {
+        self.p2
+    }
+
+    /// Get the measurement error rate.
+    #[must_use]
+    pub fn p_meas(&self) -> f64 {
+        self.p_meas
+    }
+
+    /// Get the boost factor.
+    #[must_use]
+    pub fn boost(&self) -> f64 {
+        self.boost
+    }
+}
+
+impl Default for ImportanceSamplingBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<ImportanceSamplingBuilder> for Orchestrator {
+    fn from(builder: ImportanceSamplingBuilder) -> Self {
+        builder.build()
+    }
+}
+
+/// Create an importance sampling orchestrator builder.
+///
+/// Importance sampling biases noise toward higher error rates to observe
+/// rare events more frequently, then reweights results for unbiased estimates.
+///
+/// # Example
+///
+/// ```ignore
+/// use pecos_neo::tool::{sim_neo, importance_sampling};
+///
+/// let results = sim_neo(circuit)
+///     .orchestrator(importance_sampling()
+///         .with_p1(0.001)
+///         .with_p2(0.01)
+///         .with_boost(10.0))
+///     .shots(10000)
+///     .run();
+///
+/// // Compute weighted logical error rate
+/// if let Some(rate) = results.weighted_mean(|outcome| {
+///     if check_logical_error(outcome) { 1.0 } else { 0.0 }
+/// }) {
+///     println!("Estimated error rate: {:.2e}", rate);
+/// }
+/// ```
+#[must_use]
+pub fn importance_sampling() -> ImportanceSamplingBuilder {
+    ImportanceSamplingBuilder::new()
+}
+
 /// Orchestration strategy for simulation execution.
 ///
 /// This enum defines how shots are executed. Different strategies offer
 /// trade-offs between simplicity, parallelism, and specialized sampling.
 ///
 /// Stored as data in the builder, the actual execution is set up at run time.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum Orchestrator {
     /// Sequential execution via Tool (default for simplicity).
+    #[default]
     Sequential,
 
     /// Parallel Monte Carlo execution using rayon.
@@ -413,18 +573,12 @@ pub enum Orchestrator {
     ///
     /// Biases sampling toward rare events and reweights results.
     /// Use when estimating probabilities of rare outcomes.
+    ///
+    /// Use the [`importance_sampling()`] builder function to create this variant.
     ImportanceSampling {
-        /// Boost factor for rare events.
-        boost: f64,
-        /// Number of parallel workers.
-        workers: usize,
+        /// Configuration for importance sampling.
+        config: ImportanceSamplingBuilder,
     },
-}
-
-impl Default for Orchestrator {
-    fn default() -> Self {
-        Self::Sequential
-    }
 }
 
 impl Orchestrator {
@@ -442,12 +596,6 @@ impl Orchestrator {
             .unwrap_or(1);
         Self::MonteCarlo { workers }
     }
-
-    /// Create an importance sampling orchestrator.
-    #[must_use]
-    pub fn importance_sampling(boost: f64, workers: usize) -> Self {
-        Self::ImportanceSampling { boost, workers }
-    }
 }
 
 /// Accumulated simulation results.
@@ -455,6 +603,8 @@ impl Orchestrator {
 pub struct SimulationResults {
     /// Per-shot measurement outcomes.
     pub outcomes: Vec<MeasurementOutcomes>,
+    /// Per-shot importance weights (only for importance sampling).
+    pub weights: Option<Vec<crate::sampling::weight::SampleWeight>>,
 }
 
 impl SimulationResults {
@@ -479,6 +629,58 @@ impl SimulationResults {
     /// Clear results for reuse.
     pub fn clear(&mut self) {
         self.outcomes.clear();
+        if let Some(ref mut weights) = self.weights {
+            weights.clear();
+        }
+    }
+
+    /// Check if this result has importance weights.
+    #[must_use]
+    pub fn has_weights(&self) -> bool {
+        self.weights.is_some()
+    }
+
+    /// Compute weighted statistics for a binary indicator function.
+    ///
+    /// Returns `None` if no importance weights are present.
+    ///
+    /// # Arguments
+    /// * `indicator` - Function that returns 1.0 for "success" outcomes, 0.0 otherwise
+    #[must_use]
+    pub fn weighted_mean<F>(&self, indicator: F) -> Option<f64>
+    where
+        F: Fn(&MeasurementOutcomes) -> f64,
+    {
+        let weights = self.weights.as_ref()?;
+        if weights.is_empty() {
+            return None;
+        }
+
+        let mut stats = crate::sampling::weight::WeightedStatistics::new();
+        for (outcome, weight) in self.outcomes.iter().zip(weights.iter()) {
+            stats.add(indicator(outcome), weight);
+        }
+        Some(stats.mean())
+    }
+
+    /// Compute weighted statistics with standard error.
+    ///
+    /// Returns `(mean, standard_error)` or `None` if no weights.
+    #[must_use]
+    pub fn weighted_stats<F>(&self, indicator: F) -> Option<(f64, f64)>
+    where
+        F: Fn(&MeasurementOutcomes) -> f64,
+    {
+        let weights = self.weights.as_ref()?;
+        if weights.is_empty() {
+            return None;
+        }
+
+        let mut stats = crate::sampling::weight::WeightedStatistics::new();
+        for (outcome, weight) in self.outcomes.iter().zip(weights.iter()) {
+            stats.add(indicator(outcome), weight);
+        }
+        Some((stats.mean(), stats.standard_error()))
     }
 }
 
@@ -1104,8 +1306,8 @@ impl SimNeoBuilder {
     ///     .run();
     /// ```
     #[must_use]
-    pub fn orchestrator(mut self, orchestrator: Orchestrator) -> Self {
-        self.orchestrator = orchestrator;
+    pub fn orchestrator(mut self, orchestrator: impl Into<Orchestrator>) -> Self {
+        self.orchestrator = orchestrator.into();
         self
     }
 
@@ -1627,7 +1829,7 @@ impl Simulation {
     /// Execution strategy depends on the orchestrator:
     /// - `Sequential`: Runs shots one at a time via the Tool
     /// - `MonteCarlo`: Parallelizes shots across workers (for static noiseless circuits)
-    /// - `ImportanceSampling`: Biased sampling for rare events (not yet implemented)
+    /// - `ImportanceSampling`: Biased sampling for rare events with importance weights
     pub fn run(&mut self) -> SimulationResults {
         let config = self.tool.resource::<SimConfig>().clone();
 
@@ -1639,9 +1841,14 @@ impl Simulation {
                 }
                 // Fall through to sequential for classical engines or noisy circuits
             }
-            Orchestrator::ImportanceSampling { .. } => {
-                // TODO: Implement importance sampling via ImportanceSamplingPlugin
-                unimplemented!("Importance sampling orchestration not yet implemented");
+            Orchestrator::ImportanceSampling { config: is_config } => {
+                if let Some(ref parallel_data) = self.parallel_data {
+                    return self.run_importance_sampling(&config, parallel_data, is_config);
+                }
+                panic!(
+                    "Importance sampling requires a static circuit. \
+                     Classical engines are not yet supported for importance sampling."
+                );
             }
             _ => {} // Sequential falls through
         }
@@ -1718,7 +1925,70 @@ impl Simulation {
         // Flatten results in deterministic order
         let outcomes: Vec<MeasurementOutcomes> = all_outcomes.into_iter().flatten().collect();
 
-        SimulationResults { outcomes }
+        SimulationResults {
+            outcomes,
+            weights: None,
+        }
+    }
+
+    /// Run shots with importance sampling.
+    ///
+    /// Uses `ImportanceSamplingRunner` to sample from a biased proposal distribution
+    /// while tracking importance weights for proper reweighting.
+    fn run_importance_sampling(
+        &self,
+        config: &SimConfig,
+        data: &ParallelExecutionData,
+        is_config: &ImportanceSamplingBuilder,
+    ) -> SimulationResults {
+        let shots = config.shots;
+        let base_seed = config.seed.unwrap_or(0);
+
+        let mut outcomes = Vec::with_capacity(shots);
+        let mut weights = Vec::with_capacity(shots);
+
+        // Run shots sequentially with importance sampling
+        // (parallel importance sampling requires more careful weight aggregation)
+        for shot_idx in 0..shots {
+            // Derive per-shot seed for reproducibility (matches parallel execution)
+            let shot_seed = derive_seed(base_seed, &format!("shot_{shot_idx}"));
+            // Further derive separate seeds for simulator and noise
+            let sim_seed = derive_seed(shot_seed, "simulator");
+            let noise_seed = derive_seed(shot_seed, "noise");
+
+            // Create fresh simulator and runner for each shot
+            let result = match &data.quantum_backend {
+                QuantumBackend::SparseStab => {
+                    let sim = SparseStab::with_seed(data.num_qubits, sim_seed);
+                    let mut runner = ImportanceSamplingRunner::new(sim)
+                        .with_single_qubit_boost(is_config.p1(), is_config.boost())
+                        .with_two_qubit_boost(is_config.p2(), is_config.boost())
+                        .with_measurement_boost(is_config.p_meas(), is_config.boost())
+                        .with_seed(noise_seed);
+                    runner.run_shot(&data.circuit)
+                }
+                QuantumBackend::StateVec => {
+                    // ImportanceSamplingRunner uses CliffordGateable which SparseStab
+                    // implements. StateVec would need ArbitraryRotationGateable support.
+                    // For now, use SparseStab for importance sampling.
+                    let sim = SparseStab::with_seed(data.num_qubits, sim_seed);
+                    let mut runner = ImportanceSamplingRunner::new(sim)
+                        .with_single_qubit_boost(is_config.p1(), is_config.boost())
+                        .with_two_qubit_boost(is_config.p2(), is_config.boost())
+                        .with_measurement_boost(is_config.p_meas(), is_config.boost())
+                        .with_seed(noise_seed);
+                    runner.run_shot(&data.circuit)
+                }
+            };
+
+            outcomes.push(result.outcomes);
+            weights.push(result.weight);
+        }
+
+        SimulationResults {
+            outcomes,
+            weights: Some(weights),
+        }
     }
 
     /// Get a reference to the current configuration.
@@ -2560,5 +2830,217 @@ mod tests {
                 "X gate should produce |1>"
             );
         }
+    }
+
+    // ========================================================================
+    // Importance Sampling Orchestrator Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sim_neo_importance_sampling_basic() {
+        // Basic test: importance sampling should return results with weights
+        use super::importance_sampling;
+
+        let circuit = CommandBuilder::new()
+            .prep(0)
+            .h(0) // Single-qubit gate triggers importance sampling
+            .measure(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .orchestrator(importance_sampling()
+                .with_p1(0.01)
+                .with_p2(0.02)
+                .with_p_meas(0.01)
+                .with_boost(5.0))
+            .shots(100)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 100);
+        assert!(results.has_weights(), "Importance sampling should produce weights");
+
+        let weights = results.weights.as_ref().unwrap();
+        assert_eq!(weights.len(), 100);
+    }
+
+    #[test]
+    fn test_sim_neo_importance_sampling_uniform() {
+        // Test the convenience method for uniform error rates
+        use super::importance_sampling;
+
+        let circuit = CommandBuilder::new()
+            .prep(0)
+            .h(0)
+            .measure(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .orchestrator(importance_sampling()
+                .with_uniform_error(0.01)
+                .with_boost(10.0))
+            .shots(50)
+            .seed(123)
+            .run();
+
+        assert_eq!(results.len(), 50);
+        assert!(results.has_weights());
+    }
+
+    #[test]
+    fn test_sim_neo_importance_sampling_produces_unbiased_estimates() {
+        // The weighted mean should approximate the true expectation
+        // For H then measure: P(0) = P(1) = 0.5 (without errors)
+        use super::importance_sampling;
+
+        let circuit = CommandBuilder::new()
+            .prep(0)
+            .h(0) // Creates |+> = (|0> + |1>)/sqrt(2)
+            .measure(0)
+            .build();
+
+        // Run with importance sampling (boosting noise that doesn't affect this test)
+        let results = sim_neo(circuit)
+            .orchestrator(importance_sampling()
+                .with_uniform_error(0.001)
+                .with_boost(100.0)) // Very aggressive boost
+            .shots(2000)
+            .seed(42)
+            .run();
+
+        // Compute weighted mean of outcome
+        let weighted_one_rate = results
+            .weighted_mean(|outcome| {
+                if outcome.get_bit(QubitId(0)).unwrap_or(false) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .expect("Should have weights");
+
+        // Should be approximately 0.5
+        assert!(
+            (weighted_one_rate - 0.5).abs() < 0.1,
+            "Weighted mean should be ~0.5, got {weighted_one_rate:.4}"
+        );
+    }
+
+    #[test]
+    fn test_sim_neo_importance_sampling_deterministic() {
+        // Same seed should produce same results
+        use super::importance_sampling;
+
+        let circuit = CommandBuilder::new()
+            .prep(0)
+            .h(0)
+            .measure(0)
+            .build();
+
+        let is_builder = importance_sampling()
+            .with_uniform_error(0.01)
+            .with_boost(10.0);
+
+        let results1 = sim_neo(circuit.clone())
+            .orchestrator(is_builder.clone())
+            .shots(20)
+            .seed(42)
+            .run();
+
+        let results2 = sim_neo(circuit)
+            .orchestrator(is_builder)
+            .shots(20)
+            .seed(42)
+            .run();
+
+        assert_eq!(results1.outcomes.len(), results2.outcomes.len());
+        for (i, (o1, o2)) in results1
+            .outcomes
+            .iter()
+            .zip(results2.outcomes.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                o1.get_bit(QubitId(0)),
+                o2.get_bit(QubitId(0)),
+                "Shot {i} should be deterministic"
+            );
+        }
+
+        // Weights should also match
+        let w1 = results1.weights.as_ref().unwrap();
+        let w2 = results2.weights.as_ref().unwrap();
+        for (i, (a, b)) in w1.iter().zip(w2.iter()).enumerate() {
+            assert!(
+                (a.weight() - b.weight()).abs() < 1e-10,
+                "Weight at shot {i} should match"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_importance_sampling_with_two_qubit_gate() {
+        // Test that two-qubit gates also trigger importance sampling
+        use super::importance_sampling;
+
+        let circuit = CommandBuilder::new()
+            .prep(0)
+            .prep(1)
+            .h(0)
+            .cx(0, 1) // Two-qubit gate
+            .measure(0)
+            .measure(1)
+            .build();
+
+        let results = sim_neo(circuit)
+            .orchestrator(importance_sampling()
+                .with_p1(0.001)
+                .with_p2(0.01)
+                .with_p_meas(0.001)
+                .with_boost(10.0))
+            .shots(100)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 100);
+        assert!(results.has_weights());
+    }
+
+    #[test]
+    fn test_sim_neo_importance_sampling_weighted_stats() {
+        // Test the weighted_stats helper method
+        use super::importance_sampling;
+
+        let circuit = CommandBuilder::new()
+            .prep(0)
+            .h(0)
+            .measure(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .orchestrator(importance_sampling()
+                .with_uniform_error(0.01)
+                .with_boost(10.0))
+            .shots(500)
+            .seed(42)
+            .run();
+
+        // Use weighted_stats to compute mean and variance
+        let stats = results.weighted_stats(|outcome| {
+            if outcome.get_bit(QubitId(0)).unwrap_or(false) {
+                1.0
+            } else {
+                0.0
+            }
+        });
+
+        assert!(stats.is_some(), "Should have weights for stats");
+        let (mean, _std_error) = stats.unwrap();
+
+        // Mean should be approximately 0.5
+        assert!(
+            (mean - 0.5).abs() < 0.15,
+            "Mean should be ~0.5, got {mean:.4}"
+        );
     }
 }

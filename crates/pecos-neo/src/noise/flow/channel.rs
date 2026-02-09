@@ -1126,7 +1126,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
 
@@ -1136,7 +1136,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits2,
             angles: &angles,
-        };
+        gate_id: None, };
         assert!(!NoiseChannel::responds_to(&channel, &event2));
     }
 
@@ -1155,7 +1155,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
 
@@ -1186,7 +1186,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
         assert!(response.should_skip_gate());
@@ -1206,7 +1206,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
 
@@ -1233,7 +1233,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
 
@@ -1271,7 +1271,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         // Run multiple times to get statistical coverage
         let mut pauli_count = 0;
@@ -1382,7 +1382,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &[],
-        };
+        gate_id: None, };
 
         assert!(NoiseChannel::responds_to(&crosstalk, &event));
 
@@ -1543,7 +1543,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
 
@@ -1574,7 +1574,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         // Very low probability - should almost always be empty
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1597,7 +1597,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         // Run once and check we get roughly 10% affected
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1635,7 +1635,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         // Run and verify roughly 0.1% affected
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1832,7 +1832,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         // Qubit 0 perspective: partner (qubit 1) didn't fire, I did -> PartnerOnlyFired = false
         ctx.set_current_qubit_index(0, &qubits);
@@ -1899,7 +1899,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &[],
-        };
+        gate_id: None, };
         assert!(!NoiseChannel::responds_to(&channel, &gate_event));
 
         // Apply and verify
@@ -1930,7 +1930,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &[],
-        };
+        gate_id: None, };
         assert!(!NoiseChannel::responds_to(&channel, &gate_event));
     }
 

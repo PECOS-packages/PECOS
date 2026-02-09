@@ -208,7 +208,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
         assert!(channel.responds_to(&h_event));
 
         // SZ gate should have no noise (p=0)
@@ -216,7 +216,7 @@ mod tests {
             gate_type: GateType::SZ,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
         assert!(!channel.responds_to(&sz_event));
 
         // X gate not configured - should not respond without default
@@ -224,7 +224,7 @@ mod tests {
             gate_type: GateType::X,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
         assert!(!channel.responds_to(&x_event));
     }
 
@@ -242,7 +242,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
         assert!(channel.responds_to(&h_event));
 
         // Unconfigured gate uses default
@@ -250,7 +250,7 @@ mod tests {
             gate_type: GateType::X,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
         assert!(channel.responds_to(&x_event));
     }
 
@@ -264,7 +264,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -288,7 +288,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -314,7 +314,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(0));

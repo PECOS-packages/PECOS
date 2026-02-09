@@ -91,12 +91,14 @@
 //! 5. `IdleTime` - can apply T1/T2 decay
 
 pub mod builder;
+pub mod category_channel;
 pub mod composer;
 pub mod context;
 pub mod correlated;
 pub mod crosstalk;
 pub mod flow;
 pub mod gate_dependent;
+pub mod gate_id_dependent;
 pub mod general_builder;
 pub mod idle;
 pub mod introspection;
@@ -113,11 +115,13 @@ pub mod two_qubit;
 pub mod validation;
 
 pub use builder::NoiseModelBuilder;
+pub use category_channel::CategoryBasedChannel;
 pub use composer::ComposableNoiseModel;
 pub use context::{BitVec, GateInfo, IdleInfo, NoiseContext, QubitState};
 pub use correlated::{CorrelatedNoiseChannel, CorrelationStats};
 pub use crosstalk::CrosstalkChannel;
 pub use gate_dependent::{GateDependentChannel, GateNoiseConfig};
+pub use gate_id_dependent::{GateIdDependentChannel, GateIdNoiseConfig};
 pub use general_builder::GeneralNoiseModelBuilder;
 pub use idle::IdleChannel;
 pub use leakage::LeakageChannel;
@@ -129,6 +133,7 @@ pub use two_qubit::TwoQubitChannel;
 
 use crate::command::GateCommand;
 use crate::command::GateType;
+use crate::extensible::GateId;
 use pecos_core::{Angle64, QubitId, TimeUnits};
 use pecos_rng::PecosRng;
 use smallvec::SmallVec;
@@ -147,6 +152,10 @@ pub enum NoiseEvent<'a> {
         gate_type: GateType,
         qubits: &'a [QubitId],
         angles: &'a [Angle64],
+        /// Optional gate ID for custom gate identification.
+        /// This allows noise channels to apply per-custom-gate noise rates.
+        /// `None` for standard gates or when gate ID tracking is disabled.
+        gate_id: Option<GateId>,
     },
 
     /// Emitted after a gate is applied.
@@ -156,6 +165,10 @@ pub enum NoiseEvent<'a> {
         gate_type: GateType,
         qubits: &'a [QubitId],
         angles: &'a [Angle64],
+        /// Optional gate ID for custom gate identification.
+        /// This allows noise channels to apply per-custom-gate noise rates.
+        /// `None` for standard gates or when gate ID tracking is disabled.
+        gate_id: Option<GateId>,
     },
 
     /// Emitted before measurement.
@@ -213,7 +226,89 @@ pub enum NoiseEvent<'a> {
     },
 }
 
-impl NoiseEvent<'_> {
+impl<'a> NoiseEvent<'a> {
+    /// Create a BeforeGate event with gate ID derived from gate type.
+    ///
+    /// The `gate_id` is automatically set to `gate_type.to_gate_id()`, enabling
+    /// uniform gate identification in noise channels regardless of whether
+    /// the gate is a core gate or custom gate.
+    #[must_use]
+    pub fn before_gate(gate_type: GateType, qubits: &'a [QubitId], angles: &'a [Angle64]) -> Self {
+        Self::BeforeGate {
+            gate_type,
+            qubits,
+            angles,
+            gate_id: Some(gate_type.to_gate_id()),
+        }
+    }
+
+    /// Create a BeforeGate event with an explicit custom gate ID.
+    ///
+    /// Use this when you need to override the gate ID (e.g., for tracking
+    /// the original custom gate through decomposition).
+    #[must_use]
+    pub fn before_gate_with_id(
+        gate_type: GateType,
+        qubits: &'a [QubitId],
+        angles: &'a [Angle64],
+        gate_id: GateId,
+    ) -> Self {
+        Self::BeforeGate {
+            gate_type,
+            qubits,
+            angles,
+            gate_id: Some(gate_id),
+        }
+    }
+
+    /// Create an AfterGate event with gate ID derived from gate type.
+    ///
+    /// The `gate_id` is automatically set to `gate_type.to_gate_id()`, enabling
+    /// uniform gate identification in noise channels regardless of whether
+    /// the gate is a core gate or custom gate.
+    #[must_use]
+    pub fn after_gate(gate_type: GateType, qubits: &'a [QubitId], angles: &'a [Angle64]) -> Self {
+        Self::AfterGate {
+            gate_type,
+            qubits,
+            angles,
+            gate_id: Some(gate_type.to_gate_id()),
+        }
+    }
+
+    /// Create an AfterGate event with an explicit custom gate ID.
+    ///
+    /// Use this when you need to override the gate ID (e.g., for tracking
+    /// the original custom gate through decomposition).
+    #[must_use]
+    pub fn after_gate_with_id(
+        gate_type: GateType,
+        qubits: &'a [QubitId],
+        angles: &'a [Angle64],
+        gate_id: GateId,
+    ) -> Self {
+        Self::AfterGate {
+            gate_type,
+            qubits,
+            angles,
+            gate_id: Some(gate_id),
+        }
+    }
+
+    /// Get the gate ID for gate events.
+    ///
+    /// Returns `Some(gate_id)` for `BeforeGate` and `AfterGate` events,
+    /// `None` for other event types. For gate events created with the
+    /// standard constructors, this is always populated (derived from
+    /// `gate_type.to_gate_id()` or explicitly provided).
+    #[must_use]
+    pub fn gate_id(&self) -> Option<GateId> {
+        match self {
+            Self::BeforeGate { gate_id, .. } | Self::AfterGate { gate_id, .. } => *gate_id,
+            _ => None,
+        }
+    }
+
     /// Get the qubits involved in this event (if qubit-specific).
     ///
     /// Returns an empty slice for circuit-level events like `BeforeCircuit`
@@ -1056,7 +1151,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         assert_eq!(event.qubits(), &qubits);
     }
@@ -1069,7 +1164,7 @@ mod tests {
             gate_type: GateType::RZ,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         assert_eq!(event.angles(), &angles);
     }

@@ -494,7 +494,7 @@ mod tests {
             gate_type: GateType::RZ,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         let mut error_count = 0;
         for _ in 0..1000 {
@@ -515,7 +515,7 @@ mod tests {
             gate_type: GateType::RZ,
             qubits: &qubits,
             angles: &angles,
-        };
+        gate_id: None, };
 
         error_count = 0;
         for _ in 0..1000 {
@@ -594,7 +594,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits_1q,
             angles: &[],
-        };
+        gate_id: None, };
 
         for _ in 0..100 {
             let response = channel.apply(&event_h, &mut ctx, &mut rng);
@@ -607,7 +607,7 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits_2q,
             angles: &[],
-        };
+        gate_id: None, };
 
         let mut error_count = 0;
         for _ in 0..100 {
@@ -1131,7 +1131,7 @@ mod tests {
             gate_type: crate::command::GateType::CX,
             qubits: &qubits,
             angles: &[],
-        };
+        gate_id: None, };
 
         // With 100% emission probability, both qubits should emit/leak
         // Since both fired, partner_only_fired should be false for both
@@ -1169,7 +1169,7 @@ mod tests {
             gate_type: crate::command::GateType::CX,
             qubits: &qubits,
             angles: &[],
-        };
+        gate_id: None, };
 
         // Run multiple times and count leakage patterns
         let mut both_leaked = 0;
@@ -1256,7 +1256,7 @@ mod tests {
                 gate_type: GateType::H,
                 qubits: &[QubitId(0)],
                 angles: &[],
-            };
+            gate_id: None, };
             let response = channel.apply(&event, &mut ctx, &mut rng);
             if !response.is_none() {
                 error_count += 1;
@@ -1298,7 +1298,7 @@ mod tests {
             gate_type: GateType::H,
             qubits: &[QubitId(0)],
             angles: &[],
-        };
+        gate_id: None, };
         let _response = channel.apply(&event, &mut ctx, &mut rng);
         // The channel has 100% error rate, so we should see some response
         // (though the exact response depends on the Pauli sampled)

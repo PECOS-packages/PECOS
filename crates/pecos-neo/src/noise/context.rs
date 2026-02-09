@@ -39,6 +39,7 @@
 //! but use efficient bitwise operations.
 
 use crate::command::GateType;
+use crate::extensible::{GateCategory, GateDefinitions, GateId, GateSpec};
 use pecos_core::{Angle64, QubitId, TimeUnits};
 use smallvec::SmallVec;
 use std::collections::BTreeSet;
@@ -283,6 +284,9 @@ pub struct NoiseContext {
     /// Per-qubit "fired" flags for two-stage processing.
     /// Index corresponds to qubit position in gate (0, 1, ...).
     fired_flags: [bool; 4],
+    /// Optional gate definitions for category/spec lookups.
+    /// When set, channels can query gate metadata via `category()`, `spec()`, etc.
+    gate_definitions: Option<GateDefinitions>,
 }
 
 impl Default for NoiseContext {
@@ -321,6 +325,7 @@ impl NoiseContext {
             sampled_correlation: None,
             current_gate_qubits: SmallVec::new(),
             fired_flags: [false; 4],
+            gate_definitions: None,
         }
     }
 
@@ -722,7 +727,7 @@ impl NoiseContext {
     /// Reset the context for a new shot.
     ///
     /// This clears per-shot state (leaked qubits, prepared qubits, active qubits)
-    /// but preserves configuration (noiseless gates).
+    /// but preserves configuration (noiseless gates, gate definitions).
     pub fn reset(&mut self) {
         self.active.clear_all();
         self.leaked.clear_all();
@@ -733,7 +738,73 @@ impl NoiseContext {
         self.current_gate = None;
         self.current_idle = None;
         self.fired_flags = [false; 4];
-        // Note: noiseless_gates is configuration, not per-shot state
+        // Note: noiseless_gates and gate_definitions are configuration, not per-shot state
+    }
+
+    // ========================================================================
+    // Gate Definitions
+    // ========================================================================
+
+    /// Set gate definitions for this context.
+    ///
+    /// When set, channels can query gate metadata via `category()`, `spec()`, etc.
+    /// This enables category-based noise filtering and uniform treatment of
+    /// core and custom gates.
+    pub fn set_gate_definitions(&mut self, defs: GateDefinitions) {
+        self.gate_definitions = Some(defs);
+    }
+
+    /// Get gate definitions if set.
+    #[must_use]
+    pub fn gate_definitions(&self) -> Option<&GateDefinitions> {
+        self.gate_definitions.as_ref()
+    }
+
+    /// Get the category of a gate by its ID. O(1).
+    ///
+    /// Returns `None` if gate definitions are not set or the gate is unknown.
+    #[must_use]
+    pub fn category(&self, gate_id: GateId) -> Option<GateCategory> {
+        self.gate_definitions.as_ref().and_then(|d| d.category(gate_id))
+    }
+
+    /// Get the spec of a gate by its ID. O(1).
+    ///
+    /// Returns `None` if gate definitions are not set or the gate is unknown.
+    #[must_use]
+    pub fn gate_spec(&self, gate_id: GateId) -> Option<&GateSpec> {
+        self.gate_definitions.as_ref().and_then(|d| d.spec(gate_id))
+    }
+
+    /// Get the quantum arity of a gate by its ID. O(1).
+    ///
+    /// Returns `None` if gate definitions are not set or the gate is unknown.
+    #[must_use]
+    pub fn quantum_arity(&self, gate_id: GateId) -> Option<u8> {
+        self.gate_definitions.as_ref().and_then(|d| d.quantum_arity(gate_id))
+    }
+
+    /// Check if a gate is single-qubit by its ID. O(1).
+    #[must_use]
+    pub fn is_single_qubit_gate(&self, gate_id: GateId) -> bool {
+        self.quantum_arity(gate_id) == Some(1)
+    }
+
+    /// Check if a gate is two-qubit by its ID. O(1).
+    #[must_use]
+    pub fn is_two_qubit_gate(&self, gate_id: GateId) -> bool {
+        self.quantum_arity(gate_id) == Some(2)
+    }
+
+    /// Get the error probability for a gate from definitions. O(1).
+    ///
+    /// Returns 0.0 if gate definitions are not set or the gate has no noise config.
+    #[must_use]
+    pub fn gate_error_probability(&self, gate_id: GateId) -> f64 {
+        self.gate_definitions
+            .as_ref()
+            .map(|d| d.error_probability(gate_id))
+            .unwrap_or(0.0)
     }
 }
 

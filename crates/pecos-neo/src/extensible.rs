@@ -30,6 +30,7 @@ mod plugin;
 mod batch;
 mod noise_integration;
 mod user_gates;
+mod definitions;
 
 pub use gate_id::{GateId, gates};
 pub use gate_spec::{GateSpec, GateCategory};
@@ -80,6 +81,10 @@ pub use noise_integration::{
 };
 pub use user_gates::{
     UserGateBuilder, UserGateDefinition, UserGatesPlugin, UserGateRegistry,
+};
+pub use definitions::{
+    GateDefinitions, GateDefinitionsBuilder, GateDefinitionsError,
+    GateExecutor, NoNativeGates,
 };
 
 #[cfg(test)]

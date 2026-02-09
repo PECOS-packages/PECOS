@@ -15,6 +15,7 @@
 //! Executes gate commands on a simulator, applying noise as configured.
 
 use crate::command::{CommandQueue, GateCommand, GateType};
+use crate::extensible::GateDefinitions;
 use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use pecos_core::rng::rng_manageable::{derive_seed, RngManageable};
@@ -51,6 +52,8 @@ pub struct ShotRunner<S: CliffordGateable> {
     noise: Option<ComposableNoiseModel>,
     rng: PecosRng,
     outcomes: MeasurementOutcomes,
+    /// Optional gate definitions for noise model integration.
+    gate_definitions: Option<GateDefinitions>,
 }
 
 impl<S: CliffordGateable> ShotRunner<S> {
@@ -61,14 +64,59 @@ impl<S: CliffordGateable> ShotRunner<S> {
             noise: None,
             rng: PecosRng::from_rng(&mut rand::rng()),
             outcomes: MeasurementOutcomes::new(),
+            gate_definitions: None,
         }
     }
 
     /// Set the noise model.
+    ///
+    /// If gate definitions have been set on this runner, they will be
+    /// automatically propagated to the noise model's context.
     #[must_use]
-    pub fn with_noise(mut self, noise: ComposableNoiseModel) -> Self {
+    pub fn with_noise(mut self, mut noise: ComposableNoiseModel) -> Self {
+        // Propagate gate definitions to noise model if we have them
+        if let Some(ref defs) = self.gate_definitions {
+            noise = noise.with_gate_definitions(defs.clone());
+        }
         self.noise = Some(noise);
         self
+    }
+
+    /// Set gate definitions for this runner.
+    ///
+    /// Gate definitions provide metadata about gates (category, arity, etc.)
+    /// and are automatically propagated to the noise model if one is set.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use pecos_neo::extensible::GateDefinitions;
+    ///
+    /// let gates = GateDefinitions::builder()
+    ///     .with_category_noise(GateCategory::SingleQubitUnitary, 0.001)
+    ///     .build()?;
+    ///
+    /// let runner = ShotRunner::new(sim)
+    ///     .with_gate_definitions(gates)
+    ///     .with_noise(noise);
+    /// ```
+    #[must_use]
+    pub fn with_gate_definitions(mut self, defs: GateDefinitions) -> Self {
+        // If noise model already exists, propagate definitions to it
+        if let Some(ref mut noise) = self.noise {
+            // We need to update the noise model's context
+            // Since with_gate_definitions consumes, we need to swap
+            let old_noise = std::mem::replace(noise, ComposableNoiseModel::new());
+            *noise = old_noise.with_gate_definitions(defs.clone());
+        }
+        self.gate_definitions = Some(defs);
+        self
+    }
+
+    /// Get gate definitions if set.
+    #[must_use]
+    pub fn gate_definitions(&self) -> Option<&GateDefinitions> {
+        self.gate_definitions.as_ref()
     }
 
     /// Set the RNG seed for noise operations.
@@ -213,12 +261,12 @@ impl<S: CliffordGateable> ShotRunner<S> {
     /// Returns `true` if the gate should be skipped (e.g., for leaked qubits).
     fn emit_before_gate(&mut self, command: &GateCommand) -> bool {
         if let Some(ref mut noise) = self.noise {
-            // Use as_slice() for zero-allocation access
-            let event = NoiseEvent::BeforeGate {
-                gate_type: command.gate_type,
-                qubits: command.qubits.as_slice(),
-                angles: command.angles.as_slice(),
-            };
+            // Use helper constructor for zero-allocation access
+            let event = NoiseEvent::before_gate(
+                command.gate_type,
+                command.qubits.as_slice(),
+                command.angles.as_slice(),
+            );
             let response = noise.emit(event, &mut self.rng);
             let should_skip = response.should_skip_gate();
             self.apply_noise_response(response);
@@ -230,12 +278,12 @@ impl<S: CliffordGateable> ShotRunner<S> {
     /// Emit an after-gate noise event and apply any responses.
     fn emit_after_gate(&mut self, command: &GateCommand) {
         if let Some(ref mut noise) = self.noise {
-            // Use as_slice() for zero-allocation access
-            let event = NoiseEvent::AfterGate {
-                gate_type: command.gate_type,
-                qubits: command.qubits.as_slice(),
-                angles: command.angles.as_slice(),
-            };
+            // Use helper constructor for zero-allocation access
+            let event = NoiseEvent::after_gate(
+                command.gate_type,
+                command.qubits.as_slice(),
+                command.angles.as_slice(),
+            );
             let response = noise.emit(event, &mut self.rng);
             self.apply_noise_response(response);
         }
@@ -1169,5 +1217,66 @@ mod tests {
         // With one control = 0, target should stay 0
         let outcome = outcomes.get(QubitId(2)).unwrap();
         assert!(!outcome.outcome, "CCX with one control=0 should not flip target");
+    }
+
+    #[test]
+    fn test_with_gate_definitions() {
+        use crate::extensible::{GateCategory, GateDefinitions};
+        use crate::noise::CategoryBasedChannel;
+
+        // Create gate definitions with category-based noise
+        let gates = GateDefinitions::builder()
+            .with_category_noise(GateCategory::SingleQubitUnitary, 0.0) // No noise for testing
+            .with_category_noise(GateCategory::TwoQubitUnitary, 0.0)
+            .build_or_panic();
+
+        // Create a category-based noise channel
+        let noise = ComposableNoiseModel::new()
+            .add_channel(CategoryBasedChannel::new()
+                .with_category(GateCategory::SingleQubitUnitary, 0.0));
+
+        // Create runner with gate definitions
+        let commands = CommandBuilder::new()
+            .prep(0)
+            .h(0)
+            .measure(0)
+            .build();
+
+        let mut runner = ShotRunner::new(SparseStab::new(1))
+            .with_gate_definitions(gates)
+            .with_noise(noise)
+            .with_seed(42);
+
+        let outcomes = runner.execute(&commands);
+        assert_eq!(outcomes.len(), 1);
+    }
+
+    #[test]
+    fn test_gate_definitions_propagated_to_noise() {
+        use crate::extensible::{GateCategory, GateDefinitions};
+        use crate::noise::CategoryBasedChannel;
+
+        // Create definitions with a custom gate
+        let mut gates = GateDefinitions::new();
+        let custom_id = gates.register(
+            crate::extensible::GateSpec::new("CustomGate")
+                .with_quantum_arity(1)
+                .with_category(GateCategory::SingleQubitUnitary)
+        );
+
+        // Noise channel that uses category filtering
+        let noise = ComposableNoiseModel::new()
+            .add_channel(CategoryBasedChannel::new()
+                .with_category(GateCategory::SingleQubitUnitary, 0.0));
+
+        // Runner should propagate definitions to noise model
+        let runner = ShotRunner::new(SparseStab::new(1))
+            .with_gate_definitions(gates)
+            .with_noise(noise);
+
+        // Verify definitions are accessible
+        assert!(runner.gate_definitions().is_some());
+        let defs = runner.gate_definitions().unwrap();
+        assert_eq!(defs.name(custom_id), Some("CustomGate"));
     }
 }

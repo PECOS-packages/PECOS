@@ -514,13 +514,12 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// Emit a before-gate noise event (for leakage handling, etc.).
     fn emit_before_gate(&mut self, command: &GateCommand) -> bool {
         if let Some(ref mut noise) = self.noise {
-            let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
-            let angles: Vec<pecos_core::Angle64> = command.angles.iter().copied().collect();
-            let event = NoiseEvent::BeforeGate {
-                gate_type: command.gate_type,
-                qubits: &qubits,
-                angles: &angles,
-            };
+            // Use helper constructor for zero-allocation access
+            let event = NoiseEvent::before_gate(
+                command.gate_type,
+                command.qubits.as_slice(),
+                command.angles.as_slice(),
+            );
             let response = noise.emit(event, &mut self.rng);
             let should_skip = response.should_skip_gate();
             self.apply_noise_response(response);

@@ -144,6 +144,7 @@ pub mod adapter;
 pub mod circuit;
 pub mod command;
 pub mod ecs;
+pub mod extended_runner;
 pub mod extensible;
 pub mod noise;
 pub mod outcome;
@@ -174,6 +175,8 @@ pub use extensible::{
     // Arbitrary Pauli strings and operation builder
     Pauli, PauliString, StabilizerMeasurement, StabilizerPreparation,
     OpBuilder, Subcircuit, GateLibrary,
+    // Gate definitions and execution
+    GateDefinitions, GateDefinitionsBuilder, GateExecutor, NoNativeGates,
 };
 pub use noise::{
     ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder, NoiseChannel,
@@ -193,6 +196,7 @@ pub use noise::{
 pub use outcome::{MeasurementOutcome, MeasurementOutcomes};
 pub use program::{CommandSource, ConditionalProgram, ProgramResult, ProgramRunner, RepeatedProgram, StaticProgram};
 pub use runner::ShotRunner;
+pub use extended_runner::{ExtendedRunner, ExecutionError, GateOverrides, GateExecutorFn};
 
 // Re-export adapter utilities (always available)
 pub use adapter::{command_queue_to_gates, gate_to_command, gates_to_command_queue};
@@ -219,6 +223,8 @@ pub mod prelude {
         AdaptedOp, AdaptedSequence, ResultId, PrepBasis, MeasBasis,
         ExtendedAdaptor, StabilizerAdaptor, stabilizer_gates,
         Pauli, PauliString, StabilizerMeasurement, StabilizerPreparation, OpBuilder,
+        // Gate definitions
+        GateDefinitions, GateDefinitionsBuilder, GateExecutor,
     };
     pub use crate::noise::{
         ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder,
@@ -238,6 +244,7 @@ pub mod prelude {
     };
     pub use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
     pub use crate::runner::ShotRunner;
+    pub use crate::extended_runner::{ExtendedRunner, ExecutionError, GateOverrides};
 
     // Re-export commonly used types from dependencies
     pub use pecos_core::{Angle64, QubitId};

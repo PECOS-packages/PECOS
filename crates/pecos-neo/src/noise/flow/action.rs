@@ -2277,12 +2277,8 @@ pub mod actions {
 
             let gate_type = gate_info.map_or(GateType::I, |g| g.gate_type);
 
-            // Create the event
-            let event = NoiseEvent::AfterGate {
-                gate_type,
-                qubits: &qubits,
-                angles: &angles,
-            };
+            // Create the event using helper constructor
+            let event = NoiseEvent::after_gate(gate_type, &qubits, &angles);
 
             // Apply the wrapped channel
             let response = self.channel.apply(&event, ctx, rng);

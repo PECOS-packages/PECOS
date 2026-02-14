@@ -12,10 +12,15 @@
 """Tests for AST comparison and diff utilities."""
 
 import pytest
-
 from pecos.slr import CReg, If, Main, QAlloc, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
-from pecos.slr.ast.compare import AstComparator, AstDiff, ast_equal, compare_ast, nodes_equal
+from pecos.slr.ast.compare import (
+    AstComparator,
+    AstDiff,
+    ast_equal,
+    compare_ast,
+    nodes_equal,
+)
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BinaryExpr,
@@ -34,7 +39,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestAstEqual:
     """Tests for ast_equal function."""
 
-    def test_identical_programs(self):
+    def test_identical_programs(self) -> None:
         prog1 = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -51,7 +56,7 @@ class TestAstEqual:
 
         assert ast_equal(ast1, ast2)
 
-    def test_different_gates(self):
+    def test_different_gates(self) -> None:
         prog1 = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -66,16 +71,16 @@ class TestAstEqual:
 
         assert not ast_equal(ast1, ast2)
 
-    def test_different_allocator_sizes(self):
-        prog1 = Main(q := QReg("q", 2))
-        prog2 = Main(q := QReg("q", 3))
+    def test_different_allocator_sizes(self) -> None:
+        prog1 = Main(_q := QReg("q", 2))
+        prog2 = Main(_q := QReg("q", 3))
 
         ast1 = slr_to_ast(prog1)
         ast2 = slr_to_ast(prog2)
 
         assert not ast_equal(ast1, ast2)
 
-    def test_different_body_length(self):
+    def test_different_body_length(self) -> None:
         prog1 = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -91,7 +96,7 @@ class TestAstEqual:
 
         assert not ast_equal(ast1, ast2)
 
-    def test_empty_programs_equal(self):
+    def test_empty_programs_equal(self) -> None:
         prog1 = Main()
         prog2 = Main()
 
@@ -100,7 +105,7 @@ class TestAstEqual:
 
         assert ast_equal(ast1, ast2)
 
-    def test_ignore_name_option(self):
+    def test_ignore_name_option(self) -> None:
         """Test that ignore_name option works."""
         ast1 = Program(name="program1", declarations=(), body=())
         ast2 = Program(name="program2", declarations=(), body=())
@@ -113,15 +118,15 @@ class TestAstEqual:
 class TestCompareAst:
     """Tests for compare_ast function."""
 
-    def test_returns_ast_diff(self):
-        prog = Main(q := QReg("q", 1))
+    def test_returns_ast_diff(self) -> None:
+        prog = Main(_q := QReg("q", 1))
         ast = slr_to_ast(prog)
 
         diff = compare_ast(ast, ast)
 
         assert isinstance(diff, AstDiff)
 
-    def test_equal_programs_diff(self):
+    def test_equal_programs_diff(self) -> None:
         prog1 = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -139,7 +144,7 @@ class TestCompareAst:
         assert diff.equal
         assert len(diff.differences) == 0
 
-    def test_different_programs_diff(self):
+    def test_different_programs_diff(self) -> None:
         prog1 = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -157,7 +162,7 @@ class TestCompareAst:
         assert not diff.equal
         assert len(diff.differences) > 0
 
-    def test_diff_contains_path_info(self):
+    def test_diff_contains_path_info(self) -> None:
         prog1 = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -176,9 +181,9 @@ class TestCompareAst:
         diff_text = str(diff)
         assert "body" in diff_text or "gate" in diff_text
 
-    def test_diff_str_representation(self):
-        prog1 = Main(q := QReg("q", 1))
-        prog2 = Main(q := QReg("q", 2))
+    def test_diff_str_representation(self) -> None:
+        prog1 = Main(_q := QReg("q", 1))
+        prog2 = Main(_q := QReg("q", 2))
 
         ast1 = slr_to_ast(prog1)
         ast2 = slr_to_ast(prog2)
@@ -189,8 +194,8 @@ class TestCompareAst:
         diff_str = str(diff)
         assert "differ" in diff_str.lower() or "mismatch" in diff_str.lower()
 
-    def test_equal_diff_str_representation(self):
-        prog = Main(q := QReg("q", 1))
+    def test_equal_diff_str_representation(self) -> None:
+        prog = Main(_q := QReg("q", 1))
         ast = slr_to_ast(prog)
 
         diff = compare_ast(ast, ast)
@@ -201,30 +206,27 @@ class TestCompareAst:
 class TestAstDiff:
     """Tests for AstDiff dataclass."""
 
-    def test_bool_conversion_true(self):
+    def test_bool_conversion_true(self) -> None:
         diff = AstDiff(equal=True, differences=[])
 
         assert bool(diff) is True
         # Can use in if statement
-        if diff:
-            passed = True
-        else:
-            passed = False
+        passed = bool(diff)
         assert passed
 
-    def test_bool_conversion_false(self):
+    def test_bool_conversion_false(self) -> None:
         diff = AstDiff(equal=False, differences=["some difference"])
 
         assert bool(diff) is False
 
-    def test_str_equal(self):
+    def test_str_equal(self) -> None:
         diff = AstDiff(equal=True, differences=[])
 
         output = str(diff)
 
         assert "equal" in output.lower()
 
-    def test_str_with_differences(self):
+    def test_str_with_differences(self) -> None:
         diff = AstDiff(equal=False, differences=["diff1", "diff2"])
 
         output = str(diff)
@@ -237,31 +239,31 @@ class TestAstDiff:
 class TestNodesEqual:
     """Tests for nodes_equal function."""
 
-    def test_slot_refs_equal(self):
+    def test_slot_refs_equal(self) -> None:
         a = SlotRef(allocator="q", index=0)
         b = SlotRef(allocator="q", index=0)
 
         assert nodes_equal(a, b)
 
-    def test_slot_refs_different_allocator(self):
+    def test_slot_refs_different_allocator(self) -> None:
         a = SlotRef(allocator="q", index=0)
         b = SlotRef(allocator="r", index=0)
 
         assert not nodes_equal(a, b)
 
-    def test_slot_refs_different_index(self):
+    def test_slot_refs_different_index(self) -> None:
         a = SlotRef(allocator="q", index=0)
         b = SlotRef(allocator="q", index=1)
 
         assert not nodes_equal(a, b)
 
-    def test_bit_refs_equal(self):
+    def test_bit_refs_equal(self) -> None:
         a = BitRef(register="c", index=2)
         b = BitRef(register="c", index=2)
 
         assert nodes_equal(a, b)
 
-    def test_gate_ops_equal(self):
+    def test_gate_ops_equal(self) -> None:
         a = GateOp(
             gate=GateKind.H,
             targets=(SlotRef(allocator="q", index=0),),
@@ -273,7 +275,7 @@ class TestNodesEqual:
 
         assert nodes_equal(a, b)
 
-    def test_gate_ops_different_kind(self):
+    def test_gate_ops_different_kind(self) -> None:
         a = GateOp(
             gate=GateKind.H,
             targets=(SlotRef(allocator="q", index=0),),
@@ -285,19 +287,19 @@ class TestNodesEqual:
 
         assert not nodes_equal(a, b)
 
-    def test_literal_exprs_equal(self):
+    def test_literal_exprs_equal(self) -> None:
         a = LiteralExpr(value=42)
         b = LiteralExpr(value=42)
 
         assert nodes_equal(a, b)
 
-    def test_literal_exprs_different(self):
+    def test_literal_exprs_different(self) -> None:
         a = LiteralExpr(value=42)
         b = LiteralExpr(value=43)
 
         assert not nodes_equal(a, b)
 
-    def test_binary_exprs_equal(self):
+    def test_binary_exprs_equal(self) -> None:
         a = BinaryExpr(
             op=BinaryOp.ADD,
             left=LiteralExpr(value=1),
@@ -311,7 +313,7 @@ class TestNodesEqual:
 
         assert nodes_equal(a, b)
 
-    def test_binary_exprs_different_op(self):
+    def test_binary_exprs_different_op(self) -> None:
         a = BinaryExpr(
             op=BinaryOp.ADD,
             left=LiteralExpr(value=1),
@@ -329,7 +331,7 @@ class TestNodesEqual:
 class TestSourceLocationHandling:
     """Tests for source location handling in comparison."""
 
-    def test_ignores_location_by_default(self):
+    def test_ignores_location_by_default(self) -> None:
         loc1 = SourceLocation(line=1, column=1)
         loc2 = SourceLocation(line=99, column=99)
 
@@ -338,7 +340,7 @@ class TestSourceLocationHandling:
 
         assert nodes_equal(a, b)
 
-    def test_can_compare_locations(self):
+    def test_can_compare_locations(self) -> None:
         loc1 = SourceLocation(line=1, column=1)
         loc2 = SourceLocation(line=99, column=99)
 
@@ -347,7 +349,7 @@ class TestSourceLocationHandling:
 
         assert not nodes_equal(a, b, ignore_location=False)
 
-    def test_locations_equal_when_same(self):
+    def test_locations_equal_when_same(self) -> None:
         loc = SourceLocation(line=10, column=5)
 
         a = SlotRef(allocator="q", index=0, location=loc)
@@ -359,7 +361,7 @@ class TestSourceLocationHandling:
 class TestAstComparator:
     """Tests for AstComparator class."""
 
-    def test_reusable(self):
+    def test_reusable(self) -> None:
         comparator = AstComparator()
 
         prog1 = Main(q := QReg("q", 1), qb.H(q[0]))
@@ -376,7 +378,7 @@ class TestAstComparator:
         assert not diff1.equal
         assert diff2.equal
 
-    def test_ignore_location_option(self):
+    def test_ignore_location_option(self) -> None:
         comparator = AstComparator(ignore_location=False)
 
         loc1 = SourceLocation(line=1, column=1)
@@ -389,7 +391,7 @@ class TestAstComparator:
 
         assert not diff.equal
 
-    def test_ignore_name_option(self):
+    def test_ignore_name_option(self) -> None:
         comparator = AstComparator(ignore_name=True)
 
         ast1 = Program(name="program1", declarations=(), body=())
@@ -403,7 +405,7 @@ class TestAstComparator:
 class TestComplexComparisons:
     """Tests for complex AST comparisons."""
 
-    def test_nested_control_flow(self):
+    def test_nested_control_flow(self) -> None:
         prog1 = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
@@ -428,7 +430,7 @@ class TestComplexComparisons:
 
         assert ast_equal(ast1, ast2)
 
-    def test_nested_control_flow_different(self):
+    def test_nested_control_flow_different(self) -> None:
         prog1 = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
@@ -457,7 +459,7 @@ class TestComplexComparisons:
         # Should identify the nested difference
         assert any("gate" in d.lower() or "body" in d.lower() for d in diff.differences)
 
-    def test_repeat_blocks_equal(self):
+    def test_repeat_blocks_equal(self) -> None:
         prog1 = Main(
             q := QReg("q", 1),
             Repeat(cond=5).block(
@@ -476,7 +478,7 @@ class TestComplexComparisons:
 
         assert ast_equal(ast1, ast2)
 
-    def test_repeat_different_count(self):
+    def test_repeat_different_count(self) -> None:
         prog1 = Main(
             q := QReg("q", 1),
             Repeat(cond=5).block(
@@ -495,7 +497,7 @@ class TestComplexComparisons:
 
         assert not ast_equal(ast1, ast2)
 
-    def test_hierarchical_allocators(self):
+    def test_hierarchical_allocators(self) -> None:
         all1 = QAlloc(4, name="all")
         data1 = QAlloc(2, name="data", parent=all1)
 
@@ -510,7 +512,7 @@ class TestComplexComparisons:
 
         assert ast_equal(ast1, ast2)
 
-    def test_qec_syndrome_extraction(self):
+    def test_qec_syndrome_extraction(self) -> None:
         prog1 = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
@@ -537,28 +539,28 @@ class TestComplexComparisons:
 class TestEdgeCases:
     """Edge case tests."""
 
-    def test_none_handling(self):
+    def test_none_handling(self) -> None:
         """Test that None values are handled correctly."""
         decl1 = AllocatorDecl(name="q", capacity=2, parent=None)
         decl2 = AllocatorDecl(name="q", capacity=2, parent=None)
 
         assert nodes_equal(decl1, decl2)
 
-    def test_none_vs_value(self):
+    def test_none_vs_value(self) -> None:
         """Test None vs actual value."""
         decl1 = AllocatorDecl(name="q", capacity=2, parent=None)
         decl2 = AllocatorDecl(name="q", capacity=2, parent="all")
 
         assert not nodes_equal(decl1, decl2)
 
-    def test_empty_tuples(self):
+    def test_empty_tuples(self) -> None:
         """Test comparison of empty tuples."""
         ast1 = Program(name="test", declarations=(), body=())
         ast2 = Program(name="test", declarations=(), body=())
 
         assert ast_equal(ast1, ast2)
 
-    def test_different_tuple_lengths(self):
+    def test_different_tuple_lengths(self) -> None:
         """Test tuples of different lengths."""
         gate1 = GateOp(
             gate=GateKind.CX,
@@ -574,7 +576,7 @@ class TestEdgeCases:
 
         assert not nodes_equal(gate1, gate2)
 
-    def test_bool_values(self):
+    def test_bool_values(self) -> None:
         """Test boolean value comparison."""
         expr1 = LiteralExpr(value=True)
         expr2 = LiteralExpr(value=True)
@@ -583,7 +585,7 @@ class TestEdgeCases:
         assert nodes_equal(expr1, expr2)
         assert not nodes_equal(expr1, expr3)
 
-    def test_float_values(self):
+    def test_float_values(self) -> None:
         """Test float value comparison."""
         expr1 = LiteralExpr(value=3.14159)
         expr2 = LiteralExpr(value=3.14159)
@@ -592,7 +594,7 @@ class TestEdgeCases:
         assert nodes_equal(expr1, expr2)
         assert not nodes_equal(expr1, expr3)
 
-    def test_int_vs_float(self):
+    def test_int_vs_float(self) -> None:
         """Test that int and float of same value are different types."""
         expr1 = LiteralExpr(value=5)
         expr2 = LiteralExpr(value=5.0)
@@ -607,7 +609,7 @@ class TestEdgeCases:
 class TestSerializationRoundtripComparison:
     """Test that serialization round-trip produces equal ASTs."""
 
-    def test_serialization_preserves_equality(self):
+    def test_serialization_preserves_equality(self) -> None:
         from pecos.slr.ast.serialize import ast_to_json, json_to_ast
 
         prog = Main(
@@ -626,7 +628,7 @@ class TestSerializationRoundtripComparison:
         # Should be equal
         assert ast_equal(ast, restored)
 
-    def test_double_serialization_equal(self):
+    def test_double_serialization_equal(self) -> None:
         from pecos.slr.ast.serialize import ast_to_json, json_to_ast
 
         prog = Main(

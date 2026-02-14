@@ -21,7 +21,18 @@ def _check_cuda_available() -> bool:
     # Check for CUDA toolkit using pecos CLI (same as Justfile pattern)
     try:
         result = subprocess.run(
-            ["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],
+            [
+                "cargo",
+                "run",
+                "-p",
+                "pecos",
+                "--features",
+                "cli",
+                "--",
+                "cuda",
+                "check",
+                "-q",
+            ],
             capture_output=True,
             timeout=30,
             check=False,
@@ -70,19 +81,20 @@ def restore_cwd():
     which can interfere with other tests that rely on path resolution.
     """
     import os
+
     original_cwd = os.getcwd()
     yield
     os.chdir(original_cwd)
 
 
-def pytest_configure(config):
+def pytest_configure(config) -> None:
     """Register custom markers."""
     config.addinivalue_line("markers", "slow: marks tests as slow")
     config.addinivalue_line("markers", "gpu: marks tests as requiring GPU")
     config.addinivalue_line("markers", "cuda: marks tests as requiring CUDA")
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(config, items) -> None:
     """Print CUDA status at collection time."""
     cuda = cuda_available()
     print(f"\nCUDA available: {cuda}")

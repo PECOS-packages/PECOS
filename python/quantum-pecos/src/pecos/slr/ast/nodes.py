@@ -27,9 +27,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pecos.slr.ast.visitor import AstVisitor, T
 
 
@@ -242,8 +244,6 @@ class BitRef(AstNode):
 class Expression(AstNode, ABC):
     """Base class for all expressions."""
 
-    pass
-
 
 @dataclass(frozen=True, kw_only=True)
 class LiteralExpr(Expression):
@@ -316,8 +316,6 @@ class UnaryExpr(Expression):
 class TypeExpr(AstNode, ABC):
     """Base class for type expressions."""
 
-    pass
-
 
 @dataclass(frozen=True, kw_only=True)
 class QubitTypeExpr(TypeExpr):
@@ -368,8 +366,6 @@ class AllocatorTypeExpr(TypeExpr):
 class Declaration(AstNode, ABC):
     """Base class for all declarations."""
 
-    pass
-
 
 @dataclass(frozen=True, kw_only=True)
 class AllocatorDecl(Declaration):
@@ -407,8 +403,6 @@ class RegisterDecl(Declaration):
 @dataclass(frozen=True, kw_only=True)
 class Statement(AstNode, ABC):
     """Base class for all statements."""
-
-    pass
 
 
 @dataclass(frozen=True, kw_only=True)

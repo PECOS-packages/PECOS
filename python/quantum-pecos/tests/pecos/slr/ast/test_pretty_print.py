@@ -39,7 +39,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestPrettyPrintBasic:
     """Basic pretty-printing tests."""
 
-    def test_simple_program(self):
+    def test_simple_program(self) -> None:
         """Simple program prints correctly."""
         prog = Main(
             q := QReg("q", 2),
@@ -56,7 +56,7 @@ class TestPrettyPrintBasic:
         assert result.startswith("Main(")
         assert result.endswith(")")
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         """Empty program prints correctly."""
         prog = Program(
             name="test",
@@ -68,11 +68,11 @@ class TestPrettyPrintBasic:
         assert "Main(" in result
         assert 'q := QReg("q", 1)' in result
 
-    def test_with_classical_register(self):
+    def test_with_classical_register(self) -> None:
         """Program with classical register prints correctly."""
         prog = Main(
             q := QReg("q", 1),
-            c := CReg("c", 1),
+            _c := CReg("c", 1),
             qb.H(q[0]),
         )
 
@@ -85,7 +85,7 @@ class TestPrettyPrintBasic:
 class TestPrettyPrintGates:
     """Gate pretty-printing tests."""
 
-    def test_single_qubit_gates(self):
+    def test_single_qubit_gates(self) -> None:
         """Single-qubit gates print correctly."""
         prog = Main(
             q := QReg("q", 1),
@@ -103,7 +103,7 @@ class TestPrettyPrintGates:
         assert "qb.Y(q[0])" in result
         assert "qb.Z(q[0])" in result
 
-    def test_two_qubit_gates(self):
+    def test_two_qubit_gates(self) -> None:
         """Two-qubit gates print correctly."""
         prog = Main(
             q := QReg("q", 2),
@@ -117,7 +117,7 @@ class TestPrettyPrintGates:
         assert "qb.CX(q[0], q[1])" in result
         assert "qb.CZ(q[0], q[1])" in result
 
-    def test_rotation_gates(self):
+    def test_rotation_gates(self) -> None:
         """Rotation gates with parameters print correctly."""
         prog = Main(
             q := QReg("q", 1),
@@ -136,7 +136,7 @@ class TestPrettyPrintGates:
 class TestPrettyPrintControlFlow:
     """Control flow pretty-printing tests."""
 
-    def test_if_statement(self):
+    def test_if_statement(self) -> None:
         """If statement prints correctly."""
         prog = Main(
             q := QReg("q", 1),
@@ -153,7 +153,7 @@ class TestPrettyPrintControlFlow:
         assert ".Then(" in result
         assert "qb.H(q[0])" in result
 
-    def test_repeat_statement(self):
+    def test_repeat_statement(self) -> None:
         """Repeat statement prints correctly."""
         prog = Main(
             q := QReg("q", 1),
@@ -168,7 +168,7 @@ class TestPrettyPrintControlFlow:
         assert "Repeat(cond=5).block(" in result
         assert "qb.X(q[0])" in result
 
-    def test_nested_control_flow(self):
+    def test_nested_control_flow(self) -> None:
         """Nested control flow prints correctly."""
         prog = Program(
             name="test",
@@ -184,7 +184,12 @@ class TestPrettyPrintControlFlow:
                                 left=LiteralExpr(value=1),
                                 right=LiteralExpr(value=1),
                             ),
-                            then_body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
+                            then_body=(
+                                GateOp(
+                                    gate=GateKind.H,
+                                    targets=(SlotRef(allocator="q", index=0),),
+                                ),
+                            ),
                         ),
                     ),
                 ),
@@ -203,23 +208,31 @@ class TestPrettyPrintControlFlow:
 class TestPrettyPrintExpressions:
     """Expression pretty-printing tests."""
 
-    def test_binary_expressions(self):
+    def test_binary_expressions(self) -> None:
         """Binary expressions print correctly."""
-        expr = BinaryExpr(op=BinaryOp.EQ, left=LiteralExpr(value=1), right=LiteralExpr(value=0))
+        expr = BinaryExpr(
+            op=BinaryOp.EQ,
+            left=LiteralExpr(value=1),
+            right=LiteralExpr(value=0),
+        )
 
         result = format_expression(expr)
 
         assert result == "(1 == 0)"
 
-    def test_arithmetic_expressions(self):
+    def test_arithmetic_expressions(self) -> None:
         """Arithmetic expressions print correctly."""
-        expr = BinaryExpr(op=BinaryOp.ADD, left=LiteralExpr(value=2), right=LiteralExpr(value=3))
+        expr = BinaryExpr(
+            op=BinaryOp.ADD,
+            left=LiteralExpr(value=2),
+            right=LiteralExpr(value=3),
+        )
 
         result = format_expression(expr)
 
         assert result == "(2 + 3)"
 
-    def test_unary_expressions(self):
+    def test_unary_expressions(self) -> None:
         """Unary expressions print correctly."""
         expr = UnaryExpr(op=UnaryOp.NEG, operand=LiteralExpr(value=5))
 
@@ -227,7 +240,7 @@ class TestPrettyPrintExpressions:
 
         assert result == "-5"
 
-    def test_not_expression(self):
+    def test_not_expression(self) -> None:
         """Not expression prints correctly."""
         expr = UnaryExpr(op=UnaryOp.NOT, operand=LiteralExpr(value=True))
 
@@ -235,7 +248,7 @@ class TestPrettyPrintExpressions:
 
         assert result == "not True"
 
-    def test_comparison_operators(self):
+    def test_comparison_operators(self) -> None:
         """Comparison operators print correctly."""
         ops = [
             (BinaryOp.LT, "<"),
@@ -246,7 +259,11 @@ class TestPrettyPrintExpressions:
         ]
 
         for op, symbol in ops:
-            expr = BinaryExpr(op=op, left=LiteralExpr(value=1), right=LiteralExpr(value=2))
+            expr = BinaryExpr(
+                op=op,
+                left=LiteralExpr(value=1),
+                right=LiteralExpr(value=2),
+            )
             result = format_expression(expr)
             assert symbol in result
 
@@ -254,7 +271,7 @@ class TestPrettyPrintExpressions:
 class TestPrettyPrintStatements:
     """Statement pretty-printing tests."""
 
-    def test_gate_statement(self):
+    def test_gate_statement(self) -> None:
         """Gate statement formats correctly."""
         stmt = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
 
@@ -262,7 +279,7 @@ class TestPrettyPrintStatements:
 
         assert result == "qb.H(q[0])"
 
-    def test_measure_statement(self):
+    def test_measure_statement(self) -> None:
         """Measure statement formats correctly."""
         stmt = MeasureOp(
             targets=(SlotRef(allocator="q", index=0),),
@@ -274,7 +291,7 @@ class TestPrettyPrintStatements:
         assert "Measure(q[0])" in result
         assert "c[0]" in result
 
-    def test_rotation_gate_statement(self):
+    def test_rotation_gate_statement(self) -> None:
         """Rotation gate statement formats correctly."""
         stmt = GateOp(
             gate=GateKind.RZ,
@@ -290,7 +307,7 @@ class TestPrettyPrintStatements:
 class TestPrettyPrintIndentation:
     """Indentation tests."""
 
-    def test_default_indentation(self):
+    def test_default_indentation(self) -> None:
         """Default indentation is 4 spaces."""
         prog = Main(
             q := QReg("q", 1),
@@ -302,12 +319,16 @@ class TestPrettyPrintIndentation:
 
         lines = result.split("\n")
         # Find a content line (not Main( or ))
-        content_lines = [l for l in lines if l.strip() and not l.strip().startswith("Main") and l.strip() != ")"]
+        content_lines = [
+            l
+            for l in lines
+            if l.strip() and not l.strip().startswith("Main") and l.strip() != ")"
+        ]
         assert len(content_lines) > 0
         # Should start with 4 spaces
         assert content_lines[0].startswith("    ")
 
-    def test_custom_indentation(self):
+    def test_custom_indentation(self) -> None:
         """Custom indentation works."""
         prog = Main(
             q := QReg("q", 1),
@@ -318,7 +339,11 @@ class TestPrettyPrintIndentation:
         result = pretty_print(ast, indent="  ")  # 2 spaces
 
         lines = result.split("\n")
-        content_lines = [l for l in lines if l.strip() and not l.strip().startswith("Main") and l.strip() != ")"]
+        content_lines = [
+            l
+            for l in lines
+            if l.strip() and not l.strip().startswith("Main") and l.strip() != ")"
+        ]
         assert len(content_lines) > 0
         # Should start with 2 spaces, not 4
         assert content_lines[0].startswith("  ")
@@ -328,7 +353,7 @@ class TestPrettyPrintIndentation:
 class TestPrettyPrintMultipleAllocators:
     """Multiple allocator tests."""
 
-    def test_nested_allocators(self):
+    def test_nested_allocators(self) -> None:
         """Nested allocators print correctly."""
         prog = Program(
             name="test",
@@ -346,7 +371,7 @@ class TestPrettyPrintMultipleAllocators:
 class TestPrettyPrintRoundTrip:
     """Tests that verify output structure matches expected patterns."""
 
-    def test_bell_state(self):
+    def test_bell_state(self) -> None:
         """Bell state preparation prints nicely."""
         prog = Main(
             q := QReg("q", 2),
@@ -368,7 +393,7 @@ class TestPrettyPrintRoundTrip:
         for part in expected_parts:
             assert part in result
 
-    def test_ghz_state(self):
+    def test_ghz_state(self) -> None:
         """GHZ state preparation prints nicely."""
         prog = Main(
             q := QReg("q", 3),

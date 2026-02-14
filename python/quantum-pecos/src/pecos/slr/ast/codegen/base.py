@@ -20,11 +20,12 @@ Example:
     >>> if result.validation.valid:
     ...     print(result.code)
     ...     print(f"T-count: {result.t_count.t_count}")
+    ...
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -87,7 +88,9 @@ class CodegenResult:
                 lines.append(f"    errors: {len(self.validation.errors)}")
 
         if self.resources is not None:
-            lines.append(f"  resources: {self.resources.total_gates} gates, {self.resources.qubit_count} qubits")
+            lines.append(
+                f"  resources: {self.resources.total_gates} gates, {self.resources.qubit_count} qubits",
+            )
 
         if self.t_count is not None:
             lines.append(f"  t_count: {self.t_count.t_count}")

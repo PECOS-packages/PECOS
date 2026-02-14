@@ -52,7 +52,7 @@ pub struct PyWasmForeignObject {
 }
 
 impl PyWasmForeignObject {
-    /// Get a cloned boxed ForeignObject for use with HugrEngine
+    /// Get a cloned boxed `ForeignObject` for use with `HugrEngine`
     pub fn clone_boxed(&self) -> Box<dyn ForeignObject> {
         self.inner.clone_box()
     }
@@ -423,7 +423,7 @@ impl PyWasmForeignObject {
     /// Support for pickle (Python serialization)
     ///
     /// Returns a tuple (callable, args) that can be used to reconstruct the object.
-    /// We use from_dict as the callable and the serialized dict as the argument.
+    /// We use `from_dict` as the callable and the serialized dict as the argument.
     fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
         // Get the from_dict classmethod
         let module = py.import("pecos_rslib")?;

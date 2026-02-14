@@ -17,6 +17,7 @@ from pecos.slr import CReg, If, Main, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    BitRef,
     GateKind,
     GateOp,
     LiteralExpr,
@@ -25,7 +26,6 @@ from pecos.slr.ast.nodes import (
     RegisterDecl,
     RepeatStmt,
     SlotRef,
-    BitRef,
 )
 from pecos.slr.ast.validation import TypeChecker, check_types
 from pecos.slr.qeclib import qubit as qb
@@ -34,7 +34,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestTypeCheckerValid:
     """Tests for valid types."""
 
-    def test_valid_gates(self):
+    def test_valid_gates(self) -> None:
         """Valid gate types."""
         prog = Main(
             q := QReg("q", 2),
@@ -49,7 +49,7 @@ class TestTypeCheckerValid:
         assert result.valid is True
         assert len(result.errors) == 0
 
-    def test_valid_rotation_gates(self):
+    def test_valid_rotation_gates(self) -> None:
         """Valid rotation gate with angle parameter."""
         prog = Main(
             q := QReg("q", 1),
@@ -66,7 +66,7 @@ class TestTypeCheckerValid:
 class TestTypeCheckerArityErrors:
     """Tests for gate arity errors."""
 
-    def test_single_qubit_gate_wrong_arity(self):
+    def test_single_qubit_gate_wrong_arity(self) -> None:
         """Single-qubit gate with wrong number of targets."""
         prog = Program(
             name="test",
@@ -88,7 +88,7 @@ class TestTypeCheckerArityErrors:
         assert "expects 1 qubit(s), got 2" in result.errors[0].message
         assert result.errors[0].code == "E201"
 
-    def test_two_qubit_gate_wrong_arity(self):
+    def test_two_qubit_gate_wrong_arity(self) -> None:
         """Two-qubit gate with wrong number of targets."""
         prog = Program(
             name="test",
@@ -110,7 +110,7 @@ class TestTypeCheckerArityErrors:
 class TestTypeCheckerParameterErrors:
     """Tests for gate parameter errors."""
 
-    def test_rotation_gate_missing_param(self):
+    def test_rotation_gate_missing_param(self) -> None:
         """Rotation gate without required parameter."""
         prog = Program(
             name="test",
@@ -130,7 +130,7 @@ class TestTypeCheckerParameterErrors:
         assert "requires an angle parameter" in result.errors[0].message
         assert result.errors[0].code == "E202"
 
-    def test_non_numeric_angle(self):
+    def test_non_numeric_angle(self) -> None:
         """Rotation gate with non-numeric angle."""
         prog = Program(
             name="test",
@@ -150,7 +150,7 @@ class TestTypeCheckerParameterErrors:
         assert "Expected numeric value" in result.errors[0].message
         assert result.errors[0].code == "E203"
 
-    def test_extra_params_warning(self):
+    def test_extra_params_warning(self) -> None:
         """Non-parameterized gate with parameters gives warning."""
         prog = Program(
             name="test",
@@ -174,7 +174,7 @@ class TestTypeCheckerParameterErrors:
 class TestTypeCheckerMeasurement:
     """Tests for measurement type checking."""
 
-    def test_valid_measurement(self):
+    def test_valid_measurement(self) -> None:
         """Valid measurement with matching targets and results."""
         prog = Program(
             name="test",
@@ -198,7 +198,7 @@ class TestTypeCheckerMeasurement:
 
         assert result.valid is True
 
-    def test_mismatched_measurement_count(self):
+    def test_mismatched_measurement_count(self) -> None:
         """Measurement with mismatched target and result count."""
         prog = Program(
             name="test",
@@ -210,7 +210,9 @@ class TestTypeCheckerMeasurement:
                         SlotRef(allocator="q", index=0),
                         SlotRef(allocator="q", index=1),
                     ),
-                    results=(BitRef(register="c", index=0),),  # Only 1 result for 2 qubits
+                    results=(
+                        BitRef(register="c", index=0),
+                    ),  # Only 1 result for 2 qubits
                 ),
             ),
         )
@@ -224,7 +226,7 @@ class TestTypeCheckerMeasurement:
 class TestTypeCheckerControlFlow:
     """Type checking in control flow."""
 
-    def test_negative_repeat_count(self):
+    def test_negative_repeat_count(self) -> None:
         """Negative repeat count."""
         prog = Program(
             name="test",
@@ -232,7 +234,12 @@ class TestTypeCheckerControlFlow:
             body=(
                 RepeatStmt(
                     count=-5,
-                    body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
+                    body=(
+                        GateOp(
+                            gate=GateKind.H,
+                            targets=(SlotRef(allocator="q", index=0),),
+                        ),
+                    ),
                 ),
             ),
         )
@@ -242,7 +249,7 @@ class TestTypeCheckerControlFlow:
         assert result.valid is False
         assert "cannot be negative" in result.errors[0].message
 
-    def test_valid_if_statement(self):
+    def test_valid_if_statement(self) -> None:
         """Valid if statement."""
         prog = Main(
             q := QReg("q", 1),
@@ -261,7 +268,7 @@ class TestTypeCheckerControlFlow:
 class TestTypeCheckerClass:
     """Tests for TypeChecker class."""
 
-    def test_checker_reuse(self):
+    def test_checker_reuse(self) -> None:
         """Checker can be reused."""
         checker = TypeChecker()
 
@@ -269,7 +276,15 @@ class TestTypeCheckerClass:
         prog2 = Program(
             name="test",
             allocator=AllocatorDecl(name="q", capacity=2),
-            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1))),),
+            body=(
+                GateOp(
+                    gate=GateKind.H,
+                    targets=(
+                        SlotRef(allocator="q", index=0),
+                        SlotRef(allocator="q", index=1),
+                    ),
+                ),
+            ),
         )
 
         ast1 = slr_to_ast(prog1)
@@ -280,7 +295,7 @@ class TestTypeCheckerClass:
         assert result1.valid is True
         assert result2.valid is False
 
-    def test_passes_applied(self):
+    def test_passes_applied(self) -> None:
         """Pass name is tracked."""
         prog = Main(q := QReg("q", 1), qb.H(q[0]))
         ast = slr_to_ast(prog)

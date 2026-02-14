@@ -31,6 +31,8 @@ Example:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     AssignOp,
@@ -40,9 +42,7 @@ from pecos.slr.ast.nodes import (
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RepeatStmt,
-    Statement,
     WhileStmt,
 )
 from pecos.slr.ast.validation.base import (
@@ -51,6 +51,12 @@ from pecos.slr.ast.validation.base import (
     ValidationPass,
     ValidationResult,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Program,
+        Statement,
+    )
 
 
 class AllocationValidator(ValidationPass):
@@ -103,7 +109,7 @@ class AllocationValidator(ValidationPass):
                         location=self.allocators[name].location,
                         severity=Severity.WARNING,
                         code="W301",
-                    )
+                    ),
                 )
 
         return ValidationResult(
@@ -133,7 +139,7 @@ class AllocationValidator(ValidationPass):
                         location=decl.location,
                         severity=Severity.ERROR,
                         code="E302",
-                    )
+                    ),
                 )
 
         # Check for cycles in parent hierarchy
@@ -148,7 +154,7 @@ class AllocationValidator(ValidationPass):
                     location=decl.location,
                     severity=Severity.ERROR,
                     code="E301",
-                )
+                ),
             )
         else:
             self.allocators[decl.name] = decl
@@ -161,7 +167,7 @@ class AllocationValidator(ValidationPass):
                         location=decl.location,
                         severity=Severity.ERROR,
                         code="E303",
-                    )
+                    ),
                 )
 
     def _check_parent_cycles(self) -> None:
@@ -178,7 +184,7 @@ class AllocationValidator(ValidationPass):
                             location=self.allocators[name].location,
                             severity=Severity.ERROR,
                             code="E304",
-                        )
+                        ),
                     )
                     break
 
@@ -221,7 +227,7 @@ class AllocationValidator(ValidationPass):
                     location=location if hasattr(location, "line") else None,  # type: ignore[arg-type]
                     severity=Severity.ERROR,
                     code="E305",
-                )
+                ),
             )
 
     def _validate_gate(self, node: GateOp) -> None:

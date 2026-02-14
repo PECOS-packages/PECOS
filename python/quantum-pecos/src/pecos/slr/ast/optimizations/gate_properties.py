@@ -35,7 +35,7 @@ SELF_INVERSE_GATES: frozenset[GateKind] = frozenset(
         GateKind.CY,
         GateKind.CZ,
         GateKind.CH,
-    }
+    },
 )
 
 # Mapping from gate to its inverse
@@ -69,7 +69,7 @@ ROTATION_GATES: frozenset[GateKind] = frozenset(
         GateKind.RY,
         GateKind.RZ,
         GateKind.RZZ,
-    }
+    },
 )
 
 
@@ -96,5 +96,6 @@ def targets_match(gate1: GateOp, gate2: GateOp) -> bool:
     if len(gate1.targets) != len(gate2.targets):
         return False
     return all(
-        t1.allocator == t2.allocator and t1.index == t2.index for t1, t2 in zip(gate1.targets, gate2.targets, strict=True)
+        t1.allocator == t2.allocator and t1.index == t2.index
+        for t1, t2 in zip(gate1.targets, gate2.targets, strict=True)
     )

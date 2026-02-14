@@ -23,7 +23,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestRotationMergingBasic:
     """Basic rotation merging tests."""
 
-    def test_rz_rz_merges(self):
+    def test_rz_rz_merges(self) -> None:
         """RZ+RZ on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
@@ -45,7 +45,7 @@ class TestRotationMergingBasic:
         assert isinstance(gate.params[0], LiteralExpr)
         assert abs(gate.params[0].value - 0.8) < 1e-10
 
-    def test_rx_rx_merges(self):
+    def test_rx_rx_merges(self) -> None:
         """RX+RX on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
@@ -65,7 +65,7 @@ class TestRotationMergingBasic:
         assert isinstance(gate.params[0], LiteralExpr)
         assert abs(gate.params[0].value - math.pi / 2) < 1e-10
 
-    def test_ry_ry_merges(self):
+    def test_ry_ry_merges(self) -> None:
         """RY+RY on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
@@ -89,7 +89,7 @@ class TestRotationMergingBasic:
 class TestRotationMergingNoMerge:
     """Tests where rotations should NOT merge."""
 
-    def test_different_rotation_types_no_merge(self):
+    def test_different_rotation_types_no_merge(self) -> None:
         """Different rotation types do not merge."""
         prog = Main(
             q := QReg("q", 1),
@@ -103,7 +103,7 @@ class TestRotationMergingNoMerge:
         assert len(result.program.body) == 2
         assert result.gates_merged == 0
 
-    def test_different_qubits_no_merge(self):
+    def test_different_qubits_no_merge(self) -> None:
         """Rotations on different qubits do not merge."""
         prog = Main(
             q := QReg("q", 2),
@@ -117,7 +117,7 @@ class TestRotationMergingNoMerge:
         assert len(result.program.body) == 2
         assert result.gates_merged == 0
 
-    def test_interleaved_rotations_no_merge(self):
+    def test_interleaved_rotations_no_merge(self) -> None:
         """Interleaved rotations do not merge."""
         prog = Main(
             q := QReg("q", 1),
@@ -136,7 +136,7 @@ class TestRotationMergingNoMerge:
 class TestRotationMergingControlFlow:
     """Rotation merging inside control flow."""
 
-    def test_merge_inside_if(self):
+    def test_merge_inside_if(self) -> None:
         """Rotations merge inside if statements."""
         prog = Main(
             q := QReg("q", 1),
@@ -153,7 +153,7 @@ class TestRotationMergingControlFlow:
         assert len(result.program.body) == 1  # IfStmt
         assert result.gates_merged == 1
 
-    def test_merge_inside_repeat(self):
+    def test_merge_inside_repeat(self) -> None:
         """Rotations merge inside repeat blocks."""
         prog = Main(
             q := QReg("q", 1),
@@ -173,7 +173,7 @@ class TestRotationMergingControlFlow:
 class TestRotationMergingMultiple:
     """Multiple rotation merging tests."""
 
-    def test_three_rotations_merge_to_one(self):
+    def test_three_rotations_merge_to_one(self) -> None:
         """Three consecutive rotations merge to one (requires multiple passes)."""
         prog = Main(
             q := QReg("q", 1),

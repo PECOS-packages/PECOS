@@ -14,7 +14,6 @@
 import json
 
 import pytest
-
 from pecos.slr import CReg, If, Main, QAlloc, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.nodes import (
@@ -40,7 +39,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestAstToDict:
     """Tests for ast_to_dict function."""
 
-    def test_simple_program(self):
+    def test_simple_program(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -54,7 +53,7 @@ class TestAstToDict:
         assert len(data["declarations"]) == 1
         assert len(data["body"]) == 1
 
-    def test_gate_op_serialization(self):
+    def test_gate_op_serialization(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -69,7 +68,7 @@ class TestAstToDict:
         assert gate_data["gate"]["value"] == "CX"
         assert len(gate_data["targets"]) == 2
 
-    def test_slot_ref_serialization(self):
+    def test_slot_ref_serialization(self) -> None:
         slot = SlotRef(allocator="q", index=5)
 
         data = ast_to_dict(slot)
@@ -78,7 +77,7 @@ class TestAstToDict:
         assert data["allocator"] == "q"
         assert data["index"] == 5
 
-    def test_bit_ref_serialization(self):
+    def test_bit_ref_serialization(self) -> None:
         bit = BitRef(register="c", index=3)
 
         data = ast_to_dict(bit)
@@ -87,7 +86,7 @@ class TestAstToDict:
         assert data["register"] == "c"
         assert data["index"] == 3
 
-    def test_literal_expr_serialization(self):
+    def test_literal_expr_serialization(self) -> None:
         expr = LiteralExpr(value=42)
 
         data = ast_to_dict(expr)
@@ -95,7 +94,7 @@ class TestAstToDict:
         assert data["_type"] == "LiteralExpr"
         assert data["value"] == 42
 
-    def test_binary_expr_serialization(self):
+    def test_binary_expr_serialization(self) -> None:
         expr = BinaryExpr(
             op=BinaryOp.EQ,
             left=LiteralExpr(value=1),
@@ -112,7 +111,7 @@ class TestAstToDict:
 class TestDictToAst:
     """Tests for dict_to_ast function."""
 
-    def test_simple_program_roundtrip(self):
+    def test_simple_program_roundtrip(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -127,7 +126,7 @@ class TestDictToAst:
         assert len(restored.declarations) == len(ast.declarations)
         assert len(restored.body) == len(ast.body)
 
-    def test_gate_kind_preserved(self):
+    def test_gate_kind_preserved(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -141,7 +140,7 @@ class TestDictToAst:
         assert isinstance(gate_op, GateOp)
         assert gate_op.gate == GateKind.CX
 
-    def test_slot_ref_roundtrip(self):
+    def test_slot_ref_roundtrip(self) -> None:
         slot = SlotRef(allocator="data", index=7)
 
         data = ast_to_dict(slot)
@@ -151,7 +150,7 @@ class TestDictToAst:
         assert restored.allocator == "data"
         assert restored.index == 7
 
-    def test_binary_op_preserved(self):
+    def test_binary_op_preserved(self) -> None:
         expr = BinaryExpr(
             op=BinaryOp.LT,
             left=LiteralExpr(value=5),
@@ -164,13 +163,13 @@ class TestDictToAst:
         assert isinstance(restored, BinaryExpr)
         assert restored.op == BinaryOp.LT
 
-    def test_unknown_type_raises_error(self):
+    def test_unknown_type_raises_error(self) -> None:
         data = {"_type": "UnknownNodeType"}
 
         with pytest.raises(ValueError, match="Unknown node type"):
             dict_to_ast(data)
 
-    def test_missing_type_raises_error(self):
+    def test_missing_type_raises_error(self) -> None:
         data = {"name": "test"}
 
         with pytest.raises(ValueError, match="missing '_type' field"):
@@ -180,7 +179,7 @@ class TestDictToAst:
 class TestJsonSerialization:
     """Tests for JSON serialization functions."""
 
-    def test_ast_to_json_produces_valid_json(self):
+    def test_ast_to_json_produces_valid_json(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -194,7 +193,7 @@ class TestJsonSerialization:
         assert isinstance(parsed, dict)
         assert parsed["_type"] == "Program"
 
-    def test_json_roundtrip_basic(self):
+    def test_json_roundtrip_basic(self) -> None:
         prog = Main(
             q := QReg("q", 3),
             qb.H(q[0]),
@@ -209,7 +208,7 @@ class TestJsonSerialization:
         assert restored.name == ast.name
         assert len(restored.body) == len(ast.body)
 
-    def test_json_roundtrip_with_creg(self):
+    def test_json_roundtrip_with_creg(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -225,7 +224,7 @@ class TestJsonSerialization:
         assert isinstance(measure_op, MeasureOp)
         assert len(measure_op.results) == 1
 
-    def test_json_roundtrip_with_if_statement(self):
+    def test_json_roundtrip_with_if_statement(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -242,7 +241,7 @@ class TestJsonSerialization:
         assert isinstance(if_stmt, IfStmt)
         assert len(if_stmt.then_body) == 1
 
-    def test_json_roundtrip_with_repeat(self):
+    def test_json_roundtrip_with_repeat(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=5).block(
@@ -258,15 +257,15 @@ class TestJsonSerialization:
         assert isinstance(repeat_stmt, RepeatStmt)
         assert repeat_stmt.count == 5
 
-    def test_json_to_ast_non_program_raises_error(self):
+    def test_json_to_ast_non_program_raises_error(self) -> None:
         slot = SlotRef(allocator="q", index=0)
         json_str = json.dumps(ast_to_dict(slot))
 
         with pytest.raises(ValueError, match="Expected Program"):
             json_to_ast(json_str)
 
-    def test_json_compact_output(self):
-        prog = Main(q := QReg("q", 1))
+    def test_json_compact_output(self) -> None:
+        prog = Main(_q := QReg("q", 1))
         ast = slr_to_ast(prog)
 
         json_str = ast_to_json(ast, indent=None)
@@ -278,7 +277,7 @@ class TestJsonSerialization:
 class TestComplexRoundtrip:
     """Complex round-trip tests combining multiple features."""
 
-    def test_full_qec_pattern(self):
+    def test_full_qec_pattern(self) -> None:
         """Test a QEC syndrome extraction pattern."""
         prog = Main(
             data := QReg("data", 2),
@@ -298,23 +297,24 @@ class TestComplexRoundtrip:
         assert len(restored.body) == 3  # 2 CX + 1 Measure
 
         # Verify gate types
-        assert all(
-            isinstance(s, (GateOp, MeasureOp))
-            for s in restored.body
-        )
+        assert all(isinstance(s, (GateOp, MeasureOp)) for s in restored.body)
 
-    def test_nested_control_flow(self):
+    def test_nested_control_flow(self) -> None:
         """Test nested if statements."""
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            If(c[0] == 1).Then(
-                If(c[1] == 1).Then(
+            If(c[0] == 1)
+            .Then(
+                If(c[1] == 1)
+                .Then(
                     qb.X(q[0]),
-                ).Else(
+                )
+                .Else(
                     qb.Y(q[0]),
                 ),
-            ).Else(
+            )
+            .Else(
                 qb.Z(q[0]),
             ),
         )
@@ -331,7 +331,7 @@ class TestComplexRoundtrip:
         inner_if = outer_if.then_body[0]
         assert isinstance(inner_if, IfStmt)
 
-    def test_hierarchical_allocators(self):
+    def test_hierarchical_allocators(self) -> None:
         """Test hierarchical allocator serialization."""
         all_qubits = QAlloc(4, name="all")
         data_alloc = QAlloc(2, name="data", parent=all_qubits)
@@ -350,10 +350,7 @@ class TestComplexRoundtrip:
         restored = json_to_ast(json_str)
 
         # Find allocator declarations
-        allocators = [
-            d for d in restored.declarations
-            if isinstance(d, AllocatorDecl)
-        ]
+        allocators = [d for d in restored.declarations if isinstance(d, AllocatorDecl)]
         assert len(allocators) == 3
 
         # Check parent relationships preserved
@@ -363,7 +360,7 @@ class TestComplexRoundtrip:
         ancilla_decl = next(d for d in allocators if d.name == "ancilla")
         assert ancilla_decl.parent == "all"
 
-    def test_double_roundtrip_identical(self):
+    def test_double_roundtrip_identical(self) -> None:
         """Test that double round-trip produces identical JSON."""
         prog = Main(
             q := QReg("q", 2),
@@ -395,7 +392,7 @@ class TestComplexRoundtrip:
 class TestSourceLocation:
     """Tests for source location preservation."""
 
-    def test_source_location_roundtrip(self):
+    def test_source_location_roundtrip(self) -> None:
         """Test that source locations are preserved."""
         loc = SourceLocation(line=10, column=5, file="test.py")
         slot = SlotRef(allocator="q", index=0, location=loc)
@@ -408,7 +405,7 @@ class TestSourceLocation:
         assert restored.location.column == 5
         assert restored.location.file == "test.py"
 
-    def test_source_location_optional(self):
+    def test_source_location_optional(self) -> None:
         """Test that missing source location is handled."""
         slot = SlotRef(allocator="q", index=0)
 
@@ -421,7 +418,7 @@ class TestSourceLocation:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         prog = Main()
         ast = slr_to_ast(prog)
 
@@ -431,7 +428,7 @@ class TestEdgeCases:
         assert len(restored.declarations) == 0
         assert len(restored.body) == 0
 
-    def test_register_with_is_result_false(self):
+    def test_register_with_is_result_false(self) -> None:
         """Test RegisterDecl with is_result=False."""
         decl = RegisterDecl(name="scratch", size=4, is_result=False)
 
@@ -441,7 +438,7 @@ class TestEdgeCases:
         assert isinstance(restored, RegisterDecl)
         assert restored.is_result is False
 
-    def test_allocator_without_parent(self):
+    def test_allocator_without_parent(self) -> None:
         """Test AllocatorDecl without parent."""
         decl = AllocatorDecl(name="q", capacity=5)
 
@@ -451,7 +448,7 @@ class TestEdgeCases:
         assert isinstance(restored, AllocatorDecl)
         assert restored.parent is None
 
-    def test_boolean_literal_preserved(self):
+    def test_boolean_literal_preserved(self) -> None:
         """Test that boolean literals are preserved correctly."""
         expr_true = LiteralExpr(value=True)
         expr_false = LiteralExpr(value=False)
@@ -467,7 +464,7 @@ class TestEdgeCases:
         assert isinstance(restored_true.value, bool)
         assert isinstance(restored_false.value, bool)
 
-    def test_float_literal_preserved(self):
+    def test_float_literal_preserved(self) -> None:
         """Test that float literals are preserved."""
         expr = LiteralExpr(value=3.14159)
 

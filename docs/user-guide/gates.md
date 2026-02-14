@@ -789,6 +789,7 @@ RX(θ) = [[cos(θ/2),    -i·sin(θ/2)],
 === ":fontawesome-brands-python: Python"
     ```python
     import pecos as pc
+
     state.run_gate("RX", {q}, angles=(pc.f64.pi / 4,))
     ```
 

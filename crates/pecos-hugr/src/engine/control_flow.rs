@@ -16,7 +16,7 @@
 //!
 //! This module organizes control flow methods for [`super::HugrEngine`]:
 //!
-//! - [`tailloop`]: TailLoop iteration and completion
+//! - [`tailloop`]: `TailLoop` iteration and completion
 //! - [`conditional`]: Conditional branching
 //! - [`cfg`]: Control flow graph traversal
 //! - [`call`]: Function call handling

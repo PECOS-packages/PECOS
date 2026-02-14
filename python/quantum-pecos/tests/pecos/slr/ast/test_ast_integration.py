@@ -15,7 +15,6 @@ Tests the complete flow: SLR → AST → validate → optimize → analyze → c
 """
 
 import pytest
-
 from pecos.slr import CReg, If, Main, QAlloc, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.analysis import (
@@ -26,10 +25,10 @@ from pecos.slr.ast.analysis import (
     count_resources,
 )
 from pecos.slr.ast.codegen import (
+    CodegenOptions,
     generate,
     generate_with_options,
     generate_with_validation,
-    CodegenOptions,
 )
 from pecos.slr.ast.compare import ast_equal
 from pecos.slr.ast.optimizations import optimize
@@ -42,7 +41,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestFullPipeline:
     """Test complete SLR → AST → validate → optimize → codegen pipeline."""
 
-    def test_simple_circuit_pipeline(self):
+    def test_simple_circuit_pipeline(self) -> None:
         """Test basic pipeline with Bell state."""
         # SLR → AST
         prog = Main(
@@ -65,7 +64,7 @@ class TestFullPipeline:
         assert "h q[0]" in qasm.lower()
         assert "cx q[0], q[1]" in qasm.lower() or "cx q[0],q[1]" in qasm.lower()
 
-    def test_optimize_then_generate(self):
+    def test_optimize_then_generate(self) -> None:
         """Test optimization followed by code generation."""
         # Create circuit with redundant gates
         prog = Main(
@@ -90,7 +89,7 @@ class TestFullPipeline:
         assert "h q[0]" in qasm.lower()
         assert qasm.lower().count("x q[0]") == 0
 
-    def test_pipeline_with_control_flow(self):
+    def test_pipeline_with_control_flow(self) -> None:
         """Test pipeline with If statement."""
         prog = Main(
             q := QReg("q", 1),
@@ -116,7 +115,7 @@ class TestFullPipeline:
         qasm = generate(ast, "qasm")
         assert "if" in qasm.lower() or "measure" in qasm.lower()
 
-    def test_pipeline_with_hierarchical_allocators(self):
+    def test_pipeline_with_hierarchical_allocators(self) -> None:
         """Test pipeline with hierarchical allocators."""
         all_qubits = QAlloc(4, name="all")
         data = QAlloc(2, name="data", parent=all_qubits)
@@ -143,7 +142,7 @@ class TestFullPipeline:
 class TestAnalysisIntegration:
     """Test combining multiple analysis passes."""
 
-    def test_all_analysis_passes(self):
+    def test_all_analysis_passes(self) -> None:
         """Run all analysis passes on a single program."""
         prog = Main(
             q := QReg("q", 3),
@@ -159,8 +158,8 @@ class TestAnalysisIntegration:
         resources = count_resources(ast)
         depth = analyze_depth(ast)
         t_count = analyze_t_count(ast)
-        connectivity = analyze_connectivity(ast)
-        parallelism = analyze_parallelism(ast)
+        analyze_connectivity(ast)
+        analyze_parallelism(ast)
 
         # Verify results
         assert resources.total_gates == 3  # H + 2 CX
@@ -169,7 +168,7 @@ class TestAnalysisIntegration:
         assert t_count.t_count == 0  # No T gates
         assert resources.qubit_count == 3
 
-    def test_analysis_with_t_gates(self):
+    def test_analysis_with_t_gates(self) -> None:
         """Test T-count analysis with T gates."""
         prog = Main(
             q := QReg("q", 1),
@@ -182,7 +181,7 @@ class TestAnalysisIntegration:
         t_count = analyze_t_count(ast)
         assert t_count.t_count == 2
 
-    def test_analysis_consistency(self):
+    def test_analysis_consistency(self) -> None:
         """Verify analysis results are consistent with each other."""
         prog = Main(
             q := QReg("q", 2),
@@ -193,7 +192,7 @@ class TestAnalysisIntegration:
         ast = slr_to_ast(prog)
 
         resources = count_resources(ast)
-        connectivity = analyze_connectivity(ast)
+        analyze_connectivity(ast)
 
         # Should have 3 gates total
         assert resources.total_gates == 3
@@ -204,7 +203,7 @@ class TestAnalysisIntegration:
 class TestValidationCodegen:
     """Test validation before code generation."""
 
-    def test_generate_with_validation_valid(self):
+    def test_generate_with_validation_valid(self) -> None:
         """Test generate_with_validation with valid program."""
         prog = Main(
             q := QReg("q", 2),
@@ -219,7 +218,7 @@ class TestValidationCodegen:
         assert result.code is not None
         assert "h" in result.code.lower()
 
-    def test_generate_with_validation_and_analysis(self):
+    def test_generate_with_validation_and_analysis(self) -> None:
         """Test generate_with_validation with analysis enabled."""
         prog = Main(
             q := QReg("q", 2),
@@ -230,7 +229,9 @@ class TestValidationCodegen:
         ast = slr_to_ast(prog)
 
         result = generate_with_validation(
-            ast, target="qasm", include_analysis=True
+            ast,
+            target="qasm",
+            include_analysis=True,
         )
 
         assert result.valid
@@ -239,7 +240,7 @@ class TestValidationCodegen:
         assert result.t_count.t_count == 1
         assert result.depth is not None
 
-    def test_generate_with_options(self):
+    def test_generate_with_options(self) -> None:
         """Test generate_with_options with custom options."""
         prog = Main(
             q := QReg("q", 1),
@@ -258,7 +259,7 @@ class TestValidationCodegen:
         assert result.validation.valid
         assert result.resources is not None
 
-    def test_all_codegen_targets(self):
+    def test_all_codegen_targets(self) -> None:
         """Test code generation for all supported targets."""
         prog = Main(
             q := QReg("q", 2),
@@ -292,7 +293,7 @@ class TestValidationCodegen:
 class TestSerializationRoundtrip:
     """Test AST serialization round-trips."""
 
-    def test_serialize_validate_deserialize(self):
+    def test_serialize_validate_deserialize(self) -> None:
         """Test: serialize → validate → deserialize → compare."""
         prog = Main(
             q := QReg("q", 2),
@@ -316,7 +317,7 @@ class TestSerializationRoundtrip:
         assert validate(ast).valid
         assert validate(ast2).valid
 
-    def test_serialize_optimize_compare(self):
+    def test_serialize_optimize_compare(self) -> None:
         """Test: optimize → serialize → deserialize → compare."""
         prog = Main(
             q := QReg("q", 1),
@@ -337,7 +338,7 @@ class TestSerializationRoundtrip:
         # Compare
         assert ast_equal(optimized, restored)
 
-    def test_serialize_generate_compare(self):
+    def test_serialize_generate_compare(self) -> None:
         """Test: generate code from original and deserialized AST."""
         prog = Main(
             q := QReg("q", 2),
@@ -361,7 +362,7 @@ class TestSerializationRoundtrip:
 class TestOptimizeAndGenerate:
     """Test optimization followed by code generation for each target."""
 
-    def test_optimize_then_qasm(self):
+    def test_optimize_then_qasm(self) -> None:
         """Test optimize then QASM generation."""
         prog = Main(
             q := QReg("q", 1),
@@ -379,7 +380,7 @@ class TestOptimizeAndGenerate:
         # H gates should be gone
         assert qasm.lower().count("h ") <= 1  # Allow for potential header
 
-    def test_optimize_then_guppy(self):
+    def test_optimize_then_guppy(self) -> None:
         """Test optimize then Guppy generation."""
         prog = Main(
             q := QReg("q", 1),
@@ -395,7 +396,7 @@ class TestOptimizeAndGenerate:
         # Should have minimal content
         assert "def" in guppy or "@guppy" in guppy
 
-    def test_optimize_then_stim(self):
+    def test_optimize_then_stim(self) -> None:
         """Test optimize then Stim generation."""
         prog = Main(
             q := QReg("q", 2),
@@ -416,7 +417,7 @@ class TestOptimizeAndGenerate:
 class TestQECPatterns:
     """Test QEC-specific patterns through the pipeline."""
 
-    def test_syndrome_extraction_pipeline(self):
+    def test_syndrome_extraction_pipeline(self) -> None:
         """Test syndrome extraction pattern."""
         prog = Main(
             data := QReg("data", 2),
@@ -442,7 +443,7 @@ class TestQECPatterns:
         result = generate_with_validation(ast, target="qasm", include_analysis=True)
         assert result.valid
 
-    def test_ghz_state_preparation(self):
+    def test_ghz_state_preparation(self) -> None:
         """Test GHZ state preparation."""
         prog = Main(
             q := QReg("q", 4),
@@ -465,7 +466,7 @@ class TestQECPatterns:
         opt = optimize(ast, level=1)
         assert opt.gates_removed == 0
 
-    def test_repeat_stabilizer_rounds(self):
+    def test_repeat_stabilizer_rounds(self) -> None:
         """Test repeated stabilizer measurement."""
         prog = Main(
             data := QReg("data", 2),
@@ -491,7 +492,7 @@ class TestQECPatterns:
 class TestPrettyPrintIntegration:
     """Test pretty-printing with other operations."""
 
-    def test_pretty_print_optimized(self):
+    def test_pretty_print_optimized(self) -> None:
         """Test pretty-printing optimized AST."""
         prog = Main(
             q := QReg("q", 1),
@@ -511,7 +512,7 @@ class TestPrettyPrintIntegration:
         # X gates should be gone
         assert output.count("qb.X") == 0
 
-    def test_pretty_print_deserialized(self):
+    def test_pretty_print_deserialized(self) -> None:
         """Test pretty-printing after deserialization."""
         prog = Main(
             q := QReg("q", 2),
@@ -535,7 +536,7 @@ class TestPrettyPrintIntegration:
 class TestEdgeCases:
     """Edge cases and error handling."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         """Test pipeline with empty program."""
         prog = Main()
         ast = slr_to_ast(prog)
@@ -548,7 +549,7 @@ class TestEdgeCases:
         qasm = generate(ast, "qasm")
         assert isinstance(qasm, str)
 
-    def test_invalid_target_raises_error(self):
+    def test_invalid_target_raises_error(self) -> None:
         """Test that invalid target raises ValueError."""
         prog = Main(q := QReg("q", 1), qb.H(q[0]))
         ast = slr_to_ast(prog)
@@ -556,7 +557,7 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="Unknown target"):
             generate(ast, "invalid_target")
 
-    def test_multiple_optimization_levels(self):
+    def test_multiple_optimization_levels(self) -> None:
         """Test different optimization levels."""
         prog = Main(
             q := QReg("q", 1),
@@ -577,18 +578,22 @@ class TestEdgeCases:
         opt2 = optimize(ast, level=2)
         assert opt2.gates_removed >= 2
 
-    def test_deep_nesting(self):
+    def test_deep_nesting(self) -> None:
         """Test pipeline with deeply nested control flow."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
-            If(c[0] == 1).Then(
-                If(c[1] == 1).Then(
+            If(c[0] == 1)
+            .Then(
+                If(c[1] == 1)
+                .Then(
                     qb.X(q[0]),
-                ).Else(
+                )
+                .Else(
                     qb.Y(q[0]),
                 ),
-            ).Else(
+            )
+            .Else(
                 qb.Z(q[0]),
             ),
         )
@@ -607,7 +612,7 @@ class TestMultipleCodegenTargets:
     """Test that all codegen targets work with various patterns."""
 
     @pytest.mark.parametrize("target", ["qasm", "guppy", "stim", "qir"])
-    def test_bell_state_all_targets(self, target):
+    def test_bell_state_all_targets(self, target) -> None:
         """Test Bell state generation for all targets."""
         prog = Main(
             q := QReg("q", 2),
@@ -621,7 +626,7 @@ class TestMultipleCodegenTargets:
         assert len(code) > 0
 
     @pytest.mark.parametrize("target", ["qasm", "guppy", "stim", "qir"])
-    def test_with_measurement_all_targets(self, target):
+    def test_with_measurement_all_targets(self, target) -> None:
         """Test measurement generation for all targets."""
         prog = Main(
             q := QReg("q", 1),

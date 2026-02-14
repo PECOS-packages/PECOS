@@ -12,35 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! TailLoop control flow handling.
+//! `TailLoop` control flow handling.
 //!
-//! TailLoops are HUGR's looping construct. They repeatedly execute their body
+//! `TailLoops` are HUGR's looping construct. They repeatedly execute their body
 //! until the body outputs a "break" Sum variant (tag 1). The body can also
 //! output a "continue" variant (tag 0) to loop again with new values.
 //!
 //! # Loop Structure
 //!
-//! A TailLoop has:
+//! A `TailLoop` has:
 //! - Input ports: `just_inputs` + `rest` values
 //! - Output ports: `just_outputs` + `rest` values
 //! - Body Input node: receives iteration values
-//! - Body Output node: produces Sum(continue_values | break_values) + rest
+//! - Body Output node: produces `Sum(continue_values` | `break_values`) + rest
 //!
 //! # Iteration Flow
 //!
 //! 1. First iteration: external inputs -> body Input
 //! 2. Body executes quantum/classical operations
 //! 3. Body Output produces Sum tag:
-//!    - Tag 0 (CONTINUE): loop again with new just_inputs + rest
-//!    - Tag 1 (BREAK): exit loop with just_outputs + rest
+//!    - Tag 0 (CONTINUE): loop again with new `just_inputs` + rest
+//!    - Tag 1 (BREAK): exit loop with `just_outputs` + rest
 
 use log::debug;
 use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
+use crate::engine::HugrEngine;
 use crate::engine::analysis::all_predecessors_ready;
 use crate::engine::types::{ActiveTailLoopInfo, TailLoopInfo};
-use crate::engine::HugrEngine;
 
 impl HugrEngine {
     /// Try to resolve the control value for a `TailLoop`'s current iteration.
@@ -190,6 +190,42 @@ impl HugrEngine {
             }
         }
 
+        // Also activate classical ops
+        for &op_node in &tailloop_info.classical_ops {
+            self.nodes_inside_tailloops.remove(&op_node);
+            if all_predecessors_ready(
+                hugr,
+                op_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) {
+                entry_nodes.push(op_node);
+            }
+        }
+
+        // Also activate bool ops
+        for &op_node in &tailloop_info.bool_ops {
+            self.nodes_inside_tailloops.remove(&op_node);
+            if all_predecessors_ready(
+                hugr,
+                op_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) {
+                entry_nodes.push(op_node);
+            }
+        }
+
+        // Also activate Conditional nodes
+        for &cond_node in &tailloop_info.conditional_nodes {
+            self.nodes_inside_tailloops.remove(&cond_node);
+            entry_nodes.push(cond_node);
+        }
+
         debug!(
             "TailLoop {tailloop_node:?}: activated body with {} entry nodes",
             entry_nodes.len()
@@ -217,14 +253,18 @@ impl HugrEngine {
                 {
                     let src_wire = (src_node, src_port.index());
                     if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                        self.wire_state.wire_to_qubit.insert((input_node, port_idx), qubit_id);
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((input_node, port_idx), qubit_id);
                         debug!(
                             "TailLoop {tailloop_node:?} iter {iteration}: propagated qubit {qubit_id:?} to Input port {port_idx}"
                         );
                     }
                     // Also propagate classical values
                     if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                        self.wire_state.classical_values.insert((input_node, port_idx), value);
+                        self.wire_state
+                            .classical_values
+                            .insert((input_node, port_idx), value);
                     }
                 }
             }
@@ -255,6 +295,15 @@ impl HugrEngine {
         }
         for &op_node in &tailloop_info.extension_ops {
             self.processed.remove(&op_node);
+        }
+        for &op_node in &tailloop_info.classical_ops {
+            self.processed.remove(&op_node);
+        }
+        for &op_node in &tailloop_info.bool_ops {
+            self.processed.remove(&op_node);
+        }
+        for &cond_node in &tailloop_info.conditional_nodes {
+            self.processed.remove(&cond_node);
         }
 
         // Propagate iteration values from Output to Input
@@ -306,6 +355,37 @@ impl HugrEngine {
                 self.work_queue.push_back(op_node);
             }
         }
+        for &op_node in &tailloop_info.classical_ops {
+            if all_predecessors_ready(
+                hugr,
+                op_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) && !self.work_queue.contains(&op_node)
+            {
+                self.work_queue.push_back(op_node);
+            }
+        }
+        for &op_node in &tailloop_info.bool_ops {
+            if all_predecessors_ready(
+                hugr,
+                op_node,
+                &self.quantum_ops,
+                &self.conditionals,
+                &self.cfgs,
+                &self.processed,
+            ) && !self.work_queue.contains(&op_node)
+            {
+                self.work_queue.push_back(op_node);
+            }
+        }
+        for &cond_node in &tailloop_info.conditional_nodes {
+            if !self.work_queue.contains(&cond_node) {
+                self.work_queue.push_back(cond_node);
+            }
+        }
     }
 
     /// Propagate values from CONTINUE tag to next iteration's inputs.
@@ -336,14 +416,16 @@ impl HugrEngine {
                 let src_wire = (src_node, src_port.index());
 
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                    self.wire_state.wire_to_qubit
+                    self.wire_state
+                        .wire_to_qubit
                         .insert((input_node, input_port_idx), qubit_id);
                     debug!(
                         "TailLoop continue: propagated rest qubit {qubit_id:?} from Output:{output_port_idx} to Input:{input_port_idx}"
                     );
                 }
                 if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((input_node, input_port_idx), value);
                 }
             }
@@ -363,13 +445,17 @@ impl HugrEngine {
                 {
                     let src_wire = (src_node, src_port.index());
                     if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                        self.wire_state.wire_to_qubit.insert((input_node, port_idx), qubit_id);
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((input_node, port_idx), qubit_id);
                         debug!(
                             "TailLoop continue: propagated just_input qubit {qubit_id:?} to Input:{port_idx}"
                         );
                     }
                     if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                        self.wire_state.classical_values.insert((input_node, port_idx), value);
+                        self.wire_state
+                            .classical_values
+                            .insert((input_node, port_idx), value);
                     }
                 }
             }
@@ -424,7 +510,8 @@ impl HugrEngine {
 
                 // Map qubits
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                    self.wire_state.wire_to_qubit
+                    self.wire_state
+                        .wire_to_qubit
                         .insert((tailloop_node, tailloop_output_idx), qubit_id);
                     debug!(
                         "TailLoop {tailloop_node:?} output {tailloop_output_idx}: mapped rest qubit {qubit_id:?}"
@@ -432,7 +519,8 @@ impl HugrEngine {
                 }
                 // Map classical values (including arrays)
                 if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((tailloop_node, tailloop_output_idx), value);
                     debug!(
                         "TailLoop {tailloop_node:?} output {tailloop_output_idx}: mapped rest classical value"
@@ -455,7 +543,8 @@ impl HugrEngine {
                     let src_wire = (src_node, src_port.index());
                     // Map qubits
                     if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                        self.wire_state.wire_to_qubit
+                        self.wire_state
+                            .wire_to_qubit
                             .insert((tailloop_node, port_idx), qubit_id);
                         debug!(
                             "TailLoop {tailloop_node:?} output {port_idx}: mapped just_output qubit {qubit_id:?}"
@@ -463,7 +552,8 @@ impl HugrEngine {
                     }
                     // Map classical values
                     if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                        self.wire_state.classical_values
+                        self.wire_state
+                            .classical_values
                             .insert((tailloop_node, port_idx), value);
                         debug!(
                             "TailLoop {tailloop_node:?} output {port_idx}: mapped just_output classical value"
@@ -490,7 +580,10 @@ impl HugrEngine {
             // Check if processed node is in this TailLoop
             let is_in_loop = tailloop_info.quantum_ops.contains(&processed_node)
                 || tailloop_info.call_nodes.contains(&processed_node)
-                || tailloop_info.extension_ops.contains(&processed_node);
+                || tailloop_info.extension_ops.contains(&processed_node)
+                || tailloop_info.classical_ops.contains(&processed_node)
+                || tailloop_info.bool_ops.contains(&processed_node)
+                || tailloop_info.conditional_nodes.contains(&processed_node);
 
             if is_in_loop {
                 // Check if all ops are processed
@@ -506,8 +599,26 @@ impl HugrEngine {
                     .extension_ops
                     .iter()
                     .all(|op| self.processed.contains(op));
+                let all_classical_done = tailloop_info
+                    .classical_ops
+                    .iter()
+                    .all(|op| self.processed.contains(op));
+                let all_bool_done = tailloop_info
+                    .bool_ops
+                    .iter()
+                    .all(|op| self.processed.contains(op));
+                let all_conditionals_done = tailloop_info
+                    .conditional_nodes
+                    .iter()
+                    .all(|cond| self.processed.contains(cond));
 
-                if all_quantum_done && all_calls_done && all_extension_done {
+                if all_quantum_done
+                    && all_calls_done
+                    && all_extension_done
+                    && all_classical_done
+                    && all_bool_done
+                    && all_conditionals_done
+                {
                     completions.push(*tailloop_node);
                 }
             }

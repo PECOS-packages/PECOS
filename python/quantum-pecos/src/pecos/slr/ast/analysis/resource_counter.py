@@ -33,22 +33,27 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     ForStmt,
-    GateKind,
     GateOp,
     IfStmt,
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RegisterDecl,
     RepeatStmt,
-    Statement,
     WhileStmt,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        GateKind,
+        Program,
+        Statement,
+    )
 
 
 @dataclass
@@ -78,18 +83,12 @@ class ResourceCount:
     @property
     def single_qubit_gates(self) -> int:
         """Count of single-qubit gates."""
-        return sum(
-            count for gate, count in self.gate_counts.items()
-            if gate.arity == 1
-        )
+        return sum(count for gate, count in self.gate_counts.items() if gate.arity == 1)
 
     @property
     def two_qubit_gates(self) -> int:
         """Count of two-qubit gates."""
-        return sum(
-            count for gate, count in self.gate_counts.items()
-            if gate.arity == 2
-        )
+        return sum(count for gate, count in self.gate_counts.items() if gate.arity == 2)
 
     def __str__(self) -> str:
         lines = [

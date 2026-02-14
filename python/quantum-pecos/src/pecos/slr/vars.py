@@ -54,7 +54,7 @@ class Vars:
         # Store the source class name for code generation
         self.source_class = None
 
-    def extend(self, vars_obj: "Vars") -> None:
+    def extend(self, vars_obj: Vars) -> None:
         if isinstance(vars_obj, Vars):
             self.vars.extend(vars_obj.vars)
             # Preserve source class information if available
@@ -95,7 +95,7 @@ class Var: ...
 
 
 class Reg(Var):
-    def __init__(self, sym: str, size: int, elem_type: type["Elem"]) -> None:
+    def __init__(self, sym: str, size: int, elem_type: type[Elem]) -> None:
         self.sym = sym
         self.size = size
         self.elems = []

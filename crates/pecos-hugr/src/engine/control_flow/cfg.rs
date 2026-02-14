@@ -14,15 +14,15 @@
 
 //! CFG (Control Flow Graph) handling.
 //!
-//! CFGs contain DataflowBlocks connected by control edges. Each block can
+//! CFGs contain `DataflowBlocks` connected by control edges. Each block can
 //! branch to multiple successors based on a Sum output value.
 //!
 //! # Structure
 //!
 //! A CFG node has:
-//! - Entry block: First DataflowBlock to execute
+//! - Entry block: First `DataflowBlock` to execute
 //! - Exit block: Terminal block that produces CFG outputs
-//! - DataflowBlocks: Each contains operations and branches to successors
+//! - `DataflowBlocks`: Each contains operations and branches to successors
 //!
 //! # Execution Flow
 //!
@@ -38,11 +38,11 @@ use log::debug;
 use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
+use crate::engine::HugrEngine;
 use crate::engine::analysis::{
     all_predecessors_ready, find_extension_ops_in_block, find_input_node, find_output_node,
 };
 use crate::engine::types::ClassicalValue;
-use crate::engine::HugrEngine;
 
 impl HugrEngine {
     /// Try to resolve the branch value for a CFG `DataflowBlock`.
@@ -163,7 +163,8 @@ impl HugrEngine {
                                 );
 
                                 // First check if we have a classical value for this wire
-                                if let Some(bool_value) = self.wire_state.classical_values.get(&bool_wire)
+                                if let Some(bool_value) =
+                                    self.wire_state.classical_values.get(&bool_wire)
                                     && let Some(v) = bool_value.to_u32()
                                 {
                                     debug!(
@@ -651,7 +652,9 @@ impl HugrEngine {
             let num_conditionals = block_info.conditional_nodes.len();
             let num_bool_ops = block_info.bool_ops.len();
             let num_tailloops = block_info.tailloop_nodes.len();
-            debug!("[TRACE] Activated block {to_block:?} with {num_ops} ops, {num_calls} calls, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops");
+            debug!(
+                "[TRACE] Activated block {to_block:?} with {num_ops} ops, {num_calls} calls, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops"
+            );
 
             // Handle blocks with no operations - immediately complete and transition
             // IMPORTANT: Also check for extension_ops and classical_ops, not just quantum/bool/conditional
@@ -659,8 +662,14 @@ impl HugrEngine {
             let has_classical_ops = !block_info.classical_ops.is_empty();
             let has_tailloops = !block_info.tailloop_nodes.is_empty();
 
-            if num_ops == 0 && num_calls == 0 && num_conditionals == 0 && num_bool_ops == 0
-                && !has_extension_ops && !has_classical_ops && !has_tailloops {
+            if num_ops == 0
+                && num_calls == 0
+                && num_conditionals == 0
+                && num_bool_ops == 0
+                && !has_extension_ops
+                && !has_classical_ops
+                && !has_tailloops
+            {
                 debug!(
                     "[TRACE] Block {to_block:?} has 0 ops and 0 calls, trying to resolve branch"
                 );
@@ -777,7 +786,8 @@ impl HugrEngine {
 
                             // Check if the next block is also empty - if so, we need to handle it recursively
                             // Find extension ops in this block
-                            let next_extension_ops: Vec<Node> = find_extension_ops_in_block(hugr, next_block);
+                            let next_extension_ops: Vec<Node> =
+                                find_extension_ops_in_block(hugr, next_block);
                             let next_has_extension_ops = !next_extension_ops.is_empty();
                             let next_has_classical_ops = !next_info.classical_ops.is_empty();
 
@@ -797,7 +807,12 @@ impl HugrEngine {
                                         self.complete_cfg_execution(hugr, cfg_node, next_block);
                                     } else {
                                         // Recursively transition
-                                        self.transition_to_cfg_successor(hugr, cfg_node, next_block, next_next_block);
+                                        self.transition_to_cfg_successor(
+                                            hugr,
+                                            cfg_node,
+                                            next_block,
+                                            next_next_block,
+                                        );
                                     }
                                 }
                             }
@@ -840,10 +855,7 @@ impl HugrEngine {
         cfg_node: Node,
         final_block: Node,
     ) {
-        debug!(
-            "complete_cfg_execution: CFG {:?} from block {:?}",
-            cfg_node, final_block
-        );
+        debug!("complete_cfg_execution: CFG {cfg_node:?} from block {final_block:?}");
 
         // Propagate outputs from final block to CFG output ports
         self.propagate_cfg_outputs(hugr, cfg_node, final_block);
@@ -897,10 +909,7 @@ impl HugrEngine {
                     &self.processed,
                 )
             {
-                debug!(
-                    "CFG complete: adding successor {:?} to work queue",
-                    succ_node
-                );
+                debug!("CFG complete: adding successor {succ_node:?} to work queue");
                 self.work_queue.push_back(succ_node);
             }
         }
@@ -913,17 +922,13 @@ impl HugrEngine {
         from_block: Node,
         to_block: Node,
     ) {
-        debug!(
-            "[TRACE] propagate_block_outputs_to_successor: from {from_block:?} to {to_block:?}"
-        );
+        debug!("[TRACE] propagate_block_outputs_to_successor: from {from_block:?} to {to_block:?}");
         let from_output = find_output_node(hugr, from_block);
         let to_input = find_input_node(hugr, to_block);
         debug!("[TRACE] from_output={from_output:?}, to_input={to_input:?}");
 
         let (Some(from_output), Some(to_input)) = (from_output, to_input) else {
-            debug!(
-                "[TRACE] Cannot propagate: from_output={from_output:?}, to_input={to_input:?}"
-            );
+            debug!("[TRACE] Cannot propagate: from_output={from_output:?}, to_input={to_input:?}");
             return;
         };
 
@@ -941,8 +946,7 @@ impl HugrEngine {
         let sum_port = IncomingPort::from(0);
         let mut payload_len = 0;
 
-        if let Some((sum_src_node, _)) = hugr.single_linked_output(from_output, sum_port)
-        {
+        if let Some((sum_src_node, _)) = hugr.single_linked_output(from_output, sum_port) {
             let sum_src_op = hugr.get_optype(sum_src_node);
 
             // Check if it's a Conditional - extract payload from virtual output ports
@@ -995,7 +999,9 @@ impl HugrEngine {
                 let src_wire = (src_node, src_port.index());
 
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                    self.wire_state.wire_to_qubit.insert((to_input, to_port_idx), qubit_id);
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((to_input, to_port_idx), qubit_id);
                     debug!(
                         "[TRACE] Block transition: mapped qubit {:?} from {:?}:{} to {:?}:{}",
                         qubit_id,
@@ -1017,7 +1023,8 @@ impl HugrEngine {
                     // Try to resolve constant value at source
                     if let Some(const_value) = Self::try_resolve_const_bool(hugr, src_node) {
                         let to_wire = (to_input, to_port_idx);
-                        self.wire_state.classical_values
+                        self.wire_state
+                            .classical_values
                             .insert(to_wire, ClassicalValue::Bool(const_value));
                         debug!(
                             "[TRACE] Block transition: resolved constant bool {const_value} for {to_wire:?}"
@@ -1044,11 +1051,11 @@ impl HugrEngine {
                 let from_input = find_input_node(hugr, from_block);
                 if let Some(from_input_node) = from_input {
                     let input_wire = (from_input_node, port_idx);
-                    if let Some(value) = self.wire_state.classical_values.get(&input_wire).cloned() {
+                    if let Some(value) = self.wire_state.classical_values.get(&input_wire).cloned()
+                    {
                         let to_wire = (to_input, to_port_idx);
                         debug!(
-                            "[TRACE] Fallback: propagating {:?} from input {:?} to {:?}",
-                            value, input_wire, to_wire
+                            "[TRACE] Fallback: propagating {value:?} from input {input_wire:?} to {to_wire:?}"
                         );
                         self.wire_state.classical_values.insert(to_wire, value);
                     }
@@ -1072,12 +1079,7 @@ impl HugrEngine {
     }
 
     /// Propagate wire mappings from final block to CFG outputs.
-    pub(crate) fn propagate_cfg_outputs(
-        &mut self,
-        hugr: &Hugr,
-        cfg_node: Node,
-        final_block: Node,
-    ) {
+    pub(crate) fn propagate_cfg_outputs(&mut self, hugr: &Hugr, cfg_node: Node, final_block: Node) {
         let Some(output_node) = find_output_node(hugr, final_block) else {
             debug!("No Output node found in final block {final_block:?}");
             return;
@@ -1094,7 +1096,9 @@ impl HugrEngine {
                 let src_wire = (src_node, src_port.index());
 
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                    self.wire_state.wire_to_qubit.insert((cfg_node, port_idx), qubit_id);
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((cfg_node, port_idx), qubit_id);
                     debug!("CFG {cfg_node:?} output {port_idx}: mapped qubit {qubit_id:?}");
                 }
             }
@@ -1134,7 +1138,9 @@ impl HugrEngine {
                 // Check for qubit mapping
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
                     // Map to entry block's Input node output
-                    self.wire_state.wire_to_qubit.insert((input_node, port_idx), qubit_id);
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((input_node, port_idx), qubit_id);
                     debug!(
                         "CFG {cfg_node:?}: mapped input {port_idx} qubit {qubit_id:?} to entry Input {input_node:?}:{port_idx}"
                     );
@@ -1145,7 +1151,9 @@ impl HugrEngine {
                     debug!(
                         "CFG {cfg_node:?}: propagated classical value {value:?} to entry Input {input_node:?}:{port_idx}"
                     );
-                    self.wire_state.classical_values.insert((input_node, port_idx), value);
+                    self.wire_state
+                        .classical_values
+                        .insert((input_node, port_idx), value);
                 }
             }
         }

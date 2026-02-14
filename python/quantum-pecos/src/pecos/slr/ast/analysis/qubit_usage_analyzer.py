@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -40,11 +41,15 @@ from pecos.slr.ast.nodes import (
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RepeatStmt,
-    Statement,
     WhileStmt,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Program,
+        Statement,
+    )
 
 
 class QubitRole(Enum):

@@ -12,7 +12,6 @@
 """Tests for AST node definitions."""
 
 import pytest
-
 from pecos.slr.ast import (
     AllocatorDecl,
     AssignOp,
@@ -46,21 +45,21 @@ from pecos.slr.ast import (
 class TestSourceLocation:
     """Tests for SourceLocation."""
 
-    def test_basic_location(self):
+    def test_basic_location(self) -> None:
         loc = SourceLocation(line=10, column=5)
         assert loc.line == 10
         assert loc.column == 5
         assert loc.file is None
 
-    def test_location_with_file(self):
+    def test_location_with_file(self) -> None:
         loc = SourceLocation(line=10, column=5, file="test.py")
         assert str(loc) == "test.py:10:5"
 
-    def test_location_without_file(self):
+    def test_location_without_file(self) -> None:
         loc = SourceLocation(line=10, column=5)
         assert str(loc) == "10:5"
 
-    def test_location_is_frozen(self):
+    def test_location_is_frozen(self) -> None:
         loc = SourceLocation(line=10, column=5)
         with pytest.raises(Exception):  # FrozenInstanceError
             loc.line = 20
@@ -69,19 +68,19 @@ class TestSourceLocation:
 class TestReferences:
     """Tests for SlotRef and BitRef."""
 
-    def test_slot_ref(self):
+    def test_slot_ref(self) -> None:
         ref = SlotRef(allocator="q", index=0)
         assert ref.allocator == "q"
         assert ref.index == 0
         assert str(ref) == "q[0]"
 
-    def test_bit_ref(self):
+    def test_bit_ref(self) -> None:
         ref = BitRef(register="c", index=1)
         assert ref.register == "c"
         assert ref.index == 1
         assert str(ref) == "c[1]"
 
-    def test_refs_are_frozen(self):
+    def test_refs_are_frozen(self) -> None:
         ref = SlotRef(allocator="q", index=0)
         with pytest.raises(Exception):
             ref.index = 1
@@ -90,29 +89,29 @@ class TestReferences:
 class TestExpressions:
     """Tests for expression nodes."""
 
-    def test_literal_int(self):
+    def test_literal_int(self) -> None:
         expr = LiteralExpr(value=42)
         assert expr.value == 42
 
-    def test_literal_float(self):
+    def test_literal_float(self) -> None:
         expr = LiteralExpr(value=3.14)
         assert expr.value == 3.14
 
-    def test_literal_bool(self):
+    def test_literal_bool(self) -> None:
         expr = LiteralExpr(value=True)
         assert expr.value is True
 
-    def test_var_expr(self):
+    def test_var_expr(self) -> None:
         expr = VarExpr(name="x")
         assert expr.name == "x"
 
-    def test_bit_expr(self):
+    def test_bit_expr(self) -> None:
         ref = BitRef(register="c", index=0)
         expr = BitExpr(ref=ref)
         assert expr.ref == ref
         assert expr.children() == (ref,)
 
-    def test_binary_expr(self):
+    def test_binary_expr(self) -> None:
         left = LiteralExpr(value=1)
         right = LiteralExpr(value=2)
         expr = BinaryExpr(op=BinaryOp.ADD, left=left, right=right)
@@ -122,7 +121,7 @@ class TestExpressions:
         assert expr.right == right
         assert expr.children() == (left, right)
 
-    def test_unary_expr(self):
+    def test_unary_expr(self) -> None:
         operand = LiteralExpr(value=1)
         expr = UnaryExpr(op=UnaryOp.NEG, operand=operand)
 
@@ -134,23 +133,23 @@ class TestExpressions:
 class TestGateKind:
     """Tests for GateKind enum."""
 
-    def test_single_qubit_gates(self):
+    def test_single_qubit_gates(self) -> None:
         assert GateKind.H.arity == 1
         assert GateKind.X.arity == 1
         assert GateKind.RZ.arity == 1
 
-    def test_two_qubit_gates(self):
+    def test_two_qubit_gates(self) -> None:
         assert GateKind.CX.arity == 2
         assert GateKind.CZ.arity == 2
         assert GateKind.SZZ.arity == 2
 
-    def test_parameterized_gates(self):
+    def test_parameterized_gates(self) -> None:
         assert GateKind.RX.is_parameterized
         assert GateKind.RY.is_parameterized
         assert GateKind.RZ.is_parameterized
         assert GateKind.RZZ.is_parameterized
 
-    def test_non_parameterized_gates(self):
+    def test_non_parameterized_gates(self) -> None:
         assert not GateKind.H.is_parameterized
         assert not GateKind.CX.is_parameterized
 
@@ -158,7 +157,7 @@ class TestGateKind:
 class TestStatements:
     """Tests for statement nodes."""
 
-    def test_gate_op_single_qubit(self):
+    def test_gate_op_single_qubit(self) -> None:
         target = SlotRef(allocator="q", index=0)
         gate = GateOp(gate=GateKind.H, targets=(target,))
 
@@ -167,7 +166,7 @@ class TestStatements:
         assert gate.params == ()
         assert gate.children() == (target,)
 
-    def test_gate_op_two_qubit(self):
+    def test_gate_op_two_qubit(self) -> None:
         t1 = SlotRef(allocator="q", index=0)
         t2 = SlotRef(allocator="q", index=1)
         gate = GateOp(gate=GateKind.CX, targets=(t1, t2))
@@ -176,7 +175,7 @@ class TestStatements:
         assert gate.targets == (t1, t2)
         assert gate.children() == (t1, t2)
 
-    def test_gate_op_with_params(self):
+    def test_gate_op_with_params(self) -> None:
         target = SlotRef(allocator="q", index=0)
         angle = LiteralExpr(value=3.14)
         gate = GateOp(gate=GateKind.RZ, targets=(target,), params=(angle,))
@@ -184,16 +183,16 @@ class TestStatements:
         assert gate.params == (angle,)
         assert gate.children() == (target, angle)
 
-    def test_prepare_op(self):
+    def test_prepare_op(self) -> None:
         prep = PrepareOp(allocator="q", slots=(0, 1))
         assert prep.allocator == "q"
         assert prep.slots == (0, 1)
 
-    def test_prepare_op_all(self):
+    def test_prepare_op_all(self) -> None:
         prep = PrepareOp(allocator="q", slots=None)
         assert prep.slots is None
 
-    def test_measure_op(self):
+    def test_measure_op(self) -> None:
         target = SlotRef(allocator="q", index=0)
         result = BitRef(register="c", index=0)
         measure = MeasureOp(targets=(target,), results=(result,))
@@ -202,7 +201,7 @@ class TestStatements:
         assert measure.results == (result,)
         assert measure.children() == (target, result)
 
-    def test_assign_op_to_bit(self):
+    def test_assign_op_to_bit(self) -> None:
         target = BitRef(register="c", index=0)
         value = LiteralExpr(value=1)
         assign = AssignOp(target=target, value=value)
@@ -212,22 +211,22 @@ class TestStatements:
         assert target in assign.children()
         assert value in assign.children()
 
-    def test_assign_op_to_var(self):
+    def test_assign_op_to_var(self) -> None:
         value = LiteralExpr(value=42)
         assign = AssignOp(target="x", value=value)
 
         assert assign.target == "x"
         assert assign.children() == [value]
 
-    def test_barrier_op(self):
+    def test_barrier_op(self) -> None:
         barrier = BarrierOp(allocators=("q", "r"))
         assert barrier.allocators == ("q", "r")
 
-    def test_comment_op(self):
+    def test_comment_op(self) -> None:
         comment = CommentOp(text="This is a comment")
         assert comment.text == "This is a comment"
 
-    def test_return_op(self):
+    def test_return_op(self) -> None:
         ret = ReturnOp(values=("q", "c"))
         assert ret.values == ("q", "c")
 
@@ -235,7 +234,7 @@ class TestStatements:
 class TestControlFlow:
     """Tests for control flow nodes."""
 
-    def test_if_stmt_then_only(self):
+    def test_if_stmt_then_only(self) -> None:
         cond = LiteralExpr(value=True)
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         if_stmt = IfStmt(condition=cond, then_body=(gate,))
@@ -244,7 +243,7 @@ class TestControlFlow:
         assert if_stmt.then_body == (gate,)
         assert if_stmt.else_body == ()
 
-    def test_if_stmt_with_else(self):
+    def test_if_stmt_with_else(self) -> None:
         cond = LiteralExpr(value=True)
         then_gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         else_gate = GateOp(gate=GateKind.X, targets=(SlotRef(allocator="q", index=0),))
@@ -255,7 +254,7 @@ class TestControlFlow:
         assert then_gate in if_stmt.children()
         assert else_gate in if_stmt.children()
 
-    def test_while_stmt(self):
+    def test_while_stmt(self) -> None:
         cond = LiteralExpr(value=True)
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         while_stmt = WhileStmt(condition=cond, body=(gate,))
@@ -263,7 +262,7 @@ class TestControlFlow:
         assert while_stmt.condition == cond
         assert while_stmt.body == (gate,)
 
-    def test_for_stmt(self):
+    def test_for_stmt(self) -> None:
         start = LiteralExpr(value=0)
         stop = LiteralExpr(value=10)
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
@@ -275,7 +274,7 @@ class TestControlFlow:
         assert for_stmt.step is None
         assert for_stmt.body == (gate,)
 
-    def test_for_stmt_with_step(self):
+    def test_for_stmt_with_step(self) -> None:
         start = LiteralExpr(value=0)
         stop = LiteralExpr(value=10)
         step = LiteralExpr(value=2)
@@ -284,14 +283,14 @@ class TestControlFlow:
         assert for_stmt.step == step
         assert step in for_stmt.children()
 
-    def test_repeat_stmt(self):
+    def test_repeat_stmt(self) -> None:
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         repeat = RepeatStmt(count=5, body=(gate,))
 
         assert repeat.count == 5
         assert repeat.body == (gate,)
 
-    def test_parallel_block(self):
+    def test_parallel_block(self) -> None:
         gate1 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         gate2 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=1),))
         parallel = ParallelBlock(body=(gate1, gate2))
@@ -302,23 +301,23 @@ class TestControlFlow:
 class TestDeclarations:
     """Tests for declaration nodes."""
 
-    def test_allocator_decl(self):
+    def test_allocator_decl(self) -> None:
         decl = AllocatorDecl(name="q", capacity=10)
         assert decl.name == "q"
         assert decl.capacity == 10
         assert decl.parent is None
 
-    def test_allocator_decl_with_parent(self):
+    def test_allocator_decl_with_parent(self) -> None:
         decl = AllocatorDecl(name="data", capacity=7, parent="base")
         assert decl.parent == "base"
 
-    def test_register_decl(self):
+    def test_register_decl(self) -> None:
         decl = RegisterDecl(name="c", size=5)
         assert decl.name == "c"
         assert decl.size == 5
         assert decl.is_result is True
 
-    def test_register_decl_not_result(self):
+    def test_register_decl_not_result(self) -> None:
         decl = RegisterDecl(name="scratch", size=3, is_result=False)
         assert decl.is_result is False
 
@@ -326,7 +325,7 @@ class TestDeclarations:
 class TestProgram:
     """Tests for Program node."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         prog = Program(name="test")
         assert prog.name == "test"
         assert prog.declarations == ()
@@ -334,27 +333,27 @@ class TestProgram:
         assert prog.returns == ()
         assert prog.allocator is None
 
-    def test_program_with_declarations(self):
+    def test_program_with_declarations(self) -> None:
         alloc = AllocatorDecl(name="q", capacity=5)
         reg = RegisterDecl(name="c", size=5)
         prog = Program(name="test", declarations=(alloc, reg))
 
         assert prog.declarations == (alloc, reg)
 
-    def test_program_with_body(self):
+    def test_program_with_body(self) -> None:
         prep = PrepareOp(allocator="q", slots=(0,))
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         prog = Program(name="test", body=(prep, gate))
 
         assert prog.body == (prep, gate)
 
-    def test_program_with_base_allocator(self):
+    def test_program_with_base_allocator(self) -> None:
         base = AllocatorDecl(name="base", capacity=100)
         prog = Program(name="test", allocator=base)
 
         assert prog.allocator == base
 
-    def test_program_get_allocator(self):
+    def test_program_get_allocator(self) -> None:
         base = AllocatorDecl(name="base", capacity=100)
         child = AllocatorDecl(name="data", capacity=10, parent="base")
         prog = Program(name="test", allocator=base, declarations=(child,))
@@ -363,14 +362,14 @@ class TestProgram:
         assert prog.get_allocator("data") == child
         assert prog.get_allocator("unknown") is None
 
-    def test_program_get_register(self):
+    def test_program_get_register(self) -> None:
         reg = RegisterDecl(name="c", size=5)
         prog = Program(name="test", declarations=(reg,))
 
         assert prog.get_register("c") == reg
         assert prog.get_register("unknown") is None
 
-    def test_program_children(self):
+    def test_program_children(self) -> None:
         base = AllocatorDecl(name="q", capacity=5)
         reg = RegisterDecl(name="c", size=5)
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))

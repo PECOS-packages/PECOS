@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     ForStmt,
@@ -27,9 +28,13 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     Program,
     RepeatStmt,
-    Statement,
     WhileStmt,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Statement,
+    )
 
 
 @dataclass
@@ -115,7 +120,10 @@ class StatementListOptimizer(OptimizationPass):
             passes_applied=[self.name],
         )
 
-    def _optimize_statements(self, statements: tuple[Statement, ...]) -> tuple[tuple[Statement, ...], int]:
+    def _optimize_statements(
+        self,
+        statements: tuple[Statement, ...],
+    ) -> tuple[tuple[Statement, ...], int]:
         """Optimize a sequence of statements.
 
         Scans for consecutive gate operations that can be cancelled or merged.
@@ -168,7 +176,11 @@ class StatementListOptimizer(OptimizationPass):
                 continue
 
             # Check for cancellation with next gate
-            if isinstance(stmt, GateOp) and i + 1 < len(statements) and isinstance(statements[i + 1], GateOp):
+            if (
+                isinstance(stmt, GateOp)
+                and i + 1 < len(statements)
+                and isinstance(statements[i + 1], GateOp)
+            ):
                 next_stmt = statements[i + 1]
                 if self._should_cancel(stmt, next_stmt):
                     # Skip both gates
@@ -197,7 +209,9 @@ class StatementListOptimizer(OptimizationPass):
     def _optimize_if(self, stmt: IfStmt) -> tuple[IfStmt, int]:
         """Recursively optimize an if statement."""
         then_body, then_count = self._optimize_statements(stmt.then_body)
-        else_body, else_count = self._optimize_statements(stmt.else_body) if stmt.else_body else ((), 0)
+        else_body, else_count = (
+            self._optimize_statements(stmt.else_body) if stmt.else_body else ((), 0)
+        )
 
         optimized = IfStmt(
             condition=stmt.condition,

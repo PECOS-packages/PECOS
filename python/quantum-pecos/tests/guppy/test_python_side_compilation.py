@@ -100,7 +100,11 @@ class TestPythonSideCompilation:
             ), "Measurements should be tuples, lists, or integers"
 
             # Check correlation if measurements are pairs
-            if measurements and isinstance(measurements[0], (tuple, list)) and len(measurements[0]) == 2:
+            if (
+                measurements
+                and isinstance(measurements[0], (tuple, list))
+                and len(measurements[0]) == 2
+            ):
                 correlated = sum(1 for m in measurements if m[0] == m[1])
                 correlation_rate = correlated / len(measurements)
                 assert (

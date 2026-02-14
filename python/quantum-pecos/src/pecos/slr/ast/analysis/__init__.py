@@ -70,44 +70,44 @@ from pecos.slr.ast.analysis.t_count_analyzer import (
 __all__ = [
     # Qubit state validation
     "AstQubitStateValidator",
-    "QubitStateTracker",
-    "StateViolation",
-    "ValidationSlotState",
-    "validate_ast_qubit_states",
-    # Resource counting
-    "ResourceCount",
-    "ResourceCounter",
-    "count_resources",
-    # Depth analysis
-    "DepthAnalyzer",
-    "DepthResult",
-    "analyze_depth",
-    # Qubit usage analysis
-    "QubitRole",
-    "QubitUsageAnalyzer",
-    "QubitUsageResult",
-    "QubitUsageStats",
-    "analyze_qubit_usage",
-    # Dependency analysis
-    "DependencyAnalyzer",
-    "DependencyResult",
-    "analyze_dependencies",
+    # Connectivity analysis
+    "ConnectivityAnalyzer",
+    "ConnectivityResult",
     # Data flow analysis
     "DataFlowAnalyzer",
     "DataFlowInfo",
     "DataFlowResult",
-    "ValueUse",
-    "analyze_data_flow",
-    # T-count analysis
-    "TCountAnalyzer",
-    "TCountResult",
-    "analyze_t_count",
-    # Connectivity analysis
-    "ConnectivityAnalyzer",
-    "ConnectivityResult",
-    "analyze_connectivity",
+    # Dependency analysis
+    "DependencyAnalyzer",
+    "DependencyResult",
+    # Depth analysis
+    "DepthAnalyzer",
+    "DepthResult",
     # Parallelism analysis
     "ParallelismAnalyzer",
     "ParallelismResult",
+    # Qubit usage analysis
+    "QubitRole",
+    "QubitStateTracker",
+    "QubitUsageAnalyzer",
+    "QubitUsageResult",
+    "QubitUsageStats",
+    # Resource counting
+    "ResourceCount",
+    "ResourceCounter",
+    "StateViolation",
+    # T-count analysis
+    "TCountAnalyzer",
+    "TCountResult",
+    "ValidationSlotState",
+    "ValueUse",
+    "analyze_connectivity",
+    "analyze_data_flow",
+    "analyze_dependencies",
+    "analyze_depth",
     "analyze_parallelism",
+    "analyze_qubit_usage",
+    "analyze_t_count",
+    "count_resources",
+    "validate_ast_qubit_states",
 ]

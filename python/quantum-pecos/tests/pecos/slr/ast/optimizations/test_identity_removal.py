@@ -22,7 +22,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestIdentityRemovalBasic:
     """Basic identity removal tests."""
 
-    def test_rz_zero_removed(self):
+    def test_rz_zero_removed(self) -> None:
         """RZ(0) is removed."""
         prog = Main(
             q := QReg("q", 1),
@@ -35,7 +35,7 @@ class TestIdentityRemovalBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 1
 
-    def test_rx_zero_removed(self):
+    def test_rx_zero_removed(self) -> None:
         """RX(0) is removed."""
         prog = Main(
             q := QReg("q", 1),
@@ -48,7 +48,7 @@ class TestIdentityRemovalBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 1
 
-    def test_ry_zero_removed(self):
+    def test_ry_zero_removed(self) -> None:
         """RY(0) is removed."""
         prog = Main(
             q := QReg("q", 1),
@@ -61,7 +61,7 @@ class TestIdentityRemovalBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 1
 
-    def test_rz_2pi_removed(self):
+    def test_rz_2pi_removed(self) -> None:
         """RZ(2*pi) is removed."""
         prog = Main(
             q := QReg("q", 1),
@@ -74,7 +74,7 @@ class TestIdentityRemovalBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 1
 
-    def test_rz_4pi_removed(self):
+    def test_rz_4pi_removed(self) -> None:
         """RZ(4*pi) is removed (multiple of 2*pi)."""
         prog = Main(
             q := QReg("q", 1),
@@ -91,7 +91,7 @@ class TestIdentityRemovalBasic:
 class TestIdentityRemovalNoRemove:
     """Tests where gates should NOT be removed."""
 
-    def test_rz_nonzero_not_removed(self):
+    def test_rz_nonzero_not_removed(self) -> None:
         """RZ(0.5) is not removed."""
         prog = Main(
             q := QReg("q", 1),
@@ -104,7 +104,7 @@ class TestIdentityRemovalNoRemove:
         assert len(result.program.body) == 1
         assert result.gates_removed == 0
 
-    def test_rz_pi_not_removed(self):
+    def test_rz_pi_not_removed(self) -> None:
         """RZ(pi) is not removed."""
         prog = Main(
             q := QReg("q", 1),
@@ -117,7 +117,7 @@ class TestIdentityRemovalNoRemove:
         assert len(result.program.body) == 1
         assert result.gates_removed == 0
 
-    def test_non_rotation_not_removed(self):
+    def test_non_rotation_not_removed(self) -> None:
         """Non-rotation gates are not affected."""
         prog = Main(
             q := QReg("q", 1),
@@ -135,7 +135,7 @@ class TestIdentityRemovalNoRemove:
 class TestIdentityRemovalControlFlow:
     """Identity removal inside control flow."""
 
-    def test_removal_inside_if(self):
+    def test_removal_inside_if(self) -> None:
         """Identity gates removed inside if statements."""
         prog = Main(
             q := QReg("q", 1),
@@ -152,7 +152,7 @@ class TestIdentityRemovalControlFlow:
         assert len(result.program.body) == 1  # IfStmt
         assert result.gates_removed == 1
 
-    def test_removal_inside_repeat(self):
+    def test_removal_inside_repeat(self) -> None:
         """Identity gates removed inside repeat blocks."""
         prog = Main(
             q := QReg("q", 1),
@@ -171,7 +171,7 @@ class TestIdentityRemovalControlFlow:
 class TestIdentityRemovalMultiple:
     """Multiple identity removal tests."""
 
-    def test_multiple_identity_gates(self):
+    def test_multiple_identity_gates(self) -> None:
         """Multiple identity gates are removed."""
         prog = Main(
             q := QReg("q", 1),
@@ -187,7 +187,7 @@ class TestIdentityRemovalMultiple:
         assert len(result.program.body) == 1  # Only H remains
         assert result.gates_removed == 3
 
-    def test_mixed_with_nonidentity(self):
+    def test_mixed_with_nonidentity(self) -> None:
         """Identity gates removed among non-identity gates."""
         prog = Main(
             q := QReg("q", 1),

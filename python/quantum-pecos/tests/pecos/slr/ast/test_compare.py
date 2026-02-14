@@ -32,7 +32,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestAstEqual:
     """Tests for ast_equal function."""
 
-    def test_identical_programs(self):
+    def test_identical_programs(self) -> None:
         """Identical programs are equal."""
         prog1 = Main(
             q := QReg("q", 2),
@@ -50,7 +50,7 @@ class TestAstEqual:
 
         assert ast_equal(ast1, ast2)
 
-    def test_different_gates(self):
+    def test_different_gates(self) -> None:
         """Programs with different gates are not equal."""
         prog1 = Main(q := QReg("q", 1), qb.H(q[0]))
         prog2 = Main(q := QReg("q", 1), qb.X(q[0]))
@@ -60,7 +60,7 @@ class TestAstEqual:
 
         assert not ast_equal(ast1, ast2)
 
-    def test_different_allocator_sizes(self):
+    def test_different_allocator_sizes(self) -> None:
         """Programs with different allocator sizes are not equal."""
         prog1 = Program(
             name="test",
@@ -73,7 +73,7 @@ class TestAstEqual:
 
         assert not ast_equal(prog1, prog2)
 
-    def test_different_body_length(self):
+    def test_different_body_length(self) -> None:
         """Programs with different body lengths are not equal."""
         prog1 = Main(q := QReg("q", 1), qb.H(q[0]))
         prog2 = Main(q := QReg("q", 1), qb.H(q[0]), qb.X(q[0]))
@@ -83,7 +83,7 @@ class TestAstEqual:
 
         assert not ast_equal(ast1, ast2)
 
-    def test_ignore_location(self):
+    def test_ignore_location(self) -> None:
         """Location differences are ignored by default."""
         gate1 = GateOp(
             gate=GateKind.H,
@@ -99,7 +99,7 @@ class TestAstEqual:
         assert nodes_equal(gate1, gate2, ignore_location=True)
         assert not nodes_equal(gate1, gate2, ignore_location=False)
 
-    def test_ignore_name(self):
+    def test_ignore_name(self) -> None:
         """Program name can be ignored."""
         prog1 = Program(name="prog1", allocator=AllocatorDecl(name="q", capacity=1))
         prog2 = Program(name="prog2", allocator=AllocatorDecl(name="q", capacity=1))
@@ -111,7 +111,7 @@ class TestAstEqual:
 class TestCompareAst:
     """Tests for compare_ast function."""
 
-    def test_equal_returns_no_differences(self):
+    def test_equal_returns_no_differences(self) -> None:
         """Equal programs have empty differences list."""
         prog1 = Main(q := QReg("q", 1), qb.H(q[0]))
         prog2 = Main(q := QReg("q", 1), qb.H(q[0]))
@@ -124,7 +124,7 @@ class TestCompareAst:
         assert diff.equal
         assert len(diff.differences) == 0
 
-    def test_different_returns_differences(self):
+    def test_different_returns_differences(self) -> None:
         """Different programs have non-empty differences list."""
         prog1 = Program(
             name="test",
@@ -142,9 +142,11 @@ class TestCompareAst:
         assert not diff.equal
         assert len(diff.differences) > 0
         # Should identify the gate difference
-        assert any("gate" in d.lower() or "mismatch" in d.lower() for d in diff.differences)
+        assert any(
+            "gate" in d.lower() or "mismatch" in d.lower() for d in diff.differences
+        )
 
-    def test_diff_string_representation(self):
+    def test_diff_string_representation(self) -> None:
         """Diff has useful string representation."""
         prog1 = Program(name="test", allocator=AllocatorDecl(name="q", capacity=1))
         prog2 = Program(name="test", allocator=AllocatorDecl(name="q", capacity=2))
@@ -155,7 +157,7 @@ class TestCompareAst:
         assert "differ" in result_str
         assert "capacity" in result_str
 
-    def test_equal_diff_string(self):
+    def test_equal_diff_string(self) -> None:
         """Equal diff has nice string."""
         prog = Program(name="test", allocator=AllocatorDecl(name="q", capacity=1))
 
@@ -163,7 +165,7 @@ class TestCompareAst:
 
         assert "equal" in str(diff).lower()
 
-    def test_diff_bool_conversion(self):
+    def test_diff_bool_conversion(self) -> None:
         """Diff can be used as boolean."""
         prog = Program(name="test", allocator=AllocatorDecl(name="q", capacity=1))
 
@@ -177,21 +179,21 @@ class TestCompareAst:
 class TestNodesEqual:
     """Tests for nodes_equal function."""
 
-    def test_gate_nodes_equal(self):
+    def test_gate_nodes_equal(self) -> None:
         """Gate nodes with same properties are equal."""
         gate1 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         gate2 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
 
         assert nodes_equal(gate1, gate2)
 
-    def test_gate_nodes_different_target(self):
+    def test_gate_nodes_different_target(self) -> None:
         """Gate nodes with different targets are not equal."""
         gate1 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         gate2 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=1),))
 
         assert not nodes_equal(gate1, gate2)
 
-    def test_rotation_gates_equal(self):
+    def test_rotation_gates_equal(self) -> None:
         """Rotation gates with same params are equal."""
         gate1 = GateOp(
             gate=GateKind.RZ,
@@ -206,7 +208,7 @@ class TestNodesEqual:
 
         assert nodes_equal(gate1, gate2)
 
-    def test_rotation_gates_different_params(self):
+    def test_rotation_gates_different_params(self) -> None:
         """Rotation gates with different params are not equal."""
         gate1 = GateOp(
             gate=GateKind.RZ,
@@ -225,7 +227,7 @@ class TestNodesEqual:
 class TestComplexCircuits:
     """Tests with complex circuits."""
 
-    def test_bell_state_equal(self):
+    def test_bell_state_equal(self) -> None:
         """Bell state circuits are equal."""
         prog1 = Main(
             q := QReg("q", 2),
@@ -243,7 +245,7 @@ class TestComplexCircuits:
 
         assert ast_equal(ast1, ast2)
 
-    def test_ghz_different_size(self):
+    def test_ghz_different_size(self) -> None:
         """GHZ circuits with different sizes are not equal."""
         prog1 = Main(
             q := QReg("q", 3),
@@ -264,7 +266,7 @@ class TestComplexCircuits:
 
         assert not ast_equal(ast1, ast2)
 
-    def test_circuit_with_control_flow(self):
+    def test_circuit_with_control_flow(self) -> None:
         """Circuits with control flow can be compared."""
         prog1 = Main(
             q := QReg("q", 1),
@@ -286,7 +288,7 @@ class TestComplexCircuits:
 
         assert ast_equal(ast1, ast2)
 
-    def test_circuit_different_control_flow(self):
+    def test_circuit_different_control_flow(self) -> None:
         """Circuits with different control flow are not equal."""
         prog1 = Main(
             q := QReg("q", 1),
@@ -308,7 +310,7 @@ class TestComplexCircuits:
 
         assert not ast_equal(ast1, ast2)
 
-    def test_repeat_loops_equal(self):
+    def test_repeat_loops_equal(self) -> None:
         """Repeat loops with same count are equal."""
         prog1 = Main(
             q := QReg("q", 1),
@@ -328,7 +330,7 @@ class TestComplexCircuits:
 
         assert ast_equal(ast1, ast2)
 
-    def test_repeat_loops_different_count(self):
+    def test_repeat_loops_different_count(self) -> None:
         """Repeat loops with different counts are not equal."""
         prog1 = Main(
             q := QReg("q", 1),
@@ -352,7 +354,7 @@ class TestComplexCircuits:
 class TestSerializationRoundTrip:
     """Test comparison with serialization round-trip."""
 
-    def test_serialized_equal_to_original(self):
+    def test_serialized_equal_to_original(self) -> None:
         """Serialized and restored AST equals original."""
         from pecos.slr.ast.serialize import ast_to_json, json_to_ast
 
@@ -370,7 +372,7 @@ class TestSerializationRoundTrip:
         # Ignoring name because slr_to_ast may generate different names
         assert ast_equal(ast, restored, ignore_name=True)
 
-    def test_double_serialization(self):
+    def test_double_serialization(self) -> None:
         """Double serialization produces equal result."""
         from pecos.slr.ast.serialize import ast_to_json, json_to_ast
 

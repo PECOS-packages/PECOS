@@ -35,7 +35,7 @@ use tket::hugr::Hugr;
 #[cfg(feature = "wasm")]
 use pecos_wasm::ForeignObject;
 
-/// Wrapper for ForeignObject that implements Clone using clone_box()
+/// Wrapper for `ForeignObject` that implements Clone using `clone_box()`
 #[cfg(feature = "wasm")]
 struct CloneableForeignObject(Box<dyn ForeignObject>);
 
@@ -47,22 +47,13 @@ impl Clone for CloneableForeignObject {
 }
 
 /// Builder for HUGR engines that integrates with the unified simulation API
+#[derive(Default)]
 pub struct HugrEngineBuilder {
     /// The HUGR source (either bytes, file path, or direct Hugr)
     source: Option<HugrSource>,
     /// Optional foreign object for WASM calls
     #[cfg(feature = "wasm")]
     foreign_object: Option<CloneableForeignObject>,
-}
-
-impl Default for HugrEngineBuilder {
-    fn default() -> Self {
-        Self {
-            source: None,
-            #[cfg(feature = "wasm")]
-            foreign_object: None,
-        }
-    }
 }
 
 impl Clone for HugrEngineBuilder {
@@ -152,7 +143,7 @@ impl ClassicalControlEngineBuilder for HugrEngineBuilder {
                 return Err(PecosError::Input(
                     "No HUGR source specified. Use .hugr(), .hugr_bytes(), or .hugr_file()"
                         .to_string(),
-                ))
+                ));
             }
         };
 

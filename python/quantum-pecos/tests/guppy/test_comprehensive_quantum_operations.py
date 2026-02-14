@@ -74,7 +74,10 @@ def get_decoded_results(
         # Flat format (legacy)
         if n_bits is not None and n_bits > 1:
             return decode_integer_results(raw_measurements, n_bits)
-        return [bool(v) if isinstance(v, int) and v in (0, 1) else v for v in raw_measurements]
+        return [
+            bool(v) if isinstance(v, int) and v in (0, 1) else v
+            for v in raw_measurements
+        ]
 
     # Fallback to key-based lookup
     if key in results:
@@ -124,7 +127,11 @@ class TestBasicQuantumGates:
             return result1, result2, result3, result4
 
         results = (
-            sim(Guppy(single_qubit_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+            sim(Guppy(single_qubit_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
         )
 
         # Decode integer-encoded results
@@ -182,7 +189,9 @@ class TestBasicQuantumGates:
 
             return r1, r2, r3, r4
 
-        results = sim(Guppy(phase_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(phase_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
 
         decoded_results = get_decoded_results(results, n_bits=4)
         for r in decoded_results:
@@ -211,7 +220,13 @@ class TestBasicQuantumGates:
 
             return r1, r2, r3
 
-        results = sim(Guppy(rotation_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(rotation_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
+        )
 
         decoded_results = get_decoded_results(results, n_bits=3)
         for r in decoded_results:
@@ -241,7 +256,13 @@ class TestBasicQuantumGates:
 
             return r1, r2, r3, r4
 
-        results = sim(Guppy(two_qubit_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(two_qubit_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
+        )
 
         decoded_results = get_decoded_results(results, n_bits=4)
         for r in decoded_results:
@@ -258,7 +279,9 @@ class TestBasicQuantumGates:
             ch(q1, q2)
             return measure(q1), measure(q2)
 
-        results = sim(Guppy(ch_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(ch_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
 
         decoded_results = get_decoded_results(results, n_bits=2)
         for r in decoded_results:
@@ -276,7 +299,13 @@ class TestBasicQuantumGates:
             toffoli(q1, q2, q3)
             return measure(q1), measure(q2), measure(q3)
 
-        results = sim(Guppy(toffoli_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(toffoli_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
+        )
 
         decoded_results = get_decoded_results(results, n_bits=3)
         for r in decoded_results:
@@ -295,7 +324,13 @@ class TestQuantumStateManagement:
             q = qubit()
             return measure(q)
 
-        results = sim(Guppy(allocation_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(allocation_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
+        )
 
         # New qubits should be in |0⟩
         decoded_results = get_decoded_results(results, n_bits=1)
@@ -328,7 +363,13 @@ class TestQuantumStateManagement:
 
             return m1, m2, m3
 
-        results = sim(Guppy(measure_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(measure_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
+        )
 
         # Check that measurement operations work correctly
         decoded_results = get_decoded_results(results, n_bits=3)
@@ -351,7 +392,13 @@ class TestQuantumStateManagement:
             x(q2)
             return measure(q2)
 
-        results = sim(Guppy(discard_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(discard_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
+        )
 
         # Should always measure True
         decoded_results = get_decoded_results(results, n_bits=1)
@@ -373,7 +420,9 @@ class TestQuantumStateManagement:
 
             return before, after
 
-        results = sim(Guppy(reset_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(reset_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
 
         decoded_results = get_decoded_results(results, n_bits=2)
         for r in decoded_results:
@@ -430,7 +479,13 @@ class TestLinearTypeSystem:
             x(q)
             return measure(q)
 
-        results = sim(Guppy(rebinding_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(rebinding_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
+        )
 
         # Should always be True
         decoded_results = get_decoded_results(results, n_bits=1)
@@ -461,14 +516,21 @@ class TestLinearTypeSystem:
             return measure(q)
 
         # Test X gate - should always return True
-        results_x = sim(Guppy(test_with_x)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results_x = (
+            sim(Guppy(test_with_x)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
         decoded_x = get_decoded_results(results_x, n_bits=1)
         assert all(r for r in decoded_x)
 
         # Test H gate - should produce a mix of 0s and 1s
         # Use seed for reproducibility
         results_h = (
-            sim(Guppy(test_with_h)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
+            sim(Guppy(test_with_h))
+            .qubits(10)
+            .quantum(state_vector())
+            .seed(42)
+            .run(100)
+            .to_dict()
         )
         decoded_h = get_decoded_results(results_h, n_bits=1)
         # H gate should produce roughly 50/50 distribution of 0s and 1s
@@ -515,7 +577,9 @@ class TestQuantumClassicalHybrid:
 
             return count
 
-        results = sim(Guppy(hybrid_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(hybrid_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
 
         # Due to deterministic bug, we don't get proper quantum randomness
         # TODO: When bug is fixed, should see all values 0-7
@@ -569,13 +633,25 @@ class TestQuantumClassicalHybrid:
 
         # Test each condition
         results0 = (
-            sim(Guppy(test_condition_0)).qubits(10).quantum(state_vector()).run(10).to_dict()
+            sim(Guppy(test_condition_0))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
         )
         results1 = (
-            sim(Guppy(test_condition_1)).qubits(10).quantum(state_vector()).run(10).to_dict()
+            sim(Guppy(test_condition_1))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
         )
         results2 = (
-            sim(Guppy(test_condition_2)).qubits(10).quantum(state_vector()).run(10).to_dict()
+            sim(Guppy(test_condition_2))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
         )
 
         # Condition 0: no gate, should measure |0⟩
@@ -591,7 +667,9 @@ class TestQuantumClassicalHybrid:
         # H followed by X should produce variation
         assert len(decoded2) == 10
 
-    @pytest.mark.skip(reason="For-loop with parity accumulation returns empty results in HUGR interpreter")
+    @pytest.mark.skip(
+        reason="For-loop with parity accumulation returns empty results in HUGR interpreter",
+    )
     def test_parity_accumulation(self) -> None:
         """Test accumulating measurement results (parity).
 
@@ -615,7 +693,12 @@ class TestQuantumClassicalHybrid:
 
         # Use seed for reproducibility and 100 shots for statistical robustness
         results = (
-            sim(Guppy(parity_test)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
+            sim(Guppy(parity_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .seed(42)
+            .run(100)
+            .to_dict()
         )
 
         # H gates now produce proper randomness, so parity should vary
@@ -644,7 +727,13 @@ class TestQuantumCircuitPatterns:
             h(q)
             return measure(q)
 
-        results = sim(Guppy(sequential_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(sequential_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .run(10)
+            .to_dict()
+        )
 
         # Complex sequences should produce mixed results with state_vector simulator
         decoded_results = get_decoded_results(results, n_bits=1)
@@ -666,7 +755,9 @@ class TestQuantumCircuitPatterns:
 
             return measure(q1), measure(q2)
 
-        results = sim(Guppy(bell_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(bell_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
 
         # Should only see 00 and 11
         decoded_results = get_decoded_results(results, n_bits=2)
@@ -688,7 +779,9 @@ class TestQuantumCircuitPatterns:
 
             return measure(q1), measure(q2), measure(q3)
 
-        results = sim(Guppy(ghz_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(ghz_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
 
         # Should only see 000 and 111
         decoded_results = get_decoded_results(results, n_bits=3)
@@ -728,7 +821,8 @@ class TestQuantumCircuitPatterns:
             .qubits(10)
             .quantum(state_vector())
             .seed(42)
-            .run(1000).to_dict()
+            .run(1000)
+            .to_dict()
         )
 
         # With H gate producing 50/50, we should see various patterns
@@ -762,7 +856,9 @@ class TestStructuredQuantumData:
 
             return measure(q1), measure(q2)
 
-        results = sim(Guppy(tuple_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(Guppy(tuple_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
 
         # First qubit always 1, second follows first
         decoded_results = get_decoded_results(results, n_bits=2)
@@ -795,7 +891,8 @@ class TestStructuredQuantumData:
             sim(Guppy(create_and_measure_bell))
             .qubits(10)
             .quantum(state_vector())
-            .run(20).to_dict()
+            .run(20)
+            .to_dict()
         )
         decoded_results = get_decoded_results(results, n_bits=2)
         for r in decoded_results:

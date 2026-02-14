@@ -14,10 +14,15 @@
 from __future__ import annotations
 
 import copy
+import warnings
+from typing import TYPE_CHECKING
 
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.slr.gen_codes.generator import Generator
-from pecos.slr.vars import LoopVar, SymbolicElem
+from pecos.slr.vars import SymbolicElem
+
+if TYPE_CHECKING:
+    from pecos.slr.vars import LoopVar
 
 
 class QuantumCircuitGenerator(Generator):

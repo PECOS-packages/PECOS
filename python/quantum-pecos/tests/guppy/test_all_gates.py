@@ -7,9 +7,29 @@ the expected quantum state transformations.
 import pytest
 from guppylang import guppy
 from guppylang.std.quantum import (
-    qubit, measure, h, x, y, z, s, sdg, t, tdg,
-    cx, cy, cz, rx, ry, rz, crz, toffoli, reset, discard,
-    v, vdg, pi,
+    crz,
+    cx,
+    cy,
+    cz,
+    discard,
+    h,
+    measure,
+    pi,
+    qubit,
+    reset,
+    rx,
+    ry,
+    rz,
+    s,
+    sdg,
+    t,
+    tdg,
+    toffoli,
+    v,
+    vdg,
+    x,
+    y,
+    z,
 )
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -37,6 +57,7 @@ class TestSingleQubitGates:
 
     def test_x_gate(self) -> None:
         """X gate: |0> -> |1>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -48,6 +69,7 @@ class TestSingleQubitGates:
 
     def test_y_gate(self) -> None:
         """Y gate: |0> -> i|1> (measures as |1>)."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -59,6 +81,7 @@ class TestSingleQubitGates:
 
     def test_z_gate_on_zero(self) -> None:
         """Z gate: |0> -> |0> (no change in measurement)."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -70,6 +93,7 @@ class TestSingleQubitGates:
 
     def test_z_gate_on_one(self) -> None:
         """Z gate: |1> -> -|1> (still measures as |1>)."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -82,6 +106,7 @@ class TestSingleQubitGates:
 
     def test_h_gate_superposition(self) -> None:
         """H gate: |0> -> |+> (50/50 distribution)."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -97,6 +122,7 @@ class TestSingleQubitGates:
 
     def test_h_h_identity(self) -> None:
         """H-H = I: |0> -> |+> -> |0>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -109,6 +135,7 @@ class TestSingleQubitGates:
 
     def test_s_gate(self) -> None:
         """S gate (phase): |0> -> |0>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -120,6 +147,7 @@ class TestSingleQubitGates:
 
     def test_sdg_gate(self) -> None:
         """Sdg gate (S-dagger): |0> -> |0>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -131,6 +159,7 @@ class TestSingleQubitGates:
 
     def test_s_sdg_identity(self) -> None:
         """S-Sdg = I on superposition."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -145,6 +174,7 @@ class TestSingleQubitGates:
 
     def test_t_gate(self) -> None:
         """T gate: |0> -> |0>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -156,6 +186,7 @@ class TestSingleQubitGates:
 
     def test_tdg_gate(self) -> None:
         """Tdg gate (T-dagger): |0> -> |0>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -167,6 +198,7 @@ class TestSingleQubitGates:
 
     def test_t_tdg_identity(self) -> None:
         """T-Tdg = I on superposition."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -181,6 +213,7 @@ class TestSingleQubitGates:
 
     def test_v_gate_squared(self) -> None:
         """V gate (sqrt(X)): V^2 = X, so |0> -> |1>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -193,6 +226,7 @@ class TestSingleQubitGates:
 
     def test_vdg_gate_squared(self) -> None:
         """Vdg gate: Vdg^2 = X, so |0> -> |1>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -205,6 +239,7 @@ class TestSingleQubitGates:
 
     def test_v_vdg_identity(self) -> None:
         """V-Vdg = I."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -221,6 +256,7 @@ class TestRotationGates:
 
     def test_rx_pi(self) -> None:
         """RX(pi) = X (up to global phase)."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -232,6 +268,7 @@ class TestRotationGates:
 
     def test_ry_pi(self) -> None:
         """RY(pi) = Y (up to global phase)."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -243,6 +280,7 @@ class TestRotationGates:
 
     def test_rz_on_zero(self) -> None:
         """RZ(pi) on |0> = |0>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -254,6 +292,7 @@ class TestRotationGates:
 
     def test_rz_phase_flip(self) -> None:
         """RZ(pi): |+> -> |-> -> |1> via H-RZ-H."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -271,6 +310,7 @@ class TestTwoQubitGates:
 
     def test_cx_control_zero(self) -> None:
         """CX: control=|0>, no flip."""
+
         @guppy
         def circuit() -> tuple[bool, bool]:
             q0 = qubit()
@@ -283,6 +323,7 @@ class TestTwoQubitGates:
 
     def test_cx_control_one(self) -> None:
         """CX: control=|1>, flip target."""
+
         @guppy
         def circuit() -> tuple[bool, bool]:
             q0 = qubit()
@@ -296,6 +337,7 @@ class TestTwoQubitGates:
 
     def test_cy_control_zero(self) -> None:
         """CY: control=|0>, no flip."""
+
         @guppy
         def circuit() -> tuple[bool, bool]:
             q0 = qubit()
@@ -308,6 +350,7 @@ class TestTwoQubitGates:
 
     def test_cy_control_one(self) -> None:
         """CY: control=|1>, flip target."""
+
         @guppy
         def circuit() -> tuple[bool, bool]:
             q0 = qubit()
@@ -321,6 +364,7 @@ class TestTwoQubitGates:
 
     def test_cz_phase_only(self) -> None:
         """CZ: both |1>, phase only (no measurement change)."""
+
         @guppy
         def circuit() -> tuple[bool, bool]:
             q0 = qubit()
@@ -335,6 +379,7 @@ class TestTwoQubitGates:
 
     def test_crz_control_zero(self) -> None:
         """CRZ: control=|0>, no effect."""
+
         @guppy
         def circuit() -> tuple[bool, bool]:
             q0 = qubit()
@@ -347,14 +392,15 @@ class TestTwoQubitGates:
 
     def test_crz_control_one(self) -> None:
         """CRZ: control=|1>, applies RZ(pi) to target."""
+
         @guppy
         def circuit() -> tuple[bool, bool]:
             q0 = qubit()
             q1 = qubit()
-            x(q0)       # ctrl = |1>
-            h(q1)       # target = |+>
+            x(q0)  # ctrl = |1>
+            h(q1)  # target = |+>
             crz(q0, q1, pi)  # target -> |->
-            h(q1)       # target -> |1>
+            h(q1)  # target -> |1>
             return measure(q0), measure(q1)
 
         measurements = get_measurements(run_circuit(circuit, 2))
@@ -366,6 +412,7 @@ class TestThreeQubitGates:
 
     def test_toffoli_00(self) -> None:
         """Toffoli: controls=00, no flip."""
+
         @guppy
         def circuit() -> tuple[bool, bool, bool]:
             q0 = qubit()
@@ -379,6 +426,7 @@ class TestThreeQubitGates:
 
     def test_toffoli_10(self) -> None:
         """Toffoli: controls=10, no flip."""
+
         @guppy
         def circuit() -> tuple[bool, bool, bool]:
             q0 = qubit()
@@ -393,6 +441,7 @@ class TestThreeQubitGates:
 
     def test_toffoli_01(self) -> None:
         """Toffoli: controls=01, no flip."""
+
         @guppy
         def circuit() -> tuple[bool, bool, bool]:
             q0 = qubit()
@@ -407,6 +456,7 @@ class TestThreeQubitGates:
 
     def test_toffoli_11(self) -> None:
         """Toffoli: controls=11, flip target."""
+
         @guppy
         def circuit() -> tuple[bool, bool, bool]:
             q0 = qubit()
@@ -426,6 +476,7 @@ class TestResetAndDiscard:
 
     def test_reset_from_one(self) -> None:
         """Reset: |1> -> |0>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -438,6 +489,7 @@ class TestResetAndDiscard:
 
     def test_reset_from_zero(self) -> None:
         """Reset: |0> -> |0>."""
+
         @guppy
         def circuit() -> bool:
             q = qubit()
@@ -449,6 +501,7 @@ class TestResetAndDiscard:
 
     def test_discard(self) -> None:
         """Discard doesn't crash and other qubits work."""
+
         @guppy
         def circuit() -> bool:
             q1 = qubit()
@@ -466,6 +519,7 @@ class TestEntanglement:
 
     def test_bell_state(self) -> None:
         """Bell state: perfectly correlated 00 or 11."""
+
         @guppy
         def circuit() -> tuple[bool, bool]:
             q0 = qubit()
@@ -480,10 +534,12 @@ class TestEntanglement:
         # Should see both 00 and 11
         has_zeros = any(m[0] == 0 for m in measurements)
         has_ones = any(m[0] == 1 for m in measurements)
-        assert has_zeros and has_ones
+        assert has_zeros
+        assert has_ones
 
     def test_ghz_3_state(self) -> None:
         """3-qubit GHZ state: perfectly correlated 000 or 111."""
+
         @guppy
         def circuit() -> tuple[bool, bool, bool]:
             q0 = qubit()
@@ -500,7 +556,8 @@ class TestEntanglement:
         # Should see both 000 and 111
         has_zeros = any(m[0] == 0 for m in measurements)
         has_ones = any(m[0] == 1 for m in measurements)
-        assert has_zeros and has_ones
+        assert has_zeros
+        assert has_ones
 
 
 if __name__ == "__main__":

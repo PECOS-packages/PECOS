@@ -17,16 +17,19 @@ optionally iterating until a fixed point is reached.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
-from pecos.slr.ast.optimizations.base import OptimizationPass, OptimizationResult
+from pecos.slr.ast.optimizations.base import OptimizationResult
 from pecos.slr.ast.optimizations.gate_cancellation import GateCancellationPass
 from pecos.slr.ast.optimizations.identity_removal import IdentityRemovalPass
 from pecos.slr.ast.optimizations.inverse_cancellation import InverseCancellationPass
 from pecos.slr.ast.optimizations.rotation_merging import RotationMergingPass
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pecos.slr.ast.nodes import Program
+    from pecos.slr.ast.optimizations.base import OptimizationPass
 
 
 class OptimizationPipeline:
@@ -172,5 +175,5 @@ def create_default_pipeline() -> OptimizationPipeline:
             GateCancellationPass(),  # Then cancel self-inverse
             InverseCancellationPass(),  # Then cancel inverse pairs
             RotationMergingPass(),  # Finally merge rotations
-        ]
+        ],
     )

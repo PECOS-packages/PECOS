@@ -29,6 +29,7 @@ Example:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     ForStmt,
@@ -37,11 +38,15 @@ from pecos.slr.ast.nodes import (
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RepeatStmt,
-    Statement,
     WhileStmt,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Program,
+        Statement,
+    )
 
 
 @dataclass
@@ -150,19 +155,19 @@ class ParallelismAnalyzer:
         """
         if isinstance(stmt, GateOp):
             return self._schedule_gate(stmt, op_index)
-        elif isinstance(stmt, MeasureOp):
+        if isinstance(stmt, MeasureOp):
             return self._schedule_measure(stmt, op_index)
-        elif isinstance(stmt, PrepareOp):
+        if isinstance(stmt, PrepareOp):
             return self._schedule_prepare(stmt, op_index)
-        elif isinstance(stmt, IfStmt):
+        if isinstance(stmt, IfStmt):
             return self._schedule_if(stmt, op_index)
-        elif isinstance(stmt, WhileStmt):
+        if isinstance(stmt, WhileStmt):
             return self._schedule_while(stmt, op_index)
-        elif isinstance(stmt, ForStmt):
+        if isinstance(stmt, ForStmt):
             return self._schedule_for(stmt, op_index)
-        elif isinstance(stmt, RepeatStmt):
+        if isinstance(stmt, RepeatStmt):
             return self._schedule_repeat(stmt, op_index)
-        elif isinstance(stmt, ParallelBlock):
+        if isinstance(stmt, ParallelBlock):
             return self._schedule_parallel(stmt, op_index)
         return op_index
 

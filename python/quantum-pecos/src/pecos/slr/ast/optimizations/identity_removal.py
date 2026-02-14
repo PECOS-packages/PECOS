@@ -17,6 +17,7 @@ Removes rotation gates that are equivalent to identity (angle = 0 or 2*pi*n).
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     ForStmt,
@@ -26,11 +27,15 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     Program,
     RepeatStmt,
-    Statement,
     WhileStmt,
 )
 from pecos.slr.ast.optimizations.base import OptimizationPass, OptimizationResult
 from pecos.slr.ast.optimizations.gate_properties import is_rotation_gate
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Statement,
+    )
 
 
 class IdentityRemovalPass(OptimizationPass):
@@ -78,7 +83,10 @@ class IdentityRemovalPass(OptimizationPass):
             passes_applied=[self.name],
         )
 
-    def _optimize_statements(self, statements: tuple[Statement, ...]) -> tuple[tuple[Statement, ...], int]:
+    def _optimize_statements(
+        self,
+        statements: tuple[Statement, ...],
+    ) -> tuple[tuple[Statement, ...], int]:
         """Remove identity gates from a sequence of statements."""
         result: list[Statement] = []
         removed = 0
@@ -153,12 +161,17 @@ class IdentityRemovalPass(OptimizationPass):
 
         # Check for multiples of 2*pi
         normalized = value % (2 * math.pi)
-        return abs(normalized) < self.IDENTITY_ANGLE_TOLERANCE or abs(normalized - 2 * math.pi) < self.IDENTITY_ANGLE_TOLERANCE
+        return (
+            abs(normalized) < self.IDENTITY_ANGLE_TOLERANCE
+            or abs(normalized - 2 * math.pi) < self.IDENTITY_ANGLE_TOLERANCE
+        )
 
     def _optimize_if(self, stmt: IfStmt) -> tuple[IfStmt, int]:
         """Recursively optimize an if statement."""
         then_body, then_count = self._optimize_statements(stmt.then_body)
-        else_body, else_count = self._optimize_statements(stmt.else_body) if stmt.else_body else ((), 0)
+        else_body, else_count = (
+            self._optimize_statements(stmt.else_body) if stmt.else_body else ((), 0)
+        )
 
         optimized = IfStmt(
             condition=stmt.condition,

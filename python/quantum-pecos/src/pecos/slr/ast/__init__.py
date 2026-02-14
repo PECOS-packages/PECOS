@@ -81,6 +81,7 @@ Extend :class:`BaseVisitor` to create custom analysis passes:
 
     from pecos.slr.ast import BaseVisitor, GateOp
 
+
     class GateCounter(BaseVisitor[int]):
         def default_result(self) -> int:
             return 0
@@ -90,6 +91,7 @@ Extend :class:`BaseVisitor` to create custom analysis passes:
 
         def visit_gate(self, node: GateOp) -> int:
             return 1 + self.combine_results(self.visit_children(node))
+
 
     counter = GateCounter()
     gate_count = counter.visit(program)
@@ -105,53 +107,6 @@ Submodules
 - :mod:`pecos.slr.ast.compare` - AST comparison tools
 """
 
-from pecos.slr.ast.nodes import (
-    # Base
-    AstNode,
-    SourceLocation,
-    # Enums
-    BinaryOp,
-    GateKind,
-    UnaryOp,
-    # References
-    BitRef,
-    SlotRef,
-    # Expressions
-    BinaryExpr,
-    BitExpr,
-    Expression,
-    LiteralExpr,
-    UnaryExpr,
-    VarExpr,
-    # Types
-    AllocatorTypeExpr,
-    ArrayTypeExpr,
-    BitTypeExpr,
-    QubitTypeExpr,
-    TypeExpr,
-    # Declarations
-    AllocatorDecl,
-    Declaration,
-    RegisterDecl,
-    # Statements
-    AssignOp,
-    BarrierOp,
-    CommentOp,
-    GateOp,
-    MeasureOp,
-    PermuteOp,
-    PrepareOp,
-    ReturnOp,
-    Statement,
-    # Control flow
-    ForStmt,
-    IfStmt,
-    ParallelBlock,
-    RepeatStmt,
-    WhileStmt,
-    # Program
-    Program,
-)
 from pecos.slr.ast.analysis import (
     AstQubitStateValidator,
     DepthAnalyzer,
@@ -178,6 +133,53 @@ from pecos.slr.ast.codegen import (
 )
 from pecos.slr.ast.compare import ast_equal, compare_ast, nodes_equal
 from pecos.slr.ast.converter import SlrToAst, slr_to_ast
+from pecos.slr.ast.nodes import (
+    # Declarations
+    AllocatorDecl,
+    # Types
+    AllocatorTypeExpr,
+    ArrayTypeExpr,
+    # Statements
+    AssignOp,
+    # Base
+    AstNode,
+    BarrierOp,
+    # Expressions
+    BinaryExpr,
+    # Enums
+    BinaryOp,
+    BitExpr,
+    # References
+    BitRef,
+    BitTypeExpr,
+    CommentOp,
+    Declaration,
+    Expression,
+    # Control flow
+    ForStmt,
+    GateKind,
+    GateOp,
+    IfStmt,
+    LiteralExpr,
+    MeasureOp,
+    ParallelBlock,
+    PermuteOp,
+    PrepareOp,
+    # Program
+    Program,
+    QubitTypeExpr,
+    RegisterDecl,
+    RepeatStmt,
+    ReturnOp,
+    SlotRef,
+    SourceLocation,
+    Statement,
+    TypeExpr,
+    UnaryExpr,
+    UnaryOp,
+    VarExpr,
+    WhileStmt,
+)
 from pecos.slr.ast.pretty_print import format_expression, format_statement, pretty_print
 from pecos.slr.ast.serialize import ast_to_dict, ast_to_json, dict_to_ast, json_to_ast
 from pecos.slr.ast.visitor import (
@@ -188,92 +190,92 @@ from pecos.slr.ast.visitor import (
 )
 
 __all__ = [
+    "AllocatorDecl",
+    "AllocatorTypeExpr",
+    "ArrayTypeExpr",
+    "AssignOp",
     # Base
     "AstNode",
-    "SourceLocation",
-    # Enums
-    "GateKind",
-    "BinaryOp",
-    "UnaryOp",
-    # References
-    "SlotRef",
-    "BitRef",
-    # Expressions
-    "Expression",
-    "LiteralExpr",
-    "VarExpr",
-    "BitExpr",
-    "BinaryExpr",
-    "UnaryExpr",
-    # Types
-    "TypeExpr",
-    "QubitTypeExpr",
-    "BitTypeExpr",
-    "ArrayTypeExpr",
-    "AllocatorTypeExpr",
-    # Declarations
-    "Declaration",
-    "AllocatorDecl",
-    "RegisterDecl",
-    # Statements
-    "Statement",
-    "GateOp",
-    "PrepareOp",
-    "MeasureOp",
-    "AssignOp",
-    "BarrierOp",
-    "CommentOp",
-    "ReturnOp",
-    "PermuteOp",
-    # Control flow
-    "IfStmt",
-    "WhileStmt",
-    "ForStmt",
-    "RepeatStmt",
-    "ParallelBlock",
-    # Program
-    "Program",
-    # Visitors
-    "AstVisitor",
-    "BaseVisitor",
-    "VoidVisitor",
-    "CollectingVisitor",
-    # Converter
-    "SlrToAst",
-    "slr_to_ast",
+    # Analysis
+    "AstQubitStateValidator",
     # Code generation
     "AstToGuppy",
-    "ast_to_guppy",
     "AstToQasm",
-    "ast_to_qasm",
+    # Visitors
+    "AstVisitor",
+    "BarrierOp",
+    "BaseVisitor",
+    "BinaryExpr",
+    "BinaryOp",
+    "BitExpr",
+    "BitRef",
+    "BitTypeExpr",
     "CodegenOptions",
     "CodegenResult",
-    "generate",
-    "generate_with_options",
-    "generate_with_validation",
+    "CollectingVisitor",
+    "CommentOp",
+    # Declarations
+    "Declaration",
+    "DepthAnalyzer",
+    "DepthResult",
+    # Expressions
+    "Expression",
+    "ForStmt",
+    # Enums
+    "GateKind",
+    "GateOp",
+    # Control flow
+    "IfStmt",
+    "LiteralExpr",
+    "MeasureOp",
+    "ParallelBlock",
+    "PermuteOp",
+    "PrepareOp",
+    # Program
+    "Program",
+    "QubitStateTracker",
+    "QubitTypeExpr",
+    "RegisterDecl",
+    "RepeatStmt",
+    "ResourceCount",
+    "ResourceCounter",
+    "ReturnOp",
+    # References
+    "SlotRef",
+    # Converter
+    "SlrToAst",
+    "SourceLocation",
+    "StateViolation",
+    # Statements
+    "Statement",
+    # Types
+    "TypeExpr",
+    "UnaryExpr",
+    "UnaryOp",
+    "ValidationSlotState",
+    "VarExpr",
+    "VoidVisitor",
+    "WhileStmt",
+    "analyze_depth",
+    # Comparison
+    "ast_equal",
     # Serialization
     "ast_to_dict",
+    "ast_to_guppy",
     "ast_to_json",
+    "ast_to_qasm",
+    "compare_ast",
+    "count_resources",
     "dict_to_ast",
-    "json_to_ast",
     # Pretty-printing
     "format_expression",
     "format_statement",
-    "pretty_print",
-    # Comparison
-    "ast_equal",
-    "compare_ast",
+    "generate",
+    "generate_with_options",
+    "generate_with_validation",
+    "json_to_ast",
     "nodes_equal",
-    # Analysis
-    "AstQubitStateValidator",
-    "QubitStateTracker",
-    "StateViolation",
-    "ValidationSlotState",
+    "pretty_print",
+    "slr_to_ast",
     "validate_ast_qubit_states",
-    "ResourceCount",
-    "ResourceCounter",
-    "count_resources",
-    "DepthAnalyzer",
-    "DepthResult",
-    "analyze_depth",
 ]

@@ -18,9 +18,9 @@
 //!
 //! # Module Structure
 //!
-//! - [`types`]: Type definitions (QuantumOp, ClassicalOp, ClassicalValue, etc.)
+//! - [`types`]: Type definitions (`QuantumOp`, `ClassicalOp`, `ClassicalValue`, etc.)
 //! - [`analysis`]: HUGR static analysis and extraction functions
-//! - [`control_flow`]: Control flow handling (TailLoop, Conditional, CFG, Call)
+//! - [`control_flow`]: Control flow handling (`TailLoop`, Conditional, CFG, Call)
 
 pub(crate) mod analysis;
 mod control_flow;
@@ -44,9 +44,7 @@ use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 use crate::loader::load_hugr_from_bytes;
 
 // Re-export public types from submodules
-pub use types::{
-    CapturedResult, ClassicalValue, FutureId, ResultValue, RngContextId,
-};
+pub use types::{CapturedResult, ClassicalValue, FutureId, ResultValue, RngContextId};
 
 // Use internal types from submodules
 use types::{
@@ -59,8 +57,8 @@ use types::{
 use analysis::{
     all_predecessors_ready, collect_descendants, extract_call_targets, extract_cfgs,
     extract_classical_ops, extract_conditionals, extract_func_defns, extract_quantum_ops,
-    extract_tailloops, find_nodes_inside_cases,
-    find_nodes_inside_cfg_blocks, find_nodes_inside_func_defns, find_nodes_inside_tailloops,
+    extract_tailloops, find_nodes_inside_cases, find_nodes_inside_cfg_blocks,
+    find_nodes_inside_func_defns, find_nodes_inside_tailloops,
 };
 /// A HUGR interpreter engine that directly executes HUGR programs.
 ///
@@ -138,7 +136,7 @@ pub struct HugrEngine {
     pub(crate) pending_cfg_branches: BTreeMap<(Node, Node), Vec<Node>>,
 
     /// Pending block propagations that need re-propagation after measurement results.
-    /// Stores (cfg_node, from_block, to_block) tuples.
+    /// Stores (`cfg_node`, `from_block`, `to_block`) tuples.
     pub(crate) pending_measurement_propagations: Vec<(Node, Node, Node)>,
 
     // === Call/FuncDefn Support ===
@@ -325,8 +323,13 @@ impl HugrEngine {
         // Extract quantum operations (but we'll skip case/CFG-internal ones in work queue)
         self.quantum_ops = extract_quantum_ops(&hugr);
         debug!("Extracted {} quantum operations", self.quantum_ops.len());
-        eprintln!("[DEBUG] Extracted {} quantum ops, {} cfgs, {} func_defns, {} call_targets",
-            self.quantum_ops.len(), self.cfgs.len(), self.func_defns.len(), self.call_targets.len());
+        eprintln!(
+            "[DEBUG] Extracted {} quantum ops, {} cfgs, {} func_defns, {} call_targets",
+            self.quantum_ops.len(),
+            self.cfgs.len(),
+            self.func_defns.len(),
+            self.call_targets.len()
+        );
 
         // Extract classical operations (arithmetic, logic, etc.)
         self.classical_ops = extract_classical_ops(&hugr);
@@ -529,11 +532,6 @@ impl HugrEngine {
         );
     }
 
-
-
-
-
-
     /// Try to resolve pending `TailLoop` control values after measurement results are available.
     fn try_resolve_pending_tailloops(&mut self) {
         let hugr = match &self.hugr {
@@ -586,15 +584,6 @@ impl HugrEngine {
         }
     }
 
-
-
-
-
-
-
-
-
-
     /// Process the HUGR and generate quantum commands.
     ///
     /// This is the main execution loop that processes nodes from the work queue
@@ -603,7 +592,7 @@ impl HugrEngine {
     /// 1. **Control Flow Dispatch** (in priority order):
     ///    - Conditional nodes: Branch based on measurement results
     ///    - CFG nodes: Execute entry block and manage transitions
-    ///    - TailLoop nodes: Handle iteration and break conditions
+    ///    - `TailLoop` nodes: Handle iteration and break conditions
     ///    - Call nodes: Activate function definitions
     ///
     /// 2. **Operation Processing**:
@@ -612,7 +601,7 @@ impl HugrEngine {
     ///    - Quantum operations: Emit gates to message builder
     ///
     /// 3. **Completion Checks**: After each operation, check if it completes
-    ///    any active Case, CFG block, or TailLoop body.
+    ///    any active Case, CFG block, or `TailLoop` body.
     ///
     /// # Returns
     ///
@@ -649,7 +638,7 @@ impl HugrEngine {
                 continue;
             }
             let node_op = hugr.get_optype(current_node);
-            eprintln!("[DEBUG] Processing node {current_node:?}: {:?}", node_op);
+            eprintln!("[DEBUG] Processing node {current_node:?}: {node_op:?}");
 
             // Check batch size
             if operation_count >= Self::MAX_BATCH_SIZE {
@@ -695,7 +684,10 @@ impl HugrEngine {
             if let Some(cfg_info) = self.cfgs.get(&current_node).cloned() {
                 debug!("Starting CFG {current_node:?} execution");
                 debug!("[TRACE] Starting CFG {current_node:?}");
-                eprintln!("[DEBUG] Starting CFG {current_node:?}, entry_block={:?}", cfg_info.entry_block);
+                eprintln!(
+                    "[DEBUG] Starting CFG {current_node:?}, entry_block={:?}",
+                    cfg_info.entry_block
+                );
 
                 // Start CFG execution by activating the entry block's operations
                 let entry_block = cfg_info.entry_block;
@@ -783,8 +775,7 @@ impl HugrEngine {
                         if self.nodes_inside_tailloops.contains(&op_node) {
                             continue;
                         }
-                        if !self.work_queue.contains(&op_node)
-                            && !self.processed.contains(&op_node)
+                        if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node)
                         {
                             self.work_queue.push_back(op_node);
                         }
@@ -799,8 +790,7 @@ impl HugrEngine {
                             if self.nodes_inside_tailloops.contains(&child) {
                                 continue;
                             }
-                            if !self.work_queue.contains(&child)
-                                && !self.processed.contains(&child)
+                            if !self.work_queue.contains(&child) && !self.processed.contains(&child)
                             {
                                 self.work_queue.push_back(child);
                             }
@@ -858,8 +848,7 @@ impl HugrEngine {
                     // propagation separately during expansion.
                     for &tl_node in &block_info.tailloop_nodes {
                         self.nodes_inside_cfg_blocks.remove(&tl_node);
-                        if !self.work_queue.contains(&tl_node)
-                            && !self.processed.contains(&tl_node)
+                        if !self.work_queue.contains(&tl_node) && !self.processed.contains(&tl_node)
                         {
                             self.work_queue.push_back(tl_node);
                         }
@@ -875,7 +864,12 @@ impl HugrEngine {
                     );
 
                     // If entry block has no operations, immediately transition to successor
-                    if num_ops == 0 && num_calls == 0 && num_conditionals == 0 && num_bool_ops == 0 && num_tailloops == 0 {
+                    if num_ops == 0
+                        && num_calls == 0
+                        && num_conditionals == 0
+                        && num_bool_ops == 0
+                        && num_tailloops == 0
+                    {
                         debug!(
                             "[TRACE] Entry block {:?} has 0 ops and 0 calls, successors: {:?}",
                             entry_block, block_info.successors
@@ -978,7 +972,9 @@ impl HugrEngine {
                 }
 
                 debug!("Processing Call {current_node:?} to FuncDefn {func_defn_node:?}");
-                eprintln!("[DEBUG] Processing Call {current_node:?} to FuncDefn {func_defn_node:?}");
+                eprintln!(
+                    "[DEBUG] Processing Call {current_node:?} to FuncDefn {func_defn_node:?}"
+                );
 
                 // Check if there's already an active call to this FuncDefn
                 // If so, queue this call to wait
@@ -1011,16 +1007,22 @@ impl HugrEngine {
                             // Map qubits
                             if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
                                 let func_input_wire = (func_info.input_node, in_port);
-                                self.wire_state.wire_to_qubit.insert(func_input_wire, qubit_id);
+                                self.wire_state
+                                    .wire_to_qubit
+                                    .insert(func_input_wire, qubit_id);
                                 debug!(
                                     "Call {:?}: mapped input {} qubit {:?} to FuncDefn Input {:?}",
                                     current_node, in_port, qubit_id, func_info.input_node
                                 );
                             }
                             // Map classical values (including arrays)
-                            if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                            if let Some(value) =
+                                self.wire_state.classical_values.get(&src_wire).cloned()
+                            {
                                 let func_input_wire = (func_info.input_node, in_port);
-                                self.wire_state.classical_values.insert(func_input_wire, value.clone());
+                                self.wire_state
+                                    .classical_values
+                                    .insert(func_input_wire, value.clone());
                                 debug!(
                                     "Call {:?}: mapped input {} classical value to FuncDefn Input {:?}",
                                     current_node, in_port, func_info.input_node
@@ -1066,9 +1068,13 @@ impl HugrEngine {
                         // No CFG - just pass through qubits (identity function)
                         for port in 0..func_info.num_outputs {
                             let func_input_wire = (func_info.input_node, port);
-                            if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&func_input_wire) {
+                            if let Some(&qubit_id) =
+                                self.wire_state.wire_to_qubit.get(&func_input_wire)
+                            {
                                 let call_output_wire = (current_node, port);
-                                self.wire_state.wire_to_qubit.insert(call_output_wire, qubit_id);
+                                self.wire_state
+                                    .wire_to_qubit
+                                    .insert(call_output_wire, qubit_id);
                             }
                         }
                     }
@@ -1085,7 +1091,9 @@ impl HugrEngine {
             let current_op = hugr.get_optype(current_node);
             if matches!(current_op, OpType::LoadConstant(_)) {
                 if let Some(value) = self.try_load_constant(&hugr, current_node) {
-                    self.wire_state.classical_values.insert((current_node, 0), value);
+                    self.wire_state
+                        .classical_values
+                        .insert((current_node, 0), value);
                     debug!("LoadConstant {current_node:?}: loaded value");
                 } else {
                     debug!("LoadConstant {current_node:?}: failed to load value");
@@ -1113,13 +1121,13 @@ impl HugrEngine {
 
                 // If outputs are empty, inputs weren't ready - defer this operation
                 if outputs.is_empty() && classical_op.num_outputs > 0 {
-                    debug!(
-                        "Classical op {current_node:?}: deferring - inputs not ready"
-                    );
+                    debug!("Classical op {current_node:?}: deferring - inputs not ready");
                     // Clear stale output values so dependent ops see None and also defer
                     // This is critical for loops where old iteration values could be misread
                     for port in 0..classical_op.num_outputs {
-                        self.wire_state.classical_values.remove(&(current_node, port));
+                        self.wire_state
+                            .classical_values
+                            .remove(&(current_node, port));
                     }
                     // Add to pending bool reads set for retry (reusing the same mechanism)
                     self.pending_bool_reads.insert(current_node);
@@ -1148,6 +1156,9 @@ impl HugrEngine {
                 // This is especially important for loop control (iadd for incrementing counters)
                 self.check_cfg_block_completion(&hugr, current_node);
 
+                // Check if this operation completes any active TailLoop body
+                self.check_tailloop_body_completion(&hugr, current_node);
+
                 // Add ready successors to work queue
                 self.queue_ready_successors(&hugr, current_node);
 
@@ -1173,20 +1184,21 @@ impl HugrEngine {
                 // This is especially important for tket.bool ops in loop control
                 self.check_cfg_block_completion(&hugr, current_node);
 
+                // Check if this operation completes any active TailLoop body
+                self.check_tailloop_body_completion(&hugr, current_node);
+
                 // Add ready successors to work queue
                 self.queue_ready_successors(&hugr, current_node);
 
                 continue;
-            } else if is_extension_op {
-                if !self.quantum_ops.contains_key(&current_node) {
-                    // Extension op couldn't be processed (input not ready) - defer it
-                    // But don't defer if it's also a quantum op (e.g., MeasureFree from tket.quantum)
-                    // - those should fall through to the quantum op handling below
-                    self.pending_bool_reads.insert(current_node);
-                    continue;
-                }
-                // Fall through to quantum op handling
+            } else if is_extension_op && !self.quantum_ops.contains_key(&current_node) {
+                // Extension op couldn't be processed (input not ready) - defer it
+                // But don't defer if it's also a quantum op (e.g., MeasureFree from tket.quantum)
+                // - those should fall through to the quantum op handling below
+                self.pending_bool_reads.insert(current_node);
+                continue;
             }
+            // Fall through to quantum op handling
 
             // =================================================================
             // Quantum Operations (gates, measurements)
@@ -1383,7 +1395,8 @@ impl HugrEngine {
                 self.measurement_state.mappings.push((node, qubit_id));
 
                 let bool_output_port = usize::from(op.gate_type == GateType::Measure);
-                self.measurement_state.output_wires
+                self.measurement_state
+                    .output_wires
                     .insert(node, (node, bool_output_port));
 
                 debug!(
@@ -1414,11 +1427,11 @@ impl HugrEngine {
         }
         // Fall back to runtime classical value at the angle input port.
         // The angle port is after all qubit inputs.
-        if let Some(value) = self.get_input_value(hugr, node, op.num_qubit_inputs) {
-            if let Some(halfturns) = value.as_rotation() {
-                // Convert half-turns to radians: halfturns * pi
-                return halfturns * std::f64::consts::PI;
-            }
+        if let Some(value) = self.get_input_value(hugr, node, op.num_qubit_inputs)
+            && let Some(halfturns) = value.as_rotation()
+        {
+            // Convert half-turns to radians: halfturns * pi
+            return halfturns * std::f64::consts::PI;
         }
         0.0
     }
@@ -1577,14 +1590,18 @@ impl ClassicalEngine for HugrEngine {
                 for (local_idx, value) in outcomes.into_iter().enumerate() {
                     let global_idx = self.measurement_state.processed_count + local_idx;
 
-                    if let Some((meas_node, qubit_id)) = self.measurement_state.mappings.get(global_idx) {
+                    if let Some((meas_node, qubit_id)) =
+                        self.measurement_state.mappings.get(global_idx)
+                    {
                         debug!("Measurement result: qubit {qubit_id:?} = {value}");
                         self.measurement_state.results.insert(*qubit_id, value);
 
                         // Record the classical value on the measurement's output wire
-                        if let Some(&wire_key) = self.measurement_state.output_wires.get(meas_node) {
+                        if let Some(&wire_key) = self.measurement_state.output_wires.get(meas_node)
+                        {
                             debug!("Recording classical value {value} on wire {wire_key:?}");
-                            self.wire_state.classical_values
+                            self.wire_state
+                                .classical_values
                                 .insert(wire_key, ClassicalValue::Bool(value != 0));
                         }
                     } else {
@@ -1789,7 +1806,10 @@ impl std::fmt::Debug for HugrEngine {
             .field("quantum_ops_count", &self.quantum_ops.len())
             .field("work_queue_len", &self.work_queue.len())
             .field("processed_count", &self.processed.len())
-            .field("measurements_processed", &self.measurement_state.processed_count)
+            .field(
+                "measurements_processed",
+                &self.measurement_state.processed_count,
+            )
             .finish_non_exhaustive()
     }
 }

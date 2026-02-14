@@ -25,7 +25,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestAstToQirBasic:
     """Basic code generation tests."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         prog = Main()
         ast = slr_to_ast(prog)
 
@@ -34,7 +34,7 @@ class TestAstToQirBasic:
         assert isinstance(llvm_ir, str)
         assert "define void @main()" in llvm_ir
 
-    def test_program_with_qreg(self):
+    def test_program_with_qreg(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -46,9 +46,9 @@ class TestAstToQirBasic:
         assert "define void @main()" in llvm_ir
         assert "__quantum__qis__h__body" in llvm_ir
 
-    def test_has_entry_point_attribute(self):
+    def test_has_entry_point_attribute(self) -> None:
         prog = Main(
-            q := QReg("q", 1),
+            _q := QReg("q", 1),
         )
         ast = slr_to_ast(prog)
 
@@ -61,7 +61,7 @@ class TestAstToQirBasic:
 class TestAstToQirGates:
     """Gate code generation tests."""
 
-    def test_hadamard_gate(self):
+    def test_hadamard_gate(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -72,7 +72,7 @@ class TestAstToQirGates:
 
         assert "__quantum__qis__h__body" in llvm_ir
 
-    def test_pauli_gates(self):
+    def test_pauli_gates(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.X(q[0]),
@@ -87,7 +87,7 @@ class TestAstToQirGates:
         assert "__quantum__qis__y__body" in llvm_ir
         assert "__quantum__qis__z__body" in llvm_ir
 
-    def test_phase_gates(self):
+    def test_phase_gates(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.SZ(q[0]),
@@ -100,7 +100,7 @@ class TestAstToQirGates:
         assert "__quantum__qis__s__body" in llvm_ir
         assert "__quantum__qis__s__adj" in llvm_ir
 
-    def test_t_gates(self):
+    def test_t_gates(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.T(q[0]),
@@ -113,7 +113,7 @@ class TestAstToQirGates:
         assert "__quantum__qis__t__body" in llvm_ir
         assert "__quantum__qis__t__adj" in llvm_ir
 
-    def test_two_qubit_cx_gate(self):
+    def test_two_qubit_cx_gate(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -124,7 +124,7 @@ class TestAstToQirGates:
 
         assert "__quantum__qis__cnot__body" in llvm_ir
 
-    def test_two_qubit_cz_gate(self):
+    def test_two_qubit_cz_gate(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.CZ(q[0], q[1]),
@@ -139,7 +139,7 @@ class TestAstToQirGates:
 class TestAstToQirPrepMeasure:
     """Prep and measure code generation tests."""
 
-    def test_measurement(self):
+    def test_measurement(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -152,7 +152,7 @@ class TestAstToQirPrepMeasure:
         # Measurement uses mz_to_creg_bit
         assert "mz_to_creg_bit" in llvm_ir
 
-    def test_prep_reset(self):
+    def test_prep_reset(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.Prep(q[0]),
@@ -167,7 +167,7 @@ class TestAstToQirPrepMeasure:
 class TestAstToQirControlFlow:
     """Control flow code generation tests."""
 
-    def test_if_statement(self):
+    def test_if_statement(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -183,7 +183,7 @@ class TestAstToQirControlFlow:
         assert "br i1" in llvm_ir
         assert "__quantum__qis__h__body" in llvm_ir
 
-    def test_repeat_unrolled(self):
+    def test_repeat_unrolled(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=3).block(
@@ -202,10 +202,10 @@ class TestAstToQirControlFlow:
 class TestAstToQirClassicalRegisters:
     """Classical register tests."""
 
-    def test_creg_creation(self):
+    def test_creg_creation(self) -> None:
         prog = Main(
-            q := QReg("q", 1),
-            c := CReg("c", 4),
+            _q := QReg("q", 1),
+            _c := CReg("c", 4),
         )
         ast = slr_to_ast(prog)
 
@@ -214,7 +214,7 @@ class TestAstToQirClassicalRegisters:
         # Should call create_creg
         assert "create_creg" in llvm_ir
 
-    def test_results_output(self):
+    def test_results_output(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1, result=True),
@@ -231,7 +231,7 @@ class TestAstToQirClassicalRegisters:
 class TestAstToQirQEC:
     """QEC pattern code generation tests."""
 
-    def test_syndrome_extraction(self):
+    def test_syndrome_extraction(self) -> None:
         prog = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
@@ -253,7 +253,7 @@ class TestAstToQirQEC:
 class TestAstToQirGenerator:
     """Tests for AstToQir generator class."""
 
-    def test_generator_reusable(self):
+    def test_generator_reusable(self) -> None:
         generator = AstToQir()
 
         prog1 = Main(
@@ -275,10 +275,10 @@ class TestAstToQirGenerator:
         assert "__quantum__qis__h__body" in llvm_ir1
         assert "__quantum__qis__x__body" in llvm_ir2
 
-    def test_qubit_count_tracked(self):
+    def test_qubit_count_tracked(self) -> None:
         prog = Main(
-            a := QReg("a", 3),
-            b := QReg("b", 2),
+            _a := QReg("a", 3),
+            _b := QReg("b", 2),
         )
         ast = slr_to_ast(prog)
 
@@ -288,7 +288,7 @@ class TestAstToQirGenerator:
         assert generator.context.qubit_count == 5
         assert 'required_num_qubits"="5"' in llvm_ir
 
-    def test_measurement_count_tracked(self):
+    def test_measurement_count_tracked(self) -> None:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
@@ -308,7 +308,7 @@ class TestAstToQirGenerator:
 class TestAstToQirFullPipeline:
     """End-to-end tests: SLR -> AST -> QIR."""
 
-    def test_bell_state_circuit(self):
+    def test_bell_state_circuit(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -324,7 +324,7 @@ class TestAstToQirFullPipeline:
         assert "__quantum__qis__cnot__body" in llvm_ir
         assert "ret void" in llvm_ir
 
-    def test_ghz_state_circuit(self):
+    def test_ghz_state_circuit(self) -> None:
         prog = Main(
             q := QReg("q", 3),
             qb.H(q[0]),
@@ -339,7 +339,7 @@ class TestAstToQirFullPipeline:
         # Two CNOT calls - count occurrences of the call instruction
         assert llvm_ir.count("call void @__quantum__qis__cnot__body") == 2
 
-    def test_valid_llvm_ir_structure(self):
+    def test_valid_llvm_ir_structure(self) -> None:
         """Test that generated IR has valid LLVM structure."""
         prog = Main(
             q := QReg("q", 2),

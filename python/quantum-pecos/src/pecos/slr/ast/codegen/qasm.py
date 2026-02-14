@@ -33,36 +33,38 @@ from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
-    AssignOp,
-    BarrierOp,
     BinaryExpr,
     BinaryOp,
     BitExpr,
     BitRef,
-    CommentOp,
-    ForStmt,
     GateKind,
-    GateOp,
-    IfStmt,
     LiteralExpr,
-    MeasureOp,
-    ParallelBlock,
-    PermuteOp,
-    PrepareOp,
-    Program,
     RegisterDecl,
-    RepeatStmt,
-    ReturnOp,
-    SlotRef,
     UnaryExpr,
     UnaryOp,
     VarExpr,
-    WhileStmt,
 )
 from pecos.slr.ast.visitor import BaseVisitor
 
 if TYPE_CHECKING:
-    from pecos.slr.ast.nodes import Expression
+    from pecos.slr.ast.nodes import (
+        AssignOp,
+        BarrierOp,
+        CommentOp,
+        Expression,
+        ForStmt,
+        GateOp,
+        IfStmt,
+        MeasureOp,
+        ParallelBlock,
+        PermuteOp,
+        PrepareOp,
+        Program,
+        RepeatStmt,
+        ReturnOp,
+        SlotRef,
+        WhileStmt,
+    )
 
 
 # Mapping from AST GateKind to QASM gate names
@@ -134,8 +136,12 @@ class QasmContext:
     """Context for QASM code generation."""
 
     allocators: dict[str, int] = field(default_factory=dict)  # name -> size
-    allocator_parents: dict[str, str | None] = field(default_factory=dict)  # name -> parent
-    allocator_offsets: dict[str, int] = field(default_factory=dict)  # name -> offset in parent
+    allocator_parents: dict[str, str | None] = field(
+        default_factory=dict,
+    )  # name -> parent
+    allocator_offsets: dict[str, int] = field(
+        default_factory=dict,
+    )  # name -> offset in parent
     registers: dict[str, int] = field(default_factory=dict)  # name -> size
     condition: str | None = None  # Current if condition
 
@@ -376,7 +382,9 @@ class AstToQasm(BaseVisitor[list[str]]):
             if i < len(node.results):
                 result = node.results[i]
                 result_ref = f"{result.register}[{result.index}]"
-                lines.append(self._maybe_conditional(f"measure {target_ref} -> {result_ref};"))
+                lines.append(
+                    self._maybe_conditional(f"measure {target_ref} -> {result_ref};"),
+                )
             else:
                 # Measurement without result storage
                 lines.append(self._maybe_conditional(f"measure {target_ref};"))
@@ -387,10 +395,11 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_assign(self, node: AssignOp) -> list[str]:
         """Generate assignment operation."""
-        if isinstance(node.target, BitRef):
-            target = f"{node.target.register}[{node.target.index}]"
-        else:
-            target = str(node.target)
+        target = (
+            f"{node.target.register}[{node.target.index}]"
+            if isinstance(node.target, BitRef)
+            else str(node.target)
+        )
 
         value = self._render_expression(node.value)
         return [self._maybe_conditional(f"{target} = {value};")]

@@ -25,15 +25,15 @@ from pecos.circuit_converters.checks2circuit import Check2Circuits
 
 # hugr_to_dag and hugr_to_ast require the optional hugr package
 try:
+    from pecos.circuit_converters.hugr_to_ast import (
+        guppy_to_ast,
+        hugr_to_ast,
+    )
     from pecos.circuit_converters.hugr_to_dag import (
         UnsupportedHugrStructureError,
         dag_to_gate_sequence,
         guppy_to_dag,
         hugr_to_dag,
-    )
-    from pecos.circuit_converters.hugr_to_ast import (
-        guppy_to_ast,
-        hugr_to_ast,
     )
 
     _HAS_HUGR = True
@@ -48,9 +48,9 @@ if _HAS_HUGR:
     __all__ += [
         "UnsupportedHugrStructureError",
         "dag_to_gate_sequence",
-        "guppy_to_dag",
-        "hugr_to_dag",
         # HUGR to AST conversion
         "guppy_to_ast",
+        "guppy_to_dag",
         "hugr_to_ast",
+        "hugr_to_dag",
     ]

@@ -39,7 +39,6 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     PermuteOp,
     PrepareOp,
-    Program,
     RegisterDecl,
     RepeatStmt,
     WhileStmt,
@@ -47,7 +46,10 @@ from pecos.slr.ast.nodes import (
 
 if TYPE_CHECKING:
     from pecos.circuits.quantum_circuit import QuantumCircuit
-    from pecos.slr.ast.nodes import Statement
+    from pecos.slr.ast.nodes import (
+        Program,
+        Statement,
+    )
 
 # Mapping from AST GateKind to QuantumCircuit gate names
 GATE_TO_QC: dict[GateKind, str] = {
@@ -188,7 +190,9 @@ class AstToQuantumCircuit:
                 self.context.allocator_parents[decl.name] = decl.parent
 
         if program.allocator:
-            self.context.allocator_parents[program.allocator.name] = program.allocator.parent
+            self.context.allocator_parents[program.allocator.name] = (
+                program.allocator.parent
+            )
 
         # Calculate offsets for child allocators
         self._calculate_allocator_offsets(program)
@@ -278,17 +282,25 @@ class AstToQuantumCircuit:
     def _process_two_qubit_gate(self, node: GateOp, gate_name: str) -> None:
         """Process a two-qubit gate."""
         if len(node.targets) >= 2:
-            q0 = self.context.get_qubit(node.targets[0].allocator, node.targets[0].index)
-            q1 = self.context.get_qubit(node.targets[1].allocator, node.targets[1].index)
+            q0 = self.context.get_qubit(
+                node.targets[0].allocator,
+                node.targets[0].index,
+            )
+            q1 = self.context.get_qubit(
+                node.targets[1].allocator,
+                node.targets[1].index,
+            )
             self._add_to_tick(gate_name, (q0, q1))
         elif len(node.targets) % 2 == 0:
             # Process pairs
             for i in range(0, len(node.targets), 2):
                 q0 = self.context.get_qubit(
-                    node.targets[i].allocator, node.targets[i].index
+                    node.targets[i].allocator,
+                    node.targets[i].index,
                 )
                 q1 = self.context.get_qubit(
-                    node.targets[i + 1].allocator, node.targets[i + 1].index
+                    node.targets[i + 1].allocator,
+                    node.targets[i + 1].index,
                 )
                 self._add_to_tick(gate_name, (q0, q1))
 

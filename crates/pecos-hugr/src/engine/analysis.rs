@@ -21,7 +21,7 @@
 //! # Overview
 //!
 //! The analysis phase extracts:
-//! - Control flow structures (Conditionals, CFGs, TailLoops, FuncDefns)
+//! - Control flow structures (Conditionals, CFGs, `TailLoops`, `FuncDefns`)
 //! - Quantum operations and their metadata
 //! - Classical operations (logic, arithmetic)
 //! - Structural information (nodes inside containers, I/O nodes)
@@ -114,7 +114,7 @@ pub fn find_nodes_inside_cases(
 
 /// Extract all CFG nodes from the HUGR.
 ///
-/// CFGs (Control Flow Graphs) contain DataflowBlocks connected by control edges.
+/// CFGs (Control Flow Graphs) contain `DataflowBlocks` connected by control edges.
 /// Each block can branch to multiple successors based on a Sum output.
 pub fn extract_cfgs(hugr: &Hugr) -> BTreeMap<Node, CfgInfo> {
     let mut cfgs = BTreeMap::new();
@@ -212,7 +212,9 @@ pub fn extract_dataflow_block_info(
     // Find extension ops that aren't tracked elsewhere (e.g., tket.result)
     let extension_ops: BTreeSet<Node> = find_extension_ops_in_block(hugr, node)
         .into_iter()
-        .filter(|op| !quantum_ops.contains(op) && !bool_ops.contains(op) && !classical_ops.contains(op))
+        .filter(|op| {
+            !quantum_ops.contains(op) && !bool_ops.contains(op) && !classical_ops.contains(op)
+        })
         .collect();
 
     // Find TailLoop nodes inside this block
@@ -300,7 +302,7 @@ pub fn find_nodes_inside_cfg_blocks(hugr: &Hugr, cfgs: &BTreeMap<Node, CfgInfo>)
 
 /// Extract all `TailLoop` nodes from the HUGR.
 ///
-/// TailLoops are HUGR's looping construct. They repeatedly execute their body
+/// `TailLoops` are HUGR's looping construct. They repeatedly execute their body
 /// until the body outputs a "break" Sum variant.
 pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
     let mut tailloops = BTreeMap::new();
@@ -331,21 +333,27 @@ pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
             let num_inputs = just_inputs_count + rest_count;
             let num_outputs = just_outputs_count + rest_count;
 
-            // Find quantum operations inside the TailLoop
+            // Find operations inside the TailLoop
             let quantum_ops = find_quantum_ops_in_block(hugr, node);
             let call_nodes = find_call_nodes_in_block(hugr, node);
             let extension_ops: BTreeSet<Node> = find_extension_ops_in_block(hugr, node)
                 .into_iter()
                 .collect();
+            let classical_ops = find_classical_ops_in_block(hugr, node);
+            let bool_ops = find_bool_ops_in_block(hugr, node);
+            let conditional_nodes = find_conditional_nodes_in_block(hugr, node);
 
             debug!(
-                "Found TailLoop node {:?} with {} inputs, {} outputs, {} quantum ops, {} calls, {} extension ops",
+                "Found TailLoop node {:?} with {} inputs, {} outputs, {} quantum ops, {} calls, {} extension ops, {} classical ops, {} bool ops, {} conditionals",
                 node,
                 num_inputs,
                 num_outputs,
                 quantum_ops.len(),
                 call_nodes.len(),
-                extension_ops.len()
+                extension_ops.len(),
+                classical_ops.len(),
+                bool_ops.len(),
+                conditional_nodes.len()
             );
 
             tailloops.insert(
@@ -360,6 +368,9 @@ pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
                     quantum_ops,
                     call_nodes,
                     extension_ops,
+                    classical_ops,
+                    bool_ops,
+                    conditional_nodes,
                     num_inputs,
                     num_outputs,
                 },
@@ -390,7 +401,7 @@ pub fn find_nodes_inside_tailloops(
 
 /// Extract all `FuncDefn` nodes from the HUGR.
 ///
-/// FuncDefns are function definitions that can be called via Call nodes.
+/// `FuncDefns` are function definitions that can be called via Call nodes.
 /// They contain a body dataflow graph and may have nested CFGs.
 pub fn extract_func_defns(hugr: &Hugr) -> BTreeMap<Node, FuncDefnInfo> {
     let mut func_defns = BTreeMap::new();
@@ -573,7 +584,7 @@ pub fn extract_quantum_ops(hugr: &Hugr) -> BTreeMap<Node, QuantumOp> {
 /// - `arithmetic.int`: iadd, isub, imul, etc.
 /// - `arithmetic.float`: fadd, fsub, fmul, etc.
 /// - `arithmetic.conversions`: int/float conversions
-/// - `prelude`: MakeTuple, UnpackTuple
+/// - `prelude`: `MakeTuple`, `UnpackTuple`
 #[allow(clippy::too_many_lines)]
 pub fn extract_classical_ops(hugr: &Hugr) -> BTreeMap<Node, ClassicalOp> {
     let mut operations = BTreeMap::new();
@@ -742,11 +753,7 @@ pub fn find_conditional_nodes_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Nod
 }
 
 /// Recursively collect Conditional nodes in a subtree.
-fn collect_conditional_nodes_recursive(
-    hugr: &Hugr,
-    node: Node,
-    conditionals: &mut BTreeSet<Node>,
-) {
+fn collect_conditional_nodes_recursive(hugr: &Hugr, node: Node, conditionals: &mut BTreeSet<Node>) {
     for child in hugr.children(node) {
         let op = hugr.get_optype(child);
         if matches!(op, OpType::Conditional(_)) {
@@ -759,19 +766,15 @@ fn collect_conditional_nodes_recursive(
     }
 }
 
-/// Find all TailLoop nodes inside a CFG block.
+/// Find all `TailLoop` nodes inside a CFG block.
 pub fn find_tailloop_nodes_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
     let mut tailloops = BTreeSet::new();
     collect_tailloop_nodes_recursive(hugr, block, &mut tailloops);
     tailloops
 }
 
-/// Recursively collect TailLoop nodes in a subtree.
-fn collect_tailloop_nodes_recursive(
-    hugr: &Hugr,
-    node: Node,
-    tailloops: &mut BTreeSet<Node>,
-) {
+/// Recursively collect `TailLoop` nodes in a subtree.
+fn collect_tailloop_nodes_recursive(hugr: &Hugr, node: Node, tailloops: &mut BTreeSet<Node>) {
     for child in hugr.children(node) {
         let op = hugr.get_optype(child);
         if matches!(op, OpType::TailLoop(_)) {
@@ -918,7 +921,7 @@ pub fn get_container_type(hugr: &Hugr, node: Node) -> ContainerType {
 }
 
 /// Check if all quantum predecessors of a node have been processed.
-/// This includes quantum operations, Conditionals, CFGs, TailLoops, and Call nodes.
+/// This includes quantum operations, Conditionals, CFGs, `TailLoops`, and Call nodes.
 pub fn all_predecessors_ready(
     hugr: &Hugr,
     node: Node,
@@ -951,7 +954,6 @@ pub fn all_predecessors_ready(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_collect_descendants_empty() {

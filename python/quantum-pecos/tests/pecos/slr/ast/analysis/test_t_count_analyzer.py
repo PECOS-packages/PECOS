@@ -20,7 +20,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestTCountBasic:
     """Basic T-count tests."""
 
-    def test_no_t_gates(self):
+    def test_no_t_gates(self) -> None:
         """Circuit with no T gates."""
         prog = Main(
             q := QReg("q", 1),
@@ -34,7 +34,7 @@ class TestTCountBasic:
         assert result.t_count == 0
         assert result.t_depth == 0
 
-    def test_single_t_gate(self):
+    def test_single_t_gate(self) -> None:
         """Circuit with single T gate."""
         prog = Main(
             q := QReg("q", 1),
@@ -48,7 +48,7 @@ class TestTCountBasic:
         assert result.t_depth == 1
         assert result.breakdown == {"T": 1}
 
-    def test_single_tdg_gate(self):
+    def test_single_tdg_gate(self) -> None:
         """Circuit with single Tdg gate."""
         prog = Main(
             q := QReg("q", 1),
@@ -62,7 +62,7 @@ class TestTCountBasic:
         assert result.t_depth == 1
         assert result.breakdown == {"Tdg": 1}
 
-    def test_mixed_t_gates(self):
+    def test_mixed_t_gates(self) -> None:
         """Circuit with T and Tdg gates."""
         prog = Main(
             q := QReg("q", 1),
@@ -81,7 +81,7 @@ class TestTCountBasic:
 class TestTDepth:
     """T-depth calculation tests."""
 
-    def test_sequential_t_gates(self):
+    def test_sequential_t_gates(self) -> None:
         """Sequential T gates on same qubit have additive T-depth."""
         prog = Main(
             q := QReg("q", 1),
@@ -96,7 +96,7 @@ class TestTDepth:
         assert result.t_count == 3
         assert result.t_depth == 3
 
-    def test_parallel_t_gates(self):
+    def test_parallel_t_gates(self) -> None:
         """T gates on different qubits can be parallel."""
         prog = Main(
             q := QReg("q", 2),
@@ -110,7 +110,7 @@ class TestTDepth:
         assert result.t_count == 2
         assert result.t_depth == 1  # Parallel on different qubits
 
-    def test_mixed_parallel_sequential(self):
+    def test_mixed_parallel_sequential(self) -> None:
         """Mix of parallel and sequential T gates."""
         prog = Main(
             q := QReg("q", 2),
@@ -129,7 +129,7 @@ class TestTDepth:
 class TestTCountControlFlow:
     """T-count with control flow."""
 
-    def test_t_inside_repeat(self):
+    def test_t_inside_repeat(self) -> None:
         """T gates inside repeat loop count all iterations."""
         prog = Main(
             q := QReg("q", 1),
@@ -144,7 +144,7 @@ class TestTCountControlFlow:
         assert result.t_count == 3
         assert result.t_depth == 3
 
-    def test_t_inside_if(self):
+    def test_t_inside_if(self) -> None:
         """T gates inside if statement."""
         prog = Main(
             q := QReg("q", 1),
@@ -164,7 +164,7 @@ class TestTCountControlFlow:
 class TestTCountWithClifford:
     """T-count with Clifford gates."""
 
-    def test_t_with_clifford(self):
+    def test_t_with_clifford(self) -> None:
         """T gates with Clifford gates."""
         prog = Main(
             q := QReg("q", 1),
@@ -180,7 +180,7 @@ class TestTCountWithClifford:
         assert result.t_count == 2
         assert result.t_depth == 2
 
-    def test_toffoli_decomposition_pattern(self):
+    def test_toffoli_decomposition_pattern(self) -> None:
         """Pattern similar to Toffoli gate T-count."""
         prog = Main(
             q := QReg("q", 3),
@@ -204,7 +204,7 @@ class TestTCountWithClifford:
 class TestAnalyzerClass:
     """Tests for TCountAnalyzer class."""
 
-    def test_analyzer_reuse(self):
+    def test_analyzer_reuse(self) -> None:
         """Analyzer can be reused."""
         analyzer = TCountAnalyzer()
 
@@ -220,7 +220,7 @@ class TestAnalyzerClass:
         assert result1.t_count == 1
         assert result2.t_count == 2
 
-    def test_result_string(self):
+    def test_result_string(self) -> None:
         """TCountResult string representation."""
         prog = Main(q := QReg("q", 1), qb.T(q[0]))
 

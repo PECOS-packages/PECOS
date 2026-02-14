@@ -45,7 +45,18 @@ def _check_cuda_available() -> bool:
     # Check for CUDA toolkit using pecos CLI (same as Justfile pattern)
     try:
         result = subprocess.run(
-            ["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],
+            [
+                "cargo",
+                "run",
+                "-p",
+                "pecos",
+                "--features",
+                "cli",
+                "--",
+                "cuda",
+                "check",
+                "-q",
+            ],
             capture_output=True,
             timeout=30,
             check=False,
@@ -208,7 +219,9 @@ def test_python_block(
     an error message matching the pattern (regex).
     """
     if expected_error:
-        print(f"Testing Python block #{block_number} from {file_path} (expecting error)...")
+        print(
+            f"Testing Python block #{block_number} from {file_path} (expecting error)...",
+        )
     else:
         print(f"Testing Python block #{block_number} from {file_path}...")
 
@@ -256,23 +269,22 @@ def test_python_block(
             if result.returncode == 0:
                 print(
                     f"FAIL: Python block #{block_number} from {file_path} "
-                    f"was expected to fail but succeeded"
+                    f"was expected to fail but succeeded",
                 )
                 return False
             # Check if error matches expected pattern
             if re.search(expected_error, result.stderr):
                 print(
                     f"PASS: Python block #{block_number} from {file_path} "
-                    f"(failed as expected with matching error)"
+                    f"(failed as expected with matching error)",
                 )
                 return True
-            else:
-                print(
-                    f"FAIL: Python block #{block_number} from {file_path} "
-                    f"failed but error didn't match pattern '{expected_error}':"
-                )
-                print(result.stderr[:500])  # Truncate long errors
-                return False
+            print(
+                f"FAIL: Python block #{block_number} from {file_path} "
+                f"failed but error didn't match pattern '{expected_error}':",
+            )
+            print(result.stderr[:500])  # Truncate long errors
+            return False
 
         # Normal case: expect success
         if result.returncode != 0:
@@ -283,7 +295,7 @@ def test_python_block(
         if expected_error and re.search(expected_error, "TimeoutExpired"):
             print(
                 f"PASS: Python block #{block_number} from {file_path} "
-                f"(timed out as expected)"
+                f"(timed out as expected)",
             )
             return True
         print(f"FAIL: Timeout in Python block #{block_number} from {file_path}")

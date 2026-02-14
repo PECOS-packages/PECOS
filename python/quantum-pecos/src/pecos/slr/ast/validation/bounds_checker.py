@@ -28,23 +28,21 @@ Example:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     AssignOp,
     BitExpr,
     BitRef,
-    Expression,
     ForStmt,
     GateOp,
     IfStmt,
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RegisterDecl,
     RepeatStmt,
-    SlotRef,
-    Statement,
     WhileStmt,
 )
 from pecos.slr.ast.validation.base import (
@@ -53,6 +51,14 @@ from pecos.slr.ast.validation.base import (
     ValidationPass,
     ValidationResult,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Expression,
+        Program,
+        SlotRef,
+        Statement,
+    )
 
 
 class BoundsChecker(ValidationPass):
@@ -139,7 +145,7 @@ class BoundsChecker(ValidationPass):
                     location=slot.location,
                     severity=Severity.ERROR,
                     code="E101",
-                )
+                ),
             )
             return
 
@@ -152,7 +158,7 @@ class BoundsChecker(ValidationPass):
                     location=slot.location,
                     severity=Severity.ERROR,
                     code="E102",
-                )
+                ),
             )
         elif slot.index >= capacity:
             self.errors.append(
@@ -162,7 +168,7 @@ class BoundsChecker(ValidationPass):
                     location=slot.location,
                     severity=Severity.ERROR,
                     code="E103",
-                )
+                ),
             )
 
     def _validate_bit_ref(self, ref: BitRef) -> None:
@@ -174,7 +180,7 @@ class BoundsChecker(ValidationPass):
                     location=ref.location,
                     severity=Severity.ERROR,
                     code="E104",
-                )
+                ),
             )
             return
 
@@ -187,7 +193,7 @@ class BoundsChecker(ValidationPass):
                     location=ref.location,
                     severity=Severity.ERROR,
                     code="E105",
-                )
+                ),
             )
         elif ref.index >= size:
             self.errors.append(
@@ -197,7 +203,7 @@ class BoundsChecker(ValidationPass):
                     location=ref.location,
                     severity=Severity.ERROR,
                     code="E106",
-                )
+                ),
             )
 
     def _validate_gate(self, node: GateOp) -> None:
@@ -221,7 +227,7 @@ class BoundsChecker(ValidationPass):
                     location=node.location,
                     severity=Severity.ERROR,
                     code="E101",
-                )
+                ),
             )
             return
 
@@ -235,7 +241,7 @@ class BoundsChecker(ValidationPass):
                             location=node.location,
                             severity=Severity.ERROR,
                             code="E102",
-                        )
+                        ),
                     )
                 elif slot >= capacity:
                     self.errors.append(
@@ -245,7 +251,7 @@ class BoundsChecker(ValidationPass):
                             location=node.location,
                             severity=Severity.ERROR,
                             code="E103",
-                        )
+                        ),
                     )
 
     def _validate_assign(self, node: AssignOp) -> None:

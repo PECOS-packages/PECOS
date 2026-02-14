@@ -27,38 +27,42 @@ Example:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
-    AssignOp,
-    BarrierOp,
-    BinaryExpr,
     BinaryOp,
-    BitExpr,
     BitRef,
-    CommentOp,
     Expression,
-    ForStmt,
-    GateKind,
-    GateOp,
-    IfStmt,
-    LiteralExpr,
-    MeasureOp,
-    ParallelBlock,
-    PermuteOp,
-    PrepareOp,
-    Program,
     RegisterDecl,
-    RepeatStmt,
-    ReturnOp,
-    SlotRef,
-    Statement,
-    UnaryExpr,
     UnaryOp,
-    VarExpr,
-    WhileStmt,
 )
 from pecos.slr.ast.visitor import BaseVisitor
 
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        AssignOp,
+        BarrierOp,
+        BinaryExpr,
+        BitExpr,
+        CommentOp,
+        ForStmt,
+        GateOp,
+        IfStmt,
+        LiteralExpr,
+        MeasureOp,
+        ParallelBlock,
+        PermuteOp,
+        PrepareOp,
+        Program,
+        RepeatStmt,
+        ReturnOp,
+        SlotRef,
+        Statement,
+        UnaryExpr,
+        VarExpr,
+        WhileStmt,
+    )
 
 # Operator symbols for pretty-printing
 _BINARY_OP_SYMBOLS: dict[BinaryOp, str] = {
@@ -112,7 +116,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
         """Apply current indentation level to a line."""
         return f"{self._indent * self._level}{line}"
 
-    def _with_indent(self) -> "_IndentContext":
+    def _with_indent(self) -> _IndentContext:
         """Context manager to increase indent level."""
         return _IndentContext(self)
 
@@ -125,17 +129,31 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
         # Allocator
         if node.allocator:
-            lines.append(self._indented(f'{node.allocator.name} := QReg("{node.allocator.name}", {node.allocator.capacity}),'))
+            lines.append(
+                self._indented(
+                    f'{node.allocator.name} := QReg("{node.allocator.name}", {node.allocator.capacity}),',
+                ),
+            )
 
         # Additional declarations
         for decl in node.declarations:
             if isinstance(decl, AllocatorDecl):
                 if decl.parent:
-                    lines.append(self._indented(f'{decl.name} := QReg("{decl.name}", {decl.capacity}, parent={decl.parent}),'))
+                    lines.append(
+                        self._indented(
+                            f'{decl.name} := QReg("{decl.name}", {decl.capacity}, parent={decl.parent}),',
+                        ),
+                    )
                 else:
-                    lines.append(self._indented(f'{decl.name} := QReg("{decl.name}", {decl.capacity}),'))
+                    lines.append(
+                        self._indented(
+                            f'{decl.name} := QReg("{decl.name}", {decl.capacity}),',
+                        ),
+                    )
             elif isinstance(decl, RegisterDecl):
-                lines.append(self._indented(f'{decl.name} := CReg("{decl.name}", {decl.size}),'))
+                lines.append(
+                    self._indented(f'{decl.name} := CReg("{decl.name}", {decl.size}),'),
+                )
 
         # Body statements
         for stmt in node.body:
@@ -190,7 +208,11 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_assign(self, node: AssignOp) -> str:
         """Visit assignment."""
-        target = self.visit_bit_ref(node.target) if isinstance(node.target, BitRef) else node.target
+        target = (
+            self.visit_bit_ref(node.target)
+            if isinstance(node.target, BitRef)
+            else node.target
+        )
         value = self._format_expression(node.value)
         return f"{target} = {value}"
 

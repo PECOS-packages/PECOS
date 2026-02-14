@@ -36,7 +36,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestValidateFunction:
     """Tests for the validate() convenience function."""
 
-    def test_validate_valid_program(self):
+    def test_validate_valid_program(self) -> None:
         """Valid program passes all checks."""
         prog = Main(
             q := QReg("q", 2),
@@ -50,7 +50,7 @@ class TestValidateFunction:
         assert result.valid is True
         assert len(result.errors) == 0
 
-    def test_validate_with_rotation(self):
+    def test_validate_with_rotation(self) -> None:
         """Program with rotation gates passes."""
         prog = Main(
             q := QReg("q", 1),
@@ -63,7 +63,7 @@ class TestValidateFunction:
 
         assert result.valid is True
 
-    def test_validate_complex_circuit(self):
+    def test_validate_complex_circuit(self) -> None:
         """Complex circuit with all features."""
         prog = Main(
             q := QReg("q", 3),
@@ -86,7 +86,7 @@ class TestValidateFunction:
 class TestValidationPipeline:
     """Tests for ValidationPipeline class."""
 
-    def test_empty_pipeline(self):
+    def test_empty_pipeline(self) -> None:
         """Empty pipeline returns valid result."""
         pipeline = ValidationPipeline([])
 
@@ -98,7 +98,7 @@ class TestValidationPipeline:
         assert result.valid is True
         assert len(result.passes_applied) == 0
 
-    def test_custom_pipeline(self):
+    def test_custom_pipeline(self) -> None:
         """Custom pipeline with specific passes."""
         pipeline = ValidationPipeline([BoundsChecker()])
 
@@ -110,7 +110,7 @@ class TestValidationPipeline:
         assert result.valid is True
         assert "bounds_checker" in result.passes_applied
 
-    def test_add_pass(self):
+    def test_add_pass(self) -> None:
         """Adding passes to pipeline."""
         pipeline = ValidationPipeline()
         pipeline.add_pass(BoundsChecker())
@@ -124,7 +124,7 @@ class TestValidationPipeline:
         assert result.valid is True
         assert len(result.passes_applied) == 2
 
-    def test_pipeline_accumulates_errors(self):
+    def test_pipeline_accumulates_errors(self) -> None:
         """Pipeline accumulates errors from all passes."""
         pipeline = ValidationPipeline([BoundsChecker(), TypeChecker()])
 
@@ -156,7 +156,7 @@ class TestValidationPipeline:
 class TestDefaultPipeline:
     """Tests for create_default_pipeline()."""
 
-    def test_default_pipeline_runs_all(self):
+    def test_default_pipeline_runs_all(self) -> None:
         """Default pipeline runs all standard passes."""
         pipeline = create_default_pipeline()
 
@@ -174,7 +174,7 @@ class TestDefaultPipeline:
 class TestValidationResult:
     """Tests for ValidationResult class."""
 
-    def test_result_merge(self):
+    def test_result_merge(self) -> None:
         """Merging validation results."""
         result1 = ValidationResult(valid=True, passes_applied=["pass1"])
         result2 = ValidationResult(valid=False, errors=[], passes_applied=["pass2"])
@@ -185,28 +185,31 @@ class TestValidationResult:
         assert "pass1" in merged.passes_applied
         assert "pass2" in merged.passes_applied
 
-    def test_result_string_valid(self):
+    def test_result_string_valid(self) -> None:
         """String representation for valid result."""
         result = ValidationResult(valid=True)
         assert "Valid" in str(result)
 
-    def test_result_string_invalid(self):
+    def test_result_string_invalid(self) -> None:
         """String representation for invalid result."""
         result = ValidationResult(valid=False)
         assert "Invalid" in str(result)
 
-    def test_error_count(self):
+    def test_error_count(self) -> None:
         """Error count property."""
         from pecos.slr.ast.validation import ValidationError
 
         result = ValidationResult(
             valid=False,
-            errors=[ValidationError(message="error1"), ValidationError(message="error2")],
+            errors=[
+                ValidationError(message="error1"),
+                ValidationError(message="error2"),
+            ],
         )
 
         assert result.error_count == 2
 
-    def test_warning_count(self):
+    def test_warning_count(self) -> None:
         """Warning count property."""
         from pecos.slr.ast.validation import Severity, ValidationError
 

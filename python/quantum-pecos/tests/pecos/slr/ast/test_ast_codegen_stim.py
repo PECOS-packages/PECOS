@@ -24,7 +24,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestAstToStimBasic:
     """Basic code generation tests."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         prog = Main()
         ast = slr_to_ast(prog)
 
@@ -33,7 +33,7 @@ class TestAstToStimBasic:
         assert isinstance(circuit, stim.Circuit)
         assert len(circuit) == 0
 
-    def test_program_with_qreg(self):
+    def test_program_with_qreg(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -45,7 +45,7 @@ class TestAstToStimBasic:
         assert isinstance(circuit, stim.Circuit)
         assert len(circuit) > 0
 
-    def test_string_output(self):
+    def test_string_output(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -61,7 +61,7 @@ class TestAstToStimBasic:
 class TestAstToStimGates:
     """Gate code generation tests."""
 
-    def test_hadamard_gate(self):
+    def test_hadamard_gate(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -72,7 +72,7 @@ class TestAstToStimGates:
 
         assert "H 0" in code
 
-    def test_pauli_gates(self):
+    def test_pauli_gates(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.X(q[0]),
@@ -87,7 +87,7 @@ class TestAstToStimGates:
         assert "Y 0" in code
         assert "Z 0" in code
 
-    def test_phase_gates(self):
+    def test_phase_gates(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.SZ(q[0]),
@@ -100,7 +100,7 @@ class TestAstToStimGates:
         assert "S 0" in code
         assert "S_DAG 0" in code
 
-    def test_t_gates(self):
+    def test_t_gates(self) -> None:
         # Note: T gates are non-Clifford and Stim uses them for noise modeling
         # The Stim gate is called "T" not "T_DAG" for the adjoint
         prog = Main(
@@ -119,7 +119,7 @@ class TestAstToStimGates:
             # T gate not supported in Stim - this is expected
             pass
 
-    def test_two_qubit_cx_gate(self):
+    def test_two_qubit_cx_gate(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -130,7 +130,7 @@ class TestAstToStimGates:
 
         assert "CX 0 1" in code
 
-    def test_two_qubit_cz_gate(self):
+    def test_two_qubit_cz_gate(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.CZ(q[0], q[1]),
@@ -141,7 +141,7 @@ class TestAstToStimGates:
 
         assert "CZ 0 1" in code
 
-    def test_multiple_gates(self):
+    def test_multiple_gates(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -160,7 +160,7 @@ class TestAstToStimGates:
 class TestAstToStimPrepMeasure:
     """Prep and measure code generation tests."""
 
-    def test_measurement(self):
+    def test_measurement(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -172,7 +172,7 @@ class TestAstToStimPrepMeasure:
 
         assert "M 0" in code
 
-    def test_multiple_measurements(self):
+    def test_multiple_measurements(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
@@ -189,7 +189,7 @@ class TestAstToStimPrepMeasure:
         assert "0" in code
         assert "1" in code
 
-    def test_prep_reset(self):
+    def test_prep_reset(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.Prep(q[0]),
@@ -204,7 +204,7 @@ class TestAstToStimPrepMeasure:
 class TestAstToStimControlFlow:
     """Control flow code generation tests."""
 
-    def test_barrier_becomes_tick(self):
+    def test_barrier_becomes_tick(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -217,7 +217,7 @@ class TestAstToStimControlFlow:
 
         assert "TICK" in code
 
-    def test_repeat_uses_repeat_block(self):
+    def test_repeat_uses_repeat_block(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=3).block(
@@ -232,7 +232,7 @@ class TestAstToStimControlFlow:
         assert "REPEAT 3" in code
         assert "H 0" in code
 
-    def test_if_statement_adds_tick(self):
+    def test_if_statement_adds_tick(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -252,7 +252,7 @@ class TestAstToStimControlFlow:
 class TestAstToStimQEC:
     """QEC pattern code generation tests."""
 
-    def test_syndrome_extraction(self):
+    def test_syndrome_extraction(self) -> None:
         prog = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
@@ -272,7 +272,7 @@ class TestAstToStimQEC:
         assert "1 2" in code or "1, 2" in code  # Second CX pair
         assert "M 2" in code
 
-    def test_repeated_syndrome_extraction(self):
+    def test_repeated_syndrome_extraction(self) -> None:
         prog = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
@@ -294,7 +294,7 @@ class TestAstToStimQEC:
 class TestAstToStimGenerator:
     """Tests for AstToStim generator class."""
 
-    def test_generator_reusable(self):
+    def test_generator_reusable(self) -> None:
         generator = AstToStim()
 
         prog1 = Main(
@@ -319,7 +319,7 @@ class TestAstToStimGenerator:
         assert "H 0" in code1
         assert "X 0" in code2
 
-    def test_measurement_count_tracked(self):
+    def test_measurement_count_tracked(self) -> None:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
@@ -338,7 +338,7 @@ class TestAstToStimGenerator:
 class TestAstToStimFullPipeline:
     """End-to-end tests: SLR -> AST -> Stim."""
 
-    def test_bell_state_circuit(self):
+    def test_bell_state_circuit(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -353,7 +353,7 @@ class TestAstToStimFullPipeline:
         assert "H 0" in code
         assert "CX 0 1" in code
 
-    def test_circuit_is_valid_stim(self):
+    def test_circuit_is_valid_stim(self) -> None:
         """Test that generated circuit can be used by Stim."""
         prog = Main(
             q := QReg("q", 2),
@@ -373,7 +373,7 @@ class TestAstToStimFullPipeline:
 
         assert samples.shape == (10, 2)
 
-    def test_ghz_state_circuit(self):
+    def test_ghz_state_circuit(self) -> None:
         """Test a GHZ state circuit."""
         prog = Main(
             q := QReg("q", 3),

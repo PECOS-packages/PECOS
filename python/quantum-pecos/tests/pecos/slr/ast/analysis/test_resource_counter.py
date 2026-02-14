@@ -12,7 +12,6 @@
 """Tests for AST resource counter."""
 
 import pytest
-
 from pecos.slr import CReg, Main, QReg, Repeat
 from pecos.slr.ast import GateKind, slr_to_ast
 from pecos.slr.ast.analysis import ResourceCounter, count_resources
@@ -22,7 +21,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestResourceCounterBasic:
     """Basic resource counting tests."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         """Empty program has no resources."""
         prog = Main()
         ast = slr_to_ast(prog)
@@ -33,10 +32,10 @@ class TestResourceCounterBasic:
         assert result.classical_bit_count == 0
         assert result.total_gates == 0
 
-    def test_qubits_counted(self):
+    def test_qubits_counted(self) -> None:
         """Qubits in allocators are counted."""
         prog = Main(
-            q := QReg("q", 5),
+            _q := QReg("q", 5),
         )
         ast = slr_to_ast(prog)
 
@@ -45,11 +44,11 @@ class TestResourceCounterBasic:
         assert result.qubit_count == 5
         assert result.qubits_by_allocator["q"] == 5
 
-    def test_classical_bits_counted(self):
+    def test_classical_bits_counted(self) -> None:
         """Classical bits in registers are counted."""
         prog = Main(
-            q := QReg("q", 1),
-            c := CReg("c", 3),
+            _q := QReg("q", 1),
+            _c := CReg("c", 3),
         )
         ast = slr_to_ast(prog)
 
@@ -58,13 +57,13 @@ class TestResourceCounterBasic:
         assert result.classical_bit_count == 3
         assert result.bits_by_register["c"] == 3
 
-    def test_multiple_registers(self):
+    def test_multiple_registers(self) -> None:
         """Multiple registers are counted separately."""
         prog = Main(
-            q1 := QReg("q1", 2),
-            q2 := QReg("q2", 3),
-            c1 := CReg("c1", 1),
-            c2 := CReg("c2", 2),
+            _q1 := QReg("q1", 2),
+            _q2 := QReg("q2", 3),
+            _c1 := CReg("c1", 1),
+            _c2 := CReg("c2", 2),
         )
         ast = slr_to_ast(prog)
 
@@ -81,7 +80,7 @@ class TestResourceCounterBasic:
 class TestResourceCounterGates:
     """Gate counting tests."""
 
-    def test_single_qubit_gates(self):
+    def test_single_qubit_gates(self) -> None:
         """Single-qubit gates are counted."""
         prog = Main(
             q := QReg("q", 1),
@@ -98,7 +97,7 @@ class TestResourceCounterGates:
         assert result.single_qubit_gates == 3
         assert result.two_qubit_gates == 0
 
-    def test_two_qubit_gates(self):
+    def test_two_qubit_gates(self) -> None:
         """Two-qubit gates are counted."""
         prog = Main(
             q := QReg("q", 2),
@@ -115,7 +114,7 @@ class TestResourceCounterGates:
         assert result.single_qubit_gates == 0
         assert result.two_qubit_gates == 2
 
-    def test_mixed_gates(self):
+    def test_mixed_gates(self) -> None:
         """Mixed single and two-qubit gates are counted correctly."""
         prog = Main(
             q := QReg("q", 2),
@@ -133,7 +132,7 @@ class TestResourceCounterGates:
         assert result.single_qubit_gates == 2  # H, X
         assert result.two_qubit_gates == 1  # CX
 
-    def test_gate_counts_by_type(self):
+    def test_gate_counts_by_type(self) -> None:
         """Gates are counted by type."""
         prog = Main(
             q := QReg("q", 2),
@@ -155,7 +154,7 @@ class TestResourceCounterGates:
 class TestResourceCounterOperations:
     """Measurement and preparation counting tests."""
 
-    def test_measurements_counted(self):
+    def test_measurements_counted(self) -> None:
         """Measurements are counted."""
         prog = Main(
             q := QReg("q", 2),
@@ -171,7 +170,7 @@ class TestResourceCounterOperations:
 
         assert result.measurement_count == 2
 
-    def test_preparations_counted(self):
+    def test_preparations_counted(self) -> None:
         """Preparations are counted."""
         prog = Main(
             q := QReg("q", 2),
@@ -188,7 +187,7 @@ class TestResourceCounterOperations:
 class TestResourceCounterControlFlow:
     """Control flow resource counting tests."""
 
-    def test_repeat_multiplies_resources(self):
+    def test_repeat_multiplies_resources(self) -> None:
         """Repeat loop multiplies gate counts."""
         prog = Main(
             q := QReg("q", 1),
@@ -210,7 +209,7 @@ class TestResourceCounterControlFlow:
 class TestResourceCounterQEC:
     """QEC pattern resource counting tests."""
 
-    def test_syndrome_extraction_resources(self):
+    def test_syndrome_extraction_resources(self) -> None:
         """Syndrome extraction resources are counted correctly."""
         prog = Main(
             data := QReg("data", 2),
@@ -237,12 +236,12 @@ class TestResourceCounterQEC:
 class TestResourceCounterClass:
     """Tests for the ResourceCounter class."""
 
-    def test_counter_reusable(self):
+    def test_counter_reusable(self) -> None:
         """Counter can be reused for multiple programs."""
         counter = ResourceCounter()
 
-        prog1 = Main(q := QReg("q", 2))
-        prog2 = Main(q := QReg("q", 5))
+        prog1 = Main(_q := QReg("q", 2))
+        prog2 = Main(_q := QReg("q", 5))
 
         ast1 = slr_to_ast(prog1)
         ast2 = slr_to_ast(prog2)
@@ -253,11 +252,11 @@ class TestResourceCounterClass:
         assert result1.qubit_count == 2
         assert result2.qubit_count == 5
 
-    def test_result_string_representation(self):
+    def test_result_string_representation(self) -> None:
         """ResourceCount has useful string representation."""
         prog = Main(
             q := QReg("q", 2),
-            c := CReg("c", 1),
+            _c := CReg("c", 1),
             qb.Prep(q[0]),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),

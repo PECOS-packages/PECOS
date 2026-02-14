@@ -380,7 +380,9 @@ impl PySimBuilder {
             SimBuilderInner::Qasm(builder) => {
                 builder.foreign_object = Some(foreign_obj);
             }
-            SimBuilderInner::QisControl(_) | SimBuilderInner::PhirJson(_) | SimBuilderInner::Empty => {
+            SimBuilderInner::QisControl(_)
+            | SimBuilderInner::PhirJson(_)
+            | SimBuilderInner::Empty => {
                 return Err(pyo3::exceptions::PyTypeError::new_err(
                     "foreign_object() is only supported for HUGR and QASM programs",
                 ));

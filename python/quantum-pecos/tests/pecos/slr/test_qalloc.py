@@ -12,14 +12,13 @@
 """Tests for QAlloc - Qubit Allocator for SLR."""
 
 import pytest
-
 from pecos.slr.qalloc import QAlloc, QubitRef, SlotState
 
 
 class TestSlotState:
     """Tests for SlotState enum."""
 
-    def test_two_states(self):
+    def test_two_states(self) -> None:
         """Only two states: unprepared and prepared."""
         assert len(SlotState) == 2
         assert SlotState.UNPREPARED.value == "unprepared"
@@ -29,7 +28,7 @@ class TestSlotState:
 class TestQubitRef:
     """Tests for QubitRef."""
 
-    def test_creation(self):
+    def test_creation(self) -> None:
         """QubitRef is created via allocator indexing."""
         alloc = QAlloc(5, name="test")
         ref = alloc[0]
@@ -38,7 +37,7 @@ class TestQubitRef:
         assert ref.alloc is alloc
         assert ref.index == 0
 
-    def test_string_representation(self):
+    def test_string_representation(self) -> None:
         """QubitRef has readable string representation."""
         alloc = QAlloc(5, name="data")
         ref = alloc[2]
@@ -46,7 +45,7 @@ class TestQubitRef:
         assert str(ref) == "data[2]"
         assert "data[2]" in repr(ref)
 
-    def test_state_property(self):
+    def test_state_property(self) -> None:
         """QubitRef reflects slot state."""
         alloc = QAlloc(5, name="test")
         ref = alloc[0]
@@ -59,7 +58,7 @@ class TestQubitRef:
         assert ref.state == SlotState.PREPARED
         assert ref.is_prepared
 
-    def test_equality(self):
+    def test_equality(self) -> None:
         """QubitRefs are equal if same allocator and index."""
         alloc = QAlloc(5, name="test")
 
@@ -70,7 +69,7 @@ class TestQubitRef:
         assert ref1 == ref2
         assert ref1 != ref3
 
-    def test_hashable(self):
+    def test_hashable(self) -> None:
         """QubitRefs can be used in sets/dicts."""
         alloc = QAlloc(5, name="test")
 
@@ -81,7 +80,7 @@ class TestQubitRef:
 class TestQAllocBase:
     """Tests for base QAlloc creation and properties."""
 
-    def test_create_base_allocator(self):
+    def test_create_base_allocator(self) -> None:
         """Base allocator has no parent."""
         base = QAlloc(100, name="base")
 
@@ -91,17 +90,17 @@ class TestQAllocBase:
         assert base.is_base
         assert base.available == 100
 
-    def test_default_name(self):
+    def test_default_name(self) -> None:
         """Allocator gets default name if none provided."""
         alloc = QAlloc(10)
         assert alloc.name.startswith("alloc_")
 
-    def test_invalid_capacity(self):
+    def test_invalid_capacity(self) -> None:
         """Negative capacity raises error."""
         with pytest.raises(ValueError, match="non-negative"):
             QAlloc(-1)
 
-    def test_zero_capacity(self):
+    def test_zero_capacity(self) -> None:
         """Zero capacity is allowed."""
         alloc = QAlloc(0)
         assert alloc.capacity == 0
@@ -111,7 +110,7 @@ class TestQAllocBase:
 class TestQAllocSlotStates:
     """Tests for slot state management."""
 
-    def test_initial_state_unprepared(self):
+    def test_initial_state_unprepared(self) -> None:
         """All slots start unprepared."""
         alloc = QAlloc(5, name="test")
 
@@ -119,7 +118,7 @@ class TestQAllocSlotStates:
             assert alloc.state(i) == SlotState.UNPREPARED
             assert not alloc.is_prepared(i)
 
-    def test_prepare_single(self):
+    def test_prepare_single(self) -> None:
         """Prepare individual slots."""
         alloc = QAlloc(5, name="test")
 
@@ -127,7 +126,7 @@ class TestQAllocSlotStates:
         assert alloc.is_prepared(0)
         assert not alloc.is_prepared(1)
 
-    def test_prepare_multiple(self):
+    def test_prepare_multiple(self) -> None:
         """Prepare multiple slots at once."""
         alloc = QAlloc(5, name="test")
 
@@ -139,7 +138,7 @@ class TestQAllocSlotStates:
         assert not alloc.is_prepared(3)
         assert alloc.is_prepared(4)
 
-    def test_prepare_all(self):
+    def test_prepare_all(self) -> None:
         """Prepare all slots."""
         alloc = QAlloc(5, name="test")
 
@@ -149,7 +148,7 @@ class TestQAllocSlotStates:
         assert alloc.prepared_count() == 5
         assert alloc.unprepared_count() == 0
 
-    def test_mark_unprepared(self):
+    def test_mark_unprepared(self) -> None:
         """Mark slots as unprepared (after measurement)."""
         alloc = QAlloc(5, name="test")
         alloc.prepare_all()
@@ -161,7 +160,7 @@ class TestQAllocSlotStates:
         assert not alloc.is_prepared(2)
         assert alloc.is_prepared(3)
 
-    def test_mark_all_unprepared(self):
+    def test_mark_all_unprepared(self) -> None:
         """Mark all slots as unprepared."""
         alloc = QAlloc(5, name="test")
         alloc.prepare_all()
@@ -171,7 +170,7 @@ class TestQAllocSlotStates:
         assert alloc.prepared_count() == 0
         assert alloc.unprepared_count() == 5
 
-    def test_prepare_unprepared_cycle(self):
+    def test_prepare_unprepared_cycle(self) -> None:
         """Slots can be prepared, measured (unprepared), and re-prepared."""
         alloc = QAlloc(3, name="ancilla")
 
@@ -194,7 +193,7 @@ class TestQAllocSlotStates:
 class TestQAllocChild:
     """Tests for child allocator creation."""
 
-    def test_create_child(self):
+    def test_create_child(self) -> None:
         """Child allocator reserves slots from parent."""
         base = QAlloc(100, name="base")
 
@@ -206,7 +205,7 @@ class TestQAllocChild:
         assert not child.is_base
         assert base.available == 90
 
-    def test_multiple_children(self):
+    def test_multiple_children(self) -> None:
         """Multiple children can be created."""
         base = QAlloc(100, name="base")
 
@@ -217,7 +216,7 @@ class TestQAllocChild:
         assert data.capacity == 7
         assert ancilla.capacity == 6
 
-    def test_nested_children(self):
+    def test_nested_children(self) -> None:
         """Children can have their own children."""
         base = QAlloc(100, name="base")
         level1 = base.child(50, name="level1")
@@ -227,7 +226,7 @@ class TestQAllocChild:
         assert level1.parent is base
         assert level1.available == 30
 
-    def test_insufficient_capacity(self):
+    def test_insufficient_capacity(self) -> None:
         """Cannot create child larger than available."""
         base = QAlloc(10, name="base")
         base.child(8, name="child1")
@@ -235,7 +234,7 @@ class TestQAllocChild:
         with pytest.raises(ValueError, match="Insufficient capacity"):
             base.child(5, name="child2")  # only 2 available
 
-    def test_child_slots_independent(self):
+    def test_child_slots_independent(self) -> None:
         """Child slot states are independent of parent."""
         base = QAlloc(10, name="base")
         child = base.child(5, name="child")
@@ -245,16 +244,16 @@ class TestQAllocChild:
         # Parent's unreserved slots are still unprepared
         assert base.state(5) == SlotState.UNPREPARED
 
-    def test_cannot_access_reserved_slots(self):
+    def test_cannot_access_reserved_slots(self) -> None:
         """Parent cannot access slots reserved by child."""
         base = QAlloc(10, name="base")
         base.child(5, name="child")
 
         # Slots 0-4 are reserved
         with pytest.raises(ValueError, match="reserved"):
-            base[0]  # noqa: B018 - intentional access for test
+            base[0]
 
-    def test_cannot_prepare_reserved_slots(self):
+    def test_cannot_prepare_reserved_slots(self) -> None:
         """Parent cannot prepare slots reserved by child."""
         base = QAlloc(10, name="base")
         base.child(5, name="child")
@@ -266,7 +265,7 @@ class TestQAllocChild:
 class TestQAllocRelease:
     """Tests for allocator release."""
 
-    def test_explicit_release(self):
+    def test_explicit_release(self) -> None:
         """Explicit release returns slots to parent."""
         base = QAlloc(10, name="base")
         child = base.child(5, name="child")
@@ -278,19 +277,19 @@ class TestQAllocRelease:
         assert base.available == 10
         assert child.is_released
 
-    def test_released_allocator_unusable(self):
+    def test_released_allocator_unusable(self) -> None:
         """Released allocator cannot be used."""
         base = QAlloc(10, name="base")
         child = base.child(5, name="child")
         child.release()
 
         with pytest.raises(RuntimeError, match="released"):
-            child[0]  # noqa: B018
+            child[0]
 
         with pytest.raises(RuntimeError, match="released"):
             child.prepare(0)
 
-    def test_double_release_error(self):
+    def test_double_release_error(self) -> None:
         """Cannot release twice."""
         base = QAlloc(10, name="base")
         child = base.child(5, name="child")
@@ -299,7 +298,7 @@ class TestQAllocRelease:
         with pytest.raises(RuntimeError, match="already released"):
             child.release()
 
-    def test_release_cascades_to_children(self):
+    def test_release_cascades_to_children(self) -> None:
         """Releasing parent releases all children."""
         base = QAlloc(100, name="base")
         level1 = base.child(50, name="level1")
@@ -314,12 +313,12 @@ class TestQAllocRelease:
 class TestQAllocIteration:
     """Tests for iterating over allocator slots."""
 
-    def test_len(self):
+    def test_len(self) -> None:
         """len() returns capacity."""
         alloc = QAlloc(7, name="test")
         assert len(alloc) == 7
 
-    def test_iterate_slots(self):
+    def test_iterate_slots(self) -> None:
         """Can iterate over slots as QubitRefs."""
         alloc = QAlloc(3, name="test")
 
@@ -329,7 +328,7 @@ class TestQAllocIteration:
         assert all(isinstance(r, QubitRef) for r in refs)
         assert [r.index for r in refs] == [0, 1, 2]
 
-    def test_iterate_skips_reserved(self):
+    def test_iterate_skips_reserved(self) -> None:
         """Iteration skips slots reserved by children."""
         base = QAlloc(10, name="base")
         base.child(5, name="child")  # reserves 0-4
@@ -343,28 +342,28 @@ class TestQAllocIteration:
 class TestQAllocIndexOutOfRange:
     """Tests for index validation."""
 
-    def test_negative_index_error(self):
+    def test_negative_index_error(self) -> None:
         """Negative index raises error."""
         alloc = QAlloc(5, name="test")
 
         with pytest.raises(IndexError):
-            alloc[-1]  # noqa: B018
+            alloc[-1]
 
-    def test_too_large_index_error(self):
+    def test_too_large_index_error(self) -> None:
         """Index >= capacity raises error."""
         alloc = QAlloc(5, name="test")
 
         with pytest.raises(IndexError):
-            alloc[5]  # noqa: B018
+            alloc[5]
 
-    def test_prepare_invalid_index(self):
+    def test_prepare_invalid_index(self) -> None:
         """Prepare with invalid index raises error."""
         alloc = QAlloc(5, name="test")
 
         with pytest.raises(IndexError):
             alloc.prepare(10)
 
-    def test_state_invalid_index(self):
+    def test_state_invalid_index(self) -> None:
         """State query with invalid index raises error."""
         alloc = QAlloc(5, name="test")
 
@@ -375,19 +374,19 @@ class TestQAllocIndexOutOfRange:
 class TestQRegCompatibility:
     """Tests for QReg/Qubit interface compatibility."""
 
-    def test_qalloc_sym_property(self):
+    def test_qalloc_sym_property(self) -> None:
         """QAlloc.sym is alias for name (like QReg.sym)."""
         alloc = QAlloc(5, name="data")
         assert alloc.sym == "data"
         assert alloc.sym == alloc.name
 
-    def test_qalloc_size_property(self):
+    def test_qalloc_size_property(self) -> None:
         """QAlloc.size is alias for capacity (like QReg.size)."""
         alloc = QAlloc(7, name="test")
         assert alloc.size == 7
         assert alloc.size == alloc.capacity
 
-    def test_qubitref_reg_property(self):
+    def test_qubitref_reg_property(self) -> None:
         """QubitRef.reg is alias for alloc (like Qubit.reg)."""
         alloc = QAlloc(5, name="data")
         ref = alloc[0]
@@ -395,14 +394,14 @@ class TestQRegCompatibility:
         assert ref.reg is alloc
         assert ref.reg is ref.alloc
 
-    def test_qubitref_str_matches_qubit_pattern(self):
+    def test_qubitref_str_matches_qubit_pattern(self) -> None:
         """QubitRef string format matches Qubit: 'regname[index]'."""
         alloc = QAlloc(5, name="q")
         ref = alloc[2]
 
         assert str(ref) == "q[2]"
 
-    def test_compatibility_pattern(self):
+    def test_compatibility_pattern(self) -> None:
         """Common pattern: ref.reg.sym works like qubit.reg.sym."""
         alloc = QAlloc(5, name="ancilla")
         ref = alloc[0]
@@ -415,7 +414,7 @@ class TestQRegCompatibility:
 class TestQAllocQECPattern:
     """Tests demonstrating QEC usage patterns."""
 
-    def test_syndrome_extraction_pattern(self):
+    def test_syndrome_extraction_pattern(self) -> None:
         """Test typical syndrome extraction pattern."""
         # Base allocator
         base = QAlloc(17, name="base")
@@ -441,7 +440,7 @@ class TestQAllocQECPattern:
             # Data qubits remain prepared
             assert data.all_prepared()
 
-    def test_nested_workspace_pattern(self):
+    def test_nested_workspace_pattern(self) -> None:
         """Test nested workspace allocation."""
         base = QAlloc(20, name="base")
         main_qubits = base.child(10, name="main")
@@ -449,7 +448,7 @@ class TestQAllocQECPattern:
         main_qubits.prepare_all()
 
         # Function that needs temporary workspace
-        def operation_needing_workspace(alloc: QAlloc):
+        def operation_needing_workspace(alloc: QAlloc) -> None:
             workspace = alloc.child(3, name="workspace")
             workspace.prepare_all()
 

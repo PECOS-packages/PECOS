@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Test for-loop behavior."""
-from guppylang.decorator import guppy
-from guppylang.std.quantum import qubit, h, measure
-from pecos import sim, Guppy
-from pecos_rslib import state_vector
 import os
+
+from guppylang.decorator import guppy
+from guppylang.std.quantum import h, measure, qubit
+from pecos import Guppy, sim
+from pecos_rslib import state_vector
 
 
 @guppy
@@ -35,4 +36,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error: {e}")
         import traceback
+
         traceback.print_exc()

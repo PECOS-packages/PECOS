@@ -12,7 +12,6 @@
 """Tests for AST qubit state validator."""
 
 import pytest
-
 from pecos.slr import CReg, If, Main, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.analysis import (
@@ -26,7 +25,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestQubitStateValidatorBasic:
     """Basic validation tests."""
 
-    def test_gate_without_prep_fails_strict(self):
+    def test_gate_without_prep_fails_strict(self) -> None:
         """Gate on unprepared qubit should fail in strict mode."""
         prog = Main(
             q := QReg("q", 1),
@@ -41,7 +40,7 @@ class TestQubitStateValidatorBasic:
         assert violations[0].index == 0
         assert "H" in violations[0].message
 
-    def test_gate_without_prep_passes_nonstrict(self):
+    def test_gate_without_prep_passes_nonstrict(self) -> None:
         """Gate on unprepared qubit should pass in non-strict mode."""
         prog = Main(
             q := QReg("q", 1),
@@ -53,7 +52,7 @@ class TestQubitStateValidatorBasic:
 
         assert len(violations) == 0
 
-    def test_gate_with_prep_passes(self):
+    def test_gate_with_prep_passes(self) -> None:
         """Gate on prepared qubit should pass."""
         prog = Main(
             q := QReg("q", 1),
@@ -66,7 +65,7 @@ class TestQubitStateValidatorBasic:
 
         assert len(violations) == 0
 
-    def test_multiple_gates_after_prep(self):
+    def test_multiple_gates_after_prep(self) -> None:
         """Multiple gates after prep should all pass."""
         prog = Main(
             q := QReg("q", 1),
@@ -85,7 +84,7 @@ class TestQubitStateValidatorBasic:
 class TestQubitStateValidatorMeasurement:
     """Measurement state transition tests."""
 
-    def test_gate_after_measure_fails(self):
+    def test_gate_after_measure_fails(self) -> None:
         """Gate after measurement should fail (qubit becomes unprepared)."""
         prog = Main(
             q := QReg("q", 1),
@@ -103,7 +102,7 @@ class TestQubitStateValidatorMeasurement:
         assert violations[0].allocator == "q"
         assert "X" in violations[0].message
 
-    def test_reprep_after_measure_passes(self):
+    def test_reprep_after_measure_passes(self) -> None:
         """Re-preparation after measurement allows gates."""
         prog = Main(
             q := QReg("q", 1),
@@ -124,7 +123,7 @@ class TestQubitStateValidatorMeasurement:
 class TestQubitStateValidatorMultiQubit:
     """Multi-qubit operation tests."""
 
-    def test_two_qubit_gate_both_prepared(self):
+    def test_two_qubit_gate_both_prepared(self) -> None:
         """Two-qubit gate with both qubits prepared should pass."""
         prog = Main(
             q := QReg("q", 2),
@@ -138,7 +137,7 @@ class TestQubitStateValidatorMultiQubit:
 
         assert len(violations) == 0
 
-    def test_two_qubit_gate_one_unprepared(self):
+    def test_two_qubit_gate_one_unprepared(self) -> None:
         """Two-qubit gate with one qubit unprepared should fail."""
         prog = Main(
             q := QReg("q", 2),
@@ -153,7 +152,7 @@ class TestQubitStateValidatorMultiQubit:
         assert len(violations) == 1
         assert violations[0].index == 1
 
-    def test_two_qubit_gate_both_unprepared(self):
+    def test_two_qubit_gate_both_unprepared(self) -> None:
         """Two-qubit gate with both qubits unprepared should have two violations."""
         prog = Main(
             q := QReg("q", 2),
@@ -169,7 +168,7 @@ class TestQubitStateValidatorMultiQubit:
 class TestQubitStateValidatorControlFlow:
     """Control flow tests."""
 
-    def test_if_branch_prep_not_sufficient(self):
+    def test_if_branch_prep_not_sufficient(self) -> None:
         """Prep in only one branch is not sufficient."""
         prog = Main(
             q := QReg("q", 1),
@@ -186,14 +185,16 @@ class TestQubitStateValidatorControlFlow:
 
         assert len(violations) == 1
 
-    def test_if_both_branches_prep(self):
+    def test_if_both_branches_prep(self) -> None:
         """Prep in both branches is sufficient."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            If(c[0] == 1).Then(
+            If(c[0] == 1)
+            .Then(
                 qb.Prep(q[0]),
-            ).Else(
+            )
+            .Else(
                 qb.Prep(q[0]),
             ),
             qb.H(q[0]),  # Safe - prepared in both branches
@@ -204,7 +205,7 @@ class TestQubitStateValidatorControlFlow:
 
         assert len(violations) == 0
 
-    def test_if_body_uses_prep_from_before(self):
+    def test_if_body_uses_prep_from_before(self) -> None:
         """If body can use prep from before the if."""
         prog = Main(
             q := QReg("q", 1),
@@ -220,7 +221,7 @@ class TestQubitStateValidatorControlFlow:
 
         assert len(violations) == 0
 
-    def test_repeat_uses_prep_from_before(self):
+    def test_repeat_uses_prep_from_before(self) -> None:
         """Repeat body can use prep from before."""
         prog = Main(
             q := QReg("q", 1),
@@ -239,7 +240,7 @@ class TestQubitStateValidatorControlFlow:
 class TestQubitStateValidatorQEC:
     """QEC pattern tests."""
 
-    def test_syndrome_extraction_pattern(self):
+    def test_syndrome_extraction_pattern(self) -> None:
         """Standard syndrome extraction pattern should pass."""
         prog = Main(
             data := QReg("data", 2),
@@ -262,7 +263,7 @@ class TestQubitStateValidatorQEC:
 
         assert len(violations) == 0
 
-    def test_repeated_syndrome_extraction(self):
+    def test_repeated_syndrome_extraction(self) -> None:
         """Repeated syndrome extraction needs re-prep of ancilla."""
         prog = Main(
             data := QReg("data", 2),
@@ -292,7 +293,7 @@ class TestQubitStateValidatorQEC:
 class TestValidatorClass:
     """Tests for the validator class itself."""
 
-    def test_validator_reusable(self):
+    def test_validator_reusable(self) -> None:
         """Validator can be reused for multiple programs."""
         validator = AstQubitStateValidator(strict=True)
 
@@ -315,7 +316,7 @@ class TestValidatorClass:
         assert len(violations1) == 1
         assert len(violations2) == 0
 
-    def test_violation_string_representation(self):
+    def test_violation_string_representation(self) -> None:
         """Violation should have a useful string representation."""
         prog = Main(
             q := QReg("q", 1),

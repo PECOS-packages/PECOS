@@ -86,25 +86,25 @@ from pecos.slr.ast.optimizations.pipeline import (
 from pecos.slr.ast.optimizations.rotation_merging import RotationMergingPass
 
 __all__ = [
-    # Base classes
-    "OptimizationPass",
-    "OptimizationResult",
-    "StatementListOptimizer",
-    # Passes
-    "GateCancellationPass",
-    "InverseCancellationPass",
-    "RotationMergingPass",
-    "IdentityRemovalPass",
-    # Pipeline
-    "OptimizationPipeline",
-    "optimize",
-    "create_default_pipeline",
-    # Gate properties
-    "SELF_INVERSE_GATES",
     "INVERSE_PAIRS",
     "ROTATION_GATES",
-    "is_self_inverse",
+    # Gate properties
+    "SELF_INVERSE_GATES",
+    # Passes
+    "GateCancellationPass",
+    "IdentityRemovalPass",
+    "InverseCancellationPass",
+    # Base classes
+    "OptimizationPass",
+    # Pipeline
+    "OptimizationPipeline",
+    "OptimizationResult",
+    "RotationMergingPass",
+    "StatementListOptimizer",
+    "create_default_pipeline",
     "get_inverse",
     "is_rotation_gate",
+    "is_self_inverse",
+    "optimize",
     "targets_match",
 ]

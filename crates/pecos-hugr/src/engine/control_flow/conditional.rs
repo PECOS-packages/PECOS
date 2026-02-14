@@ -37,13 +37,15 @@ use std::collections::BTreeSet;
 
 use log::debug;
 use pecos_core::gate_type::GateType;
-use pecos_quantum::hugr_convert::{hugr_op_to_gate_type, is_rotation_gate, try_extract_rotation_angle};
+use pecos_quantum::hugr_convert::{
+    hugr_op_to_gate_type, is_rotation_gate, try_extract_rotation_angle,
+};
 use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
+use crate::engine::HugrEngine;
 use crate::engine::analysis::find_input_node;
 use crate::engine::types::{ActiveCaseInfo, QuantumOp};
-use crate::engine::HugrEngine;
 
 impl HugrEngine {
     /// Try to resolve the control value for a Conditional node.
@@ -198,7 +200,9 @@ impl HugrEngine {
                 // Check if we have a qubit mapping for this wire
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
                     // Map to the Conditional's output port
-                    self.wire_state.wire_to_qubit.insert((cond_node, port_idx), qubit_id);
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((cond_node, port_idx), qubit_id);
                     debug!(
                         "Mapped Conditional {cond_node:?} output {port_idx} to qubit {qubit_id:?} (from {src_wire:?})"
                     );
@@ -206,10 +210,11 @@ impl HugrEngine {
 
                 // Check if we have a classical value for this wire
                 if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                    self.wire_state.classical_values.insert((cond_node, port_idx), value.clone());
+                    self.wire_state
+                        .classical_values
+                        .insert((cond_node, port_idx), value.clone());
                     debug!(
-                        "Mapped Conditional {cond_node:?} output {port_idx} to classical value {:?} (from {src_wire:?})",
-                        value
+                        "Mapped Conditional {cond_node:?} output {port_idx} to classical value {value:?} (from {src_wire:?})"
                     );
                 }
 
@@ -217,10 +222,9 @@ impl HugrEngine {
                 let src_op = hugr.get_optype(src_node);
                 if let OpType::Tag(tag_op) = src_op {
                     let tag_value = tag_op.tag;
-                    self.wire_state.classical_values.insert(
-                        (cond_node, port_idx),
-                        ClassicalValue::Int(tag_value as i64),
-                    );
+                    self.wire_state
+                        .classical_values
+                        .insert((cond_node, port_idx), ClassicalValue::Int(tag_value as i64));
 
                     // Also extract and store the Tag's inputs (Sum payload values)
                     // Store them at "virtual" output ports (1, 2, ...) on the Conditional
@@ -232,8 +236,11 @@ impl HugrEngine {
                             hugr.single_linked_output(src_node, tag_in_port)
                         {
                             let payload_src_wire = (payload_src_node, payload_src_port.index());
-                            if let Some(payload_value) =
-                                self.wire_state.classical_values.get(&payload_src_wire).cloned()
+                            if let Some(payload_value) = self
+                                .wire_state
+                                .classical_values
+                                .get(&payload_src_wire)
+                                .cloned()
                             {
                                 // Store at virtual output port (port_idx + 1 + payload_idx)
                                 // This allows CFG block transitions to find the payload values
@@ -305,7 +312,8 @@ impl HugrEngine {
 
                     // Propagate qubit mappings
                     if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                        self.wire_state.wire_to_qubit
+                        self.wire_state
+                            .wire_to_qubit
                             .insert((input_node, input_output_idx), qubit_id);
                         debug!(
                             "Propagated qubit {qubit_id:?} to Input node {input_node:?} port {input_output_idx}"

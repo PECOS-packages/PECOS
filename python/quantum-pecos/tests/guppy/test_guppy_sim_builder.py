@@ -63,7 +63,9 @@ class TestGuppySimBuilder:
 
     def test_direct_run(self) -> None:
         """Test direct run() without explicit build()."""
-        results = sim(self.single_qubit).qubits(10).quantum(state_vector()).run(10).to_dict()
+        results = (
+            sim(self.single_qubit).qubits(10).quantum(state_vector()).run(10).to_dict()
+        )
 
         # Check that we have measurement results
         raw_measurements = results.get("measurements", [])
@@ -137,13 +139,20 @@ class TestGuppySimBuilder:
     def test_bell_state_correlation(self) -> None:
         """Test that Bell state results are correlated."""
         results = (
-            sim(self.bell_state).qubits(10).quantum(state_vector()).seed(42).run(1000).to_dict()
+            sim(self.bell_state)
+            .qubits(10)
+            .quantum(state_vector())
+            .seed(42)
+            .run(1000)
+            .to_dict()
         )
 
         # Measurements format is [[m0, m1], [m0, m1], ...]
         raw_measurements = results.get("measurements", [])
         correlated = sum(1 for m in raw_measurements if m[0] == m[1])
-        assert correlated == len(raw_measurements), "Bell state should be 100% correlated"
+        assert correlated == len(
+            raw_measurements,
+        ), "Bell state should be 100% correlated"
 
     def test_keep_intermediate_files(self) -> None:
         """Test keeping intermediate compilation files."""

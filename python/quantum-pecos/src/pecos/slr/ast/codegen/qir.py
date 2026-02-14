@@ -37,7 +37,6 @@ from pecos.slr.ast.nodes import (
     BinaryOp,
     BitExpr,
     BitRef,
-    Expression,
     ForStmt,
     GateKind,
     GateOp,
@@ -47,7 +46,6 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     PermuteOp,
     PrepareOp,
-    Program,
     RegisterDecl,
     RepeatStmt,
     SlotRef,
@@ -58,7 +56,11 @@ from pecos.slr.ast.nodes import (
 )
 
 if TYPE_CHECKING:
-    from pecos.slr.ast.nodes import Statement
+    from pecos.slr.ast.nodes import (
+        Expression,
+        Program,
+        Statement,
+    )
 
 # Mapping from AST GateKind to QIR gate names
 GATE_TO_QIR: dict[GateKind, str] = {
@@ -163,8 +165,9 @@ class AstToQir:
         Returns:
             QIR as an LLVM IR string.
         """
+        from pecos_rslib.llvm import ir
+
         import pecos as pc
-        from pecos_rslib.llvm import binding, ir
 
         self.context = QirCodeGenContext()
         self._gate_cache = {}
@@ -194,7 +197,11 @@ class AstToQir:
         self._mz_to_bit = self._declare_function(
             "mz_to_creg_bit",
             self._types["void"],
-            [self._types["qubit_ptr"], self._types["bool"].as_pointer(), self._types["int"]],
+            [
+                self._types["qubit_ptr"],
+                self._types["bool"].as_pointer(),
+                self._types["int"],
+            ],
         )
 
         # Setup main function
@@ -202,7 +209,9 @@ class AstToQir:
         self._main_func = ir.Function(self._module, main_fnty, name="main")
         entry_block = self._main_func.append_basic_block(name="entry")
         self._builder = ir.IRBuilder(entry_block)
-        self._builder.comment(f"// Generated from AST using: PECOS version {pc.__version__}")
+        self._builder.comment(
+            f"// Generated from AST using: PECOS version {pc.__version__}",
+        )
 
         # Setup operator map
         self._setup_op_map()
@@ -225,7 +234,6 @@ class AstToQir:
 
     def _setup_creg_funcs(self) -> None:
         """Setup classical register helper functions."""
-        from pecos_rslib.llvm import ir
 
         self._creg_funcs = {
             "create_creg": self._declare_function(
@@ -246,7 +254,11 @@ class AstToQir:
             "set_creg_bit": self._declare_function(
                 "set_creg_bit",
                 self._types["void"],
-                [self._types["bool"].as_pointer(), self._types["int"], self._types["bool"]],
+                [
+                    self._types["bool"].as_pointer(),
+                    self._types["int"],
+                    self._types["bool"],
+                ],
             ),
             "set_creg": self._declare_function(
                 "set_creg_to_int",
@@ -297,7 +309,9 @@ class AstToQir:
                 self.context.allocator_parents[decl.name] = decl.parent
 
         if program.allocator:
-            self.context.allocator_parents[program.allocator.name] = program.allocator.parent
+            self.context.allocator_parents[program.allocator.name] = (
+                program.allocator.parent
+            )
 
         # Calculate offsets for child allocators
         self._calculate_allocator_offsets(program)
@@ -429,7 +443,11 @@ class AstToQir:
             self._builder.call(gate_func, args, name="")
 
     def _get_or_create_gate(
-        self, qir_name: str, *, has_params: bool, num_qubits: int
+        self,
+        qir_name: str,
+        *,
+        has_params: bool,
+        num_qubits: int,
     ) -> Any:
         """Get or create a QIR gate function declaration."""
         from pecos_rslib.llvm import ir
@@ -460,7 +478,7 @@ class AstToQir:
 
         qubit_index = self.context.get_qubit_index(target.allocator, target.index)
         return ir.Constant(self._types["int"], qubit_index).inttoptr(
-            self._types["qubit_ptr"]
+            self._types["qubit_ptr"],
         )
 
     def _process_measure(self, node: MeasureOp) -> None:
@@ -491,7 +509,7 @@ class AstToQir:
 
         for slot in node.slots:
             qubit_ptr = self._get_qubit_ptr(
-                SlotRef(allocator=node.allocator, index=slot)
+                SlotRef(allocator=node.allocator, index=slot),
             )
             self._builder.call(reset_func, [qubit_ptr], name="")
 
@@ -503,11 +521,13 @@ class AstToQir:
         qubits = []
         if node.allocators:
             for alloc in node.allocators:
-                for key, idx in self.context.qubit_map.items():
+                for key in self.context.qubit_map:
                     if key[0] == alloc:
-                        qubits.append(self._get_qubit_ptr(
-                            SlotRef(allocator=key[0], index=key[1])
-                        ))
+                        qubits.append(
+                            self._get_qubit_ptr(
+                                SlotRef(allocator=key[0], index=key[1]),
+                            ),
+                        )
 
         if not qubits:
             return
@@ -668,7 +688,7 @@ class AstToQir:
                 name="",
             )
             reg_tag_gep = reg_tag.gep(
-                (ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0))
+                (ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)),
             )
             self._builder.call(
                 self._creg_funcs["int_result"],

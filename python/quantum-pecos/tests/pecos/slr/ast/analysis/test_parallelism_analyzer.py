@@ -20,10 +20,10 @@ from pecos.slr.qeclib import qubit as qb
 class TestParallelismBasic:
     """Basic parallelism tests."""
 
-    def test_empty_circuit(self):
+    def test_empty_circuit(self) -> None:
         """Empty circuit has no parallelism."""
         prog = Main(
-            q := QReg("q", 1),
+            _q := QReg("q", 1),
         )
 
         ast = slr_to_ast(prog)
@@ -32,7 +32,7 @@ class TestParallelismBasic:
         assert result.total_operations == 0
         assert result.depth == 0
 
-    def test_single_gate(self):
+    def test_single_gate(self) -> None:
         """Single gate has parallelism ratio of 1."""
         prog = Main(
             q := QReg("q", 1),
@@ -46,7 +46,7 @@ class TestParallelismBasic:
         assert result.depth == 1
         assert result.parallelism_ratio == 1.0
 
-    def test_sequential_gates(self):
+    def test_sequential_gates(self) -> None:
         """Sequential gates on same qubit have ratio 1."""
         prog = Main(
             q := QReg("q", 1),
@@ -66,7 +66,7 @@ class TestParallelismBasic:
 class TestParallelismParallel:
     """Tests for parallel operations."""
 
-    def test_parallel_gates(self):
+    def test_parallel_gates(self) -> None:
         """Gates on different qubits can be parallel."""
         prog = Main(
             q := QReg("q", 2),
@@ -82,7 +82,7 @@ class TestParallelismParallel:
         assert result.parallelism_ratio == 2.0
         assert result.max_parallel_gates == 2
 
-    def test_three_parallel_gates(self):
+    def test_three_parallel_gates(self) -> None:
         """Three gates on different qubits."""
         prog = Main(
             q := QReg("q", 3),
@@ -99,7 +99,7 @@ class TestParallelismParallel:
         assert result.parallelism_ratio == 3.0
         assert result.max_parallel_gates == 3
 
-    def test_mixed_parallelism(self):
+    def test_mixed_parallelism(self) -> None:
         """Mix of parallel and sequential."""
         prog = Main(
             q := QReg("q", 2),
@@ -119,7 +119,7 @@ class TestParallelismParallel:
 class TestParallelismTwoQubit:
     """Two-qubit gate parallelism tests."""
 
-    def test_cx_blocks_both_qubits(self):
+    def test_cx_blocks_both_qubits(self) -> None:
         """CX gate blocks both qubits."""
         prog = Main(
             q := QReg("q", 2),
@@ -135,7 +135,7 @@ class TestParallelismTwoQubit:
         assert result.total_operations == 3
         assert result.depth == 2
 
-    def test_parallel_cx_gates(self):
+    def test_parallel_cx_gates(self) -> None:
         """CX gates on disjoint qubits can be parallel."""
         prog = Main(
             q := QReg("q", 4),
@@ -154,7 +154,7 @@ class TestParallelismTwoQubit:
 class TestParallelismControlFlow:
     """Parallelism with control flow."""
 
-    def test_repeat_loop(self):
+    def test_repeat_loop(self) -> None:
         """Repeat loop unrolls for parallelism."""
         prog = Main(
             q := QReg("q", 1),
@@ -170,7 +170,7 @@ class TestParallelismControlFlow:
         assert result.total_operations == 3
         assert result.depth == 3
 
-    def test_if_branches(self):
+    def test_if_branches(self) -> None:
         """If statement considers both branches."""
         prog = Main(
             q := QReg("q", 1),
@@ -190,7 +190,7 @@ class TestParallelismControlFlow:
 class TestParallelismMetrics:
     """Tests for parallelism metrics."""
 
-    def test_avg_parallel_gates(self):
+    def test_avg_parallel_gates(self) -> None:
         """Average parallel gates calculation."""
         prog = Main(
             q := QReg("q", 2),
@@ -204,7 +204,7 @@ class TestParallelismMetrics:
 
         assert result.avg_parallel_gates == 1.5
 
-    def test_layer_sizes(self):
+    def test_layer_sizes(self) -> None:
         """Layer size tracking."""
         prog = Main(
             q := QReg("q", 3),
@@ -224,7 +224,7 @@ class TestParallelismMetrics:
 class TestAnalyzerClass:
     """Tests for ParallelismAnalyzer class."""
 
-    def test_analyzer_reuse(self):
+    def test_analyzer_reuse(self) -> None:
         """Analyzer can be reused."""
         analyzer = ParallelismAnalyzer()
 
@@ -240,7 +240,7 @@ class TestAnalyzerClass:
         assert result1.parallelism_ratio == 1.0
         assert result2.parallelism_ratio == 2.0
 
-    def test_result_string(self):
+    def test_result_string(self) -> None:
         """ParallelismResult string representation."""
         prog = Main(q := QReg("q", 2), qb.H(q[0]), qb.X(q[1]))
 

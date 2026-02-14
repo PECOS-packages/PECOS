@@ -23,8 +23,8 @@
 use log::debug;
 use tket::hugr::{Hugr, Node};
 
-use crate::engine::types::{ClassicalValue, FutureState};
 use crate::engine::HugrEngine;
+use crate::engine::types::{ClassicalValue, FutureState};
 
 impl HugrEngine {
     /// Handle tket.futures operations.
@@ -42,7 +42,8 @@ impl HugrEngine {
                     match state {
                         FutureState::Resolved(outcome) => {
                             // Future is resolved, output the value
-                            self.wire_state.classical_values
+                            self.wire_state
+                                .classical_values
                                 .insert((node, 0), ClassicalValue::Bool(*outcome != 0));
                             debug!("Read future {future_id} -> {outcome}");
                         }
@@ -54,12 +55,14 @@ impl HugrEngine {
                                 self.measurement_state.mappings.get(*measurement_index)
                             {
                                 if let Some(&result) = self.measurement_state.results.get(qubit) {
-                                    self.wire_state.classical_values
+                                    self.wire_state
+                                        .classical_values
                                         .insert((node, 0), ClassicalValue::Bool(result != 0));
                                     debug!("Read future {future_id} from measurement -> {result}");
                                 } else {
                                     // Result not yet available - use default
-                                    self.wire_state.classical_values
+                                    self.wire_state
+                                        .classical_values
                                         .insert((node, 0), ClassicalValue::Bool(false));
                                     debug!("Read future {future_id} pending, using default");
                                 }
@@ -88,9 +91,11 @@ impl HugrEngine {
                     }
 
                     // Output both Futures
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Future(new_id1));
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 1), ClassicalValue::Future(new_id2));
 
                     debug!("Dup future {original_id} -> {new_id1}, {new_id2}");

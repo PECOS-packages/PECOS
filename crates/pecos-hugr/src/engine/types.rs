@@ -26,8 +26,8 @@
 
 use std::collections::BTreeSet;
 
-use pecos_core::gate_type::GateType;
 use pecos_core::QubitId;
+use pecos_core::gate_type::GateType;
 use tket::hugr::Node;
 
 // ============================================================================
@@ -342,7 +342,7 @@ impl ClassicalOp {
         }
     }
 
-    /// Set integer type info (log_width, is_signed).
+    /// Set integer type info (`log_width`, `is_signed`).
     #[must_use]
     pub fn with_int_info(mut self, log_width: u8, is_signed: bool) -> Self {
         self.int_info = Some((log_width, is_signed));
@@ -630,15 +630,15 @@ pub enum ContainerType {
     Case,
     /// Conditional: Control input unpacks Sum type; data inputs pass through
     Conditional,
-    /// TailLoop: Complex - has CONTINUE_TAG/BREAK_TAG handling
+    /// `TailLoop`: Complex - has `CONTINUE_TAG/BREAK_TAG` handling
     TailLoop,
-    /// FuncDefn: Function definition, similar to DFG
+    /// `FuncDefn`: Function definition, similar to DFG
     FuncDefn,
-    /// Call: Function call, maps to FuncDefn's Input/Output
+    /// Call: Function call, maps to `FuncDefn`'s Input/Output
     Call,
     /// CFG: Control flow graph with basic blocks
     Cfg,
-    /// DataflowBlock: Basic block inside a CFG
+    /// `DataflowBlock`: Basic block inside a CFG
     DataflowBlock,
     /// Other: Unknown container type
     Other,
@@ -723,7 +723,7 @@ pub struct ActiveCaseInfo {
 
 /// Information about a CFG (Control Flow Graph) node.
 ///
-/// CFG nodes contain DataflowBlock children that represent basic blocks.
+/// CFG nodes contain `DataflowBlock` children that represent basic blocks.
 /// Control flow between blocks is determined by Sum types at port 0 of
 /// each block's output, with the tag value selecting the successor.
 #[derive(Debug, Clone)]
@@ -731,11 +731,11 @@ pub struct CfgInfo {
     /// The CFG node in the HUGR (kept for future diagnostics).
     #[allow(dead_code)]
     pub node: Node,
-    /// Entry block (first DataflowBlock child).
+    /// Entry block (first `DataflowBlock` child).
     pub entry_block: Node,
-    /// Exit block (ExitBlock child).
+    /// Exit block (`ExitBlock` child).
     pub exit_block: Node,
-    /// All DataflowBlock children indexed by node.
+    /// All `DataflowBlock` children indexed by node.
     pub blocks: std::collections::BTreeMap<Node, DataflowBlockInfo>,
     /// Number of input values to the CFG (kept for wire validation).
     #[allow(dead_code)]
@@ -745,16 +745,16 @@ pub struct CfgInfo {
     pub num_outputs: usize,
 }
 
-/// Information about a DataflowBlock within a CFG.
+/// Information about a `DataflowBlock` within a CFG.
 #[derive(Debug, Clone)]
 pub struct DataflowBlockInfo {
-    /// The DataflowBlock node (kept for diagnostics).
+    /// The `DataflowBlock` node (kept for diagnostics).
     #[allow(dead_code)]
     pub node: Node,
     /// Number of input values for this block (kept for wire validation).
     #[allow(dead_code)]
     pub num_inputs: usize,
-    /// Number of successor blocks (from sum_rows.len()) (kept for validation).
+    /// Number of successor blocks (from `sum_rows.len()`) (kept for validation).
     #[allow(dead_code)]
     pub num_successors: usize,
     /// Successor block nodes indexed by Sum tag.
@@ -772,7 +772,7 @@ pub struct DataflowBlockInfo {
     /// All extension operation nodes inside this block (tket.result, tket.qsystem, etc.).
     /// These are extension ops that are not tracked elsewhere (not quantum, bool, or classical).
     pub extension_ops: BTreeSet<Node>,
-    /// All TailLoop nodes inside this block.
+    /// All `TailLoop` nodes inside this block.
     pub tailloop_nodes: BTreeSet<Node>,
     /// Input node inside this block (kept for future wire tracing).
     #[allow(dead_code)]
@@ -798,20 +798,20 @@ pub struct ActiveCfgInfo {
 // Function Call Types
 // ============================================================================
 
-/// Information about a FuncDefn (function definition) node.
+/// Information about a `FuncDefn` (function definition) node.
 #[derive(Debug, Clone)]
 pub struct FuncDefnInfo {
-    /// The FuncDefn node.
+    /// The `FuncDefn` node.
     #[allow(dead_code)]
     pub node: Node,
     /// The function name.
     #[allow(dead_code)]
     pub name: String,
-    /// Input node inside the FuncDefn.
+    /// Input node inside the `FuncDefn`.
     pub input_node: Node,
-    /// Output node inside the FuncDefn.
+    /// Output node inside the `FuncDefn`.
     pub output_node: Node,
-    /// The CFG inside the FuncDefn (if any).
+    /// The CFG inside the `FuncDefn` (if any).
     pub cfg_node: Option<Node>,
     /// Number of input parameters.
     pub num_inputs: usize,
@@ -825,7 +825,7 @@ pub struct ActiveCallInfo {
     /// The Call node.
     #[allow(dead_code)]
     pub call_node: Node,
-    /// The FuncDefn being called.
+    /// The `FuncDefn` being called.
     pub func_defn_node: Node,
 }
 
@@ -833,10 +833,10 @@ pub struct ActiveCallInfo {
 // TailLoop Control Flow Types
 // ============================================================================
 
-/// Information about a TailLoop node.
+/// Information about a `TailLoop` node.
 ///
-/// TailLoop executes its body repeatedly until the body outputs BREAK_TAG (1).
-/// On CONTINUE_TAG (0), the body is re-executed with updated values.
+/// `TailLoop` executes its body repeatedly until the body outputs `BREAK_TAG` (1).
+/// On `CONTINUE_TAG` (0), the body is re-executed with updated values.
 ///
 /// # Port Layout
 ///
@@ -847,11 +847,11 @@ pub struct ActiveCallInfo {
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Some fields reserved for future use
 pub struct TailLoopInfo {
-    /// The TailLoop node in the HUGR.
+    /// The `TailLoop` node in the HUGR.
     pub node: Node,
-    /// Input node inside the TailLoop body.
+    /// Input node inside the `TailLoop` body.
     pub input_node: Node,
-    /// Output node inside the TailLoop body.
+    /// Output node inside the `TailLoop` body.
     pub output_node: Node,
     /// Number of "just inputs" (only input, not iterated).
     pub just_inputs_count: usize,
@@ -859,22 +859,28 @@ pub struct TailLoopInfo {
     pub just_outputs_count: usize,
     /// Number of "rest" values (both input and output, iterated).
     pub rest_count: usize,
-    /// All quantum operation nodes inside this TailLoop body.
+    /// All quantum operation nodes inside this `TailLoop` body.
     pub quantum_ops: BTreeSet<Node>,
-    /// All Call nodes inside this TailLoop body.
+    /// All Call nodes inside this `TailLoop` body.
     pub call_nodes: BTreeSet<Node>,
-    /// All extension operation nodes inside this TailLoop body.
+    /// All extension operation nodes inside this `TailLoop` body.
     pub extension_ops: BTreeSet<Node>,
-    /// Total number of TailLoop input ports.
+    /// All classical operation nodes inside this `TailLoop` body.
+    pub classical_ops: BTreeSet<Node>,
+    /// All tket.bool operation nodes inside this `TailLoop` body.
+    pub bool_ops: BTreeSet<Node>,
+    /// All Conditional nodes inside this `TailLoop` body.
+    pub conditional_nodes: BTreeSet<Node>,
+    /// Total number of `TailLoop` input ports.
     pub num_inputs: usize,
-    /// Total number of TailLoop output ports.
+    /// Total number of `TailLoop` output ports.
     pub num_outputs: usize,
 }
 
-/// Information about an active TailLoop being executed.
+/// Information about an active `TailLoop` being executed.
 #[derive(Debug, Clone)]
 pub struct ActiveTailLoopInfo {
-    /// The TailLoop node.
+    /// The `TailLoop` node.
     #[allow(dead_code)]
     pub tailloop_node: Node,
     /// Current iteration number (for debugging/limits).
@@ -913,10 +919,7 @@ mod tests {
 
     #[test]
     fn test_classical_value_tuple() {
-        let tuple = ClassicalValue::Tuple(vec![
-            ClassicalValue::Int(1),
-            ClassicalValue::Bool(true),
-        ]);
+        let tuple = ClassicalValue::Tuple(vec![ClassicalValue::Int(1), ClassicalValue::Bool(true)]);
         assert!(tuple.as_tuple().is_some());
         assert_eq!(tuple.tuple_get(0), Some(&ClassicalValue::Int(1)));
         assert_eq!(tuple.tuple_get(1), Some(&ClassicalValue::Bool(true)));
@@ -943,6 +946,6 @@ mod tests {
         assert_ne!(v1, v2); // Should produce different values
 
         let f = rng.next_f64();
-        assert!(f >= 0.0 && f < 1.0); // Should be in [0, 1)
+        assert!((0.0..1.0).contains(&f)); // Should be in [0, 1)
     }
 }

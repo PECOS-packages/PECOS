@@ -14,52 +14,52 @@
 
 //! Function call handling.
 //!
-//! Call nodes invoke FuncDefn definitions. The engine tracks active calls
+//! Call nodes invoke `FuncDefn` definitions. The engine tracks active calls
 //! and manages the call stack for recursive/nested calls.
 //!
 //! # Structure
 //!
-//! - Call node: Invokes a FuncDefn with input values
-//! - FuncDefn: Contains the function body (may include CFG)
-//! - Return: Outputs from FuncDefn propagate back through Call outputs
+//! - Call node: Invokes a `FuncDefn` with input values
+//! - `FuncDefn`: Contains the function body (may include CFG)
+//! - Return: Outputs from `FuncDefn` propagate back through Call outputs
 //!
 //! # Execution Flow
 //!
 //! 1. Call node encountered in work queue
-//! 2. FuncDefn body activated (typically contains a CFG)
-//! 3. CFG executes within FuncDefn context
+//! 2. `FuncDefn` body activated (typically contains a CFG)
+//! 3. CFG executes within `FuncDefn` context
 //! 4. On CFG completion, `complete_func_call_if_needed` is triggered
-//! 5. Outputs propagate from FuncDefn to Call outputs
+//! 5. Outputs propagate from `FuncDefn` to Call outputs
 //! 6. Call's successors are added to work queue
 
 use log::debug;
 use tket::hugr::{Hugr, HugrView, IncomingPort, PortIndex};
 
-use crate::engine::analysis::all_predecessors_ready;
 use crate::engine::HugrEngine;
+use crate::engine::analysis::all_predecessors_ready;
 
 impl HugrEngine {
     /// Complete a function call if the completed CFG belongs to an active Call's `FuncDefn`.
     ///
     /// This method is called when a CFG completes. It checks if that CFG belongs
-    /// to a FuncDefn that was invoked by an active Call, and if so:
-    /// 1. Propagates output wires from FuncDefn to Call outputs
+    /// to a `FuncDefn` that was invoked by an active Call, and if so:
+    /// 1. Propagates output wires from `FuncDefn` to Call outputs
     /// 2. Marks the Call as processed
     /// 3. Adds Call successors to the work queue
-    /// 4. Starts any pending calls to the same FuncDefn
+    /// 4. Starts any pending calls to the same `FuncDefn`
     pub(crate) fn complete_func_call_if_needed(&mut self, hugr: &Hugr, cfg_node: tket::hugr::Node) {
         // Find which active Call (if any) has a FuncDefn with this CFG
-        let call_to_complete: Option<(tket::hugr::Node, tket::hugr::Node)> =
-            self.active_calls
-                .iter()
-                .find_map(|(&call_node, call_info)| {
-                    if let Some(func_info) = self.func_defns.get(&call_info.func_defn_node)
-                        && func_info.cfg_node == Some(cfg_node)
-                    {
-                        return Some((call_node, call_info.func_defn_node));
-                    }
-                    None
-                });
+        let call_to_complete: Option<(tket::hugr::Node, tket::hugr::Node)> = self
+            .active_calls
+            .iter()
+            .find_map(|(&call_node, call_info)| {
+                if let Some(func_info) = self.func_defns.get(&call_info.func_defn_node)
+                    && func_info.cfg_node == Some(cfg_node)
+                {
+                    return Some((call_node, call_info.func_defn_node));
+                }
+                None
+            });
 
         if let Some((call_node, func_defn_node)) = call_to_complete {
             debug!(
@@ -81,18 +81,23 @@ impl HugrEngine {
                         // Map qubits
                         if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
                             let call_output_wire = (call_node, port);
-                            self.wire_state.wire_to_qubit.insert(call_output_wire, qubit_id);
+                            self.wire_state
+                                .wire_to_qubit
+                                .insert(call_output_wire, qubit_id);
                             debug!(
                                 "Call {call_node:?}: mapped FuncDefn output {port} qubit {qubit_id:?} to Call output"
                             );
                         }
                         // Map classical values (including arrays)
-                        if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                        if let Some(value) =
+                            self.wire_state.classical_values.get(&src_wire).cloned()
+                        {
                             let call_output_wire = (call_node, port);
-                            self.wire_state.classical_values.insert(call_output_wire, value.clone());
+                            self.wire_state
+                                .classical_values
+                                .insert(call_output_wire, value.clone());
                             debug!(
-                                "Call {call_node:?}: mapped FuncDefn output {port} classical value {:?} to Call output",
-                                value
+                                "Call {call_node:?}: mapped FuncDefn output {port} classical value {value:?} to Call output"
                             );
                         }
                     }

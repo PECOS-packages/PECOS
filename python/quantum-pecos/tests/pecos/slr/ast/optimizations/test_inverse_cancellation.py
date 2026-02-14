@@ -20,7 +20,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestInverseCancellationBasic:
     """Basic inverse cancellation tests."""
 
-    def test_s_sdg_cancels(self):
+    def test_s_sdg_cancels(self) -> None:
         """S-Sdg on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -34,7 +34,7 @@ class TestInverseCancellationBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_sdg_s_cancels(self):
+    def test_sdg_s_cancels(self) -> None:
         """Sdg-S on same qubit cancels (order reversed)."""
         prog = Main(
             q := QReg("q", 1),
@@ -48,7 +48,7 @@ class TestInverseCancellationBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_t_tdg_cancels(self):
+    def test_t_tdg_cancels(self) -> None:
         """T-Tdg on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -62,7 +62,7 @@ class TestInverseCancellationBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_tdg_t_cancels(self):
+    def test_tdg_t_cancels(self) -> None:
         """Tdg-T on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -80,7 +80,7 @@ class TestInverseCancellationBasic:
 class TestInverseCancellationSqrt:
     """Square root gate inverse cancellation tests."""
 
-    def test_sx_sxdg_cancels(self):
+    def test_sx_sxdg_cancels(self) -> None:
         """SX-SXdg on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -94,7 +94,7 @@ class TestInverseCancellationSqrt:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_sy_sydg_cancels(self):
+    def test_sy_sydg_cancels(self) -> None:
         """SY-SYdg on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -112,7 +112,7 @@ class TestInverseCancellationSqrt:
 class TestInverseCancellationNoCancel:
     """Tests where inverse pairs should NOT cancel."""
 
-    def test_s_t_no_cancel(self):
+    def test_s_t_no_cancel(self) -> None:
         """S-T are not inverses."""
         prog = Main(
             q := QReg("q", 1),
@@ -126,7 +126,7 @@ class TestInverseCancellationNoCancel:
         assert len(result.program.body) == 2
         assert result.gates_removed == 0
 
-    def test_s_sdg_different_qubits_no_cancel(self):
+    def test_s_sdg_different_qubits_no_cancel(self) -> None:
         """S-Sdg on different qubits does not cancel."""
         prog = Main(
             q := QReg("q", 2),
@@ -144,7 +144,7 @@ class TestInverseCancellationNoCancel:
 class TestInverseCancellationControlFlow:
     """Inverse cancellation inside control flow."""
 
-    def test_cancellation_inside_if(self):
+    def test_cancellation_inside_if(self) -> None:
         """Inverse pairs cancel inside if statements."""
         prog = Main(
             q := QReg("q", 1),
@@ -161,7 +161,7 @@ class TestInverseCancellationControlFlow:
         assert len(result.program.body) == 1  # IfStmt still present
         assert result.gates_removed == 2
 
-    def test_cancellation_inside_repeat(self):
+    def test_cancellation_inside_repeat(self) -> None:
         """Inverse pairs cancel inside repeat blocks."""
         prog = Main(
             q := QReg("q", 1),
@@ -181,7 +181,7 @@ class TestInverseCancellationControlFlow:
 class TestInverseCancellationMultiple:
     """Multiple inverse cancellation tests."""
 
-    def test_multiple_inverse_pairs(self):
+    def test_multiple_inverse_pairs(self) -> None:
         """Multiple inverse pairs cancel correctly."""
         prog = Main(
             q := QReg("q", 1),
@@ -197,7 +197,7 @@ class TestInverseCancellationMultiple:
         assert len(result.program.body) == 0
         assert result.gates_removed == 4
 
-    def test_interleaved_no_cancel(self):
+    def test_interleaved_no_cancel(self) -> None:
         """Interleaved inverse pairs do not cancel."""
         prog = Main(
             q := QReg("q", 1),

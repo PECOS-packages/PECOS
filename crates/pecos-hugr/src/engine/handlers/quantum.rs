@@ -16,8 +16,8 @@
 //!
 //! This module handles quantum-related extension operations:
 //! - `tket.quantum`: Non-gate operations like `symbolic_angle`
-//! - `tket.rotation`: Rotation type operations (from_halfturns, to_halfturns, radd)
-//! - `tket.modifier`: Gate modifiers (ControlModifier, DaggerModifier, PowerModifier)
+//! - `tket.rotation`: Rotation type operations (`from_halfturns`, `to_halfturns`, radd)
+//! - `tket.modifier`: Gate modifiers (`ControlModifier`, `DaggerModifier`, `PowerModifier`)
 //! - `tket.global_phase`: Global phase accumulation
 //!
 //! Note: Quantum gate operations are handled via the quantum ops extraction path,
@@ -26,8 +26,8 @@
 use log::debug;
 use tket::hugr::{Hugr, HugrView, Node};
 
-use crate::engine::types::ClassicalValue;
 use crate::engine::HugrEngine;
+use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `tket.quantum` non-gate operations (e.g., `symbolic_angle`).
@@ -53,12 +53,14 @@ impl HugrEngine {
                     let debug_str = format!("{ext_op:?}");
                     // Try to extract the symbolic expression from parameters
                     let angle = Self::parse_symbolic_angle(&debug_str);
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Rotation(angle));
                     debug!("symbolic_angle: parsed angle = {angle} half-turns");
                 } else {
                     // Default to 0 if we can't parse
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Rotation(0.0));
                     debug!("symbolic_angle: defaulting to 0");
                 }
@@ -143,7 +145,8 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                     .unwrap_or(0.0);
 
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Rotation(halfturns));
 
                 debug!("tket.rotation.from_halfturns: {halfturns}");
@@ -157,7 +160,8 @@ impl HugrEngine {
                     .and_then(|v| v.as_rotation())
                     .unwrap_or(0.0);
 
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Float(halfturns));
 
                 debug!("tket.rotation.to_halfturns: {halfturns}");
@@ -178,7 +182,8 @@ impl HugrEngine {
                 // Rotation addition, normalized to [0, 2) half-turns
                 let sum = (a + b).rem_euclid(2.0);
 
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Rotation(sum));
 
                 debug!("tket.rotation.radd: {a} + {b} = {sum}");
@@ -246,7 +251,8 @@ impl HugrEngine {
                 .unwrap_or(0.0);
 
             // Accumulate global phase (normalized to [0, 2))
-            self.extension_state.global_phase = (self.extension_state.global_phase + phase).rem_euclid(2.0);
+            self.extension_state.global_phase =
+                (self.extension_state.global_phase + phase).rem_euclid(2.0);
 
             debug!(
                 "tket.global_phase: added {phase}, total = {}",

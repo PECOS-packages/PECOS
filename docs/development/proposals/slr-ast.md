@@ -75,6 +75,7 @@ Support the visitor pattern for analysis and transformation:
 class ASTVisitor(Protocol[T]):
     def visit_program(self, node: Program) -> T: ...
     def visit_gate(self, node: GateOp) -> T: ...
+
     # etc.
 ```
 
@@ -98,16 +99,20 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TypeVar, Generic, Protocol, Sequence
 
+
 @dataclass(frozen=True)
 class SourceLocation:
     """Source location for error reporting."""
+
     line: int
     column: int
     file: str | None = None
 
+
 @dataclass(frozen=True)
 class ASTNode(ABC):
     """Base class for all AST nodes."""
+
     location: SourceLocation | None = field(default=None, compare=False)
 
     @abstractmethod
@@ -126,6 +131,7 @@ class ASTNode(ABC):
 @dataclass(frozen=True)
 class Program(ASTNode):
     """Root node representing an SLR program."""
+
     name: str
     allocator: AllocatorDecl | None  # Base allocator (required in strict mode)
     declarations: tuple[Declaration, ...]
@@ -149,11 +155,14 @@ class Program(ASTNode):
 ```python
 class Declaration(ASTNode, ABC):
     """Base for all declarations."""
+
     pass
+
 
 @dataclass(frozen=True)
 class AllocatorDecl(Declaration):
     """Qubit allocator declaration."""
+
     name: str
     capacity: int
     parent: str | None = None  # Name of parent allocator
@@ -161,9 +170,11 @@ class AllocatorDecl(Declaration):
     def accept(self, visitor: ASTVisitor[T]) -> T:
         return visitor.visit_allocator_decl(self)
 
+
 @dataclass(frozen=True)
 class RegisterDecl(Declaration):
     """Classical register declaration."""
+
     name: str
     size: int
     is_result: bool = True
@@ -177,11 +188,14 @@ class RegisterDecl(Declaration):
 ```python
 class Statement(ASTNode, ABC):
     """Base for all statements."""
+
     pass
+
 
 @dataclass(frozen=True)
 class GateOp(Statement):
     """Quantum gate application."""
+
     gate: GateKind
     targets: tuple[SlotRef, ...]
     params: tuple[Expression, ...] = ()
@@ -192,18 +206,22 @@ class GateOp(Statement):
     def children(self) -> Sequence[ASTNode]:
         return (*self.targets, *self.params)
 
+
 @dataclass(frozen=True)
 class PrepareOp(Statement):
     """Prepare qubit slots (unprepared -> prepared)."""
+
     allocator: str
     slots: tuple[int, ...] | None = None  # None means all slots
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
         return visitor.visit_prepare(self)
 
+
 @dataclass(frozen=True)
 class MeasureOp(Statement):
     """Measure qubit slots."""
+
     targets: tuple[SlotRef, ...]
     results: tuple[BitRef, ...] = ()
 
@@ -213,9 +231,11 @@ class MeasureOp(Statement):
     def children(self) -> Sequence[ASTNode]:
         return (*self.targets, *self.results)
 
+
 @dataclass(frozen=True)
 class AssignOp(Statement):
     """Classical assignment."""
+
     target: BitRef | str  # Variable or bit reference
     value: Expression
 
@@ -228,25 +248,31 @@ class AssignOp(Statement):
             nodes.insert(0, self.target)
         return nodes
 
+
 @dataclass(frozen=True)
 class BarrierOp(Statement):
     """Synchronization barrier."""
+
     allocators: tuple[str, ...] = ()
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
         return visitor.visit_barrier(self)
 
+
 @dataclass(frozen=True)
 class CommentOp(Statement):
     """Comment in generated code."""
+
     text: str
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
         return visitor.visit_comment(self)
 
+
 @dataclass(frozen=True)
 class ReturnOp(Statement):
     """Return statement."""
+
     values: tuple[Expression, ...]
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
@@ -262,6 +288,7 @@ class ReturnOp(Statement):
 @dataclass(frozen=True)
 class IfStmt(Statement):
     """Conditional execution."""
+
     condition: Expression
     then_body: tuple[Statement, ...]
     else_body: tuple[Statement, ...] = ()
@@ -272,9 +299,11 @@ class IfStmt(Statement):
     def children(self) -> Sequence[ASTNode]:
         return (self.condition, *self.then_body, *self.else_body)
 
+
 @dataclass(frozen=True)
 class WhileStmt(Statement):
     """While loop."""
+
     condition: Expression
     body: tuple[Statement, ...]
 
@@ -284,9 +313,11 @@ class WhileStmt(Statement):
     def children(self) -> Sequence[ASTNode]:
         return (self.condition, *self.body)
 
+
 @dataclass(frozen=True)
 class ForStmt(Statement):
     """For loop with iteration variable."""
+
     variable: str
     start: Expression
     stop: Expression
@@ -303,9 +334,11 @@ class ForStmt(Statement):
         nodes.extend(self.body)
         return nodes
 
+
 @dataclass(frozen=True)
 class RepeatStmt(Statement):
     """Repeat N times."""
+
     count: int
     body: tuple[Statement, ...]
 
@@ -315,9 +348,11 @@ class RepeatStmt(Statement):
     def children(self) -> Sequence[ASTNode]:
         return self.body
 
+
 @dataclass(frozen=True)
 class ParallelBlock(Statement):
     """Parallel execution hint."""
+
     body: tuple[Statement, ...]
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
@@ -333,6 +368,7 @@ class ParallelBlock(Statement):
 @dataclass(frozen=True)
 class SlotRef(ASTNode):
     """Reference to a qubit slot in an allocator."""
+
     allocator: str
     index: int
 
@@ -342,9 +378,11 @@ class SlotRef(ASTNode):
     def __str__(self) -> str:
         return f"{self.allocator}[{self.index}]"
 
+
 @dataclass(frozen=True)
 class BitRef(ASTNode):
     """Reference to a classical bit in a register."""
+
     register: str
     index: int
 
@@ -360,27 +398,34 @@ class BitRef(ASTNode):
 ```python
 class Expression(ASTNode, ABC):
     """Base for all expressions."""
+
     pass
+
 
 @dataclass(frozen=True)
 class LiteralExpr(Expression):
     """Literal value (int, float, bool)."""
+
     value: int | float | bool
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
         return visitor.visit_literal(self)
 
+
 @dataclass(frozen=True)
 class VarExpr(Expression):
     """Variable reference."""
+
     name: str
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
         return visitor.visit_var(self)
 
+
 @dataclass(frozen=True)
 class BitExpr(Expression):
     """Bit reference as expression (for conditions)."""
+
     ref: BitRef
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
@@ -389,9 +434,11 @@ class BitExpr(Expression):
     def children(self) -> Sequence[ASTNode]:
         return (self.ref,)
 
+
 @dataclass(frozen=True)
 class BinaryExpr(Expression):
     """Binary operation."""
+
     op: BinaryOp
     left: Expression
     right: Expression
@@ -402,9 +449,11 @@ class BinaryExpr(Expression):
     def children(self) -> Sequence[ASTNode]:
         return (self.left, self.right)
 
+
 @dataclass(frozen=True)
 class UnaryExpr(Expression):
     """Unary operation."""
+
     op: UnaryOp
     operand: Expression
 
@@ -414,8 +463,10 @@ class UnaryExpr(Expression):
     def children(self) -> Sequence[ASTNode]:
         return (self.operand,)
 
+
 class BinaryOp(Enum):
     """Binary operators."""
+
     # Arithmetic
     ADD = auto()
     SUB = auto()
@@ -436,8 +487,10 @@ class BinaryOp(Enum):
     LSHIFT = auto()
     RSHIFT = auto()
 
+
 class UnaryOp(Enum):
     """Unary operators."""
+
     NOT = auto()
     NEG = auto()
 ```
@@ -447,6 +500,7 @@ class UnaryOp(Enum):
 ```python
 class GateKind(Enum):
     """All supported gate types."""
+
     # Single-qubit Paulis
     X = auto()
     Y = auto()
@@ -492,9 +546,16 @@ class GateKind(Enum):
     def arity(self) -> int:
         """Number of qubit arguments."""
         two_qubit = {
-            GateKind.CX, GateKind.CY, GateKind.CZ, GateKind.CH,
-            GateKind.SXX, GateKind.SYY, GateKind.SZZ,
-            GateKind.SXXdg, GateKind.SYYdg, GateKind.SZZdg,
+            GateKind.CX,
+            GateKind.CY,
+            GateKind.CZ,
+            GateKind.CH,
+            GateKind.SXX,
+            GateKind.SYY,
+            GateKind.SZZ,
+            GateKind.SXXdg,
+            GateKind.SYYdg,
+            GateKind.SZZdg,
             GateKind.RZZ,
         }
         return 2 if self in two_qubit else 1
@@ -511,23 +572,30 @@ class GateKind(Enum):
 @dataclass(frozen=True)
 class TypeExpr(ASTNode):
     """Type expression for return types and declarations."""
+
     pass
+
 
 @dataclass(frozen=True)
 class QubitType(TypeExpr):
     """Single qubit type."""
+
     def accept(self, visitor: ASTVisitor[T]) -> T:
         return visitor.visit_qubit_type(self)
+
 
 @dataclass(frozen=True)
 class BitType(TypeExpr):
     """Single classical bit type."""
+
     def accept(self, visitor: ASTVisitor[T]) -> T:
         return visitor.visit_bit_type(self)
+
 
 @dataclass(frozen=True)
 class ArrayType(TypeExpr):
     """Array type with element type and size."""
+
     element: TypeExpr
     size: int
 
@@ -537,9 +605,11 @@ class ArrayType(TypeExpr):
     def children(self) -> Sequence[ASTNode]:
         return (self.element,)
 
+
 @dataclass(frozen=True)
 class AllocatorType(TypeExpr):
     """Qubit allocator type with capacity."""
+
     capacity: int
 
     def accept(self, visitor: ASTVisitor[T]) -> T:
@@ -553,7 +623,8 @@ class AllocatorType(TypeExpr):
 ```python
 from typing import TypeVar, Protocol
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class ASTVisitor(Protocol[T]):
     """Protocol for AST visitors."""
@@ -704,8 +775,7 @@ class ASTStateValidator(BaseVisitor[None]):
         # Validate all targets are prepared
         for target in node.targets:
             state = self.slot_states.get(
-                (target.allocator, target.index),
-                SlotState.UNPREPARED
+                (target.allocator, target.index), SlotState.UNPREPARED
             )
             if state == SlotState.UNPREPARED:
                 self.violations.append(StateViolation(...))
@@ -727,6 +797,7 @@ def slr_to_ast(block: SLRBlock) -> Program:
     """Convert current SLR block to AST."""
     converter = SLRToASTConverter()
     return converter.convert(block)
+
 
 class SLRToASTConverter:
     """Converts SLR objects to AST nodes."""
@@ -831,11 +902,13 @@ class QASMGenerator(BaseVisitor[str]):
 
 class GuppyGenerator(BaseVisitor[str]):
     """Generate Guppy code from AST."""
+
     # Similar structure, different output format
 
 
 class HUGRGenerator(BaseVisitor[HUGRNode]):
     """Generate HUGR from AST."""
+
     # Returns HUGR IR nodes instead of strings
 ```
 

@@ -15,7 +15,6 @@ import json
 import math
 
 import pytest
-
 from pecos.slr import CReg, If, Main, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.nodes import (
@@ -41,7 +40,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestAstToDict:
     """Tests for ast_to_dict conversion."""
 
-    def test_simple_program(self):
+    def test_simple_program(self) -> None:
         """Simple program converts to dict."""
         prog = Program(
             name="test",
@@ -57,25 +56,32 @@ class TestAstToDict:
         assert result["allocator"]["name"] == "q"
         assert result["allocator"]["capacity"] == 2
 
-    def test_gate_kind_enum(self):
+    def test_gate_kind_enum(self) -> None:
         """GateKind enum serializes correctly."""
-        gate = GateOp(gate=GateKind.CX, targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)))
+        gate = GateOp(
+            gate=GateKind.CX,
+            targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)),
+        )
 
         result = ast_to_dict(gate)
 
         assert result["gate"]["_enum"] == "GateKind"
         assert result["gate"]["value"] == "CX"
 
-    def test_binary_op_enum(self):
+    def test_binary_op_enum(self) -> None:
         """BinaryOp enum serializes correctly."""
-        expr = BinaryExpr(op=BinaryOp.EQ, left=LiteralExpr(value=1), right=LiteralExpr(value=0))
+        expr = BinaryExpr(
+            op=BinaryOp.EQ,
+            left=LiteralExpr(value=1),
+            right=LiteralExpr(value=0),
+        )
 
         result = ast_to_dict(expr)
 
         assert result["op"]["_enum"] == "BinaryOp"
         assert result["op"]["value"] == "EQ"
 
-    def test_tuple_fields(self):
+    def test_tuple_fields(self) -> None:
         """Tuple fields serialize to lists."""
         prog = Program(
             name="test",
@@ -91,7 +97,7 @@ class TestAstToDict:
         assert isinstance(result["body"], list)
         assert len(result["body"]) == 2
 
-    def test_source_location(self):
+    def test_source_location(self) -> None:
         """SourceLocation serializes correctly."""
         gate = GateOp(
             gate=GateKind.H,
@@ -106,7 +112,7 @@ class TestAstToDict:
         assert result["location"]["column"] == 5
         assert result["location"]["file"] == "test.py"
 
-    def test_none_values(self):
+    def test_none_values(self) -> None:
         """None values serialize as null."""
         prog = Program(
             name="test",
@@ -117,7 +123,7 @@ class TestAstToDict:
 
         assert result["location"] is None
 
-    def test_rotation_gate_params(self):
+    def test_rotation_gate_params(self) -> None:
         """Parameterized gate params serialize correctly."""
         gate = GateOp(
             gate=GateKind.RZ,
@@ -135,7 +141,7 @@ class TestAstToDict:
 class TestDictToAst:
     """Tests for dict_to_ast conversion."""
 
-    def test_simple_program(self):
+    def test_simple_program(self) -> None:
         """Simple dict converts to program."""
         data = {
             "_type": "Program",
@@ -143,7 +149,13 @@ class TestDictToAst:
             "declarations": [],
             "body": [],
             "returns": [],
-            "allocator": {"_type": "AllocatorDecl", "name": "q", "capacity": 2, "parent": None, "location": None},
+            "allocator": {
+                "_type": "AllocatorDecl",
+                "name": "q",
+                "capacity": 2,
+                "parent": None,
+                "location": None,
+            },
             "location": None,
         }
 
@@ -154,7 +166,7 @@ class TestDictToAst:
         assert result.allocator.name == "q"
         assert result.allocator.capacity == 2
 
-    def test_gate_kind_enum(self):
+    def test_gate_kind_enum(self) -> None:
         """GateKind enum deserializes correctly."""
         data = {
             "_type": "GateOp",
@@ -172,7 +184,7 @@ class TestDictToAst:
         assert isinstance(result, GateOp)
         assert result.gate == GateKind.CX
 
-    def test_binary_op_enum(self):
+    def test_binary_op_enum(self) -> None:
         """BinaryOp enum deserializes correctly."""
         data = {
             "_type": "BinaryExpr",
@@ -187,14 +199,14 @@ class TestDictToAst:
         assert isinstance(result, BinaryExpr)
         assert result.op == BinaryOp.EQ
 
-    def test_missing_type_raises(self):
+    def test_missing_type_raises(self) -> None:
         """Missing _type raises ValueError."""
         data = {"name": "test"}
 
         with pytest.raises(ValueError, match="_type"):
             dict_to_ast(data)
 
-    def test_unknown_type_raises(self):
+    def test_unknown_type_raises(self) -> None:
         """Unknown _type raises ValueError."""
         data = {"_type": "UnknownNode"}
 
@@ -205,7 +217,7 @@ class TestDictToAst:
 class TestJsonRoundTrip:
     """Tests for JSON round-trip serialization."""
 
-    def test_simple_circuit(self):
+    def test_simple_circuit(self) -> None:
         """Simple circuit round-trips correctly."""
         prog = Main(
             q := QReg("q", 2),
@@ -220,7 +232,7 @@ class TestJsonRoundTrip:
         assert restored.name == ast.name
         assert len(restored.body) == len(ast.body)
 
-    def test_rotation_gates(self):
+    def test_rotation_gates(self) -> None:
         """Rotation gates with float params round-trip."""
         prog = Main(
             q := QReg("q", 1),
@@ -233,11 +245,13 @@ class TestJsonRoundTrip:
         restored = json_to_ast(json_str)
 
         # Find RZ gate
-        rz_gates = [s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ]
+        rz_gates = [
+            s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ
+        ]
         assert len(rz_gates) == 1
         assert rz_gates[0].params[0].value == 0.5
 
-    def test_measurement(self):
+    def test_measurement(self) -> None:
         """Measurement with classical register round-trips."""
         prog = Program(
             name="test",
@@ -246,8 +260,14 @@ class TestJsonRoundTrip:
             body=(
                 GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),
                 MeasureOp(
-                    targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)),
-                    results=(BitRef(register="c", index=0), BitRef(register="c", index=1)),
+                    targets=(
+                        SlotRef(allocator="q", index=0),
+                        SlotRef(allocator="q", index=1),
+                    ),
+                    results=(
+                        BitRef(register="c", index=0),
+                        BitRef(register="c", index=1),
+                    ),
                 ),
             ),
         )
@@ -259,7 +279,7 @@ class TestJsonRoundTrip:
         assert isinstance(restored.declarations[0], RegisterDecl)
         assert restored.declarations[0].name == "c"
 
-    def test_control_flow(self):
+    def test_control_flow(self) -> None:
         """Control flow structures round-trip."""
         prog = Program(
             name="test",
@@ -268,7 +288,12 @@ class TestJsonRoundTrip:
             body=(
                 RepeatStmt(
                     count=3,
-                    body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
+                    body=(
+                        GateOp(
+                            gate=GateKind.H,
+                            targets=(SlotRef(allocator="q", index=0),),
+                        ),
+                    ),
                 ),
                 IfStmt(
                     condition=BinaryExpr(
@@ -276,7 +301,12 @@ class TestJsonRoundTrip:
                         left=LiteralExpr(value=1),
                         right=LiteralExpr(value=1),
                     ),
-                    then_body=(GateOp(gate=GateKind.X, targets=(SlotRef(allocator="q", index=0),)),),
+                    then_body=(
+                        GateOp(
+                            gate=GateKind.X,
+                            targets=(SlotRef(allocator="q", index=0),),
+                        ),
+                    ),
                 ),
             ),
         )
@@ -288,7 +318,7 @@ class TestJsonRoundTrip:
         assert restored.body[0].count == 3
         assert isinstance(restored.body[1], IfStmt)
 
-    def test_nested_allocators(self):
+    def test_nested_allocators(self) -> None:
         """Nested allocators round-trip."""
         prog = Program(
             name="test",
@@ -302,7 +332,7 @@ class TestJsonRoundTrip:
 
         assert restored.declarations[0].parent == "q"
 
-    def test_from_slr_if_statement(self):
+    def test_from_slr_if_statement(self) -> None:
         """If statement from SLR round-trips."""
         prog = Main(
             q := QReg("q", 1),
@@ -320,7 +350,7 @@ class TestJsonRoundTrip:
         if_stmts = [s for s in restored.body if isinstance(s, IfStmt)]
         assert len(if_stmts) == 1
 
-    def test_from_slr_repeat(self):
+    def test_from_slr_repeat(self) -> None:
         """Repeat from SLR round-trips."""
         prog = Main(
             q := QReg("q", 1),
@@ -341,7 +371,7 @@ class TestJsonRoundTrip:
 class TestJsonFormat:
     """Tests for JSON output format."""
 
-    def test_compact_output(self):
+    def test_compact_output(self) -> None:
         """Compact JSON has no extra whitespace."""
         prog = Program(
             name="test",
@@ -352,7 +382,7 @@ class TestJsonFormat:
 
         assert "\n" not in json_str
 
-    def test_indented_output(self):
+    def test_indented_output(self) -> None:
         """Indented JSON is human-readable."""
         prog = Program(
             name="test",
@@ -366,7 +396,7 @@ class TestJsonFormat:
         parsed = json.loads(json_str)
         assert parsed["_type"] == "Program"
 
-    def test_json_is_valid(self):
+    def test_json_is_valid(self) -> None:
         """Output is valid JSON."""
         prog = Main(
             q := QReg("q", 3),
@@ -386,7 +416,7 @@ class TestJsonFormat:
 class TestEdgeCases:
     """Edge case tests."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         """Empty program round-trips."""
         prog = Program(
             name="empty",
@@ -399,27 +429,33 @@ class TestEdgeCases:
         assert restored.name == "empty"
         assert len(restored.body) == 0
 
-    def test_all_gate_kinds(self):
+    def test_all_gate_kinds(self) -> None:
         """All gate kinds can be serialized."""
         for gate_kind in GateKind:
             gate = GateOp(
                 gate=gate_kind,
-                targets=tuple(SlotRef(allocator="q", index=i) for i in range(gate_kind.arity)),
+                targets=tuple(
+                    SlotRef(allocator="q", index=i) for i in range(gate_kind.arity)
+                ),
                 params=(LiteralExpr(value=0.5),) if gate_kind.is_parameterized else (),
             )
 
             result = ast_to_dict(gate)
             assert result["gate"]["value"] == gate_kind.name
 
-    def test_all_binary_ops(self):
+    def test_all_binary_ops(self) -> None:
         """All binary operators can be serialized."""
         for op in BinaryOp:
-            expr = BinaryExpr(op=op, left=LiteralExpr(value=1), right=LiteralExpr(value=2))
+            expr = BinaryExpr(
+                op=op,
+                left=LiteralExpr(value=1),
+                right=LiteralExpr(value=2),
+            )
 
             result = ast_to_dict(expr)
             assert result["op"]["value"] == op.name
 
-    def test_float_precision(self):
+    def test_float_precision(self) -> None:
         """Float values maintain precision."""
         prog = Program(
             name="test",

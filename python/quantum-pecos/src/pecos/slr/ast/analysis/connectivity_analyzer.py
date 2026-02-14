@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     ForStmt,
@@ -38,11 +39,15 @@ from pecos.slr.ast.nodes import (
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RepeatStmt,
-    Statement,
     WhileStmt,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Program,
+        Statement,
+    )
 
 # Two-qubit gates that create connectivity requirements
 TWO_QUBIT_GATES = frozenset(
@@ -58,7 +63,7 @@ TWO_QUBIT_GATES = frozenset(
         GateKind.SYYdg,
         GateKind.SZZdg,
         GateKind.RZZ,
-    }
+    },
 )
 
 
@@ -71,11 +76,13 @@ class ConnectivityResult:
 
     # Adjacency list for the connectivity graph
     coupling_map: dict[tuple[str, int], set[tuple[str, int]]] = field(
-        default_factory=lambda: defaultdict(set)
+        default_factory=lambda: defaultdict(set),
     )
 
     # Count of two-qubit gates per edge
-    edge_weights: dict[tuple[tuple[str, int], tuple[str, int]], int] = field(default_factory=dict)
+    edge_weights: dict[tuple[tuple[str, int], tuple[str, int]], int] = field(
+        default_factory=dict,
+    )
 
     # All two-qubit gate types used
     gate_types: set[GateKind] = field(default_factory=set)
@@ -99,8 +106,12 @@ class ConnectivityAnalyzer:
 
     def __init__(self) -> None:
         self.edges: set[tuple[tuple[str, int], tuple[str, int]]] = set()
-        self.coupling_map: dict[tuple[str, int], set[tuple[str, int]]] = defaultdict(set)
-        self.edge_weights: dict[tuple[tuple[str, int], tuple[str, int]], int] = defaultdict(int)
+        self.coupling_map: dict[tuple[str, int], set[tuple[str, int]]] = defaultdict(
+            set,
+        )
+        self.edge_weights: dict[tuple[tuple[str, int], tuple[str, int]], int] = (
+            defaultdict(int)
+        )
         self.gate_types: set[GateKind] = set()
 
     def analyze(self, program: Program) -> ConnectivityResult:
@@ -138,7 +149,9 @@ class ConnectivityAnalyzer:
         )
 
     def _make_edge(
-        self, q1: tuple[str, int], q2: tuple[str, int]
+        self,
+        q1: tuple[str, int],
+        q2: tuple[str, int],
     ) -> tuple[tuple[str, int], tuple[str, int]]:
         """Create a canonical edge (sorted for consistency)."""
         return (q1, q2) if (q1[0], q1[1]) <= (q2[0], q2[1]) else (q2, q1)

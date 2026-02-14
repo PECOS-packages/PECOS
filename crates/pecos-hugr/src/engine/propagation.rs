@@ -28,14 +28,14 @@ use pecos_core::gate_type::GateType;
 use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
+use crate::engine::HugrEngine;
 use crate::engine::analysis::get_container_type;
 use crate::engine::types::{ClassicalValue, ContainerType, QuantumOp, WireKey};
-use crate::engine::HugrEngine;
 
 impl HugrEngine {
     /// Trace through an Input node to find the actual source wire.
     ///
-    /// When processing nodes inside containers (DFG, Case, FuncDefn, etc.),
+    /// When processing nodes inside containers (DFG, Case, `FuncDefn`, etc.),
     /// the Input node's outputs come from the container's inputs. This method
     /// traces through the Input node to find the actual source wire.
     ///
@@ -192,7 +192,7 @@ impl HugrEngine {
             );
             value
         } else {
-            debug!("get_input_value({:?}, {}): no linked output", node, port);
+            debug!("get_input_value({node:?}, {port}): no linked output");
             None
         }
     }
@@ -291,7 +291,9 @@ impl HugrEngine {
 
                     // Propagate qubit to output port if this gate has outputs
                     if port_idx < op.num_qubit_outputs {
-                        self.wire_state.wire_to_qubit.insert((node, port_idx), qubit_id);
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((node, port_idx), qubit_id);
                     }
                 } else {
                     // Fallback: create a new qubit ID
@@ -299,7 +301,9 @@ impl HugrEngine {
                     self.wire_state.next_qubit_id += 1;
                     qubits.push(fallback);
                     if port_idx < op.num_qubit_outputs {
-                        self.wire_state.wire_to_qubit.insert((node, port_idx), fallback);
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((node, port_idx), fallback);
                     }
                     debug!(
                         "Warning: No wire mapping for {wire_key:?}, using fallback {fallback:?}"
@@ -319,17 +323,17 @@ impl HugrEngine {
         qubits
     }
 
-    /// Try to load a constant value from a LoadConstant node.
+    /// Try to load a constant value from a `LoadConstant` node.
     ///
-    /// LoadConstant nodes have a static edge to a Const node. This method
-    /// extracts the value from the Const node and returns it as a ClassicalValue.
+    /// `LoadConstant` nodes have a static edge to a Const node. This method
+    /// extracts the value from the Const node and returns it as a `ClassicalValue`.
     ///
     /// Supports integer constants (`ConstInt`), float constants (`ConstF64`),
     /// and boolean constants (`ConstBool`).
     pub(crate) fn try_load_constant(&self, hugr: &Hugr, node: Node) -> Option<ClassicalValue> {
+        use tket::extension::bool::ConstBool;
         use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
         use tket::hugr::std_extensions::arithmetic::int_types::ConstInt;
-        use tket::extension::bool::ConstBool;
 
         // LoadConstant has a static edge from a Const node
         for pred_node in hugr.input_neighbours(node) {

@@ -12,7 +12,6 @@
 """Tests for AST visitor pattern."""
 
 import pytest
-
 from pecos.slr.ast import (
     AllocatorDecl,
     BaseVisitor,
@@ -32,14 +31,14 @@ from pecos.slr.ast import (
 class TestVoidVisitor:
     """Tests for VoidVisitor."""
 
-    def test_void_visitor_returns_none(self):
+    def test_void_visitor_returns_none(self) -> None:
         visitor = VoidVisitor()
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
 
         result = visitor.visit(gate)
         assert result is None
 
-    def test_void_visitor_traverses_program(self):
+    def test_void_visitor_traverses_program(self) -> None:
         visitor = VoidVisitor()
         prep = PrepareOp(allocator="q", slots=(0,))
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
@@ -52,7 +51,7 @@ class TestVoidVisitor:
 class TestCollectingVisitor:
     """Tests for CollectingVisitor."""
 
-    def test_collecting_visitor_empty(self):
+    def test_collecting_visitor_empty(self) -> None:
         class GateCollector(CollectingVisitor[str]):
             def visit_gate(self, node: GateOp) -> list[str]:
                 return [node.gate.name]
@@ -63,14 +62,17 @@ class TestCollectingVisitor:
         result = visitor.visit(prog)
         assert result == []
 
-    def test_collecting_visitor_collects_gates(self):
+    def test_collecting_visitor_collects_gates(self) -> None:
         class GateCollector(CollectingVisitor[str]):
             def visit_gate(self, node: GateOp) -> list[str]:
                 return [node.gate.name]
 
         visitor = GateCollector()
         gate1 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
-        gate2 = GateOp(gate=GateKind.CX, targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)))
+        gate2 = GateOp(
+            gate=GateKind.CX,
+            targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)),
+        )
         prog = Program(name="test", body=(gate1, gate2))
 
         result = visitor.visit(prog)
@@ -81,7 +83,7 @@ class TestCollectingVisitor:
 class TestCustomVisitor:
     """Tests for custom visitor implementations."""
 
-    def test_gate_counter(self):
+    def test_gate_counter(self) -> None:
         class GateCounter(BaseVisitor[int]):
             def default_result(self) -> int:
                 return 0
@@ -95,13 +97,16 @@ class TestCustomVisitor:
         visitor = GateCounter()
         gate1 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
         gate2 = GateOp(gate=GateKind.X, targets=(SlotRef(allocator="q", index=1),))
-        gate3 = GateOp(gate=GateKind.CX, targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)))
+        gate3 = GateOp(
+            gate=GateKind.CX,
+            targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)),
+        )
         prog = Program(name="test", body=(gate1, gate2, gate3))
 
         count = visitor.visit(prog)
         assert count == 3
 
-    def test_depth_calculator(self):
+    def test_depth_calculator(self) -> None:
         class DepthCalculator(BaseVisitor[int]):
             def default_result(self) -> int:
                 return 0
@@ -129,7 +134,7 @@ class TestCustomVisitor:
         depth = visitor.visit(prog)
         assert depth == 2
 
-    def test_qubit_usage_tracker(self):
+    def test_qubit_usage_tracker(self) -> None:
         class QubitTracker(BaseVisitor[set]):
             def default_result(self) -> set:
                 return set()
@@ -145,7 +150,10 @@ class TestCustomVisitor:
 
         visitor = QubitTracker()
         gate1 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
-        gate2 = GateOp(gate=GateKind.CX, targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)))
+        gate2 = GateOp(
+            gate=GateKind.CX,
+            targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)),
+        )
         gate3 = GateOp(gate=GateKind.X, targets=(SlotRef(allocator="r", index=0),))
         prog = Program(name="test", body=(gate1, gate2, gate3))
 
@@ -154,7 +162,7 @@ class TestCustomVisitor:
         assert ("q", 1) in used
         assert ("r", 0) in used
 
-    def test_code_generator_simple(self):
+    def test_code_generator_simple(self) -> None:
         class SimpleCodeGen(BaseVisitor[str]):
             def default_result(self) -> str:
                 return ""
@@ -179,7 +187,10 @@ class TestCustomVisitor:
         visitor = SimpleCodeGen()
         prep = PrepareOp(allocator="q", slots=(0, 1))
         gate1 = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
-        gate2 = GateOp(gate=GateKind.CX, targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)))
+        gate2 = GateOp(
+            gate=GateKind.CX,
+            targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1)),
+        )
         measure = MeasureOp(targets=(SlotRef(allocator="q", index=0),))
         prog = Program(name="test", body=(prep, gate1, gate2, measure))
 
@@ -193,9 +204,9 @@ class TestCustomVisitor:
 class TestVisitorTraversal:
     """Tests for visitor traversal behavior."""
 
-    def test_visits_all_children(self):
+    def test_visits_all_children(self) -> None:
         class VisitTracker(VoidVisitor):
-            def __init__(self):
+            def __init__(self) -> None:
                 self.visited = []
 
             def visit_gate(self, node: GateOp) -> None:
@@ -221,9 +232,9 @@ class TestVisitorTraversal:
         assert ("gate", "H") in visitor.visited
         assert ("slot", "q[0]") in visitor.visited
 
-    def test_visits_control_flow_children(self):
+    def test_visits_control_flow_children(self) -> None:
         class VisitTracker(VoidVisitor):
-            def __init__(self):
+            def __init__(self) -> None:
                 self.visited = []
 
             def visit_gate(self, node: GateOp) -> None:

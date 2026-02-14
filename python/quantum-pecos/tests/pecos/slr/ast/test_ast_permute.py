@@ -12,9 +12,8 @@
 """Tests for AST Permute operation support."""
 
 import pytest
-
 from pecos.slr import CReg, Main, Permute, QReg
-from pecos.slr.ast import slr_to_ast, PermuteOp
+from pecos.slr.ast import PermuteOp, slr_to_ast
 from pecos.slr.ast.codegen import generate
 from pecos.slr.ast.compare import ast_equal
 from pecos.slr.ast.pretty_print import pretty_print
@@ -25,7 +24,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestPermuteConversion:
     """Test SLR Permute to AST PermuteOp conversion."""
 
-    def test_simple_permute_conversion(self):
+    def test_simple_permute_conversion(self) -> None:
         """Test basic Permute conversion."""
         prog = Main(
             a := QReg("a", 2),
@@ -42,7 +41,7 @@ class TestPermuteConversion:
         assert permute.sources == ("a",)
         assert permute.targets == ("b",)
 
-    def test_permute_with_comment(self):
+    def test_permute_with_comment(self) -> None:
         """Test Permute with comment flag."""
         prog = Main(
             a := QReg("a", 2),
@@ -55,7 +54,7 @@ class TestPermuteConversion:
         assert len(permute_ops) == 1
         assert permute_ops[0].add_comment is True
 
-    def test_permute_without_comment(self):
+    def test_permute_without_comment(self) -> None:
         """Test Permute without comment flag."""
         prog = Main(
             a := QReg("a", 2),
@@ -72,7 +71,7 @@ class TestPermuteConversion:
 class TestPermuteOpNode:
     """Test PermuteOp node behavior."""
 
-    def test_permute_op_creation(self):
+    def test_permute_op_creation(self) -> None:
         """Test direct PermuteOp creation."""
         permute = PermuteOp(
             sources=("a", "b"),
@@ -83,7 +82,7 @@ class TestPermuteOpNode:
         assert permute.targets == ("b", "a")
         assert permute.add_comment is True
 
-    def test_permute_op_frozen(self):
+    def test_permute_op_frozen(self) -> None:
         """Test that PermuteOp is frozen (immutable)."""
         permute = PermuteOp(sources=("a",), targets=("b",))
         with pytest.raises(AttributeError):
@@ -93,7 +92,7 @@ class TestPermuteOpNode:
 class TestPermuteCodegen:
     """Test code generation for Permute."""
 
-    def test_permute_guppy_codegen(self):
+    def test_permute_guppy_codegen(self) -> None:
         """Test Permute generates Guppy swap code."""
         prog = Main(
             a := QReg("a", 2),
@@ -108,7 +107,7 @@ class TestPermuteCodegen:
         # Should contain swap code
         assert "Swap" in guppy or "_temp_" in guppy or "a, b = b, a" in guppy
 
-    def test_permute_qasm_codegen(self):
+    def test_permute_qasm_codegen(self) -> None:
         """Test Permute generates QASM comment."""
         prog = Main(
             a := QReg("a", 2),
@@ -121,7 +120,7 @@ class TestPermuteCodegen:
         # Should contain a comment about permute
         assert "Permute" in qasm or "permute" in qasm.lower()
 
-    def test_permute_stim_codegen(self):
+    def test_permute_stim_codegen(self) -> None:
         """Test Permute works with Stim codegen."""
         prog = Main(
             a := QReg("a", 2),
@@ -136,7 +135,7 @@ class TestPermuteCodegen:
         stim = generate(ast, "stim")
         assert stim is not None
 
-    def test_permute_qir_codegen(self):
+    def test_permute_qir_codegen(self) -> None:
         """Test Permute works with QIR codegen."""
         prog = Main(
             a := QReg("a", 2),
@@ -155,7 +154,7 @@ class TestPermuteCodegen:
 class TestPermuteSerialization:
     """Test Permute serialization round-trip."""
 
-    def test_permute_json_roundtrip(self):
+    def test_permute_json_roundtrip(self) -> None:
         """Test Permute survives JSON serialization."""
         prog = Main(
             a := QReg("a", 2),
@@ -183,7 +182,7 @@ class TestPermuteSerialization:
 class TestPermutePrettyPrint:
     """Test Permute pretty-printing."""
 
-    def test_permute_pretty_print(self):
+    def test_permute_pretty_print(self) -> None:
         """Test Permute appears in pretty-print output."""
         prog = Main(
             a := QReg("a", 2),
@@ -195,13 +194,14 @@ class TestPermutePrettyPrint:
         output = pretty_print(ast)
         # Should contain something about permute
         # The exact format depends on the pretty-printer implementation
-        assert "a" in output and "b" in output
+        assert "a" in output
+        assert "b" in output
 
 
 class TestPermuteWithOperations:
     """Test Permute combined with other operations."""
 
-    def test_permute_between_gates(self):
+    def test_permute_between_gates(self) -> None:
         """Test Permute between gate operations."""
         prog = Main(
             a := QReg("a", 2),
@@ -217,7 +217,7 @@ class TestPermuteWithOperations:
         # Should have gates and permute in correct order
         assert len(ast.body) >= 4
 
-    def test_permute_with_measurement(self):
+    def test_permute_with_measurement(self) -> None:
         """Test Permute with measurements."""
         prog = Main(
             a := QReg("a", 2),
@@ -237,7 +237,7 @@ class TestPermuteWithOperations:
 class TestMultiplePermutes:
     """Test multiple Permute operations."""
 
-    def test_consecutive_permutes(self):
+    def test_consecutive_permutes(self) -> None:
         """Test two consecutive Permutes."""
         prog = Main(
             a := QReg("a", 2),
@@ -250,7 +250,7 @@ class TestMultiplePermutes:
         permute_ops = [s for s in ast.body if isinstance(s, PermuteOp)]
         assert len(permute_ops) == 2
 
-    def test_three_way_permute(self):
+    def test_three_way_permute(self) -> None:
         """Test permuting three registers."""
         prog = Main(
             a := QReg("a", 2),

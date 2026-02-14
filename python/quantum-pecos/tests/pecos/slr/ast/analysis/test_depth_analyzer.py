@@ -12,7 +12,6 @@
 """Tests for AST depth analyzer."""
 
 import pytest
-
 from pecos.slr import CReg, Main, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.analysis import DepthAnalyzer, analyze_depth
@@ -22,7 +21,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestDepthAnalyzerBasic:
     """Basic depth analysis tests."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         """Empty program has depth 0."""
         prog = Main()
         ast = slr_to_ast(prog)
@@ -31,7 +30,7 @@ class TestDepthAnalyzerBasic:
 
         assert result.depth == 0
 
-    def test_single_gate(self):
+    def test_single_gate(self) -> None:
         """Single gate has depth 1."""
         prog = Main(
             q := QReg("q", 1),
@@ -44,7 +43,7 @@ class TestDepthAnalyzerBasic:
 
         assert result.depth == 2  # Prep + H
 
-    def test_sequential_gates_same_qubit(self):
+    def test_sequential_gates_same_qubit(self) -> None:
         """Sequential gates on same qubit add to depth."""
         prog = Main(
             q := QReg("q", 1),
@@ -59,7 +58,7 @@ class TestDepthAnalyzerBasic:
 
         assert result.depth == 4  # Prep + H + X + Z
 
-    def test_parallel_gates_different_qubits(self):
+    def test_parallel_gates_different_qubits(self) -> None:
         """Gates on different qubits can run in parallel."""
         prog = Main(
             q := QReg("q", 2),
@@ -81,7 +80,7 @@ class TestDepthAnalyzerBasic:
 class TestDepthAnalyzerTwoQubit:
     """Two-qubit gate depth tests."""
 
-    def test_two_qubit_gate_depth(self):
+    def test_two_qubit_gate_depth(self) -> None:
         """Two-qubit gate increases depth for both qubits."""
         prog = Main(
             q := QReg("q", 2),
@@ -97,7 +96,7 @@ class TestDepthAnalyzerTwoQubit:
         assert result.depth == 2
         assert result.two_qubit_depth == 2
 
-    def test_two_qubit_gate_waits_for_both(self):
+    def test_two_qubit_gate_waits_for_both(self) -> None:
         """Two-qubit gate waits for both qubits to be ready."""
         prog = Main(
             q := QReg("q", 2),
@@ -114,7 +113,7 @@ class TestDepthAnalyzerTwoQubit:
         # q[1]: Prep(1) -> (wait) -> CX(3)
         assert result.depth == 3
 
-    def test_chain_of_two_qubit_gates(self):
+    def test_chain_of_two_qubit_gates(self) -> None:
         """Chain of two-qubit gates increases depth."""
         prog = Main(
             q := QReg("q", 3),
@@ -135,7 +134,7 @@ class TestDepthAnalyzerTwoQubit:
 class TestDepthAnalyzerBellState:
     """Bell state circuit depth tests."""
 
-    def test_bell_state_depth(self):
+    def test_bell_state_depth(self) -> None:
         """Bell state has depth 3 (prep + H + CX)."""
         prog = Main(
             q := QReg("q", 2),
@@ -156,7 +155,7 @@ class TestDepthAnalyzerBellState:
 class TestDepthAnalyzerControlFlow:
     """Control flow depth tests."""
 
-    def test_repeat_adds_depth(self):
+    def test_repeat_adds_depth(self) -> None:
         """Repeat loop adds depth for each iteration."""
         prog = Main(
             q := QReg("q", 1),
@@ -176,7 +175,7 @@ class TestDepthAnalyzerControlFlow:
 class TestDepthAnalyzerQEC:
     """QEC pattern depth tests."""
 
-    def test_syndrome_extraction_depth(self):
+    def test_syndrome_extraction_depth(self) -> None:
         """Syndrome extraction depth is computed correctly."""
         prog = Main(
             data := QReg("data", 2),
@@ -204,7 +203,7 @@ class TestDepthAnalyzerQEC:
 class TestDepthAnalyzerClass:
     """Tests for the DepthAnalyzer class."""
 
-    def test_analyzer_reusable(self):
+    def test_analyzer_reusable(self) -> None:
         """Analyzer can be reused for multiple programs."""
         analyzer = DepthAnalyzer()
 
@@ -229,7 +228,7 @@ class TestDepthAnalyzerClass:
         assert result1.depth == 2
         assert result2.depth == 3
 
-    def test_result_string_representation(self):
+    def test_result_string_representation(self) -> None:
         """DepthResult has useful string representation."""
         prog = Main(
             q := QReg("q", 2),

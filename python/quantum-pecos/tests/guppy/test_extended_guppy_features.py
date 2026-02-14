@@ -393,7 +393,9 @@ class TestControlFlow:
                     expected_pattern,
                 ), f"Pattern mismatch: {shot_result}"
 
-    @pytest.mark.skip(reason="While loops with compound conditions need more work in HUGR interpreter")
+    @pytest.mark.skip(
+        reason="While loops with compound conditions need more work in HUGR interpreter",
+    )
     def test_while_with_quantum(self, tester: ExtendedGuppyTester) -> None:
         """Test while loops with quantum operations."""
 
@@ -744,7 +746,9 @@ class TestPerformance:
             avg = sum(counts) / len(counts)
             assert 3 < avg < 7, f"Many qubit statistics off, avg={avg}"
 
-    @pytest.mark.skip(reason="For-loop in function body returns empty results in HUGR interpreter")
+    @pytest.mark.skip(
+        reason="For-loop in function body returns empty results in HUGR interpreter",
+    )
     def test_deep_circuit(self, tester: ExtendedGuppyTester) -> None:
         """Test deep circuit with many gates."""
 

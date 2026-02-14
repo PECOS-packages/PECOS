@@ -22,8 +22,8 @@
 use log::debug;
 use tket::hugr::{Hugr, Node};
 
-use crate::engine::types::ClassicalValue;
 use crate::engine::HugrEngine;
+use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `arithmetic.float` operations (transcendental functions, etc.).
@@ -125,7 +125,8 @@ impl HugrEngine {
         };
 
         if let Some(value) = result {
-            self.wire_state.classical_values
+            self.wire_state
+                .classical_values
                 .insert((node, 0), ClassicalValue::Float(value));
             debug!("arithmetic.float.{op_name}: result = {value}");
         }
@@ -291,7 +292,8 @@ impl HugrEngine {
         };
 
         if let Some(value) = result {
-            self.wire_state.classical_values
+            self.wire_state
+                .classical_values
                 .insert((node, 0), ClassicalValue::Int(value));
             debug!("arithmetic.int.{op_name}: result = {value}");
         }
@@ -320,7 +322,8 @@ impl HugrEngine {
                 // Signed integer to float
                 if let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int()) {
                     let result = value as f64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Float(result));
                     debug!("convert_s: {value} -> {result}");
                 }
@@ -332,7 +335,8 @@ impl HugrEngine {
                     .and_then(|v| v.as_uint())
                 {
                     let result = value as f64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Float(result));
                     debug!("convert_u: {value} -> {result}");
                 }
@@ -346,7 +350,8 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 {
                     let result = value.trunc() as i64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Int(result));
                     debug!("trunc_s: {value} -> {result}");
                 }
@@ -360,7 +365,8 @@ impl HugrEngine {
                     // Clamp to non-negative before converting
                     let clamped = value.max(0.0).trunc();
                     let result = clamped as u64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::UInt(result));
                     debug!("trunc_u: {value} -> {result}");
                 }
@@ -373,7 +379,8 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 {
                     let result = value.ceil() as i64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Int(result));
                     debug!("ceil_s: {value} -> {result}");
                 }
@@ -385,7 +392,8 @@ impl HugrEngine {
                 {
                     let clamped = value.max(0.0).ceil();
                     let result = clamped as u64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::UInt(result));
                     debug!("ceil_u: {value} -> {result}");
                 }
@@ -396,7 +404,8 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 {
                     let result = value.floor() as i64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Int(result));
                     debug!("floor_s: {value} -> {result}");
                 }
@@ -408,7 +417,8 @@ impl HugrEngine {
                 {
                     let clamped = value.max(0.0).floor();
                     let result = clamped as u64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::UInt(result));
                     debug!("floor_u: {value} -> {result}");
                 }
@@ -421,7 +431,8 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 {
                     let result = value.round() as i64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Int(result));
                     debug!("round_s: {value} -> {result}");
                 }
@@ -433,7 +444,8 @@ impl HugrEngine {
                 {
                     let clamped = value.max(0.0).round();
                     let result = clamped as u64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::UInt(result));
                     debug!("round_u: {value} -> {result}");
                 }

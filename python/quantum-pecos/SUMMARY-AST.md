@@ -27,11 +27,13 @@ Converts compiled Guppy programs (HUGR format) to SLR-AST for analysis and code 
 ```python
 from pecos.circuit_converters.hugr_to_ast import guppy_to_ast, hugr_to_ast
 
+
 @guppy
 def my_circuit() -> bool:
     q = qubit()
     h(q)
     return measure(q)
+
 
 ast = guppy_to_ast(my_circuit)
 ```
@@ -118,6 +120,7 @@ from pecos.circuit_converters.hugr_to_ast import guppy_to_ast
 from pecos.slr.ast.validation import validate
 from pecos.slr.ast.codegen import generate
 
+
 @guppy
 def bell() -> tuple[bool, bool]:
     q0 = qubit()
@@ -125,6 +128,7 @@ def bell() -> tuple[bool, bool]:
     h(q0)
     cx(q0, q1)
     return measure(q0), measure(q1)
+
 
 # Convert to AST
 ast = guppy_to_ast(bell)

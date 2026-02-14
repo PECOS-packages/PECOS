@@ -44,7 +44,6 @@ from pecos.slr.ast.nodes import (
     BitRef,
     BitTypeExpr,
     CommentOp,
-    Expression,
     ForStmt,
     GateKind,
     GateOp,
@@ -60,8 +59,6 @@ from pecos.slr.ast.nodes import (
     RepeatStmt,
     ReturnOp,
     SlotRef,
-    Statement,
-    TypeExpr,
     UnaryExpr,
     UnaryOp,
     VarExpr,
@@ -69,6 +66,11 @@ from pecos.slr.ast.nodes import (
 )
 
 if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Expression,
+        Statement,
+        TypeExpr,
+    )
     from pecos.slr.block import Block
     from pecos.slr.main import Main
 
@@ -402,7 +404,11 @@ class SlrToAst:
 
         # Get allocator name and slot indices
         first_qubit = gate.qargs[0]
-        allocator = first_qubit.reg.sym if hasattr(first_qubit.reg, "sym") else str(first_qubit.reg)
+        allocator = (
+            first_qubit.reg.sym
+            if hasattr(first_qubit.reg, "sym")
+            else str(first_qubit.reg)
+        )
 
         slots = tuple(q.index for q in gate.qargs)
 
@@ -474,7 +480,11 @@ class SlrToAst:
         else:
             start = self._convert_expression(op.start)
             stop = self._convert_expression(op.stop)
-            step = self._convert_expression(op.step) if op.step is not None and op.step != 1 else None
+            step = (
+                self._convert_expression(op.step)
+                if op.step is not None and op.step != 1
+                else None
+            )
 
         body = tuple(self._convert_statements(op.ops))
 
@@ -607,9 +617,12 @@ class SlrToAst:
             )
 
         # Bit reference as expression
-        if hasattr(expr, "reg") and hasattr(expr, "index"):
-            if expr.__class__.__name__ == "Bit":
-                return BitExpr(ref=self._convert_bit_ref(expr))
+        if (
+            hasattr(expr, "reg")
+            and hasattr(expr, "index")
+            and expr.__class__.__name__ == "Bit"
+        ):
+            return BitExpr(ref=self._convert_bit_ref(expr))
 
         # Variable reference
         if hasattr(expr, "sym"):

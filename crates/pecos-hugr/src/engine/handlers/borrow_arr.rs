@@ -28,18 +28,13 @@ use log::debug;
 use tket::hugr::ops::OpTrait;
 use tket::hugr::{Hugr, HugrView, Node};
 
-use crate::engine::types::ClassicalValue;
 use crate::engine::HugrEngine;
+use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `collections.borrow_arr` operations.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn handle_borrow_arr_op(
-        &mut self,
-        hugr: &Hugr,
-        node: Node,
-        op_name: &str,
-    ) -> bool {
+    pub(crate) fn handle_borrow_arr_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing collections.borrow_arr operation: {op_name} at {node:?}");
 
         match op_name {
@@ -102,17 +97,16 @@ impl HugrEngine {
                         // Output port 1 = the borrowed element
                         // If element is a QubitRef, also propagate to wire_to_qubit
                         if let ClassicalValue::QubitRef(qubit_id) = &element {
-                            self.wire_state
-                                .wire_to_qubit
-                                .insert((node, 1), *qubit_id);
+                            self.wire_state.wire_to_qubit.insert((node, 1), *qubit_id);
                         }
-                        self.wire_state
-                            .classical_values
-                            .insert((node, 1), element);
+                        self.wire_state.classical_values.insert((node, 1), element);
 
                         debug!("borrow[{index}]: extracted element");
                     } else {
-                        debug!("borrow[{index}]: index out of bounds (len={})", elements.len());
+                        debug!(
+                            "borrow[{index}]: index out of bounds (len={})",
+                            elements.len()
+                        );
                     }
                 } else {
                     debug!("borrow: no array found on input port 0");
@@ -200,7 +194,7 @@ impl HugrEngine {
                 // eprintln!("[BORROW_ARR] discard_all_borrowed at {node:?}: array={array:?}");
                 if let Some(arr) = array {
                     // eprintln!("[BORROW_ARR] discard_all_borrowed: propagating {:?}", arr);
-                    debug!("discard_all_borrowed: propagating array value {:?}", arr);
+                    debug!("discard_all_borrowed: propagating array value {arr:?}");
                     self.wire_state.classical_values.insert((node, 0), arr);
                 } else {
                     // Array not available yet - defer until it's ready

@@ -60,7 +60,9 @@ class QubitStateTracker:
     """
 
     # Map from (array_name, index) to current state
-    slot_states: dict[tuple[str, int], ValidationSlotState] = field(default_factory=dict)
+    slot_states: dict[tuple[str, int], ValidationSlotState] = field(
+        default_factory=dict,
+    )
 
     # Collected violations
     violations: list[StateViolation] = field(default_factory=list)
@@ -95,7 +97,7 @@ class QubitStateTracker:
                     gate_name=gate_name,
                     message=f"Gate '{gate_name}' applied to unprepared qubit. "
                     f"Call prepare() before applying gates.",
-                )
+                ),
             )
             return False
         return True
@@ -177,7 +179,7 @@ class QubitStateValidator:
 
     def _initialize_prepared(self, variable_context: dict[str, Any]) -> None:
         """Mark all qubits as initially prepared (legacy mode)."""
-        for name, var in variable_context.items():
+        for var in variable_context.values():
             if hasattr(var, "size") and hasattr(var, "sym"):
                 # Check if it's a quantum register
                 var_type = type(var).__name__
@@ -274,7 +276,10 @@ class QubitStateValidator:
             then_state = state_after_then.get(key, ValidationSlotState.UNPREPARED)
             else_state = state_after_else.get(key, ValidationSlotState.UNPREPARED)
             # Only prepared if prepared in both branches
-            if then_state == ValidationSlotState.PREPARED and else_state == ValidationSlotState.PREPARED:
+            if (
+                then_state == ValidationSlotState.PREPARED
+                and else_state == ValidationSlotState.PREPARED
+            ):
                 merged_state[key] = ValidationSlotState.PREPARED
             else:
                 merged_state[key] = ValidationSlotState.UNPREPARED
@@ -309,9 +314,7 @@ class QubitStateValidator:
     def _has_reg_and_index(self, qarg: Any) -> bool:
         """Check if a qubit argument has reg and index attributes."""
         return (
-            hasattr(qarg, "reg")
-            and hasattr(qarg.reg, "sym")
-            and hasattr(qarg, "index")
+            hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index")
         )
 
 

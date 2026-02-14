@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -152,11 +151,15 @@ def _rust_is_incomplete(code: str) -> bool:
         # If it has use statements with actual code, it can be wrapped
         if re.search(r"^use\s+", code, re.MULTILINE):
             # Check if there's actual executable code (not just imports/comments)
-            lines = code.strip().split('\n')
+            lines = code.strip().split("\n")
             has_executable = False
             for line in lines:
                 stripped = line.strip()
-                if stripped and not stripped.startswith('use ') and not stripped.startswith('//'):
+                if (
+                    stripped
+                    and not stripped.startswith("use ")
+                    and not stripped.startswith("//")
+                ):
                     has_executable = True
                     break
             if has_executable:
@@ -175,7 +178,7 @@ def _rust_wrap_snippet(code: str) -> str:
     if "fn main()" in code or "fn main ()" in code:
         return code
 
-    lines = code.strip().split('\n')
+    lines = code.strip().split("\n")
     module_level = []
     main_body = []
     in_multiline_use = False  # Track if we're inside a multi-line use statement
@@ -187,19 +190,20 @@ def _rust_wrap_snippet(code: str) -> str:
         if in_multiline_use:
             module_level.append(line)
             # Count braces to handle nested structures
-            in_multiline_use = not stripped.endswith('};')
+            in_multiline_use = not stripped.endswith("};")
             continue
 
         # Keep use statements, extern crate, and comments at module level
-        if (stripped.startswith('use ') or
-            stripped.startswith('extern crate ') or
-            stripped.startswith('//') or
-            stripped == ''):
+        if stripped.startswith(("use ", "extern crate ", "//")) or stripped == "":
             # But only if we haven't started the main body yet
-            if not main_body or stripped.startswith('//') or stripped == '':
+            if not main_body or stripped.startswith("//") or stripped == "":
                 module_level.append(line)
                 # Check if this is the start of a multi-line use statement
-                if stripped.startswith('use ') and '{' in stripped and '};' not in stripped:
+                if (
+                    stripped.startswith("use ")
+                    and "{" in stripped
+                    and "};" not in stripped
+                ):
                     in_multiline_use = True
             else:
                 main_body.append(line)
@@ -207,28 +211,28 @@ def _rust_wrap_snippet(code: str) -> str:
             main_body.append(line)
 
     # Check if code uses ? operator (needs Result return type)
-    main_body_str = '\n'.join(main_body)
-    uses_question_mark = '?' in main_body_str
+    main_body_str = "\n".join(main_body)
+    uses_question_mark = "?" in main_body_str
 
     # Build the wrapped code
     result_lines = module_level.copy()
     if main_body:
-        result_lines.append('')
+        result_lines.append("")
         if uses_question_mark:
-            result_lines.append('fn main() -> Result<(), Box<dyn std::error::Error>> {')
+            result_lines.append("fn main() -> Result<(), Box<dyn std::error::Error>> {")
         else:
-            result_lines.append('fn main() {')
+            result_lines.append("fn main() {")
         for line in main_body:
-            result_lines.append('    ' + line if line.strip() else line)
+            result_lines.append("    " + line if line.strip() else line)
         if uses_question_mark:
-            result_lines.append('    Ok(())')
-        result_lines.append('}')
+            result_lines.append("    Ok(())")
+        result_lines.append("}")
     else:
         # No body, just add empty main
-        result_lines.append('')
-        result_lines.append('fn main() {}')
+        result_lines.append("")
+        result_lines.append("fn main() {}")
 
-    return '\n'.join(result_lines)
+    return "\n".join(result_lines)
 
 
 def _rust_needs_cargo(code: str) -> bool:
@@ -240,9 +244,7 @@ def _rust_needs_cargo(code: str) -> bool:
     if re.search(r"use\s+(serde|tokio|anyhow|thiserror|hugr|tket2)::", code):
         return True
     # Check for extern crate declarations
-    if re.search(r"extern\s+crate\s+\w+", code):
-        return True
-    return False
+    return bool(re.search(r"extern\s+crate\s+\w+", code))
 
 
 def _parse_marker_comment(comment: str) -> dict:
@@ -361,13 +363,14 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
     # Pattern to find code blocks with optional marker comment before them
     # Captures: (marker_comment, hidden_prefix, lang_suffix, code)
     marker_pattern = r"(<!--[^>]*-->\s*)?"
-    fence_pattern = rf"```(hidden-)?{language}(,(?:skip|ignore|no_run|notest))?\n(.*?)```"
+    fence_pattern = (
+        rf"```(hidden-)?{language}(,(?:skip|ignore|no_run|notest))?\n(.*?)```"
+    )
     full_pattern = marker_pattern + fence_pattern
 
     blocks = []
     preamble_parts: list[str] = []
     setup_code = ""
-    teardown_code = ""
     block_number = 0
 
     for match in re.finditer(full_pattern, content, re.DOTALL):
@@ -398,7 +401,6 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             setup_code = cleaned_code
             continue
         if attrs["is_teardown"]:
-            teardown_code = cleaned_code
             continue
 
         # Handle hidden blocks (accumulate as preamble)
@@ -476,9 +478,13 @@ def generate_test_function(block: CodeBlock, file_stem: str) -> str:
         reason = block.skip_reason or "Marked as skip in documentation"
         lines.append(f'@pytest.mark.skip(reason="{reason}")')
     elif block.language == "rust" and _rust_is_incomplete(block.code):
-        lines.append('@pytest.mark.skip(reason="Rust code is incomplete (no main function or is a code snippet)")')
+        lines.append(
+            '@pytest.mark.skip(reason="Rust code is incomplete (no main function or is a code snippet)")',
+        )
     elif block.skip_if_no_cuda:
-        lines.append('@pytest.mark.skipif(not cuda_available(), reason="CUDA not available")')
+        lines.append(
+            '@pytest.mark.skipif(not cuda_available(), reason="CUDA not available")',
+        )
 
     for mark in block.marks:
         lines.append(f"@pytest.mark.{mark}")
@@ -512,27 +518,26 @@ def _generate_exec_body(block: CodeBlock) -> list[str]:
     # Escape the code for embedding in a string
     escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
 
-    lines = [
+    return [
         '    code = """',
-        *[line for line in escaped_code.split("\n")],
+        *list(escaped_code.split("\n")),
         '"""',
         "    exec(code, {})",
     ]
-    return lines
 
 
 def _generate_guppy_body(block: CodeBlock) -> list[str]:
     """Generate test body for Guppy code (needs file-based execution)."""
     escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
 
-    lines = [
+    return [
         "    import subprocess",
         "    import sys",
         "    import tempfile",
         "    from pathlib import Path",
         "",
         '    code = """',
-        *[line for line in escaped_code.split("\n")],
+        *list(escaped_code.split("\n")),
         '"""',
         "",
         "    # Guppy needs file-based execution for inspect.getsourcelines()",
@@ -553,14 +558,15 @@ def _generate_guppy_body(block: CodeBlock) -> list[str]:
         "    finally:",
         "        Path(temp_path).unlink(missing_ok=True)",
     ]
-    return lines
 
 
 def _generate_expect_error_body(block: CodeBlock) -> list[str]:
     """Generate test body that expects an error matching a pattern."""
     escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
     # Don't double-escape backslashes in patterns - they're already regex escapes
-    escaped_pattern = block.expect_error.replace('"', '\\"') if block.expect_error else ""
+    escaped_pattern = (
+        block.expect_error.replace('"', '\\"') if block.expect_error else ""
+    )
 
     if _uses_guppy_decorator(block.code):
         # Guppy code needs subprocess execution
@@ -572,7 +578,7 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
             "    from pathlib import Path",
             "",
             '    code = """',
-            *[line for line in escaped_code.split("\n")],
+            *list(escaped_code.split("\n")),
             '"""',
             f'    expected_pattern = r"{escaped_pattern}"',
             "",
@@ -602,7 +608,7 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
             "    import re",
             "",
             '    code = """',
-            *[line for line in escaped_code.split("\n")],
+            *list(escaped_code.split("\n")),
             '"""',
             f'    expected_pattern = r"{escaped_pattern}"',
             "",
@@ -641,48 +647,52 @@ def _generate_rust_rustc_body(block: CodeBlock) -> list[str]:
         "    from pathlib import Path",
         "",
         '    code = """',
-        *[line for line in escaped_code.split("\n")],
+        *list(escaped_code.split("\n")),
         '"""',
         "",
     ]
 
     if not has_main:
-        lines.extend([
-            "    # Wrap code in main function if not present",
-            '    if "fn main()" not in code:',
-            '        code = f"fn main() {{\\n{code}\\n}}"',
-            "",
-        ])
+        lines.extend(
+            [
+                "    # Wrap code in main function if not present",
+                '    if "fn main()" not in code:',
+                '        code = f"fn main() {{\\n{code}\\n}}"',
+                "",
+            ],
+        )
 
-    lines.extend([
-        "    # Create temp directory for Rust compilation",
-        "    with tempfile.TemporaryDirectory() as tmpdir:",
-        "        src_path = Path(tmpdir) / 'test.rs'",
-        "        bin_path = Path(tmpdir) / 'test'",
-        "        src_path.write_text(code)",
-        "",
-        "        # Compile with rustc",
-        "        compile_result = subprocess.run(",
-        "            ['rustc', str(src_path), '-o', str(bin_path)],",
-        "            capture_output=True,",
-        "            text=True,",
-        "            timeout=60,",
-        "            check=False,",
-        "        )",
-        "        if compile_result.returncode != 0:",
-        '            pytest.fail(f"Rust compilation failed:\\n{compile_result.stderr}")',
-        "",
-        "        # Run the compiled binary",
-        "        run_result = subprocess.run(",
-        "            [str(bin_path)],",
-        "            capture_output=True,",
-        "            text=True,",
-        "            timeout=30,",
-        "            check=False,",
-        "        )",
-        "        if run_result.returncode != 0:",
-        '            pytest.fail(f"Rust execution failed:\\n{run_result.stderr}")',
-    ])
+    lines.extend(
+        [
+            "    # Create temp directory for Rust compilation",
+            "    with tempfile.TemporaryDirectory() as tmpdir:",
+            "        src_path = Path(tmpdir) / 'test.rs'",
+            "        bin_path = Path(tmpdir) / 'test'",
+            "        src_path.write_text(code)",
+            "",
+            "        # Compile with rustc",
+            "        compile_result = subprocess.run(",
+            "            ['rustc', str(src_path), '-o', str(bin_path)],",
+            "            capture_output=True,",
+            "            text=True,",
+            "            timeout=60,",
+            "            check=False,",
+            "        )",
+            "        if compile_result.returncode != 0:",
+            '            pytest.fail(f"Rust compilation failed:\\n{compile_result.stderr}")',
+            "",
+            "        # Run the compiled binary",
+            "        run_result = subprocess.run(",
+            "            [str(bin_path)],",
+            "            capture_output=True,",
+            "            text=True,",
+            "            timeout=30,",
+            "            check=False,",
+            "        )",
+            "        if run_result.returncode != 0:",
+            '            pytest.fail(f"Rust execution failed:\\n{run_result.stderr}")',
+        ],
+    )
 
     return lines
 
@@ -701,7 +711,7 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
         "    from pathlib import Path",
         "",
         '    code = """',
-        *[line for line in escaped_code.split("\n")],
+        *list(escaped_code.split("\n")),
         '"""',
         "",
         "    # Find the PECOS project root (where workspace Cargo.toml is)",
@@ -725,15 +735,15 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
         'edition = "2021"',
         "",
         "[dependencies]",
-        '# Enable runtime and hugr features for full API access',
+        "# Enable runtime and hugr features for full API access",
         'pecos = {{ path = "{project_root}/crates/pecos", features = ["runtime", "hugr", "wasm"] }}',
-        '# Also include internal crates that docs may reference directly',
+        "# Also include internal crates that docs may reference directly",
         'pecos-hugr = {{ path = "{project_root}/crates/pecos-hugr" }}',
         'pecos-engines = {{ path = "{project_root}/crates/pecos-engines" }}',
         'pecos-num = {{ path = "{project_root}/crates/pecos-num" }}',
         'pecos-decoders = {{ path = "{project_root}/crates/pecos-decoders", features = ["ldpc"] }}',
         'pecos-decoder-core = {{ path = "{project_root}/crates/pecos-decoder-core" }}',
-        '# Common external crates used in documentation examples',
+        "# Common external crates used in documentation examples",
         'serde_json = "1.0"',
         '"""',
         "        (tmpdir / 'Cargo.toml').write_text(cargo_toml)",
@@ -752,46 +762,50 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
     if block.test_data:
         for test_file in block.test_data:
             escaped_file = test_file.replace('"', '\\"')
-            lines.extend([
-                f'        # Look for {escaped_file} in multiple locations',
-                f'        src_file = None',
-                f'        for search_dir in [python_generated_dir, test_data_dir, hugr_test_data_dir]:',
-                f'            candidate = search_dir / "{escaped_file}"',
-                f'            if candidate.exists():',
-                f'                src_file = candidate',
-                f'                break',
-                f'        if src_file:',
-                f'            import shutil',
-                f'            shutil.copy(src_file, tmpdir / "{escaped_file}")',
-                f'        else:',
-                f'            pytest.skip(f"Test data file not found: {escaped_file}")',
-            ])
+            lines.extend(
+                [
+                    f"        # Look for {escaped_file} in multiple locations",
+                    "        src_file = None",
+                    "        for search_dir in [python_generated_dir, test_data_dir, hugr_test_data_dir]:",
+                    f'            candidate = search_dir / "{escaped_file}"',
+                    "            if candidate.exists():",
+                    "                src_file = candidate",
+                    "                break",
+                    "        if src_file:",
+                    "            import shutil",
+                    f'            shutil.copy(src_file, tmpdir / "{escaped_file}")',
+                    "        else:",
+                    f'            pytest.skip(f"Test data file not found: {escaped_file}")',
+                ],
+            )
 
-    lines.extend([
-        "",
-        "        # Build and run with cargo",
-        "        build_result = subprocess.run(",
-        "            ['cargo', 'build', '--release'],",
-        "            cwd=tmpdir,",
-        "            capture_output=True,",
-        "            text=True,",
-        "            timeout=300,",
-        "            check=False,",
-        "        )",
-        "        if build_result.returncode != 0:",
-        '            pytest.fail(f"Cargo build failed:\\n{build_result.stderr}")',
-        "",
-        "        run_result = subprocess.run(",
-        "            ['cargo', 'run', '--release'],",
-        "            cwd=tmpdir,",
-        "            capture_output=True,",
-        "            text=True,",
-        "            timeout=60,",
-        "            check=False,",
-        "        )",
-        "        if run_result.returncode != 0:",
-        '            pytest.fail(f"Cargo run failed:\\n{run_result.stderr}")',
-    ])
+    lines.extend(
+        [
+            "",
+            "        # Build and run with cargo",
+            "        build_result = subprocess.run(",
+            "            ['cargo', 'build', '--release'],",
+            "            cwd=tmpdir,",
+            "            capture_output=True,",
+            "            text=True,",
+            "            timeout=300,",
+            "            check=False,",
+            "        )",
+            "        if build_result.returncode != 0:",
+            '            pytest.fail(f"Cargo build failed:\\n{build_result.stderr}")',
+            "",
+            "        run_result = subprocess.run(",
+            "            ['cargo', 'run', '--release'],",
+            "            cwd=tmpdir,",
+            "            capture_output=True,",
+            "            text=True,",
+            "            timeout=60,",
+            "            check=False,",
+            "        )",
+            "        if run_result.returncode != 0:",
+            '            pytest.fail(f"Cargo run failed:\\n{run_result.stderr}")',
+        ],
+    )
 
     return lines
 
@@ -799,16 +813,18 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
 def _generate_rust_expect_error_body(block: CodeBlock) -> list[str]:
     """Generate test body for Rust code that expects a compilation error."""
     escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-    escaped_pattern = block.expect_error.replace('"', '\\"') if block.expect_error else ""
+    escaped_pattern = (
+        block.expect_error.replace('"', '\\"') if block.expect_error else ""
+    )
 
-    lines = [
+    return [
         "    import subprocess",
         "    import tempfile",
         "    import re",
         "    from pathlib import Path",
         "",
         '    code = """',
-        *[line for line in escaped_code.split("\n")],
+        *list(escaped_code.split("\n")),
         '"""',
         f'    expected_pattern = r"{escaped_pattern}"',
         "",
@@ -831,13 +847,13 @@ def _generate_rust_expect_error_body(block: CodeBlock) -> list[str]:
         '            f"Error did not match pattern {expected_pattern!r}:\\n{compile_result.stderr}"',
     ]
 
-    return lines
-
 
 def _generate_expect_output_body(block: CodeBlock) -> list[str]:
     """Generate test body that checks stdout contains expected text."""
     escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-    escaped_output = block.expect_output.replace('"', '\\"') if block.expect_output else ""
+    escaped_output = (
+        block.expect_output.replace('"', '\\"') if block.expect_output else ""
+    )
 
     if _uses_guppy_decorator(block.code):
         # Guppy code needs file-based execution
@@ -848,7 +864,7 @@ def _generate_expect_output_body(block: CodeBlock) -> list[str]:
             "    from pathlib import Path",
             "",
             '    code = """',
-            *[line for line in escaped_code.split("\n")],
+            *list(escaped_code.split("\n")),
             '"""',
             f'    expected_output = "{escaped_output}"',
             "",
@@ -878,7 +894,7 @@ def _generate_expect_output_body(block: CodeBlock) -> list[str]:
             "    import sys",
             "",
             '    code = """',
-            *[line for line in escaped_code.split("\n")],
+            *list(escaped_code.split("\n")),
             '"""',
             f'    expected_output = "{escaped_output}"',
             "",
@@ -917,34 +933,36 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
 
     # Only include cuda_available if needed
     if needs_cuda_check:
-        lines.extend([
-            "",
-            "# CUDA availability check (inlined to avoid import issues)",
-            "_CUDA_AVAILABLE = None",
-            "",
-            "",
-            "def cuda_available():",
-            '    """Check if CUDA is available."""',
-            "    global _CUDA_AVAILABLE",
-            "    if _CUDA_AVAILABLE is None:",
-            "        import subprocess",
-            "        import sys",
-            "        try:",
-            "            # Check CUDA toolkit",
-            '            result = subprocess.run(["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],',
-            "                capture_output=True, timeout=30, check=False)",
-            "            if result.returncode != 0:",
-            "                _CUDA_AVAILABLE = False",
-            "            else:",
-            "                # Check cupy",
-            '                result = subprocess.run([sys.executable, "-c", "import cupy; print(cupy.cuda.is_available())"],',
-            "                    capture_output=True, text=True, timeout=10, check=False)",
-            '                _CUDA_AVAILABLE = result.returncode == 0 and "True" in result.stdout',
-            "        except Exception:",
-            "            _CUDA_AVAILABLE = False",
-            "    return _CUDA_AVAILABLE",
-            "",
-        ])
+        lines.extend(
+            [
+                "",
+                "# CUDA availability check (inlined to avoid import issues)",
+                "_CUDA_AVAILABLE = None",
+                "",
+                "",
+                "def cuda_available():",
+                '    """Check if CUDA is available."""',
+                "    global _CUDA_AVAILABLE",
+                "    if _CUDA_AVAILABLE is None:",
+                "        import subprocess",
+                "        import sys",
+                "        try:",
+                "            # Check CUDA toolkit",
+                '            result = subprocess.run(["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],',
+                "                capture_output=True, timeout=30, check=False)",
+                "            if result.returncode != 0:",
+                "                _CUDA_AVAILABLE = False",
+                "            else:",
+                "                # Check cupy",
+                '                result = subprocess.run([sys.executable, "-c", "import cupy; print(cupy.cuda.is_available())"],',
+                "                    capture_output=True, text=True, timeout=10, check=False)",
+                '                _CUDA_AVAILABLE = result.returncode == 0 and "True" in result.stdout',
+                "        except Exception:",
+                "            _CUDA_AVAILABLE = False",
+                "    return _CUDA_AVAILABLE",
+                "",
+            ],
+        )
 
     lines.append("")
 
@@ -1053,7 +1071,9 @@ def pytest_collection_modifyitems(config, items):
 
 def main() -> None:
     """Generate pytest test files from documentation."""
-    parser = argparse.ArgumentParser(description="Generate pytest tests from documentation")
+    parser = argparse.ArgumentParser(
+        description="Generate pytest tests from documentation",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -1110,8 +1130,11 @@ def main() -> None:
         total_rust_blocks += len(rust_blocks)
         # Count skipped blocks including Rust that requires cargo
         total_skipped += sum(
-            1 for b in all_blocks
-            if b.skip or b.skip_if_no_cuda or (b.language == "rust" and _rust_is_incomplete(b.code))
+            1
+            for b in all_blocks
+            if b.skip
+            or b.skip_if_no_cuda
+            or (b.language == "rust" and _rust_is_incomplete(b.code))
         )
 
         # Generate test file
@@ -1124,14 +1147,18 @@ def main() -> None:
         output_path = output_subdir / test_file_name
 
         if args.dry_run:
-            print(f"Would generate: {output_path} ({len(python_blocks)} Python, {len(rust_blocks)} Rust blocks)")
+            print(
+                f"Would generate: {output_path} ({len(python_blocks)} Python, {len(rust_blocks)} Rust blocks)",
+            )
         else:
             output_subdir.mkdir(parents=True, exist_ok=True)
             output_path.write_text(test_content)
             files_generated += 1
-            print(f"Generated: {output_path} ({len(python_blocks)} Python, {len(rust_blocks)} Rust blocks)")
+            print(
+                f"Generated: {output_path} ({len(python_blocks)} Python, {len(rust_blocks)} Rust blocks)",
+            )
 
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Python blocks: {total_python_blocks}")
     print(f"  Rust blocks: {total_rust_blocks}")
     print(f"  Total code blocks: {total_python_blocks + total_rust_blocks}")

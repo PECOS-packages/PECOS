@@ -28,21 +28,24 @@ Example:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     ForStmt,
-    GateKind,
     GateOp,
     IfStmt,
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RepeatStmt,
-    SlotRef,
-    Statement,
     WhileStmt,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Program,
+        Statement,
+    )
 
 
 @dataclass
@@ -149,9 +152,8 @@ class DepthAnalyzer:
             self._set_qubit_depth(target.allocator, target.index, new_depth)
 
         # Track two-qubit depth
-        if node.gate.arity >= 2:
-            if new_depth > self.max_2q_depth:
-                self.max_2q_depth = new_depth
+        if node.gate.arity >= 2 and new_depth > self.max_2q_depth:
+            self.max_2q_depth = new_depth
 
         # Track critical path
         if new_depth == self.max_depth:

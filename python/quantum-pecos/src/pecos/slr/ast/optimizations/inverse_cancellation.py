@@ -17,9 +17,13 @@ For example: S-Sdg, T-Tdg, SX-SXdg all cancel to identity.
 
 from __future__ import annotations
 
-from pecos.slr.ast.nodes import GateOp
+from typing import TYPE_CHECKING
+
 from pecos.slr.ast.optimizations.base import StatementListOptimizer
 from pecos.slr.ast.optimizations.gate_properties import get_inverse, targets_match
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import GateOp
 
 
 class InverseCancellationPass(StatementListOptimizer):
@@ -55,4 +59,8 @@ class InverseCancellationPass(StatementListOptimizer):
         2. They act on the same qubits in the same order
         """
         inverse = get_inverse(gate1.gate)
-        return inverse is not None and gate2.gate == inverse and targets_match(gate1, gate2)
+        return (
+            inverse is not None
+            and gate2.gate == inverse
+            and targets_match(gate1, gate2)
+        )

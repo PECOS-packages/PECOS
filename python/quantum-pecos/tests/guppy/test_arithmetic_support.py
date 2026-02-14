@@ -23,7 +23,12 @@ def test_integer_arithmetic() -> None:
         return measure(q)
 
     results = (
-        sim(Guppy(quantum_add)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
+        sim(Guppy(quantum_add))
+        .qubits(1)
+        .quantum(state_vector())
+        .seed(42)
+        .run(10)
+        .to_dict()
     )
 
     raw_measurements = results.get("measurements", [])
@@ -76,7 +81,12 @@ def test_integer_comparisons() -> None:
         return measure(q)
 
     results = (
-        sim(Guppy(quantum_compare)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
+        sim(Guppy(quantum_compare))
+        .qubits(1)
+        .quantum(state_vector())
+        .seed(42)
+        .run(10)
+        .to_dict()
     )
 
     raw_measurements = results.get("measurements", [])
@@ -103,7 +113,12 @@ def test_arithmetic_in_loop() -> None:
         return measure(q)
 
     results = (
-        sim(Guppy(quantum_loop)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
+        sim(Guppy(quantum_loop))
+        .qubits(1)
+        .quantum(state_vector())
+        .seed(42)
+        .run(10)
+        .to_dict()
     )
 
     raw_measurements = results.get("measurements", [])
@@ -129,7 +144,12 @@ def test_chained_comparisons() -> None:
         return measure(q)
 
     results = (
-        sim(Guppy(quantum_chain)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
+        sim(Guppy(quantum_chain))
+        .qubits(1)
+        .quantum(state_vector())
+        .seed(42)
+        .run(10)
+        .to_dict()
     )
 
     raw_measurements = results.get("measurements", [])
@@ -139,7 +159,9 @@ def test_chained_comparisons() -> None:
     assert 1 in measurements
 
 
-@pytest.mark.skip(reason="Conditional quantum ops based on measurement results cause register count mismatch")
+@pytest.mark.skip(
+    reason="Conditional quantum ops based on measurement results cause register count mismatch",
+)
 def test_arithmetic_with_measurements() -> None:
     """Test using measurement results in arithmetic."""
 

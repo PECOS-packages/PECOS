@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
     from guppylang import guppy
-    from guppylang.std.quantum import qubit, cx, measure
     from guppylang.std.builtins import array, result
+    from guppylang.std.quantum import cx, measure, qubit
 except ImportError as e:
     print(f"Error: Could not import guppylang: {e}")
     print("Please install guppylang: uv pip install guppylang")
@@ -85,6 +85,7 @@ def main() -> int:
     except Exception as e:
         print(f"  Error generating repetition code: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

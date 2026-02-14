@@ -22,20 +22,20 @@
 //! - Float arithmetic (fadd, fsub, fmul, fdiv, fneg, fabs, ffloor, fceil)
 //! - Float comparisons (feq, fne, flt, fle, fgt, fge)
 //! - Conversions (int<->float)
-//! - Tuple operations (make_tuple, unpack_tuple)
+//! - Tuple operations (`make_tuple`, `unpack_tuple`)
 //!
 //! Also handles `tket.bool` extension operations.
 
 use log::debug;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
-use crate::engine::types::{ClassicalOp, ClassicalOpType, ClassicalValue};
 use crate::engine::HugrEngine;
+use crate::engine::types::{ClassicalOp, ClassicalOpType, ClassicalValue};
 
 impl HugrEngine {
     /// Execute a classical operation and return the output values.
     ///
-    /// Returns a vector of (port_index, value) pairs for output ports.
+    /// Returns a vector of (`port_index`, value) pairs for output ports.
     #[allow(
         clippy::too_many_lines,
         clippy::float_cmp, // Exact float comparison is intentional for feq/fne operations
@@ -440,7 +440,8 @@ impl HugrEngine {
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a && b));
                 debug!("tket.bool.and: {a} && {b} = {}", a && b);
                 true
@@ -454,7 +455,8 @@ impl HugrEngine {
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a || b));
                 debug!("tket.bool.or: {a} || {b} = {}", a || b);
                 true
@@ -468,7 +470,8 @@ impl HugrEngine {
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a ^ b));
                 debug!("tket.bool.xor: {a} ^ {b} = {}", a ^ b);
                 true
@@ -478,7 +481,8 @@ impl HugrEngine {
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Bool(!a));
                 debug!("tket.bool.not: !{a} = {}", !a);
                 true
@@ -492,7 +496,8 @@ impl HugrEngine {
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a == b));
                 debug!("tket.bool.eq: {a} == {b} = {}", a == b);
                 true
@@ -501,11 +506,11 @@ impl HugrEngine {
                 // make_opaque: Sum<bool> -> tket.bool
                 // Convert Sum type to opaque bool
                 let input_value = self.get_input_value(hugr, node, 0);
-                debug!("tket.bool.make_opaque at {:?}: input_value={:?}", node, input_value);
+                debug!("tket.bool.make_opaque at {node:?}: input_value={input_value:?}");
 
                 // If the input value is not available, defer this operation
                 let Some(input_val) = input_value else {
-                    debug!("tket.bool.make_opaque at {:?}: deferring - input not ready", node);
+                    debug!("tket.bool.make_opaque at {node:?}: deferring - input not ready");
                     // Track this node so it can be retried when input becomes available
                     self.pending_bool_reads.insert(node);
                     return false;
@@ -515,7 +520,8 @@ impl HugrEngine {
                 self.pending_bool_reads.remove(&node);
 
                 let value = input_val.as_bool().unwrap_or(false);
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
                 debug!("tket.bool.make_opaque: {value}");
                 true
@@ -524,14 +530,14 @@ impl HugrEngine {
                 // read: tket.bool -> Sum<bool>
                 // Convert opaque bool to Sum type
                 let input_value = self.get_input_value(hugr, node, 0);
-                debug!("tket.bool.read at {:?}: input_value={:?}", node, input_value);
-                
+                debug!("tket.bool.read at {node:?}: input_value={input_value:?}");
+
                 // If the input value is not available (e.g., measurement result pending),
                 // defer this operation by returning false. It will be retried later
                 // when the measurement result is available.
                 let Some(input_val) = input_value else {
-                    debug!("tket.bool.read at {:?}: deferring - input not ready", node);
-                                        // Track this node so it can be retried when measurement results arrive
+                    debug!("tket.bool.read at {node:?}: deferring - input not ready");
+                    // Track this node so it can be retried when measurement results arrive
                     self.pending_bool_reads.insert(node);
                     return false;
                 };
@@ -540,10 +546,11 @@ impl HugrEngine {
                 self.pending_bool_reads.remove(&node);
 
                 let value = input_val.as_bool().unwrap_or(false);
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
                 debug!("tket.bool.read: {value}");
-                                true
+                true
             }
             _ => {
                 debug!("Unknown tket.bool operation: {op_name}");

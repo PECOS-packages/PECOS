@@ -32,7 +32,9 @@ class TestQubitAllocationLimits:
         for m in measurements:
             assert len(m) == 3, f"Each shot should have 3 measurements, got {len(m)}"
 
-    @pytest.mark.skip(reason="For-loop with int return not supported by HUGR interpreter")
+    @pytest.mark.skip(
+        reason="For-loop with int return not supported by HUGR interpreter",
+    )
     def test_dynamic_allocation_in_loop(self) -> None:
         """Test dynamic allocation in a loop - requires sufficient max_qubits."""
 
@@ -165,7 +167,9 @@ class TestQubitAllocationLimits:
             allocation_succeeded or error_was_expected
         ), "Should either succeed with optimization or fail with resource error"
 
-    @pytest.mark.skip(reason="Nested loops with int return not supported by HUGR interpreter")
+    @pytest.mark.skip(
+        reason="Nested loops with int return not supported by HUGR interpreter",
+    )
     def test_nested_loop_allocation(self) -> None:
         """Test nested loops with qubit allocation."""
 
@@ -264,7 +268,9 @@ class TestQubitAllocationLimits:
             )
 
             raw_measurements = results.get("measurements", [])
-            measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+            measurements = [
+                m[-1] if isinstance(m, list) else m for m in raw_measurements
+            ]
             assert (
                 len(measurements) == 10
             ), f"Should have 10 measurements with max_qubits={max_q}"
@@ -274,7 +280,9 @@ class TestQubitAllocationLimits:
                 isinstance(m, bool | int) for m in measurements
             ), "Measurements should be bool/int"
 
-    @pytest.mark.skip(reason="TailLoop control flow resolution needs work - ige_s results not propagating")
+    @pytest.mark.skip(
+        reason="TailLoop/CFG control flow with arrays needs work - loop iterations not completing",
+    )
     def test_qubit_array_allocation(self) -> None:
         """Test allocation of qubit arrays using Guppy's array type with proper ownership."""
         from guppylang.std.builtins import owned
@@ -302,7 +310,12 @@ class TestQubitAllocationLimits:
 
         # Need at least 3 qubits for the array
         results = (
-            sim(Guppy(array_test)).qubits(3).quantum(state_vector()).seed(42).run(50).to_dict()
+            sim(Guppy(array_test))
+            .qubits(3)
+            .quantum(state_vector())
+            .seed(42)
+            .run(50)
+            .to_dict()
         )
 
         # The result should be an array of 3 booleans for each shot
@@ -312,9 +325,7 @@ class TestQubitAllocationLimits:
 
         # Each measurement should be an array/tuple of 3 booleans
         for m in measurements[:5]:  # Check first few
-            assert (
-                len(m) == 3
-            ), f"Each result should have 3 measurements, got {len(m)}"
+            assert len(m) == 3, f"Each result should have 3 measurements, got {len(m)}"
 
         # Check distribution for each qubit position
         for i in range(3):

@@ -46,8 +46,8 @@ from pecos.simulators.statevec import StateVec
 
 # Attempt to import optional cuquantum and cupy packages for CuStateVec
 try:
-    import cupy  # noqa: F401
-    import cuquantum  # noqa: F401
+    import cupy
+    import cuquantum
 
     from pecos.simulators.custatevec.state import (
         CuStateVec,

@@ -20,8 +20,8 @@
 use log::debug;
 use tket::hugr::{Hugr, Node};
 
-use crate::engine::types::ClassicalValue;
 use crate::engine::HugrEngine;
+use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `tket.wasm` operations for WebAssembly integration.
@@ -36,7 +36,8 @@ impl HugrEngine {
                 // get_context: () -> WasmContext
                 // Create or get WASM execution context
                 // Stub: output a placeholder value
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::UInt(0));
                 debug!("tket.wasm.get_context: stub (no WASM support)");
                 true
@@ -61,7 +62,8 @@ impl HugrEngine {
                 if let Some(ctx) = self.get_input_value(hugr, node, 0) {
                     self.wire_state.classical_values.insert((node, 0), ctx);
                 }
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 1), ClassicalValue::UInt(0));
                 debug!("tket.wasm.lookup_by_id: stub (no WASM support)");
                 true
@@ -72,7 +74,8 @@ impl HugrEngine {
                 if let Some(ctx) = self.get_input_value(hugr, node, 0) {
                     self.wire_state.classical_values.insert((node, 0), ctx);
                 }
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 1), ClassicalValue::UInt(0));
                 debug!("tket.wasm.lookup_by_name: stub (no WASM support)");
                 true
@@ -80,7 +83,8 @@ impl HugrEngine {
             "read_result" | "ReadResult" => {
                 // read_result: WasmResult -> value
                 // Stub: output zero
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Int(0));
                 debug!("tket.wasm.read_result: stub (no WASM support)");
                 true

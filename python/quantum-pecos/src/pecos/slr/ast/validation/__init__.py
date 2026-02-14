@@ -82,7 +82,7 @@ def validate(program: Program) -> ValidationResult:
             AllocationValidator(),
             BoundsChecker(),
             TypeChecker(),
-        ]
+        ],
     )
     return pipeline.validate(program)
 
@@ -98,21 +98,21 @@ def create_default_pipeline() -> ValidationPipeline:
             AllocationValidator(),
             BoundsChecker(),
             TypeChecker(),
-        ]
+        ],
     )
 
 
 __all__ = [
+    # Validators
+    "AllocationValidator",
+    "BoundsChecker",
     # Base classes
     "Severity",
+    "TypeChecker",
     "ValidationError",
     "ValidationPass",
     "ValidationPipeline",
     "ValidationResult",
-    # Validators
-    "AllocationValidator",
-    "BoundsChecker",
-    "TypeChecker",
     # Convenience functions
     "check_bounds",
     "check_types",

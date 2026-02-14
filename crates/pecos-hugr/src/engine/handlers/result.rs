@@ -24,8 +24,8 @@
 use log::debug;
 use tket::hugr::{Hugr, HugrView, Node, NodeIndex};
 
-use crate::engine::types::{CapturedResult, ClassicalValue, ResultValue};
 use crate::engine::HugrEngine;
+use crate::engine::types::{CapturedResult, ClassicalValue, ResultValue};
 
 impl HugrEngine {
     /// Handle tket.result operations for capturing output values.

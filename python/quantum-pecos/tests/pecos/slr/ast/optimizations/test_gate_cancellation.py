@@ -21,7 +21,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestGateCancellationBasic:
     """Basic gate cancellation tests."""
 
-    def test_x_x_cancels(self):
+    def test_x_x_cancels(self) -> None:
         """X-X on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -35,7 +35,7 @@ class TestGateCancellationBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_h_h_cancels(self):
+    def test_h_h_cancels(self) -> None:
         """H-H on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -49,7 +49,7 @@ class TestGateCancellationBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_y_y_cancels(self):
+    def test_y_y_cancels(self) -> None:
         """Y-Y on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -63,7 +63,7 @@ class TestGateCancellationBasic:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_z_z_cancels(self):
+    def test_z_z_cancels(self) -> None:
         """Z-Z on same qubit cancels."""
         prog = Main(
             q := QReg("q", 1),
@@ -81,7 +81,7 @@ class TestGateCancellationBasic:
 class TestGateCancellationTwoQubit:
     """Two-qubit gate cancellation tests."""
 
-    def test_cx_cx_cancels(self):
+    def test_cx_cx_cancels(self) -> None:
         """CX-CX on same qubits cancels."""
         prog = Main(
             q := QReg("q", 2),
@@ -95,7 +95,7 @@ class TestGateCancellationTwoQubit:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_cz_cz_cancels(self):
+    def test_cz_cz_cancels(self) -> None:
         """CZ-CZ on same qubits cancels."""
         prog = Main(
             q := QReg("q", 2),
@@ -109,7 +109,7 @@ class TestGateCancellationTwoQubit:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_cx_different_order_no_cancel(self):
+    def test_cx_different_order_no_cancel(self) -> None:
         """CX with swapped control/target does not cancel."""
         prog = Main(
             q := QReg("q", 2),
@@ -127,7 +127,7 @@ class TestGateCancellationTwoQubit:
 class TestGateCancellationNoCancel:
     """Tests where gates should NOT cancel."""
 
-    def test_x_x_different_qubits_no_cancel(self):
+    def test_x_x_different_qubits_no_cancel(self) -> None:
         """X-X on different qubits does not cancel."""
         prog = Main(
             q := QReg("q", 2),
@@ -141,7 +141,7 @@ class TestGateCancellationNoCancel:
         assert len(result.program.body) == 2
         assert result.gates_removed == 0
 
-    def test_x_h_no_cancel(self):
+    def test_x_h_no_cancel(self) -> None:
         """Different gate types do not cancel."""
         prog = Main(
             q := QReg("q", 1),
@@ -155,7 +155,7 @@ class TestGateCancellationNoCancel:
         assert len(result.program.body) == 2
         assert result.gates_removed == 0
 
-    def test_non_self_inverse_no_cancel(self):
+    def test_non_self_inverse_no_cancel(self) -> None:
         """Non-self-inverse gates (S, T) do not cancel with themselves."""
         prog = Main(
             q := QReg("q", 1),
@@ -173,7 +173,7 @@ class TestGateCancellationNoCancel:
 class TestGateCancellationControlFlow:
     """Gate cancellation inside control flow."""
 
-    def test_cancellation_inside_if(self):
+    def test_cancellation_inside_if(self) -> None:
         """Gates cancel inside if statements."""
         prog = Main(
             q := QReg("q", 1),
@@ -191,7 +191,7 @@ class TestGateCancellationControlFlow:
         assert len(result.program.body) == 1  # IfStmt still present
         assert result.gates_removed == 2
 
-    def test_cancellation_inside_repeat(self):
+    def test_cancellation_inside_repeat(self) -> None:
         """Gates cancel inside repeat blocks."""
         prog = Main(
             q := QReg("q", 1),
@@ -207,7 +207,7 @@ class TestGateCancellationControlFlow:
         assert len(result.program.body) == 1  # RepeatStmt still present
         assert result.gates_removed == 2
 
-    def test_no_cancel_across_control_flow(self):
+    def test_no_cancel_across_control_flow(self) -> None:
         """Gates do not cancel across control flow boundaries."""
         prog = Main(
             q := QReg("q", 1),
@@ -229,7 +229,7 @@ class TestGateCancellationControlFlow:
 class TestGateCancellationMultiple:
     """Multiple cancellation tests."""
 
-    def test_multiple_cancellations(self):
+    def test_multiple_cancellations(self) -> None:
         """Multiple pairs cancel correctly."""
         prog = Main(
             q := QReg("q", 1),
@@ -245,7 +245,7 @@ class TestGateCancellationMultiple:
         assert len(result.program.body) == 0
         assert result.gates_removed == 4
 
-    def test_interleaved_no_cancel(self):
+    def test_interleaved_no_cancel(self) -> None:
         """Interleaved gates on same qubit do not cancel."""
         prog = Main(
             q := QReg("q", 1),
@@ -260,7 +260,7 @@ class TestGateCancellationMultiple:
         assert len(result.program.body) == 3
         assert result.gates_removed == 0
 
-    def test_four_of_same_gate(self):
+    def test_four_of_same_gate(self) -> None:
         """Four of the same gate reduces to zero."""
         prog = Main(
             q := QReg("q", 1),
@@ -276,7 +276,7 @@ class TestGateCancellationMultiple:
         assert len(result.program.body) == 0
         assert result.gates_removed == 4
 
-    def test_three_of_same_gate(self):
+    def test_three_of_same_gate(self) -> None:
         """Three of the same gate leaves one."""
         prog = Main(
             q := QReg("q", 1),

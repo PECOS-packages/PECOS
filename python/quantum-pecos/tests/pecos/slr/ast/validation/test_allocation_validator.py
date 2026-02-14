@@ -28,7 +28,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestAllocationValidatorValid:
     """Tests for valid allocations."""
 
-    def test_valid_single_allocator(self):
+    def test_valid_single_allocator(self) -> None:
         """Single valid allocator."""
         prog = Main(
             q := QReg("q", 2),
@@ -42,7 +42,7 @@ class TestAllocationValidatorValid:
         assert result.valid is True
         assert len(result.errors) == 0
 
-    def test_valid_multiple_allocators(self):
+    def test_valid_multiple_allocators(self) -> None:
         """Multiple valid allocators."""
         prog = Main(
             q := QReg("q", 2),
@@ -61,7 +61,7 @@ class TestAllocationValidatorValid:
 class TestAllocationValidatorErrors:
     """Tests for allocation errors."""
 
-    def test_duplicate_allocator_names(self):
+    def test_duplicate_allocator_names(self) -> None:
         """Duplicate allocator names."""
         prog = Program(
             name="test",
@@ -76,7 +76,7 @@ class TestAllocationValidatorErrors:
         assert "Duplicate allocator name" in result.errors[0].message
         assert result.errors[0].code == "E301"
 
-    def test_undeclared_allocator_reference(self):
+    def test_undeclared_allocator_reference(self) -> None:
         """Reference to undeclared allocator."""
         prog = Program(
             name="test",
@@ -95,7 +95,7 @@ class TestAllocationValidatorErrors:
         assert "undeclared allocator" in result.errors[0].message
         assert result.errors[0].code == "E305"
 
-    def test_zero_capacity(self):
+    def test_zero_capacity(self) -> None:
         """Allocator with zero capacity."""
         prog = Program(
             name="test",
@@ -109,7 +109,7 @@ class TestAllocationValidatorErrors:
         assert "non-positive capacity" in result.errors[0].message
         assert result.errors[0].code == "E303"
 
-    def test_negative_capacity(self):
+    def test_negative_capacity(self) -> None:
         """Allocator with negative capacity."""
         prog = Program(
             name="test",
@@ -126,7 +126,7 @@ class TestAllocationValidatorErrors:
 class TestAllocationValidatorParentHierarchy:
     """Tests for parent allocator hierarchy."""
 
-    def test_unknown_parent(self):
+    def test_unknown_parent(self) -> None:
         """Reference to unknown parent allocator."""
         prog = Program(
             name="test",
@@ -143,14 +143,12 @@ class TestAllocationValidatorParentHierarchy:
         assert "unknown parent" in result.errors[0].message
         assert result.errors[0].code == "E302"
 
-    def test_valid_parent_reference(self):
+    def test_valid_parent_reference(self) -> None:
         """Valid parent allocator reference."""
         prog = Program(
             name="test",
             allocator=AllocatorDecl(name="parent", capacity=5),
-            declarations=(
-                AllocatorDecl(name="child", capacity=2, parent="parent"),
-            ),
+            declarations=(AllocatorDecl(name="child", capacity=2, parent="parent"),),
             body=(
                 GateOp(gate=GateKind.H, targets=(SlotRef(allocator="child", index=0),)),
             ),
@@ -160,7 +158,7 @@ class TestAllocationValidatorParentHierarchy:
 
         assert result.valid is True
 
-    def test_parent_cycle_detection(self):
+    def test_parent_cycle_detection(self) -> None:
         """Detect cycles in parent hierarchy."""
         prog = Program(
             name="test",
@@ -181,7 +179,7 @@ class TestAllocationValidatorParentHierarchy:
 class TestAllocationValidatorWarnings:
     """Tests for allocation warnings."""
 
-    def test_unused_allocator_warning(self):
+    def test_unused_allocator_warning(self) -> None:
         """Unused allocator generates warning."""
         prog = Program(
             name="test",
@@ -202,7 +200,7 @@ class TestAllocationValidatorWarnings:
 class TestAllocationValidatorControlFlow:
     """Allocation validation in control flow."""
 
-    def test_allocation_inside_if(self):
+    def test_allocation_inside_if(self) -> None:
         """Allocator references inside if statements."""
         prog = Main(
             q := QReg("q", 2),
@@ -217,7 +215,7 @@ class TestAllocationValidatorControlFlow:
 
         assert result.valid is True
 
-    def test_allocation_inside_repeat(self):
+    def test_allocation_inside_repeat(self) -> None:
         """Allocator references inside repeat loops."""
         prog = Main(
             q := QReg("q", 1),
@@ -235,7 +233,7 @@ class TestAllocationValidatorControlFlow:
 class TestAllocationValidatorPrepare:
     """Tests for prepare operation validation."""
 
-    def test_valid_prepare(self):
+    def test_valid_prepare(self) -> None:
         """Valid prepare references declared allocator."""
         prog = Program(
             name="test",
@@ -247,7 +245,7 @@ class TestAllocationValidatorPrepare:
 
         assert result.valid is True
 
-    def test_prepare_undeclared_allocator(self):
+    def test_prepare_undeclared_allocator(self) -> None:
         """Prepare references undeclared allocator."""
         prog = Program(
             name="test",
@@ -264,7 +262,7 @@ class TestAllocationValidatorPrepare:
 class TestAllocationValidatorClass:
     """Tests for AllocationValidator class."""
 
-    def test_validator_reuse(self):
+    def test_validator_reuse(self) -> None:
         """Validator can be reused."""
         validator = AllocationValidator()
 
@@ -272,7 +270,12 @@ class TestAllocationValidatorClass:
         prog2 = Program(
             name="test",
             allocator=AllocatorDecl(name="q", capacity=2),
-            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="unknown", index=0),)),),
+            body=(
+                GateOp(
+                    gate=GateKind.H,
+                    targets=(SlotRef(allocator="unknown", index=0),),
+                ),
+            ),
         )
 
         ast1 = slr_to_ast(prog1)
@@ -283,7 +286,7 @@ class TestAllocationValidatorClass:
         assert result1.valid is True
         assert result2.valid is False
 
-    def test_passes_applied(self):
+    def test_passes_applied(self) -> None:
         """Pass name is tracked."""
         prog = Main(q := QReg("q", 1), qb.H(q[0]))
         ast = slr_to_ast(prog)

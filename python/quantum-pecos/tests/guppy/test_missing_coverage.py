@@ -102,7 +102,11 @@ class TestNoiseModels:
 
         # Test with no noise - should be deterministic
         results_ideal = (
-            sim(Guppy(noisy_circuit)).qubits(1).quantum(state_vector()).seed(42).run(10)
+            sim(Guppy(noisy_circuit))
+            .qubits(1)
+            .quantum(state_vector())
+            .seed(42)
+            .run(10)
             .to_dict()
         )
         measurements_ideal = get_measurements(results_ideal)
@@ -355,7 +359,9 @@ class TestArrayOperations:
 class TestAdvancedControlFlow:
     """Test complex control flow patterns."""
 
-    @pytest.mark.skip(reason="For-loop with int return not supported by HUGR interpreter")
+    @pytest.mark.skip(
+        reason="For-loop with int return not supported by HUGR interpreter",
+    )
     def test_nested_loops(self) -> None:
         """Test loops with quantum operations."""
 
@@ -376,7 +382,11 @@ class TestAdvancedControlFlow:
 
         # Run multiple times to see distribution
         results = (
-            sim(Guppy(loop_test)).qubits(1).quantum(state_vector()).seed(111).run(10)
+            sim(Guppy(loop_test))
+            .qubits(1)
+            .quantum(state_vector())
+            .seed(111)
+            .run(10)
             .to_dict()
         )
 
@@ -764,7 +774,11 @@ class TestQuantumErrorHandling:
             return m1, m2
 
         results = (
-            sim(Guppy(reset_test)).qubits(2).quantum(state_vector()).seed(42).run(10)
+            sim(Guppy(reset_test))
+            .qubits(2)
+            .quantum(state_vector())
+            .seed(42)
+            .run(10)
             .to_dict()
         )
 

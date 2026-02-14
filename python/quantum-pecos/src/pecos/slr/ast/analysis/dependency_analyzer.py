@@ -30,6 +30,7 @@ Example:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -37,22 +38,26 @@ from pecos.slr.ast.nodes import (
     BinaryExpr,
     BitExpr,
     BitRef,
-    Expression,
     ForStmt,
     GateOp,
     IfStmt,
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RegisterDecl,
     RepeatStmt,
-    SlotRef,
-    Statement,
     UnaryExpr,
     VarExpr,
     WhileStmt,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Expression,
+        Program,
+        SlotRef,
+        Statement,
+    )
 
 
 @dataclass
@@ -120,7 +125,9 @@ class DependencyAnalyzer:
                 self.result.bit_accesses[decl.name] = set()
 
         if program.allocator:
-            self.result.allocators_used[program.allocator.name] = program.allocator.capacity
+            self.result.allocators_used[program.allocator.name] = (
+                program.allocator.capacity
+            )
             self.result.slot_accesses[program.allocator.name] = set()
 
         # Analyze statements

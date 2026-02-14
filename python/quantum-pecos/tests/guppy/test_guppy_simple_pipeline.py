@@ -43,7 +43,12 @@ def test_quantum_function() -> None:
             return measure(q)
 
         result = (
-            sim(Guppy(quantum_coin)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
+            sim(Guppy(quantum_coin))
+            .qubits(1)
+            .quantum(state_vector())
+            .seed(42)
+            .run(10)
+            .to_dict()
         )
 
         # Should have measurement results

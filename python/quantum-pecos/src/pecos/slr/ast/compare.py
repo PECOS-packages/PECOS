@@ -29,9 +29,12 @@ Example:
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pecos.slr.ast.nodes import AstNode, Program, SourceLocation
+from pecos.slr.ast.nodes import Program
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import AstNode
 
 
 @dataclass
@@ -111,7 +114,9 @@ class AstComparator:
         if a is None and b is None:
             return True
         if a is None or b is None:
-            self._add_diff(f"one is None, other is {type(b if a is None else a).__name__}")
+            self._add_diff(
+                f"one is None, other is {type(b if a is None else a).__name__}",
+            )
             return False
 
         # Handle different types
@@ -139,7 +144,7 @@ class AstComparator:
                 self._add_diff(f"length mismatch: {len(a)} vs {len(b)}")
                 return False
             all_equal = True
-            for i, (item_a, item_b) in enumerate(zip(a, b)):
+            for i, (item_a, item_b) in enumerate(zip(a, b, strict=False)):
                 self._path.append(f"[{i}]")
                 if not self._compare_nodes(item_a, item_b):
                     all_equal = False
@@ -170,7 +175,13 @@ class AstComparator:
         return False
 
 
-def compare_ast(a: Program, b: Program, *, ignore_location: bool = True, ignore_name: bool = False) -> AstDiff:
+def compare_ast(
+    a: Program,
+    b: Program,
+    *,
+    ignore_location: bool = True,
+    ignore_name: bool = False,
+) -> AstDiff:
     """Compare two AST programs for structural equality.
 
     Args:
@@ -186,12 +197,19 @@ def compare_ast(a: Program, b: Program, *, ignore_location: bool = True, ignore_
         >>> diff = compare_ast(ast1, ast2)
         >>> if not diff.equal:
         ...     print(diff)
+        ...
     """
     comparator = AstComparator(ignore_location=ignore_location, ignore_name=ignore_name)
     return comparator.compare(a, b)
 
 
-def ast_equal(a: Program, b: Program, *, ignore_location: bool = True, ignore_name: bool = False) -> bool:
+def ast_equal(
+    a: Program,
+    b: Program,
+    *,
+    ignore_location: bool = True,
+    ignore_name: bool = False,
+) -> bool:
     """Check if two AST programs are structurally equal.
 
     Args:
@@ -207,7 +225,12 @@ def ast_equal(a: Program, b: Program, *, ignore_location: bool = True, ignore_na
         >>> ast_equal(ast1, ast2)
         True
     """
-    return compare_ast(a, b, ignore_location=ignore_location, ignore_name=ignore_name).equal
+    return compare_ast(
+        a,
+        b,
+        ignore_location=ignore_location,
+        ignore_name=ignore_name,
+    ).equal
 
 
 def nodes_equal(a: AstNode, b: AstNode, *, ignore_location: bool = True) -> bool:

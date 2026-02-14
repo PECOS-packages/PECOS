@@ -26,8 +26,8 @@ use log::debug;
 use pecos_core::QubitId;
 use tket::hugr::{Hugr, Node};
 
-use crate::engine::types::{ClassicalValue, FutureState, RngContextId, RngContextState};
 use crate::engine::HugrEngine;
+use crate::engine::types::{ClassicalValue, FutureState, RngContextId, RngContextState};
 
 impl HugrEngine {
     /// Handle tket.qsystem operations (lazy measurements, barriers, etc.).
@@ -57,7 +57,8 @@ impl HugrEngine {
                     );
 
                     // Store Future value on output port 0
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Future(future_id));
 
                     debug!("LazyMeasure on qubit {qubit_id:?}, created future {future_id}");
@@ -89,7 +90,8 @@ impl HugrEngine {
 
                     // Output port 0: qubit, Output port 1: Future
                     self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 1), ClassicalValue::Future(future_id));
 
                     debug!("LazyMeasureReset on qubit {qubit_id:?}, created future {future_id}");
@@ -115,7 +117,8 @@ impl HugrEngine {
                         },
                     );
 
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Future(future_id));
 
                     debug!("LazyMeasureLeaked on qubit {qubit_id:?}, created future {future_id}");
@@ -159,7 +162,8 @@ impl HugrEngine {
                 // Output on port 0 (Sum type, tag 1 = success with qubit)
                 self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
                 // Store Sum tag = 1 (success) for control flow
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::UInt(1));
 
                 debug!("TryQAlloc created qubit {qubit_id:?}");
@@ -200,10 +204,12 @@ impl HugrEngine {
                 } else {
                     seed
                 };
-                self.extension_state.rng_contexts
+                self.extension_state
+                    .rng_contexts
                     .insert(ctx_id, RngContextState { seed, state });
 
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::RngContext(ctx_id));
 
                 debug!("NewRNGContext with seed {seed} -> context {ctx_id}");
@@ -229,10 +235,12 @@ impl HugrEngine {
                     let random_float = self.generate_random_float(ctx_id);
 
                     // Output port 0: RNGContext (pass through)
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::RngContext(ctx_id));
                     // Output port 1: random float
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 1), ClassicalValue::Float(random_float));
 
                     debug!("RandomFloat: generated {random_float}");
@@ -247,9 +255,11 @@ impl HugrEngine {
                 {
                     let random_int = self.generate_random_u64(ctx_id) as i64;
 
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::RngContext(ctx_id));
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 1), ClassicalValue::Int(random_int));
 
                     debug!("RandomInt: generated {random_int}");
@@ -269,9 +279,11 @@ impl HugrEngine {
                 if let Some(ClassicalValue::RngContext(ctx_id)) = ctx_value {
                     let random_val = self.generate_random_u64(ctx_id) % bound;
 
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::RngContext(ctx_id));
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 1), ClassicalValue::Int(random_val as i64));
 
                     debug!("RandomIntBounded({bound}): generated {random_val}");
@@ -296,7 +308,8 @@ impl HugrEngine {
                         self.generate_random_u64(ctx_id);
                     }
 
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::RngContext(ctx_id));
 
                     debug!("RandomAdvance: advanced by {delta} steps");
@@ -343,8 +356,10 @@ impl HugrEngine {
         if op_name == "GetCurrentShot" {
             // GetCurrentShot: () -> int<64>
             // Return the current shot number
-            self.wire_state.classical_values
-                .insert((node, 0), ClassicalValue::UInt(self.extension_state.current_shot));
+            self.wire_state.classical_values.insert(
+                (node, 0),
+                ClassicalValue::UInt(self.extension_state.current_shot),
+            );
 
             debug!("GetCurrentShot: {}", self.extension_state.current_shot);
             true

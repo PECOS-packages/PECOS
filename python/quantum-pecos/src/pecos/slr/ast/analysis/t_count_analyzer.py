@@ -29,6 +29,7 @@ Example:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     ForStmt,
@@ -38,11 +39,15 @@ from pecos.slr.ast.nodes import (
     MeasureOp,
     ParallelBlock,
     PrepareOp,
-    Program,
     RepeatStmt,
-    Statement,
     WhileStmt,
 )
+
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import (
+        Program,
+        Statement,
+    )
 
 # T gates (expensive in fault-tolerant QEC)
 T_GATES = frozenset({GateKind.T, GateKind.Tdg})
@@ -146,13 +151,17 @@ class TCountAnalyzer:
             # Record location if available
             if node.location:
                 self.t_gate_locations.append(
-                    (node.gate.name, node.location.line, node.location.column)
+                    (node.gate.name, node.location.line, node.location.column),
                 )
 
             # Update T-depth: T-depth increases on the path through this qubit
             for target in node.targets:
                 current_depth = self._get_qubit_t_depth(target.allocator, target.index)
-                self._set_qubit_t_depth(target.allocator, target.index, current_depth + 1)
+                self._set_qubit_t_depth(
+                    target.allocator,
+                    target.index,
+                    current_depth + 1,
+                )
 
     def _analyze_if(self, node: IfStmt) -> None:
         """Analyze an if statement.

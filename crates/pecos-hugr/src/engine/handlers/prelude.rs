@@ -23,8 +23,8 @@
 use log::debug;
 use tket::hugr::{Hugr, HugrView, Node};
 
-use crate::engine::types::ClassicalValue;
 use crate::engine::HugrEngine;
+use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle prelude extension operations.
@@ -77,11 +77,52 @@ impl HugrEngine {
                 true
             }
 
-            "MakeTuple" | "UnpackTuple" => {
-                // These are handled by the classical ops handler
-                // But if we get here, just propagate
-                debug!("prelude::{op_name} at {node:?} - propagating");
-                self.propagate_all_inputs(hugr, node);
+            "MakeTuple" => {
+                // MakeTuple: N inputs -> 1 output (a tuple/sum containing all inputs)
+                // Collect all input values into a tuple
+                use tket::hugr::ops::OpTrait;
+                let op = hugr.get_optype(node);
+                let num_inputs = op.dataflow_signature().map_or(0, |sig| sig.input_count());
+
+                let mut elements = Vec::with_capacity(num_inputs);
+                for port in 0..num_inputs {
+                    if let Some(value) = self.get_input_value(hugr, node, port) {
+                        elements.push(value);
+                    } else {
+                        // Missing input - use a default
+                        elements.push(ClassicalValue::Int(0));
+                    }
+                }
+
+                debug!(
+                    "MakeTuple at {node:?}: created tuple with {} elements",
+                    elements.len()
+                );
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Tuple(elements));
+                true
+            }
+            "UnpackTuple" => {
+                // UnpackTuple: 1 input (a tuple) -> N outputs (the elements)
+                use tket::hugr::ops::OpTrait;
+                let op = hugr.get_optype(node);
+                let num_outputs = op.dataflow_signature().map_or(0, |sig| sig.output_count());
+
+                if let Some(ClassicalValue::Tuple(elements)) = self.get_input_value(hugr, node, 0) {
+                    for (port, value) in elements.into_iter().enumerate() {
+                        if port < num_outputs {
+                            self.wire_state.classical_values.insert((node, port), value);
+                        }
+                    }
+                    debug!(
+                        "UnpackTuple at {node:?}: unpacked to {num_outputs} outputs"
+                    );
+                } else {
+                    // Input not a tuple or not available - try pass-through as fallback
+                    debug!("UnpackTuple at {node:?}: input not a tuple, attempting pass-through");
+                    self.propagate_all_inputs(hugr, node);
+                }
                 true
             }
 

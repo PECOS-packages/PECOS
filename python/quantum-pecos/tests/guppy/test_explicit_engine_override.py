@@ -15,11 +15,12 @@ def _verify_bell_correlation(results: dict, label: str) -> None:
     elif "q0" in results:
         m0_key, m1_key = "q0", "q1"
     else:
-        raise AssertionError(f"{label}: Expected measurement_0 or q0 in {list(results.keys())}")
+        msg = f"{label}: Expected measurement_0 or q0 in {list(results.keys())}"
+        raise AssertionError(
+            msg,
+        )
 
-    assert (
-        m1_key in results
-    ), f"{label}: {m1_key} not found in {list(results.keys())}"
+    assert m1_key in results, f"{label}: {m1_key} not found in {list(results.keys())}"
 
     m0_list = results[m0_key]
     m1_list = results[m1_key]
@@ -192,7 +193,8 @@ def test_engine_override_with_noise() -> None:
     elif "q0" in results:
         m_key = "q0"
     else:
-        raise AssertionError(f"Expected measurement_0 or q0 in {list(results.keys())}")
+        msg = f"Expected measurement_0 or q0 in {list(results.keys())}"
+        raise AssertionError(msg)
     values = results[m_key]
     # Values are integers (0 or 1), not strings
     zeros = sum(1 for v in values if v == 0)

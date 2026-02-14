@@ -23,7 +23,6 @@ These tests verify that the various AST modules work correctly together:
 import math
 
 import pytest
-
 from pecos.slr import CReg, If, Main, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.codegen import (
@@ -49,7 +48,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestFullPipeline:
     """Test full pipeline: SLR -> AST -> validate -> analyze -> codegen."""
 
-    def test_simple_circuit_pipeline(self):
+    def test_simple_circuit_pipeline(self) -> None:
         """Simple circuit through full pipeline."""
         # 1. Create SLR program
         prog = Main(
@@ -73,7 +72,7 @@ class TestFullPipeline:
         assert result.t_count is not None
         assert result.t_count.t_count == 0  # No T gates
 
-    def test_ghz_state_pipeline(self):
+    def test_ghz_state_pipeline(self) -> None:
         """GHZ state preparation through pipeline."""
         prog = Main(
             q := QReg("q", 4),
@@ -92,7 +91,7 @@ class TestFullPipeline:
         assert result.connectivity.is_linear  # GHZ has linear connectivity
         assert len(result.connectivity.edges) == 3
 
-    def test_t_gate_circuit_pipeline(self):
+    def test_t_gate_circuit_pipeline(self) -> None:
         """Circuit with T gates through pipeline."""
         prog = Program(
             name="t_circuit",
@@ -101,7 +100,13 @@ class TestFullPipeline:
                 GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),
                 GateOp(gate=GateKind.T, targets=(SlotRef(allocator="q", index=0),)),
                 GateOp(gate=GateKind.T, targets=(SlotRef(allocator="q", index=1),)),
-                GateOp(gate=GateKind.CX, targets=(SlotRef(allocator="q", index=0), SlotRef(allocator="q", index=1))),
+                GateOp(
+                    gate=GateKind.CX,
+                    targets=(
+                        SlotRef(allocator="q", index=0),
+                        SlotRef(allocator="q", index=1),
+                    ),
+                ),
             ),
         )
 
@@ -114,7 +119,7 @@ class TestFullPipeline:
 class TestSerializationRoundTrip:
     """Test serialization round-trips preserve equality."""
 
-    def test_basic_roundtrip(self):
+    def test_basic_roundtrip(self) -> None:
         """Basic serialization round-trip."""
         prog = Main(
             q := QReg("q", 2),
@@ -131,7 +136,7 @@ class TestSerializationRoundTrip:
         # Verify equality
         assert ast_equal(ast, restored, ignore_name=True)
 
-    def test_complex_circuit_roundtrip(self):
+    def test_complex_circuit_roundtrip(self) -> None:
         """Complex circuit with control flow round-trips."""
         prog = Main(
             q := QReg("q", 2),
@@ -151,7 +156,7 @@ class TestSerializationRoundTrip:
 
         assert ast_equal(ast, restored, ignore_name=True)
 
-    def test_rotation_gates_roundtrip(self):
+    def test_rotation_gates_roundtrip(self) -> None:
         """Rotation gates with float params round-trip."""
         prog = Main(
             q := QReg("q", 1),
@@ -167,15 +172,19 @@ class TestSerializationRoundTrip:
         assert ast_equal(ast, restored, ignore_name=True)
 
         # Verify float values preserved
-        original_rz = [s for s in ast.body if isinstance(s, GateOp) and s.gate == GateKind.RZ][0]
-        restored_rz = [s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ][0]
+        original_rz = next(
+            s for s in ast.body if isinstance(s, GateOp) and s.gate == GateKind.RZ
+        )
+        restored_rz = next(
+            s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ
+        )
         assert original_rz.params[0].value == restored_rz.params[0].value
 
 
 class TestValidationCodegen:
     """Test validation before code generation."""
 
-    def test_valid_program_generates_code(self):
+    def test_valid_program_generates_code(self) -> None:
         """Valid program generates code successfully."""
         prog = Main(
             q := QReg("q", 2),
@@ -190,7 +199,7 @@ class TestValidationCodegen:
         assert result.code is not None
         assert len(result.code) > 0
 
-    def test_invalid_program_reports_errors(self):
+    def test_invalid_program_reports_errors(self) -> None:
         """Invalid program reports validation errors but still generates code."""
         # Create program with out-of-bounds access
         prog = Program(
@@ -213,7 +222,7 @@ class TestValidationCodegen:
         # But code should still be generated
         assert result.code is not None
 
-    def test_all_targets_work(self):
+    def test_all_targets_work(self) -> None:
         """All code generation targets work with validation."""
         prog = Main(
             q := QReg("q", 2),
@@ -233,7 +242,7 @@ class TestValidationCodegen:
 class TestAnalysisIntegration:
     """Test analysis passes work together."""
 
-    def test_multiple_analysis_passes(self):
+    def test_multiple_analysis_passes(self) -> None:
         """Multiple analysis passes return consistent results."""
         prog = Main(
             q := QReg("q", 3),
@@ -257,7 +266,7 @@ class TestAnalysisIntegration:
         assert result.resources.qubit_count == 3
         assert result.connectivity.max_degree == 2  # Middle qubit
 
-    def test_fine_grained_options(self):
+    def test_fine_grained_options(self) -> None:
         """Fine-grained options control which analyses run."""
         prog = Main(
             q := QReg("q", 2),
@@ -276,7 +285,7 @@ class TestAnalysisIntegration:
         assert result.resources is None  # Not requested
         assert result.depth is None  # Not requested
 
-    def test_no_validation_option(self):
+    def test_no_validation_option(self) -> None:
         """Can skip validation with options."""
         prog = Main(q := QReg("q", 1), qb.H(q[0]))
 
@@ -292,7 +301,7 @@ class TestAnalysisIntegration:
 class TestPrettyPrintIntegration:
     """Test pretty-print integration."""
 
-    def test_pretty_print_readable(self):
+    def test_pretty_print_readable(self) -> None:
         """Pretty-printed output is readable."""
         prog = Main(
             q := QReg("q", 2),
@@ -309,7 +318,7 @@ class TestPrettyPrintIntegration:
         assert "qb.H" in output
         assert "qb.CX" in output
 
-    def test_pretty_print_with_control_flow(self):
+    def test_pretty_print_with_control_flow(self) -> None:
         """Pretty-print handles control flow."""
         prog = Main(
             q := QReg("q", 1),
@@ -329,7 +338,7 @@ class TestPrettyPrintIntegration:
 class TestCodegenResult:
     """Test CodegenResult class."""
 
-    def test_result_string_representation(self):
+    def test_result_string_representation(self) -> None:
         """CodegenResult has useful string representation."""
         prog = Main(
             q := QReg("q", 2),
@@ -346,7 +355,7 @@ class TestCodegenResult:
         assert "valid" in result_str.lower()
         assert "gates" in result_str.lower()
 
-    def test_result_bool_valid(self):
+    def test_result_bool_valid(self) -> None:
         """CodegenResult.valid property works."""
         prog = Main(q := QReg("q", 1), qb.H(q[0]))
         ast = slr_to_ast(prog)
@@ -355,7 +364,7 @@ class TestCodegenResult:
 
         assert result.valid is True
 
-    def test_generate_simple(self):
+    def test_generate_simple(self) -> None:
         """Simple generate function works."""
         prog = Main(q := QReg("q", 1), qb.H(q[0]))
         ast = slr_to_ast(prog)
@@ -365,7 +374,7 @@ class TestCodegenResult:
         assert isinstance(code, str)
         assert "OPENQASM" in code
 
-    def test_generate_unknown_target_raises(self):
+    def test_generate_unknown_target_raises(self) -> None:
         """Unknown target raises ValueError."""
         prog = Main(q := QReg("q", 1), qb.H(q[0]))
         ast = slr_to_ast(prog)
@@ -377,7 +386,7 @@ class TestCodegenResult:
 class TestRealWorldPatterns:
     """Test real-world quantum patterns."""
 
-    def test_bell_measurement_pattern(self):
+    def test_bell_measurement_pattern(self) -> None:
         """Bell state preparation pattern."""
         prog = Main(
             q := QReg("q", 2),
@@ -391,7 +400,7 @@ class TestRealWorldPatterns:
         assert result.valid
         assert result.connectivity.is_linear
 
-    def test_ghz_pattern(self):
+    def test_ghz_pattern(self) -> None:
         """GHZ state preparation pattern."""
         prog = Main(
             q := QReg("q", 4),
@@ -408,7 +417,7 @@ class TestRealWorldPatterns:
         assert len(result.connectivity.edges) == 3
         assert result.connectivity.is_linear
 
-    def test_parallel_operations_pattern(self):
+    def test_parallel_operations_pattern(self) -> None:
         """Parallel single-qubit operations pattern."""
         prog = Main(
             q := QReg("q", 4),
@@ -426,7 +435,7 @@ class TestRealWorldPatterns:
         # 4 H gates can run in parallel
         assert result.parallelism.max_parallel_gates >= 4
 
-    def test_repeated_syndrome_pattern(self):
+    def test_repeated_syndrome_pattern(self) -> None:
         """Repeated syndrome measurement pattern."""
         prog = Main(
             q := QReg("q", 2),

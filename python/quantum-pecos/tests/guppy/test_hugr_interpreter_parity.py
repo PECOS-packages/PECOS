@@ -25,19 +25,26 @@ KNOWN LIMITATIONS:
      event hooks or result handling to extract measurements.
 """
 
+import contextlib
+
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import result
-from guppylang.std.quantum import ch, cx, h, measure, qubit, x, y, z, discard
+from guppylang.std.quantum import ch, cx, discard, h, measure, qubit, x, y, z
 from pecos import Guppy, sim
 from pecos.compilation_pipeline import compile_guppy_to_hugr
 from pecos_rslib import Qis, compile_hugr_to_qis, state_vector
 from selene_sim import build
-from selene_sim.backends import Quest, SimpleRuntime
 from selene_sim.backends import IdealErrorModel as IdealNoiseModel
+from selene_sim.backends import Quest, SimpleRuntime
 
 
-def run_with_selene_reference(guppy_func, num_qubits: int, shots: int = 100, seed: int = 42):
+def run_with_selene_reference(
+    guppy_func,
+    num_qubits: int,
+    shots: int = 100,
+    seed: int = 42,
+):
     """Run a Guppy function using the true Selene reference implementation.
 
     This uses selene-sim directly to build and run the program, which is
@@ -63,10 +70,8 @@ def run_with_selene_reference(guppy_func, num_qubits: int, shots: int = 100, see
         results.append(shot_data)
 
     # Clean up the instance files
-    try:
+    with contextlib.suppress(Exception):
         instance.delete_files()
-    except Exception:
-        pass
 
     return {"shots": results}
 
@@ -98,7 +103,11 @@ def run_with_selene_llvm(guppy_func, num_qubits: int, shots: int = 100, seed: in
     qis_string = compile_hugr_to_qis(hugr_bytes, None)
     qis_program = Qis.from_string(qis_string)
     results = (
-        sim(qis_program).qubits(num_qubits).quantum(state_vector()).seed(seed).run(shots)
+        sim(qis_program)
+        .qubits(num_qubits)
+        .quantum(state_vector())
+        .seed(seed)
+        .run(shots)
     )
     return results.to_dict()
 
@@ -119,7 +128,7 @@ def extract_measurements(results: dict) -> list:
         return results["measurements"]
 
     # Format 2: Selene/LLVM format with measurement_N keys
-    measurement_keys = sorted([k for k in results.keys() if k.startswith("measurement_")])
+    measurement_keys = sorted([k for k in results if k.startswith("measurement_")])
     if measurement_keys:
         # Transpose from columnar to row format
         num_shots = len(results[measurement_keys[0]])
@@ -130,11 +139,17 @@ def extract_measurements(results: dict) -> list:
 
     # Format 3: result() format with m0, m1, etc. or other named keys
     # Find all keys that look like measurement results (exclude metadata)
-    result_keys = sorted([k for k in results.keys() if k.startswith("m") and k not in ("measurements",)])
+    result_keys = sorted(
+        [k for k in results if k.startswith("m") and k not in ("measurements",)],
+    )
     if result_keys:
         # Transpose from columnar to row format
         first_key = result_keys[0]
-        if first_key in results and isinstance(results[first_key], list) and len(results[first_key]) > 0:
+        if (
+            first_key in results
+            and isinstance(results[first_key], list)
+            and len(results[first_key]) > 0
+        ):
             num_shots = len(results[first_key])
             return [
                 [int(results[key][shot_idx]) for key in result_keys]
@@ -143,7 +158,7 @@ def extract_measurements(results: dict) -> list:
 
     # Fallback: single measurement register
     for key in sorted(results.keys()):
-        if key.startswith("q") or key.startswith("measurement"):
+        if key.startswith(("q", "measurement")):
             values = results[key]
             # Wrap single values in lists if needed
             if values and not isinstance(values[0], list):
@@ -208,8 +223,12 @@ class TestSimpleCircuitParity:
         selene_ones = count_ones(extract_measurements(selene_results))
 
         # Allow for statistical variation (expect ~500 ones out of 1000)
-        assert 400 < direct_ones < 600, f"Direct path: unexpected distribution {direct_ones}/1000"
-        assert 400 < selene_ones < 600, f"Selene path: unexpected distribution {selene_ones}/1000"
+        assert (
+            400 < direct_ones < 600
+        ), f"Direct path: unexpected distribution {direct_ones}/1000"
+        assert (
+            400 < selene_ones < 600
+        ), f"Selene path: unexpected distribution {selene_ones}/1000"
 
     def test_deterministic_zero_state(self) -> None:
         """Test that measuring |0> gives consistent results on both paths."""
@@ -226,8 +245,12 @@ class TestSimpleCircuitParity:
         direct_ones = count_ones(extract_measurements(direct_results))
         selene_ones = count_ones(extract_measurements(selene_results))
 
-        assert direct_ones == 0, f"Direct path: expected all zeros, got {direct_ones}/100 ones"
-        assert selene_ones == 0, f"Selene path: expected all zeros, got {selene_ones}/100 ones"
+        assert (
+            direct_ones == 0
+        ), f"Direct path: expected all zeros, got {direct_ones}/100 ones"
+        assert (
+            selene_ones == 0
+        ), f"Selene path: expected all zeros, got {selene_ones}/100 ones"
 
     def test_deterministic_one_state(self) -> None:
         """Test that measuring |1> gives consistent results on both paths."""
@@ -245,8 +268,12 @@ class TestSimpleCircuitParity:
         direct_ones = count_ones(extract_measurements(direct_results))
         selene_ones = count_ones(extract_measurements(selene_results))
 
-        assert direct_ones == 100, f"Direct path: expected all ones, got {direct_ones}/100"
-        assert selene_ones == 100, f"Selene path: expected all ones, got {selene_ones}/100"
+        assert (
+            direct_ones == 100
+        ), f"Direct path: expected all ones, got {direct_ones}/100"
+        assert (
+            selene_ones == 100
+        ), f"Selene path: expected all ones, got {selene_ones}/100"
 
     def test_bell_state_correlation(self) -> None:
         """Test Bell state produces correlated measurements on both paths."""
@@ -268,12 +295,16 @@ class TestSimpleCircuitParity:
         selene_meas = extract_measurements(selene_results)
 
         if direct_meas:
-            direct_mismatches = sum(1 for m in direct_meas if len(m) >= 2 and m[0] != m[1])
-            assert direct_mismatches == 0, f"Direct path: Bell state correlation broken"
+            direct_mismatches = sum(
+                1 for m in direct_meas if len(m) >= 2 and m[0] != m[1]
+            )
+            assert direct_mismatches == 0, "Direct path: Bell state correlation broken"
 
         if selene_meas:
-            selene_mismatches = sum(1 for m in selene_meas if len(m) >= 2 and m[0] != m[1])
-            assert selene_mismatches == 0, f"Selene path: Bell state correlation broken"
+            selene_mismatches = sum(
+                1 for m in selene_meas if len(m) >= 2 and m[0] != m[1]
+            )
+            assert selene_mismatches == 0, "Selene path: Bell state correlation broken"
 
 
 class TestConditionalCircuitParity:
@@ -292,8 +323,16 @@ class TestConditionalCircuitParity:
             result("m0", r1)
             result("m1", measure(q2))  # Should be False
 
-        direct_results = run_with_direct_hugr(conditional_x_zero, num_qubits=2, shots=100)
-        selene_results = run_with_selene_llvm(conditional_x_zero, num_qubits=2, shots=100)
+        direct_results = run_with_direct_hugr(
+            conditional_x_zero,
+            num_qubits=2,
+            shots=100,
+        )
+        selene_results = run_with_selene_llvm(
+            conditional_x_zero,
+            num_qubits=2,
+            shots=100,
+        )
 
         # Check that all measurements (both q1 and q2) are 0
         # Direct path: q1=0 (no gate), q2=0 (conditional X not triggered) = 2 zeros per shot
@@ -319,8 +358,16 @@ class TestConditionalCircuitParity:
             result("m0", r1)
             result("m1", measure(q2))  # Should be True
 
-        direct_results = run_with_direct_hugr(conditional_x_one, num_qubits=2, shots=100)
-        selene_results = run_with_selene_llvm(conditional_x_one, num_qubits=2, shots=100)
+        direct_results = run_with_direct_hugr(
+            conditional_x_one,
+            num_qubits=2,
+            shots=100,
+        )
+        selene_results = run_with_selene_llvm(
+            conditional_x_one,
+            num_qubits=2,
+            shots=100,
+        )
 
         # Check that all measurements (both q1 and q2) are 1
         # Direct path: q1=1 (from X), q2=1 (from conditional X) = 2 ones per shot
@@ -366,7 +413,9 @@ class TestLoopCircuits:
 
         # All final results should be True (that's what breaks the loop)
         ones = count_ones(extract_measurements(results))
-        assert ones == 100, f"repeat_until_one should always return True, got {ones}/100"
+        assert (
+            ones == 100
+        ), f"repeat_until_one should always return True, got {ones}/100"
 
     def test_repeat_until_one_selene(self) -> None:
         """Test repeat-until-one pattern using Selene/LLVM path.
@@ -387,7 +436,9 @@ class TestLoopCircuits:
         results = run_with_selene_llvm(repeat_until_one, num_qubits=20, shots=100)
         # All final results should be True (that's what breaks the loop)
         ones = count_ones(extract_measurements(results))
-        assert ones == 100, f"repeat_until_one should always return True, got {ones}/100"
+        assert (
+            ones == 100
+        ), f"repeat_until_one should always return True, got {ones}/100"
 
     def test_bounded_loop_direct_hugr(self) -> None:
         """Test a bounded loop using direct HUGR interpreter."""
@@ -472,9 +523,15 @@ class TestControlledGatesParity:
         selene_meas = extract_measurements(selene_results)
 
         for shot in direct_meas:
-            assert shot == [0, 0], f"Direct path: CH control=0 should give [0, 0], got {shot}"
+            assert shot == [
+                0,
+                0,
+            ], f"Direct path: CH control=0 should give [0, 0], got {shot}"
         for shot in selene_meas:
-            assert shot == [0, 0], f"Selene path: CH control=0 should give [0, 0], got {shot}"
+            assert shot == [
+                0,
+                0,
+            ], f"Selene path: CH control=0 should give [0, 0], got {shot}"
 
     def test_ch_control_one(self) -> None:
         """Test CH gate with control=1 (should apply H to target)."""
@@ -504,8 +561,12 @@ class TestControlledGatesParity:
         direct_target_ones = sum(1 for shot in direct_meas if shot[1] == 1)
         selene_target_ones = sum(1 for shot in selene_meas if shot[1] == 1)
 
-        assert 400 < direct_target_ones < 600, f"Direct path: CH control=1 target should be ~50%, got {direct_target_ones}/1000"
-        assert 400 < selene_target_ones < 600, f"Selene path: CH control=1 target should be ~50%, got {selene_target_ones}/1000"
+        assert (
+            400 < direct_target_ones < 600
+        ), f"Direct path: CH control=1 target should be ~50%, got {direct_target_ones}/1000"
+        assert (
+            400 < selene_target_ones < 600
+        ), f"Selene path: CH control=1 target should be ~50%, got {selene_target_ones}/1000"
 
 
 class TestQubitReuseParity:
@@ -527,15 +588,27 @@ class TestQubitReuseParity:
             x(q2)  # X on |0> should give |1>
             result("m0", measure(q2))  # Should always be 1
 
-        direct_results = run_with_direct_hugr(discard_and_reuse, num_qubits=2, shots=100)
-        selene_results = run_with_selene_llvm(discard_and_reuse, num_qubits=2, shots=100)
+        direct_results = run_with_direct_hugr(
+            discard_and_reuse,
+            num_qubits=2,
+            shots=100,
+        )
+        selene_results = run_with_selene_llvm(
+            discard_and_reuse,
+            num_qubits=2,
+            shots=100,
+        )
 
         direct_ones = count_ones(extract_measurements(direct_results))
         selene_ones = count_ones(extract_measurements(selene_results))
 
         # New qubit should be |0>, so X gives |1>
-        assert direct_ones == 100, f"Direct path: reused qubit should be reset, got {direct_ones}/100 ones"
-        assert selene_ones == 100, f"Selene path: reused qubit should be reset, got {selene_ones}/100 ones"
+        assert (
+            direct_ones == 100
+        ), f"Direct path: reused qubit should be reset, got {direct_ones}/100 ones"
+        assert (
+            selene_ones == 100
+        ), f"Selene path: reused qubit should be reset, got {selene_ones}/100 ones"
 
     def test_measure_and_reuse(self) -> None:
         """Test that a qubit reused after MeasureFree is in |0> state."""
@@ -552,8 +625,16 @@ class TestQubitReuseParity:
             result("m0", r1)
             result("m1", r2)
 
-        direct_results = run_with_direct_hugr(measure_and_reuse, num_qubits=2, shots=100)
-        selene_results = run_with_selene_llvm(measure_and_reuse, num_qubits=2, shots=100)
+        direct_results = run_with_direct_hugr(
+            measure_and_reuse,
+            num_qubits=2,
+            shots=100,
+        )
+        selene_results = run_with_selene_llvm(
+            measure_and_reuse,
+            num_qubits=2,
+            shots=100,
+        )
 
         # Check measurements are [1, 0] for each shot
         direct_meas = extract_measurements(direct_results)
@@ -592,12 +673,20 @@ class TestSequentialMeasurementsParity:
 
         # Should get [1, 0] for each shot
         direct_meas = extract_measurements(direct_results)
-        assert len(direct_meas) == 100, f"Direct path: expected 100 shots, got {len(direct_meas)}"
-        assert len(direct_meas[0]) == 2, f"Direct path: expected 2 measurements per shot, got {len(direct_meas[0])}"
+        assert (
+            len(direct_meas) == 100
+        ), f"Direct path: expected 100 shots, got {len(direct_meas)}"
+        assert (
+            len(direct_meas[0]) == 2
+        ), f"Direct path: expected 2 measurements per shot, got {len(direct_meas[0])}"
 
         selene_meas = extract_measurements(selene_results)
-        assert len(selene_meas) == 100, f"Selene path: expected 100 shots, got {len(selene_meas)}"
-        assert len(selene_meas[0]) == 2, f"Selene path: expected 2 measurements per shot, got {len(selene_meas[0])}"
+        assert (
+            len(selene_meas) == 100
+        ), f"Selene path: expected 100 shots, got {len(selene_meas)}"
+        assert (
+            len(selene_meas[0]) == 2
+        ), f"Selene path: expected 2 measurements per shot, got {len(selene_meas[0])}"
 
         for shot in direct_meas:
             assert shot == [1, 0], f"Direct path: expected [1, 0], got {shot}"
@@ -639,8 +728,12 @@ class TestSequentialMeasurementsParity:
         direct_meas = extract_measurements(direct_results)
         selene_meas = extract_measurements(selene_results)
 
-        assert len(direct_meas[0]) == 4, f"Direct path: expected 4 measurements per shot, got {len(direct_meas[0])}"
-        assert len(selene_meas[0]) == 4, f"Selene path: expected 4 measurements per shot, got {len(selene_meas[0])}"
+        assert (
+            len(direct_meas[0]) == 4
+        ), f"Direct path: expected 4 measurements per shot, got {len(direct_meas[0])}"
+        assert (
+            len(selene_meas[0]) == 4
+        ), f"Selene path: expected 4 measurements per shot, got {len(selene_meas[0])}"
 
         # Check deterministic results (indices 1, 2, 3 should be 1, 0, 1)
         for shot in direct_meas:
@@ -675,12 +768,18 @@ class TestSeleneReferenceValidation:
             result("m", measure(q))
 
         # Run on true Selene reference
-        reference_results = run_with_selene_reference(hadamard_test, num_qubits=1, shots=1000)
+        reference_results = run_with_selene_reference(
+            hadamard_test,
+            num_qubits=1,
+            shots=1000,
+        )
         reference_meas = extract_selene_measurements(reference_results)
         reference_ones = count_ones(reference_meas)
 
         # Verify reference produces expected distribution (~50%)
-        assert 400 < reference_ones < 600, f"Selene reference: unexpected {reference_ones}/1000"
+        assert (
+            400 < reference_ones < 600
+        ), f"Selene reference: unexpected {reference_ones}/1000"
 
     def test_deterministic_x_gate_against_reference(self) -> None:
         """Test X gate produces deterministic |1> per Selene reference."""
@@ -692,12 +791,18 @@ class TestSeleneReferenceValidation:
             result("m", measure(q))
 
         # Run on true Selene reference
-        reference_results = run_with_selene_reference(x_gate_test, num_qubits=1, shots=100)
+        reference_results = run_with_selene_reference(
+            x_gate_test,
+            num_qubits=1,
+            shots=100,
+        )
         reference_meas = extract_selene_measurements(reference_results)
         reference_ones = count_ones(reference_meas)
 
         # Should be all ones
-        assert reference_ones == 100, f"Selene reference: X gate should give all ones, got {reference_ones}/100"
+        assert (
+            reference_ones == 100
+        ), f"Selene reference: X gate should give all ones, got {reference_ones}/100"
 
     def test_bell_state_against_reference(self) -> None:
         """Test Bell state produces correlated measurements per Selene reference."""
@@ -712,7 +817,11 @@ class TestSeleneReferenceValidation:
             result("m1", measure(q1))
 
         # Run on true Selene reference
-        reference_results = run_with_selene_reference(bell_test, num_qubits=2, shots=100)
+        reference_results = run_with_selene_reference(
+            bell_test,
+            num_qubits=2,
+            shots=100,
+        )
         reference_meas = extract_selene_measurements(reference_results)
 
         # Bell state should have correlated measurements (both 0 or both 1)
@@ -734,13 +843,17 @@ class TestSeleneReferenceValidation:
 
         # Run on true Selene reference - it should handle loops correctly
         reference_results = run_with_selene_reference(
-            repeat_until_one, num_qubits=20, shots=100
+            repeat_until_one,
+            num_qubits=20,
+            shots=100,
         )
         reference_meas = extract_selene_measurements(reference_results)
         reference_ones = count_ones(reference_meas)
 
         # Should always be True (that's what breaks the loop)
-        assert reference_ones == 100, f"Selene reference: expected all ones, got {reference_ones}/100"
+        assert (
+            reference_ones == 100
+        ), f"Selene reference: expected all ones, got {reference_ones}/100"
 
 
 if __name__ == "__main__":

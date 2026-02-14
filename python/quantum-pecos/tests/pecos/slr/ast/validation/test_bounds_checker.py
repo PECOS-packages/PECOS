@@ -15,13 +15,13 @@ from pecos.slr import CReg, If, Main, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    BitRef,
     GateKind,
     GateOp,
     MeasureOp,
     Program,
     RegisterDecl,
     SlotRef,
-    BitRef,
 )
 from pecos.slr.ast.validation import BoundsChecker, check_bounds
 from pecos.slr.qeclib import qubit as qb
@@ -30,7 +30,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestBoundsCheckerValid:
     """Tests for valid bounds."""
 
-    def test_valid_qubit_indices(self):
+    def test_valid_qubit_indices(self) -> None:
         """Valid qubit indices pass."""
         prog = Main(
             q := QReg("q", 3),
@@ -45,7 +45,7 @@ class TestBoundsCheckerValid:
         assert result.valid is True
         assert len(result.errors) == 0
 
-    def test_valid_two_qubit_gates(self):
+    def test_valid_two_qubit_gates(self) -> None:
         """Valid two-qubit gate indices."""
         prog = Main(
             q := QReg("q", 2),
@@ -61,7 +61,7 @@ class TestBoundsCheckerValid:
 class TestBoundsCheckerQubitErrors:
     """Tests for qubit bound errors."""
 
-    def test_qubit_index_out_of_bounds(self):
+    def test_qubit_index_out_of_bounds(self) -> None:
         """Qubit index exceeds capacity."""
         # Create AST directly with out-of-bounds index
         prog = Program(
@@ -82,7 +82,7 @@ class TestBoundsCheckerQubitErrors:
         assert "out of bounds" in result.errors[0].message
         assert result.errors[0].code == "E103"
 
-    def test_negative_qubit_index(self):
+    def test_negative_qubit_index(self) -> None:
         """Negative qubit index."""
         prog = Program(
             name="test",
@@ -101,7 +101,7 @@ class TestBoundsCheckerQubitErrors:
         assert "Negative" in result.errors[0].message
         assert result.errors[0].code == "E102"
 
-    def test_unknown_allocator(self):
+    def test_unknown_allocator(self) -> None:
         """Reference to unknown allocator."""
         prog = Program(
             name="test",
@@ -124,7 +124,7 @@ class TestBoundsCheckerQubitErrors:
 class TestBoundsCheckerBitErrors:
     """Tests for classical bit bound errors."""
 
-    def test_bit_index_out_of_bounds(self):
+    def test_bit_index_out_of_bounds(self) -> None:
         """Classical bit index exceeds register size."""
         prog = Program(
             name="test",
@@ -144,7 +144,7 @@ class TestBoundsCheckerBitErrors:
         assert "out of bounds" in result.errors[0].message
         assert result.errors[0].code == "E106"
 
-    def test_unknown_register(self):
+    def test_unknown_register(self) -> None:
         """Reference to unknown register."""
         prog = Program(
             name="test",
@@ -167,7 +167,7 @@ class TestBoundsCheckerBitErrors:
 class TestBoundsCheckerControlFlow:
     """Bounds checking in control flow."""
 
-    def test_bounds_inside_if(self):
+    def test_bounds_inside_if(self) -> None:
         """Bounds checked inside if statements."""
         prog = Main(
             q := QReg("q", 2),
@@ -183,7 +183,7 @@ class TestBoundsCheckerControlFlow:
 
         assert result.valid is True
 
-    def test_bounds_inside_repeat(self):
+    def test_bounds_inside_repeat(self) -> None:
         """Bounds checked inside repeat loops."""
         prog = Main(
             q := QReg("q", 2),
@@ -201,24 +201,20 @@ class TestBoundsCheckerControlFlow:
 class TestBoundsCheckerClass:
     """Tests for BoundsChecker class."""
 
-    def test_checker_reuse(self):
+    def test_checker_reuse(self) -> None:
         """Checker can be reused."""
         checker = BoundsChecker()
 
         prog1 = Program(
             name="test1",
             allocator=AllocatorDecl(name="q", capacity=2),
-            body=(
-                GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),
-            ),
+            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
         )
 
         prog2 = Program(
             name="test2",
             allocator=AllocatorDecl(name="q", capacity=1),
-            body=(
-                GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=5),)),
-            ),
+            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=5),)),),
         )
 
         result1 = checker.validate(prog1)
@@ -227,7 +223,7 @@ class TestBoundsCheckerClass:
         assert result1.valid is True
         assert result2.valid is False
 
-    def test_passes_applied(self):
+    def test_passes_applied(self) -> None:
         """Pass name is tracked."""
         prog = Main(q := QReg("q", 1), qb.H(q[0]))
         ast = slr_to_ast(prog)

@@ -72,8 +72,12 @@ class GuppyPipelineTest:
                     if raw_measurements and isinstance(raw_measurements[0], list):
                         # Check if function returns single bool or tuple
                         import inspect
+
                         actual_func = func
-                        if hasattr(func, "wrapped") and hasattr(func.wrapped, "python_func"):
+                        if hasattr(func, "wrapped") and hasattr(
+                            func.wrapped,
+                            "python_func",
+                        ):
                             actual_func = func.wrapped.python_func
                         try:
                             sig = inspect.signature(actual_func)

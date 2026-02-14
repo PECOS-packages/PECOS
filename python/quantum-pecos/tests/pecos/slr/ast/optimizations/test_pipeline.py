@@ -31,7 +31,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestOptimizeLevels:
     """Tests for optimize() function with different levels."""
 
-    def test_level_0_no_optimization(self):
+    def test_level_0_no_optimization(self) -> None:
         """Level 0 performs no optimization."""
         prog = Main(
             q := QReg("q", 1),
@@ -46,7 +46,7 @@ class TestOptimizeLevels:
         assert result.gates_removed == 0
         assert result.gates_merged == 0
 
-    def test_level_1_gate_cancellation(self):
+    def test_level_1_gate_cancellation(self) -> None:
         """Level 1 performs gate cancellation."""
         prog = Main(
             q := QReg("q", 1),
@@ -60,7 +60,7 @@ class TestOptimizeLevels:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_level_1_inverse_cancellation(self):
+    def test_level_1_inverse_cancellation(self) -> None:
         """Level 1 performs inverse cancellation."""
         prog = Main(
             q := QReg("q", 1),
@@ -74,7 +74,7 @@ class TestOptimizeLevels:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_level_2_rotation_merging(self):
+    def test_level_2_rotation_merging(self) -> None:
         """Level 2 adds rotation merging."""
         prog = Main(
             q := QReg("q", 1),
@@ -88,7 +88,7 @@ class TestOptimizeLevels:
         assert len(result.program.body) == 1
         assert result.gates_merged == 1
 
-    def test_level_3_identity_removal(self):
+    def test_level_3_identity_removal(self) -> None:
         """Level 3 adds identity removal."""
         prog = Main(
             q := QReg("q", 1),
@@ -105,12 +105,12 @@ class TestOptimizeLevels:
 class TestOptimizationPipeline:
     """Tests for OptimizationPipeline class."""
 
-    def test_custom_pipeline(self):
+    def test_custom_pipeline(self) -> None:
         """Custom pipeline with specific passes."""
         pipeline = OptimizationPipeline(
             [
                 GateCancellationPass(),
-            ]
+            ],
         )
 
         prog = Main(
@@ -125,14 +125,14 @@ class TestOptimizationPipeline:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_pipeline_fixed_point(self):
+    def test_pipeline_fixed_point(self) -> None:
         """Pipeline iterates to fixed point."""
         # RZ(0.5) + RZ(-0.5) -> RZ(0) -> removed
         pipeline = OptimizationPipeline(
             [
                 RotationMergingPass(),
                 IdentityRemovalPass(),
-            ]
+            ],
         )
 
         prog = Main(
@@ -148,7 +148,7 @@ class TestOptimizationPipeline:
         assert result.gates_merged == 1
         assert result.gates_removed == 1
 
-    def test_pipeline_no_fixed_point(self):
+    def test_pipeline_no_fixed_point(self) -> None:
         """Pipeline with iterate_to_fixed_point=False runs once."""
         pipeline = OptimizationPipeline(
             [
@@ -173,7 +173,7 @@ class TestOptimizationPipeline:
         assert len(result.program.body) == 0  # Both pairs cancel in one scan
         assert result.gates_removed == 4
 
-    def test_pipeline_max_iterations(self):
+    def test_pipeline_max_iterations(self) -> None:
         """Pipeline respects max_iterations."""
         pipeline = OptimizationPipeline(
             [
@@ -199,7 +199,7 @@ class TestOptimizationPipeline:
 class TestCreateDefaultPipeline:
     """Tests for create_default_pipeline()."""
 
-    def test_default_pipeline_all_optimizations(self):
+    def test_default_pipeline_all_optimizations(self) -> None:
         """Default pipeline applies all optimizations."""
         pipeline = create_default_pipeline()
 
@@ -230,13 +230,13 @@ class TestCreateDefaultPipeline:
 class TestPipelinePassTracking:
     """Tests for pass tracking in results."""
 
-    def test_passes_applied_tracked(self):
+    def test_passes_applied_tracked(self) -> None:
         """Applied passes are tracked in result."""
         pipeline = OptimizationPipeline(
             [
                 GateCancellationPass(),
                 InverseCancellationPass(),
-            ]
+            ],
         )
 
         prog = Main(
@@ -251,7 +251,7 @@ class TestPipelinePassTracking:
         assert "gate_cancellation" in result.passes_applied
         assert "inverse_cancellation" in result.passes_applied
 
-    def test_total_optimizations(self):
+    def test_total_optimizations(self) -> None:
         """total_optimizations property works correctly."""
         prog = Main(
             q := QReg("q", 1),
@@ -272,7 +272,7 @@ class TestPipelinePassTracking:
 class TestComplexOptimization:
     """Tests for complex optimization scenarios."""
 
-    def test_bell_state_no_optimization_needed(self):
+    def test_bell_state_no_optimization_needed(self) -> None:
         """Bell state circuit has no redundant gates."""
         prog = Main(
             q := QReg("q", 2),
@@ -286,7 +286,7 @@ class TestComplexOptimization:
         assert len(result.program.body) == 2
         assert result.total_optimizations == 0
 
-    def test_redundant_syndrome_extraction(self):
+    def test_redundant_syndrome_extraction(self) -> None:
         """Redundant syndrome extraction gates can be optimized."""
         prog = Main(
             q := QReg("q", 2),
@@ -301,7 +301,7 @@ class TestComplexOptimization:
         assert len(result.program.body) == 0
         assert result.gates_removed == 2
 
-    def test_rotation_to_identity_chain(self):
+    def test_rotation_to_identity_chain(self) -> None:
         """Chain of rotations that sum to identity."""
         prog = Main(
             q := QReg("q", 1),

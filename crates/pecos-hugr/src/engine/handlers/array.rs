@@ -23,8 +23,8 @@ use log::debug;
 use tket::hugr::ops::OpTrait;
 use tket::hugr::{Hugr, HugrView, Node};
 
-use crate::engine::types::ClassicalValue;
 use crate::engine::HugrEngine;
+use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `collections.array` operations.
@@ -49,7 +49,8 @@ impl HugrEngine {
                     }
                 }
 
-                self.wire_state.classical_values
+                self.wire_state
+                    .classical_values
                     .insert((node, 0), ClassicalValue::Array(elements.clone()));
 
                 debug!("new_array: created array with {} elements", elements.len());
@@ -66,7 +67,9 @@ impl HugrEngine {
 
                 if let Some(ClassicalValue::Array(elements)) = array {
                     if let Some(element) = elements.get(index) {
-                        self.wire_state.classical_values.insert((node, 0), element.clone());
+                        self.wire_state
+                            .classical_values
+                            .insert((node, 0), element.clone());
                         debug!("array.get[{index}]: retrieved element");
                     } else {
                         debug!("array.get[{index}]: index out of bounds");
@@ -89,7 +92,8 @@ impl HugrEngine {
                     if index < elements.len() {
                         elements[index] = new_value;
                     }
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Array(elements));
                     debug!("array.set[{index}]: updated element");
                 }
@@ -102,7 +106,8 @@ impl HugrEngine {
 
                 if let Some(ClassicalValue::Array(elements)) = array {
                     let len = elements.len() as u64;
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::UInt(len));
                     debug!("array.len: {len}");
                 }
@@ -116,7 +121,8 @@ impl HugrEngine {
                 if let Some(ClassicalValue::Array(mut elements)) = array
                     && let Some(last) = elements.pop()
                 {
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Array(elements));
                     self.wire_state.classical_values.insert((node, 1), last);
                     debug!("array.pop: removed last element");
@@ -132,7 +138,8 @@ impl HugrEngine {
                 if let (Some(ClassicalValue::Array(mut elements)), Some(new_value)) = (array, value)
                 {
                     elements.push(new_value);
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Array(elements));
                     debug!("array.push: appended element");
                 }
@@ -149,7 +156,8 @@ impl HugrEngine {
 
                 if let Some(val) = value {
                     let elements = vec![val; count];
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Array(elements));
                     debug!("array.repeat: created array with {count} copies");
                 }
@@ -172,7 +180,8 @@ impl HugrEngine {
                     if i < elements.len() && j < elements.len() {
                         elements.swap(i, j);
                     }
-                    self.wire_state.classical_values
+                    self.wire_state
+                        .classical_values
                         .insert((node, 0), ClassicalValue::Array(elements));
                     debug!("array.swap[{i}, {j}]");
                 }

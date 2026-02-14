@@ -235,7 +235,9 @@ class TestSlotReferences:
 
         ast = guppy_to_ast(circuit)
 
-        cx_gates = [s for s in ast.body if isinstance(s, GateOp) and s.gate == GateKind.CX]
+        cx_gates = [
+            s for s in ast.body if isinstance(s, GateOp) and s.gate == GateKind.CX
+        ]
 
         assert len(cx_gates) == 1
         cx_gate = cx_gates[0]

@@ -132,12 +132,14 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
 
+
     @guppy
     def my_circuit() -> tuple[bool, bool]:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
         return measure(q0), measure(q1)
+
 
     # Compile and save to file
     hugr = my_circuit.compile()
@@ -158,7 +160,9 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
     from pecos_rslib import state_vector
 
     # From file
-    results = sim(Hugr.from_file("circuit.hugr")).qubits(2).quantum(state_vector()).run(1000)
+    results = (
+        sim(Hugr.from_file("circuit.hugr")).qubits(2).quantum(state_vector()).run(1000)
+    )
 
     # Or from bytes
     with open("circuit.hugr", "rb") as f:
@@ -342,11 +346,13 @@ HUGR programs work with different quantum backends:
     from pecos import sim, Guppy
     from pecos_rslib import state_vector, sparse_stabilizer
 
+
     @guppy
     def my_circuit() -> bool:
         q = qubit()
         h(q)
         return measure(q)
+
 
     # State vector - required for non-Clifford gates (T, rotations)
     results = sim(Guppy(my_circuit)).qubits(5).quantum(state_vector()).run(100)
@@ -444,12 +450,14 @@ Results from Guppy simulations work the same as QASM:
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
+
     @guppy
     def bell_state() -> tuple[bool, bool]:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
         return measure(q0), measure(q1)
+
 
     results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(1000)
 

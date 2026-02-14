@@ -21,7 +21,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestConnectivityBasic:
     """Basic connectivity tests."""
 
-    def test_no_two_qubit_gates(self):
+    def test_no_two_qubit_gates(self) -> None:
         """Circuit with no two-qubit gates."""
         prog = Main(
             q := QReg("q", 2),
@@ -36,7 +36,7 @@ class TestConnectivityBasic:
         assert result.max_degree == 0
         assert result.is_linear is True
 
-    def test_single_cx(self):
+    def test_single_cx(self) -> None:
         """Single CX gate creates one edge."""
         prog = Main(
             q := QReg("q", 2),
@@ -47,12 +47,12 @@ class TestConnectivityBasic:
         result = analyze_connectivity(ast)
 
         assert len(result.edges) == 1
-        edge = list(result.edges)[0]
-        assert (("q", 0), ("q", 1)) == edge or (("q", 1), ("q", 0)) == edge
+        edge = next(iter(result.edges))
+        assert edge == (("q", 0), ("q", 1)) or edge == (("q", 1), ("q", 0))
         assert result.max_degree == 1
         assert result.is_linear is True
 
-    def test_single_cz(self):
+    def test_single_cz(self) -> None:
         """Single CZ gate creates one edge."""
         prog = Main(
             q := QReg("q", 2),
@@ -69,7 +69,7 @@ class TestConnectivityBasic:
 class TestConnectivityLinear:
     """Linear connectivity tests."""
 
-    def test_bell_state(self):
+    def test_bell_state(self) -> None:
         """Bell state has linear connectivity."""
         prog = Main(
             q := QReg("q", 2),
@@ -83,7 +83,7 @@ class TestConnectivityLinear:
         assert len(result.edges) == 1
         assert result.is_linear is True
 
-    def test_ghz_state(self):
+    def test_ghz_state(self) -> None:
         """GHZ state has linear connectivity."""
         prog = Main(
             q := QReg("q", 3),
@@ -99,7 +99,7 @@ class TestConnectivityLinear:
         assert result.is_linear is True
         assert result.max_degree == 2
 
-    def test_linear_chain(self):
+    def test_linear_chain(self) -> None:
         """Linear chain of CX gates."""
         prog = Main(
             q := QReg("q", 4),
@@ -118,7 +118,7 @@ class TestConnectivityLinear:
 class TestConnectivityNonLinear:
     """Non-linear connectivity tests."""
 
-    def test_triangle(self):
+    def test_triangle(self) -> None:
         """Triangle connectivity is not linear."""
         prog = Main(
             q := QReg("q", 3),
@@ -133,7 +133,7 @@ class TestConnectivityNonLinear:
         assert len(result.edges) == 3
         assert result.is_linear is False  # Has cycle
 
-    def test_star_topology(self):
+    def test_star_topology(self) -> None:
         """Star topology (center connected to all others)."""
         prog = Main(
             q := QReg("q", 4),
@@ -153,7 +153,7 @@ class TestConnectivityNonLinear:
 class TestConnectivityControlFlow:
     """Connectivity with control flow."""
 
-    def test_cx_inside_if(self):
+    def test_cx_inside_if(self) -> None:
         """CX inside if statement."""
         prog = Main(
             q := QReg("q", 2),
@@ -168,7 +168,7 @@ class TestConnectivityControlFlow:
 
         assert len(result.edges) == 1
 
-    def test_cx_inside_repeat(self):
+    def test_cx_inside_repeat(self) -> None:
         """CX inside repeat loop."""
         prog = Main(
             q := QReg("q", 2),
@@ -182,14 +182,14 @@ class TestConnectivityControlFlow:
 
         assert len(result.edges) == 1
         # Connectivity analyzer only looks at unique edges, not counts
-        edge = list(result.edges)[0]
+        edge = next(iter(result.edges))
         assert result.edge_weights[edge] >= 1
 
 
 class TestConnectivityCouplingMap:
     """Coupling map tests."""
 
-    def test_coupling_map_structure(self):
+    def test_coupling_map_structure(self) -> None:
         """Coupling map has correct structure."""
         prog = Main(
             q := QReg("q", 3),
@@ -214,7 +214,7 @@ class TestConnectivityCouplingMap:
 class TestAnalyzerClass:
     """Tests for ConnectivityAnalyzer class."""
 
-    def test_analyzer_reuse(self):
+    def test_analyzer_reuse(self) -> None:
         """Analyzer can be reused."""
         analyzer = ConnectivityAnalyzer()
 
@@ -230,7 +230,7 @@ class TestAnalyzerClass:
         assert len(result1.edges) == 1
         assert len(result2.edges) == 2
 
-    def test_result_string(self):
+    def test_result_string(self) -> None:
         """ConnectivityResult string representation."""
         prog = Main(q := QReg("q", 2), qb.CX(q[0], q[1]))
 

@@ -12,7 +12,6 @@
 """Tests for SLR to AST converter."""
 
 import pytest
-
 from pecos.slr import CReg, If, Main, QReg, Repeat
 from pecos.slr.ast import (
     AllocatorDecl,
@@ -35,7 +34,7 @@ from pecos.slr.qeclib import qubit as qb
 class TestSlrToAstBasic:
     """Basic conversion tests."""
 
-    def test_empty_program(self):
+    def test_empty_program(self) -> None:
         prog = Main()
 
         ast = slr_to_ast(prog)
@@ -44,9 +43,9 @@ class TestSlrToAstBasic:
         assert ast.name == "Main"
         assert ast.body == ()
 
-    def test_program_with_qreg(self):
+    def test_program_with_qreg(self) -> None:
         prog = Main(
-            q := QReg("q", 2),
+            _q := QReg("q", 2),
         )
 
         ast = slr_to_ast(prog)
@@ -57,9 +56,9 @@ class TestSlrToAstBasic:
         assert decl.name == "q"
         assert decl.capacity == 2
 
-    def test_program_with_creg(self):
+    def test_program_with_creg(self) -> None:
         prog = Main(
-            c := CReg("c", 3),
+            _c := CReg("c", 3),
         )
 
         ast = slr_to_ast(prog)
@@ -71,10 +70,10 @@ class TestSlrToAstBasic:
         assert decl.size == 3
         assert decl.is_result is True
 
-    def test_program_with_both_regs(self):
+    def test_program_with_both_regs(self) -> None:
         prog = Main(
-            q := QReg("q", 2),
-            c := CReg("c", 2),
+            _q := QReg("q", 2),
+            _c := CReg("c", 2),
         )
 
         ast = slr_to_ast(prog)
@@ -88,7 +87,7 @@ class TestSlrToAstBasic:
 class TestSlrToAstGates:
     """Gate conversion tests."""
 
-    def test_single_qubit_gate(self):
+    def test_single_qubit_gate(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -104,7 +103,7 @@ class TestSlrToAstGates:
         assert gate.targets[0].allocator == "q"
         assert gate.targets[0].index == 0
 
-    def test_two_qubit_gate(self):
+    def test_two_qubit_gate(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -120,7 +119,7 @@ class TestSlrToAstGates:
         assert gate.targets[0].index == 0
         assert gate.targets[1].index == 1
 
-    def test_multiple_gates(self):
+    def test_multiple_gates(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -139,7 +138,7 @@ class TestSlrToAstGates:
 class TestSlrToAstPrepMeasure:
     """Prep and Measure conversion tests."""
 
-    def test_prep_operation(self):
+    def test_prep_operation(self) -> None:
         prog = Main(
             q := QReg("q", 2),
             qb.Prep(q[0]),
@@ -153,7 +152,7 @@ class TestSlrToAstPrepMeasure:
         assert prep.allocator == "q"
         assert prep.slots == (0,)
 
-    def test_measure_operation(self):
+    def test_measure_operation(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -176,7 +175,7 @@ class TestSlrToAstPrepMeasure:
 class TestSlrToAstControlFlow:
     """Control flow conversion tests."""
 
-    def test_if_statement(self):
+    def test_if_statement(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -193,13 +192,15 @@ class TestSlrToAstControlFlow:
         assert len(if_stmt.then_body) == 1
         assert isinstance(if_stmt.then_body[0], GateOp)
 
-    def test_if_else_statement(self):
+    def test_if_else_statement(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            If(c[0] == 1).Then(
+            If(c[0] == 1)
+            .Then(
                 qb.H(q[0]),
-            ).Else(
+            )
+            .Else(
                 qb.X(q[0]),
             ),
         )
@@ -213,7 +214,7 @@ class TestSlrToAstControlFlow:
         assert if_stmt.then_body[0].gate == GateKind.H
         assert if_stmt.else_body[0].gate == GateKind.X
 
-    def test_condition_expression(self):
+    def test_condition_expression(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -231,7 +232,7 @@ class TestSlrToAstControlFlow:
         assert isinstance(if_stmt.condition, BinaryExpr)
         assert if_stmt.condition.op == BinaryOp.EQ
 
-    def test_repeat_statement(self):
+    def test_repeat_statement(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=5).block(
@@ -251,7 +252,7 @@ class TestSlrToAstControlFlow:
 class TestSlrToAstConverter:
     """Tests for SlrToAst converter class."""
 
-    def test_converter_reusable(self):
+    def test_converter_reusable(self) -> None:
         converter = SlrToAst()
 
         prog1 = Main(
@@ -277,7 +278,7 @@ class TestSlrToAstConverter:
 class TestSlrToAstQEC:
     """Tests for QEC-related patterns."""
 
-    def test_syndrome_extraction_pattern(self):
+    def test_syndrome_extraction_pattern(self) -> None:
         prog = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
@@ -310,7 +311,7 @@ class TestSlrToAstQEC:
         assert len(gates) == 2
         assert len(measures) == 1
 
-    def test_round_trip_preserves_structure(self):
+    def test_round_trip_preserves_structure(self) -> None:
         """Test that conversion preserves the logical structure."""
         prog = Main(
             q := QReg("q", 3),
@@ -345,7 +346,7 @@ class TestSlrToAstQEC:
 class TestSlrToAstQAlloc:
     """Tests for QAlloc (hierarchical allocator) conversion."""
 
-    def test_single_qalloc(self):
+    def test_single_qalloc(self) -> None:
         """Test conversion of a single QAlloc."""
         prog = Main(
             base := QAlloc(4, name="base"),
@@ -362,7 +363,7 @@ class TestSlrToAstQAlloc:
         assert decl.capacity == 4
         assert decl.parent is None
 
-    def test_hierarchical_qalloc(self):
+    def test_hierarchical_qalloc(self) -> None:
         """Test conversion of hierarchical QAllocs (parent-child)."""
         prog = Main(
             base := QAlloc(10, name="base"),
@@ -394,7 +395,7 @@ class TestSlrToAstQAlloc:
         assert decl_by_name["ancilla"].capacity == 4
         assert decl_by_name["ancilla"].parent == "base"
 
-    def test_qalloc_gates_use_correct_allocator_names(self):
+    def test_qalloc_gates_use_correct_allocator_names(self) -> None:
         """Test that gates on QAlloc qubits reference correct allocator names."""
         prog = Main(
             base := QAlloc(10, name="base"),
@@ -419,7 +420,7 @@ class TestSlrToAstQAlloc:
         assert cx_gate.targets[0].allocator == "data"
         assert cx_gate.targets[1].allocator == "data"
 
-    def test_qalloc_no_duplicates(self):
+    def test_qalloc_no_duplicates(self) -> None:
         """Test that QAllocs appearing in both vars and ops aren't duplicated."""
         # When using walrus operator, QAllocs end up in ops
         prog = Main(

@@ -33,8 +33,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TYPE_CHECKING
 
-from pecos.slr.ast.nodes import Program, SourceLocation
+if TYPE_CHECKING:
+    from pecos.slr.ast.nodes import Program, SourceLocation
 
 
 class Severity(Enum):

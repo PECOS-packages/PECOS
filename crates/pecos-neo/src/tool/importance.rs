@@ -18,13 +18,15 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::tool::{sim_neo, ImportanceSamplingPlugin};
-//! use pecos_neo::noise::SingleQubitChannel;
+//! use pecos_neo::prelude::*;
+//!
+//! let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 //!
 //! // Create simulation with importance sampling
 //! let mut sim = sim_neo(circuit)
-//!     .noise(SingleQubitChannel::depolarizing(0.001))  // True error rate
+//!     .depolarizing(0.001)  // True error rate
 //!     .build();
 //!
 //! // Add importance sampling with 10x boost
@@ -34,8 +36,8 @@
 //! // Use weighted statistics to analyze results...
 //! ```
 
-use crate::sampling::weight::{SampleWeight, WeightedStatistics};
 use crate::sampling::importance::ImportanceConfig;
+use crate::sampling::weight::{SampleWeight, WeightedStatistics};
 
 use super::resource::Resources;
 use super::{Plugin, Stage, Tool};

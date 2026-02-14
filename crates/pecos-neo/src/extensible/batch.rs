@@ -67,9 +67,7 @@ pub enum Batch {
     },
 
     /// Output result markers.
-    OutputResult {
-        results: Vec<super::ResultId>,
-    },
+    OutputResult { results: Vec<super::ResultId> },
 }
 
 impl Batch {
@@ -155,12 +153,30 @@ impl BatchedCircuit {
     /// Check if an operation can extend the current batch.
     fn can_extend(batch: &Batch, op: &ResolvedOp) -> bool {
         match (batch, op) {
-            (Batch::SingleQubit { gate_id: g1, .. }, ResolvedOp::Gate { gate_id: g2, qubits, angles })
-                if qubits.len() == 1 && angles.is_empty() => *g1 == *g2,
-            (Batch::TwoQubit { gate_id: g1, .. }, ResolvedOp::Gate { gate_id: g2, qubits, angles })
-                if qubits.len() == 2 && angles.is_empty() => *g1 == *g2,
-            (Batch::Rotation { gate_id: g1, .. }, ResolvedOp::Gate { gate_id: g2, qubits, angles })
-                if qubits.len() == 1 && angles.len() == 1 => *g1 == *g2,
+            (
+                Batch::SingleQubit { gate_id: g1, .. },
+                ResolvedOp::Gate {
+                    gate_id: g2,
+                    qubits,
+                    angles,
+                },
+            ) if qubits.len() == 1 && angles.is_empty() => *g1 == *g2,
+            (
+                Batch::TwoQubit { gate_id: g1, .. },
+                ResolvedOp::Gate {
+                    gate_id: g2,
+                    qubits,
+                    angles,
+                },
+            ) if qubits.len() == 2 && angles.is_empty() => *g1 == *g2,
+            (
+                Batch::Rotation { gate_id: g1, .. },
+                ResolvedOp::Gate {
+                    gate_id: g2,
+                    qubits,
+                    angles,
+                },
+            ) if qubits.len() == 1 && angles.len() == 1 => *g1 == *g2,
             (Batch::Prep { basis: b1, .. }, ResolvedOp::Prep { basis: b2, .. }) => *b1 == *b2,
             (Batch::Measure { basis: b1, .. }, ResolvedOp::Measure { basis: b2, .. }) => *b1 == *b2,
             (Batch::XorResult { .. }, ResolvedOp::XorResult { .. })
@@ -172,7 +188,11 @@ impl BatchedCircuit {
     /// Start a new batch from an operation.
     fn start_batch(op: &ResolvedOp) -> Batch {
         match op {
-            ResolvedOp::Gate { gate_id, qubits, angles } => {
+            ResolvedOp::Gate {
+                gate_id,
+                qubits,
+                angles,
+            } => {
                 if angles.is_empty() {
                     if qubits.len() == 1 {
                         Batch::SingleQubit {
@@ -206,11 +226,19 @@ impl BatchedCircuit {
                 basis: *basis,
                 qubits: vec![*qubit],
             },
-            ResolvedOp::Measure { qubit, basis, result } => Batch::Measure {
+            ResolvedOp::Measure {
+                qubit,
+                basis,
+                result,
+            } => Batch::Measure {
                 basis: *basis,
                 ops: vec![(*qubit, *result)],
             },
-            ResolvedOp::Conditional { condition, if_one, if_zero } => Batch::Conditional {
+            ResolvedOp::Conditional {
+                condition,
+                if_one,
+                if_zero,
+            } => Batch::Conditional {
                 condition: *condition,
                 if_one: if_one.clone(),
                 if_zero: if_zero.clone(),
@@ -233,7 +261,14 @@ impl BatchedCircuit {
             (Batch::TwoQubit { pairs, .. }, ResolvedOp::Gate { qubits: q, .. }) => {
                 pairs.push((q[0], q[1]));
             }
-            (Batch::Rotation { ops, .. }, ResolvedOp::Gate { qubits: q, angles: a, .. }) => {
+            (
+                Batch::Rotation { ops, .. },
+                ResolvedOp::Gate {
+                    qubits: q,
+                    angles: a,
+                    ..
+                },
+            ) => {
                 ops.push((q[0], a[0]));
             }
             (Batch::Prep { qubits, .. }, ResolvedOp::Prep { qubit, .. }) => {
@@ -339,7 +374,11 @@ pub trait BatchExecutor {
                 Batch::Measure { basis, ops } => {
                     self.execute_measure(*basis, ops, &mut results);
                 }
-                Batch::Conditional { condition, if_one, if_zero } => {
+                Batch::Conditional {
+                    condition,
+                    if_one,
+                    if_zero,
+                } => {
                     self.execute_conditional(*condition, if_one, if_zero, &mut results);
                 }
                 Batch::XorResult { .. } | Batch::OutputResult { .. } => {
@@ -431,16 +470,28 @@ impl<T: SimpleExecutor> BatchExecutor for T {
 
         for op in ops {
             match op {
-                ResolvedOp::Gate { gate_id, qubits, angles } => {
+                ResolvedOp::Gate {
+                    gate_id,
+                    qubits,
+                    angles,
+                } => {
                     self.execute_gate(*gate_id, qubits, angles);
                 }
                 ResolvedOp::Prep { qubit, basis } => {
                     SimpleExecutor::execute_prep(self, *basis, *qubit);
                 }
-                ResolvedOp::Measure { qubit, basis, result } => {
+                ResolvedOp::Measure {
+                    qubit,
+                    basis,
+                    result,
+                } => {
                     SimpleExecutor::execute_measure(self, *basis, *qubit, *result, results);
                 }
-                ResolvedOp::Conditional { condition, if_one, if_zero } => {
+                ResolvedOp::Conditional {
+                    condition,
+                    if_one,
+                    if_zero,
+                } => {
                     self.execute_conditional(*condition, if_one, if_zero, results);
                 }
                 ResolvedOp::XorResult { .. } | ResolvedOp::OutputResult { .. } => {}

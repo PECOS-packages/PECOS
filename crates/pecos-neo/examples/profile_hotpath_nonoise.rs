@@ -23,18 +23,15 @@ fn main() {
 
     // Build commands once
     let commands = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
-    println!(
-        "Running {} iterations of shot execution WITHOUT noise...",
-        iterations
-    );
+    println!("Running {iterations} iterations of shot execution WITHOUT noise...");
 
     for _ in 0..iterations {
         let mut runner = ShotRunner::new(SparseStab::new(2)).with_seed(42);

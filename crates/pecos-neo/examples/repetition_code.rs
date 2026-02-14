@@ -23,7 +23,7 @@
 //! - 3 data qubits (forming a logical qubit)
 //! - 2 ancilla qubits (for syndrome measurement)
 //!
-//! Run with: cargo run --example repetition_code
+//! Run with: cargo run --example `repetition_code`
 
 use pecos_neo::prelude::*;
 use pecos_qsim::SparseStab;
@@ -63,7 +63,7 @@ impl RepetitionCode {
 
         // Prepare ancillas in |0⟩
         for &a in &self.ancilla_qubits {
-            b = b.prep(a);
+            b = b.pz(a);
         }
 
         // Parity check for A0 = Z0 * Z1
@@ -76,7 +76,7 @@ impl RepetitionCode {
 
         // Measure ancillas
         for &a in &self.ancilla_qubits {
-            b = b.measure(a);
+            b = b.mz(a);
         }
 
         b
@@ -88,7 +88,7 @@ impl RepetitionCode {
 
         // Initialize data qubits in |000⟩ (logical |0⟩)
         for &d in &self.data_qubits {
-            builder = builder.prep(d);
+            builder = builder.pz(d);
         }
 
         // Syndrome extraction rounds
@@ -98,7 +98,7 @@ impl RepetitionCode {
 
         // Final data measurement
         for &d in &self.data_qubits {
-            builder = builder.measure(d);
+            builder = builder.mz(d);
         }
 
         builder.build()
@@ -168,7 +168,7 @@ fn example_noiseless(code: &RepetitionCode) {
         // (we don't need to check each one here)
     }
 
-    println!("  100 shots with 3 rounds: all data qubits = 0? {}", all_zero);
+    println!("  100 shots with 3 rounds: all data qubits = 0? {all_zero}");
     println!("  (Expected: true - no noise means no errors)\n");
 }
 
@@ -176,7 +176,7 @@ fn example_noiseless(code: &RepetitionCode) {
 fn example_with_noise(code: &RepetitionCode) {
     println!("--- With Depolarizing Noise ---");
 
-    let p_error = 0.02;  // 2% error rate
+    let p_error = 0.02; // 2% error rate
 
     let noise = ComposableNoiseModel::new()
         .add_plugin(CorePlugin)
@@ -198,7 +198,7 @@ fn example_with_noise(code: &RepetitionCode) {
 
         // Extract data outcomes (last 3 measurements)
         let all_outcomes: Vec<bool> = outcomes.iter().map(|o| o.outcome).collect();
-        let num_ancilla_meas = 3 * 2;  // 3 rounds * 2 ancillas
+        let num_ancilla_meas = 3 * 2; // 3 rounds * 2 ancillas
         let data_outcomes: Vec<bool> = all_outcomes[num_ancilla_meas..].to_vec();
 
         // Extract syndromes
@@ -217,7 +217,7 @@ fn example_with_noise(code: &RepetitionCode) {
 
         results.total_shots += 1;
         if logical {
-            results.logical_errors += 1;  // We initialized in |0⟩, so |1⟩ is error
+            results.logical_errors += 1; // We initialized in |0⟩, so |1⟩ is error
         }
 
         // Track syndrome patterns
@@ -229,7 +229,10 @@ fn example_with_noise(code: &RepetitionCode) {
     }
 
     println!("  Physical error rate: {:.1}%", p_error * 100.0);
-    println!("  Logical error rate: {:.2}%", results.logical_error_rate() * 100.0);
+    println!(
+        "  Logical error rate: {:.2}%",
+        results.logical_error_rate() * 100.0
+    );
     println!("  (Logical rate should be lower than physical due to error correction)");
 
     // Show most common syndrome patterns
@@ -238,7 +241,11 @@ fn example_with_noise(code: &RepetitionCode) {
 
     println!("\n  Most common syndrome patterns:");
     for (pattern, count) in sorted.iter().take(5) {
-        println!("    {}: {:.1}%", pattern, **count as f64 / shots as f64 * 100.0);
+        println!(
+            "    {}: {:.1}%",
+            pattern,
+            **count as f64 / f64::from(shots) * 100.0
+        );
     }
     println!();
 }
@@ -279,8 +286,12 @@ fn example_error_scaling(code: &RepetitionCode) {
             }
         }
 
-        let p_log = errors as f64 / shots as f64;
-        let reduction = if p_log > 0.0 { p_phys / p_log } else { f64::INFINITY };
+        let p_log = f64::from(errors) / f64::from(shots);
+        let reduction = if p_log > 0.0 {
+            p_phys / p_log
+        } else {
+            f64::INFINITY
+        };
 
         println!(
             "  {:>9.1}% {:>14.2}% {:>11.1}x",
@@ -330,7 +341,7 @@ fn example_round_scaling(code: &RepetitionCode) {
             }
         }
 
-        let p_log = errors as f64 / shots as f64;
+        let p_log = f64::from(errors) / f64::from(shots);
         println!("  {:>8} {:>14.2}%", num_rounds, p_log * 100.0);
     }
 

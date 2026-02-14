@@ -17,14 +17,14 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::validation::*;
 //!
 //! // Validate a probability
-//! let p = validate_probability(0.5, "error_rate")?;
+//! let p = validate_probability(0.5, "error_rate").unwrap();
 //!
 //! // Validate weights
-//! let weights = validate_weights(&[0.25, 0.25, 0.5], "pauli_weights")?;
+//! validate_weights(&[0.25, 0.25, 0.5], "pauli_weights").unwrap();
 //! ```
 
 use std::fmt;
@@ -46,10 +46,10 @@ impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Invalid {}: {}", self.field, self.message)?;
         if let Some(ref val) = self.value {
-            write!(f, " (got: {})", val)?;
+            write!(f, " (got: {val})")?;
         }
         if let Some(ref suggestion) = self.suggestion {
-            write!(f, ". {}", suggestion)?;
+            write!(f, ". {suggestion}")?;
         }
         Ok(())
     }
@@ -98,9 +98,11 @@ pub fn validate_probability(p: f64, field: &str) -> ValidationResult<f64> {
             .with_suggestion("Check for division by zero or invalid computations"));
     }
     if p < 0.0 {
-        return Err(ValidationError::new(field, "probability cannot be negative")
-            .with_value(p)
-            .with_suggestion("Use a value between 0.0 and 1.0"));
+        return Err(
+            ValidationError::new(field, "probability cannot be negative")
+                .with_value(p)
+                .with_suggestion("Use a value between 0.0 and 1.0"),
+        );
     }
     if p > 1.0 {
         return Err(ValidationError::new(field, "probability cannot exceed 1.0")
@@ -117,11 +119,7 @@ pub fn validate_probability(p: f64, field: &str) -> ValidationResult<f64> {
 /// floating point errors.
 #[must_use]
 pub fn clamp_probability(p: f64) -> f64 {
-    if p.is_nan() {
-        0.0
-    } else {
-        p.clamp(0.0, 1.0)
-    }
+    if p.is_nan() { 0.0 } else { p.clamp(0.0, 1.0) }
 }
 
 /// Validate that weights are non-negative.
@@ -132,13 +130,16 @@ pub fn clamp_probability(p: f64) -> f64 {
 pub fn validate_weights(weights: &[f64], field: &str) -> ValidationResult<()> {
     for (i, &w) in weights.iter().enumerate() {
         if w.is_nan() {
-            return Err(ValidationError::new(field, format!("weight[{}] cannot be NaN", i))
-                .with_value(w));
+            return Err(
+                ValidationError::new(field, format!("weight[{i}] cannot be NaN")).with_value(w),
+            );
         }
         if w < 0.0 {
-            return Err(ValidationError::new(field, format!("weight[{}] cannot be negative", i))
-                .with_value(w)
-                .with_suggestion("Use non-negative weights"));
+            return Err(
+                ValidationError::new(field, format!("weight[{i}] cannot be negative"))
+                    .with_value(w)
+                    .with_suggestion("Use non-negative weights"),
+            );
         }
     }
     Ok(())
@@ -153,9 +154,11 @@ pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()
     validate_weights(weights, field)?;
     let sum: f64 = weights.iter().sum();
     if sum <= 0.0 {
-        return Err(ValidationError::new(field, "weights must sum to a positive value")
-            .with_value(sum)
-            .with_suggestion("Ensure at least one weight is positive"));
+        return Err(
+            ValidationError::new(field, "weights must sum to a positive value")
+                .with_value(sum)
+                .with_suggestion("Ensure at least one weight is positive"),
+        );
     }
     Ok(())
 }
@@ -167,8 +170,7 @@ pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()
 /// Returns an error if the rate is negative or NaN.
 pub fn validate_rate(rate: f64, field: &str) -> ValidationResult<f64> {
     if rate.is_nan() {
-        return Err(ValidationError::new(field, "rate cannot be NaN")
-            .with_value(rate));
+        return Err(ValidationError::new(field, "rate cannot be NaN").with_value(rate));
     }
     if rate < 0.0 {
         return Err(ValidationError::new(field, "rate cannot be negative")
@@ -185,8 +187,7 @@ pub fn validate_rate(rate: f64, field: &str) -> ValidationResult<f64> {
 /// Returns an error if the value is not positive.
 pub fn validate_positive(value: f64, field: &str) -> ValidationResult<f64> {
     if value.is_nan() {
-        return Err(ValidationError::new(field, "value cannot be NaN")
-            .with_value(value));
+        return Err(ValidationError::new(field, "value cannot be NaN").with_value(value));
     }
     if value <= 0.0 {
         return Err(ValidationError::new(field, "value must be positive")
@@ -221,7 +222,7 @@ impl fmt::Display for NoiseWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Warning: {}", self.message)?;
         if let Some(ref ctx) = self.context {
-            write!(f, " (in {})", ctx)?;
+            write!(f, " (in {ctx})")?;
         }
         Ok(())
     }
@@ -245,11 +246,11 @@ impl NoiseWarning {
 }
 
 /// Warn if probability is very high (might be a mistake).
+#[must_use]
 pub fn warn_high_probability(p: f64, field: &str, threshold: f64) -> Option<NoiseWarning> {
     if p > threshold {
         Some(NoiseWarning::new(format!(
-            "{} probability {} is unusually high (> {})",
-            field, p, threshold
+            "{field} probability {p} is unusually high (> {threshold})"
         )))
     } else {
         None
@@ -257,11 +258,11 @@ pub fn warn_high_probability(p: f64, field: &str, threshold: f64) -> Option<Nois
 }
 
 /// Warn if probability is very low but non-zero (might be inefficient).
+#[must_use]
 pub fn warn_low_probability(p: f64, field: &str, threshold: f64) -> Option<NoiseWarning> {
     if p > 0.0 && p < threshold {
         Some(NoiseWarning::new(format!(
-            "{} probability {} is very low (< {}), consider using 0 if not needed",
-            field, p, threshold
+            "{field} probability {p} is very low (< {threshold}), consider using 0 if not needed"
         )))
     } else {
         None
@@ -269,6 +270,7 @@ pub fn warn_low_probability(p: f64, field: &str, threshold: f64) -> Option<Noise
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 

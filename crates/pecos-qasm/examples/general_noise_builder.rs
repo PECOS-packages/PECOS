@@ -93,7 +93,7 @@ fn main() {
         .with_p1_probability(0.1) // High single-qubit error
         .with_p2_probability(0.1) // High two-qubit error
         .with_noiseless_gate(pecos_core::prelude::GateType::H) // H gates have no noise
-        .with_noiseless_gate(pecos_core::prelude::GateType::Measure); // Measurements have no noise
+        .with_noiseless_gate(pecos_core::prelude::GateType::MZ); // Measurements have no noise
 
     let _results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))

@@ -29,12 +29,7 @@ use smallvec::smallvec;
 /// (which can contain other primitives), actions directly produce responses.
 pub trait GateAction: Send + Sync {
     /// Apply this action for a specific qubit.
-    fn apply(
-        &self,
-        qubit: QubitId,
-        ctx: &mut NoiseContext,
-        rng: &mut PecosRng,
-    ) -> FlowResponse;
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse;
 
     /// Human-readable name for visualization.
     fn name(&self) -> &'static str;
@@ -616,7 +611,8 @@ impl GateAction for TwoQubitEmission {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::flow::prelude::*;
 /// // Stage 1: Sample emission
 /// let stage1 = sample_emission();  // Stores fired flag, returns Leak if fired
 ///
@@ -705,7 +701,7 @@ impl GateAction for SampleEmissionWithProb {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// // Two-qubit gate with emission probability and partner depolarizing
@@ -919,9 +915,10 @@ impl GateAction for IndependentEmissionWithPartnerDepolarize {
 /// # Usage
 ///
 /// This is typically used in a two-qubit gate channel with a condition:
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::flow::prelude::*;
 /// // If this qubit is leaked, depolarize its partner
-/// when_leaked(partner_depolarize(), nothing())
+/// let noise = when_leaked(partner_depolarize(), nothing());
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct PartnerDepolarize {
@@ -1217,9 +1214,12 @@ impl GateAction for CoherentRotation {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::command::GateType;
+///
 /// // 1% over-rotation on all gates
-/// let error = OverRotation::new(GateType::RZ, 0.01);
+/// let error = over_rotation(GateType::RZ, 0.01);
 /// ```
 #[derive(Debug, Clone)]
 pub struct OverRotation {
@@ -1234,7 +1234,10 @@ impl OverRotation {
     /// - `fraction < 0`: under-rotation (gate rotates too little)
     #[must_use]
     pub fn new(gate_type: GateType, fraction: f64) -> Self {
-        Self { gate_type, fraction }
+        Self {
+            gate_type,
+            fraction,
+        }
     }
 
     /// RZ over-rotation.
@@ -1250,7 +1253,7 @@ impl GateAction for OverRotation {
         #[allow(clippy::redundant_closure)]
         let base_angle = ctx
             .current_gate()
-            .and_then(|g| g.angle())
+            .and_then(super::super::context::GateInfo::angle)
             .map_or(0.0, |a| a.to_radians());
 
         let error_angle = base_angle * self.fraction;
@@ -1582,7 +1585,9 @@ impl GateAction for CrosstalkAction {
     fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
         // Get the qubit's state from the measurement outcome if available,
         // otherwise sample randomly (unknown state).
-        let state = ctx.current_outcome().unwrap_or_else(|| rng.random::<bool>());
+        let state = ctx
+            .current_outcome()
+            .unwrap_or_else(|| rng.random::<bool>());
 
         let r: f64 = rng.random();
         let result = self.transitions.sample(state, r);
@@ -1621,12 +1626,7 @@ impl GateAction for CrosstalkAction {
 pub struct FlipOutcomeAction;
 
 impl GateAction for FlipOutcomeAction {
-    fn apply(
-        &self,
-        _qubit: QubitId,
-        _ctx: &mut NoiseContext,
-        _rng: &mut PecosRng,
-    ) -> FlowResponse {
+    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> FlowResponse {
         FlowResponse::FlipOutcome
     }
 
@@ -1665,12 +1665,7 @@ impl ForceOutcomeAction {
 }
 
 impl GateAction for ForceOutcomeAction {
-    fn apply(
-        &self,
-        _qubit: QubitId,
-        _ctx: &mut NoiseContext,
-        _rng: &mut PecosRng,
-    ) -> FlowResponse {
+    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> FlowResponse {
         FlowResponse::ForceOutcome(self.value)
     }
 
@@ -1716,12 +1711,7 @@ impl Default for RandomOutcome {
 }
 
 impl GateAction for RandomOutcome {
-    fn apply(
-        &self,
-        _qubit: QubitId,
-        _ctx: &mut NoiseContext,
-        rng: &mut PecosRng,
-    ) -> FlowResponse {
+    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
         let r: f64 = rng.random();
         FlowResponse::ForceOutcome(r < self.prob_one)
     }
@@ -1742,12 +1732,7 @@ impl GateAction for RandomOutcome {
 pub struct LeakedMeasurementAction;
 
 impl GateAction for LeakedMeasurementAction {
-    fn apply(
-        &self,
-        _qubit: QubitId,
-        _ctx: &mut NoiseContext,
-        _rng: &mut PecosRng,
-    ) -> FlowResponse {
+    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> FlowResponse {
         FlowResponse::LeakedMeasurement
     }
 
@@ -1761,7 +1746,7 @@ pub mod actions {
     use super::{
         AmplitudeDamping, BiasedAmplitudeDamping, CoherentRotation, CrosstalkAction, Emission,
         Erasure, ErasureWithReplacement, FlipOutcomeAction, FlowResponse, ForceOutcomeAction,
-        GateAction, GateType, Inject, IndependentEmissionWithPartnerDepolarize, InjectCoherentRZ,
+        GateAction, GateType, IndependentEmissionWithPartnerDepolarize, Inject, InjectCoherentRZ,
         Leak, LeakedMeasurementAction, NoiseContext, Nothing, OverRotation, PartnerDepolarize,
         Pauli, PauliWeights, PecosRng, PrepFlip, PrepPhase, QubitId, RandomOutcome, SampleEmission,
         SampleEmissionWithProb, Seep, SkipGate, TwoQubitEmission,
@@ -1935,9 +1920,7 @@ pub mod actions {
 
     /// Correlated two-qubit Pauli with custom weights.
     #[must_use]
-    pub fn two_qubit_pauli_weighted(
-        weights: crate::noise::TwoQubitPauliWeights,
-    ) -> TwoQubitPauli {
+    pub fn two_qubit_pauli_weighted(weights: crate::noise::TwoQubitPauliWeights) -> TwoQubitPauli {
         TwoQubitPauli::with_weights(weights)
     }
 
@@ -1987,9 +1970,7 @@ pub mod actions {
 
     /// Emission error with custom weights.
     #[must_use]
-    pub fn emission_weighted(
-        weights: crate::noise::SingleQubitEmissionWeights,
-    ) -> Emission {
+    pub fn emission_weighted(weights: crate::noise::SingleQubitEmissionWeights) -> Emission {
         Emission::with_weights(weights)
     }
 
@@ -2039,9 +2020,10 @@ pub mod actions {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use pecos_neo::noise::flow::prelude::*;
     /// // In a two-qubit channel: if this qubit is leaked, depolarize partner
-    /// when_leaked(partner_depolarize(), nothing())
+    /// let noise = when_leaked(partner_depolarize(), nothing());
     /// ```
     #[must_use]
     pub fn partner_depolarize() -> PartnerDepolarize {
@@ -2066,9 +2048,10 @@ pub mod actions {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use pecos_neo::noise::flow::prelude::*;
     /// // 1% chance of emission, with automatic partner depolarizing
-    /// prob(0.01, two_qubit_emission_with_partner_depolarize())
+    /// let noise = prob(0.01, two_qubit_emission_with_partner_depolarize());
     /// ```
     #[must_use]
     pub fn two_qubit_emission_with_partner_depolarize() -> TwoQubitEmissionWithPartnerDepolarize {
@@ -2083,9 +2066,10 @@ pub mod actions {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use pecos_neo::noise::flow::prelude::*;
     /// // Each qubit has 1% independent emission probability
-    /// independent_emission(0.01)
+    /// let noise = independent_emission(0.01);
     /// ```
     #[must_use]
     pub fn independent_emission(emission_prob: f64) -> IndependentEmissionWithPartnerDepolarize {
@@ -2204,7 +2188,7 @@ pub mod actions {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     /// use pecos_neo::noise::SingleQubitChannel;
     ///
@@ -2224,6 +2208,15 @@ pub mod actions {
     pub struct ChannelAdapter {
         channel: Box<dyn crate::noise::NoiseChannel>,
         name: String,
+    }
+
+    impl Clone for ChannelAdapter {
+        fn clone(&self) -> Self {
+            Self {
+                channel: self.channel.clone_box(),
+                name: self.name.clone(),
+            }
+        }
     }
 
     impl ChannelAdapter {
@@ -2271,9 +2264,8 @@ pub mod actions {
                 gate_qubits.to_vec()
             };
 
-            let angles: Vec<pecos_core::Angle64> = gate_info
-                .map(|g| g.angles.to_vec())
-                .unwrap_or_default();
+            let angles: Vec<pecos_core::Angle64> =
+                gate_info.map(|g| g.angles.to_vec()).unwrap_or_default();
 
             let gate_type = gate_info.map_or(GateType::I, |g| g.gate_type);
 
@@ -2366,7 +2358,7 @@ pub mod actions {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     /// use pecos_neo::noise::SingleQubitChannel;
     ///
@@ -2458,9 +2450,9 @@ mod tests {
 
         // Should be roughly uniform (1/3 each)
         let total = 3000.0;
-        assert!((x_count as f64 / total - 1.0 / 3.0).abs() < 0.05);
-        assert!((y_count as f64 / total - 1.0 / 3.0).abs() < 0.05);
-        assert!((z_count as f64 / total - 1.0 / 3.0).abs() < 0.05);
+        assert!((f64::from(x_count) / total - 1.0 / 3.0).abs() < 0.05);
+        assert!((f64::from(y_count) / total - 1.0 / 3.0).abs() < 0.05);
+        assert!((f64::from(z_count) / total - 1.0 / 3.0).abs() < 0.05);
     }
 
     #[test]
@@ -2551,7 +2543,7 @@ mod tests {
         // This tests that the correlation is working
         let total = same_count + mixed_count;
         if total > 0 {
-            let same_rate = same_count as f64 / total as f64;
+            let same_rate = f64::from(same_count) / f64::from(total);
             // Allow wide tolerance for statistical variation
             assert!(
                 same_rate > 0.1 && same_rate < 0.4,
@@ -2602,7 +2594,7 @@ mod tests {
         }
 
         // Should be roughly 25% leakage, 75% Pauli
-        let leak_rate = leak_count as f64 / 1000.0;
+        let leak_rate = f64::from(leak_count) / 1000.0;
         assert!(
             (leak_rate - 0.25).abs() < 0.05,
             "Expected ~25% leakage, got {leak_rate}"
@@ -2672,8 +2664,8 @@ mod tests {
         }
 
         // With flip_only: 50% stay, 50% flip, 0% leak
-        let stay_rate = no_change as f64 / 1000.0;
-        let flip_rate = flip as f64 / 1000.0;
+        let stay_rate = f64::from(no_change) / 1000.0;
+        let flip_rate = f64::from(flip) / 1000.0;
 
         assert!(
             (stay_rate - 0.5).abs() < 0.1,
@@ -2711,9 +2703,9 @@ mod tests {
 
         // With symmetric_with_leakage: 1/3 each
         let total = 3000.0;
-        let stay_rate = no_change as f64 / total;
-        let flip_rate = flip as f64 / total;
-        let leak_rate = leak as f64 / total;
+        let stay_rate = f64::from(no_change) / total;
+        let flip_rate = f64::from(flip) / total;
+        let leak_rate = f64::from(leak) / total;
 
         assert!(
             (stay_rate - 0.333).abs() < 0.05,
@@ -2737,28 +2729,22 @@ mod tests {
         // Create asymmetric transitions:
         // From 0: 100% flip
         // From 1: 100% stay
-        let action = CrosstalkAction::new(
-            crate::noise::CrosstalkTransitions::custom(0.0, 1.0, 0.0, 1.0, 0.0, 0.0),
-        );
+        let action = CrosstalkAction::new(crate::noise::CrosstalkTransitions::custom(
+            0.0, 1.0, 0.0, 1.0, 0.0, 0.0,
+        ));
 
         // Set outcome to 0 -> should always flip (X gate)
         ctx.set_current_outcome(false);
         for _ in 0..10 {
             let response = action.apply(QubitId(0), &mut ctx, &mut rng);
-            assert!(
-                !response.is_none(),
-                "With outcome=0, should always flip"
-            );
+            assert!(!response.is_none(), "With outcome=0, should always flip");
         }
 
         // Set outcome to 1 -> should always stay (no change)
         ctx.set_current_outcome(true);
         for _ in 0..10 {
             let response = action.apply(QubitId(0), &mut ctx, &mut rng);
-            assert!(
-                response.is_none(),
-                "With outcome=1, should always stay"
-            );
+            assert!(response.is_none(), "With outcome=1, should always stay");
         }
     }
 
@@ -2784,7 +2770,7 @@ mod tests {
         }
 
         // Should be roughly 50/50
-        let one_rate = ones as f64 / 1000.0;
+        let one_rate = f64::from(ones) / 1000.0;
         assert!(
             (one_rate - 0.5).abs() < 0.1,
             "Expected ~50% ones, got {one_rate}"
@@ -2807,7 +2793,7 @@ mod tests {
         }
 
         // Should be roughly 80%
-        let one_rate = ones as f64 / 1000.0;
+        let one_rate = f64::from(ones) / 1000.0;
         assert!(
             (one_rate - 0.8).abs() < 0.1,
             "Expected ~80% ones, got {one_rate}"
@@ -2831,7 +2817,10 @@ mod tests {
         let response = SampleEmission::new().apply(QubitId(0), &mut ctx, &mut rng);
 
         assert!(ctx.is_fired(0), "Should have set fired flag for qubit 0");
-        assert!(ctx.is_leaked(QubitId(0)), "Should have marked qubit as leaked");
+        assert!(
+            ctx.is_leaked(QubitId(0)),
+            "Should have marked qubit as leaked"
+        );
         assert!(response.causes_leak(), "Should return Leak response");
     }
 
@@ -2855,7 +2844,7 @@ mod tests {
         }
 
         // Should be roughly 50%
-        let fired_rate = fired_count as f64 / 1000.0;
+        let fired_rate = f64::from(fired_count) / 1000.0;
         assert!(
             (fired_rate - 0.5).abs() < 0.1,
             "Expected ~50% fired, got {fired_rate}"
@@ -2890,11 +2879,20 @@ mod tests {
         // From qubit 0's perspective: I fired, partner didn't
         ctx.set_current_qubit_index(0, &qubits);
         assert!(ctx.current_qubit_fired(), "Qubit 0 should show as fired");
-        assert!(!ctx.partner_fired(), "Qubit 0's partner should NOT show as fired");
+        assert!(
+            !ctx.partner_fired(),
+            "Qubit 0's partner should NOT show as fired"
+        );
 
         // From qubit 1's perspective: I didn't fire, partner fired
         ctx.set_current_qubit_index(1, &qubits);
-        assert!(!ctx.current_qubit_fired(), "Qubit 1 should NOT show as fired");
-        assert!(ctx.partner_fired(), "Qubit 1's partner SHOULD show as fired");
+        assert!(
+            !ctx.current_qubit_fired(),
+            "Qubit 1 should NOT show as fired"
+        );
+        assert!(
+            ctx.partner_fired(),
+            "Qubit 1's partner SHOULD show as fired"
+        );
     }
 }

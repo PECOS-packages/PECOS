@@ -17,9 +17,10 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::prelude::*;
 //! use pecos_quantum::TickCircuit;
+//! use pecos_qsim::SparseStab;
 //!
 //! // Build a circuit using TickCircuit
 //! let mut circuit = TickCircuit::new();
@@ -31,7 +32,7 @@
 //! // Convert to CommandQueue and execute
 //! let commands = CommandQueue::from(&circuit);
 //! let mut runner = ShotRunner::new(SparseStab::new(2)).with_seed(42);
-//! let outcomes = runner.execute(&commands);
+//! let outcomes = runner.run_shot(&commands);
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType};
@@ -77,10 +78,10 @@ impl From<pecos_core::gate_type::GateType> for GateType {
             CoreGT::RYY => Self::RYY,
             CoreGT::RZZ => Self::RZZ,
             CoreGT::CCX => Self::CCX,
-            CoreGT::Measure => Self::Measure,
+            CoreGT::MZ => Self::MZ,
             CoreGT::MeasureLeaked => Self::MeasureLeaked,
             CoreGT::MeasureFree => Self::MeasureFree,
-            CoreGT::Prep => Self::Prep,
+            CoreGT::PZ => Self::PZ,
             CoreGT::QAlloc => Self::QAlloc,
             CoreGT::QFree => Self::QFree,
             CoreGT::Idle => Self::Idle,
@@ -123,10 +124,10 @@ impl From<GateType> for pecos_core::gate_type::GateType {
             GateType::RYY => CoreGT::RYY,
             GateType::RZZ => CoreGT::RZZ,
             GateType::CCX => CoreGT::CCX,
-            GateType::Measure => CoreGT::Measure,
+            GateType::MZ => CoreGT::MZ,
             GateType::MeasureLeaked => CoreGT::MeasureLeaked,
             GateType::MeasureFree => CoreGT::MeasureFree,
-            GateType::Prep => CoreGT::Prep,
+            GateType::PZ => CoreGT::PZ,
             GateType::QAlloc => CoreGT::QAlloc,
             GateType::QFree => CoreGT::QFree,
             GateType::Idle => CoreGT::Idle,
@@ -144,7 +145,9 @@ impl From<&Gate> for GateCommand {
         let qubits: SmallVec<[QubitId; 4]> = gate.qubits.iter().copied().collect();
 
         // Handle idle gates specially - they store duration in params
-        if gate_type == GateType::Idle && let Some(&duration) = gate.params.first() {
+        if gate_type == GateType::Idle
+            && let Some(&duration) = gate.params.first()
+        {
             return GateCommand::idle(qubits[0], TimeUnits::new(duration as u64));
         }
 
@@ -244,10 +247,10 @@ impl From<&CommandQueue> for TickCircuit {
 
             // Handle different gate types
             match gate_type {
-                pecos_core::gate_type::GateType::Prep => {
+                pecos_core::gate_type::GateType::PZ => {
                     tick.pz(&qubits);
                 }
-                pecos_core::gate_type::GateType::Measure => {
+                pecos_core::gate_type::GateType::MZ => {
                     tick.mz(&qubits);
                 }
                 pecos_core::gate_type::GateType::H => {
@@ -310,8 +313,8 @@ mod tests {
             GateType::H,
             GateType::X,
             GateType::CX,
-            GateType::Measure,
-            GateType::Prep,
+            GateType::MZ,
+            GateType::PZ,
         ];
 
         for &gt in &neo_types {
@@ -339,21 +342,21 @@ mod tests {
 
         // Check gate types
         let types: Vec<_> = queue.iter().map(|c| c.gate_type).collect();
-        assert_eq!(types[0], GateType::Prep);
-        assert_eq!(types[1], GateType::Prep);
+        assert_eq!(types[0], GateType::PZ);
+        assert_eq!(types[1], GateType::PZ);
         assert_eq!(types[2], GateType::H);
         assert_eq!(types[3], GateType::CX);
-        assert_eq!(types[4], GateType::Measure);
-        assert_eq!(types[5], GateType::Measure);
+        assert_eq!(types[4], GateType::MZ);
+        assert_eq!(types[5], GateType::MZ);
     }
 
     #[test]
     fn test_tick_circuit_bulk_ops() {
         // Test bulk operations - create single gate with multiple qubits
         let mut circuit = TickCircuit::new();
-        circuit.tick().pz(&[0, 1]);  // One prep gate with 2 qubits
-        circuit.tick().h(&[0, 1]);   // One H gate with 2 qubits
-        circuit.tick().mz(&[0, 1]);  // One measure gate with 2 qubits
+        circuit.tick().pz(&[0, 1]); // One prep gate with 2 qubits
+        circuit.tick().h(&[0, 1]); // One H gate with 2 qubits
+        circuit.tick().mz(&[0, 1]); // One measure gate with 2 qubits
 
         let queue = CommandQueue::from(&circuit);
 
@@ -362,7 +365,7 @@ mod tests {
 
         // First command should be Prep with 2 qubits
         let prep_cmd = queue.iter().next().unwrap();
-        assert_eq!(prep_cmd.gate_type, GateType::Prep);
+        assert_eq!(prep_cmd.gate_type, GateType::PZ);
         assert_eq!(prep_cmd.qubits.len(), 2);
     }
 
@@ -382,7 +385,7 @@ mod tests {
         assert_eq!(queue.len(), 6);
 
         // First two should be preps
-        assert_eq!(queue.iter().next().unwrap().gate_type, GateType::Prep);
+        assert_eq!(queue.iter().next().unwrap().gate_type, GateType::PZ);
     }
 
     #[test]
@@ -390,12 +393,12 @@ mod tests {
         use crate::command::CommandBuilder;
 
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let circuit = TickCircuit::from(&commands);

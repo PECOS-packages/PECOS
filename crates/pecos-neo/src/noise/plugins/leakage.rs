@@ -40,7 +40,7 @@ use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::plugins::LeakagePlugin;
 ///
 /// // Full leakage (default)

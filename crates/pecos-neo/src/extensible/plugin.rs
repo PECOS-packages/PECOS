@@ -6,9 +6,7 @@
 //! - `StandardDecompositionsPlugin` with common derived gates
 //! - Dependency resolution between plugins
 
-use super::{
-    gates, Decomposition, DecompositionRegistry, DecompOp, GateSupportSet,
-};
+use super::{DecompOp, Decomposition, DecompositionRegistry, GateSupportSet, gates};
 use std::any::TypeId;
 use std::collections::HashSet;
 
@@ -19,7 +17,7 @@ use std::collections::HashSet;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::extensible::{GatePlugin, DecompositionRegistry};
 ///
 /// struct MyCustomGates;
@@ -303,7 +301,11 @@ impl std::fmt::Display for PluginError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnresolvedDependencies(names) => {
-                write!(f, "Plugins with unresolved dependencies: {}", names.join(", "))
+                write!(
+                    f,
+                    "Plugins with unresolved dependencies: {}",
+                    names.join(", ")
+                )
             }
         }
     }
@@ -394,7 +396,10 @@ mod tests {
             .with_plugin(StandardDecompositionsPlugin)
             .build();
 
-        assert!(matches!(result, Err(PluginError::UnresolvedDependencies(_))));
+        assert!(matches!(
+            result,
+            Err(PluginError::UnresolvedDependencies(_))
+        ));
     }
 
     #[test]
@@ -441,7 +446,13 @@ mod tests {
     #[test]
     fn test_plugin_names() {
         assert_eq!(CoreGatesPlugin.name(), "core-gates");
-        assert_eq!(StandardDecompositionsPlugin.name(), "standard-decompositions");
-        assert_eq!(ExtendedDecompositionsPlugin.name(), "extended-decompositions");
+        assert_eq!(
+            StandardDecompositionsPlugin.name(),
+            "standard-decompositions"
+        );
+        assert_eq!(
+            ExtendedDecompositionsPlugin.name(),
+            "extended-decompositions"
+        );
     }
 }

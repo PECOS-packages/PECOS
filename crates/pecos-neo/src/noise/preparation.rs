@@ -118,6 +118,10 @@ impl NoiseChannel for PreparationChannel {
     fn name(&self) -> &'static str {
         "PreparationChannel"
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 #[cfg(test)]

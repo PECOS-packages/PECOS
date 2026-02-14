@@ -36,7 +36,7 @@ pub struct MeasurementOutcome {
     /// Whether the qubit was in a leaked state when measured.
     ///
     /// For `MeasureLeaked` gate type, leaked qubits return value 2.
-    /// For regular `Measure`, leaked qubits return value 1.
+    /// For regular `MZ`, leaked qubits return value 1.
     pub is_leaked: bool,
 }
 
@@ -89,7 +89,11 @@ impl MeasurementOutcome {
     /// Returns 2 if the qubit was leaked, otherwise 0 or 1.
     #[must_use]
     pub fn as_int_leaked(&self) -> u8 {
-        if self.is_leaked { 2 } else { u8::from(self.outcome) }
+        if self.is_leaked {
+            2
+        } else {
+            u8::from(self.outcome)
+        }
     }
 }
 
@@ -249,6 +253,134 @@ impl FromIterator<MeasurementOutcome> for MeasurementOutcomes {
     }
 }
 
+// ============================================================================
+// RegisterMap
+// ============================================================================
+
+/// Mapping from register names to qubit ranges.
+///
+/// This bridges qubit-indexed measurement outcomes to named registers,
+/// as used in QASM-style programs where results are accessed by register name
+/// (e.g., `c[0]`, `c[1]`).
+///
+/// # Example
+///
+/// ```
+/// use pecos_neo::outcome::RegisterMap;
+/// use pecos_core::QubitId;
+///
+/// let mut reg = RegisterMap::new();
+/// reg.add_register("data", &[QubitId(0), QubitId(1)]);
+/// reg.add_register("syndrome", &[QubitId(2), QubitId(3), QubitId(4)]);
+///
+/// assert_eq!(reg.get("data"), Some(&[QubitId(0), QubitId(1)][..]));
+/// assert_eq!(reg.register_names().count(), 2);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct RegisterMap {
+    /// Register name -> ordered list of `QubitId`s in that register.
+    registers: BTreeMap<String, Vec<QubitId>>,
+}
+
+impl RegisterMap {
+    /// Create an empty register map.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a register with the given name and qubit IDs.
+    pub fn add_register(&mut self, name: impl Into<String>, qubits: &[QubitId]) {
+        self.registers.insert(name.into(), qubits.to_vec());
+    }
+
+    /// Create from an iterator of (name, qubits) pairs.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_neo::outcome::RegisterMap;
+    /// use pecos_core::QubitId;
+    ///
+    /// let reg = RegisterMap::from_pairs([
+    ///     ("q".to_string(), vec![QubitId(0), QubitId(1)]),
+    ///     ("c".to_string(), vec![QubitId(2)]),
+    /// ]);
+    /// assert_eq!(reg.register_names().count(), 2);
+    /// ```
+    #[must_use]
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (String, Vec<QubitId>)>) -> Self {
+        Self {
+            registers: pairs.into_iter().collect(),
+        }
+    }
+
+    /// Get the qubits for a named register.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&[QubitId]> {
+        self.registers.get(name).map(Vec::as_slice)
+    }
+
+    /// Iterate over register names (sorted).
+    pub fn register_names(&self) -> impl Iterator<Item = &str> {
+        self.registers.keys().map(String::as_str)
+    }
+
+    /// Number of registers.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.registers.len()
+    }
+
+    /// Check if empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.registers.is_empty()
+    }
+}
+
+impl MeasurementOutcomes {
+    /// Get outcomes for a named register as a bitstring.
+    ///
+    /// Returns `None` if the register doesn't exist or any qubit hasn't been measured.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_neo::outcome::{MeasurementOutcomes, RegisterMap};
+    /// use pecos_core::QubitId;
+    ///
+    /// let mut outcomes = MeasurementOutcomes::new();
+    /// outcomes.record_outcome(QubitId(0), true, false);
+    /// outcomes.record_outcome(QubitId(1), false, false);
+    ///
+    /// let mut reg = RegisterMap::new();
+    /// reg.add_register("c", &[QubitId(0), QubitId(1)]);
+    ///
+    /// assert_eq!(outcomes.register_bitstring(&reg, "c"), Some(vec![true, false]));
+    /// assert_eq!(outcomes.register_bitstring(&reg, "missing"), None);
+    /// ```
+    #[must_use]
+    pub fn register_bitstring(&self, register: &RegisterMap, name: &str) -> Option<Vec<bool>> {
+        let qubits = register.get(name)?;
+        self.bitstring(qubits)
+    }
+
+    /// Get all registers as a map of name -> bitstring.
+    ///
+    /// Registers where any qubit hasn't been measured are omitted.
+    #[must_use]
+    pub fn as_register_map(&self, register: &RegisterMap) -> BTreeMap<String, Vec<bool>> {
+        let mut result = BTreeMap::new();
+        for name in register.register_names() {
+            if let Some(bits) = self.register_bitstring(register, name) {
+                result.insert(name.to_string(), bits);
+            }
+        }
+        result
+    }
+}
+
 impl<'a> IntoIterator for &'a MeasurementOutcomes {
     type Item = &'a MeasurementOutcome;
     type IntoIter = std::slice::Iter<'a, MeasurementOutcome>;
@@ -355,5 +487,69 @@ mod tests {
 
         // Non-existent qubit returns false
         assert!(!outcomes.set_outcome(QubitId(2), true));
+    }
+
+    // ========================================================================
+    // RegisterMap tests
+    // ========================================================================
+
+    #[test]
+    fn test_register_map_basic() {
+        let mut reg = RegisterMap::new();
+        assert!(reg.is_empty());
+
+        reg.add_register("data", &[QubitId(0), QubitId(1)]);
+        reg.add_register("syndrome", &[QubitId(2), QubitId(3)]);
+
+        assert_eq!(reg.len(), 2);
+        assert!(!reg.is_empty());
+        assert_eq!(reg.get("data"), Some(&[QubitId(0), QubitId(1)][..]));
+        assert_eq!(reg.get("missing"), None);
+    }
+
+    #[test]
+    fn test_register_map_from_pairs() {
+        let reg = RegisterMap::from_pairs([
+            ("a".to_string(), vec![QubitId(0)]),
+            ("b".to_string(), vec![QubitId(1), QubitId(2)]),
+        ]);
+
+        assert_eq!(reg.len(), 2);
+        assert_eq!(reg.get("a"), Some(&[QubitId(0)][..]));
+        assert_eq!(reg.get("b"), Some(&[QubitId(1), QubitId(2)][..]));
+    }
+
+    #[test]
+    fn test_register_bitstring() {
+        let mut outcomes = MeasurementOutcomes::new();
+        outcomes.record_outcome(QubitId(0), true, false);
+        outcomes.record_outcome(QubitId(1), false, false);
+        outcomes.record_outcome(QubitId(2), true, false);
+
+        let mut reg = RegisterMap::new();
+        reg.add_register("c", &[QubitId(0), QubitId(1)]);
+        reg.add_register("d", &[QubitId(2)]);
+
+        assert_eq!(
+            outcomes.register_bitstring(&reg, "c"),
+            Some(vec![true, false])
+        );
+        assert_eq!(outcomes.register_bitstring(&reg, "d"), Some(vec![true]));
+        assert_eq!(outcomes.register_bitstring(&reg, "missing"), None);
+    }
+
+    #[test]
+    fn test_as_register_map() {
+        let mut outcomes = MeasurementOutcomes::new();
+        outcomes.record_outcome(QubitId(0), true, false);
+        outcomes.record_outcome(QubitId(1), false, false);
+
+        let mut reg = RegisterMap::new();
+        reg.add_register("c", &[QubitId(0), QubitId(1)]);
+        reg.add_register("unmeasured", &[QubitId(5)]); // Not measured
+
+        let map = outcomes.as_register_map(&reg);
+        assert_eq!(map.len(), 1); // Only "c" should be present
+        assert_eq!(map["c"], vec![true, false]);
     }
 }

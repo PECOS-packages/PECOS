@@ -13,9 +13,9 @@
 //! Profiling binary for noise channel overhead analysis.
 
 use pecos_core::QubitId;
+use pecos_neo::GateType;
 use pecos_neo::noise::{ComposableNoiseModel, NoiseEvent, SingleQubitChannel};
 use pecos_neo::prelude::CorePlugin;
-use pecos_neo::GateType;
 use pecos_rng::PecosRng;
 use std::hint::black_box;
 
@@ -25,10 +25,7 @@ fn main() {
     let qubits = [qubit];
     let angles = [];
 
-    println!(
-        "Profiling noise channel overhead ({} iterations each)...\n",
-        iterations
-    );
+    println!("Profiling noise channel overhead ({iterations} iterations each)...\n");
 
     // Baseline: just RNG sampling
     let mut rng = PecosRng::seed_from_u64(42);
@@ -41,7 +38,7 @@ fn main() {
     println!(
         "RNG sampling only: {:?} ({:.1} ns/iter)",
         rng_time,
-        rng_time.as_nanos() as f64 / iterations as f64
+        rng_time.as_nanos() as f64 / f64::from(iterations)
     );
 
     // Single channel with event check
@@ -56,7 +53,8 @@ fn main() {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
         let response = noise.emit(event, &mut rng);
         black_box(response);
     }
@@ -64,7 +62,7 @@ fn main() {
     println!(
         "Single channel emit: {:?} ({:.1} ns/iter)",
         single_channel_time,
-        single_channel_time.as_nanos() as f64 / iterations as f64
+        single_channel_time.as_nanos() as f64 / f64::from(iterations)
     );
 
     // Multiple channels
@@ -81,7 +79,8 @@ fn main() {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
         let response = noise.emit(event, &mut rng);
         black_box(response);
     }
@@ -89,7 +88,7 @@ fn main() {
     println!(
         "Three channels emit: {:?} ({:.1} ns/iter)",
         multi_channel_time,
-        multi_channel_time.as_nanos() as f64 / iterations as f64
+        multi_channel_time.as_nanos() as f64 / f64::from(iterations)
     );
 
     // Noise model creation overhead
@@ -104,7 +103,7 @@ fn main() {
     println!(
         "Noise model creation: {:?} ({:.1} ns/iter)",
         creation_time,
-        creation_time.as_nanos() as f64 / iterations as f64
+        creation_time.as_nanos() as f64 / f64::from(iterations)
     );
 
     println!("\nDone!");

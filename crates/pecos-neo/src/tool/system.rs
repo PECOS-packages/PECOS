@@ -14,8 +14,8 @@
 //!
 //! Systems are functions that operate on resources during tool execution.
 
-use super::resource::Resources;
 use super::Stage;
+use super::resource::Resources;
 
 /// A system that can be executed during a stage.
 ///
@@ -24,11 +24,13 @@ use super::Stage;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use pecos_neo::tool::Resources;
+///
 /// fn my_system(resources: &mut Resources) {
-///     let config = resources.get::<MyConfig>();
-///     let mut results = resources.get_mut::<MyResults>();
-///     // ... do work ...
+///     // Access resources and do work
+///     // let config = resources.get::<MyConfig>();
+///     // let mut results = resources.get_mut::<MyResults>();
 /// }
 /// ```
 pub trait System: Send + Sync {

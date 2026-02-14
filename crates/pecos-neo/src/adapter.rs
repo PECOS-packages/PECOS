@@ -29,7 +29,9 @@
 //!
 //! ## Example
 //!
-//! ```ignore
+#![cfg_attr(feature = "engines-adapter", doc = "```no_run")]
+#![cfg_attr(not(feature = "engines-adapter"), doc = "```ignore")]
+//! use std::str::FromStr;
 //! use pecos_neo::adapter::ClassicalEngineAdapter;
 //! use pecos_neo::prelude::*;
 //! use pecos_neo::program::ProgramRunner;
@@ -46,7 +48,7 @@
 //!     measure q[1];
 //! "#;
 //!
-//! let engine = QASMEngine::from_str(qasm)?;
+//! let engine = QASMEngine::from_str(qasm).unwrap();
 //!
 //! // Wrap in adapter to get CommandSource interface
 //! let mut program = ClassicalEngineAdapter::new(engine);
@@ -115,10 +117,10 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
         CoreGateType::CCX => NeoGateType::CCX,
 
         // Measurement and preparation
-        CoreGateType::Measure => NeoGateType::Measure,
+        CoreGateType::MZ => NeoGateType::MZ,
         CoreGateType::MeasureLeaked => NeoGateType::MeasureLeaked,
         CoreGateType::MeasureFree => NeoGateType::MeasureFree,
-        CoreGateType::Prep => NeoGateType::Prep,
+        CoreGateType::PZ => NeoGateType::PZ,
         CoreGateType::QAlloc => NeoGateType::QAlloc,
         CoreGateType::QFree => NeoGateType::QFree,
 
@@ -171,16 +173,11 @@ pub fn byte_message_to_command_queue(
 /// The outcomes are ordered by qubit ID for consistency with the engine's expectations.
 #[cfg(feature = "engines-adapter")]
 #[must_use]
-pub fn outcomes_to_byte_message(
-    outcomes: &MeasurementOutcomes,
-) -> pecos_engines::ByteMessage {
+pub fn outcomes_to_byte_message(outcomes: &MeasurementOutcomes) -> pecos_engines::ByteMessage {
     let mut builder = pecos_engines::ByteMessage::outcomes_builder();
 
     // Collect outcomes in order and convert to usize values (as expected by ByteMessageBuilder)
-    let outcome_values: Vec<usize> = outcomes
-        .iter()
-        .map(|o| usize::from(o.outcome))
-        .collect();
+    let outcome_values: Vec<usize> = outcomes.iter().map(|o| usize::from(o.outcome)).collect();
 
     builder.add_outcomes(&outcome_values);
     builder.build()
@@ -254,7 +251,8 @@ where
         use pecos_engines::EngineStage;
 
         let outcome_message = outcomes_to_byte_message(outcomes);
-        let stage = pecos_engines::ControlEngine::continue_processing(&mut self.engine, outcome_message)?;
+        let stage =
+            pecos_engines::ControlEngine::continue_processing(&mut self.engine, outcome_message)?;
 
         match stage {
             EngineStage::NeedsProcessing(commands) => {
@@ -421,10 +419,10 @@ fn convert_neo_to_core_gate_type(neo_type: NeoGateType) -> CoreGateType {
         NeoGateType::RYY => CoreGateType::RYY,
         NeoGateType::RZZ => CoreGateType::RZZ,
         NeoGateType::CCX => CoreGateType::CCX,
-        NeoGateType::Measure => CoreGateType::Measure,
+        NeoGateType::MZ => CoreGateType::MZ,
         NeoGateType::MeasureLeaked => CoreGateType::MeasureLeaked,
         NeoGateType::MeasureFree => CoreGateType::MeasureFree,
-        NeoGateType::Prep => CoreGateType::Prep,
+        NeoGateType::PZ => CoreGateType::PZ,
         NeoGateType::QAlloc => CoreGateType::QAlloc,
         NeoGateType::QFree => CoreGateType::QFree,
         NeoGateType::Idle => CoreGateType::Idle,
@@ -446,8 +444,8 @@ mod tests {
             CoreGateType::CX,
             CoreGateType::CZ,
             CoreGateType::RZ,
-            CoreGateType::Measure,
-            CoreGateType::Prep,
+            CoreGateType::MZ,
+            CoreGateType::PZ,
         ];
 
         for core_type in test_types {
@@ -460,12 +458,7 @@ mod tests {
     #[test]
     fn test_gate_conversion() {
         // Create a simple Gate and convert it
-        let gate = Gate::new(
-            CoreGateType::H,
-            vec![],
-            vec![],
-            vec![QubitId(0)],
-        );
+        let gate = Gate::new(CoreGateType::H, vec![], vec![], vec![QubitId(0)]);
 
         let cmd = gate_to_command(&gate).expect("should convert");
         assert_eq!(cmd.gate_type, NeoGateType::H);
@@ -476,12 +469,7 @@ mod tests {
     fn test_parameterized_gate_conversion() {
         // Create an RZ gate with angle
         let angle = Angle64::from_radians(std::f64::consts::PI / 2.0);
-        let gate = Gate::new(
-            CoreGateType::RZ,
-            vec![angle],
-            vec![],
-            vec![QubitId(0)],
-        );
+        let gate = Gate::new(CoreGateType::RZ, vec![angle], vec![], vec![QubitId(0)]);
 
         let cmd = gate_to_command(&gate).expect("should convert");
         assert_eq!(cmd.gate_type, NeoGateType::RZ);
@@ -493,8 +481,13 @@ mod tests {
     fn test_gates_to_command_queue() {
         let gates = vec![
             Gate::new(CoreGateType::H, vec![], vec![], vec![QubitId(0)]),
-            Gate::new(CoreGateType::CX, vec![], vec![], vec![QubitId(0), QubitId(1)]),
-            Gate::new(CoreGateType::Measure, vec![], vec![], vec![QubitId(0)]),
+            Gate::new(
+                CoreGateType::CX,
+                vec![],
+                vec![],
+                vec![QubitId(0), QubitId(1)],
+            ),
+            Gate::new(CoreGateType::MZ, vec![], vec![], vec![QubitId(0)]),
         ];
 
         let queue = gates_to_command_queue(&gates);
@@ -505,7 +498,12 @@ mod tests {
     fn test_command_queue_to_gates_roundtrip() {
         let original_gates = vec![
             Gate::new(CoreGateType::H, vec![], vec![], vec![QubitId(0)]),
-            Gate::new(CoreGateType::CX, vec![], vec![], vec![QubitId(0), QubitId(1)]),
+            Gate::new(
+                CoreGateType::CX,
+                vec![],
+                vec![],
+                vec![QubitId(0), QubitId(1)],
+            ),
         ];
 
         let queue = gates_to_command_queue(&original_gates);

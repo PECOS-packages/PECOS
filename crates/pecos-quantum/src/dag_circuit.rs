@@ -1364,7 +1364,7 @@ impl DagCircuit {
     ///
     /// Returns a `PrepHandle` for attaching metadata.
     pub fn pz(&mut self, q: impl Into<QubitId>) -> PrepHandle<'_> {
-        let node = self.add_gate_auto_wire(Gate::simple(GateType::Prep, vec![q.into()]));
+        let node = self.add_gate_auto_wire(Gate::simple(GateType::PZ, vec![q.into()]));
         PrepHandle {
             circuit: self,
             node,
@@ -2251,7 +2251,7 @@ mod tests {
         // Measure gate should have basis
         let mz_node = gates
             .iter()
-            .find(|(_, g)| g.gate_type == GateType::Measure)
+            .find(|(_, g)| g.gate_type == GateType::MZ)
             .unwrap()
             .0;
         assert_eq!(

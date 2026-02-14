@@ -16,7 +16,7 @@
 //! declarative noise models with conditional logic, see `FlowChannel` in
 //! `pecos_neo::noise::flow::prelude`.
 //!
-//! ## When to use this vs FlowChannel
+//! ## When to use this vs `FlowChannel`
 //!
 //! **Use `TwoQubitChannel` when:**
 //! - You want a simple, direct noise model
@@ -371,11 +371,7 @@ impl TwoQubitChannel {
 
     /// Set the emission error ratio with custom emission weights.
     #[must_use]
-    pub fn with_emission_weights(
-        mut self,
-        ratio: f64,
-        weights: TwoQubitEmissionWeights,
-    ) -> Self {
+    pub fn with_emission_weights(mut self, ratio: f64, weights: TwoQubitEmissionWeights) -> Self {
         self.emission_ratio = ratio;
         self.emission_threshold = PecosRng::probability_threshold(ratio);
         self.emission_weights = weights;
@@ -441,8 +437,9 @@ impl NoiseChannel for TwoQubitChannel {
             return false;
         }
         match event {
-            NoiseEvent::BeforeGate { gate_type, .. }
-            | NoiseEvent::AfterGate { gate_type, .. } => gate_type.is_two_qubit(),
+            NoiseEvent::BeforeGate { gate_type, .. } | NoiseEvent::AfterGate { gate_type, .. } => {
+                gate_type.is_two_qubit()
+            }
             _ => false,
         }
     }
@@ -528,6 +525,10 @@ impl NoiseChannel for TwoQubitChannel {
 
     fn priority(&self) -> i32 {
         10
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
     }
 }
 
@@ -681,7 +682,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(channel.responds_to(&event));
 
@@ -703,7 +705,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(!channel.responds_to(&event));
     }
@@ -738,7 +741,7 @@ mod tests {
         let scaling = AngleScaling::asymmetric(
             0.1, 2.0, 0.0, // negative: 0.1 + 2.0 * |theta/pi| + 0.0 * |theta/pi|^1
             0.2, 1.0, 0.0, // positive: 0.2 + 1.0 * |theta/pi| + 0.0 * |theta/pi|^1
-            1.0,           // power = 1 (linear)
+            1.0, // power = 1 (linear)
         );
 
         // For positive pi/2 (normalized = 0.5): 0.2 + 1.0 * 0.5 + 0 = 0.7
@@ -795,7 +798,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(0));
@@ -820,7 +824,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -913,10 +918,7 @@ mod tests {
             let p_val = polynomial.scale(angle);
             assert!(
                 (q_val - p_val).abs() < 1e-10,
-                "Mismatch at {:?}: quadratic={}, polynomial={}",
-                angle,
-                q_val,
-                p_val
+                "Mismatch at {angle:?}: quadratic={q_val}, polynomial={p_val}"
             );
         }
     }
@@ -937,10 +939,7 @@ mod tests {
             let p_val = polynomial.scale(angle);
             assert!(
                 (l_val - p_val).abs() < 1e-10,
-                "Mismatch at {:?}: linear={}, polynomial={}",
-                angle,
-                l_val,
-                p_val
+                "Mismatch at {angle:?}: linear={l_val}, polynomial={p_val}"
             );
         }
     }
@@ -961,10 +960,7 @@ mod tests {
             let p_val = polynomial.scale(angle);
             assert!(
                 (c_val - p_val).abs() < 1e-10,
-                "Mismatch at {:?}: constant={}, polynomial={}",
-                angle,
-                c_val,
-                p_val
+                "Mismatch at {angle:?}: constant={c_val}, polynomial={p_val}"
             );
         }
     }

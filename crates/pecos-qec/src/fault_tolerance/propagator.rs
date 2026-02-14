@@ -591,7 +591,7 @@ impl<'a> DagPropagator<'a> {
 
                 if touches_active {
                     // Handle prep gates specially - they kill the Pauli
-                    if matches!(gate.gate_type, GateType::Prep | GateType::QAlloc) {
+                    if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
                         for q in &gate.qubits {
                             let idx = q.index();
                             if prop.contains_x(idx) {

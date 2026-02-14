@@ -20,7 +20,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::noise::prelude::*;
 //!
 //! let noise = seq![
@@ -64,11 +64,15 @@ pub trait DescribeTree {
 }
 
 /// Helper to format a tree node with children.
-pub fn format_tree_node(name: &str, children: &[(&str, &dyn DescribeTree)], indent: usize) -> String {
+pub fn format_tree_node(
+    name: &str,
+    children: &[(&str, &dyn DescribeTree)],
+    indent: usize,
+) -> String {
     let mut result = String::new();
     let prefix = "  ".repeat(indent);
 
-    writeln!(result, "{}{}", prefix, name).unwrap();
+    writeln!(result, "{prefix}{name}").unwrap();
 
     for (i, (label, child)) in children.iter().enumerate() {
         let is_last = i == children.len() - 1;
@@ -77,9 +81,9 @@ pub fn format_tree_node(name: &str, children: &[(&str, &dyn DescribeTree)], inde
 
         // Write the connector and label
         if label.is_empty() {
-            write!(result, "{}{} ", prefix, connector).unwrap();
+            write!(result, "{prefix}{connector} ").unwrap();
         } else {
-            write!(result, "{}{} {}: ", prefix, connector, label).unwrap();
+            write!(result, "{prefix}{connector} {label}: ").unwrap();
         }
 
         // Get child's tree representation
@@ -93,7 +97,7 @@ pub fn format_tree_node(name: &str, children: &[(&str, &dyn DescribeTree)], inde
             // Multi-line child - put on next line with proper indentation
             writeln!(result).unwrap();
             for line in child_lines {
-                writeln!(result, "{}{}{}", prefix, child_prefix, line).unwrap();
+                writeln!(result, "{prefix}{child_prefix}{line}").unwrap();
             }
         }
     }
@@ -130,16 +134,36 @@ impl std::fmt::Display for NoiseModelSummary {
         writeln!(f, "Total channels: {}", self.channel_count)?;
         writeln!(f)?;
         writeln!(f, "Channels by event:")?;
-        writeln!(f, "  BeforeGate:       {}", self.channels_by_event.before_gate)?;
-        writeln!(f, "  AfterGate:        {}", self.channels_by_event.after_gate)?;
-        writeln!(f, "  BeforeMeasurement: {}", self.channels_by_event.before_measurement)?;
-        writeln!(f, "  AfterMeasurement: {}", self.channels_by_event.after_measurement)?;
-        writeln!(f, "  AfterPreparation: {}", self.channels_by_event.after_preparation)?;
+        writeln!(
+            f,
+            "  BeforeGate:       {}",
+            self.channels_by_event.before_gate
+        )?;
+        writeln!(
+            f,
+            "  AfterGate:        {}",
+            self.channels_by_event.after_gate
+        )?;
+        writeln!(
+            f,
+            "  BeforeMeasurement: {}",
+            self.channels_by_event.before_measurement
+        )?;
+        writeln!(
+            f,
+            "  AfterMeasurement: {}",
+            self.channels_by_event.after_measurement
+        )?;
+        writeln!(
+            f,
+            "  AfterPreparation: {}",
+            self.channels_by_event.after_preparation
+        )?;
         writeln!(f, "  IdleTime:         {}", self.channels_by_event.idle)?;
         writeln!(f)?;
         writeln!(f, "Channel names:")?;
         for name in &self.channel_names {
-            writeln!(f, "  - {}", name)?;
+            writeln!(f, "  - {name}")?;
         }
         Ok(())
     }
@@ -184,12 +208,10 @@ mod tests {
                 },
                 TestNode {
                     name: "Child2".to_string(),
-                    children: vec![
-                        TestNode {
-                            name: "Grandchild".to_string(),
-                            children: vec![],
-                        },
-                    ],
+                    children: vec![TestNode {
+                        name: "Grandchild".to_string(),
+                        children: vec![],
+                    }],
                 },
             ],
         };

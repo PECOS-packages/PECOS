@@ -15,6 +15,8 @@
 //! Primitives are the building blocks of noise decision trees. They compose
 //! together to form complex noise models while maintaining a simple, fixed API.
 
+use std::fmt::Write as _;
+
 use super::action::GateAction;
 use super::condition::Condition;
 use super::response::FlowResponse;
@@ -33,6 +35,9 @@ pub trait Primitive: Send + Sync {
 
     /// Human-readable description for visualization (single line).
     fn describe(&self) -> String;
+
+    /// Clone this primitive into a boxed trait object.
+    fn clone_box(&self) -> Box<dyn Primitive>;
 
     /// Multi-line tree representation for debugging.
     ///
@@ -153,6 +158,7 @@ impl MultiQubitSamples {
 /// # Example Implementation
 ///
 /// ```ignore
+/// # use pecos_neo::noise::flow::prelude::*;
 /// struct EmissionWithPartnerDepolarize { prob: f64 }
 ///
 /// impl TwoStagePrimitive for EmissionWithPartnerDepolarize {
@@ -231,7 +237,7 @@ pub trait TwoStagePrimitive: Send + Sync {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// // Two-stage emission with partner depolarizing
@@ -243,6 +249,15 @@ pub trait TwoStagePrimitive: Send + Sync {
 pub struct TwoStage<P1: Primitive, P2: Primitive> {
     stage1: P1,
     stage2: P2,
+}
+
+impl<P1: Primitive + Clone, P2: Primitive + Clone> Clone for TwoStage<P1, P2> {
+    fn clone(&self) -> Self {
+        Self {
+            stage1: self.stage1.clone(),
+            stage2: self.stage2.clone(),
+        }
+    }
 }
 
 impl<P1: Primitive, P2: Primitive> TwoStage<P1, P2> {
@@ -302,16 +317,71 @@ impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
     ) -> FlowResponse {
         self.stage2.apply(qubit, ctx, rng)
     }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(TwoStage {
+            stage1: self.stage1.clone_box(),
+            stage2: self.stage2.clone_box(),
+        })
+    }
+}
+
+impl Primitive for Box<dyn Primitive> {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+        (**self).apply(qubit, ctx, rng)
+    }
+
+    fn describe(&self) -> String {
+        (**self).describe()
+    }
+
+    fn describe_tree(&self) -> String {
+        (**self).describe_tree()
+    }
+
+    fn describe_tree_with_prefix(&self, prefix: &str, is_last: bool) -> String {
+        (**self).describe_tree_with_prefix(prefix, is_last)
+    }
+
+    fn needs_two_pass(&self) -> bool {
+        (**self).needs_two_pass()
+    }
+
+    fn apply_stage1(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> FlowResponse {
+        (**self).apply_stage1(qubit, ctx, rng)
+    }
+
+    fn apply_stage2(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> FlowResponse {
+        (**self).apply_stage2(qubit, ctx, rng)
+    }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        (**self).clone_box()
+    }
 }
 
 // Implement Primitive for all GateActions
-impl<A: GateAction> Primitive for A {
+impl<A: GateAction + Clone + 'static> Primitive for A {
     fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
         GateAction::apply(self, qubit, ctx, rng)
     }
 
     fn describe(&self) -> String {
         self.name().to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(self.clone())
     }
 }
 
@@ -322,6 +392,15 @@ impl<A: GateAction> Primitive for A {
 pub struct Prob<P: Primitive> {
     probability: f64,
     inner: P,
+}
+
+impl<P: Primitive + Clone> Clone for Prob<P> {
+    fn clone(&self) -> Self {
+        Self {
+            probability: self.probability,
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<P: Primitive> Prob<P> {
@@ -371,6 +450,13 @@ impl<P: Primitive> Primitive for Prob<P> {
             self.inner.describe_tree().replace('\n', "\n   ")
         )
     }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(Prob {
+            probability: self.probability,
+            inner: self.inner.clone_box(),
+        })
+    }
 }
 
 /// Dynamic probability gate: compute probability from gate context.
@@ -381,7 +467,7 @@ impl<P: Primitive> Primitive for Prob<P> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// // Angle-dependent two-qubit noise
@@ -402,6 +488,19 @@ where
 {
     probability_fn: F,
     inner: P,
+}
+
+impl<F, P> Clone for ProbFn<F, P>
+where
+    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync + Clone,
+    P: Primitive + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            probability_fn: self.probability_fn.clone(),
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<F, P> ProbFn<F, P>
@@ -425,7 +524,7 @@ where
 
 impl<F, P> Primitive for ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync,
+    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync + Clone + 'static,
     P: Primitive,
 {
     fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
@@ -440,6 +539,13 @@ where
     fn describe(&self) -> String {
         "prob_fn(...)".to_string()
     }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(ProbFn {
+            probability_fn: self.probability_fn.clone(),
+            inner: self.inner.clone_box(),
+        })
+    }
 }
 
 /// Linear time-dependent probability: p = rate * duration.
@@ -449,7 +555,7 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// // 0.001 error rate per time unit, applying Z error
@@ -458,6 +564,15 @@ where
 pub struct ProbLinear<P: Primitive> {
     rate_per_time_unit: f64,
     inner: P,
+}
+
+impl<P: Primitive + Clone> Clone for ProbLinear<P> {
+    fn clone(&self) -> Self {
+        Self {
+            rate_per_time_unit: self.rate_per_time_unit,
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<P: Primitive> ProbLinear<P> {
@@ -491,6 +606,13 @@ impl<P: Primitive> Primitive for ProbLinear<P> {
     fn describe(&self) -> String {
         format!("prob_linear({:.6})", self.rate_per_time_unit)
     }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(ProbLinear {
+            rate_per_time_unit: self.rate_per_time_unit,
+            inner: self.inner.clone_box(),
+        })
+    }
 }
 
 /// Quadratic time-dependent dephasing: p = sin(rate * duration)^2.
@@ -503,7 +625,7 @@ impl<P: Primitive> Primitive for ProbLinear<P> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// // Quadratic dephasing with 0.01 rate
@@ -513,6 +635,16 @@ pub struct ProbQuadratic<P: Primitive> {
     rate_per_time_unit: f64,
     coherent_to_incoherent_factor: f64,
     inner: P,
+}
+
+impl<P: Primitive + Clone> Clone for ProbQuadratic<P> {
+    fn clone(&self) -> Self {
+        Self {
+            rate_per_time_unit: self.rate_per_time_unit,
+            coherent_to_incoherent_factor: self.coherent_to_incoherent_factor,
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<P: Primitive> ProbQuadratic<P> {
@@ -559,6 +691,14 @@ impl<P: Primitive> Primitive for ProbQuadratic<P> {
     fn describe(&self) -> String {
         format!("prob_quadratic({:.6})", self.rate_per_time_unit)
     }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(ProbQuadratic {
+            rate_per_time_unit: self.rate_per_time_unit,
+            coherent_to_incoherent_factor: self.coherent_to_incoherent_factor,
+            inner: self.inner.clone_box(),
+        })
+    }
 }
 
 /// Conditional: if condition is true, execute `then_branch`, else `else_branch`.
@@ -566,6 +706,16 @@ pub struct When<C: Condition, T: Primitive, E: Primitive> {
     condition: C,
     then_branch: T,
     else_branch: E,
+}
+
+impl<C: Condition + Clone, T: Primitive + Clone, E: Primitive + Clone> Clone for When<C, T, E> {
+    fn clone(&self) -> Self {
+        Self {
+            condition: self.condition.clone(),
+            then_branch: self.then_branch.clone(),
+            else_branch: self.else_branch.clone(),
+        }
+    }
 }
 
 impl<C: Condition, T: Primitive, E: Primitive> When<C, T, E> {
@@ -580,7 +730,7 @@ impl<C: Condition, T: Primitive, E: Primitive> When<C, T, E> {
     }
 }
 
-impl<C: Condition, T: Primitive, E: Primitive> Primitive for When<C, T, E> {
+impl<C: Condition + Clone + 'static, T: Primitive, E: Primitive> Primitive for When<C, T, E> {
     fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
         if self.condition.evaluate(qubit, ctx) {
             self.then_branch.apply(qubit, ctx, rng)
@@ -606,6 +756,14 @@ impl<C: Condition, T: Primitive, E: Primitive> Primitive for When<C, T, E> {
             self.else_branch.describe_tree().replace('\n', "\n   ")
         )
     }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(When {
+            condition: self.condition.clone(),
+            then_branch: self.then_branch.clone_box(),
+            else_branch: self.else_branch.clone_box(),
+        })
+    }
 }
 
 /// Weighted sample: choose one branch based on weights.
@@ -614,6 +772,15 @@ impl<C: Condition, T: Primitive, E: Primitive> Primitive for When<C, T, E> {
 pub struct Sample<P: Primitive> {
     branches: Vec<(f64, P)>,
     cumulative_weights: Vec<f64>,
+}
+
+impl<P: Primitive + Clone> Clone for Sample<P> {
+    fn clone(&self) -> Self {
+        Self {
+            branches: self.branches.clone(),
+            cumulative_weights: self.cumulative_weights.clone(),
+        }
+    }
 }
 
 impl<P: Primitive> Sample<P> {
@@ -672,20 +839,40 @@ impl<P: Primitive> Primitive for Sample<P> {
             let is_last = i == self.branches.len() - 1;
             let connector = if is_last { "└─" } else { "├─" };
             let prefix = if is_last { "   " } else { "│  " };
-            result.push_str(&format!(
-                "{} ({:.2}) {}\n",
+            let _ = writeln!(
+                result,
+                "{} ({:.2}) {}",
                 connector,
                 weight,
-                primitive.describe_tree().replace('\n', &format!("\n{}", prefix))
-            ));
+                primitive
+                    .describe_tree()
+                    .replace('\n', &format!("\n{prefix}"))
+            );
         }
         result.trim_end().to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(BoxSample::new(
+            self.branches
+                .iter()
+                .map(|(w, p)| (*w, p.clone_box()))
+                .collect(),
+        ))
     }
 }
 
 /// Sequential: execute all primitives in order, combine responses.
 pub struct Seq<P: Primitive> {
     primitives: Vec<P>,
+}
+
+impl<P: Primitive + Clone> Clone for Seq<P> {
+    fn clone(&self) -> Self {
+        Self {
+            primitives: self.primitives.clone(),
+        }
+    }
 }
 
 impl<P: Primitive> Seq<P> {
@@ -715,7 +902,7 @@ impl<P: Primitive> Primitive for Seq<P> {
     }
 
     fn describe(&self) -> String {
-        let items: Vec<String> = self.primitives.iter().map(|p| p.describe()).collect();
+        let items: Vec<String> = self.primitives.iter().map(Primitive::describe).collect();
         format!("seq([{}])", items.join(", "))
     }
 
@@ -725,13 +912,22 @@ impl<P: Primitive> Primitive for Seq<P> {
             let is_last = i == self.primitives.len() - 1;
             let connector = if is_last { "└─" } else { "├─" };
             let prefix = if is_last { "   " } else { "│  " };
-            result.push_str(&format!(
-                "{} {}\n",
+            let _ = writeln!(
+                result,
+                "{} {}",
                 connector,
-                primitive.describe_tree().replace('\n', &format!("\n{}", prefix))
-            ));
+                primitive
+                    .describe_tree()
+                    .replace('\n', &format!("\n{prefix}"))
+            );
         }
         result.trim_end().to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(BoxSeq::new(
+            self.primitives.iter().map(Primitive::clone_box).collect(),
+        ))
     }
 }
 
@@ -741,6 +937,14 @@ impl<P: Primitive> Primitive for Seq<P> {
 /// `BoxSeq` allows different primitive types by boxing them.
 pub struct BoxSeq {
     primitives: Vec<Box<dyn Primitive>>,
+}
+
+impl Clone for BoxSeq {
+    fn clone(&self) -> Self {
+        Self {
+            primitives: self.primitives.iter().map(Primitive::clone_box).collect(),
+        }
+    }
 }
 
 impl BoxSeq {
@@ -770,7 +974,7 @@ impl Primitive for BoxSeq {
     }
 
     fn describe(&self) -> String {
-        let items: Vec<String> = self.primitives.iter().map(|p| p.describe()).collect();
+        let items: Vec<String> = self.primitives.iter().map(Primitive::describe).collect();
         format!("seq([{}])", items.join(", "))
     }
 
@@ -780,19 +984,34 @@ impl Primitive for BoxSeq {
             let is_last = i == self.primitives.len() - 1;
             let connector = if is_last { "└─" } else { "├─" };
             let prefix = if is_last { "   " } else { "│  " };
-            result.push_str(&format!(
-                "{} {}\n",
+            let _ = writeln!(
+                result,
+                "{} {}",
                 connector,
-                primitive.describe_tree().replace('\n', &format!("\n{}", prefix))
-            ));
+                primitive
+                    .describe_tree()
+                    .replace('\n', &format!("\n{prefix}"))
+            );
         }
         result.trim_end().to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(self.clone())
     }
 }
 
 /// Early exit: if condition is true, return `SkipGate` response.
 pub struct SkipIf<C: Condition> {
     condition: C,
+}
+
+impl<C: Condition + Clone> Clone for SkipIf<C> {
+    fn clone(&self) -> Self {
+        Self {
+            condition: self.condition.clone(),
+        }
+    }
 }
 
 impl<C: Condition> SkipIf<C> {
@@ -803,7 +1022,7 @@ impl<C: Condition> SkipIf<C> {
     }
 }
 
-impl<C: Condition> Primitive for SkipIf<C> {
+impl<C: Condition + Clone + 'static> Primitive for SkipIf<C> {
     fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> FlowResponse {
         if self.condition.evaluate(qubit, ctx) {
             FlowResponse::SkipGate
@@ -815,6 +1034,10 @@ impl<C: Condition> Primitive for SkipIf<C> {
     fn describe(&self) -> String {
         format!("skip_if({})", self.condition.name())
     }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(self.clone())
+    }
 }
 
 /// Create a boxed sequence from heterogeneous primitives.
@@ -823,7 +1046,7 @@ impl<C: Condition> Primitive for SkipIf<C> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// let noise = seq![
@@ -846,7 +1069,7 @@ macro_rules! seq {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// let noise = sample![
@@ -870,6 +1093,19 @@ macro_rules! sample {
 pub struct BoxSample {
     branches: Vec<(f64, Box<dyn Primitive>)>,
     cumulative_weights: Vec<f64>,
+}
+
+impl Clone for BoxSample {
+    fn clone(&self) -> Self {
+        Self {
+            branches: self
+                .branches
+                .iter()
+                .map(|(w, p)| (*w, p.clone_box()))
+                .collect(),
+            cumulative_weights: self.cumulative_weights.clone(),
+        }
+    }
 }
 
 impl BoxSample {
@@ -928,23 +1164,33 @@ impl Primitive for BoxSample {
             let is_last = i == self.branches.len() - 1;
             let connector = if is_last { "└─" } else { "├─" };
             let prefix = if is_last { "   " } else { "│  " };
-            result.push_str(&format!(
-                "{} ({:.2}) {}\n",
+            let _ = writeln!(
+                result,
+                "{} ({:.2}) {}",
                 connector,
                 weight,
-                primitive.describe_tree().replace('\n', &format!("\n{}", prefix))
-            ));
+                primitive
+                    .describe_tree()
+                    .replace('\n', &format!("\n{prefix}"))
+            );
         }
         result.trim_end().to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(self.clone())
     }
 }
 
 /// Convenience functions for creating primitives.
 pub mod primitives {
-    use super::{Condition, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Sample, Seq, SkipIf, TwoStage, When};
+    use super::{
+        Condition, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Sample, Seq, SkipIf,
+        TwoStage, When,
+    };
+    use crate::noise::GateInfo;
     use crate::noise::flow::action::Nothing;
     use crate::noise::flow::condition::{Always, GateTypeIs, Leaked, NotLeaked, OutcomeIs};
-    use crate::noise::GateInfo;
 
     /// Probability gate.
     #[must_use]
@@ -959,7 +1205,7 @@ pub mod primitives {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // Angle-dependent error: p = 0.01 * |angle|
@@ -988,7 +1234,7 @@ pub mod primitives {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // T1 relaxation: 0.001 error per time unit
@@ -1005,7 +1251,7 @@ pub mod primitives {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // T2 dephasing
@@ -1051,9 +1297,10 @@ pub mod primitives {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use pecos_neo::noise::flow::prelude::*;
     /// // Partner depolarizing: apply random Pauli when partner is leaked
-    /// when_partner_leaked(pauli(), nothing())
+    /// when_partner_leaked(pauli(), nothing());
     /// ```
     #[must_use]
     pub fn when_partner_leaked<T: Primitive, E: Primitive>(
@@ -1065,7 +1312,10 @@ pub mod primitives {
 
     /// Conditional (then only, else is nothing).
     #[must_use]
-    pub fn if_then<C: Condition, T: Primitive>(condition: C, then_branch: T) -> When<C, T, Nothing> {
+    pub fn if_then<C: Condition, T: Primitive>(
+        condition: C,
+        then_branch: T,
+    ) -> When<C, T, Nothing> {
         When::new(condition, then_branch, Nothing)
     }
 
@@ -1113,7 +1363,8 @@ pub mod primitives {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use pecos_neo::noise::flow::prelude::*;
     /// // Asymmetric measurement noise
     /// let meas_noise = seq![
     ///     on_outcome(false, prob(0.02, flip_outcome())),  // 2% error on 0
@@ -1141,7 +1392,7 @@ pub mod primitives {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     /// use pecos_neo::command::GateType;
     ///
@@ -1162,7 +1413,7 @@ pub mod primitives {
     // Angle-scaled probability helpers (for two-qubit gates)
     // ========================================================================
 
-    /// Probability scaled by gate angle: p = base_prob * |angle/π|^power.
+    /// Probability scaled by gate angle: p = `base_prob` * |angle/π|^power.
     ///
     /// This models angle-dependent error rates for parameterized gates like
     /// RZZ, RXX, RYY, CRZ. The scaling factor is |θ/π|^power, which:
@@ -1171,7 +1422,7 @@ pub mod primitives {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // Linear angle scaling: p = 0.01 * |angle/π|
@@ -1189,7 +1440,7 @@ pub mod primitives {
         ProbFn::new(
             move |gate: Option<&GateInfo>| {
                 let scale = gate
-                    .and_then(|g| g.angle())
+                    .and_then(crate::noise::context::GateInfo::angle)
                     .map_or(1.0, |a| {
                         (a.to_radians().abs() / std::f64::consts::PI).powf(power)
                     });
@@ -1199,7 +1450,7 @@ pub mod primitives {
         )
     }
 
-    /// Probability with linear angle scaling: p = base_prob * |angle/π|.
+    /// Probability with linear angle scaling: p = `base_prob` * |angle/π|.
     ///
     /// Convenience wrapper for `prob_angle_scaled(base_prob, 1.0, inner)`.
     #[must_use]
@@ -1210,7 +1461,7 @@ pub mod primitives {
         prob_angle_scaled(base_probability, 1.0, inner)
     }
 
-    /// Probability with quadratic angle scaling: p = base_prob * |angle/π|^2.
+    /// Probability with quadratic angle scaling: p = `base_prob` * |angle/π|^2.
     ///
     /// Convenience wrapper for `prob_angle_scaled(base_prob, 2.0, inner)`.
     #[must_use]
@@ -1236,7 +1487,7 @@ pub mod primitives {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // Two-stage emission with partner depolarizing
@@ -1314,7 +1565,7 @@ mod tests {
         }
 
         // Should be roughly 30%
-        let rate = leak_count as f64 / 1000.0;
+        let rate = f64::from(leak_count) / 1000.0;
         assert!(
             (rate - 0.3).abs() < 0.05,
             "Expected ~30% leak rate, got {rate}"
@@ -1370,8 +1621,8 @@ mod tests {
             }
         }
 
-        let x_rate = x_count as f64 / 1000.0;
-        let z_rate = z_count as f64 / 1000.0;
+        let x_rate = f64::from(x_count) / 1000.0;
+        let z_rate = f64::from(z_count) / 1000.0;
 
         assert!((x_rate - 0.7).abs() < 0.05, "Expected ~70% X, got {x_rate}");
         assert!((z_rate - 0.3).abs() < 0.05, "Expected ~30% Z, got {z_rate}");
@@ -1422,10 +1673,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Heterogeneous sequence - use macro
-        let noise = seq![
-            skip_if_leaked(),
-            prob(0.5, when_leaked(seep(), pauli())),
-        ];
+        let noise = seq![skip_if_leaked(), prob(0.5, when_leaked(seep(), pauli())),];
 
         // Not leaked: should sometimes apply pauli
         let mut pauli_count = 0;
@@ -1437,7 +1685,7 @@ mod tests {
         }
 
         // Should be roughly 50%
-        let rate = pauli_count as f64 / 1000.0;
+        let rate = f64::from(pauli_count) / 1000.0;
         assert!(
             (rate - 0.5).abs() < 0.05,
             "Expected ~50% pauli rate, got {rate}"
@@ -1453,14 +1701,13 @@ mod tests {
         // CX gets 100% error, H gets 0% error
         let noise = prob_fn(
             |gate| {
-                gate.map(|g| {
+                gate.map_or(0.0, |g| {
                     if g.gate_type == GateType::CX {
                         1.0
                     } else {
                         0.0
                     }
                 })
-                .unwrap_or(0.0)
             },
             inject_x(),
         );
@@ -1490,9 +1737,8 @@ mod tests {
         // So half turn (pi) = 100% error, quarter turn (pi/2) = 50% error
         let noise = prob_fn(
             |gate| {
-                gate.and_then(|g| g.angle())
-                    .map(|a| a.to_radians() / std::f64::consts::PI)
-                    .unwrap_or(0.0)
+                gate.and_then(crate::noise::context::GateInfo::angle)
+                    .map_or(0.0, |a| a.to_radians() / std::f64::consts::PI)
             },
             inject_z(),
         );
@@ -1507,7 +1753,10 @@ mod tests {
             }
         }
         // Should be ~100%
-        assert!(triggered > 95, "Expected ~100% trigger rate for half turn, got {triggered}%");
+        assert!(
+            triggered > 95,
+            "Expected ~100% trigger rate for half turn, got {triggered}%"
+        );
         ctx.clear_current_gate();
 
         // Quarter turn should trigger ~50%
@@ -1519,7 +1768,7 @@ mod tests {
                 triggered += 1;
             }
         }
-        let rate = triggered as f64 / 1000.0;
+        let rate = f64::from(triggered) / 1000.0;
         assert!(
             (rate - 0.5).abs() < 0.1,
             "Expected ~50% trigger rate for quarter turn, got {rate}"
@@ -1535,11 +1784,7 @@ mod tests {
         // Default to 50% when no gate context
         let noise = prob_fn(
             |gate| {
-                if gate.is_some() {
-                    1.0
-                } else {
-                    0.5
-                }
+                if gate.is_some() { 1.0 } else { 0.5 }
             },
             inject_x(),
         );
@@ -1552,7 +1797,7 @@ mod tests {
                 triggered += 1;
             }
         }
-        let rate = triggered as f64 / 1000.0;
+        let rate = f64::from(triggered) / 1000.0;
         assert!(
             (rate - 0.5).abs() < 0.1,
             "Expected ~50% trigger rate with no context, got {rate}"
@@ -1580,7 +1825,10 @@ mod tests {
                 triggered += 1;
             }
         }
-        assert!(triggered > 95, "Expected ~100% trigger rate for duration=10, got {triggered}%");
+        assert!(
+            triggered > 95,
+            "Expected ~100% trigger rate for duration=10, got {triggered}%"
+        );
         ctx.clear_current_idle();
 
         // Set idle duration to 5 units -> p = 0.1 * 5 = 0.5 (50%)
@@ -1592,7 +1840,7 @@ mod tests {
                 triggered += 1;
             }
         }
-        let rate = triggered as f64 / 1000.0;
+        let rate = f64::from(triggered) / 1000.0;
         assert!(
             (rate - 0.5).abs() < 0.1,
             "Expected ~50% trigger rate for duration=5, got {rate}"
@@ -1615,7 +1863,10 @@ mod tests {
                 triggered += 1;
             }
         }
-        assert_eq!(triggered, 0, "Expected 0% trigger rate without idle context");
+        assert_eq!(
+            triggered, 0,
+            "Expected 0% trigger rate without idle context"
+        );
     }
 
     #[test]
@@ -1652,7 +1903,7 @@ mod tests {
                 triggered += 1;
             }
         }
-        let measured_rate = triggered as f64 / 1000.0;
+        let measured_rate = f64::from(triggered) / 1000.0;
         assert!(
             (measured_rate - 0.5).abs() < 0.1,
             "Expected ~50% trigger rate for angle=pi/4, got {measured_rate}"
@@ -1677,7 +1928,10 @@ mod tests {
                 triggered += 1;
             }
         }
-        assert!(triggered > 95, "Expected ~100% trigger rate with factor=2.0");
+        assert!(
+            triggered > 95,
+            "Expected ~100% trigger rate with factor=2.0"
+        );
         ctx.clear_current_idle();
     }
 }

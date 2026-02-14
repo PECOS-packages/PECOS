@@ -19,9 +19,9 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::{GateIdDependentChannel, GateIdNoiseConfig, PauliWeights};
-//! use pecos_neo::extensible::gates;
+//! use pecos_neo::extensible::{gates, GateId};
 //!
 //! let channel = GateIdDependentChannel::new()
 //!     // Configure core gates by their GateId
@@ -77,9 +77,9 @@ impl GateIdNoiseConfig {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::{GateIdDependentChannel, GateIdNoiseConfig};
-/// use pecos_neo::extensible::gates;
+/// use pecos_neo::extensible::{gates, GateId};
 ///
 /// // Core gates and custom gates can be configured the same way
 /// let channel = GateIdDependentChannel::new()
@@ -90,7 +90,7 @@ impl GateIdNoiseConfig {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct GateIdDependentChannel {
-    /// Gate-specific configurations keyed by GateId.
+    /// Gate-specific configurations keyed by `GateId`.
     gate_configs: HashMap<GateId, GateIdNoiseConfig>,
     /// Default configuration for gates not in the map.
     default_config: Option<GateIdNoiseConfig>,
@@ -231,6 +231,10 @@ impl NoiseChannel for GateIdDependentChannel {
 
     fn name(&self) -> &'static str {
         "GateIdDependentChannel"
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
     }
 }
 

@@ -18,7 +18,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::FlowNoiseModelBuilder;
 //!
 //! let noise = FlowNoiseModelBuilder::new()
@@ -55,19 +55,13 @@ use pecos_core::TimeScale;
 /// Returns the clamped value.
 fn validate_probability(value: f64, param_name: &str) -> f64 {
     if value < 0.0 {
-        eprintln!(
-            "Warning: {param_name} = {value} is negative, clamping to 0.0"
-        );
+        eprintln!("Warning: {param_name} = {value} is negative, clamping to 0.0");
         0.0
     } else if value > 1.0 {
-        eprintln!(
-            "Warning: {param_name} = {value} exceeds 1.0, clamping to 1.0"
-        );
+        eprintln!("Warning: {param_name} = {value} exceeds 1.0, clamping to 1.0");
         1.0
     } else if value.is_nan() {
-        eprintln!(
-            "Warning: {param_name} is NaN, setting to 0.0"
-        );
+        eprintln!("Warning: {param_name} is NaN, setting to 0.0");
         0.0
     } else {
         value
@@ -78,19 +72,13 @@ fn validate_probability(value: f64, param_name: &str) -> f64 {
 /// Returns the clamped value.
 fn validate_rate(value: f64, param_name: &str) -> f64 {
     if value < 0.0 {
-        eprintln!(
-            "Warning: {param_name} = {value} is negative, clamping to 0.0"
-        );
+        eprintln!("Warning: {param_name} = {value} is negative, clamping to 0.0");
         0.0
     } else if value.is_nan() {
-        eprintln!(
-            "Warning: {param_name} is NaN, setting to 0.0"
-        );
+        eprintln!("Warning: {param_name} is NaN, setting to 0.0");
         0.0
     } else if value.is_infinite() {
-        eprintln!(
-            "Warning: {param_name} is infinite, clamping to f64::MAX"
-        );
+        eprintln!("Warning: {param_name} is infinite, clamping to f64::MAX");
         f64::MAX
     } else {
         value
@@ -107,7 +95,7 @@ fn validate_rate(value: f64, param_name: &str) -> f64 {
 ///
 /// You can mix flow channels with traditional channels using [`with_channel`]:
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
 /// use pecos_neo::noise::MeasurementChannel;
 ///
@@ -277,8 +265,9 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::SingleQubitEmissionWeights;
+    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
     ///
     /// // 25% each for X, Y, Z Pauli errors, 25% leakage
     /// let emission = SingleQubitEmissionWeights::custom(0.25, 0.25, 0.25, 0.25);
@@ -345,8 +334,9 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::TwoQubitPauliWeights;
+    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
     ///
     /// // ZZ-biased errors (common in certain gate implementations)
     /// let model = FlowNoiseModelBuilder::new()
@@ -371,8 +361,9 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::TwoQubitEmissionWeights;
+    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
     ///
     /// // Use uniform weights with leakage
     /// let model = FlowNoiseModelBuilder::new()
@@ -394,9 +385,9 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
-    /// use pecos_neo::noise::AngleScaling;
+    /// use pecos_neo::noise::two_qubit::AngleScaling;
     ///
     /// let model = FlowNoiseModelBuilder::new()
     ///     .with_p2(0.01)
@@ -509,7 +500,10 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_core::QubitId;
+    ///
     /// // Define neighbors as adjacent qubits in a linear chain
     /// fn linear_neighbors(qubits: &[QubitId]) -> Vec<QubitId> {
     ///     qubits.iter()
@@ -541,8 +535,9 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::CrosstalkTransitions;
+    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
     ///
     /// // Asymmetric crosstalk: qubits in |0⟩ more likely to leak
     /// let transitions = CrosstalkTransitions::custom(
@@ -626,7 +621,8 @@ impl FlowNoiseModelBuilder {
     /// scales the effective rate. Default is 1.0 (no adjustment).
     #[must_use]
     pub fn with_coherent_to_incoherent_factor(mut self, factor: f64) -> Self {
-        self.p_idle_coherent_to_incoherent_factor = validate_rate(factor, "coherent_to_incoherent_factor");
+        self.p_idle_coherent_to_incoherent_factor =
+            validate_rate(factor, "coherent_to_incoherent_factor");
         self
     }
 
@@ -714,7 +710,7 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
     /// use pecos_core::TimeScale;
     ///
@@ -743,7 +739,7 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
     /// use pecos_core::TimeScale;
     ///
@@ -779,7 +775,7 @@ impl FlowNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
     /// use pecos_neo::noise::MeasurementChannel;
     ///
@@ -976,24 +972,22 @@ impl FlowNoiseModelBuilder {
     {
         if self.p1_seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage: complex decision tree
-            seq![
-                prob(
-                    self.p1,
-                    when_leaked(
-                        // Leaked qubit: seepage with probability
-                        prob(self.p1_seepage, seep()),
-                        // Not leaked: emission (scaled) or pauli
-                        if effective_leak > 0.0 {
-                            sample![
-                                (effective_leak, emission_action),
-                                (1.0 - effective_leak, pauli_action),
-                            ]
-                        } else {
-                            sample![(1.0, pauli_action),]
-                        },
-                    ),
+            seq![prob(
+                self.p1,
+                when_leaked(
+                    // Leaked qubit: seepage with probability
+                    prob(self.p1_seepage, seep()),
+                    // Not leaked: emission (scaled) or pauli
+                    if effective_leak > 0.0 {
+                        sample![
+                            (effective_leak, emission_action),
+                            (1.0 - effective_leak, pauli_action),
+                        ]
+                    } else {
+                        sample![(1.0, pauli_action),]
+                    },
                 ),
-            ]
+            ),]
         } else {
             // Simple depolarizing
             seq![prob(self.p1, pauli_action),]
@@ -1069,29 +1063,32 @@ impl FlowNoiseModelBuilder {
     }
 
     /// Inner helper for building two-qubit constant noise.
-    fn build_two_qubit_constant_inner<P, E>(&self, pauli_action: P, emission_action: E, effective_leak: f64) -> BoxSeq
+    fn build_two_qubit_constant_inner<P, E>(
+        &self,
+        pauli_action: P,
+        emission_action: E,
+        effective_leak: f64,
+    ) -> BoxSeq
     where
         P: crate::noise::flow::Primitive + 'static,
         E: crate::noise::flow::Primitive + 'static,
     {
         if self.p2_seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage
-            seq![
-                prob(
-                    self.p2,
-                    when_leaked(
-                        prob(self.p2_seepage, seep()),
-                        if effective_leak > 0.0 {
-                            sample![
-                                (effective_leak, emission_action),
-                                (1.0 - effective_leak, pauli_action),
-                            ]
-                        } else {
-                            sample![(1.0, pauli_action),]
-                        },
-                    ),
+            seq![prob(
+                self.p2,
+                when_leaked(
+                    prob(self.p2_seepage, seep()),
+                    if effective_leak > 0.0 {
+                        sample![
+                            (effective_leak, emission_action),
+                            (1.0 - effective_leak, pauli_action),
+                        ]
+                    } else {
+                        sample![(1.0, pauli_action),]
+                    },
                 ),
-            ]
+            ),]
         } else {
             // Simple depolarizing
             seq![prob(self.p2, pauli_action),]
@@ -1111,7 +1108,12 @@ impl FlowNoiseModelBuilder {
             (Some(pauli_model), Some(emission_model)) => {
                 let pauli_action = TwoQubitPauli::with_weights(pauli_model);
                 let emission_action = TwoQubitEmission::with_weights(emission_model);
-                self.build_two_qubit_angle_inner(scaling, pauli_action, emission_action, effective_leak)
+                self.build_two_qubit_angle_inner(
+                    scaling,
+                    pauli_action,
+                    emission_action,
+                    effective_leak,
+                )
             }
             // Correlated pauli, default emission (leak)
             (Some(pauli_model), None) => {
@@ -1125,7 +1127,12 @@ impl FlowNoiseModelBuilder {
                     None => Pauli::uniform(),
                 };
                 let emission_action = TwoQubitEmission::with_weights(emission_model);
-                self.build_two_qubit_angle_inner(scaling, pauli_action, emission_action, effective_leak)
+                self.build_two_qubit_angle_inner(
+                    scaling,
+                    pauli_action,
+                    emission_action,
+                    effective_leak,
+                )
             }
             // Both default (independent per-qubit Pauli, leak for emission)
             (None, None) => {
@@ -1188,15 +1195,13 @@ impl FlowNoiseModelBuilder {
     /// Build preparation noise primitive.
     fn build_preparation_noise(&self) -> BoxSeq {
         if self.p_prep_leak_ratio > 0.0 {
-            seq![
-                prob(
-                    self.p_prep,
-                    sample![
-                        (self.p_prep_leak_ratio, leak()),
-                        (1.0 - self.p_prep_leak_ratio, inject_x()),
-                    ],
-                ),
-            ]
+            seq![prob(
+                self.p_prep,
+                sample![
+                    (self.p_prep_leak_ratio, leak()),
+                    (1.0 - self.p_prep_leak_ratio, inject_x()),
+                ],
+            ),]
         } else {
             seq![prob(self.p_prep, inject_x()),]
         }
@@ -1343,13 +1348,13 @@ mod tests {
         let p1 = 0.1;
 
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0)
             .h(0)
             .h(0)
             .h(0)
             .h(0)
-            .measure(0)
+            .mz(0)
             .build();
 
         // Run many shots and check error rate
@@ -1362,13 +1367,13 @@ mod tests {
                 .with_noise(model)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            if outcomes.get(QubitId(0)).map(|o| o.outcome) != Some(false) {
+            if outcomes.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 errors += 1;
             }
         }
 
         // With 5 gates at 10% each, expect significant error rate
-        let error_rate = errors as f64 / shots as f64;
+        let error_rate = f64::from(errors) / shots as f64;
         assert!(
             error_rate > 0.2,
             "Expected significant error rate, got {error_rate}"
@@ -1381,7 +1386,7 @@ mod tests {
         let p_1_to_0 = 0.0;
 
         // Prep |0> and measure - only 0->1 errors should occur
-        let commands = CommandBuilder::new().prep(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).mz(0).build();
 
         let shots = 500;
         let mut flips = 0;
@@ -1396,14 +1401,13 @@ mod tests {
             if runner
                 .execute(&commands)
                 .get(QubitId(0))
-                .map(|o| o.outcome)
-                == Some(true)
+                .is_some_and(|o| o.outcome)
             {
                 flips += 1;
             }
         }
 
-        let flip_rate = flips as f64 / shots as f64;
+        let flip_rate = f64::from(flips) / shots as f64;
         assert!(
             (flip_rate - p_0_to_1).abs() < 0.1,
             "Expected ~{p_0_to_1} flip rate, got {flip_rate}"
@@ -1529,7 +1533,7 @@ mod tests {
         // Test that the primitive applies idle noise correctly
         // Build the primitive directly
         let tq_noise = seq![
-            prob(0.0, pauli()), // No main error
+            prob(0.0, pauli()),    // No main error
             prob(1.0, inject_z()), // 100% idle Z error
         ];
 
@@ -1544,7 +1548,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
 
         // Check that the channel responds to this event
         assert!(
@@ -1565,12 +1570,12 @@ mod tests {
         // Test that p2_idle works via the builder
         // Use high p2 (which also applies p2_idle) to ensure the channel triggers
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0) // Make qubit 0 in superposition
             .cx(0, 1) // Two-qubit gate
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let shots = 500;
@@ -1581,15 +1586,13 @@ mod tests {
 
         for seed in 0..shots {
             // With p2 error
-            let model_with = FlowNoiseModelBuilder::new()
-                .with_p2(p2)
-                .build();
+            let model_with = FlowNoiseModelBuilder::new().with_p2(p2).build();
             let mut runner = ShotRunner::new(SparseStab::new(2))
                 .with_noise(model_with)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            let q0 = outcomes.get(QubitId(0)).map(|o| o.outcome).unwrap_or(false);
-            let q1 = outcomes.get(QubitId(1)).map(|o| o.outcome).unwrap_or(false);
+            let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
+            let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             // Bell state: q0 != q1 indicates error
             if q0 != q1 {
                 errors_with += 1;
@@ -1601,16 +1604,16 @@ mod tests {
                 .with_noise(model_without)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            let q0 = outcomes.get(QubitId(0)).map(|o| o.outcome).unwrap_or(false);
-            let q1 = outcomes.get(QubitId(1)).map(|o| o.outcome).unwrap_or(false);
+            let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
+            let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 != q1 {
                 errors_without += 1;
             }
         }
 
         // With 50% error, should see significantly more errors
-        let rate_with = errors_with as f64 / shots as f64;
-        let rate_without = errors_without as f64 / shots as f64;
+        let rate_with = f64::from(errors_with) / shots as f64;
+        let rate_without = f64::from(errors_without) / shots as f64;
 
         assert!(
             rate_with > rate_without + 0.1,
@@ -1649,11 +1652,11 @@ mod tests {
 
         // Test with half-turn angle (pi) - should have ~50% error
         let commands_half = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .rzz(0, 1, Angle64::HALF_TURN) // pi radians
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let shots = 500;
@@ -1671,14 +1674,14 @@ mod tests {
             let outcomes = runner.execute(&commands_half);
 
             // Count if either qubit has unexpected outcome (both should be 0 without noise)
-            let q0 = outcomes.get(QubitId(0)).map(|o| o.outcome).unwrap_or(false);
-            let q1 = outcomes.get(QubitId(1)).map(|o| o.outcome).unwrap_or(false);
+            let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
+            let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 || q1 {
                 errors_half += 1;
             }
         }
 
-        let error_rate_half = errors_half as f64 / shots as f64;
+        let error_rate_half = f64::from(errors_half) / shots as f64;
         // Linear scaling at pi -> scale = 1.0, so effective p = 0.5
         // Should see significant errors
         assert!(
@@ -1688,11 +1691,11 @@ mod tests {
 
         // Test with quarter-turn angle (pi/4) - should have ~12.5% error (0.5 * 0.25)
         let commands_quarter = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .rzz(0, 1, Angle64::QUARTER_TURN) // pi/2 radians
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut errors_quarter = 0;
@@ -1708,14 +1711,14 @@ mod tests {
                 .with_seed(seed);
             let outcomes = runner.execute(&commands_quarter);
 
-            let q0 = outcomes.get(QubitId(0)).map(|o| o.outcome).unwrap_or(false);
-            let q1 = outcomes.get(QubitId(1)).map(|o| o.outcome).unwrap_or(false);
+            let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
+            let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 || q1 {
                 errors_quarter += 1;
             }
         }
 
-        let error_rate_quarter = errors_quarter as f64 / shots as f64;
+        let error_rate_quarter = f64::from(errors_quarter) / shots as f64;
         // Linear scaling at pi/2 -> scale = 0.5, so effective p = 0.25
         // Should see fewer errors than half-turn
         assert!(
@@ -1804,7 +1807,7 @@ mod tests {
     // Builder Comparison Tests (FlowNoiseModelBuilder vs GeneralNoiseModelBuilder)
     // ========================================================================
 
-    /// Compare FlowNoiseModelBuilder with GeneralNoiseModelBuilder for basic depolarizing.
+    /// Compare `FlowNoiseModelBuilder` with `GeneralNoiseModelBuilder` for basic depolarizing.
     #[test]
     fn test_builder_comparison_depolarizing() {
         use crate::noise::GeneralNoiseModelBuilder;
@@ -1816,13 +1819,13 @@ mod tests {
 
         // Build circuit with single and two-qubit gates
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .h(1)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let shots = 300;
@@ -1840,32 +1843,29 @@ mod tests {
                 .with_noise(general_model)
                 .with_seed(seed);
             let outcomes_general = runner_general.execute(&commands);
-            let q0 = outcomes_general.get(QubitId(0)).map(|o| o.outcome).unwrap_or(false);
-            let q1 = outcomes_general.get(QubitId(1)).map(|o| o.outcome).unwrap_or(false);
+            let q0 = outcomes_general.get(QubitId(0)).is_some_and(|o| o.outcome);
+            let q1 = outcomes_general.get(QubitId(1)).is_some_and(|o| o.outcome);
             // Bell state should give correlated results; errors break this
             if q0 != q1 {
                 general_errors += 1;
             }
 
             // FlowNoiseModelBuilder
-            let flow_model = FlowNoiseModelBuilder::new()
-                .with_p1(p1)
-                .with_p2(p2)
-                .build();
+            let flow_model = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
 
             let mut runner_flow = ShotRunner::new(SparseStab::new(2))
                 .with_noise(flow_model)
                 .with_seed(seed);
             let outcomes_flow = runner_flow.execute(&commands);
-            let q0 = outcomes_flow.get(QubitId(0)).map(|o| o.outcome).unwrap_or(false);
-            let q1 = outcomes_flow.get(QubitId(1)).map(|o| o.outcome).unwrap_or(false);
+            let q0 = outcomes_flow.get(QubitId(0)).is_some_and(|o| o.outcome);
+            let q1 = outcomes_flow.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 != q1 {
                 flow_errors += 1;
             }
         }
 
-        let general_rate = general_errors as f64 / shots as f64;
-        let flow_rate = flow_errors as f64 / shots as f64;
+        let general_rate = f64::from(general_errors) / shots as f64;
+        let flow_rate = f64::from(flow_errors) / shots as f64;
 
         // Both should produce similar error rates (within statistical tolerance)
         assert!(
@@ -1885,7 +1885,7 @@ mod tests {
         let p_meas_1 = 0.2;
 
         // Simple prep and measure circuit
-        let commands = CommandBuilder::new().prep(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).mz(0).build();
 
         let shots = 500;
         let mut general_flips = 0;
@@ -1901,7 +1901,7 @@ mod tests {
                 .with_noise(general_model)
                 .with_seed(seed);
             let outcomes = runner_general.execute(&commands);
-            if outcomes.get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 general_flips += 1;
             }
 
@@ -1914,13 +1914,13 @@ mod tests {
                 .with_noise(flow_model)
                 .with_seed(seed);
             let outcomes = runner_flow.execute(&commands);
-            if outcomes.get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 flow_flips += 1;
             }
         }
 
-        let general_rate = general_flips as f64 / shots as f64;
-        let flow_rate = flow_flips as f64 / shots as f64;
+        let general_rate = f64::from(general_flips) / shots as f64;
+        let flow_rate = f64::from(flow_flips) / shots as f64;
 
         // Both should be close to p_meas_0 (flipping 0 to 1)
         assert!(
@@ -1943,7 +1943,7 @@ mod tests {
         let p_prep = 0.15;
 
         // Prep and immediately measure
-        let commands = CommandBuilder::new().prep(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).mz(0).build();
 
         let shots = 500;
         let mut general_errors = 0;
@@ -1951,32 +1951,36 @@ mod tests {
 
         for seed in 0..shots {
             // GeneralNoiseModelBuilder
-            let general_model = GeneralNoiseModelBuilder::new()
-                .with_p_prep(p_prep)
-                .build();
+            let general_model = GeneralNoiseModelBuilder::new().with_p_prep(p_prep).build();
 
             let mut runner = ShotRunner::new(SparseStab::new(1))
                 .with_noise(general_model)
                 .with_seed(seed);
-            if runner.execute(&commands).get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if runner
+                .execute(&commands)
+                .get(QubitId(0))
+                .is_some_and(|o| o.outcome)
+            {
                 general_errors += 1;
             }
 
             // FlowNoiseModelBuilder
-            let flow_model = FlowNoiseModelBuilder::new()
-                .with_p_prep(p_prep)
-                .build();
+            let flow_model = FlowNoiseModelBuilder::new().with_p_prep(p_prep).build();
 
             let mut runner = ShotRunner::new(SparseStab::new(1))
                 .with_noise(flow_model)
                 .with_seed(seed);
-            if runner.execute(&commands).get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if runner
+                .execute(&commands)
+                .get(QubitId(0))
+                .is_some_and(|o| o.outcome)
+            {
                 flow_errors += 1;
             }
         }
 
-        let general_rate = general_errors as f64 / shots as f64;
-        let flow_rate = flow_errors as f64 / shots as f64;
+        let general_rate = f64::from(general_errors) / shots as f64;
+        let flow_rate = f64::from(flow_errors) / shots as f64;
 
         // Both should be close to p_prep
         assert!(
@@ -2159,9 +2163,7 @@ mod tests {
     #[test]
     fn test_validation_clamps_negative_probability() {
         // Negative probability should be clamped to 0.0
-        let model = FlowNoiseModelBuilder::new()
-            .with_p1(-0.5)
-            .build();
+        let model = FlowNoiseModelBuilder::new().with_p1(-0.5).build();
 
         // Model should build successfully (clamped to 0.0)
         // No channels since p1=0.0 after clamping
@@ -2171,9 +2173,7 @@ mod tests {
     #[test]
     fn test_validation_clamps_probability_over_one() {
         // Probability > 1.0 should be clamped to 1.0
-        let model = FlowNoiseModelBuilder::new()
-            .with_p1(1.5)
-            .build();
+        let model = FlowNoiseModelBuilder::new().with_p1(1.5).build();
 
         // Model should build successfully (clamped to 1.0)
         assert_eq!(model.channel_count(), 1);
@@ -2182,9 +2182,7 @@ mod tests {
     #[test]
     fn test_validation_handles_nan() {
         // NaN should be set to 0.0
-        let model = FlowNoiseModelBuilder::new()
-            .with_p1(f64::NAN)
-            .build();
+        let model = FlowNoiseModelBuilder::new().with_p1(f64::NAN).build();
 
         // Model should build successfully (set to 0.0)
         assert_eq!(model.channel_count(), 0);
@@ -2250,11 +2248,11 @@ mod tests {
         let emission = SingleQubitEmissionWeights::leakage_only();
 
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Single-qubit gate where emission can occur
             .h(0)
             .h(0)
-            .measure(0)
+            .mz(0)
             .build();
 
         let shots = 200;
@@ -2274,7 +2272,7 @@ mod tests {
 
             // With H^3 = H on |0>, noiseless outcome is 50/50
             // With leakage, we might see different behavior
-            if outcomes.get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 outcomes_different += 1;
             }
         }
@@ -2347,12 +2345,7 @@ mod tests {
         let emission_ratio = 0.5;
         let emission = SingleQubitEmissionWeights::uniform();
 
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
 
         let shots = 300;
         let mut general_errors = 0;
@@ -2370,7 +2363,7 @@ mod tests {
                 .with_noise(general_model)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            if outcomes.get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 general_errors += 1;
             }
 
@@ -2385,13 +2378,13 @@ mod tests {
                 .with_noise(flow_model)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            if outcomes.get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 flow_errors += 1;
             }
         }
 
-        let general_rate = general_errors as f64 / shots as f64;
-        let flow_rate = flow_errors as f64 / shots as f64;
+        let general_rate = f64::from(general_errors) / shots as f64;
+        let flow_rate = f64::from(flow_errors) / shots as f64;
 
         // Both builders should produce similar error rates
         assert!(
@@ -2409,11 +2402,11 @@ mod tests {
         let p2 = 0.3;
 
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let shots = 300;
@@ -2431,8 +2424,8 @@ mod tests {
                 .with_noise(general_model)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            let q0 = outcomes.get(QubitId(0)).map(|o| o.outcome).unwrap_or(false);
-            let q1 = outcomes.get(QubitId(1)).map(|o| o.outcome).unwrap_or(false);
+            let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
+            let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 || q1 {
                 general_errors += 1;
             }
@@ -2447,15 +2440,15 @@ mod tests {
                 .with_noise(flow_model)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            let q0 = outcomes.get(QubitId(0)).map(|o| o.outcome).unwrap_or(false);
-            let q1 = outcomes.get(QubitId(1)).map(|o| o.outcome).unwrap_or(false);
+            let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
+            let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 || q1 {
                 flow_errors += 1;
             }
         }
 
-        let general_rate = general_errors as f64 / shots as f64;
-        let flow_rate = flow_errors as f64 / shots as f64;
+        let general_rate = f64::from(general_errors) / shots as f64;
+        let flow_rate = f64::from(flow_errors) / shots as f64;
 
         // Both builders should produce similar error rates
         assert!(

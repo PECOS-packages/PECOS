@@ -22,7 +22,7 @@ use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::plugins::MeasurementNoisePlugin;
 ///
 /// // Symmetric 1% measurement error

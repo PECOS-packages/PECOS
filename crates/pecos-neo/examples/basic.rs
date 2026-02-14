@@ -13,8 +13,8 @@
 //! Basic usage examples for pecos-neo.
 //!
 //! This example demonstrates:
-//! - Building quantum circuits with CommandBuilder
-//! - Running simulations with ShotRunner
+//! - Building quantum circuits with `CommandBuilder`
+//! - Running simulations with `ShotRunner`
 //! - Collecting and analyzing measurement outcomes
 //!
 //! Run with: cargo run --example basic
@@ -38,12 +38,12 @@ fn example_bell_state() {
 
     // Build the circuit
     let commands = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
-        .h(0)       // Create superposition on qubit 0
-        .cx(0, 1)   // Entangle with qubit 1
-        .measure(0)
-        .measure(1)
+        .pz(0)
+        .pz(1)
+        .h(0) // Create superposition on qubit 0
+        .cx(0, 1) // Entangle with qubit 1
+        .mz(0)
+        .mz(1)
         .build();
 
     // Create a runner with the stabilizer simulator
@@ -57,12 +57,12 @@ fn example_bell_state() {
         let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
         let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
 
-        let key = format!("{}{}", q0 as u8, q1 as u8);
+        let key = format!("{}{}", u8::from(q0), u8::from(q1));
         *counts.entry(key).or_insert(0) += 1;
     }
 
     println!("Results (1000 shots):");
-    for (outcome, count) in counts.iter() {
+    for (outcome, count) in &counts {
         println!("  |{}⟩: {} ({:.1}%)", outcome, count, *count as f64 / 10.0);
     }
 
@@ -77,12 +77,18 @@ fn example_ghz_state() {
 
     // Build the GHZ circuit
     let commands = CommandBuilder::new()
-        .prep(0).prep(1).prep(2).prep(3)
+        .pz(0)
+        .pz(1)
+        .pz(2)
+        .pz(3)
         .h(0)
         .cx(0, 1)
         .cx(1, 2)
         .cx(2, 3)
-        .measure(0).measure(1).measure(2).measure(3)
+        .mz(0)
+        .mz(1)
+        .mz(2)
+        .mz(3)
         .build();
 
     let mut runner = ShotRunner::new(SparseStab::new(4)).with_seed(123);
@@ -104,7 +110,8 @@ fn example_ghz_state() {
     let mut sorted: Vec<_> = counts.iter().collect();
     sorted.sort_by_key(|(k, _)| *k);
     for (outcome, count) in sorted {
-        if *count > 10 {  // Only show significant outcomes
+        if *count > 10 {
+            // Only show significant outcomes
             println!("  |{}⟩: {} ({:.1}%)", outcome, count, *count as f64 / 10.0);
         }
     }
@@ -117,7 +124,9 @@ fn example_random_circuit() {
 
     // Build a circuit with various Clifford gates
     let commands = CommandBuilder::new()
-        .prep(0).prep(1).prep(2)
+        .pz(0)
+        .pz(1)
+        .pz(2)
         .h(0)
         .sz(1)
         .cx(0, 1)
@@ -125,7 +134,9 @@ fn example_random_circuit() {
         .h(2)
         .szdg(0)
         .cx(2, 0)
-        .measure(0).measure(1).measure(2)
+        .mz(0)
+        .mz(1)
+        .mz(2)
         .build();
 
     let mut runner = ShotRunner::new(SparseStab::new(3)).with_seed(456);
@@ -145,7 +156,7 @@ fn example_random_circuit() {
 
     println!("Results (1000 shots):");
     let mut sorted: Vec<_> = counts.iter().collect();
-    sorted.sort_by(|(_, a), (_, b)| b.cmp(a));  // Sort by count descending
+    sorted.sort_by(|(_, a), (_, b)| b.cmp(a)); // Sort by count descending
     for (outcome, count) in sorted.iter().take(5) {
         println!("  |{}⟩: {} ({:.1}%)", outcome, count, **count as f64 / 10.0);
     }
@@ -157,11 +168,7 @@ fn example_shot_statistics() {
     println!("--- Shot Statistics ---");
 
     // Simple Hadamard circuit - should give 50/50 distribution
-    let commands = CommandBuilder::new()
-        .prep(0)
-        .h(0)
-        .measure(0)
-        .build();
+    let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
     let mut runner = ShotRunner::new(SparseStab::new(1)).with_seed(789);
 
@@ -178,14 +185,22 @@ fn example_shot_statistics() {
         }
     }
 
-    println!("Hadamard gate statistics ({} shots):", num_shots);
-    println!("  |0⟩: {} ({:.2}%)", count_0, count_0 as f64 / num_shots as f64 * 100.0);
-    println!("  |1⟩: {} ({:.2}%)", count_1, count_1 as f64 / num_shots as f64 * 100.0);
+    println!("Hadamard gate statistics ({num_shots} shots):");
+    println!(
+        "  |0⟩: {} ({:.2}%)",
+        count_0,
+        f64::from(count_0) / f64::from(num_shots) * 100.0
+    );
+    println!(
+        "  |1⟩: {} ({:.2}%)",
+        count_1,
+        f64::from(count_1) / f64::from(num_shots) * 100.0
+    );
 
     // Calculate chi-squared statistic for uniformity
-    let expected = num_shots as f64 / 2.0;
-    let chi_sq = (count_0 as f64 - expected).powi(2) / expected
-               + (count_1 as f64 - expected).powi(2) / expected;
-    println!("  Chi-squared: {:.2} (should be < 3.84 for p=0.05)", chi_sq);
+    let expected = f64::from(num_shots) / 2.0;
+    let chi_sq = (f64::from(count_0) - expected).powi(2) / expected
+        + (f64::from(count_1) - expected).powi(2) / expected;
+    println!("  Chi-squared: {chi_sq:.2} (should be < 3.84 for p=0.05)");
     println!();
 }

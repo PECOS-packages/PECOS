@@ -88,6 +88,7 @@ impl PauliString {
     ///
     /// Returns `None` if the string contains invalid characters.
     #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         // Handle optional sign prefix
         let (positive, chars) = if let Some(rest) = s.strip_prefix('-') {
@@ -110,7 +111,7 @@ impl PauliString {
     #[must_use]
     pub fn identity(n: usize) -> Self {
         Self {
-            paulis: std::iter::repeat(Pauli::I).take(n).collect(),
+            paulis: std::iter::repeat_n(Pauli::I, n).collect(),
             positive: true,
         }
     }
@@ -118,7 +119,7 @@ impl PauliString {
     /// Create a single Z on qubit i of n qubits.
     #[must_use]
     pub fn single_z(i: usize, n: usize) -> Self {
-        let mut paulis: SmallVec<[Pauli; 8]> = std::iter::repeat(Pauli::I).take(n).collect();
+        let mut paulis: SmallVec<[Pauli; 8]> = std::iter::repeat_n(Pauli::I, n).collect();
         if i < n {
             paulis[i] = Pauli::Z;
         }
@@ -131,7 +132,7 @@ impl PauliString {
     /// Create a single X on qubit i of n qubits.
     #[must_use]
     pub fn single_x(i: usize, n: usize) -> Self {
-        let mut paulis: SmallVec<[Pauli; 8]> = std::iter::repeat(Pauli::I).take(n).collect();
+        let mut paulis: SmallVec<[Pauli; 8]> = std::iter::repeat_n(Pauli::I, n).collect();
         if i < n {
             paulis[i] = Pauli::X;
         }
@@ -205,7 +206,7 @@ impl PauliString {
     pub fn to_string_repr(&self) -> String {
         let sign = if self.positive { "" } else { "-" };
         let paulis: String = self.paulis.iter().map(|p| p.to_char()).collect();
-        format!("{}{}", sign, paulis)
+        format!("{sign}{paulis}")
     }
 }
 
@@ -233,6 +234,7 @@ impl StabilizerMeasurement {
 
     /// Create from a string like "ZXZ" or "-XZZY".
     #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         PauliString::from_str(s).map(Self::new)
     }
@@ -266,7 +268,7 @@ impl StabilizerMeasurement {
         let mut ops = Vec::new();
 
         // 1. Prepare ancilla in |0⟩
-        ops.push(AdaptedOp::prep_z(ancilla));
+        ops.push(AdaptedOp::pz(ancilla));
 
         // 2. For each non-identity Pauli, couple to ancilla
         for (i, pauli) in self.pauli.non_identity_terms() {
@@ -298,7 +300,7 @@ impl StabilizerMeasurement {
         }
 
         // 4. Measure ancilla
-        ops.push(AdaptedOp::meas_z(ancilla, ResultId(0)));
+        ops.push(AdaptedOp::mz(ancilla, ResultId(0)));
 
         // 5. Output result
         ops.push(AdaptedOp::OutputResult {
@@ -327,6 +329,7 @@ impl StabilizerPreparation {
 
     /// Create from a string like "ZX" or "-XZ".
     #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         PauliString::from_str(s).map(Self::new)
     }
@@ -367,16 +370,15 @@ impl StabilizerPreparation {
 
         // For negative eigenstate, flip the first non-trivial qubit
         // This changes the eigenvalue from +1 to -1
-        if !self.pauli.is_positive() {
-            if let Some(i) = first_nontrivial {
-                let q = qubits[i];
-                // Apply the Pauli itself to flip the eigenvalue
-                match self.pauli.paulis[i] {
-                    Pauli::X => ops.push(AdaptedOp::gate1(gates::Z, q)),
-                    Pauli::Y => ops.push(AdaptedOp::gate1(gates::Z, q)),
-                    Pauli::Z => ops.push(AdaptedOp::gate1(gates::X, q)),
-                    Pauli::I => {}
-                }
+        if !self.pauli.is_positive()
+            && let Some(i) = first_nontrivial
+        {
+            let q = qubits[i];
+            // Apply the Pauli itself to flip the eigenvalue
+            match self.pauli.paulis[i] {
+                Pauli::X | Pauli::Y => ops.push(AdaptedOp::gate1(gates::Z, q)),
+                Pauli::Z => ops.push(AdaptedOp::gate1(gates::X, q)),
+                Pauli::I => {}
             }
         }
 

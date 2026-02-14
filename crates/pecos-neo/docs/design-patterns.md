@@ -73,6 +73,13 @@ let results = sim_neo(circuit)
     .workers(4)
     .shots(1000)
     .run();
+
+// Parallel execution with noise
+let results = sim_neo(circuit)
+    .depolarizing(0.01)
+    .workers(4)
+    .shots(1000)
+    .run();
 ```
 
 ### When to Use ExtendedRunner
@@ -259,6 +266,84 @@ pub fn configure(feature: impl Into<MyFeature>) -> Self {
 // Usage:
 .configure(my_feature().with_param1(2.0))  // Builder
 .configure(existing_feature)                // Direct value
+```
+
+## The clone_box Pattern for Trait Objects
+
+Trait objects (`Box<dyn Trait>`) cannot use `Clone` directly because `Clone`
+requires `Sized`. The codebase uses a `clone_box()` method on each trait to
+enable cloning trait objects:
+
+```rust
+pub trait NoiseChannel: Send + Sync {
+    fn responds_to(&self, event: &NoiseEvent<'_>) -> bool;
+    fn apply(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext, rng: &mut PecosRng) -> NoiseResponse;
+    fn name(&self) -> &'static str;
+
+    /// Clone this channel into a boxed trait object.
+    fn clone_box(&self) -> Box<dyn NoiseChannel>;
+}
+```
+
+### Implementing clone_box for Custom Channels
+
+Any custom `NoiseChannel` must implement `clone_box()`. The typical pattern is:
+
+```rust
+#[derive(Clone)]
+struct MyChannel {
+    probability: f64,
+}
+
+impl NoiseChannel for MyChannel {
+    // ... responds_to, apply, name ...
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
+}
+```
+
+This pattern is used by three traits:
+- `NoiseChannel` -- noise channels in `ComposableNoiseModel`
+- `EventHandler` -- state-tracking handlers (e.g., preparation/measurement tracking)
+- `ContextObserver` -- observers that react to state changes (e.g., leakage)
+
+### Type-Erased Cloning for Primitives
+
+The `Primitive` trait (flow-based noise decision trees) also has `clone_box()`.
+Composite primitives like `Prob<P>`, `When<C, T, E>`, and `Seq<P>` use
+type-erased reconstruction in their `clone_box()` implementations. This avoids
+requiring `P: Clone` on generic Primitive impls:
+
+```rust
+// Prob<P> does NOT require P: Clone for its Primitive impl.
+// Instead, clone_box() reconstructs using Box<dyn Primitive>:
+impl<P: Primitive> Primitive for Prob<P> {
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(Prob {
+            probability: self.probability,
+            inner: self.inner.clone_box(),  // Returns Box<dyn Primitive>
+        })
+    }
+}
+```
+
+This works because `Box<dyn Primitive>` itself implements `Primitive`,
+so the type-erased version is fully functional.
+
+### Why clone_box Matters
+
+`ComposableNoiseModel` implements `Clone` via `clone_box()` on its constituent
+trait objects. This enables parallel Monte Carlo execution for noisy circuits --
+each worker gets an independent clone of the noise model:
+
+```rust
+sim_neo(circuit)
+    .depolarizing(0.01)
+    .workers(4)     // Each worker clones the noise model
+    .shots(10000)
+    .run();
 ```
 
 ## Trait Bounds as Source of Truth

@@ -17,7 +17,7 @@
 //!
 //! # Quick Start
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Simple: just set error rates
@@ -38,7 +38,7 @@
 //!
 //! Use ready-made noise configurations for common scenarios:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Simple depolarizing noise
@@ -64,7 +64,7 @@
 //!
 //! Use `NoiseModelBuilder` to combine features:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! let model = NoiseModelBuilder::new()
@@ -79,7 +79,7 @@
 //!
 //! Build custom decision trees using flow primitives:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Custom single-qubit noise with leakage handling
@@ -107,7 +107,8 @@
 //!
 //! Random Pauli errors after gates:
 //!
-//! ```ignore
+//! ```
+//! # use pecos_neo::noise::prelude::*;
 //! // Using pattern
 //! let model = depolarizing_only(0.001, 0.01);
 //!
@@ -120,7 +121,8 @@
 //!
 //! Bit-flip errors on measurement outcomes:
 //!
-//! ```ignore
+//! ```
+//! # use pecos_neo::noise::prelude::*;
 //! // Symmetric (same error rate for 0->1 and 1->0)
 //! let model = measurement_only(0.02, 0.02);
 //!
@@ -138,7 +140,8 @@
 //!
 //! Model qubits leaving the computational basis:
 //!
-//! ```ignore
+//! ```
+//! # use pecos_neo::noise::prelude::*;
 //! let model = with_leakage(
 //!     0.001,  // p1: single-qubit error rate
 //!     0.01,   // p2: two-qubit error rate
@@ -151,7 +154,8 @@
 //!
 //! T1 and T2 decay during idle time:
 //!
-//! ```ignore
+//! ```
+//! # use pecos_neo::noise::prelude::*;
 //! // Using builder
 //! let model = NoiseModelBuilder::new()
 //!     .with_idle_noise(0.0001, 0.0005)  // T1 rate, T2 rate
@@ -166,7 +170,8 @@
 //!
 //! Operations affecting neighboring qubits:
 //!
-//! ```ignore
+//! ```
+//! # use pecos_neo::noise::prelude::*;
 //! // 1D chain crosstalk during measurement
 //! let model = chain_measurement_crosstalk(0.01);
 //!
@@ -183,7 +188,8 @@
 //!
 //! Errors that spread between qubits:
 //!
-//! ```ignore
+//! ```
+//! # use pecos_neo::noise::prelude::*;
 //! // Chain-correlated errors
 //! let model = chain_correlated(0.01, 0.5);  // 50% correlation factor
 //!
@@ -195,14 +201,17 @@
 //!
 //! For spatial noise models, use topology helpers:
 //!
-//! ```ignore
+//! ```no_run
+//! # use pecos_neo::noise::prelude::*;
+//! # use pecos_neo::prelude::QubitId;
 //! // Neighbor functions for crosstalk
-//! chain_neighbors      // 1D: qubit i neighbors i-1, i+1
-//! grid_neighbors(5)    // 2D grid with 5 columns
+//! let _neighbors = chain_neighbors;      // 1D: qubit i neighbors i-1, i+1
+//! let _neighbors = grid_neighbors(5);    // 2D grid with 5 columns
 //!
 //! // Distance functions for correlation decay
-//! chain_distance(a, b)       // |i - j|
-//! grid_distance(5)(a, b)     // Manhattan distance on grid
+//! let (a, b) = (QubitId(0), QubitId(3));
+//! let _d = chain_distance(a, b);       // |i - j|
+//! let _d = grid_distance(5)(a, b);     // Manhattan distance on grid
 //!
 //! // Decay functions for distance-weighted correlations
 //! let decay = exponential_decay(0.5, 2.0);  // 0.5 * exp(-d/2)
@@ -315,9 +324,9 @@ pub use super::topology::{
 // ============================================================================
 
 pub use super::patterns::{
-    chain_correlated, chain_measurement_crosstalk, depolarizing_only,
-    depolarizing_with_measurement, dephasing_only, grid_measurement_crosstalk, measurement_only,
-    realistic_device_noise, surface_code_noise, with_leakage, DeviceNoiseParams,
+    DeviceNoiseParams, chain_correlated, chain_measurement_crosstalk, dephasing_only,
+    depolarizing_only, depolarizing_with_measurement, grid_measurement_crosstalk, measurement_only,
+    realistic_device_noise, surface_code_noise, with_leakage,
 };
 
 // ============================================================================
@@ -325,6 +334,6 @@ pub use super::patterns::{
 // ============================================================================
 
 pub use super::validation::{
-    clamp_probability, is_probability_one, is_probability_zero, validate_probability,
-    validate_rate, validate_weights, ValidationError, ValidationResult,
+    ValidationError, ValidationResult, clamp_probability, is_probability_one, is_probability_zero,
+    validate_probability, validate_rate, validate_weights,
 };

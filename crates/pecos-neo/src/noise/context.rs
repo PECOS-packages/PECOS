@@ -765,7 +765,9 @@ impl NoiseContext {
     /// Returns `None` if gate definitions are not set or the gate is unknown.
     #[must_use]
     pub fn category(&self, gate_id: GateId) -> Option<GateCategory> {
-        self.gate_definitions.as_ref().and_then(|d| d.category(gate_id))
+        self.gate_definitions
+            .as_ref()
+            .and_then(|d| d.category(gate_id))
     }
 
     /// Get the spec of a gate by its ID. O(1).
@@ -781,7 +783,9 @@ impl NoiseContext {
     /// Returns `None` if gate definitions are not set or the gate is unknown.
     #[must_use]
     pub fn quantum_arity(&self, gate_id: GateId) -> Option<u8> {
-        self.gate_definitions.as_ref().and_then(|d| d.quantum_arity(gate_id))
+        self.gate_definitions
+            .as_ref()
+            .and_then(|d| d.quantum_arity(gate_id))
     }
 
     /// Check if a gate is single-qubit by its ID. O(1).
@@ -803,8 +807,7 @@ impl NoiseContext {
     pub fn gate_error_probability(&self, gate_id: GateId) -> f64 {
         self.gate_definitions
             .as_ref()
-            .map(|d| d.error_probability(gate_id))
-            .unwrap_or(0.0)
+            .map_or(0.0, |d| d.error_probability(gate_id))
     }
 }
 

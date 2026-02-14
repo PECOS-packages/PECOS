@@ -29,11 +29,13 @@
 //! The builder automatically compiles primitives at build time. Users don't need
 //! to interact with this module directly.
 
+use super::Primitive;
 use super::action::PauliWeights;
 use super::response::FlowResponse;
-use super::Primitive;
 use crate::command::{GateCommand, GateType};
-use crate::noise::{NoiseContext, SingleQubitEmissionWeights, TwoQubitEmissionWeights, TwoQubitPauliWeights};
+use crate::noise::{
+    NoiseContext, SingleQubitEmissionWeights, TwoQubitEmissionWeights, TwoQubitPauliWeights,
+};
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
 use rand::Rng;
@@ -84,7 +86,12 @@ pub enum CompiledAction {
 impl CompiledAction {
     /// Apply this action.
     #[inline]
-    pub fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    pub fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> FlowResponse {
         match self {
             Self::Nothing => FlowResponse::None,
             Self::SkipGate => FlowResponse::SkipGate,
@@ -146,6 +153,7 @@ pub enum CompiledCondition {
 impl CompiledCondition {
     /// Evaluate this condition.
     #[inline]
+    #[must_use]
     pub fn evaluate(&self, qubit: QubitId, ctx: &NoiseContext) -> bool {
         match self {
             Self::Leaked => ctx.is_leaked(qubit),
@@ -154,9 +162,9 @@ impl CompiledCondition {
             Self::Always => true,
             Self::Never => false,
             Self::OutcomeIs(expected) => ctx.current_outcome() == Some(*expected),
-            Self::GateTypeIs(expected) => {
-                ctx.current_gate().is_some_and(|info| info.gate_type == *expected)
-            }
+            Self::GateTypeIs(expected) => ctx
+                .current_gate()
+                .is_some_and(|info| info.gate_type == *expected),
         }
     }
 }
@@ -200,7 +208,12 @@ pub enum CompiledPrimitive {
 impl CompiledPrimitive {
     /// Apply this primitive.
     #[inline]
-    pub fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    pub fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> FlowResponse {
         match self {
             Self::Action(action) => action.apply(qubit, ctx, rng),
             Self::Prob { probability, inner } => {
@@ -274,6 +287,10 @@ impl Primitive for CompiledPrimitive {
             Self::SkipIf(_) => "skip_if(...)".to_string(),
             Self::Custom(p) => p.describe(),
         }
+    }
+
+    fn clone_box(&self) -> Box<dyn Primitive> {
+        Box::new(self.clone())
     }
 }
 
@@ -488,11 +505,13 @@ fn apply_crosstalk_transitions(
 
 impl CompiledPrimitive {
     /// Create a compiled action.
+    #[must_use]
     pub fn action(action: CompiledAction) -> Self {
         Self::Action(action)
     }
 
     /// Create a compiled probability gate.
+    #[must_use]
     pub fn prob(probability: f64, inner: Self) -> Self {
         Self::Prob {
             probability,
@@ -501,6 +520,7 @@ impl CompiledPrimitive {
     }
 
     /// Create a compiled conditional.
+    #[must_use]
     pub fn when(condition: CompiledCondition, then_branch: Self, else_branch: Self) -> Self {
         Self::When {
             condition,
@@ -510,6 +530,7 @@ impl CompiledPrimitive {
     }
 
     /// Create a compiled sequence.
+    #[must_use]
     pub fn seq(primitives: Vec<Self>) -> Self {
         // Flatten nested sequences
         let flattened: Vec<Self> = primitives
@@ -532,6 +553,7 @@ impl CompiledPrimitive {
     }
 
     /// Create a compiled weighted sample.
+    #[must_use]
     pub fn sample(branches: Vec<(f64, Self)>) -> Self {
         if branches.is_empty() {
             return Self::Action(CompiledAction::Nothing);
@@ -555,6 +577,7 @@ impl CompiledPrimitive {
     }
 
     /// Create a skip-if condition.
+    #[must_use]
     pub fn skip_if(condition: CompiledCondition) -> Self {
         Self::SkipIf(condition)
     }
@@ -652,8 +675,14 @@ mod tests {
     #[test]
     fn test_compiled_sample() {
         let prim = CompiledPrimitive::sample(vec![
-            (0.5, CompiledPrimitive::action(CompiledAction::Inject(GateType::X))),
-            (0.5, CompiledPrimitive::action(CompiledAction::Inject(GateType::Z))),
+            (
+                0.5,
+                CompiledPrimitive::action(CompiledAction::Inject(GateType::X)),
+            ),
+            (
+                0.5,
+                CompiledPrimitive::action(CompiledAction::Inject(GateType::Z)),
+            ),
         ]);
 
         let mut ctx = NoiseContext::new();
@@ -663,18 +692,15 @@ mod tests {
         let mut x_count = 0;
         for _ in 0..1000 {
             let response = prim.apply(QubitId(0), &mut ctx, &mut rng);
-            if let FlowResponse::InjectGates(gates) = response {
-                if gates[0].gate_type == GateType::X {
-                    x_count += 1;
-                }
+            if let FlowResponse::InjectGates(gates) = response
+                && gates[0].gate_type == GateType::X
+            {
+                x_count += 1;
             }
         }
 
         // Should be roughly 50/50
-        let x_rate = x_count as f64 / 1000.0;
-        assert!(
-            (x_rate - 0.5).abs() < 0.1,
-            "Expected ~50% X, got {x_rate}"
-        );
+        let x_rate = f64::from(x_count) / 1000.0;
+        assert!((x_rate - 0.5).abs() < 0.1, "Expected ~50% X, got {x_rate}");
     }
 }

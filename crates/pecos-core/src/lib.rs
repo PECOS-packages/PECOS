@@ -29,6 +29,7 @@ pub mod prelude;
 pub mod qubit_id;
 pub mod rng;
 pub mod sets;
+pub mod signal;
 pub mod sorted_vec_set;
 
 pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
@@ -63,3 +64,6 @@ pub use rng::choices::Choices;
 
 // Operator algebra
 pub use operator::{I, Is, Operator, X, Xs, Y, Ys, Z, Zs};
+
+// Signals
+pub use signal::Signal;

@@ -27,12 +27,12 @@
 //!
 //! For circuits without mid-circuit classical control:
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::tool::sim_neo;
 //! use pecos_neo::prelude::*;
 //!
 //! let circuit = CommandBuilder::new()
-//!     .prep(0).h(0).measure(0)
+//!     .pz(0).h(0).mz(0)
 //!     .build();
 //!
 //! let results = sim_neo(circuit)
@@ -47,7 +47,8 @@
 //!
 //! For QASM programs with classical control flow:
 //!
-//! ```ignore
+#![cfg_attr(feature = "qasm", doc = "```no_run")]
+#![cfg_attr(not(feature = "qasm"), doc = "```ignore")]
 //! use pecos_neo::tool::sim_neo;
 //! use pecos_qasm::qasm_engine;
 //!
@@ -62,8 +63,9 @@
 //!     measure q[1] -> c[1];
 //! "#;
 //!
-//! // Pass engine builder directly to sim_neo()
-//! let results = sim_neo(qasm_engine().qasm(qasm))
+//! // Pass QASM source, then set the engine
+//! let results = sim_neo(qasm)
+//!     .classical(qasm_engine())
 //!     .depolarizing(0.01)
 //!     .shots(1000)
 //!     .seed(42)
@@ -97,7 +99,11 @@
 //!
 //! Build once, run multiple times:
 //!
-//! ```ignore
+//! ```no_run
+//! use pecos_neo::tool::sim_neo;
+//! use pecos_neo::prelude::*;
+//!
+//! let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 //! let mut sim = sim_neo(circuit)
 //!     .shots(1000)
 //!     .build();
@@ -109,13 +115,16 @@
 
 use crate::command::CommandQueue;
 use crate::noise::ComposableNoiseModel;
-use crate::outcome::MeasurementOutcomes;
-use crate::program::{CommandSource, ProgramRunner, StaticProgram};
+use crate::outcome::{MeasurementOutcomes, RegisterMap};
+use crate::program::{CommandSource, DynProgramRunner, ProgramRunner, StaticProgram};
 use crate::runner::ShotRunner;
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
+use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
 use pecos_qsim::{CliffordGateable, SparseStab, StateVec};
+use pecos_rng::PecosRng;
 use rayon::prelude::*;
+use std::collections::BTreeMap;
 
 use super::resource::Resources;
 use super::{Plugin, Stage, Tool};
@@ -128,7 +137,7 @@ use super::{Plugin, Stage, Tool};
 ///
 /// This enum represents the choice of quantum simulator. The actual simulator
 /// is constructed at build time, following the builder-of-builders pattern.
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub enum QuantumBackend {
     /// Sparse stabilizer simulator (default).
     ///
@@ -142,6 +151,26 @@ pub enum QuantumBackend {
     /// Supports arbitrary gates including non-Clifford (T, rotations).
     /// Memory scales as 2^n for n qubits.
     StateVec,
+
+    /// Custom simulator backend via factory function.
+    ///
+    /// Allows any simulator implementing `CliffordGateable + RngManageable<Rng = PecosRng>`
+    /// to be used through the `sim_neo()` API. Use [`custom_backend()`] to create.
+    ///
+    /// Custom backends only support sequential execution. Using `.workers()`,
+    /// `.auto_workers()`, or importance sampling will panic at `.run()` time.
+    Custom(Box<dyn SimulatorFactory>),
+}
+
+
+impl std::fmt::Debug for QuantumBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SparseStab => write!(f, "SparseStab"),
+            Self::StateVec => write!(f, "StateVec"),
+            Self::Custom(_) => write!(f, "Custom(...)"),
+        }
+    }
 }
 
 /// Builder for sparse stabilizer backend configuration.
@@ -192,12 +221,15 @@ impl From<StateVecBuilder> for QuantumBackend {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::tool::{sim_neo, sparse_stab};
+/// use pecos_neo::prelude::*;
 ///
+/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 /// let results = sim_neo(circuit)
 ///     .quantum(sparse_stab())
 ///     .shots(1000)
+///     .build()
 ///     .run();
 /// ```
 #[must_use]
@@ -212,17 +244,128 @@ pub fn sparse_stab() -> SparseStabBuilder {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::tool::{sim_neo, state_vector};
+/// use pecos_neo::prelude::*;
 ///
+/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 /// let results = sim_neo(circuit)
 ///     .quantum(state_vector())
 ///     .shots(1000)
+///     .build()
 ///     .run();
 /// ```
 #[must_use]
 pub fn state_vector() -> StateVecBuilder {
     StateVecBuilder::new()
+}
+
+// ============================================================================
+// Custom Backend Support
+// ============================================================================
+
+/// Factory for creating simulator instances.
+///
+/// This trait allows custom simulators to be used with `sim_neo()` by providing
+/// a way to create new instances. A blanket implementation is provided for
+/// closures `Fn(usize) -> S` where `S: CliffordGateable + RngManageable<Rng = PecosRng>`,
+/// so most users should prefer [`custom_backend()`] over implementing this directly.
+///
+/// Implement this directly only for advanced use cases (e.g., simulators that
+/// need custom noise injection or seed handling).
+pub trait SimulatorFactory: Send + Sync {
+    /// Create a program runner for the given number of qubits.
+    ///
+    /// Called once during simulation startup. The returned runner handles
+    /// all shots for the simulation.
+    ///
+    /// # Arguments
+    /// * `num_qubits` - Number of qubits inferred from the circuit
+    /// * `noise` - The noise model (if configured via `.noise()` or `.depolarizing()`)
+    /// * `seed` - The base seed (if configured via `.seed()`)
+    fn create_runner(
+        &self,
+        num_qubits: usize,
+        noise: Option<ComposableNoiseModel>,
+        seed: Option<u64>,
+    ) -> Box<dyn DynProgramRunner>;
+}
+
+/// Blanket implementation for closures that create simulators.
+///
+/// This allows `custom_backend(|n| MySimulator::new(n))` to work.
+impl<S, F> SimulatorFactory for F
+where
+    S: CliffordGateable + RngManageable<Rng = PecosRng> + Send + Sync + 'static,
+    F: Fn(usize) -> S + Send + Sync,
+{
+    fn create_runner(
+        &self,
+        num_qubits: usize,
+        noise: Option<ComposableNoiseModel>,
+        seed: Option<u64>,
+    ) -> Box<dyn DynProgramRunner> {
+        let sim = (self)(num_qubits);
+        let mut runner = ProgramRunner::new(sim);
+        if let Some(n) = noise {
+            runner = runner.with_noise(n);
+        }
+        if let Some(s) = seed {
+            runner = runner.with_seed(s);
+        }
+        Box::new(runner)
+    }
+}
+
+/// Builder for custom simulator backends.
+///
+/// Created via [`custom_backend()`]. Converts into [`QuantumBackend::Custom`].
+pub struct CustomBackendBuilder {
+    factory: Box<dyn SimulatorFactory>,
+}
+
+impl From<CustomBackendBuilder> for QuantumBackend {
+    fn from(builder: CustomBackendBuilder) -> Self {
+        QuantumBackend::Custom(builder.factory)
+    }
+}
+
+/// Create a custom backend from a factory closure.
+///
+/// This allows any simulator implementing `CliffordGateable + RngManageable<Rng = PecosRng>`
+/// to be used through `sim_neo()`. The closure receives the number of qubits
+/// and should return a new simulator instance.
+///
+/// **Note:** Custom backends only support sequential execution. Using `.workers()`,
+/// `.auto_workers()`, or importance sampling with a custom backend will panic
+/// at `.run()` time.
+///
+/// # Example
+///
+/// ```no_run
+/// use pecos_neo::tool::{sim_neo, custom_backend};
+/// use pecos_neo::prelude::*;
+/// use pecos_qsim::SparseStab;
+///
+/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+///
+/// // Use a custom simulator backend
+/// let results = sim_neo(circuit)
+///     .quantum(custom_backend(|n| SparseStab::new(n)))
+///     .shots(100)
+///     .seed(42)
+///     .build()
+///     .run();
+/// ```
+#[must_use]
+pub fn custom_backend<S, F>(factory: F) -> CustomBackendBuilder
+where
+    S: CliffordGateable + RngManageable<Rng = PecosRng> + Send + Sync + 'static,
+    F: Fn(usize) -> S + Send + Sync + 'static,
+{
+    CustomBackendBuilder {
+        factory: Box::new(factory),
+    }
 }
 
 // ============================================================================
@@ -239,11 +382,15 @@ pub fn state_vector() -> StateVecBuilder {
 ///
 /// To make a custom type work with `sim_neo()`, implement this trait:
 ///
-/// ```ignore
+/// ```no_run
+/// use pecos_neo::tool::{SimNeoInput, SimNeoBuilder};
+///
+/// struct MyProgramType;
+///
 /// impl SimNeoInput for MyProgramType {
 ///     fn into_sim_neo_builder(self) -> SimNeoBuilder {
 ///         // Convert to SimNeoBuilder
-///         sim_neo_builder().classical(my_engine_builder(self))
+///         SimNeoBuilder::empty()
 ///     }
 /// }
 /// ```
@@ -291,7 +438,11 @@ impl SimNeoInput for &pecos_quantum::DagCircuit {
 ///
 /// When passing a string, use `.classical(engine)` to specify how to interpret it:
 ///
-/// ```ignore
+/// ```no_run
+/// use pecos_neo::tool::sim_neo;
+/// use pecos_qasm::qasm_engine;
+///
+/// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];";
 /// sim_neo(qasm_code)
 ///     .classical(qasm_engine())
 ///     .shots(1000)
@@ -318,9 +469,15 @@ impl SimNeoInput for String {
 /// Use `.auto()` to automatically select the QASM engine, or
 /// `.classical(engine)` for explicit control:
 ///
-/// ```ignore
+/// ```no_run
+/// use pecos_neo::tool::sim_neo;
+/// use pecos_programs::Qasm;
+/// use pecos_qasm::qasm_engine;
+///
+/// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];".to_string();
+///
 /// // Auto mode - uses qasm_engine() automatically
-/// sim_neo(Qasm::from_string(qasm_code))
+/// sim_neo(Qasm::from_string(qasm_code.clone()))
 ///     .auto()
 ///     .shots(1000)
 ///     .build()
@@ -345,7 +502,11 @@ impl SimNeoInput for pecos_programs::Qasm {
 /// Use `.auto()` to automatically select the appropriate engine based on
 /// the program type:
 ///
-/// ```ignore
+/// ```no_run
+/// use pecos_neo::tool::sim_neo;
+/// use pecos_programs::{Program, Qasm};
+///
+/// let qasm = Qasm::from_string("OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];".to_string());
 /// sim_neo(Program::Qasm(qasm))
 ///     .auto()
 ///     .shots(1000)
@@ -397,9 +558,11 @@ impl Default for SimConfig {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::tool::{sim_neo, importance_sampling};
+/// use pecos_neo::prelude::*;
 ///
+/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 /// let results = sim_neo(circuit)
 ///     .orchestrator(importance_sampling()
 ///         .with_p1(0.001)
@@ -407,6 +570,7 @@ impl Default for SimConfig {
 ///         .with_p_meas(0.001)
 ///         .with_boost(10.0))
 ///     .shots(10000)
+///     .build()
 ///     .run();
 /// ```
 #[derive(Debug, Clone)]
@@ -424,7 +588,7 @@ pub struct ImportanceSamplingBuilder {
 impl ImportanceSamplingBuilder {
     /// Create a new importance sampling builder with default values.
     ///
-    /// Default: p1=0.001, p2=0.01, p_meas=0.001, boost=10.0
+    /// Default: p1=0.001, p2=0.01, `p_meas=0.001`, boost=10.0
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -525,20 +689,24 @@ impl From<ImportanceSamplingBuilder> for Orchestrator {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::tool::{sim_neo, importance_sampling};
+/// use pecos_neo::prelude::*;
 ///
+/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 /// let results = sim_neo(circuit)
 ///     .orchestrator(importance_sampling()
 ///         .with_p1(0.001)
 ///         .with_p2(0.01)
 ///         .with_boost(10.0))
 ///     .shots(10000)
+///     .build()
 ///     .run();
 ///
-/// // Compute weighted logical error rate
+/// // Compute weighted statistics
 /// if let Some(rate) = results.weighted_mean(|outcome| {
-///     if check_logical_error(outcome) { 1.0 } else { 0.0 }
+///     // Replace with actual logical error check
+///     0.0
 /// }) {
 ///     println!("Estimated error rate: {:.2e}", rate);
 /// }
@@ -563,7 +731,7 @@ pub enum Orchestrator {
     /// Parallel Monte Carlo execution using rayon.
     ///
     /// Each worker runs a batch of shots independently with deterministic seeding.
-    /// Best for noiseless simulations or when noise model is cheap to clone.
+    /// Supports both noiseless and noisy circuits (noise model is cloned per worker).
     MonteCarlo {
         /// Number of parallel workers.
         workers: usize,
@@ -682,6 +850,100 @@ impl SimulationResults {
         }
         Some((stats.mean(), stats.standard_error()))
     }
+
+    // ========================================================================
+    // Register-based accessors
+    // ========================================================================
+
+    /// Convert to columnar format: `register_name` -> `Vec<Vec<bool>>` (one bitstring per shot).
+    ///
+    /// Registers where any qubit hasn't been measured (in any shot) are omitted.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pecos_neo::tool::sim_neo;
+    /// use pecos_neo::outcome::RegisterMap;
+    /// use pecos_neo::prelude::*;
+    ///
+    /// let circuit = CommandBuilder::new()
+    ///     .pz(0).pz(1).h(0).mz(0).mz(1)
+    ///     .build();
+    ///
+    /// let mut reg = RegisterMap::new();
+    /// reg.add_register("c", &[QubitId(0), QubitId(1)]);
+    ///
+    /// let results = sim_neo(circuit).shots(100).seed(42).run();
+    /// let columns = results.as_register_columns(&reg);
+    /// assert_eq!(columns["c"].len(), 100);
+    /// ```
+    #[must_use]
+    pub fn as_register_columns(
+        &self,
+        register: &RegisterMap,
+    ) -> BTreeMap<String, Vec<Vec<bool>>> {
+        let mut columns: BTreeMap<String, Vec<Vec<bool>>> = BTreeMap::new();
+
+        for name in register.register_names() {
+            let mut col = Vec::with_capacity(self.outcomes.len());
+            let mut all_valid = true;
+
+            for outcome in &self.outcomes {
+                if let Some(bits) = outcome.register_bitstring(register, name) {
+                    col.push(bits);
+                } else {
+                    all_valid = false;
+                    break;
+                }
+            }
+
+            if all_valid {
+                columns.insert(name.to_string(), col);
+            }
+        }
+
+        columns
+    }
+
+    /// Count unique bitstring occurrences for a named register.
+    ///
+    /// Returns a map from bitstring -> count. Returns an empty map if
+    /// the register doesn't exist or any qubit hasn't been measured.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pecos_neo::tool::sim_neo;
+    /// use pecos_neo::outcome::RegisterMap;
+    /// use pecos_neo::prelude::*;
+    ///
+    /// let circuit = CommandBuilder::new()
+    ///     .pz(0).h(0).mz(0)
+    ///     .build();
+    ///
+    /// let mut reg = RegisterMap::new();
+    /// reg.add_register("c", &[QubitId(0)]);
+    ///
+    /// let results = sim_neo(circuit).shots(1000).seed(42).run();
+    /// let counts = results.register_counts(&reg, "c");
+    /// // Should have entries for [false] and [true]
+    /// ```
+    #[must_use]
+    pub fn register_counts(
+        &self,
+        register: &RegisterMap,
+        name: &str,
+    ) -> BTreeMap<Vec<bool>, usize> {
+        let mut counts = BTreeMap::new();
+
+        for outcome in &self.outcomes {
+            if let Some(bits) = outcome.register_bitstring(register, name) {
+                *counts.entry(bits).or_insert(0) += 1;
+            }
+        }
+
+        counts
+    }
 }
 
 /// Current shot state during execution.
@@ -743,7 +1005,9 @@ where
         self: Box<Self>,
     ) -> Result<Box<dyn CommandSource + Send + Sync>, pecos_core::errors::PecosError> {
         let engine = self.builder.build()?;
-        Ok(Box::new(crate::adapter::ClassicalEngineAdapter::new(engine)))
+        Ok(Box::new(crate::adapter::ClassicalEngineAdapter::new(
+            engine,
+        )))
     }
 
     fn num_qubits_hint(&self) -> Option<usize> {
@@ -776,7 +1040,9 @@ impl PendingEngineBuilder {
             #[cfg(feature = "qasm")]
             Self::Qasm(builder) => {
                 let configured = builder.qasm(source);
-                Box::new(EngineBuilderWrapper { builder: configured })
+                Box::new(EngineBuilderWrapper {
+                    builder: configured,
+                })
             }
         }
     }
@@ -820,7 +1086,6 @@ pub enum TypedProgram {
 
 /// Resource to hold the program source.
 pub struct ProgramSourceResource(pub ProgramSource);
-
 
 // ============================================================================
 // Simulation Plugin
@@ -943,9 +1208,11 @@ struct CurrentOutcomes(MeasurementOutcomes);
 ///
 /// ## Static Circuit
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::tool::sim_neo;
+/// use pecos_neo::prelude::*;
 ///
+/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 /// let results = sim_neo(circuit)
 ///     .depolarizing(0.01)
 ///     .shots(1000)
@@ -956,10 +1223,12 @@ struct CurrentOutcomes(MeasurementOutcomes);
 ///
 /// ## QASM Program (builder-of-builders pattern)
 ///
-/// ```ignore
+#[cfg_attr(feature = "qasm", doc = "```no_run")]
+#[cfg_attr(not(feature = "qasm"), doc = "```ignore")]
 /// use pecos_neo::tool::sim_neo;
 /// use pecos_qasm::qasm_engine;
 ///
+/// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];";
 /// // Pass program source first, then engine factory
 /// let results = sim_neo(qasm_code)
 ///     .classical(qasm_engine())  // Engine configured with source at build time
@@ -971,13 +1240,15 @@ struct CurrentOutcomes(MeasurementOutcomes);
 ///
 /// ## Pre-configured Engine Builder
 ///
-/// ```ignore
+#[cfg_attr(feature = "qasm", doc = "```no_run")]
+#[cfg_attr(not(feature = "qasm"), doc = "```ignore")]
 /// use pecos_neo::tool::sim_neo_builder;
 /// use pecos_qasm::qasm_engine;
 ///
+/// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];";
 /// // Or pass already-configured engine builder
 /// let results = sim_neo_builder()
-///     .classical(qasm_engine().qasm(qasm_code))
+///     .with_engine(qasm_engine().qasm(qasm_code))
 ///     .shots(1000)
 ///     .build()
 ///     .run();
@@ -1080,10 +1351,11 @@ impl SimNeoBuilder {
     /// This follows "everything is data" - we collect configuration, then wire
     /// it all together when building the Tool.
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::tool::sim_neo;
     /// use pecos_qasm::qasm_engine;
     ///
+    /// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];";
     /// // Builder is stored as data, source injected at build time
     /// let results = sim_neo(qasm_code)
     ///     .classical(qasm_engine())  // stores builder as data
@@ -1094,7 +1366,11 @@ impl SimNeoBuilder {
     ///
     /// For pre-configured engine builders, use `.with_engine()` instead:
     ///
-    /// ```ignore
+    /// ```no_run
+    /// use pecos_neo::tool::sim_neo_builder;
+    /// use pecos_qasm::qasm_engine;
+    ///
+    /// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];";
     /// let results = sim_neo_builder()
     ///     .with_engine(qasm_engine().qasm(qasm_code))
     ///     .shots(1000)
@@ -1158,10 +1434,11 @@ impl SimNeoBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::tool::sim_neo_builder;
     /// use pecos_qasm::qasm_engine;
     ///
+    /// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];";
     /// let results = sim_neo_builder()
     ///     .with_engine(qasm_engine().qasm(qasm_code))
     ///     .shots(1000)
@@ -1189,10 +1466,11 @@ impl SimNeoBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::tool::sim_neo;
     /// use pecos_programs::Qasm;
     ///
+    /// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];".to_string();
     /// // Auto-select engine based on program type
     /// let results = sim_neo(Qasm::from_string(qasm_code))
     ///     .auto()
@@ -1218,9 +1496,10 @@ impl SimNeoBuilder {
                     TypedProgram::Qasm(qasm) => {
                         // Auto-select qasm_engine() and configure with the program
                         let builder = pecos_qasm::qasm_engine().qasm(qasm.source);
-                        self.source = Some(ProgramSource::Classical(Box::new(
-                            EngineBuilderWrapper { builder },
-                        )));
+                        self.source =
+                            Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
+                                builder,
+                            })));
                     }
                     TypedProgram::Unsupported(type_name) => {
                         panic!(
@@ -1290,19 +1569,24 @@ impl SimNeoBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::tool::{sim_neo, Orchestrator};
+    /// use pecos_neo::prelude::*;
+    ///
+    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
     ///
     /// // Parallel Monte Carlo with 4 workers
-    /// let results = sim_neo(circuit)
+    /// let results = sim_neo(circuit.clone())
     ///     .orchestrator(Orchestrator::monte_carlo(4))
     ///     .shots(1000)
+    ///     .build()
     ///     .run();
     ///
     /// // Auto-detect worker count
     /// let results = sim_neo(circuit)
     ///     .orchestrator(Orchestrator::monte_carlo_auto())
     ///     .shots(1000)
+    ///     .build()
     ///     .run();
     /// ```
     #[must_use]
@@ -1312,6 +1596,17 @@ impl SimNeoBuilder {
     }
 
     /// Convenience method for parallel Monte Carlo with specified workers.
+    ///
+    /// Parallel execution distributes shots across workers using rayon,
+    /// with each worker getting its own simulator and noise model clone.
+    /// Works with both noiseless and noisy circuits.
+    ///
+    /// # Panics
+    ///
+    /// Panics at `.run()` time if parallel execution is not possible.
+    /// Parallel execution requires a static circuit using a built-in
+    /// backend (`SparseStab` or `StateVec`). Classical engines and custom
+    /// backends are not supported.
     #[must_use]
     pub fn workers(mut self, workers: usize) -> Self {
         self.orchestrator = Orchestrator::monte_carlo(workers);
@@ -1319,6 +1614,8 @@ impl SimNeoBuilder {
     }
 
     /// Convenience method for parallel Monte Carlo with auto-detected workers.
+    ///
+    /// See [`workers()`](Self::workers) for requirements and panics.
     #[must_use]
     pub fn auto_workers(mut self) -> Self {
         self.orchestrator = Orchestrator::monte_carlo_auto();
@@ -1335,19 +1632,24 @@ impl SimNeoBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::tool::{sim_neo, sparse_stab, state_vector};
+    /// use pecos_neo::prelude::*;
+    ///
+    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
     ///
     /// // Use sparse stabilizer (default, Clifford-only)
-    /// let results = sim_neo(circuit)
+    /// let results = sim_neo(circuit.clone())
     ///     .quantum(sparse_stab())
     ///     .shots(1000)
+    ///     .build()
     ///     .run();
     ///
     /// // Use state vector (supports T gates, rotations)
     /// let results = sim_neo(circuit)
     ///     .quantum(state_vector())
     ///     .shots(1000)
+    ///     .build()
     ///     .run();
     /// ```
     #[must_use]
@@ -1365,9 +1667,12 @@ impl SimNeoBuilder {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::tool::sim_neo;
-    /// use pecos_neo::noise::{GeneralNoiseModelBuilder, SingleQubitChannel};
+    /// use pecos_neo::prelude::*;
+    /// use pecos_neo::noise::GeneralNoiseModelBuilder;
+    ///
+    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
     ///
     /// // Using GeneralNoiseModelBuilder (no .build() needed)
     /// sim_neo(circuit.clone())
@@ -1463,15 +1768,14 @@ impl SimNeoBuilder {
         };
 
         #[cfg(not(feature = "engines-adapter"))]
-        let source = self.source.expect(
-            "No program source set. Use sim_neo(circuit) to provide a circuit."
-        );
+        let source = self
+            .source
+            .expect("No program source set. Use sim_neo(circuit) to provide a circuit.");
 
-        // Extract parallel execution data for static circuits without noise
-        // (noise models contain trait objects that aren't Clone)
-        let parallel_data = match (&source, &self.noise) {
-            (ProgramSource::Static(circuit), None) => {
-                // Compute num_qubits for parallel workers
+        // Extract parallel execution data for static circuits using built-in backends.
+        // Custom backends can't be parallelized (factory is consumed at startup).
+        let parallel_data = match (&source, &self.quantum_backend) {
+            (ProgramSource::Static(circuit), QuantumBackend::SparseStab) => {
                 let inferred_qubits = circuit
                     .iter()
                     .flat_map(|cmd| cmd.qubits.iter())
@@ -1483,18 +1787,35 @@ impl SimNeoBuilder {
                 Some(ParallelExecutionData {
                     circuit: circuit.clone(),
                     num_qubits,
-                    quantum_backend: self.quantum_backend.clone(),
+                    backend: BuiltinBackend::SparseStab,
+                    noise: self.noise.clone(),
                 })
             }
-            _ => None, // Classical engines or noise models don't support parallel execution yet
+            (ProgramSource::Static(circuit), QuantumBackend::StateVec) => {
+                let inferred_qubits = circuit
+                    .iter()
+                    .flat_map(|cmd| cmd.qubits.iter())
+                    .map(|q| q.0)
+                    .max()
+                    .map_or(1, |max| max + 1);
+                let num_qubits = self.explicit_num_qubits.unwrap_or(inferred_qubits);
+
+                Some(ParallelExecutionData {
+                    circuit: circuit.clone(),
+                    num_qubits,
+                    backend: BuiltinBackend::StateVec,
+                    noise: self.noise.clone(),
+                })
+            }
+            _ => None,
         };
 
         let mut tool = Tool::new()
             .insert_resource(ProgramSourceResource(source))
             .insert_resource(self.config)
+            .insert_resource(QuantumBackendResource(self.quantum_backend))
             .add_plugin(UnifiedSimulationPlugin {
                 explicit_num_qubits: self.explicit_num_qubits,
-                quantum_backend: self.quantum_backend,
             });
 
         // Add noise if configured
@@ -1516,10 +1837,12 @@ impl SimNeoBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    #[cfg_attr(feature = "qasm", doc = "```no_run")]
+    #[cfg_attr(not(feature = "qasm"), doc = "```ignore")]
     /// use pecos_neo::tool::sim_neo;
     /// use pecos_qasm::qasm_engine;
     ///
+    /// let qasm_code = "OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0];";
     /// let results = sim_neo(qasm_code)
     ///     .classical(qasm_engine())
     ///     .shots(1000)
@@ -1538,7 +1861,6 @@ impl SimNeoBuilder {
 /// Plugin that handles both static circuits and classical engines.
 struct UnifiedSimulationPlugin {
     explicit_num_qubits: Option<usize>,
-    quantum_backend: QuantumBackend,
 }
 
 /// Resource to store explicit qubit count.
@@ -1560,8 +1882,7 @@ impl Plugin for UnifiedSimulationPlugin {
         // Store explicit num_qubits for startup
         tool.insert_resource_mut(ExplicitNumQubits(self.explicit_num_qubits));
 
-        // Store quantum backend choice for startup
-        tool.insert_resource_mut(QuantumBackendResource(self.quantum_backend.clone()));
+        // QuantumBackendResource is inserted directly by SimNeoBuilder::build()
 
         // Add simulation systems
         tool.add_system_mut(Stage::Startup, unified_simulation_startup);
@@ -1575,12 +1896,14 @@ impl Plugin for UnifiedSimulationPlugin {
 ///
 /// This enum allows runtime selection of quantum simulators while maintaining
 /// type safety. Each variant wraps a `ProgramRunner<S>` for the appropriate
-/// simulator type.
+/// simulator type, or a type-erased `DynProgramRunner` for custom backends.
 pub enum QuantumRunner {
     /// Sparse stabilizer simulator (Clifford-only).
     SparseStab(ProgramRunner<SparseStab>),
     /// State vector simulator (supports arbitrary gates).
     StateVec(ProgramRunner<StateVec>),
+    /// Custom simulator backend via dynamic dispatch.
+    Custom(Box<dyn DynProgramRunner>),
 }
 
 impl QuantumRunner {
@@ -1589,29 +1912,17 @@ impl QuantumRunner {
         match self {
             Self::SparseStab(runner) => runner.run_shot(source),
             Self::StateVec(runner) => runner.run_shot(source),
+            Self::Custom(runner) => runner.run_shot(source),
         }
     }
 
-    /// Get mutable access to the shot runner for seeding.
-    pub fn shot_runner_mut(&mut self) -> &mut dyn ShotRunnerOps {
-        match self {
-            Self::SparseStab(runner) => runner.shot_runner_mut(),
-            Self::StateVec(runner) => runner.shot_runner_mut(),
-        }
-    }
-}
-
-/// Trait for common shot runner operations needed by the simulation systems.
-pub trait ShotRunnerOps {
     /// Set the full seed for deterministic execution.
-    fn set_full_seed(&mut self, seed: u64);
-}
-
-impl<S: CliffordGateable + pecos_core::rng::RngManageable<Rng = pecos_rng::PecosRng>> ShotRunnerOps
-    for ShotRunner<S>
-{
-    fn set_full_seed(&mut self, seed: u64) {
-        ShotRunner::set_full_seed(self, seed);
+    pub fn set_full_seed(&mut self, seed: u64) {
+        match self {
+            Self::SparseStab(runner) => runner.shot_runner_mut().set_full_seed(seed),
+            Self::StateVec(runner) => runner.shot_runner_mut().set_full_seed(seed),
+            Self::Custom(runner) => runner.set_full_seed(seed),
+        }
     }
 }
 
@@ -1689,8 +2000,8 @@ fn unified_simulation_startup(resources: &mut Resources) {
             }
         };
 
-    // Get quantum backend choice
-    let backend = resources.get::<QuantumBackendResource>().0.clone();
+    // Take quantum backend choice (take ownership for Custom variant)
+    let backend = resources.remove::<QuantumBackendResource>().0;
 
     // Create quantum runner based on backend choice
     let noise = resources.try_remove::<NoiseResource>();
@@ -1717,6 +2028,14 @@ fn unified_simulation_startup(resources: &mut Resources) {
             }
             QuantumRunner::StateVec(runner)
         }
+        QuantumBackend::Custom(factory) => {
+            let runner = factory.create_runner(
+                num_qubits,
+                noise.map(|n| n.0),
+                config.seed,
+            );
+            QuantumRunner::Custom(runner)
+        }
     };
 
     // Store unified shot state
@@ -1738,7 +2057,7 @@ fn unified_simulation_pre_shot(resources: &mut Resources) {
     // Derive per-shot seed if configured
     if let Some(base_seed) = config.seed {
         let shot_seed = derive_seed(base_seed, &format!("shot_{}", state.shot_index));
-        state.quantum_runner.shot_runner_mut().set_full_seed(shot_seed);
+        state.quantum_runner.set_full_seed(shot_seed);
     }
 }
 
@@ -1777,7 +2096,11 @@ fn unified_simulation_post_shot(resources: &mut Resources) {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use pecos_neo::tool::sim_neo;
+/// use pecos_neo::prelude::*;
+///
+/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 /// let mut sim = sim_neo(circuit).shots(1000).build();
 ///
 /// let results1 = sim.run();
@@ -1795,17 +2118,26 @@ pub struct Simulation {
     parallel_data: Option<ParallelExecutionData>,
 }
 
+/// Which built-in backend to use for parallel/importance-sampling execution.
+#[derive(Debug, Clone, Copy)]
+enum BuiltinBackend {
+    SparseStab,
+    StateVec,
+}
+
 /// Data stored for parallel execution support.
 ///
-/// This is populated for static circuits without noise (which can be cloned for workers).
-/// For classical engines or circuits with noise, this is None and execution falls back to sequential.
+/// This is populated for static circuits using built-in backends.
+/// For classical engines or custom backends, this is None and execution falls back to sequential.
 struct ParallelExecutionData {
     /// The circuit to execute (cloned for each worker).
     circuit: CommandQueue,
     /// Number of qubits for simulators.
     num_qubits: usize,
-    /// Quantum backend to use.
-    quantum_backend: QuantumBackend,
+    /// Which built-in backend to use.
+    backend: BuiltinBackend,
+    /// Noise model (cloned per worker for parallel execution).
+    noise: Option<ComposableNoiseModel>,
 }
 
 impl Simulation {
@@ -1828,7 +2160,7 @@ impl Simulation {
     ///
     /// Execution strategy depends on the orchestrator:
     /// - `Sequential`: Runs shots one at a time via the Tool
-    /// - `MonteCarlo`: Parallelizes shots across workers (for static noiseless circuits)
+    /// - `MonteCarlo`: Parallelizes shots across workers (for static circuits with built-in backends)
     /// - `ImportanceSampling`: Biased sampling for rare events with importance weights
     pub fn run(&mut self) -> SimulationResults {
         let config = self.tool.resource::<SimConfig>().clone();
@@ -1839,15 +2171,21 @@ impl Simulation {
                 if let Some(ref parallel_data) = self.parallel_data {
                     return self.run_parallel(&config, parallel_data, *workers);
                 }
-                // Fall through to sequential for classical engines or noisy circuits
+                panic!(
+                    "Parallel Monte Carlo requires a static circuit \
+                     using a built-in backend (SparseStab or StateVec). \
+                     Remove .workers() / .auto_workers() to use sequential execution, \
+                     or switch to a built-in backend."
+                );
             }
             Orchestrator::ImportanceSampling { config: is_config } => {
                 if let Some(ref parallel_data) = self.parallel_data {
                     return self.run_importance_sampling(&config, parallel_data, is_config);
                 }
                 panic!(
-                    "Importance sampling requires a static circuit. \
-                     Classical engines are not yet supported for importance sampling."
+                    "Importance sampling requires a static circuit \
+                     using a built-in backend (SparseStab or StateVec). \
+                     Classical engines and custom backends are not supported."
                 );
             }
             _ => {} // Sequential falls through
@@ -1863,7 +2201,7 @@ impl Simulation {
         results
     }
 
-    /// Run shots in parallel using rayon (noiseless static circuits only).
+    /// Run shots in parallel using rayon (static circuits with built-in backends).
     fn run_parallel(
         &self,
         config: &SimConfig,
@@ -1904,15 +2242,21 @@ impl Simulation {
 
                     // Create fresh simulator and runner for each shot based on backend
                     let mut program = StaticProgram::new(data.circuit.clone(), data.num_qubits);
-                    let result_outcomes = match &data.quantum_backend {
-                        QuantumBackend::SparseStab => {
+                    let result_outcomes = match data.backend {
+                        BuiltinBackend::SparseStab => {
                             let sim = SparseStab::with_seed(data.num_qubits, sim_seed);
                             let mut runner = ProgramRunner::new(sim).with_seed(noise_seed);
+                            if let Some(ref noise) = data.noise {
+                                runner = runner.with_noise(noise.clone());
+                            }
                             runner.run_shot(&mut program).outcomes
                         }
-                        QuantumBackend::StateVec => {
+                        BuiltinBackend::StateVec => {
                             let sim = StateVec::with_seed(data.num_qubits, sim_seed);
                             let mut runner = ProgramRunner::new(sim).with_seed(noise_seed);
+                            if let Some(ref noise) = data.noise {
+                                runner = runner.with_noise(noise.clone());
+                            }
                             runner.run_shot(&mut program).outcomes
                         }
                     };
@@ -1957,8 +2301,8 @@ impl Simulation {
             let noise_seed = derive_seed(shot_seed, "noise");
 
             // Create fresh simulator and runner for each shot
-            let result = match &data.quantum_backend {
-                QuantumBackend::SparseStab => {
+            let result = match data.backend {
+                BuiltinBackend::SparseStab => {
                     let sim = SparseStab::with_seed(data.num_qubits, sim_seed);
                     let mut runner = ImportanceSamplingRunner::new(sim)
                         .with_single_qubit_boost(is_config.p1(), is_config.boost())
@@ -1967,7 +2311,7 @@ impl Simulation {
                         .with_seed(noise_seed);
                     runner.run_shot(&data.circuit)
                 }
-                QuantumBackend::StateVec => {
+                BuiltinBackend::StateVec => {
                     // ImportanceSamplingRunner uses CliffordGateable which SparseStab
                     // implements. StateVec would need ArbitraryRotationGateable support.
                     // For now, use SparseStab for importance sampling.
@@ -2026,12 +2370,12 @@ impl Simulation {
 ///
 /// ## Static Circuit
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::tool::sim_neo;
 /// use pecos_neo::prelude::*;
 ///
 /// let circuit = CommandBuilder::new()
-///     .prep(0).h(0).measure(0)
+///     .pz(0).h(0).mz(0)
 ///     .build();
 ///
 /// let results = sim_neo(circuit)
@@ -2044,7 +2388,8 @@ impl Simulation {
 ///
 /// ## QASM Program
 ///
-/// ```ignore
+#[cfg_attr(feature = "qasm", doc = "```no_run")]
+#[cfg_attr(not(feature = "qasm"), doc = "```ignore")]
 /// use pecos_neo::tool::sim_neo;
 /// use pecos_qasm::qasm_engine;
 ///
@@ -2059,7 +2404,8 @@ impl Simulation {
 ///     measure q[1] -> c[1];
 /// "#;
 ///
-/// let results = sim_neo(qasm_engine().qasm(qasm))
+/// let results = sim_neo(qasm)
+///     .classical(qasm_engine())
 ///     .depolarizing(0.01)
 ///     .shots(1000)
 ///     .seed(42)
@@ -2069,7 +2415,11 @@ impl Simulation {
 ///
 /// ## Reusable Simulation
 ///
-/// ```ignore
+/// ```no_run
+/// use pecos_neo::tool::sim_neo;
+/// use pecos_neo::prelude::*;
+///
+/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 /// let mut sim = sim_neo(circuit)
 ///     .shots(1000)
 ///     .build();
@@ -2089,7 +2439,8 @@ pub fn sim_neo<I: SimNeoInput>(input: I) -> SimNeoBuilder {
 ///
 /// # Example
 ///
-/// ```ignore
+#[cfg_attr(feature = "qasm", doc = "```no_run")]
+#[cfg_attr(not(feature = "qasm"), doc = "```ignore")]
 /// use pecos_neo::tool::sim_neo_builder;
 /// use pecos_qasm::qasm_engine;
 ///
@@ -2105,7 +2456,7 @@ pub fn sim_neo<I: SimNeoInput>(input: I) -> SimNeoBuilder {
 /// "#;
 ///
 /// let results = sim_neo_builder()
-///     .classical(qasm_engine().program(qasm))
+///     .with_engine(qasm_engine().qasm(qasm))
 ///     .depolarizing(0.01)
 ///     .shots(1000)
 ///     .seed(42)
@@ -2145,9 +2496,9 @@ mod tests {
     #[test]
     fn test_sim_neo_basic() {
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .x(0) // Flip to |1>
-            .measure(0)
+            .mz(0)
             .build();
 
         let mut sim = sim_neo(circuit).shots(10).seed(42).build();
@@ -2167,11 +2518,7 @@ mod tests {
 
     #[test]
     fn test_sim_neo_rerun() {
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .x(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let mut sim = sim_neo(circuit).shots(5).build();
 
@@ -2187,17 +2534,13 @@ mod tests {
     #[test]
     fn test_sim_neo_deterministic() {
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Superposition - outcome depends on RNG
-            .measure(0)
+            .mz(0)
             .build();
 
         // Same seed should produce same results
-        let results1 = sim_neo(circuit.clone())
-            .shots(20)
-            .seed(42)
-            .build()
-            .run();
+        let results1 = sim_neo(circuit.clone()).shots(20).seed(42).build().run();
 
         let results2 = sim_neo(circuit).shots(20).seed(42).build().run();
 
@@ -2217,14 +2560,13 @@ mod tests {
         // Z|0> = |0>, so without noise we'd always measure 0
         // But with depolarizing noise on the Z gate, we'll see errors
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .z(0) // Single-qubit gate to trigger noise
-            .measure(0)
+            .mz(0)
             .build();
 
         // Very high error rate - this will definitely flip some outcomes
-        let noise = ComposableNoiseModel::new()
-            .add_channel(SingleQubitChannel::depolarizing(0.5));
+        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
 
         let results = sim_neo(circuit)
             .noise(noise)
@@ -2255,15 +2597,13 @@ mod tests {
     fn test_sim_neo_noise_deterministic() {
         // Verify noise is deterministic with same seed
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .z(0) // Single-qubit gate to trigger noise
-            .measure(0)
+            .mz(0)
             .build();
 
-        let noise1 = ComposableNoiseModel::new()
-            .add_channel(SingleQubitChannel::depolarizing(0.5));
-        let noise2 = ComposableNoiseModel::new()
-            .add_channel(SingleQubitChannel::depolarizing(0.5));
+        let noise1 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
+        let noise2 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
 
         let results1 = sim_neo(circuit.clone())
             .noise(noise1)
@@ -2291,11 +2631,7 @@ mod tests {
     #[test]
     fn test_sim_neo_ergonomic_noise() {
         // Test the ergonomic .noise(channel) syntax (without explicit ComposableNoiseModel)
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .z(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).z(0).mz(0).build();
 
         // This uses the From<C: NoiseChannel> impl for ComposableNoiseModel
         let results = sim_neo(circuit)
@@ -2322,11 +2658,7 @@ mod tests {
         // Test that GeneralNoiseModelBuilder can be passed directly without .build()
         use crate::noise::GeneralNoiseModelBuilder;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .x(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         // Pass builder directly - no .build() needed!
         let results = sim_neo(circuit)
@@ -2345,19 +2677,22 @@ mod tests {
             .filter(|o| !o.get_bit(QubitId(0)).unwrap_or(true))
             .count();
 
-        assert!(zeros > 0, "Expected some errors from 30% depolarizing noise");
+        assert!(
+            zeros > 0,
+            "Expected some errors from 30% depolarizing noise"
+        );
     }
 
     #[test]
     fn test_sim_neo_convenience_depolarizing() {
         // Test the .depolarizing(p) convenience method
         let circuit = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .x(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let results = sim_neo(circuit)
@@ -2374,8 +2709,7 @@ mod tests {
             .outcomes
             .iter()
             .filter(|o| {
-                o.get_bit(QubitId(0)).unwrap_or(false)
-                    && o.get_bit(QubitId(1)).unwrap_or(false)
+                o.get_bit(QubitId(0)).unwrap_or(false) && o.get_bit(QubitId(1)).unwrap_or(false)
             })
             .count();
 
@@ -2390,10 +2724,7 @@ mod tests {
         // Test measurement noise via GeneralNoiseModelBuilder
         use crate::noise::GeneralNoiseModelBuilder;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .noise(GeneralNoiseModelBuilder::new().with_p_meas_symmetric(0.15))
@@ -2423,10 +2754,7 @@ mod tests {
         // Test prep noise via GeneralNoiseModelBuilder
         use crate::noise::GeneralNoiseModelBuilder;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .noise(GeneralNoiseModelBuilder::new().with_p_prep(0.20))
@@ -2545,17 +2873,13 @@ mod tests {
     fn test_sim_neo_monte_carlo_orchestrator() {
         // Test Monte Carlo orchestration with multiple workers
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .x(0) // Flip to |1>
-            .measure(0)
+            .mz(0)
             .build();
 
         // Use .workers() convenience method for Monte Carlo
-        let results = sim_neo(circuit)
-            .workers(4)
-            .shots(100)
-            .seed(42)
-            .run();
+        let results = sim_neo(circuit).workers(4).shots(100).seed(42).run();
 
         assert_eq!(results.len(), 100);
 
@@ -2572,22 +2896,14 @@ mod tests {
     fn test_sim_neo_monte_carlo_deterministic() {
         // Test that Monte Carlo with same seed produces same results
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Superposition
-            .measure(0)
+            .mz(0)
             .build();
 
-        let results1 = sim_neo(circuit.clone())
-            .workers(4)
-            .shots(50)
-            .seed(42)
-            .run();
+        let results1 = sim_neo(circuit.clone()).workers(4).shots(50).seed(42).run();
 
-        let results2 = sim_neo(circuit)
-            .workers(4)
-            .shots(50)
-            .seed(42)
-            .run();
+        let results2 = sim_neo(circuit).workers(4).shots(50).seed(42).run();
 
         assert_eq!(results1.outcomes.len(), results2.outcomes.len());
         for (o1, o2) in results1.outcomes.iter().zip(results2.outcomes.iter()) {
@@ -2604,11 +2920,7 @@ mod tests {
         // Test explicit orchestrator configuration
         use super::Orchestrator;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .x(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         // Use explicit Orchestrator enum
         let results = sim_neo(circuit)
@@ -2632,11 +2944,7 @@ mod tests {
         // Test sequential orchestrator (default)
         use super::Orchestrator;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .x(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .orchestrator(Orchestrator::Sequential)
@@ -2661,9 +2969,9 @@ mod tests {
         use super::Orchestrator;
 
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Superposition - outcome depends on RNG
-            .measure(0)
+            .mz(0)
             .build();
 
         // Run with sequential orchestrator
@@ -2681,7 +2989,10 @@ mod tests {
             .run();
 
         // Results should be identical
-        assert_eq!(sequential_results.outcomes.len(), parallel_results.outcomes.len());
+        assert_eq!(
+            sequential_results.outcomes.len(),
+            parallel_results.outcomes.len()
+        );
         for (i, (seq, par)) in sequential_results
             .outcomes
             .iter()
@@ -2697,15 +3008,108 @@ mod tests {
     }
 
     #[test]
+    fn test_sim_neo_noisy_parallel_matches_sequential() {
+        // Critical test: parallel noisy execution should produce identical results
+        // to sequential noisy execution with the same seed.
+        use super::Orchestrator;
+
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .h(0)
+            .z(0) // Trigger single-qubit noise
+            .mz(0)
+            .build();
+
+        let noise_seq =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+        let noise_par =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+
+        // Run with sequential orchestrator
+        let sequential_results = sim_neo(circuit.clone())
+            .noise(noise_seq)
+            .orchestrator(Orchestrator::Sequential)
+            .shots(50)
+            .seed(42)
+            .run();
+
+        // Run with parallel Monte Carlo orchestrator
+        let parallel_results = sim_neo(circuit)
+            .noise(noise_par)
+            .orchestrator(Orchestrator::monte_carlo(4))
+            .shots(50)
+            .seed(42)
+            .run();
+
+        // Results should be identical shot-for-shot
+        assert_eq!(
+            sequential_results.outcomes.len(),
+            parallel_results.outcomes.len()
+        );
+        for (i, (seq, par)) in sequential_results
+            .outcomes
+            .iter()
+            .zip(parallel_results.outcomes.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                seq.get_bit(QubitId(0)),
+                par.get_bit(QubitId(0)),
+                "Noisy sequential and parallel should produce identical results at shot {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_noisy_parallel_deterministic() {
+        // Two parallel noisy runs with the same seed should produce identical results.
+
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .h(0)
+            .z(0)
+            .mz(0)
+            .build();
+
+        let noise1 =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+        let noise2 =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+
+        let results1 = sim_neo(circuit.clone())
+            .noise(noise1)
+            .workers(4)
+            .shots(50)
+            .seed(42)
+            .run();
+
+        let results2 = sim_neo(circuit)
+            .noise(noise2)
+            .workers(4)
+            .shots(50)
+            .seed(42)
+            .run();
+
+        for (i, (r1, r2)) in results1
+            .outcomes
+            .iter()
+            .zip(results2.outcomes.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                r1.get_bit(QubitId(0)),
+                r2.get_bit(QubitId(0)),
+                "Parallel noisy runs with same seed should be deterministic at shot {i}"
+            );
+        }
+    }
+
+    #[test]
     fn test_sim_neo_quantum_sparse_stab() {
         // Test explicitly selecting sparse stabilizer backend
         use super::sparse_stab;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .x(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .quantum(sparse_stab())
@@ -2728,11 +3132,7 @@ mod tests {
         // Test state vector backend
         use super::state_vector;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .x(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .quantum(state_vector())
@@ -2755,11 +3155,7 @@ mod tests {
         // Test that each backend is internally deterministic (same seed = same results)
         use super::{sparse_stab, state_vector};
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         // Test sparse_stab determinism
         let sparse1 = sim_neo(circuit.clone())
@@ -2809,11 +3205,7 @@ mod tests {
         // Test state vector with parallel Monte Carlo
         use super::state_vector;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .x(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .quantum(state_vector())
@@ -2842,23 +3234,28 @@ mod tests {
         use super::importance_sampling;
 
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Single-qubit gate triggers importance sampling
-            .measure(0)
+            .mz(0)
             .build();
 
         let results = sim_neo(circuit)
-            .orchestrator(importance_sampling()
-                .with_p1(0.01)
-                .with_p2(0.02)
-                .with_p_meas(0.01)
-                .with_boost(5.0))
+            .orchestrator(
+                importance_sampling()
+                    .with_p1(0.01)
+                    .with_p2(0.02)
+                    .with_p_meas(0.01)
+                    .with_boost(5.0),
+            )
             .shots(100)
             .seed(42)
             .run();
 
         assert_eq!(results.len(), 100);
-        assert!(results.has_weights(), "Importance sampling should produce weights");
+        assert!(
+            results.has_weights(),
+            "Importance sampling should produce weights"
+        );
 
         let weights = results.weights.as_ref().unwrap();
         assert_eq!(weights.len(), 100);
@@ -2869,16 +3266,14 @@ mod tests {
         // Test the convenience method for uniform error rates
         use super::importance_sampling;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let results = sim_neo(circuit)
-            .orchestrator(importance_sampling()
-                .with_uniform_error(0.01)
-                .with_boost(10.0))
+            .orchestrator(
+                importance_sampling()
+                    .with_uniform_error(0.01)
+                    .with_boost(10.0),
+            )
             .shots(50)
             .seed(123)
             .run();
@@ -2894,16 +3289,18 @@ mod tests {
         use super::importance_sampling;
 
         let circuit = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Creates |+> = (|0> + |1>)/sqrt(2)
-            .measure(0)
+            .mz(0)
             .build();
 
         // Run with importance sampling (boosting noise that doesn't affect this test)
         let results = sim_neo(circuit)
-            .orchestrator(importance_sampling()
-                .with_uniform_error(0.001)
-                .with_boost(100.0)) // Very aggressive boost
+            .orchestrator(
+                importance_sampling()
+                    .with_uniform_error(0.001)
+                    .with_boost(100.0),
+            ) // Very aggressive boost
             .shots(2000)
             .seed(42)
             .run();
@@ -2931,11 +3328,7 @@ mod tests {
         // Same seed should produce same results
         use super::importance_sampling;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let is_builder = importance_sampling()
             .with_uniform_error(0.01)
@@ -2984,20 +3377,22 @@ mod tests {
         use super::importance_sampling;
 
         let circuit = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1) // Two-qubit gate
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let results = sim_neo(circuit)
-            .orchestrator(importance_sampling()
-                .with_p1(0.001)
-                .with_p2(0.01)
-                .with_p_meas(0.001)
-                .with_boost(10.0))
+            .orchestrator(
+                importance_sampling()
+                    .with_p1(0.001)
+                    .with_p2(0.01)
+                    .with_p_meas(0.001)
+                    .with_boost(10.0),
+            )
             .shots(100)
             .seed(42)
             .run();
@@ -3011,16 +3406,14 @@ mod tests {
         // Test the weighted_stats helper method
         use super::importance_sampling;
 
-        let circuit = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let results = sim_neo(circuit)
-            .orchestrator(importance_sampling()
-                .with_uniform_error(0.01)
-                .with_boost(10.0))
+            .orchestrator(
+                importance_sampling()
+                    .with_uniform_error(0.01)
+                    .with_boost(10.0),
+            )
             .shots(500)
             .seed(42)
             .run();
@@ -3042,5 +3435,250 @@ mod tests {
             (mean - 0.5).abs() < 0.15,
             "Mean should be ~0.5, got {mean:.4}"
         );
+    }
+
+    // ========================================================================
+    // Custom Backend Tests
+    // ========================================================================
+
+    #[test]
+    fn test_custom_backend_basic() {
+        // Use SparseStab via custom_backend and verify correct results
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0) // Flip to |1>
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_custom_backend_matches_builtin() {
+        // Custom backend with SparseStab should produce identical results
+        // to the built-in SparseStab backend with the same seed
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .h(0) // Superposition - outcome depends on RNG
+            .mz(0)
+            .build();
+
+        let builtin_results = sim_neo(circuit.clone())
+            .quantum(sparse_stab())
+            .shots(50)
+            .seed(42)
+            .run();
+
+        let custom_results = sim_neo(circuit)
+            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .shots(50)
+            .seed(42)
+            .run();
+
+        assert_eq!(builtin_results.outcomes.len(), custom_results.outcomes.len());
+        for (i, (builtin, custom)) in builtin_results
+            .outcomes
+            .iter()
+            .zip(custom_results.outcomes.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                builtin.get_bit(QubitId(0)),
+                custom.get_bit(QubitId(0)),
+                "Custom backend should match built-in at shot {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_custom_backend_with_noise() {
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .z(0) // Single-qubit gate triggers noise
+            .mz(0)
+            .build();
+
+        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
+
+        let results = sim_neo(circuit)
+            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .noise(noise)
+            .shots(100)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 100);
+
+        // With 50% depolarizing, should see a mix of outcomes
+        let ones: usize = results
+            .outcomes
+            .iter()
+            .filter(|o| o.get_bit(QubitId(0)).unwrap_or(false))
+            .count();
+
+        assert!(
+            ones > 0 && ones < 100,
+            "Expected mix of outcomes with 50% noise, got {ones} ones"
+        );
+    }
+
+    #[test]
+    fn test_custom_backend_deterministic() {
+        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+
+        let results1 = sim_neo(circuit.clone())
+            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .shots(20)
+            .seed(42)
+            .run();
+
+        let results2 = sim_neo(circuit)
+            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .shots(20)
+            .seed(42)
+            .run();
+
+        for (o1, o2) in results1.outcomes.iter().zip(results2.outcomes.iter()) {
+            assert_eq!(
+                o1.get_bit(QubitId(0)),
+                o2.get_bit(QubitId(0)),
+                "Custom backend should be deterministic with same seed"
+            );
+        }
+    }
+
+    #[test]
+    fn test_custom_backend_state_vector() {
+        // Verify StateVec also works via custom_backend
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0)
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(custom_backend(|n| StateVec::new(n)))
+            .shots(10)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+        }
+    }
+
+    // ========================================================================
+    // Register-based Results Tests
+    // ========================================================================
+
+    #[test]
+    fn test_register_counts() {
+        // H gate should produce roughly 50/50 split
+        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+
+        let mut reg = RegisterMap::new();
+        reg.add_register("c", &[QubitId(0)]);
+
+        let results = sim_neo(circuit).shots(200).seed(42).run();
+        let counts = results.register_counts(&reg, "c");
+
+        // Should have entries for both [false] and [true]
+        assert!(
+            counts.contains_key(&vec![false]),
+            "Should have |0> outcomes"
+        );
+        assert!(
+            counts.contains_key(&vec![true]),
+            "Should have |1> outcomes"
+        );
+
+        let total: usize = counts.values().sum();
+        assert_eq!(total, 200, "Total counts should equal number of shots");
+    }
+
+    #[test]
+    fn test_register_counts_bell_state() {
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .pz(1)
+            .h(0)
+            .cx(0, 1)
+            .mz(0)
+            .mz(1)
+            .build();
+
+        let mut reg = RegisterMap::new();
+        reg.add_register("c", &[QubitId(0), QubitId(1)]);
+
+        let results = sim_neo(circuit).shots(100).seed(42).run();
+        let counts = results.register_counts(&reg, "c");
+
+        // Bell state: only |00> and |11> should appear
+        for (bitstring, _count) in &counts {
+            assert_eq!(bitstring[0], bitstring[1], "Bell state qubits must be correlated: got {bitstring:?}");
+        }
+    }
+
+    #[test]
+    fn test_as_register_columns() {
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .pz(1)
+            .x(0) // qubit 0 -> |1>
+            .mz(0)
+            .mz(1)
+            .build();
+
+        let mut reg = RegisterMap::new();
+        reg.add_register("a", &[QubitId(0)]);
+        reg.add_register("b", &[QubitId(1)]);
+
+        let results = sim_neo(circuit).shots(5).seed(42).run();
+        let columns = results.as_register_columns(&reg);
+
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns["a"].len(), 5);
+        assert_eq!(columns["b"].len(), 5);
+
+        // qubit 0 is always |1>, qubit 1 is always |0>
+        for shot in &columns["a"] {
+            assert_eq!(shot, &[true]);
+        }
+        for shot in &columns["b"] {
+            assert_eq!(shot, &[false]);
+        }
+    }
+
+    #[test]
+    fn test_register_counts_missing_register() {
+        let circuit = CommandBuilder::new().pz(0).mz(0).build();
+
+        let mut reg = RegisterMap::new();
+        reg.add_register("missing", &[QubitId(5)]); // never measured
+
+        let results = sim_neo(circuit).shots(10).seed(42).run();
+        let counts = results.register_counts(&reg, "missing");
+
+        assert!(counts.is_empty(), "Unmeasured register should have no counts");
     }
 }

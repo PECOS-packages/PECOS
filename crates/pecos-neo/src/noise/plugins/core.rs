@@ -33,12 +33,12 @@ use crate::noise::{NoiseContext, NoiseEvent};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::ComposableNoiseModel;
 /// use pecos_neo::noise::plugins::CorePlugin;
 ///
 /// let model = ComposableNoiseModel::new()
-///     .add_plugin(CorePlugin)  // Always add first
-///     .add_plugin(other_plugins...);
+///     .add_plugin(CorePlugin);  // Always add first
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CorePlugin;
@@ -87,6 +87,10 @@ impl EventHandler for PreparationStateHandler {
         // High priority - state tracking should happen first
         1000
     }
+
+    fn clone_box(&self) -> Box<dyn EventHandler> {
+        Box::new(*self)
+    }
 }
 
 /// Handles measurement events by marking qubits as inactive.
@@ -113,6 +117,10 @@ impl EventHandler for MeasurementStateHandler {
     fn priority(&self) -> i32 {
         // High priority - state tracking should happen first
         1000
+    }
+
+    fn clone_box(&self) -> Box<dyn EventHandler> {
+        Box::new(*self)
     }
 }
 

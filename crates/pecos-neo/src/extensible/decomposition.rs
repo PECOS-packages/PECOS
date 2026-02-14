@@ -7,8 +7,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use pecos_neo::prelude::*;
+//! ```
+//! use pecos_neo::extensible::*;
 //!
 //! // Define a custom gate with decomposition
 //! let mut registry = DecompositionRegistry::new();
@@ -16,16 +16,16 @@
 //! // SWAP decomposes into 3 CX gates
 //! registry.register(
 //!     gates::SWAP,
-//!     requires![gates::CX],
+//!     GateSupportSet::from_iter([gates::CX]),
 //!     Decomposition::SwapViaCx,
 //! );
 //!
 //! // Check if a simulator can handle SWAP
-//! let sim_support = support_set![gates::CX, gates::H, gates::T];
-//! assert!(registry.can_decompose(gates::SWAP, &sim_support));
+//! let sim_support = GateSupportSet::from_iter([gates::CX, gates::H, gates::T]);
+//! assert!(registry.can_execute(gates::SWAP, &sim_support));
 //! ```
 
-use super::{gates, GateId, GateSupportSet};
+use super::{GateId, GateSupportSet, gates};
 use pecos_core::{Angle64, QubitId};
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -392,12 +392,7 @@ impl DecompositionRegistry {
     }
 
     /// Register a gate with a dynamic decomposition.
-    pub fn register_dynamic(
-        &mut self,
-        gate: GateId,
-        requires: GateSupportSet,
-        ops: Vec<DecompOp>,
-    ) {
+    pub fn register_dynamic(&mut self, gate: GateId, requires: GateSupportSet, ops: Vec<DecompOp>) {
         self.register(gate, requires, Decomposition::Dynamic(Arc::new(ops)));
     }
 
@@ -419,8 +414,7 @@ impl DecompositionRegistry {
     #[inline]
     #[must_use]
     pub fn is_native(&self, gate: GateId) -> bool {
-        self.get(gate)
-            .is_some_and(|e| e.decomposition.is_native())
+        self.get(gate).is_some_and(|e| e.decomposition.is_native())
     }
 
     /// Check if a simulator can execute a gate.
@@ -966,8 +960,7 @@ mod tests {
         let result = registry.resolve(gates::SWAP, &sim_support);
         assert!(
             matches!(result, Err(ResolutionError::UnsupportedNativeGate(g)) if g == gates::CX),
-            "Expected UnsupportedNativeGate(CX), got {:?}",
-            result
+            "Expected UnsupportedNativeGate(CX), got {result:?}"
         );
     }
 
@@ -1145,7 +1138,9 @@ mod tests {
 
         // Should be unchanged
         match &resolved.ops[0] {
-            ResolvedOp::Gate { gate_id, qubits, .. } => {
+            ResolvedOp::Gate {
+                gate_id, qubits, ..
+            } => {
                 assert_eq!(*gate_id, gates::H);
                 assert_eq!(qubits[0], QubitId(0));
             }
@@ -1163,11 +1158,7 @@ mod tests {
         let resolver = CircuitResolver::new(&registry, &sim_support);
 
         // Circuit with SWAP (needs decomposition)
-        let seq = AdaptedSequence::new(vec![AdaptedOp::gate2(
-            gates::SWAP,
-            QubitId(0),
-            QubitId(1),
-        )]);
+        let seq = AdaptedSequence::new(vec![AdaptedOp::gate2(gates::SWAP, QubitId(0), QubitId(1))]);
 
         let resolved = resolver.resolve(&seq).unwrap();
 
@@ -1273,17 +1264,12 @@ mod tests {
 
         // Try to use SWAP which decomposes to CX
         // CX is native but not supported, so we get UnsupportedNativeGate
-        let seq = AdaptedSequence::new(vec![AdaptedOp::gate2(
-            gates::SWAP,
-            QubitId(0),
-            QubitId(1),
-        )]);
+        let seq = AdaptedSequence::new(vec![AdaptedOp::gate2(gates::SWAP, QubitId(0), QubitId(1))]);
 
         let result = resolver.resolve(&seq);
         assert!(
             matches!(result, Err(ResolutionError::UnsupportedNativeGate(g)) if g == gates::CX),
-            "Expected UnsupportedNativeGate(CX), got {:?}",
-            result
+            "Expected UnsupportedNativeGate(CX), got {result:?}"
         );
     }
 
@@ -1312,7 +1298,9 @@ mod tests {
     fn test_resolved_op_constructors() {
         let h = ResolvedOp::gate1(gates::H, QubitId(0));
         match h {
-            ResolvedOp::Gate { gate_id, qubits, .. } => {
+            ResolvedOp::Gate {
+                gate_id, qubits, ..
+            } => {
                 assert_eq!(gate_id, gates::H);
                 assert_eq!(qubits[0], QubitId(0));
             }
@@ -1321,7 +1309,9 @@ mod tests {
 
         let cx = ResolvedOp::gate2(gates::CX, QubitId(0), QubitId(1));
         match cx {
-            ResolvedOp::Gate { gate_id, qubits, .. } => {
+            ResolvedOp::Gate {
+                gate_id, qubits, ..
+            } => {
                 assert_eq!(gate_id, gates::CX);
                 assert_eq!(qubits.len(), 2);
             }
@@ -1330,7 +1320,9 @@ mod tests {
 
         let rz = ResolvedOp::rotation(gates::RZ, QubitId(0), Angle64::QUARTER_TURN);
         match rz {
-            ResolvedOp::Gate { gate_id, angles, .. } => {
+            ResolvedOp::Gate {
+                gate_id, angles, ..
+            } => {
                 assert_eq!(gate_id, gates::RZ);
                 assert_eq!(angles[0], Angle64::QUARTER_TURN);
             }

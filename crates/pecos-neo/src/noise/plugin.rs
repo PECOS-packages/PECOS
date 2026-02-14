@@ -24,8 +24,9 @@
 //!
 //! ## Example
 //!
-//! ```ignore
-//! use pecos_neo::noise::*;
+//! ```
+//! use pecos_neo::noise::ComposableNoiseModel;
+//! use pecos_neo::noise::plugins::{CorePlugin, DepolarizingPlugin, LeakagePlugin};
 //!
 //! let model = ComposableNoiseModel::new()
 //!     .add_plugin(CorePlugin)           // Fundamental state tracking
@@ -116,6 +117,9 @@ pub trait EventHandler: Send + Sync {
     fn priority(&self) -> i32 {
         0
     }
+
+    /// Clone this handler into a boxed trait object.
+    fn clone_box(&self) -> Box<dyn EventHandler>;
 }
 
 /// Observes changes to the noise context and can produce responses.
@@ -169,12 +173,16 @@ pub trait ContextObserver: Send + Sync {
     fn name(&self) -> &'static str {
         "UnnamedObserver"
     }
+
+    /// Clone this observer into a boxed trait object.
+    fn clone_box(&self) -> Box<dyn ContextObserver>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[derive(Clone, Copy)]
     struct TestHandler;
 
     impl EventHandler for TestHandler {
@@ -192,6 +200,10 @@ mod tests {
 
         fn name(&self) -> &'static str {
             "TestHandler"
+        }
+
+        fn clone_box(&self) -> Box<dyn EventHandler> {
+            Box::new(*self)
         }
     }
 

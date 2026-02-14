@@ -372,7 +372,7 @@ impl PyGateType {
     #[pyo3(name = "Measure")]
     fn measure() -> Self {
         Self {
-            inner: GateType::Measure,
+            inner: GateType::MZ,
         }
     }
 
@@ -388,7 +388,7 @@ impl PyGateType {
     #[pyo3(name = "Prep")]
     fn prep() -> Self {
         Self {
-            inner: GateType::Prep,
+            inner: GateType::PZ,
         }
     }
 

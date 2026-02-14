@@ -28,7 +28,7 @@ use super::entity::EntityId;
 use super::resource::Resources;
 use crate::noise::NoiseContext;
 use crate::sampling::SampleWeight;
-use pecos_core::rng::rng_manageable::{derive_seed, RngManageable};
+use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
 use std::collections::BTreeSet;
@@ -106,7 +106,7 @@ pub struct World<S: CliffordGateable> {
 
 impl<S: CliffordGateable> World<S> {
     /// Create a new world with the given base seed.
-    #[must_use] 
+    #[must_use]
     pub fn new(base_seed: u64) -> Self {
         Self {
             next_entity_id: 0,
@@ -123,7 +123,7 @@ impl<S: CliffordGateable> World<S> {
     }
 
     /// Get the base seed for this world.
-    #[must_use] 
+    #[must_use]
     pub fn base_seed(&self) -> u64 {
         self.resources.seed.base_seed()
     }
@@ -186,13 +186,13 @@ impl<S: CliffordGateable> World<S> {
     }
 
     /// Check if an entity is alive.
-    #[must_use] 
+    #[must_use]
     pub fn is_alive(&self, entity: EntityId) -> bool {
         self.alive_entities.contains(&entity)
     }
 
     /// Get the number of alive entities.
-    #[must_use] 
+    #[must_use]
     pub fn entity_count(&self) -> usize {
         self.alive_entities.len()
     }
@@ -203,7 +203,7 @@ impl<S: CliffordGateable> World<S> {
     }
 
     /// Get entities with a specific status.
-    #[must_use] 
+    #[must_use]
     pub fn entities_with_status(&self, status: StatusComponent) -> Vec<EntityId> {
         self.statuses
             .iter()
@@ -213,7 +213,7 @@ impl<S: CliffordGateable> World<S> {
     }
 
     /// Get all active entities.
-    #[must_use] 
+    #[must_use]
     pub fn active_entities(&self) -> Vec<EntityId> {
         self.entities_with_status(StatusComponent::Active)
     }
@@ -360,7 +360,8 @@ impl<S: CliffordGateable> World<S> {
         self.rngs.insert(entity, RngComponent::new(rng));
 
         // Import other components
-        self.weights.insert(entity, WeightComponent::new(transfer.weight));
+        self.weights
+            .insert(entity, WeightComponent::new(transfer.weight));
         self.noise_contexts.insert(
             entity,
             NoiseContextComponent {
@@ -482,11 +483,7 @@ impl<S: CliffordGateable> World<S> {
         // Collect weights and compute cumulative distribution
         let weights: Vec<f64> = active
             .iter()
-            .map(|&e| {
-                self.weights
-                    .get(e)
-                    .map_or(1.0, |w| w.weight.weight())
-            })
+            .map(|&e| self.weights.get(e).map_or(1.0, |w| w.weight.weight()))
             .collect();
 
         let total_weight: f64 = weights.iter().sum();

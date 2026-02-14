@@ -38,30 +38,29 @@
 //!
 //! ## Example
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::sampling::subset::{SubsetSimulation, SubsetConfig};
+//! use pecos_neo::prelude::*;
+//! use pecos_qsim::SparseStab;
 //!
-//! // Define score function (e.g., count of errors)
-//! let score_fn = |outcomes: &MeasurementOutcomes, errors: &ErrorHistory| {
-//!     errors.total_count() as f64
-//! };
+//! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//!
+//! // Define score function
+//! let score_fn = |outcomes: &MeasurementOutcomes| -> f64 { 0.0 };
 //!
 //! // Define failure predicate
-//! let is_failure = |outcomes: &MeasurementOutcomes| {
-//!     check_logical_error(outcomes)
-//! };
+//! let is_failure = |outcomes: &MeasurementOutcomes| -> bool { false };
 //!
 //! let config = SubsetConfig::new()
 //!     .with_samples_per_level(1000)
 //!     .with_threshold_fraction(0.1)  // Top 10% advance
 //!     .with_max_levels(10);
 //!
-//! let result = SubsetSimulation::new(circuit, score_fn, is_failure)
+//! let result = SubsetSimulation::new(commands, 1, score_fn, is_failure)
 //!     .with_config(config)
-//!     .with_noise(noise_model)
 //!     .run();
 //!
-//! println!("P(failure) ≈ {:.2e}", result.probability());
+//! println!("P(failure) = {:.2e}", result.probability());
 //! ```
 
 use crate::command::CommandQueue;
@@ -70,7 +69,7 @@ use crate::outcome::MeasurementOutcomes;
 use crate::runner::ShotRunner;
 use crate::sampling::weight::SampleWeight;
 use pecos_qsim::{CliffordGateable, SparseStab};
-use pecos_rng::{resolve_seed, PecosRng};
+use pecos_rng::{PecosRng, resolve_seed};
 use rand::Rng;
 
 /// Configuration for subset simulation.
@@ -332,7 +331,11 @@ where
         }
 
         // Sort by score to find threshold
-        samples.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        samples.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Track cumulative probability
         let mut cumulative_prob = 1.0;
@@ -380,10 +383,7 @@ where
             }
 
             // Check if all survivors are failures
-            let survivors: Vec<_> = samples
-                .iter()
-                .filter(|s| s.score >= threshold)
-                .collect();
+            let survivors: Vec<_> = samples.iter().filter(|s| s.score >= threshold).collect();
 
             if survivors.iter().all(|s| s.is_failure) {
                 // All survivors are failures - we're done
@@ -765,7 +765,7 @@ pub struct RoundResult {
 ///
 /// ## Example
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::sampling::subset::{EcsSubsetSimulation, SubsetConfig};
 /// use pecos_neo::ecs::World;
 /// use pecos_qsim::SparseStab;
@@ -779,17 +779,15 @@ pub struct RoundResult {
 /// // Define round execution and scoring
 /// let mut sim = EcsSubsetSimulation::new(world, SubsetConfig::default());
 ///
-/// // Run subset simulation
-/// let result = sim.run(
+/// // Run one round of subset simulation
+/// let result = sim.run_round(
 ///     |world, entity| {
 ///         // Execute one QEC round on this trajectory
 ///         // Returns the syndrome weight (criticality score)
-///         run_qec_round(world, entity)
+///         0.0_f64
 ///     },
 ///     |score| score >= 5.0,  // Failure condition
 /// );
-///
-/// println!("P(failure) = {:.2e}", result.probability());
 /// ```
 pub struct EcsSubsetSimulation<S: pecos_qsim::CliffordGateable + Clone> {
     /// The ECS World containing all trajectories.
@@ -873,16 +871,27 @@ impl<S: pecos_qsim::CliffordGateable + Clone> EcsSubsetSimulation<S> {
         }
 
         // Sort trajectories by score (descending for top selection)
-        self.trajectories
-            .sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        self.trajectories.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Find adaptive threshold (top threshold_fraction)
-        let target_above = (self.config.threshold_fraction * self.trajectories.len() as f64).ceil() as usize;
+        let target_above =
+            (self.config.threshold_fraction * self.trajectories.len() as f64).ceil() as usize;
         let threshold_idx = target_above.min(self.trajectories.len().saturating_sub(1));
-        let threshold = self.trajectories.get(threshold_idx).map_or(0.0, |t| t.score);
+        let threshold = self
+            .trajectories
+            .get(threshold_idx)
+            .map_or(0.0, |t| t.score);
 
         // Count trajectories above threshold
-        let num_above = self.trajectories.iter().filter(|t| t.score >= threshold).count();
+        let num_above = self
+            .trajectories
+            .iter()
+            .filter(|t| t.score >= threshold)
+            .count();
         let num_failures = self.trajectories.iter().filter(|t| t.is_failure).count();
 
         // Conditional probability for this level
@@ -986,7 +995,6 @@ impl<S: pecos_qsim::CliffordGateable + Clone> EcsSubsetSimulation<S> {
             })
             .collect();
     }
-
 }
 
 // ============================================================================
@@ -1583,7 +1591,11 @@ impl ProperSubsetSimulation {
         let mut failures = 0;
 
         for i in 0..num_samples {
-            let seed = self.config.seed.unwrap_or(12345).wrapping_add(i as u64 * 1_000_000);
+            let seed = self
+                .config
+                .seed
+                .unwrap_or(12345)
+                .wrapping_add(i as u64 * 1_000_000);
             let mut score = 0.0;
 
             for round in 0..self.num_rounds {
@@ -1794,7 +1806,9 @@ impl<S: pecos_qsim::CliffordGateable + Clone> QecHistoryTrajectory<S> {
     /// Find the checkpoint where this trajectory first crossed the given threshold.
     #[must_use]
     pub fn find_crossing_checkpoint(&self, threshold: f64) -> Option<&QecCheckpoint<S>> {
-        self.history.iter().find(|cp| cp.syndrome_score.score >= threshold)
+        self.history
+            .iter()
+            .find(|cp| cp.syndrome_score.score >= threshold)
     }
 
     /// Get the round when this trajectory first crossed the threshold.
@@ -1824,10 +1838,11 @@ impl<S: pecos_qsim::CliffordGateable + Clone> QecHistoryTrajectory<S> {
 ///
 /// ## Example
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::sampling::subset::{QecSubsetSimulation, QecSubsetConfig};
 /// use pecos_neo::ecs::World;
 /// use pecos_qsim::SparseStab;
+/// use pecos_core::QubitId;
 ///
 /// // Configure QEC subset simulation
 /// let config = QecSubsetConfig::new(
@@ -1924,11 +1939,11 @@ impl<S: pecos_qsim::CliffordGateable + Clone> QecSubsetSimulation<S> {
         // Data structure to track trajectory history
         #[allow(dead_code)]
         struct TrajHistory {
-            scores: Vec<f64>,      // Score at each round
-            seeds: Vec<u64>,       // Seed used at each round
+            scores: Vec<f64>, // Score at each round
+            seeds: Vec<u64>,  // Seed used at each round
             final_score: f64,
             is_failure: bool,
-            base_seed: u64,        // Kept for debugging/tracing
+            base_seed: u64, // Kept for debugging/tracing
         }
 
         // Step 1: Run all trajectories to completion, recording history
@@ -1997,7 +2012,10 @@ impl<S: pecos_qsim::CliffordGateable + Clone> QecSubsetSimulation<S> {
             }
 
             // Count how many exceed the new threshold
-            let num_above = histories.iter().filter(|h| h.final_score >= new_threshold).count();
+            let num_above = histories
+                .iter()
+                .filter(|h| h.final_score >= new_threshold)
+                .count();
 
             // Conditional probability for this level
             let conditional_prob = num_above as f64 / n as f64;
@@ -2060,7 +2078,8 @@ impl<S: pecos_qsim::CliffordGateable + Clone> QecSubsetSimulation<S> {
                         new_scores.push(parent.scores[round]);
                         new_seeds.push(parent.seeds[round]);
                     }
-                    syndrome_score.score = parent.scores.get(crossing_round).copied().unwrap_or(0.0);
+                    syndrome_score.score =
+                        parent.scores.get(crossing_round).copied().unwrap_or(0.0);
                     syndrome_score.total_weight = syndrome_score.score as usize;
 
                     // Continue from crossing point with new randomness
@@ -2150,14 +2169,14 @@ impl<S: pecos_qsim::CliffordGateable + Clone> QecSubsetSimulation<S> {
 #[must_use]
 pub fn bit_flip_syndrome_circuit() -> CommandQueue {
     CommandBuilder::new()
-        .prep(3)
-        .prep(4)
+        .pz(3)
+        .pz(4)
         .cx(0, 3)
         .cx(1, 3)
         .cx(1, 4)
         .cx(2, 4)
-        .measure(3)
-        .measure(4)
+        .mz(3)
+        .mz(4)
         .build()
 }
 
@@ -2170,8 +2189,8 @@ pub fn bit_flip_syndrome_circuit() -> CommandQueue {
 #[must_use]
 pub fn phase_flip_syndrome_circuit() -> CommandQueue {
     CommandBuilder::new()
-        .prep(3)
-        .prep(4)
+        .pz(3)
+        .pz(4)
         .h(3)
         .h(4)
         .cz(0, 3)
@@ -2180,12 +2199,13 @@ pub fn phase_flip_syndrome_circuit() -> CommandQueue {
         .cz(2, 4)
         .h(3)
         .h(4)
-        .measure(3)
-        .measure(4)
+        .mz(3)
+        .mz(4)
         .build()
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -2246,22 +2266,19 @@ mod tests {
         let result = sim.run();
 
         println!("Moderate prob test:");
-        println!("  Analytical:  {:.6}", analytical);
-        println!("  Direct MC:   {:.6}", direct_mc);
+        println!("  Analytical:  {analytical:.6}");
+        println!("  Direct MC:   {direct_mc:.6}");
         println!("  Subset Sim:  {:.6}", result.probability());
         println!("  Levels:      {}", result.levels.len());
 
         // Direct MC should be close to analytical
         let mc_error = (direct_mc - analytical).abs() / analytical;
-        assert!(
-            mc_error < 0.2,
-            "Direct MC error {mc_error:.2} too high"
-        );
+        assert!(mc_error < 0.2, "Direct MC error {mc_error:.2} too high");
 
         // Subset simulation should be in reasonable range
         // For moderate probabilities, subset sim may not outperform direct MC
         let ss_error = (result.probability() - analytical).abs() / analytical;
-        println!("  SS error:    {:.2}", ss_error);
+        println!("  SS error:    {ss_error:.2}");
     }
 
     #[test]
@@ -2283,8 +2300,8 @@ mod tests {
         let result = sim.run();
 
         println!("\nRare event test:");
-        println!("  Analytical: {:.6e}", analytical);
-        println!("  Direct MC:  {:.6e} (100k samples)", direct_mc);
+        println!("  Analytical: {analytical:.6e}");
+        println!("  Direct MC:  {direct_mc:.6e} (100k samples)");
         println!("  Subset Sim: {:.6e}", result.probability());
         println!("  Levels:     {}", result.levels.len());
         println!("  Total samples: {}", result.total_samples);
@@ -2311,8 +2328,8 @@ mod tests {
         let direct_mc = sim.run_direct_mc(100_000, 789);
 
         println!("\nDirect MC validation:");
-        println!("  Analytical: {:.6}", analytical);
-        println!("  Direct MC:  {:.6}", direct_mc);
+        println!("  Analytical: {analytical:.6}");
+        println!("  Direct MC:  {direct_mc:.6}");
 
         // Should agree within statistical error (~0.5% for 100k samples)
         let relative_error = (direct_mc - analytical).abs() / analytical;
@@ -2340,14 +2357,14 @@ mod tests {
         let result = sim.run();
 
         println!("\nRare event finding test:");
-        println!("  Analytical: {:.6e}", analytical);
+        println!("  Analytical: {analytical:.6e}");
         println!("  Subset Sim: {:.6e}", result.probability());
         println!("  Levels:     {}", result.levels.len());
 
         // Subset simulation should find something
         // (direct MC with 500 samples would likely find 0)
         let small_mc = sim.run_direct_mc(500, 111);
-        println!("  Direct MC (500): {:.6e}", small_mc);
+        println!("  Direct MC (500): {small_mc:.6e}");
 
         // The key point: subset sim uses ~500 samples per level but can
         // estimate probabilities that direct MC would need many more samples for
@@ -2380,12 +2397,8 @@ mod tests {
                 // Use entity ID for deterministic randomness
                 let seed = world.base_seed() + entity.0 * 1000;
                 let mut rng = PecosRng::seed_from_u64(seed);
-                let damage = if rng.random::<f64>() < 0.3 {
-                    1.0
-                } else {
-                    0.0
-                };
-                damage
+
+                if rng.random::<f64>() < 0.3 { 1.0 } else { 0.0 }
             },
             |score| score >= 3.0, // Failure if damage >= 3
         );
@@ -2436,15 +2449,16 @@ mod tests {
         let weight_after = world.total_weight();
         assert!(
             (initial_weight - weight_after).abs() < 1e-10,
-            "Weight should be preserved: {} -> {}",
-            initial_weight,
-            weight_after
+            "Weight should be preserved: {initial_weight} -> {weight_after}"
         );
 
         println!("\nTrajectory Cloning Test:");
-        println!("  Initial entities: {}", initial_count);
+        println!("  Initial entities: {initial_count}");
         println!("  After cloning: {}", world.entity_count());
-        println!("  Weight preserved: {}", (initial_weight - weight_after).abs() < 1e-10);
+        println!(
+            "  Weight preserved: {}",
+            (initial_weight - weight_after).abs() < 1e-10
+        );
     }
 
     // ========================================================================
@@ -2501,11 +2515,7 @@ mod tests {
         let mut runner = ShotRunner::new(SparseStab::new(5)).with_rng(PecosRng::seed_from_u64(42));
 
         // Initialize all qubits to |0>
-        let init_circuit = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
-            .prep(2)
-            .build();
+        let init_circuit = CommandBuilder::new().pz(0).pz(1).pz(2).build();
 
         runner.run_shot(&init_circuit);
         let outcomes = runner.run_shot(&circuit);
@@ -2515,7 +2525,7 @@ mod tests {
         let s2 = outcomes.get_bit(QubitId(4)).unwrap_or(true);
 
         println!("\nBit-flip syndrome circuit test:");
-        println!("  No errors: s1={}, s2={}", s1, s2);
+        println!("  No errors: s1={s1}, s2={s2}");
 
         // Both should be false (no errors)
         assert!(!s1, "s1 should be 0 with no errors");
@@ -2586,10 +2596,13 @@ mod tests {
         // Compare to Bernoulli analytical
         let bernoulli = BernoulliSubsetSimulation::new(0.2, 30, 10.0);
         let analytical = bernoulli.analytical_probability();
-        println!("  Bernoulli analytical: {:.6}", analytical);
+        println!("  Bernoulli analytical: {analytical:.6}");
 
         // Should find some failures
-        assert!(result.probability() > 0.0, "Should estimate non-zero probability");
+        assert!(
+            result.probability() > 0.0,
+            "Should estimate non-zero probability"
+        );
     }
 
     #[test]
@@ -2621,7 +2634,11 @@ mod tests {
         }
 
         let mean_result: f64 = results.iter().sum::<f64>() / results.len() as f64;
-        let variance: f64 = results.iter().map(|r| (r - mean_result).powi(2)).sum::<f64>() / results.len() as f64;
+        let variance: f64 = results
+            .iter()
+            .map(|r| (r - mean_result).powi(2))
+            .sum::<f64>()
+            / results.len() as f64;
         let std_dev = variance.sqrt();
 
         // Direct MC for reference
@@ -2629,16 +2646,27 @@ mod tests {
             .with_samples_per_level(1000)
             .with_threshold_fraction(0.2)
             .with_seed(12345);
-        let direct_mc_sim = ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config);
+        let direct_mc_sim =
+            ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config);
         let direct_mc = direct_mc_sim.run_direct_mc(50000);
 
         println!("\nProper Subset Validation Test (Multi-Seed):");
-        println!("  Parameters: p={}, n={}, threshold={}", p_damage, num_rounds, threshold);
-        println!("  Analytical:     {:.6}", analytical);
-        println!("  Direct MC:      {:.6} (50k samples)", direct_mc);
-        println!("  Subset mean:    {:.6} (over {} seeds)", mean_result, seeds.len());
-        println!("  Subset std:     {:.6}", std_dev);
-        println!("  Individual:     {:?}", results.iter().map(|r| format!("{:.4}", r)).collect::<Vec<_>>());
+        println!("  Parameters: p={p_damage}, n={num_rounds}, threshold={threshold}");
+        println!("  Analytical:     {analytical:.6}");
+        println!("  Direct MC:      {direct_mc:.6} (50k samples)");
+        println!(
+            "  Subset mean:    {:.6} (over {} seeds)",
+            mean_result,
+            seeds.len()
+        );
+        println!("  Subset std:     {std_dev:.6}");
+        println!(
+            "  Individual:     {:?}",
+            results
+                .iter()
+                .map(|r| format!("{r:.4}"))
+                .collect::<Vec<_>>()
+        );
 
         // Direct MC should be close to analytical
         let mc_error = (direct_mc - analytical).abs() / analytical.max(1e-10);
@@ -2652,9 +2680,7 @@ mod tests {
         // The mean should be within 25% of analytical (accounting for subset simulation variance)
         assert!(
             mean_error < 0.25,
-            "Mean subset result should be within 25% of analytical: {} vs {}",
-            mean_result,
-            analytical
+            "Mean subset result should be within 25% of analytical: {mean_result} vs {analytical}"
         );
 
         // Standard deviation should be reasonable (CV < 50%)
@@ -2687,9 +2713,9 @@ mod tests {
         let analytical = bernoulli.analytical_probability();
 
         println!("\nProper Subset Rare Event Test:");
-        println!("  Parameters: p={}, n={}, threshold={}", p_damage, num_rounds, threshold);
+        println!("  Parameters: p={p_damage}, n={num_rounds}, threshold={threshold}");
         println!("  E[damage] = {}", p_damage * num_rounds as f64);
-        println!("  Analytical:     {:.6e}", analytical);
+        println!("  Analytical:     {analytical:.6e}");
         println!("  Proper Subset:  {:.6e}", result.probability());
         println!("  Levels used:    {}", result.levels.len());
         println!("  Total samples:  {}", result.total_samples);
@@ -2703,7 +2729,10 @@ mod tests {
 
         // Should estimate something (may not be accurate for very rare events)
         // The key is that it should be attempting to find rare events
-        assert!(result.levels.len() > 1, "Should use multiple levels for rare events");
+        assert!(
+            result.levels.len() > 1,
+            "Should use multiple levels for rare events"
+        );
     }
 
     #[test]
@@ -2732,10 +2761,7 @@ mod tests {
         );
 
         // Multiple levels should be used
-        assert!(
-            result.levels.len() >= 1,
-            "Should use at least one level"
-        );
+        assert!(!result.levels.is_empty(), "Should use at least one level");
     }
 
     #[test]
@@ -2759,9 +2785,9 @@ mod tests {
         let analytical = bernoulli.analytical_probability();
 
         println!("\nDirect MC Consistency Test:");
-        println!("  Parameters: p={}, n={}, threshold={}", p_damage, num_rounds, threshold);
-        println!("  Analytical:  {:.6}", analytical);
-        println!("  Direct MC:   {:.6}", direct_mc);
+        println!("  Parameters: p={p_damage}, n={num_rounds}, threshold={threshold}");
+        println!("  Analytical:  {analytical:.6}");
+        println!("  Direct MC:   {direct_mc:.6}");
 
         // Should match within statistical error
         let rel_error = (direct_mc - analytical).abs() / analytical;
@@ -2769,9 +2795,7 @@ mod tests {
 
         assert!(
             rel_error < 0.15,
-            "Direct MC should match analytical: {} vs {}",
-            direct_mc,
-            analytical
+            "Direct MC should match analytical: {direct_mc} vs {analytical}"
         );
     }
 
@@ -2797,13 +2821,13 @@ mod tests {
         let result = sim.run_adaptive();
 
         println!("\nAdaptive Subset Simulation Test:");
-        println!("  Parameters: p={}, n={}, threshold={}", p_damage, num_rounds, threshold);
+        println!("  Parameters: p={p_damage}, n={num_rounds}, threshold={threshold}");
         println!("  Probability:      {:.6}", result.probability);
         println!("  Levels used:      {}", result.levels.len());
         println!("  Total samples:    {}", result.total_samples);
 
         // The method should produce a result
-        assert!(result.levels.len() >= 1, "Should have at least one level");
+        assert!(!result.levels.is_empty(), "Should have at least one level");
 
         // Should find some failures with these parameters
         assert!(
@@ -2822,14 +2846,14 @@ mod tests {
     fn test_qec_subset_run_proper() {
         // Test the proper Au & Beck implementation for QEC subset simulation
         use crate::ecs::World;
-        use pecos_qsim::SparseStab;
         use pecos_core::QubitId;
+        use pecos_qsim::SparseStab;
 
         let num_qubits = 5; // 3 data + 2 ancilla
         let num_trajectories = 500;
         let num_rounds = 20;
-        let p_syndrome = 0.2;  // Probability each ancilla triggers per round
-        let failure_threshold = 6.0;  // Fail if total syndrome weight >= 6
+        let p_syndrome = 0.2; // Probability each ancilla triggers per round
+        let failure_threshold = 6.0; // Fail if total syndrome weight >= 6
         let num_ancillas = 2;
 
         // Create world with trajectories
@@ -2841,7 +2865,7 @@ mod tests {
         // Configure QEC subset simulation
         let config = QecSubsetConfig::new(
             num_rounds,
-            vec![QubitId(3), QubitId(4)],  // 2 ancilla qubits
+            vec![QubitId(3), QubitId(4)], // 2 ancilla qubits
             failure_threshold,
         )
         .with_samples_per_level(num_trajectories)
@@ -2863,9 +2887,10 @@ mod tests {
         }
 
         println!("\nQEC Proper Subset Simulation Test:");
-        println!("  Parameters: p_syndrome={}, n_rounds={}, n_ancillas={}, threshold={}",
-                 p_syndrome, num_rounds, num_ancillas, failure_threshold);
-        println!("  Analytical:   {:.6}", analytical);
+        println!(
+            "  Parameters: p_syndrome={p_syndrome}, n_rounds={num_rounds}, n_ancillas={num_ancillas}, threshold={failure_threshold}"
+        );
+        println!("  Analytical:   {analytical:.6}");
         println!("  run_proper:   {:.6}", result.probability);
         println!("  Levels used:  {}", result.levels.len());
         println!("  CV:           {:.2}", result.coefficient_of_variation);

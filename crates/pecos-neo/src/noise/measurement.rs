@@ -16,7 +16,7 @@
 //! declarative noise models with conditional logic, see `FlowChannel` in
 //! `pecos_neo::noise::flow::prelude`.
 //!
-//! ## When to use this vs FlowChannel
+//! ## When to use this vs `FlowChannel`
 //!
 //! **Use `MeasurementChannel` when:**
 //! - You want simple symmetric or asymmetric readout error
@@ -202,6 +202,10 @@ impl NoiseChannel for MeasurementChannel {
 
     fn name(&self) -> &'static str {
         "MeasurementChannel"
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
     }
 }
 

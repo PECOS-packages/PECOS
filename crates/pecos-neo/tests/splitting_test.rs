@@ -58,7 +58,10 @@ fn test_apply_split_decisions_split() {
     // Check weights are split
     for entity in world.active_entities() {
         let weight = world.weights.get(entity).unwrap().weight.weight();
-        assert!((weight - 0.25).abs() < 0.01, "Weight should be ~0.25, got {weight}");
+        assert!(
+            (weight - 0.25).abs() < 0.01,
+            "Weight should be ~0.25, got {weight}"
+        );
     }
 }
 
@@ -152,8 +155,16 @@ fn test_resample_by_weight_respects_probabilities() {
     println!("Selection proportions: e1={p1:.3}, e2={p2:.3}, e3={p3:.3}");
 
     // Expected: p1~0.1, p2~0.2, p3~0.7 (within reasonable tolerance)
-    assert!(p1 < 0.25, "e1 should be selected ~10%, got {:.1}%", p1 * 100.0);
-    assert!(p3 > 0.5, "e3 should be selected ~70%, got {:.1}%", p3 * 100.0);
+    assert!(
+        p1 < 0.25,
+        "e1 should be selected ~10%, got {:.1}%",
+        p1 * 100.0
+    );
+    assert!(
+        p3 > 0.5,
+        "e3 should be selected ~70%, got {:.1}%",
+        p3 * 100.0
+    );
 }
 
 #[test]
@@ -230,7 +241,7 @@ fn test_entity_transfer() {
 
 #[test]
 fn test_redistribution_at_sync_points() {
-    use pecos_neo::ecs::{redistribute_by_weight, WorkerState};
+    use pecos_neo::ecs::{WorkerState, redistribute_by_weight};
 
     // Create workers manually (simulating what run_with_sync does internally)
     let mut workers: Vec<WorkerState<SparseStab>> = (0..2)
@@ -239,12 +250,8 @@ fn test_redistribution_at_sync_points() {
             // Each worker gets 5 entities with varying weights
             for i in 0..5 {
                 let e = worker.world.spawn_with_simulator(SparseStab::new(1));
-                worker
-                    .world
-                    .weights
-                    .get_mut(e)
-                    .unwrap()
-                    .weight = SampleWeight::from_linear(f64::from(i + 1));
+                worker.world.weights.get_mut(e).unwrap().weight =
+                    SampleWeight::from_linear(f64::from(i + 1));
             }
             worker
         })
@@ -288,7 +295,7 @@ fn test_redistribution_at_sync_points() {
 /// efficiently estimate the probability of reaching a high damage level.
 #[test]
 fn test_subset_simulation_workflow() {
-    use pecos_neo::ecs::{redistribute_by_weight, WorkerState};
+    use pecos_neo::ecs::{WorkerState, redistribute_by_weight};
     use rand::Rng;
 
     // Configuration
@@ -355,10 +362,11 @@ fn test_subset_simulation_workflow() {
                 total_weight += w;
 
                 if let Some(&d) = damage.get(&entity.0)
-                    && d >= threshold {
-                        above_threshold += 1;
-                        weight_above += w;
-                    }
+                    && d >= threshold
+                {
+                    above_threshold += 1;
+                    weight_above += w;
+                }
             }
         }
 
@@ -392,9 +400,10 @@ fn test_subset_simulation_workflow() {
         for worker in &workers {
             for entity in worker.world.active_entities() {
                 if let Some(&d) = damage.get(&entity.0)
-                    && d >= threshold {
-                        survivor_damage.insert(entity.0, d);
-                    }
+                    && d >= threshold
+                {
+                    survivor_damage.insert(entity.0, d);
+                }
             }
         }
 
@@ -478,7 +487,7 @@ fn test_subset_simulation_workflow() {
 /// across multiple redistribution operations.
 #[test]
 fn test_redistribution_exact_weight_preservation() {
-    use pecos_neo::ecs::{redistribute_by_weight, WorkerState};
+    use pecos_neo::ecs::{WorkerState, redistribute_by_weight};
 
     let mut workers: Vec<WorkerState<SparseStab>> = (0..4)
         .map(|id| {
@@ -486,12 +495,8 @@ fn test_redistribution_exact_weight_preservation() {
             for i in 0..10 {
                 let e = worker.world.spawn_with_simulator(SparseStab::new(1));
                 // Set varying weights
-                worker
-                    .world
-                    .weights
-                    .get_mut(e)
-                    .unwrap()
-                    .weight = SampleWeight::from_linear(0.1 * f64::from(i + 1));
+                worker.world.weights.get_mut(e).unwrap().weight =
+                    SampleWeight::from_linear(0.1 * f64::from(i + 1));
             }
             worker
         })
@@ -521,7 +526,7 @@ fn test_redistribution_exact_weight_preservation() {
 /// Test redistribution with extreme weight distributions.
 #[test]
 fn test_redistribution_extreme_weights() {
-    use pecos_neo::ecs::{redistribute_by_weight, WorkerState};
+    use pecos_neo::ecs::{WorkerState, redistribute_by_weight};
 
     let mut workers: Vec<WorkerState<SparseStab>> = (0..2)
         .map(|id| WorkerState::new(id, 42 + id as u64))
@@ -581,7 +586,11 @@ fn test_resampling_statistical_correctness() {
 
         // Count which entity survived
         let active = world.active_entities();
-        assert_eq!(active.len(), 1, "Should have exactly 1 entity after resampling to 1");
+        assert_eq!(
+            active.len(),
+            1,
+            "Should have exactly 1 entity after resampling to 1"
+        );
 
         let survivor = active[0];
         if survivor == e1 {
@@ -598,7 +607,9 @@ fn test_resampling_statistical_correctness() {
     let p2 = selection_counts[1] as f64 / trials as f64;
     let p3 = selection_counts[2] as f64 / trials as f64;
 
-    println!("Resampling proportions: e1={p1:.3} (expected 0.1), e2={p2:.3} (expected 0.3), e3={p3:.3} (expected 0.6)");
+    println!(
+        "Resampling proportions: e1={p1:.3} (expected 0.1), e2={p2:.3} (expected 0.3), e3={p3:.3} (expected 0.6)"
+    );
 
     // Allow 10% deviation from expected
     assert!(
@@ -740,7 +751,7 @@ fn test_resampling_edge_cases() {
 /// Test that determinism is preserved across redistribution operations.
 #[test]
 fn test_redistribution_determinism() {
-    use pecos_neo::ecs::{redistribute_by_weight, WorkerState};
+    use pecos_neo::ecs::{WorkerState, redistribute_by_weight};
 
     fn create_workers() -> Vec<WorkerState<SparseStab>> {
         (0..2)
@@ -748,12 +759,8 @@ fn test_redistribution_determinism() {
                 let mut worker = WorkerState::new(id, 42);
                 for i in 0..5 {
                     let e = worker.world.spawn_with_simulator(SparseStab::new(1));
-                    worker
-                        .world
-                        .weights
-                        .get_mut(e)
-                        .unwrap()
-                        .weight = SampleWeight::from_linear(f64::from(i + 1));
+                    worker.world.weights.get_mut(e).unwrap().weight =
+                        SampleWeight::from_linear(f64::from(i + 1));
                 }
                 worker
             })
@@ -827,9 +834,9 @@ fn test_quantum_circuit_subset_simulation() {
     // Ancilla qubits: 1, 2
     fn syndrome_circuit() -> pecos_neo::command::CommandQueue {
         CommandBuilder::new()
-            .prep(1) // Reset ancilla
+            .pz(1) // Reset ancilla
             .cx(0, 1) // CNOT data -> ancilla
-            .measure(1)
+            .mz(1)
             .build()
     }
 
@@ -849,10 +856,10 @@ fn test_quantum_circuit_subset_simulation() {
             // Build circuit for this round - need to reset simulator for rounds after first
             let circuit = if round == 0 {
                 CommandBuilder::new()
-                    .prep(0)
-                    .prep(1)
+                    .pz(0)
+                    .pz(1)
                     .cx(0, 1)
-                    .measure(1)
+                    .mz(1)
                     .build()
             } else {
                 syndrome_circuit()
@@ -870,7 +877,7 @@ fn test_quantum_circuit_subset_simulation() {
         }
     }
 
-    let direct_mc_probability = direct_failures as f64 / num_samples as f64;
+    let direct_mc_probability = f64::from(direct_failures) / num_samples as f64;
 
     // Now demonstrate ECS-based trajectory tracking with World
     let mut world: World<SparseStab> = World::new(12345);
@@ -905,10 +912,10 @@ fn test_quantum_circuit_subset_simulation() {
 
                 let circuit = if round == 0 {
                     CommandBuilder::new()
-                        .prep(0)
-                        .prep(1)
+                        .pz(0)
+                        .pz(1)
                         .cx(0, 1)
-                        .measure(1)
+                        .mz(1)
                         .build()
                 } else {
                     syndrome_circuit()
@@ -917,10 +924,10 @@ fn test_quantum_circuit_subset_simulation() {
                 let outcomes = runner.run_shot(&circuit);
 
                 // Track syndrome detection
-                if outcomes.get_bit(QubitId(1)).unwrap_or(false) {
-                    if let Some(count) = syndrome_counts.get_mut(&entity.0) {
-                        *count += 1;
-                    }
+                if outcomes.get_bit(QubitId(1)).unwrap_or(false)
+                    && let Some(count) = syndrome_counts.get_mut(&entity.0)
+                {
+                    *count += 1;
                 }
 
                 // Update simulator state (simplified - in real subset sim we'd preserve state)
@@ -936,12 +943,7 @@ fn test_quantum_circuit_subset_simulation() {
             .active_entities()
             .iter()
             .filter(|e| syndrome_counts.get(&e.0).copied().unwrap_or(0) > threshold)
-            .map(|e| {
-                world
-                    .weights
-                    .get(*e)
-                    .map_or(1.0, |w| w.weight.weight())
-            })
+            .map(|e| world.weights.get(*e).map_or(1.0, |w| w.weight.weight()))
             .sum();
 
         let p_level = if total_weight > 0.0 {
@@ -956,9 +958,7 @@ fn test_quantum_circuit_subset_simulation() {
     let final_weight = world.total_weight();
     assert!(
         (initial_weight - final_weight).abs() < 1e-10,
-        "Weight should be preserved: {} -> {}",
-        initial_weight,
-        final_weight
+        "Weight should be preserved: {initial_weight} -> {final_weight}"
     );
 
     // Count failures using ECS tracking
@@ -980,7 +980,7 @@ fn test_quantum_circuit_subset_simulation() {
     println!();
     println!("Level statistics:");
     for (i, p) in level_probs.iter().enumerate() {
-        println!("  Round {}: P(syndrome > {}) = {:.4}", i, i, p);
+        println!("  Round {i}: P(syndrome > {i}) = {p:.4}");
     }
     println!();
     println!("Results:");
@@ -1009,8 +1009,8 @@ fn test_quantum_circuit_subset_simulation() {
 /// uses direct Monte Carlo (not subset simulation) for validation purposes.
 #[test]
 fn test_bernoulli_subset_validation() {
-    use pecos_neo::sampling::subset::BernoulliSubsetSimulation;
     use pecos_neo::sampling::SubsetConfig;
+    use pecos_neo::sampling::subset::BernoulliSubsetSimulation;
 
     // Moderate probability case (easier to validate with smaller samples)
     let sim = BernoulliSubsetSimulation::new(
@@ -1018,7 +1018,11 @@ fn test_bernoulli_subset_validation() {
         50,   // 50 steps
         10.0, // Failure if damage >= 10
     )
-    .with_config(SubsetConfig::new().with_samples_per_level(5000).with_seed(42));
+    .with_config(
+        SubsetConfig::new()
+            .with_samples_per_level(5000)
+            .with_seed(42),
+    );
 
     let analytical = sim.analytical_probability();
     let direct_mc = sim.run_direct_mc(10000, 12345);
@@ -1054,7 +1058,7 @@ fn test_bernoulli_subset_validation() {
     );
 }
 
-/// Test SubsetSimulation with noise integration.
+/// Test `SubsetSimulation` with noise integration.
 ///
 /// This verifies that the `with_noise_builder` API works correctly
 /// by running a simple circuit with depolarizing noise and measurement error.
@@ -1070,31 +1074,34 @@ fn test_subset_simulation_with_noise() {
     // Build a circuit with identity gates that can accumulate errors.
     // Without noise, this always measures 0.
     let circuit = CommandBuilder::new()
-        .prep(0)
-        .identity(0)  // Gate that can have depolarizing error
+        .pz(0)
+        .identity(0) // Gate that can have depolarizing error
         .identity(0)
         .identity(0)
-        .measure(0)
+        .mz(0)
         .build();
 
     // Score function: 1.0 if measured 1 (error), 0.0 if measured 0 (correct)
     let qubit = QubitId(0);
     let score_fn = move |outcomes: &MeasurementOutcomes| {
-        outcomes.get_bit(qubit).map(|b| if b { 1.0 } else { 0.0 }).unwrap_or(0.0)
+        outcomes
+            .get_bit(qubit)
+            .map_or(0.0, |b| if b { 1.0 } else { 0.0 })
     };
 
     // Failure predicate: fails if we measure 1 (which would indicate an error)
-    let is_failure_fn = move |outcomes: &MeasurementOutcomes| {
-        outcomes.get_bit(qubit).unwrap_or(false)
-    };
+    let is_failure_fn =
+        move |outcomes: &MeasurementOutcomes| outcomes.get_bit(qubit).unwrap_or(false);
 
     // Create noise builder function that returns noise with measurement error.
     // Measurement error is guaranteed to affect the result.
     let noise_builder = || -> Option<ComposableNoiseModel> {
-        Some(FlowNoiseModelBuilder::new()
-            .with_p1(0.05)                // 5% single-qubit gate error
-            .with_p_meas(0.01, 0.01)      // 1% measurement error (symmetric)
-            .build())
+        Some(
+            FlowNoiseModelBuilder::new()
+                .with_p1(0.05) // 5% single-qubit gate error
+                .with_p_meas(0.01, 0.01) // 1% measurement error (symmetric)
+                .build(),
+        )
     };
 
     let config = SubsetConfig::new()

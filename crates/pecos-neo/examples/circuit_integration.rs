@@ -13,16 +13,16 @@
 //! Circuit integration example for pecos-neo.
 //!
 //! This example demonstrates:
-//! - Converting TickCircuit to CommandQueue
-//! - Converting DagCircuit to CommandQueue
-//! - Executing circuits directly with ShotRunner
+//! - Converting `TickCircuit` to `CommandQueue`
+//! - Converting `DagCircuit` to `CommandQueue`
+//! - Executing circuits directly with `ShotRunner`
 //! - Round-trip conversions
 //!
-//! Run with: cargo run --example circuit_integration
+//! Run with: cargo run --example `circuit_integration`
 
 use pecos_neo::prelude::*;
-use pecos_quantum::{DagCircuit, TickCircuit};
 use pecos_qsim::SparseStab;
+use pecos_quantum::{DagCircuit, TickCircuit};
 use std::collections::HashMap;
 
 fn main() {
@@ -35,7 +35,7 @@ fn main() {
     example_qec_style_circuit();
 }
 
-/// Execute a TickCircuit directly
+/// Execute a `TickCircuit` directly
 fn example_tick_circuit_execution() {
     println!("--- TickCircuit Execution ---");
 
@@ -58,7 +58,7 @@ fn example_tick_circuit_execution() {
         let outcomes = runner.run_shot_tick(&circuit);
         let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
         let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
-        let key = format!("{}{}", q0 as u8, q1 as u8);
+        let key = format!("{}{}", u8::from(q0), u8::from(q1));
         *counts.entry(key).or_insert(0) += 1;
     }
 
@@ -69,7 +69,7 @@ fn example_tick_circuit_execution() {
     println!();
 }
 
-/// Execute a DagCircuit directly
+/// Execute a `DagCircuit` directly
 fn example_dag_circuit_execution() {
     println!("--- DagCircuit Execution ---");
 
@@ -112,7 +112,7 @@ fn example_dag_circuit_execution() {
     println!();
 }
 
-/// Execute TickCircuit with noise
+/// Execute `TickCircuit` with noise
 fn example_tick_with_noise() {
     println!("--- TickCircuit with Noise ---");
 
@@ -150,8 +150,11 @@ fn example_tick_with_noise() {
     }
 
     println!("  Bell state with 1%/2% depolarizing noise:");
-    println!("    Correlated: {:.1}%", correlated as f64 / 10.0);
-    println!("    Anti-correlated: {:.1}%", anti_correlated as f64 / 10.0);
+    println!("    Correlated: {:.1}%", f64::from(correlated) / 10.0);
+    println!(
+        "    Anti-correlated: {:.1}%",
+        f64::from(anti_correlated) / 10.0
+    );
     println!();
 }
 
@@ -161,19 +164,22 @@ fn example_round_trip() {
 
     // Start with CommandBuilder
     let original = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     println!("  Original CommandQueue: {} commands", original.len());
 
     // Convert to TickCircuit
     let tick_circuit = TickCircuit::from(&original);
-    println!("  Converted to TickCircuit: {} ticks", tick_circuit.num_ticks());
+    println!(
+        "  Converted to TickCircuit: {} ticks",
+        tick_circuit.num_ticks()
+    );
 
     // Convert back to CommandQueue
     let back = pecos_neo::command::CommandQueue::from(&tick_circuit);
@@ -200,12 +206,18 @@ fn example_round_trip() {
     }
 
     println!("  Bell state correlation (should be ~100% for both):");
-    println!("    Original: {:.1}%", corr1 as f64 / shots as f64 * 100.0);
-    println!("    Round-trip: {:.1}%", corr2 as f64 / shots as f64 * 100.0);
+    println!(
+        "    Original: {:.1}%",
+        f64::from(corr1) / f64::from(shots) * 100.0
+    );
+    println!(
+        "    Round-trip: {:.1}%",
+        f64::from(corr2) / f64::from(shots) * 100.0
+    );
     println!();
 }
 
-/// QEC-style circuit using TickCircuit's parallel structure
+/// QEC-style circuit using `TickCircuit`'s parallel structure
 fn example_qec_style_circuit() {
     println!("--- QEC-Style Syndrome Extraction ---");
 
@@ -236,7 +248,10 @@ fn example_qec_style_circuit() {
     // Tick 6: Measure data qubits
     circuit.tick().mz(&[0, 1, 2]);
 
-    println!("  Syndrome extraction circuit: {} ticks", circuit.num_ticks());
+    println!(
+        "  Syndrome extraction circuit: {} ticks",
+        circuit.num_ticks()
+    );
 
     // Run with noise
     let noise = ComposableNoiseModel::new()
@@ -257,7 +272,7 @@ fn example_qec_style_circuit() {
         // Extract syndrome (ancilla measurements)
         let s0 = outcomes.get_bit(QubitId(3)).unwrap_or(false);
         let s1 = outcomes.get_bit(QubitId(4)).unwrap_or(false);
-        let key = format!("{}{}", s0 as u8, s1 as u8);
+        let key = format!("{}{}", u8::from(s0), u8::from(s1));
         *syndrome_counts.entry(key).or_insert(0) += 1;
     }
 

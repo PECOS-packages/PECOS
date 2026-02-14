@@ -75,12 +75,12 @@
 //!
 //! // Build a Bell state circuit
 //! let commands = CommandBuilder::new()
-//!     .prep(0)
-//!     .prep(1)
+//!     .pz(0)
+//!     .pz(1)
 //!     .h(0)
 //!     .cx(0, 1)
-//!     .measure(0)
-//!     .measure(1)
+//!     .mz(0)
+//!     .mz(1)
 //!     .build();
 //!
 //! // Run without noise
@@ -100,9 +100,9 @@
 //! use pecos_qsim::SparseStab;
 //!
 //! let commands = CommandBuilder::new()
-//!     .prep(0)
+//!     .pz(0)
 //!     .h(0)
-//!     .measure(0)
+//!     .mz(0)
 //!     .build();
 //!
 //! // Add depolarizing noise
@@ -127,9 +127,9 @@
 //! use pecos_qsim::StateVec;
 //!
 //! let commands = CommandBuilder::new()
-//!     .prep(0)
+//!     .pz(0)
 //!     .rx(0, Angle64::HALF_TURN)  // RX(pi) flips |0> to |1>
-//!     .measure(0)
+//!     .mz(0)
 //!     .build();
 //!
 //! let mut runner = ShotRunner::new(StateVec::new(1)).with_seed(42);
@@ -155,33 +155,71 @@ pub mod tool;
 
 // Re-export main types at crate root
 pub use command::{CommandBuilder, CommandQueue, GateCommand, GateType};
+pub use extended_runner::{ExecutionError, ExtendedRunner, GateExecutorFn, GateOverrides};
 pub use extensible::{
-    GateId, GateSpec, GateCategory, GateRegistry, GateCanonicalizer, CanonicalForm,
-    GateSupportSet, gates,
-    AngleSnapper, SnapResult, SnapError, SnapPolicy,
-    CircuitValidator, ValidationError, GateForValidation,
-    CliffordValidator, CliffordTValidator, ExactAngleValidator,
-    AllowListValidator, CompositeValidator,
-    GateAdaptor, AdaptedGate, StandardAdaptor, CompositeAdaptor, CustomAdaptor,
-    LiftedAdaptor, CompositeExtendedAdaptor,
-    GateIdConversionError,
-    CommandQueueValidation, snap_command_queue, is_clifford_circuit,
-    is_clifford_gate_type, is_clifford_angle,
+    AdaptedGate,
     // Extended operations for stabilizer measurements/preparations
-    AdaptedOp, AdaptedSequence, AncillaRequirements, ResultId,
-    PrepBasis, MeasBasis,
-    ExtendedAdaptor, StabilizerAdaptor, StabilizerMeasurementAdaptor,
-    StabilizerPreparationAdaptor, stabilizer_gates,
-    // Arbitrary Pauli strings and operation builder
-    Pauli, PauliString, StabilizerMeasurement, StabilizerPreparation,
-    OpBuilder, Subcircuit, GateLibrary,
+    AdaptedOp,
+    AdaptedSequence,
+    AllowListValidator,
+    AncillaRequirements,
+    AngleSnapper,
+    CanonicalForm,
+    CircuitValidator,
+    CliffordTValidator,
+    CliffordValidator,
+    CommandQueueValidation,
+    CompositeAdaptor,
+    CompositeExtendedAdaptor,
+    CompositeValidator,
+    CustomAdaptor,
+    ExactAngleValidator,
+    ExtendedAdaptor,
+    GateAdaptor,
+    GateCanonicalizer,
+    GateCategory,
     // Gate definitions and execution
-    GateDefinitions, GateDefinitionsBuilder, GateExecutor, NoNativeGates,
+    GateDefinitions,
+    GateDefinitionsBuilder,
+    GateExecutor,
+    GateForValidation,
+    GateId,
+    GateIdConversionError,
+    GateLibrary,
+    GateRegistry,
+    GateSpec,
+    GateSupportSet,
+    LiftedAdaptor,
+    MeasBasis,
+    NoNativeGates,
+    OpBuilder,
+    // Arbitrary Pauli strings and operation builder
+    Pauli,
+    PauliString,
+    PrepBasis,
+    ResultId,
+    SnapError,
+    SnapPolicy,
+    SnapResult,
+    StabilizerAdaptor,
+    StabilizerMeasurement,
+    StabilizerMeasurementAdaptor,
+    StabilizerPreparation,
+    StabilizerPreparationAdaptor,
+    StandardAdaptor,
+    Subcircuit,
+    ValidationError,
+    gates,
+    is_clifford_angle,
+    is_clifford_circuit,
+    is_clifford_gate_type,
+    snap_command_queue,
+    stabilizer_gates,
 };
 pub use noise::{
     ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder, NoiseChannel,
     NoiseContext, NoiseEvent, NoiseModelConfig, NoisePlugin, NoiseResponse, PauliWeights,
-    TwoQubitPauliWeights,
+    TwoQubitPauliWeights, general_noise,
     context::QubitState,
     correlated::{CorrelatedNoiseChannel, CorrelationStats},
     crosstalk::CrosstalkChannel,
@@ -193,17 +231,21 @@ pub use noise::{
     single_qubit::SingleQubitChannel,
     two_qubit::TwoQubitChannel,
 };
-pub use outcome::{MeasurementOutcome, MeasurementOutcomes};
-pub use program::{CommandSource, ConditionalProgram, ProgramResult, ProgramRunner, RepeatedProgram, StaticProgram};
-pub use runner::ShotRunner;
-pub use extended_runner::{ExtendedRunner, ExecutionError, GateOverrides, GateExecutorFn};
+pub use outcome::{MeasurementOutcome, MeasurementOutcomes, RegisterMap};
+pub use program::{
+    CommandSource, ConditionalProgram, DynProgramRunner, ProgramResult, ProgramRunner,
+    RepeatedProgram, StaticProgram,
+};
+pub use runner::{DispatchContext, ShotRunner};
 
 // Re-export adapter utilities (always available)
 pub use adapter::{command_queue_to_gates, gate_to_command, gates_to_command_queue};
 
 // Re-export ClassicalEngineAdapter when engines-adapter feature is enabled
 #[cfg(feature = "engines-adapter")]
-pub use adapter::{byte_message_to_command_queue, outcomes_to_byte_message, ClassicalEngineAdapter};
+pub use adapter::{
+    ClassicalEngineAdapter, byte_message_to_command_queue, outcomes_to_byte_message,
+};
 
 /// Prelude module for convenient imports.
 ///
@@ -214,22 +256,47 @@ pub use adapter::{byte_message_to_command_queue, outcomes_to_byte_message, Class
 /// ```
 pub mod prelude {
     pub use crate::command::{CommandBuilder, CommandQueue, GateCommand, GateType};
+    pub use crate::extended_runner::{ExecutionError, ExtendedRunner, GateOverrides};
     pub use crate::extensible::{
-        GateId, GateSpec, GateCategory, GateRegistry, GateCanonicalizer, GateSupportSet, gates,
-        AngleSnapper, SnapPolicy, CircuitValidator, CliffordValidator, ExactAngleValidator,
-        GateAdaptor, StandardAdaptor,
-        CommandQueueValidation, is_clifford_circuit,
         // Extended operations
-        AdaptedOp, AdaptedSequence, ResultId, PrepBasis, MeasBasis,
-        ExtendedAdaptor, StabilizerAdaptor, stabilizer_gates,
-        Pauli, PauliString, StabilizerMeasurement, StabilizerPreparation, OpBuilder,
+        AdaptedOp,
+        AdaptedSequence,
+        AngleSnapper,
+        CircuitValidator,
+        CliffordValidator,
+        CommandQueueValidation,
+        ExactAngleValidator,
+        ExtendedAdaptor,
+        GateAdaptor,
+        GateCanonicalizer,
+        GateCategory,
         // Gate definitions
-        GateDefinitions, GateDefinitionsBuilder, GateExecutor,
+        GateDefinitions,
+        GateDefinitionsBuilder,
+        GateExecutor,
+        GateId,
+        GateRegistry,
+        GateSpec,
+        GateSupportSet,
+        MeasBasis,
+        OpBuilder,
+        Pauli,
+        PauliString,
+        PrepBasis,
+        ResultId,
+        SnapPolicy,
+        StabilizerAdaptor,
+        StabilizerMeasurement,
+        StabilizerPreparation,
+        StandardAdaptor,
+        gates,
+        is_clifford_circuit,
+        stabilizer_gates,
     };
     pub use crate::noise::{
         ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder,
         NoiseChannel, NoiseContext, NoiseEvent, NoiseModelConfig, NoisePlugin, NoiseResponse,
-        PauliWeights, TwoQubitPauliWeights,
+        PauliWeights, TwoQubitPauliWeights, general_noise,
         context::QubitState,
         correlated::{CorrelatedNoiseChannel, CorrelationStats},
         crosstalk::CrosstalkChannel,
@@ -243,8 +310,7 @@ pub mod prelude {
         two_qubit::{AngleScaling, TwoQubitChannel},
     };
     pub use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
-    pub use crate::runner::ShotRunner;
-    pub use crate::extended_runner::{ExtendedRunner, ExecutionError, GateOverrides};
+    pub use crate::runner::{DispatchContext, ShotRunner};
 
     // Re-export commonly used types from dependencies
     pub use pecos_core::{Angle64, QubitId};
@@ -257,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_prelude_usage() {
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut runner = ShotRunner::new(SparseStab::new(1)).with_seed(42);
         let outcomes = runner.execute(&commands);
@@ -268,12 +334,12 @@ mod tests {
     #[test]
     fn test_bell_state_with_noise() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         // Very low noise to not disrupt Bell state correlation (legacy API)
@@ -296,18 +362,18 @@ mod tests {
     #[test]
     fn test_plugin_based_noise_model() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         // Plugin-based noise model (recommended approach)
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)                        // State tracking
-            .add_plugin(LeakagePlugin::new())              // Leakage handling
+            .add_plugin(CorePlugin) // State tracking
+            .add_plugin(LeakagePlugin::new()) // Leakage handling
             .add_plugin(DepolarizingPlugin::new(0.0, 0.0)) // No noise
             .add_plugin(MeasurementNoisePlugin::symmetric(0.0));
 
@@ -325,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_multiple_shots() {
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut runner = ShotRunner::new(SparseStab::new(1)).with_seed(42);
 

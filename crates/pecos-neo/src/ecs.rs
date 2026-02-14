@@ -59,11 +59,11 @@
 //!
 //! ## Module Structure
 //!
-//! - [`entity`]: Entity identifiers
-//! - [`component`]: Component types and storage
-//! - [`resource`]: Shared resources (seed management)
-//! - [`world`]: The main World container
-//! - [`coordinator`]: Parallel execution coordinator
+//! - `entity`: Entity identifiers
+//! - `component`: Component types and storage
+//! - `resource`: Shared resources (seed management)
+//! - `world`: The main World container
+//! - `coordinator`: Parallel execution coordinator
 
 mod component;
 mod coordinator;
@@ -80,11 +80,11 @@ pub use component::{
 pub use coordinator::{
     ExecutionStats, ParallelConfig, ParallelCoordinator, ParallelResult, WorkerState,
 };
-pub use redistribution::{
-    balance_entity_counts, collect_weights, redistribute_by_weight, total_weight,
-    RedistributionStats,
-};
 pub use entity::EntityId;
+pub use redistribution::{
+    RedistributionStats, balance_entity_counts, collect_weights, redistribute_by_weight,
+    total_weight,
+};
 pub use resource::{Resources, SeedResource};
 pub use splitting::{
     CustomScoreCriterion, ScoreFn, SplitDecision, SplitStats, SplittingCriterion, SubsetLevel,

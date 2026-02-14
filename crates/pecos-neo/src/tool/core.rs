@@ -12,10 +12,10 @@
 
 //! Core Tool type - the Bevy-inspired foundation.
 
+use super::Stage;
 use super::plugin::{Plugin, PluginGroup};
 use super::resource::{Resource, Resources};
 use super::system::{IntoSystem, Schedule};
-use super::Stage;
 
 /// The core Tool type - a Bevy-inspired application container.
 ///
@@ -205,7 +205,8 @@ impl Tool {
         // Main execution stages
         self.schedule.run_stage(Stage::PreShot, &mut self.resources);
         self.schedule.run_stage(Stage::Execute, &mut self.resources);
-        self.schedule.run_stage(Stage::PostShot, &mut self.resources);
+        self.schedule
+            .run_stage(Stage::PostShot, &mut self.resources);
         self.schedule.run_stage(Stage::Finish, &mut self.resources);
     }
 
@@ -229,7 +230,8 @@ impl Tool {
         for _ in 0..shots {
             self.schedule.run_stage(Stage::PreShot, &mut self.resources);
             self.schedule.run_stage(Stage::Execute, &mut self.resources);
-            self.schedule.run_stage(Stage::PostShot, &mut self.resources);
+            self.schedule
+                .run_stage(Stage::PostShot, &mut self.resources);
         }
 
         // Finish runs once at end
@@ -262,11 +264,12 @@ mod tests {
 
     #[test]
     fn test_tool_basic() {
-        let mut tool = Tool::new()
-            .insert_resource(0u32)
-            .add_system(Stage::Execute, |res: &mut Resources| {
-                *res.get_mut::<u32>() += 1;
-            });
+        let mut tool =
+            Tool::new()
+                .insert_resource(0u32)
+                .add_system(Stage::Execute, |res: &mut Resources| {
+                    *res.get_mut::<u32>() += 1;
+                });
 
         tool.run();
         assert_eq!(*tool.resource::<u32>(), 1);
@@ -298,11 +301,12 @@ mod tests {
 
     #[test]
     fn test_tool_run_shots() {
-        let mut tool = Tool::new()
-            .insert_resource(0u32)
-            .add_system(Stage::PreShot, |res: &mut Resources| {
-                *res.get_mut::<u32>() += 1;
-            });
+        let mut tool =
+            Tool::new()
+                .insert_resource(0u32)
+                .add_system(Stage::PreShot, |res: &mut Resources| {
+                    *res.get_mut::<u32>() += 1;
+                });
 
         tool.run_shots(5);
         assert_eq!(*tool.resource::<u32>(), 5);

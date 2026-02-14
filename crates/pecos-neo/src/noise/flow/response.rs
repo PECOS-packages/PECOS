@@ -96,7 +96,10 @@ impl FlowResponse {
             Self::ForceOutcome(value) => Some(*value),
             Self::Multiple(responses) => {
                 // Return the last forced outcome (in case of multiple)
-                responses.iter().filter_map(Self::forces_outcome).next_back()
+                responses
+                    .iter()
+                    .filter_map(Self::forces_outcome)
+                    .next_back()
             }
             _ => None,
         }
@@ -139,9 +142,7 @@ impl FlowResponse {
     pub fn collect_gates(&self) -> Vec<GateCommand> {
         match self {
             Self::InjectGates(gates) => gates.clone(),
-            Self::Multiple(responses) => {
-                responses.iter().flat_map(Self::collect_gates).collect()
-            }
+            Self::Multiple(responses) => responses.iter().flat_map(Self::collect_gates).collect(),
             _ => Vec::new(),
         }
     }

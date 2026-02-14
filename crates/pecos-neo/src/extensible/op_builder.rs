@@ -10,35 +10,26 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::prelude::*;
+//!
+//! let (q0, q1) = (QubitId(0), QubitId(1));
 //!
 //! // Fluent chaining
 //! let seq = OpBuilder::new()
-//!     .prep_z(q0)
+//!     .pz(q0)
 //!     .h(q0)
 //!     .cx(q0, q1)
-//!     .meas_z(q0, ResultId(0))
-//!     .build();
-//!
-//! // With subcircuits
-//! let bell = OpBuilder::new()
-//!     .prep_z(QubitId(0))
-//!     .prep_z(QubitId(1))
-//!     .h(QubitId(0))
-//!     .cx(QubitId(0), QubitId(1))
-//!     .build();
-//!
-//! let seq = OpBuilder::new()
-//!     .subcircuit(&bell, &[(QubitId(0), q0), (QubitId(1), q1)])
-//!     .meas_z(q0, ResultId(0))
+//!     .mz(q0, ResultId(0))
 //!     .build();
 //! ```
 
-use super::gates;
-use super::operation::{AdaptedOp, AdaptedSequence, AncillaRequirements, MeasBasis, PrepBasis, ResultId};
-use super::pauli::{PauliString, StabilizerMeasurement, StabilizerPreparation};
 use super::GateId;
+use super::gates;
+use super::operation::{
+    AdaptedOp, AdaptedSequence, AncillaRequirements, MeasBasis, PrepBasis, ResultId,
+};
+use super::pauli::{PauliString, StabilizerMeasurement, StabilizerPreparation};
 use crate::command::{CommandQueue, GateCommand, GateType};
 use pecos_core::{Angle64, QubitId};
 use smallvec::SmallVec;
@@ -67,7 +58,7 @@ impl Subcircuit {
         }
     }
 
-    /// Create from an OpBuilder.
+    /// Create from an `OpBuilder`.
     #[must_use]
     pub fn from_builder(builder: OpBuilder, qubit_count: usize) -> Self {
         Self::new(builder.build(), qubit_count)
@@ -111,7 +102,7 @@ impl GateLibrary {
     where
         F: FnOnce(OpBuilder, &[QubitId]) -> OpBuilder,
     {
-        let qubits: Vec<QubitId> = (0..qubit_count).map(|i| QubitId(i)).collect();
+        let qubits: Vec<QubitId> = (0..qubit_count).map(QubitId).collect();
         let builder = f(OpBuilder::new(), &qubits);
         self.define(name, Subcircuit::from_builder(builder, qubit_count));
     }
@@ -120,9 +111,11 @@ impl GateLibrary {
 /// Builder for constructing operation sequences.
 ///
 /// Uses a consuming builder pattern for fluent chaining:
-/// ```ignore
+/// ```
+/// # use pecos_neo::prelude::*;
+/// # let (q0, q1) = (QubitId(0), QubitId(1));
 /// let seq = OpBuilder::new()
-///     .prep_z(q0)
+///     .pz(q0)
 ///     .h(q0)
 ///     .cx(q0, q1)
 ///     .build();
@@ -218,7 +211,7 @@ impl OpBuilder {
     /// Allocate and prepare a fresh ancilla in |0⟩.
     pub fn fresh_ancilla(&mut self) -> QubitId {
         let anc = self.alloc_ancilla();
-        self.ops.push(AdaptedOp::prep_z(anc));
+        self.ops.push(AdaptedOp::pz(anc));
         anc
     }
 
@@ -246,15 +239,15 @@ impl OpBuilder {
 
     /// Prepare a qubit in the Z basis (|0⟩).
     #[must_use]
-    pub fn prep_z(mut self, qubit: QubitId) -> Self {
-        self.ops.push(AdaptedOp::prep_z(qubit));
+    pub fn pz(mut self, qubit: QubitId) -> Self {
+        self.ops.push(AdaptedOp::pz(qubit));
         self
     }
 
     /// Prepare a qubit in the X basis (|+⟩).
     #[must_use]
-    pub fn prep_x(mut self, qubit: QubitId) -> Self {
-        self.ops.push(AdaptedOp::prep_x(qubit));
+    pub fn px(mut self, qubit: QubitId) -> Self {
+        self.ops.push(AdaptedOp::px(qubit));
         self
     }
 
@@ -281,16 +274,16 @@ impl OpBuilder {
 
     /// Measure a qubit in the Z basis.
     #[must_use]
-    pub fn meas_z(mut self, qubit: QubitId, result: ResultId) -> Self {
-        self.ops.push(AdaptedOp::meas_z(qubit, result));
+    pub fn mz(mut self, qubit: QubitId, result: ResultId) -> Self {
+        self.ops.push(AdaptedOp::mz(qubit, result));
         self.next_result = self.next_result.max(result.0 + 1);
         self
     }
 
     /// Measure a qubit in the X basis.
     #[must_use]
-    pub fn meas_x(mut self, qubit: QubitId, result: ResultId) -> Self {
-        self.ops.push(AdaptedOp::meas_x(qubit, result));
+    pub fn mx(mut self, qubit: QubitId, result: ResultId) -> Self {
+        self.ops.push(AdaptedOp::mx(qubit, result));
         self.next_result = self.next_result.max(result.0 + 1);
         self
     }
@@ -310,7 +303,11 @@ impl OpBuilder {
     /// Measure a qubit in a specific basis.
     #[must_use]
     pub fn meas(mut self, qubit: QubitId, basis: MeasBasis, result: ResultId) -> Self {
-        self.ops.push(AdaptedOp::Measure { qubit, basis, result });
+        self.ops.push(AdaptedOp::Measure {
+            qubit,
+            basis,
+            result,
+        });
         self.next_result = self.next_result.max(result.0 + 1);
         self
     }
@@ -385,7 +382,7 @@ impl OpBuilder {
         self.gate1(gates::SXdg, qubit)
     }
 
-    /// Apply an arbitrary single-qubit gate by GateId.
+    /// Apply an arbitrary single-qubit gate by `GateId`.
     #[must_use]
     pub fn gate1(mut self, gate_id: GateId, qubit: QubitId) -> Self {
         self.ops.push(AdaptedOp::gate1(gate_id, qubit));
@@ -449,7 +446,7 @@ impl OpBuilder {
         self.gate2(gates::SWAP, q0, q1)
     }
 
-    /// Apply an arbitrary two-qubit gate by GateId.
+    /// Apply an arbitrary two-qubit gate by `GateId`.
     #[must_use]
     pub fn gate2(mut self, gate_id: GateId, q0: QubitId, q1: QubitId) -> Self {
         self.ops.push(AdaptedOp::gate2(gate_id, q0, q1));
@@ -477,7 +474,12 @@ impl OpBuilder {
 
     /// Execute operations conditionally based on a measurement result.
     #[must_use]
-    pub fn if_then_else<F1, F2>(mut self, condition: ResultId, if_one_fn: F1, if_zero_fn: F2) -> Self
+    pub fn if_then_else<F1, F2>(
+        mut self,
+        condition: ResultId,
+        if_one_fn: F1,
+        if_zero_fn: F2,
+    ) -> Self
     where
         F1: FnOnce(OpBuilder) -> OpBuilder,
         F2: FnOnce(OpBuilder) -> OpBuilder,
@@ -588,7 +590,7 @@ impl OpBuilder {
     pub fn call_named(self, library: &GateLibrary, name: &str, qubits: &[QubitId]) -> Self {
         let sub = library
             .get(name)
-            .unwrap_or_else(|| panic!("Unknown gate: {}", name));
+            .unwrap_or_else(|| panic!("Unknown gate: {name}"));
         self.call(sub, qubits)
     }
 
@@ -612,7 +614,11 @@ impl OpBuilder {
         for op in seq.ops {
             match op {
                 AdaptedOp::Measure { qubit, basis, .. } => {
-                    self.ops.push(AdaptedOp::Measure { qubit, basis, result });
+                    self.ops.push(AdaptedOp::Measure {
+                        qubit,
+                        basis,
+                        result,
+                    });
                 }
                 AdaptedOp::OutputResult { .. } => {}
                 other => self.ops.push(other),
@@ -638,7 +644,7 @@ impl OpBuilder {
     /// Prepare Bell state (|00⟩ + |11⟩)/√2.
     #[must_use]
     pub fn prep_bell(self, q0: QubitId, q1: QubitId) -> Self {
-        self.prep_z(q0).prep_z(q1).h(q0).cx(q0, q1)
+        self.pz(q0).pz(q1).h(q0).cx(q0, q1)
     }
 
     /// Prepare GHZ state on multiple qubits.
@@ -649,11 +655,12 @@ impl OpBuilder {
         }
 
         for &q in qubits {
-            self.ops.push(AdaptedOp::prep_z(q));
+            self.ops.push(AdaptedOp::pz(q));
         }
         self.ops.push(AdaptedOp::gate1(gates::H, qubits[0]));
         for i in 1..qubits.len() {
-            self.ops.push(AdaptedOp::gate2(gates::CX, qubits[0], qubits[i]));
+            self.ops
+                .push(AdaptedOp::gate2(gates::CX, qubits[0], qubits[i]));
         }
         self
     }
@@ -662,17 +669,21 @@ impl OpBuilder {
     // Conversion to CommandQueue
     // ========================================================================
 
-    /// Convert to a CommandQueue for execution.
+    /// Convert to a `CommandQueue` for execution.
     ///
     /// Note: This flattens the sequence. Conditional operations are not supported
-    /// in CommandQueue and will cause this to return an error.
+    /// in `CommandQueue` and will cause this to return an error.
     pub fn to_command_queue(&self) -> Result<CommandQueue, ConversionError> {
         let mut queue = CommandQueue::with_capacity(self.ops.len());
 
         for (idx, op) in self.ops.iter().enumerate() {
             match op {
-                AdaptedOp::Gate { gate_id, qubits, angles } => {
-                    let gate_type = gate_id.try_to_gate_type().ok_or_else(|| {
+                AdaptedOp::Gate {
+                    gate_id,
+                    qubits,
+                    angles,
+                } => {
+                    let gate_type = gate_id.try_to_gate_type().ok_or({
                         ConversionError::UnsupportedGate {
                             gate_id: *gate_id,
                             position: idx,
@@ -691,7 +702,7 @@ impl OpBuilder {
 
                 AdaptedOp::Prep { qubit, basis } => {
                     // Prep in Z is native; other bases need rotation after
-                    queue.push(GateCommand::prep(*qubit));
+                    queue.push(GateCommand::pz(*qubit));
                     match basis {
                         PrepBasis::Z => {}
                         PrepBasis::X => queue.push(GateCommand::h(*qubit)),
@@ -715,7 +726,7 @@ impl OpBuilder {
                             queue.push(GateCommand::h(*qubit));
                         }
                     }
-                    queue.push(GateCommand::measure(*qubit));
+                    queue.push(GateCommand::mz(*qubit));
                     // Rotate back (for non-destructive measurement)
                     match basis {
                         MeasBasis::Z => {}
@@ -741,12 +752,12 @@ impl OpBuilder {
     }
 }
 
-/// Error during conversion to CommandQueue.
+/// Error during conversion to `CommandQueue`.
 #[derive(Clone, Debug)]
 pub enum ConversionError {
-    /// A gate ID has no corresponding GateType.
+    /// A gate ID has no corresponding `GateType`.
     UnsupportedGate { gate_id: GateId, position: usize },
-    /// Conditional operations are not supported in CommandQueue.
+    /// Conditional operations are not supported in `CommandQueue`.
     ConditionalNotSupported { position: usize },
 }
 
@@ -763,8 +774,7 @@ impl std::fmt::Display for ConversionError {
             Self::ConditionalNotSupported { position } => {
                 write!(
                     f,
-                    "Conditional operation at position {} not supported in CommandQueue",
-                    position
+                    "Conditional operation at position {position} not supported in CommandQueue"
                 )
             }
         }
@@ -776,12 +786,15 @@ impl std::error::Error for ConversionError {}
 /// Remap qubit IDs in an operation.
 fn remap_op(op: &AdaptedOp, map: &HashMap<QubitId, QubitId>) -> AdaptedOp {
     let remap = |q: &QubitId| *map.get(q).unwrap_or(q);
-    let remap_vec = |qs: &SmallVec<[QubitId; 4]>| -> SmallVec<[QubitId; 4]> {
-        qs.iter().map(remap).collect()
-    };
+    let remap_vec =
+        |qs: &SmallVec<[QubitId; 4]>| -> SmallVec<[QubitId; 4]> { qs.iter().map(remap).collect() };
 
     match op {
-        AdaptedOp::Gate { gate_id, qubits, angles } => AdaptedOp::Gate {
+        AdaptedOp::Gate {
+            gate_id,
+            qubits,
+            angles,
+        } => AdaptedOp::Gate {
             gate_id: *gate_id,
             qubits: remap_vec(qubits),
             angles: angles.clone(),
@@ -790,12 +803,20 @@ fn remap_op(op: &AdaptedOp, map: &HashMap<QubitId, QubitId>) -> AdaptedOp {
             qubit: remap(qubit),
             basis: *basis,
         },
-        AdaptedOp::Measure { qubit, basis, result } => AdaptedOp::Measure {
+        AdaptedOp::Measure {
+            qubit,
+            basis,
+            result,
+        } => AdaptedOp::Measure {
             qubit: remap(qubit),
             basis: *basis,
             result: *result,
         },
-        AdaptedOp::Conditional { condition, if_one, if_zero } => AdaptedOp::Conditional {
+        AdaptedOp::Conditional {
+            condition,
+            if_one,
+            if_zero,
+        } => AdaptedOp::Conditional {
             condition: *condition,
             if_one: if_one.iter().map(|o| remap_op(o, map)).collect(),
             if_zero: if_zero.iter().map(|o| remap_op(o, map)).collect(),
@@ -818,12 +839,12 @@ mod tests {
         let q1 = QubitId(1);
 
         let seq = OpBuilder::new()
-            .prep_z(q0)
-            .prep_z(q1)
+            .pz(q0)
+            .pz(q1)
             .h(q0)
             .cx(q0, q1)
-            .meas_z(q0, ResultId(0))
-            .meas_z(q1, ResultId(1))
+            .mz(q0, ResultId(0))
+            .mz(q1, ResultId(1))
             .build();
 
         assert_eq!(seq.ops.len(), 6);
@@ -836,9 +857,9 @@ mod tests {
         let q1 = QubitId(1);
 
         let seq = OpBuilder::new()
-            .prep_z(q0)
+            .pz(q0)
             .h(q0)
-            .meas_z(q0, ResultId(0))
+            .mz(q0, ResultId(0))
             .if_one(ResultId(0), |b| b.x(q1))
             .build();
 
@@ -850,8 +871,8 @@ mod tests {
         // Define a Bell state subcircuit
         let bell = Subcircuit::from_builder(
             OpBuilder::new()
-                .prep_z(QubitId(0))
-                .prep_z(QubitId(1))
+                .pz(QubitId(0))
+                .pz(QubitId(1))
                 .h(QubitId(0))
                 .cx(QubitId(0), QubitId(1)),
             2,
@@ -863,7 +884,7 @@ mod tests {
 
         let seq = OpBuilder::new()
             .call(&bell, &[q2, q3])
-            .meas_z(q2, ResultId(0))
+            .mz(q2, ResultId(0))
             .build();
 
         // 4 ops from bell + 1 measurement
@@ -881,10 +902,7 @@ mod tests {
         let mut lib = GateLibrary::new();
 
         lib.define_with("bell", 2, |b, qs| {
-            b.prep_z(qs[0])
-                .prep_z(qs[1])
-                .h(qs[0])
-                .cx(qs[0], qs[1])
+            b.pz(qs[0]).pz(qs[1]).h(qs[0]).cx(qs[0], qs[1])
         });
 
         let q0 = QubitId(10);
@@ -892,7 +910,7 @@ mod tests {
 
         let seq = OpBuilder::new()
             .call_named(&lib, "bell", &[q0, q1])
-            .meas_z(q0, ResultId(0))
+            .mz(q0, ResultId(0))
             .build();
 
         assert_eq!(seq.ops.len(), 5);
@@ -904,11 +922,11 @@ mod tests {
         let q1 = QubitId(1);
 
         let builder = OpBuilder::new()
-            .prep_z(q0)
-            .prep_z(q1)
+            .pz(q0)
+            .pz(q1)
             .h(q0)
             .cx(q0, q1)
-            .meas_z(q0, ResultId(0));
+            .mz(q0, ResultId(0));
 
         let queue = builder.to_command_queue().unwrap();
 
@@ -921,8 +939,8 @@ mod tests {
         let q0 = QubitId(0);
 
         let builder = OpBuilder::new()
-            .prep_z(q0)
-            .meas_z(q0, ResultId(0))
+            .pz(q0)
+            .mz(q0, ResultId(0))
             .if_one(ResultId(0), |b| b.x(q0));
 
         let result = builder.to_command_queue();
@@ -939,8 +957,8 @@ mod tests {
             // Teleportation
             .cx(msg, alice)
             .h(msg)
-            .meas_z(msg, ResultId(0))
-            .meas_z(alice, ResultId(1))
+            .mz(msg, ResultId(0))
+            .mz(alice, ResultId(1))
             // Corrections
             .conditional_x(ResultId(1), bob)
             .conditional_z(ResultId(0), bob)
@@ -1034,8 +1052,8 @@ mod proptest_tests {
         /// Apply this operation to a builder
         fn apply(self, builder: OpBuilder) -> OpBuilder {
             match self {
-                Self::PrepZ(q) => builder.prep_z(q),
-                Self::PrepX(q) => builder.prep_x(q),
+                Self::PrepZ(q) => builder.pz(q),
+                Self::PrepX(q) => builder.px(q),
                 Self::PrepY(q) => builder.prep_y(q),
                 Self::H(q) => builder.h(q),
                 Self::X(q) => builder.x(q),
@@ -1167,10 +1185,10 @@ mod proptest_tests {
             let mut builder = OpBuilder::new();
             for i in 0..num_meas {
                 let q = QubitId(i);
-                builder = builder.prep_z(q).meas_z(q, ResultId(i as u16));
+                builder = builder.pz(q).mz(q, ResultId(i as u16));
             }
             let seq = builder.build();
-            prop_assert_eq!(seq.result_count as usize, num_meas);
+            prop_assert_eq!(seq.result_count, num_meas);
         }
 
         /// Chained operations maintain correct length
@@ -1235,8 +1253,8 @@ mod proptest_tests {
         #[test]
         fn conditional_is_single_op(q in qubit_id()) {
             let seq = OpBuilder::new()
-                .prep_z(q)
-                .meas_z(q, ResultId(0))
+                .pz(q)
+                .mz(q, ResultId(0))
                 .if_one(ResultId(0), |b| b.x(q))
                 .build();
             // prep + meas + conditional = 3
@@ -1294,8 +1312,8 @@ mod negative_tests {
     fn conditional_fails_command_queue_conversion() {
         let q = QubitId(0);
         let builder = OpBuilder::new()
-            .prep_z(q)
-            .meas_z(q, ResultId(0))
+            .pz(q)
+            .mz(q, ResultId(0))
             .if_one(ResultId(0), |b| b.x(q));
 
         let result = builder.to_command_queue();
@@ -1312,12 +1330,11 @@ mod negative_tests {
         let q1 = QubitId(1);
 
         let builder = OpBuilder::new()
-            .prep_z(q0)
-            .prep_z(q1)
-            .meas_z(q0, ResultId(0))
+            .pz(q0)
+            .pz(q1)
+            .mz(q0, ResultId(0))
             .if_one(ResultId(0), |b| {
-                b.meas_z(q1, ResultId(1))
-                    .if_one(ResultId(1), |b2| b2.x(q0))
+                b.mz(q1, ResultId(1)).if_one(ResultId(1), |b2| b2.x(q0))
             });
 
         let result = builder.to_command_queue();
@@ -1328,8 +1345,8 @@ mod negative_tests {
     fn if_then_else_fails_conversion() {
         let q = QubitId(0);
         let builder = OpBuilder::new()
-            .prep_z(q)
-            .meas_z(q, ResultId(0))
+            .pz(q)
+            .mz(q, ResultId(0))
             .if_then_else(ResultId(0), |b| b.x(q), |b| b.z(q));
 
         let result = builder.to_command_queue();
@@ -1419,7 +1436,7 @@ mod negative_tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Qubit count must match Pauli string length")]
     fn stabilizer_meas_qubit_count_mismatch_panics() {
         let qubits = [QubitId(0)]; // Only 1 qubit
         let anc = QubitId(10);
@@ -1457,7 +1474,7 @@ mod negative_tests {
     #[test]
     fn very_large_qubit_id_works() {
         let large_q = QubitId(usize::MAX - 1);
-        let seq = OpBuilder::new().prep_z(large_q).h(large_q).build();
+        let seq = OpBuilder::new().pz(large_q).h(large_q).build();
         assert_eq!(seq.ops.len(), 2);
     }
 
@@ -1468,10 +1485,10 @@ mod negative_tests {
         let q1 = QubitId(1);
 
         let seq = OpBuilder::new()
-            .prep_z(q0)
-            .prep_z(q1)
-            .meas_z(q0, ResultId(0))
-            .meas_z(q1, ResultId(0)) // Same result ID
+            .pz(q0)
+            .pz(q1)
+            .mz(q0, ResultId(0))
+            .mz(q1, ResultId(0)) // Same result ID
             .build();
 
         assert_eq!(seq.ops.len(), 4);
@@ -1484,10 +1501,10 @@ mod negative_tests {
         let q1 = QubitId(1);
 
         let seq = OpBuilder::new()
-            .prep_z(q0)
-            .prep_z(q1)
-            .meas_z(q0, ResultId(5)) // Start at 5
-            .meas_z(q1, ResultId(2)) // Then 2
+            .pz(q0)
+            .pz(q1)
+            .mz(q0, ResultId(5)) // Start at 5
+            .mz(q1, ResultId(2)) // Then 2
             .build();
 
         assert_eq!(seq.ops.len(), 4);
@@ -1500,8 +1517,8 @@ mod negative_tests {
         let q = QubitId(0);
 
         let seq = OpBuilder::new()
-            .prep_z(q)
-            .meas_z(q, ResultId(0))
+            .pz(q)
+            .mz(q, ResultId(0))
             .if_then_else(ResultId(0), |b| b, |b| b) // Empty branches
             .build();
 
@@ -1532,12 +1549,12 @@ mod negative_tests {
             gate_id: GateId(999),
             position: 5,
         };
-        let msg1 = format!("{}", err1);
+        let msg1 = format!("{err1}");
         assert!(msg1.contains("999"));
-        assert!(msg1.contains("5"));
+        assert!(msg1.contains('5'));
 
         let err2 = ConversionError::ConditionalNotSupported { position: 10 };
-        let msg2 = format!("{}", err2);
+        let msg2 = format!("{err2}");
         assert!(msg2.contains("10"));
         assert!(msg2.contains("Conditional"));
     }

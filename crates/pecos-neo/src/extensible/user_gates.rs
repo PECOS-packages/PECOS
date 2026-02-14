@@ -6,8 +6,8 @@
 //! - Integration with the plugin system
 
 use super::{
-    gates, DecompOp, DecompositionRegistry, GateCategory, GateId,
-    GatePlugin, GateSpec, GateSupportSet,
+    DecompOp, DecompositionRegistry, GateCategory, GateId, GatePlugin, GateSpec, GateSupportSet,
+    gates,
 };
 use std::any::TypeId;
 
@@ -15,17 +15,17 @@ use std::any::TypeId;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::extensible::*;
 ///
-/// let mut builder = UserGateBuilder::new("MY_GATE")
+/// let builder = UserGateBuilder::new("MY_GATE")
 ///     .qubits(2)
 ///     .category(GateCategory::TwoQubitUnitary)
 ///     .requires([gates::H, gates::CX])
-///     .decomposition(|qubits| vec![
-///         DecompOp::gate1(gates::H, qubits[0]),
-///         DecompOp::gate2(gates::CX, qubits[0], qubits[1]),
-///         DecompOp::gate1(gates::H, qubits[0]),
+///     .decomposition(vec![
+///         DecompOp::gate1(gates::H, 0),
+///         DecompOp::gate2(gates::CX, 0, 1),
+///         DecompOp::gate1(gates::H, 0),
 ///     ]);
 /// ```
 pub struct UserGateBuilder {
@@ -120,9 +120,12 @@ impl std::fmt::Debug for UserGateDefinition {
             .field("spec", &self.spec)
             .field(
                 "decomposition",
-                &self.decomposition.as_ref().map(|d| format!("{} ops", d.len())),
+                &self
+                    .decomposition
+                    .as_ref()
+                    .map(|d| format!("{} ops", d.len())),
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -130,7 +133,7 @@ impl std::fmt::Debug for UserGateDefinition {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::extensible::*;
 ///
 /// let plugin = UserGatesPlugin::new()
@@ -176,7 +179,10 @@ impl UserGatesPlugin {
 
     /// Add multiple user-defined gates.
     #[must_use]
-    pub fn define_all<I: IntoIterator<Item = UserGateDefinition>>(mut self, definitions: I) -> Self {
+    pub fn define_all<I: IntoIterator<Item = UserGateDefinition>>(
+        mut self,
+        definitions: I,
+    ) -> Self {
         self.definitions.extend(definitions);
         self
     }
@@ -246,7 +252,8 @@ impl UserGateRegistry {
     pub fn register(&mut self, definition: UserGateDefinition) -> GateId {
         let gate_id = GateId(self.next_id);
         self.next_id += 1;
-        self.by_name.insert(definition.name.clone(), (gate_id, definition));
+        self.by_name
+            .insert(definition.name.clone(), (gate_id, definition));
         gate_id
     }
 
@@ -317,9 +324,7 @@ mod tests {
 
     #[test]
     fn test_user_gate_builder_basic() {
-        let def = UserGateBuilder::new("MY_GATE")
-            .qubits(2)
-            .build();
+        let def = UserGateBuilder::new("MY_GATE").qubits(2).build();
 
         assert_eq!(def.name, "MY_GATE");
         assert_eq!(def.spec.quantum_arity, 2);
@@ -381,17 +386,9 @@ mod tests {
     fn test_user_gate_registry() {
         let mut registry = UserGateRegistry::new();
 
-        let id1 = registry.register(
-            UserGateBuilder::new("GATE1")
-                .qubits(1)
-                .build(),
-        );
+        let id1 = registry.register(UserGateBuilder::new("GATE1").qubits(1).build());
 
-        let id2 = registry.register(
-            UserGateBuilder::new("GATE2")
-                .qubits(2)
-                .build(),
-        );
+        let id2 = registry.register(UserGateBuilder::new("GATE2").qubits(2).build());
 
         assert!(id1.is_user_defined());
         assert!(id2.is_user_defined());
@@ -438,11 +435,7 @@ mod tests {
         let mut registry = UserGateRegistry::new();
 
         // Native user gate (no decomposition, simulator must support directly)
-        let id = registry.register(
-            UserGateBuilder::new("NATIVE_GATE")
-                .qubits(1)
-                .build(),
-        );
+        let id = registry.register(UserGateBuilder::new("NATIVE_GATE").qubits(1).build());
 
         let mut decomp_registry = DecompositionRegistry::new();
         registry.apply_to(&mut decomp_registry);
@@ -455,11 +448,7 @@ mod tests {
     fn test_user_gate_registry_get_by_id() {
         let mut registry = UserGateRegistry::new();
 
-        let id = registry.register(
-            UserGateBuilder::new("TEST_GATE")
-                .qubits(1)
-                .build(),
-        );
+        let id = registry.register(UserGateBuilder::new("TEST_GATE").qubits(1).build());
 
         let def = registry.get_by_id(id).unwrap();
         assert_eq!(def.name, "TEST_GATE");
@@ -469,17 +458,9 @@ mod tests {
     fn test_user_gate_registry_to_plugin() {
         let mut registry = UserGateRegistry::new();
 
-        registry.register(
-            UserGateBuilder::new("GATE1")
-                .qubits(1)
-                .build(),
-        );
+        registry.register(UserGateBuilder::new("GATE1").qubits(1).build());
 
-        registry.register(
-            UserGateBuilder::new("GATE2")
-                .qubits(2)
-                .build(),
-        );
+        registry.register(UserGateBuilder::new("GATE2").qubits(2).build());
 
         let plugin = registry.to_plugin();
         assert_eq!(plugin.gate_count(), 2);

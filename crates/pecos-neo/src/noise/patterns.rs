@@ -35,7 +35,7 @@
 //!
 //! ## Simple Noise
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // One-liner for basic depolarizing
@@ -47,7 +47,7 @@
 //!
 //! ## Asymmetric Measurement
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Different error rates for 0->1 vs 1->0
@@ -56,7 +56,7 @@
 //!
 //! ## Device Noise
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! let model = realistic_device_noise(
@@ -72,7 +72,7 @@
 //!
 //! ## Spatial Noise
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Errors that spread between qubits
@@ -82,10 +82,10 @@
 //! let model = grid_measurement_crosstalk(5, 0.01);  // 5 columns
 //! ```
 
+use super::CorrelatedNoiseChannel;
 use super::builder::NoiseModelBuilder;
 use super::composer::ComposableNoiseModel;
 use super::flow::prelude::*;
-use super::CorrelatedNoiseChannel;
 use super::topology::{chain_neighbors, grid_neighbors};
 
 // ============================================================================
@@ -103,14 +103,13 @@ use super::topology::{chain_neighbors, grid_neighbors};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// let model = depolarizing_only(0.001, 0.01);
 /// ```
 #[must_use]
 pub fn depolarizing_only(p1: f64, p2: f64) -> ComposableNoiseModel {
-    NoiseModelBuilder::new()
-        .with_depolarizing(p1, p2)
-        .build()
+    NoiseModelBuilder::new().with_depolarizing(p1, p2).build()
 }
 
 /// Create a noise model with depolarizing and measurement noise.
@@ -123,7 +122,8 @@ pub fn depolarizing_only(p1: f64, p2: f64) -> ComposableNoiseModel {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// let model = depolarizing_with_measurement(0.001, 0.01, 0.02);
 /// ```
 #[must_use]
@@ -145,7 +145,8 @@ pub fn depolarizing_with_measurement(p1: f64, p2: f64, p_meas: f64) -> Composabl
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// // Symmetric measurement error
 /// let model = measurement_only(0.02, 0.02);
 ///
@@ -170,7 +171,8 @@ pub fn measurement_only(p01: f64, p10: f64) -> ComposableNoiseModel {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// let model = dephasing_only(0.001, 0.01);
 /// ```
 #[must_use]
@@ -204,7 +206,8 @@ pub fn dephasing_only(p1: f64, p2: f64) -> ComposableNoiseModel {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// let model = with_leakage(0.001, 0.01, 0.1, 0.5);
 /// ```
 #[must_use]
@@ -266,7 +269,8 @@ pub fn with_leakage(
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// let model = chain_correlated(0.01, 0.5);
 /// ```
 #[must_use]
@@ -285,14 +289,16 @@ pub fn chain_correlated(base_probability: f64, correlation_factor: f64) -> Compo
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// let model = chain_measurement_crosstalk(0.01);
 /// ```
 #[must_use]
 pub fn chain_measurement_crosstalk(crosstalk_probability: f64) -> ComposableNoiseModel {
-    let crosstalk = FlowCrosstalkChannel::new("chain_crosstalk", prob(crosstalk_probability, pauli()))
-        .responds_to_measurement()
-        .local(chain_neighbors);
+    let crosstalk =
+        FlowCrosstalkChannel::new("chain_crosstalk", prob(crosstalk_probability, pauli()))
+            .responds_to_measurement()
+            .local(chain_neighbors);
 
     ComposableNoiseModel::new().add_channel(crosstalk)
 }
@@ -306,7 +312,8 @@ pub fn chain_measurement_crosstalk(crosstalk_probability: f64) -> ComposableNois
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// // 5x4 grid with crosstalk
 /// let model = grid_measurement_crosstalk(5, 0.01);
 /// ```
@@ -446,7 +453,8 @@ impl DeviceNoiseParams {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// let model = realistic_device_noise(
 ///     DeviceNoiseParams::new()
 ///         .with_p1(0.001)
@@ -471,10 +479,7 @@ pub fn realistic_device_noise(params: DeviceNoiseParams) -> ComposableNoiseModel
                 params.p1,
                 when_leaked(
                     prob(params.seepage_rate, seep()),
-                    sample![
-                        (params.leakage_rate, leak()),
-                        (pauli_ratio, pauli()),
-                    ],
+                    sample![(params.leakage_rate, leak()), (pauli_ratio, pauli()),],
                 ),
             ),
         ];
@@ -499,16 +504,14 @@ pub fn realistic_device_noise(params: DeviceNoiseParams) -> ComposableNoiseModel
     // Add idle noise if rates are set
     if params.t1_rate > 0.0 {
         // T1 decay: energy relaxation causes bit flips (amplitude damping approximated as Pauli)
-        let t1_channel = FlowChannelBuilder::idle(
-            "t1_decay",
-            prob_linear(params.t1_rate, pauli()),
-        );
+        let t1_channel = FlowChannelBuilder::idle("t1_decay", prob_linear(params.t1_rate, pauli()));
         model = model.add_channel(t1_channel);
     }
 
     if params.t2_rate > 0.0 {
         // T2 dephasing: pure dephasing (Z errors)
-        let t2_channel = FlowChannelBuilder::idle("t2_dephasing", prob_linear(params.t2_rate, inject_z()));
+        let t2_channel =
+            FlowChannelBuilder::idle("t2_dephasing", prob_linear(params.t2_rate, inject_z()));
         model = model.add_channel(t2_channel);
     }
 
@@ -533,7 +536,8 @@ pub fn realistic_device_noise(params: DeviceNoiseParams) -> ComposableNoiseModel
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::prelude::*;
 /// let model = surface_code_noise(0.001, false);
 /// ```
 #[must_use]
@@ -564,6 +568,7 @@ pub fn surface_code_noise(physical_error_rate: f64, with_crosstalk: bool) -> Com
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;
@@ -573,7 +578,7 @@ mod tests {
     #[test]
     fn test_depolarizing_only() {
         let model = depolarizing_only(0.5, 0.5);
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut runner = ShotRunner::new(SparseStab::new(1))
             .with_noise(model)
@@ -585,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_depolarizing_with_measurement() {
-        let commands = CommandBuilder::new().prep(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).mz(0).build();
 
         let mut errors = 0;
         for seed in 0..100 {
@@ -595,19 +600,25 @@ mod tests {
                 .with_noise(model)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            if outcomes.get(pecos_core::QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if outcomes
+                .get(pecos_core::QubitId(0))
+                .is_some_and(|o| o.outcome)
+            {
                 errors += 1;
             }
         }
 
         // Should be roughly 50% errors
-        assert!(errors > 30 && errors < 70, "Expected ~50 errors, got {errors}");
+        assert!(
+            errors > 30 && errors < 70,
+            "Expected ~50 errors, got {errors}"
+        );
     }
 
     #[test]
     fn test_dephasing_only() {
         let model = dephasing_only(0.5, 0.5);
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut runner = ShotRunner::new(SparseStab::new(1))
             .with_noise(model)
@@ -619,7 +630,7 @@ mod tests {
     #[test]
     fn test_with_leakage() {
         let model = with_leakage(0.5, 0.5, 0.5, 0.5);
-        let commands = CommandBuilder::new().prep(0).h(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
 
         let mut runner = ShotRunner::new(SparseStab::new(1))
             .with_noise(model)
@@ -632,12 +643,12 @@ mod tests {
     fn test_chain_correlated() {
         let model = chain_correlated(0.1, 0.5);
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .h(1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut runner = ShotRunner::new(SparseStab::new(2))
@@ -655,7 +666,7 @@ mod tests {
             .with_measurement_error(0.02);
 
         let model = realistic_device_noise(params);
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut runner = ShotRunner::new(SparseStab::new(1))
             .with_noise(model)
@@ -668,11 +679,11 @@ mod tests {
     fn test_surface_code_noise() {
         let model = surface_code_noise(0.001, true);
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut runner = ShotRunner::new(SparseStab::new(2))

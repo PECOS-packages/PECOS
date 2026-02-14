@@ -160,12 +160,10 @@ impl RngComponent {
 }
 
 /// Component for importance sampling weight.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct WeightComponent {
     pub weight: SampleWeight,
 }
-
 
 impl WeightComponent {
     #[must_use]
@@ -181,12 +179,10 @@ impl WeightComponent {
 }
 
 /// Component for noise context (leakage, prepared qubits, etc.).
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct NoiseContextComponent {
     pub context: NoiseContext,
 }
-
 
 impl NoiseContextComponent {
     #[must_use]

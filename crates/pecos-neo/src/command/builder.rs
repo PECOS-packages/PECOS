@@ -13,7 +13,7 @@
 //! Ergonomic builder for constructing command queues.
 
 use super::{CommandQueue, GateCommand, GateType};
-use pecos_core::{Angle64, QubitId, TimeUnits};
+use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
 
 /// Builder for constructing command queues with a fluent API.
 ///
@@ -23,12 +23,12 @@ use pecos_core::{Angle64, QubitId, TimeUnits};
 /// use pecos_neo::command::CommandBuilder;
 ///
 /// let commands = CommandBuilder::new()
-///     .prep(0)
-///     .prep(1)
+///     .pz(0)
+///     .pz(1)
 ///     .h(0)
 ///     .cx(0, 1)
-///     .measure(0)
-///     .measure(1)
+///     .mz(0)
+///     .mz(1)
 ///     .build();
 /// ```
 #[derive(Debug, Default)]
@@ -61,6 +61,33 @@ impl CommandBuilder {
     #[must_use]
     pub fn gate(mut self, command: GateCommand) -> Self {
         self.queue.push(command);
+        self
+    }
+
+    /// Add a signal at the current position in the command stream.
+    ///
+    /// The signal is placed after the most recently added gate command.
+    ///
+    /// ```
+    /// use pecos_neo::command::CommandBuilder;
+    /// use pecos_core::impl_signal;
+    ///
+    /// #[derive(Copy, Clone, Debug)]
+    /// struct RoundBoundary(pub i64);
+    /// impl_signal!(RoundBoundary);
+    ///
+    /// let queue = CommandBuilder::new()
+    ///     .pz(0).pz(1)
+    ///     .signal(RoundBoundary(1))
+    ///     .h(0).h(1)
+    ///     .mz(0).mz(1)
+    ///     .build();
+    ///
+    /// assert!(queue.has_signals());
+    /// ```
+    #[must_use]
+    pub fn signal<S: Signal>(mut self, signal: S) -> Self {
+        self.queue.signal(signal);
         self
     }
 
@@ -293,10 +320,10 @@ impl CommandBuilder {
 
     // Preparation and measurement
 
-    /// Add a state preparation (Prep) gate.
+    /// Add a Z-basis state preparation gate.
     #[must_use]
-    pub fn prep(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::prep(qubit.into()))
+    pub fn pz(self, qubit: impl Into<QubitId>) -> Self {
+        self.gate(GateCommand::pz(qubit.into()))
     }
 
     /// Add a qubit allocation.
@@ -317,10 +344,10 @@ impl CommandBuilder {
         ))
     }
 
-    /// Add a measurement.
+    /// Add a Z-basis measurement.
     #[must_use]
-    pub fn measure(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::measure(qubit.into()))
+    pub fn mz(self, qubit: impl Into<QubitId>) -> Self {
+        self.gate(GateCommand::mz(qubit.into()))
     }
 
     /// Add a measurement that also frees the qubit.
@@ -332,20 +359,20 @@ impl CommandBuilder {
         ))
     }
 
-    /// Add preparation for multiple qubits.
+    /// Add Z-basis preparation for multiple qubits.
     #[must_use]
-    pub fn prep_all(mut self, qubits: impl IntoIterator<Item = impl Into<QubitId>>) -> Self {
+    pub fn pz_all(mut self, qubits: impl IntoIterator<Item = impl Into<QubitId>>) -> Self {
         for q in qubits {
-            self.queue.push(GateCommand::prep(q.into()));
+            self.queue.push(GateCommand::pz(q.into()));
         }
         self
     }
 
-    /// Add measurements for multiple qubits.
+    /// Add Z-basis measurements for multiple qubits.
     #[must_use]
-    pub fn measure_all(mut self, qubits: impl IntoIterator<Item = impl Into<QubitId>>) -> Self {
+    pub fn mz_all(mut self, qubits: impl IntoIterator<Item = impl Into<QubitId>>) -> Self {
         for q in qubits {
-            self.queue.push(GateCommand::measure(q.into()));
+            self.queue.push(GateCommand::mz(q.into()));
         }
         self
     }
@@ -367,7 +394,8 @@ impl CommandBuilder {
         duration: impl Into<TimeUnits> + Copy,
     ) -> Self {
         for q in qubits {
-            self.queue.push(GateCommand::idle(q.into(), duration.into()));
+            self.queue
+                .push(GateCommand::idle(q.into(), duration.into()));
         }
         self
     }
@@ -380,23 +408,23 @@ mod tests {
     #[test]
     fn test_builder_fluent_api() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         assert_eq!(commands.len(), 6);
 
         let cmds: Vec<_> = commands.iter().collect();
-        assert_eq!(cmds[0].gate_type, GateType::Prep);
-        assert_eq!(cmds[1].gate_type, GateType::Prep);
+        assert_eq!(cmds[0].gate_type, GateType::PZ);
+        assert_eq!(cmds[1].gate_type, GateType::PZ);
         assert_eq!(cmds[2].gate_type, GateType::H);
         assert_eq!(cmds[3].gate_type, GateType::CX);
-        assert_eq!(cmds[4].gate_type, GateType::Measure);
-        assert_eq!(cmds[5].gate_type, GateType::Measure);
+        assert_eq!(cmds[4].gate_type, GateType::MZ);
+        assert_eq!(cmds[5].gate_type, GateType::MZ);
     }
 
     #[test]
@@ -418,9 +446,9 @@ mod tests {
     #[test]
     fn test_prep_all_measure_all() {
         let commands = CommandBuilder::new()
-            .prep_all(0..4)
+            .pz_all(0..4)
             .h(0)
-            .measure_all(0..4)
+            .mz_all(0..4)
             .build();
 
         assert_eq!(commands.len(), 9); // 4 preps + 1 H + 4 measures

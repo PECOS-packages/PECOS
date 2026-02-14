@@ -21,14 +21,22 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
-//! use pecos_neo::ecs::{ParallelCoordinator, WorkerState, redistribute_by_weight};
+//! ```no_run
+//! use pecos_neo::ecs::{ParallelCoordinator, ParallelConfig, redistribute_by_weight};
+//! use pecos_qsim::SparseStab;
+//! use pecos_rng::PecosRng;
+//! use rand_core::SeedableRng;
 //!
-//! coordinator.run_with_sync(
-//!     make_simulator,
-//!     num_steps,
-//!     step_fn,
-//!     |workers, step| {
+//! let config = ParallelConfig::new().with_workers(2).with_seed(42);
+//! let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
+//! let mut rng = PecosRng::seed_from_u64(42);
+//! let target_per_worker = 10;
+//!
+//! coordinator.run_with_sync::<_, _, _, ()>(
+//!     || SparseStab::new(1),
+//!     5,
+//!     |_world, _step| {},
+//!     |workers, _step| {
 //!         // Redistribute entities based on weights
 //!         redistribute_by_weight(workers, target_per_worker, &mut rng);
 //!     },
@@ -199,7 +207,10 @@ pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
     }
 
     // Count entities after redistribution
-    let entities_after: usize = workers.iter().map(|w| w.world.active_entities().len()).sum();
+    let entities_after: usize = workers
+        .iter()
+        .map(|w| w.world.active_entities().len())
+        .sum();
     let weight_after = total_weight(workers);
 
     RedistributionStats {
@@ -217,9 +228,7 @@ pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
 /// with fewer than average, without changing weights or sampling.
 ///
 /// Use this for simple load balancing after splitting operations.
-pub fn balance_entity_counts<S: CliffordGateable + Clone>(
-    workers: &mut [WorkerState<S>],
-) -> usize {
+pub fn balance_entity_counts<S: CliffordGateable + Clone>(workers: &mut [WorkerState<S>]) -> usize {
     let num_workers = workers.len();
     if num_workers <= 1 {
         return 0;

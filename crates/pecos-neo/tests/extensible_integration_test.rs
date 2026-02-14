@@ -16,17 +16,17 @@
 //! - Gate decomposition chaining (A → B → C)
 //! - User gate decomposition with noise
 //! - Plugin dependency handling
-//! - CommandSource with user-defined gates
+//! - `CommandSource` with user-defined gates
+#![allow(clippy::float_cmp)]
 
 use pecos_core::{Angle64, QubitId};
 use pecos_neo::command::CommandBuilder;
 use pecos_neo::extensible::{
-    gates, AdaptedOp, AdaptedSequence, CircuitResolver, CoreGatesPlugin, DecompOp,
-    DecompositionRegistry, GateCategory, GateId, GateIdNoiseConfig, GateNoiseParams,
-    GatePlugin, GateSpec, GateSupportSet, PluginError, PluginLoader, ResolutionError,
-    UserGateBuilder, UserGateRegistry,
+    AdaptedOp, AdaptedSequence, CircuitResolver, CoreGatesPlugin, DecompOp, DecompositionRegistry,
+    GateId, GatePlugin, GateSupportSet, PluginError, PluginLoader, ResolutionError,
+    UserGateBuilder, UserGateRegistry, gates,
 };
-use pecos_neo::noise::{ComposableNoiseModel, GateDependentChannel, SingleQubitChannel};
+use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
 use pecos_neo::outcome::MeasurementOutcomes;
 use pecos_neo::program::{CommandSource, ConditionalProgram, ProgramRunner, StaticProgram};
 use pecos_qsim::SparseStab;
@@ -37,7 +37,7 @@ use std::any::TypeId;
 // ============================================================================
 
 /// Create a custom gate that decomposes to SWAP (which itself decomposes to CX).
-/// This tests: CUSTOM_GATE → SWAP → CX (two levels of decomposition).
+/// This tests: `CUSTOM_GATE` → SWAP → CX (two levels of decomposition).
 #[test]
 fn test_decomposition_chaining_two_levels() {
     // Define a custom gate that uses SWAP in its decomposition
@@ -87,7 +87,7 @@ fn test_decomposition_chaining_two_levels() {
     }
 }
 
-/// Test three levels of decomposition: GATE_A → GATE_B → GATE_C → native
+/// Test three levels of decomposition: `GATE_A` → `GATE_B` → `GATE_C` → native
 #[test]
 fn test_decomposition_chaining_three_levels() {
     let mut registry = DecompositionRegistry::new();
@@ -175,8 +175,7 @@ fn test_circular_dependency_detection() {
     let result = registry.resolve(gate_a, &sim_support);
     assert!(
         matches!(result, Err(ResolutionError::CircularDependency(_))),
-        "Should detect circular dependency, got: {:?}",
-        result
+        "Should detect circular dependency, got: {result:?}"
     );
 }
 
@@ -365,7 +364,7 @@ fn test_plugin_multi_level_dependencies() {
 // User Gates with Noise Integration
 // ============================================================================
 
-/// Test that user-defined gates work with noise models in sim_neo.
+/// Test that user-defined gates work with noise models in `sim_neo`.
 #[test]
 fn test_user_gate_with_noise_integration() {
     // Create a user gate that does H-CX-H (entangling operation)
@@ -419,16 +418,15 @@ fn test_noisy_execution_statistics() {
     // Circuit: prepare |0>, apply identity gate (I), measure
     // The I gate triggers noise application
     let commands = CommandBuilder::new()
-        .prep(0)
+        .pz(0)
         .identity(0) // Identity gate triggers noise
-        .measure(0)
+        .mz(0)
         .build();
 
     let mut ones_count = 0;
     for seed in 0..num_shots {
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(
-            high_noise_rate,
-        ));
+        let noise = ComposableNoiseModel::new()
+            .add_channel(SingleQubitChannel::depolarizing(high_noise_rate));
         let mut program = StaticProgram::new(commands.clone(), 1);
         let mut runner = ProgramRunner::new(SparseStab::new(1))
             .with_noise(noise)
@@ -447,7 +445,7 @@ fn test_noisy_execution_statistics() {
     // - Y error: p/3 (flips |0> to |1>)
     // - Z error: p/3 (no flip on |0>)
     // So ~2p/3 = ~20% of shots should measure 1
-    let ones_rate = ones_count as f64 / num_shots as f64;
+    let ones_rate = f64::from(ones_count) / f64::from(num_shots);
 
     // Should see some bit flips (between 5% and 40%)
     assert!(
@@ -466,7 +464,7 @@ fn test_noisy_execution_statistics() {
 // CommandSource with User-Defined Gates
 // ============================================================================
 
-/// A custom CommandSource that uses user-defined gates.
+/// A custom `CommandSource` that uses user-defined gates.
 struct UserGateProgram {
     _user_gate_id: GateId, // Stored for potential future use with CommandBuilder extension
     executed: bool,
@@ -482,7 +480,10 @@ impl UserGateProgram {
 }
 
 impl CommandSource for UserGateProgram {
-    fn next_commands(&mut self, _outcomes: Option<&MeasurementOutcomes>) -> Option<pecos_neo::command::CommandQueue> {
+    fn next_commands(
+        &mut self,
+        _outcomes: Option<&MeasurementOutcomes>,
+    ) -> Option<pecos_neo::command::CommandQueue> {
         if self.executed {
             return None;
         }
@@ -494,12 +495,12 @@ impl CommandSource for UserGateProgram {
         // The actual user gate integration would require CommandBuilder extension.
         Some(
             CommandBuilder::new()
-                .prep(0)
-                .prep(1)
+                .pz(0)
+                .pz(1)
                 .h(0)
                 .cx(0, 1)
-                .measure(0)
-                .measure(1)
+                .mz(0)
+                .mz(1)
                 .build(),
         )
     }
@@ -552,12 +553,12 @@ fn test_command_source_with_user_gates() {
 #[test]
 fn test_conditional_program_with_feedback() {
     // Initial circuit: prepare |+>, measure
-    let initial = CommandBuilder::new().prep(0).h(0).measure(0).build();
+    let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
     // Branch: if measured 1, apply X to flip back to |0>
     let branch = |outcomes: &MeasurementOutcomes| {
         if outcomes.get_bit(QubitId(0)) == Some(true) {
-            Some(CommandBuilder::new().x(0).measure(0).build())
+            Some(CommandBuilder::new().x(0).mz(0).build())
         } else {
             None
         }
@@ -577,10 +578,10 @@ fn test_conditional_program_with_feedback() {
         if result.num_batches == 2 {
             // After X correction, the second measurement should be 0
             // (since X|1> = |0>)
-            if let Some(bit) = result.outcomes.get_bit(QubitId(0)) {
-                if bit {
-                    final_ones += 1;
-                }
+            if let Some(bit) = result.outcomes.get_bit(QubitId(0))
+                && bit
+            {
+                final_ones += 1;
             }
         }
     }
@@ -685,7 +686,9 @@ fn test_native_gate_passthrough() {
 
     for (i, op) in resolved.ops.iter().enumerate() {
         match op {
-            pecos_neo::extensible::ResolvedOp::Gate { gate_id, qubits, .. } => {
+            pecos_neo::extensible::ResolvedOp::Gate {
+                gate_id, qubits, ..
+            } => {
                 assert_eq!(*gate_id, gates::H);
                 assert_eq!(qubits[0], QubitId(i));
             }
@@ -703,9 +706,9 @@ fn test_mixed_native_and_decomposed() {
     let resolver = CircuitResolver::new(&registry, &sim_support);
 
     let seq = AdaptedSequence::new(vec![
-        AdaptedOp::gate1(gates::H, QubitId(0)),            // Native
+        AdaptedOp::gate1(gates::H, QubitId(0)), // Native
         AdaptedOp::gate2(gates::SWAP, QubitId(0), QubitId(1)), // Decomposed to 3 CX
-        AdaptedOp::gate1(gates::H, QubitId(1)),            // Native
+        AdaptedOp::gate1(gates::H, QubitId(1)), // Native
     ]);
 
     let resolved = resolver.resolve(&seq).unwrap();
@@ -727,7 +730,7 @@ fn test_mixed_native_and_decomposed() {
             pecos_neo::extensible::ResolvedOp::Gate { gate_id, .. } => {
                 assert_eq!(*gate_id, gates::CX);
             }
-            _ => panic!("Expected CX at position {}", i),
+            _ => panic!("Expected CX at position {i}"),
         }
     }
 
@@ -786,7 +789,7 @@ fn test_resolution_error_unsupported_native() {
 }
 
 /// Test that when a decomposition chain reaches a native gate that's unsupported,
-/// we get an UnsupportedNativeGate error.
+/// we get an `UnsupportedNativeGate` error.
 #[test]
 fn test_resolution_error_unsupported_in_chain() {
     let registry = DecompositionRegistry::new();
@@ -805,12 +808,11 @@ fn test_resolution_error_unsupported_in_chain() {
             result,
             Err(pecos_neo::extensible::ResolutionError::UnsupportedNativeGate(g)) if g == gates::CX
         ),
-        "Should error when decomposition chain reaches unsupported native gate, got: {:?}",
-        result
+        "Should error when decomposition chain reaches unsupported native gate, got: {result:?}"
     );
 }
 
-/// Test that MissingRequirements error is raised when a decomposition requires
+/// Test that `MissingRequirements` error is raised when a decomposition requires
 /// an unregistered gate.
 #[test]
 fn test_resolution_error_missing_requirements() {
@@ -841,8 +843,7 @@ fn test_resolution_error_missing_requirements() {
     let result = resolver.resolve(&seq);
     assert!(
         matches!(result, Err(ResolutionError::UnknownGate(g)) if g == unregistered_gate),
-        "Should error with UnknownGate for unregistered dependency, got: {:?}",
-        result
+        "Should error with UnknownGate for unregistered dependency, got: {result:?}"
     );
 }
 
@@ -868,8 +869,8 @@ fn test_e2e_custom_gate_definition_and_execution() {
             .qubits(2)
             .requires([gates::H, gates::CX])
             .decomposition(vec![
-                DecompOp::gate1(gates::H, 0),      // H on control
-                DecompOp::gate2(gates::CX, 0, 1),  // CX to entangle
+                DecompOp::gate1(gates::H, 0),     // H on control
+                DecompOp::gate2(gates::CX, 0, 1), // CX to entangle
             ])
             .build(),
     );
@@ -890,9 +891,7 @@ fn test_e2e_custom_gate_definition_and_execution() {
 
     // Step 3: Create a sequence with just the custom gate (no prep/measure in resolver)
     // Prep and Measure are handled separately by the runner, not by decomposition
-    let seq = AdaptedSequence::new(vec![
-        AdaptedOp::gate2(bell_gate_id, QubitId(0), QubitId(1)),
-    ]);
+    let seq = AdaptedSequence::new(vec![AdaptedOp::gate2(bell_gate_id, QubitId(0), QubitId(1))]);
 
     // Step 4: Resolve to native gates
     let resolved = resolver.resolve(&seq).unwrap();
@@ -917,12 +916,12 @@ fn test_e2e_custom_gate_definition_and_execution() {
     // Step 5: Execute and verify Bell state behavior
     // Build full CommandQueue with prep/measure
     let commands = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     // Run multiple shots and verify correlation
@@ -953,9 +952,6 @@ fn test_e2e_custom_gate_definition_and_execution() {
 /// Demonstrates custom gates that pass through angle parameters.
 #[test]
 fn test_e2e_custom_parameterized_gate() {
-    use pecos_neo::runner::ShotRunner;
-    use pecos_qsim::StateVec;
-
     // Define a custom controlled-phase gate: CPHASE(theta)
     // Decomposition: CZ is CPHASE(pi), but we want arbitrary angles
     // CPHASE(theta) = I on |00>, |01>, |10>; e^{i*theta} on |11>
@@ -1003,10 +999,15 @@ fn test_e2e_custom_parameterized_gate() {
 
     // Verify angles are preserved
     for op in &resolved.ops {
-        if let pecos_neo::extensible::ResolvedOp::Gate { gate_id, angles, .. } = op {
-            if *gate_id == gates::RZ {
-                assert_eq!(angles[0], angle, "Angle should be preserved through decomposition");
-            }
+        if let pecos_neo::extensible::ResolvedOp::Gate {
+            gate_id, angles, ..
+        } = op
+            && *gate_id == gates::RZ
+        {
+            assert_eq!(
+                angles[0], angle,
+                "Angle should be preserved through decomposition"
+            );
         }
     }
 }
@@ -1030,7 +1031,7 @@ fn test_e2e_hierarchical_custom_gates() {
             .qubits(2)
             .requires([my_h_id, gates::CX]) // Uses another user gate!
             .decomposition(vec![
-                DecompOp::gate1(my_h_id, 0),       // Use MY_H instead of H
+                DecompOp::gate1(my_h_id, 0), // Use MY_H instead of H
                 DecompOp::gate2(gates::CX, 0, 1),
             ])
             .build(),
@@ -1061,7 +1062,11 @@ fn test_e2e_hierarchical_custom_gates() {
     assert!(decomp_registry.can_execute(double_bell_id, &sim_support));
 
     let resolver = CircuitResolver::new(&decomp_registry, &sim_support);
-    let seq = AdaptedSequence::new(vec![AdaptedOp::gate2(double_bell_id, QubitId(0), QubitId(1))]);
+    let seq = AdaptedSequence::new(vec![AdaptedOp::gate2(
+        double_bell_id,
+        QubitId(0),
+        QubitId(1),
+    )]);
 
     let resolved = resolver.resolve(&seq).unwrap();
 
@@ -1089,7 +1094,7 @@ fn test_e2e_hierarchical_custom_gates() {
 /// This test demonstrates the CURRENT LIMITATION:
 /// - Custom gates decompose to native gates
 /// - Noise is applied per native gate, not per custom gate
-/// - There's no way to apply "5% noise on MY_GATE" directly
+/// - There's no way to apply "5% noise on `MY_GATE`" directly
 ///
 /// TODO: This test documents the gap that needs fixing.
 #[test]
@@ -1127,16 +1132,15 @@ fn test_e2e_custom_gate_noise_limitation() {
     //
     // What we CAN do is apply noise to the decomposed gates (H):
     let noise = ComposableNoiseModel::new().add_channel(
-        GateDependentChannel::new()
-            .with_gate_error(pecos_neo::command::GateType::H, 0.0), // No noise for clarity
+        GateDependentChannel::new().with_gate_error(pecos_neo::command::GateType::H, 0.0), // No noise for clarity
     );
 
     // Execute with noise
     let commands = CommandBuilder::new()
-        .prep(0)
+        .pz(0)
         .h(0)
         .h(0) // This is our "custom gate" decomposed
-        .measure(0)
+        .mz(0)
         .build();
 
     let mut runner = ShotRunner::new(SparseStab::new(1))
@@ -1166,13 +1170,13 @@ fn test_e2e_custom_gate_noise_limitation() {
     );
 }
 
-/// End-to-end example: Using GateIdNoiseConfig (currently unused infrastructure).
+/// End-to-end example: Using `GateIdNoiseConfig` (currently unused infrastructure).
 ///
-/// This test shows that GateIdNoiseConfig exists and works, but isn't
+/// This test shows that `GateIdNoiseConfig` exists and works, but isn't
 /// connected to actual noise execution.
 #[test]
 fn test_e2e_gate_id_noise_config_infrastructure() {
-    use pecos_neo::extensible::{GateIdNoiseConfig, GateNoiseParams, GateCategory, GateSpec};
+    use pecos_neo::extensible::{GateCategory, GateIdNoiseConfig, GateNoiseParams, GateSpec};
 
     // Create a custom gate
     let mut user_registry = UserGateRegistry::new();
@@ -1193,7 +1197,7 @@ fn test_e2e_gate_id_noise_config_infrastructure() {
     noise_config.set_gate(my_gate_id, GateNoiseParams::with_error(0.05));
 
     // Also set for some core gates
-    noise_config.set_gate_error(gates::T, 0.02);  // T gates have higher error
+    noise_config.set_gate_error(gates::T, 0.02); // T gates have higher error
 
     // Query error rates
     let spec = GateSpec::new("NOISY_GATE")
@@ -1201,7 +1205,10 @@ fn test_e2e_gate_id_noise_config_infrastructure() {
         .with_category(GateCategory::SingleQubitUnitary);
 
     // Custom gate has specific rate
-    assert_eq!(noise_config.get_error_probability(my_gate_id, Some(&spec)), 0.05);
+    assert_eq!(
+        noise_config.get_error_probability(my_gate_id, Some(&spec)),
+        0.05
+    );
 
     // T gate has specific rate
     assert_eq!(noise_config.get_error_probability(gates::T, None), 0.02);
@@ -1210,25 +1217,28 @@ fn test_e2e_gate_id_noise_config_infrastructure() {
     let h_spec = GateSpec::new("H")
         .with_quantum_arity(1)
         .with_category(GateCategory::SingleQubitUnitary);
-    assert_eq!(noise_config.get_error_probability(gates::SY, Some(&h_spec)), 0.001);
+    assert_eq!(
+        noise_config.get_error_probability(gates::SY, Some(&h_spec)),
+        0.001
+    );
 
     // NOTE: This infrastructure exists but isn't connected to ComposableNoiseModel
     // or ShotRunner. The gap is in wiring GateIdNoiseConfig to actual execution.
 }
 
-/// End-to-end: Complete workflow using ShotRunner directly.
+/// End-to-end: Complete workflow using `ShotRunner` directly.
 #[test]
 fn test_e2e_complete_workflow_with_shot_runner() {
     use pecos_neo::runner::ShotRunner;
 
     // Simple circuit using standard gates
     let commands = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     // Use ShotRunner directly

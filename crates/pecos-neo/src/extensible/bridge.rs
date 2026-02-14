@@ -3,7 +3,7 @@
 //! This module provides conversion between the existing `GateType` enum
 //! and the new extensible `GateId` system, enabling gradual migration.
 
-use super::{gates, GateId};
+use super::{GateId, gates};
 use crate::command::GateType;
 
 impl GateType {
@@ -53,10 +53,10 @@ impl GateType {
             Self::CCX => gates::CCX,
 
             // Measurement and preparation
-            Self::Measure => gates::MEASURE,
+            Self::MZ => gates::MZ,
             Self::MeasureLeaked => gates::MEASURE_LEAKED,
             Self::MeasureFree => gates::MEASURE_FREE,
-            Self::Prep => gates::PREP,
+            Self::PZ => gates::PZ,
             Self::QAlloc => gates::QALLOC,
             Self::QFree => gates::QFREE,
 
@@ -126,12 +126,12 @@ impl GateId {
             80 => GateType::CCX,
 
             // Measurement
-            100 => GateType::Measure,
+            100 => GateType::MZ,
             101 => GateType::MeasureLeaked,
             102 => GateType::MeasureFree,
 
             // State preparation
-            110 => GateType::Prep,
+            110 => GateType::PZ,
 
             // Qubit management
             120 => GateType::QAlloc,
@@ -226,10 +226,10 @@ mod tests {
             GateType::RYY,
             GateType::RZZ,
             GateType::CCX,
-            GateType::Measure,
+            GateType::MZ,
             GateType::MeasureLeaked,
             GateType::MeasureFree,
-            GateType::Prep,
+            GateType::PZ,
             GateType::QAlloc,
             GateType::QFree,
             GateType::Idle,
@@ -241,8 +241,7 @@ mod tests {
             assert_eq!(
                 roundtrip,
                 Some(gate_type),
-                "Roundtrip failed for {:?}",
-                gate_type
+                "Roundtrip failed for {gate_type:?}"
             );
         }
     }
@@ -253,7 +252,7 @@ mod tests {
         assert!(GateType::X.to_gate_id().is_core());
         assert!(GateType::CX.to_gate_id().is_core());
         assert!(GateType::CCX.to_gate_id().is_core());
-        assert!(GateType::Measure.to_gate_id().is_core());
+        assert!(GateType::MZ.to_gate_id().is_core());
     }
 
     #[test]
@@ -290,8 +289,8 @@ mod tests {
         assert_eq!(GateType::RZ.to_gate_id(), gates::RZ);
         assert_eq!(GateType::CX.to_gate_id(), gates::CX);
         assert_eq!(GateType::CCX.to_gate_id(), gates::CCX);
-        assert_eq!(GateType::Measure.to_gate_id(), gates::MEASURE);
-        assert_eq!(GateType::Prep.to_gate_id(), gates::PREP);
+        assert_eq!(GateType::MZ.to_gate_id(), gates::MZ);
+        assert_eq!(GateType::PZ.to_gate_id(), gates::PZ);
         assert_eq!(GateType::Idle.to_gate_id(), gates::IDLE);
     }
 }

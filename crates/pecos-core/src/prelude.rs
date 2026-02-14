@@ -11,7 +11,7 @@
 // the License.
 
 pub use crate::{
-    Angle64, Bit, BitInt, Bits, Set, TimeScale, TimeUnits, VecSet, bitvec,
+    Angle64, Bit, BitInt, Bits, Set, Signal, TimeScale, TimeUnits, VecSet, bitvec,
     errors::PecosError,
     gate_type::GateType,
     gates::Gate,

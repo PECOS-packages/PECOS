@@ -6,10 +6,8 @@
 //!
 //! These operations use ancilla qubits and decompose into primitive operations.
 
-use super::operation::{
-    AdaptedOp, AdaptedSequence, AncillaRequirements, PrepBasis, ResultId,
-};
-use super::{gates, GateId, GateSupportSet};
+use super::operation::{AdaptedOp, AdaptedSequence, AncillaRequirements, PrepBasis, ResultId};
+use super::{GateId, GateSupportSet, gates};
 use pecos_core::{Angle64, QubitId};
 
 /// Trait for extended adaptors that can produce operation sequences
@@ -93,7 +91,7 @@ impl StabilizerMeasurementAdaptor {
     /// Create a new stabilizer measurement adaptor.
     #[must_use]
     pub fn new() -> Self {
-        use stabilizer_gates::*;
+        use stabilizer_gates::{MXX, MXY, MXZ, MYX, MYY, MYZ, MZX, MZY, MZZ};
 
         let mut adaptable = GateSupportSet::new();
         adaptable.insert(MZZ);
@@ -135,13 +133,13 @@ impl StabilizerMeasurementAdaptor {
                     AdaptedOp::gate1(gates::SX, data),
                 ]
             }
-            _ => panic!("Invalid basis: {}", basis),
+            _ => panic!("Invalid basis: {basis}"),
         }
     }
 
     /// Get the two Pauli bases for a stabilizer gate ID.
     fn bases_for_gate(gate_id: GateId) -> (char, char) {
-        use stabilizer_gates::*;
+        use stabilizer_gates::{MXX, MXY, MXZ, MYX, MYY, MYZ, MZX, MZY, MZZ};
         match gate_id {
             id if id == MZZ => ('Z', 'Z'),
             id if id == MXX => ('X', 'X'),
@@ -152,7 +150,7 @@ impl StabilizerMeasurementAdaptor {
             id if id == MYZ => ('Y', 'Z'),
             id if id == MXY => ('X', 'Y'),
             id if id == MYX => ('Y', 'X'),
-            _ => panic!("Unknown stabilizer measurement gate: {:?}", gate_id),
+            _ => panic!("Unknown stabilizer measurement gate: {gate_id:?}"),
         }
     }
 }
@@ -181,8 +179,14 @@ impl ExtendedAdaptor for StabilizerMeasurementAdaptor {
         _angles: &[Angle64],
         ancillas: &[QubitId],
     ) -> AdaptedSequence {
-        assert!(qubits.len() >= 2, "Stabilizer measurement requires 2 data qubits");
-        assert!(!ancillas.is_empty(), "Stabilizer measurement requires 1 ancilla");
+        assert!(
+            qubits.len() >= 2,
+            "Stabilizer measurement requires 2 data qubits"
+        );
+        assert!(
+            !ancillas.is_empty(),
+            "Stabilizer measurement requires 1 ancilla"
+        );
 
         let (q0, q1) = (qubits[0], qubits[1]);
         let ancilla = ancillas[0];
@@ -191,7 +195,7 @@ impl ExtendedAdaptor for StabilizerMeasurementAdaptor {
         let mut ops = Vec::new();
 
         // 1. Prepare ancilla in |0⟩
-        ops.push(AdaptedOp::prep_z(ancilla));
+        ops.push(AdaptedOp::pz(ancilla));
 
         // 2. Couple first data qubit to ancilla
         ops.extend(Self::coupling_for_basis(basis0, q0, ancilla));
@@ -200,10 +204,12 @@ impl ExtendedAdaptor for StabilizerMeasurementAdaptor {
         ops.extend(Self::coupling_for_basis(basis1, q1, ancilla));
 
         // 4. Measure ancilla
-        ops.push(AdaptedOp::meas_z(ancilla, ResultId(0)));
+        ops.push(AdaptedOp::mz(ancilla, ResultId(0)));
 
         // 5. Output the result
-        ops.push(AdaptedOp::OutputResult { result: ResultId(0) });
+        ops.push(AdaptedOp::OutputResult {
+            result: ResultId(0),
+        });
 
         AdaptedSequence::new(ops)
     }
@@ -226,7 +232,7 @@ impl StabilizerPreparationAdaptor {
     /// Create a new stabilizer preparation adaptor.
     #[must_use]
     pub fn new() -> Self {
-        use stabilizer_gates::*;
+        use stabilizer_gates::{PXX, PXY, PXZ, PYX, PYY, PYZ, PZX, PZY, PZZ};
 
         let mut adaptable = GateSupportSet::new();
         adaptable.insert(PZZ);
@@ -244,7 +250,7 @@ impl StabilizerPreparationAdaptor {
 
     /// Get the two Pauli bases for a stabilizer gate ID.
     fn bases_for_gate(gate_id: GateId) -> (char, char) {
-        use stabilizer_gates::*;
+        use stabilizer_gates::{PXX, PXY, PXZ, PYX, PYY, PYZ, PZX, PZY, PZZ};
         match gate_id {
             id if id == PZZ => ('Z', 'Z'),
             id if id == PXX => ('X', 'X'),
@@ -255,7 +261,7 @@ impl StabilizerPreparationAdaptor {
             id if id == PYZ => ('Y', 'Z'),
             id if id == PXY => ('X', 'Y'),
             id if id == PYX => ('Y', 'X'),
-            _ => panic!("Unknown stabilizer preparation gate: {:?}", gate_id),
+            _ => panic!("Unknown stabilizer preparation gate: {gate_id:?}"),
         }
     }
 
@@ -265,7 +271,7 @@ impl StabilizerPreparationAdaptor {
             'Z' => PrepBasis::Z, // |0⟩ is +1 eigenstate of Z
             'X' => PrepBasis::X, // |+⟩ is +1 eigenstate of X
             'Y' => PrepBasis::Y, // |+i⟩ is +1 eigenstate of Y
-            _ => panic!("Invalid Pauli: {}", pauli),
+            _ => panic!("Invalid Pauli: {pauli}"),
         }
     }
 }
@@ -291,7 +297,10 @@ impl ExtendedAdaptor for StabilizerPreparationAdaptor {
         _angles: &[Angle64],
         _ancillas: &[QubitId],
     ) -> AdaptedSequence {
-        assert!(qubits.len() >= 2, "Stabilizer preparation requires 2 qubits");
+        assert!(
+            qubits.len() >= 2,
+            "Stabilizer preparation requires 2 qubits"
+        );
 
         let (q0, q1) = (qubits[0], qubits[1]);
         let (basis0, basis1) = Self::bases_for_gate(gate_id);
@@ -370,7 +379,7 @@ impl ExtendedAdaptor for StabilizerAdaptor {
         } else if self.preparation.can_adapt(gate_id) {
             self.preparation.adapt(gate_id, qubits, angles, ancillas)
         } else {
-            panic!("StabilizerAdaptor cannot adapt gate {:?}", gate_id);
+            panic!("StabilizerAdaptor cannot adapt gate {gate_id:?}");
         }
     }
 }
@@ -401,10 +410,21 @@ mod tests {
         assert_eq!(seq.result_count, 1);
 
         // First op should be prep
-        assert!(matches!(seq.ops[0], AdaptedOp::Prep { qubit: QubitId(2), basis: PrepBasis::Z }));
+        assert!(matches!(
+            seq.ops[0],
+            AdaptedOp::Prep {
+                qubit: QubitId(2),
+                basis: PrepBasis::Z
+            }
+        ));
 
         // Last op should be output
-        assert!(matches!(seq.ops.last(), Some(AdaptedOp::OutputResult { result: ResultId(0) })));
+        assert!(matches!(
+            seq.ops.last(),
+            Some(AdaptedOp::OutputResult {
+                result: ResultId(0)
+            })
+        ));
     }
 
     #[test]
@@ -416,12 +436,7 @@ mod tests {
         let reqs = adaptor.ancilla_requirements(stabilizer_gates::PZX);
         assert_eq!(reqs.count, 0);
 
-        let seq = adaptor.adapt(
-            stabilizer_gates::PZX,
-            &[QubitId(0), QubitId(1)],
-            &[],
-            &[],
-        );
+        let seq = adaptor.adapt(stabilizer_gates::PZX, &[QubitId(0), QubitId(1)], &[], &[]);
 
         // Should have 2 preparations
         assert_eq!(seq.ops.len(), 2);
@@ -429,13 +444,19 @@ mod tests {
         // First qubit prepared in Z basis (|0⟩)
         assert!(matches!(
             seq.ops[0],
-            AdaptedOp::Prep { qubit: QubitId(0), basis: PrepBasis::Z }
+            AdaptedOp::Prep {
+                qubit: QubitId(0),
+                basis: PrepBasis::Z
+            }
         ));
 
         // Second qubit prepared in X basis (|+⟩)
         assert!(matches!(
             seq.ops[1],
-            AdaptedOp::Prep { qubit: QubitId(1), basis: PrepBasis::X }
+            AdaptedOp::Prep {
+                qubit: QubitId(1),
+                basis: PrepBasis::X
+            }
         ));
     }
 
@@ -469,14 +490,9 @@ mod tests {
         let adaptor = StabilizerMeasurementAdaptor::new();
 
         for gate in [MZZ, MXX, MYY, MZX, MXZ, MZY, MYZ, MXY, MYX] {
-            assert!(adaptor.can_adapt(gate), "Should handle {:?}", gate);
+            assert!(adaptor.can_adapt(gate), "Should handle {gate:?}");
 
-            let seq = adaptor.adapt(
-                gate,
-                &[QubitId(0), QubitId(1)],
-                &[],
-                &[QubitId(2)],
-            );
+            let seq = adaptor.adapt(gate, &[QubitId(0), QubitId(1)], &[], &[QubitId(2)]);
 
             assert!(!seq.ops.is_empty());
             assert!(seq.result_count >= 1);
@@ -489,14 +505,9 @@ mod tests {
         let adaptor = StabilizerPreparationAdaptor::new();
 
         for gate in [PZZ, PXX, PYY, PZX, PXZ, PZY, PYZ, PXY, PYX] {
-            assert!(adaptor.can_adapt(gate), "Should handle {:?}", gate);
+            assert!(adaptor.can_adapt(gate), "Should handle {gate:?}");
 
-            let seq = adaptor.adapt(
-                gate,
-                &[QubitId(0), QubitId(1)],
-                &[],
-                &[],
-            );
+            let seq = adaptor.adapt(gate, &[QubitId(0), QubitId(1)], &[], &[]);
 
             assert_eq!(seq.ops.len(), 2); // Two preparations
         }

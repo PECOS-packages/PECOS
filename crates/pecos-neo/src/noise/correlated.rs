@@ -40,7 +40,7 @@ use smallvec::SmallVec;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::CorrelatedNoiseChannel;
 ///
 /// // 1% base error rate, 50% correlation
@@ -113,8 +113,7 @@ impl CorrelatedNoiseChannel {
     fn conditional_probability(&self, other_had_error: bool) -> f64 {
         if other_had_error {
             // Increase probability due to correlation
-            self.base_error_probability
-                + (1.0 - self.base_error_probability) * self.correlation
+            self.base_error_probability + (1.0 - self.base_error_probability) * self.correlation
         } else {
             // Decrease probability (inverse correlation effect)
             self.base_error_probability * (1.0 - self.correlation)
@@ -128,7 +127,9 @@ impl NoiseChannel for CorrelatedNoiseChannel {
             return false;
         }
         match event {
-            NoiseEvent::AfterGate { gate_type, qubits, .. } => {
+            NoiseEvent::AfterGate {
+                gate_type, qubits, ..
+            } => {
                 // For single-qubit gates, only respond if single_qubit_correlation is enabled
                 if gate_type.is_single_qubit() {
                     self.single_qubit_correlation
@@ -196,6 +197,10 @@ impl NoiseChannel for CorrelatedNoiseChannel {
 
     fn name(&self) -> &'static str {
         "CorrelatedNoiseChannel"
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
     }
 }
 
@@ -278,7 +283,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(channel.responds_to(&event));
     }
@@ -294,7 +300,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(!channel.responds_to(&event));
     }
@@ -310,7 +317,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(channel.responds_to(&event));
     }
@@ -379,7 +387,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(0));

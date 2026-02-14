@@ -181,7 +181,7 @@ impl Condition for GateTypeIs {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// // If partner is leaked (and I'm not), apply random Pauli to me
@@ -326,7 +326,10 @@ where
 
 /// Convenience functions for creating conditions.
 pub mod conditions {
-    use super::{Active, AnyQubitLeaked, FnCondition, GateType, GateTypeIs, IFired, Leaked, NoiseContext, NotLeaked, OutcomeIs, PartnerFired, PartnerOnlyFired, PartnerLeaked, QubitId};
+    use super::{
+        Active, AnyQubitLeaked, FnCondition, GateType, GateTypeIs, IFired, Leaked, NoiseContext,
+        NotLeaked, OutcomeIs, PartnerFired, PartnerLeaked, PartnerOnlyFired, QubitId,
+    };
 
     /// Condition: qubit is leaked.
     #[must_use]
@@ -394,9 +397,10 @@ pub mod conditions {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use pecos_neo::noise::flow::prelude::*;
     /// // If partner is leaked, apply Pauli to me
-    /// when(partner_leaked(), pauli(), nothing())
+    /// when(partner_leaked(), pauli(), nothing());
     /// ```
     #[must_use]
     pub fn partner_leaked() -> PartnerLeaked {
@@ -444,9 +448,10 @@ pub mod conditions {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// # use pecos_neo::noise::flow::prelude::*;
     /// // Stage 2 flow: if partner emitted but I didn't, depolarize me
-    /// when(partner_only_fired(), pauli(), nothing())
+    /// when(partner_only_fired(), pauli(), nothing());
     /// ```
     #[must_use]
     pub fn partner_only_fired() -> PartnerOnlyFired {

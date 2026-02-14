@@ -3,7 +3,7 @@
 //! Validators check circuits at build time to ensure they meet
 //! specific requirements (e.g., Clifford-only, exact angles).
 
-use super::{GateId, GateRegistry, GateCanonicalizer, GateSupportSet, gates};
+use super::{GateCanonicalizer, GateId, GateRegistry, GateSupportSet, gates};
 use pecos_core::Angle64;
 
 /// Convert angle to turns (0.0 to 1.0).
@@ -36,19 +36,25 @@ pub enum ValidationError {
         position: usize,
     },
     /// Gate ID is not registered
-    UnknownGate {
-        gate_id: GateId,
-        position: usize,
-    },
+    UnknownGate { gate_id: GateId, position: usize },
 }
 
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ForbiddenGate { gate_name, position, .. } => {
-                write!(f, "Forbidden gate '{}' at position {}", gate_name, position)
+            Self::ForbiddenGate {
+                gate_name,
+                position,
+                ..
+            } => {
+                write!(f, "Forbidden gate '{gate_name}' at position {position}")
             }
-            Self::ForbiddenAngle { gate_name, angle, position, .. } => {
+            Self::ForbiddenAngle {
+                gate_name,
+                angle,
+                position,
+                ..
+            } => {
                 write!(
                     f,
                     "Forbidden angle {:.6} turns for gate '{}' at position {}",
@@ -57,7 +63,12 @@ impl std::fmt::Display for ValidationError {
                     position
                 )
             }
-            Self::NonCanonicalAngle { gate_name, angle, position, .. } => {
+            Self::NonCanonicalAngle {
+                gate_name,
+                angle,
+                position,
+                ..
+            } => {
                 write!(
                     f,
                     "Non-canonical angle {:.6} turns for gate '{}' at position {} (must be a standard angle like pi/4, pi/2, pi)",
@@ -92,7 +103,8 @@ pub trait CircuitValidator {
     ) -> Result<(), ValidationError>;
 
     /// Check if a single gate is allowed (without position info).
-    fn is_gate_allowed(&self, gate_id: GateId, angles: &[Angle64], registry: &GateRegistry) -> bool;
+    fn is_gate_allowed(&self, gate_id: GateId, angles: &[Angle64], registry: &GateRegistry)
+    -> bool;
 }
 
 /// Validator for Clifford-only circuits.
@@ -142,8 +154,8 @@ impl CliffordValidator {
         allowed_gates.insert(gates::SZZdg);
 
         // Measurement and prep
-        allowed_gates.insert(gates::MEASURE);
-        allowed_gates.insert(gates::PREP);
+        allowed_gates.insert(gates::MZ);
+        allowed_gates.insert(gates::PZ);
 
         // Parameterized gates are allowed only at Clifford angles
         allowed_gates.insert(gates::RX);
@@ -154,9 +166,9 @@ impl CliffordValidator {
         use Angle64 as A;
         let allowed_angles = vec![
             A::ZERO,
-            A::QUARTER_TURN,           // pi/2
-            A::HALF_TURN,              // pi
-            A::THREE_QUARTERS_TURN,    // 3pi/2 (same as -pi/2)
+            A::QUARTER_TURN,        // pi/2
+            A::HALF_TURN,           // pi
+            A::THREE_QUARTERS_TURN, // 3pi/2 (same as -pi/2)
         ];
 
         Self {
@@ -180,7 +192,7 @@ impl CircuitValidator for CliffordValidator {
     ) -> Result<(), ValidationError> {
         for (idx, gate) in gates.iter().enumerate() {
             // Check if gate is registered
-            let spec = registry.get(gate.gate_id).ok_or_else(|| {
+            let spec = registry.get(gate.gate_id).ok_or({
                 ValidationError::UnknownGate {
                     gate_id: gate.gate_id,
                     position: idx,
@@ -215,15 +227,20 @@ impl CircuitValidator for CliffordValidator {
         Ok(())
     }
 
-    fn is_gate_allowed(&self, gate_id: GateId, angles: &[Angle64], registry: &GateRegistry) -> bool {
+    fn is_gate_allowed(
+        &self,
+        gate_id: GateId,
+        angles: &[Angle64],
+        registry: &GateRegistry,
+    ) -> bool {
         if !self.allowed_gates.contains(gate_id) {
             return false;
         }
 
-        if let Some(spec) = registry.get(gate_id) {
-            if spec.angle_arity > 0 {
-                return angles.iter().all(|a| self.is_clifford_angle(*a));
-            }
+        if let Some(spec) = registry.get(gate_id)
+            && spec.angle_arity > 0
+        {
+            return angles.iter().all(|a| self.is_clifford_angle(*a));
         }
 
         true
@@ -255,7 +272,7 @@ impl CliffordTValidator {
 
         // Add T angle (pi/4)
         use Angle64 as A;
-        inner.allowed_angles.push(A::HALF_TURN / 4);           // pi/4
+        inner.allowed_angles.push(A::HALF_TURN / 4); // pi/4
         inner.allowed_angles.push(A::ZERO - A::HALF_TURN / 4); // -pi/4
 
         Self { inner }
@@ -271,7 +288,12 @@ impl CircuitValidator for CliffordTValidator {
         self.inner.validate(gates, registry)
     }
 
-    fn is_gate_allowed(&self, gate_id: GateId, angles: &[Angle64], registry: &GateRegistry) -> bool {
+    fn is_gate_allowed(
+        &self,
+        gate_id: GateId,
+        angles: &[Angle64],
+        registry: &GateRegistry,
+    ) -> bool {
         self.inner.is_gate_allowed(gate_id, angles, registry)
     }
 }
@@ -313,7 +335,7 @@ impl CircuitValidator for ExactAngleValidator {
         registry: &GateRegistry,
     ) -> Result<(), ValidationError> {
         for (idx, gate) in gates.iter().enumerate() {
-            let spec = registry.get(gate.gate_id).ok_or_else(|| {
+            let spec = registry.get(gate.gate_id).ok_or({
                 ValidationError::UnknownGate {
                     gate_id: gate.gate_id,
                     position: idx,
@@ -326,17 +348,20 @@ impl CircuitValidator for ExactAngleValidator {
             }
 
             // For single-angle gates, check if canonicalizable
-            if gate.angles.len() == 1 {
-                if self.canonicalizer.canonicalize(gate.gate_id, &gate.angles).is_none() {
-                    // Check if this is a gate that can be canonicalized at all
-                    if self.canonicalizer.can_canonicalize(gate.gate_id) {
-                        return Err(ValidationError::NonCanonicalAngle {
-                            gate_id: gate.gate_id,
-                            gate_name: spec.name.to_string(),
-                            angle: gate.angles[0],
-                            position: idx,
-                        });
-                    }
+            if gate.angles.len() == 1
+                && self
+                    .canonicalizer
+                    .canonicalize(gate.gate_id, &gate.angles)
+                    .is_none()
+            {
+                // Check if this is a gate that can be canonicalized at all
+                if self.canonicalizer.can_canonicalize(gate.gate_id) {
+                    return Err(ValidationError::NonCanonicalAngle {
+                        gate_id: gate.gate_id,
+                        gate_name: spec.name.to_string(),
+                        angle: gate.angles[0],
+                        position: idx,
+                    });
                 }
             }
         }
@@ -344,7 +369,12 @@ impl CircuitValidator for ExactAngleValidator {
         Ok(())
     }
 
-    fn is_gate_allowed(&self, gate_id: GateId, angles: &[Angle64], _registry: &GateRegistry) -> bool {
+    fn is_gate_allowed(
+        &self,
+        gate_id: GateId,
+        angles: &[Angle64],
+        _registry: &GateRegistry,
+    ) -> bool {
         if angles.is_empty() {
             return true;
         }
@@ -413,8 +443,7 @@ impl CircuitValidator for AllowListValidator {
             if !self.allowed.contains(gate.gate_id) {
                 let gate_name = registry
                     .get(gate.gate_id)
-                    .map(|s| s.name.to_string())
-                    .unwrap_or_else(|| format!("ID({})", gate.gate_id.0));
+                    .map_or_else(|| format!("ID({})", gate.gate_id.0), |s| s.name.to_string());
 
                 return Err(ValidationError::ForbiddenGate {
                     gate_id: gate.gate_id,
@@ -427,7 +456,12 @@ impl CircuitValidator for AllowListValidator {
         Ok(())
     }
 
-    fn is_gate_allowed(&self, gate_id: GateId, _angles: &[Angle64], _registry: &GateRegistry) -> bool {
+    fn is_gate_allowed(
+        &self,
+        gate_id: GateId,
+        _angles: &[Angle64],
+        _registry: &GateRegistry,
+    ) -> bool {
         self.allowed.contains(gate_id)
     }
 }
@@ -477,7 +511,12 @@ impl CircuitValidator for CompositeValidator {
         Ok(())
     }
 
-    fn is_gate_allowed(&self, gate_id: GateId, angles: &[Angle64], registry: &GateRegistry) -> bool {
+    fn is_gate_allowed(
+        &self,
+        gate_id: GateId,
+        angles: &[Angle64],
+        registry: &GateRegistry,
+    ) -> bool {
         self.validators
             .iter()
             .all(|v| v.is_gate_allowed(gate_id, angles, registry))

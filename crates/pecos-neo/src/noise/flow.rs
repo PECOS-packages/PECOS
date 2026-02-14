@@ -43,7 +43,7 @@
 //!
 //! Use the `seq!` and `sample!` macros for heterogeneous compositions:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::prelude::*;
 //!
 //! // Build single-qubit gate noise as a decision tree
@@ -62,7 +62,7 @@
 //!
 //! Use `FlowChannel` to integrate flow primitives with the noise model:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::prelude::*;
 //! use pecos_neo::noise::ComposableNoiseModel;
 //!
@@ -82,7 +82,7 @@
 //!
 //! For a simpler API similar to `GeneralNoiseModelBuilder`:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::FlowNoiseModelBuilder;
 //!
 //! let model = FlowNoiseModelBuilder::new()
@@ -98,7 +98,7 @@
 //!
 //! The builder supports angle-dependent noise, leakage scaling, and custom Pauli weights:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::prelude::*;
 //!
 //! let model = FlowNoiseModelBuilder::new()
@@ -122,7 +122,7 @@
 //! Time-dependent idle noise can be modeled using `prob_linear` (T1-like)
 //! and `prob_quadratic` (T2-like) primitives:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::prelude::*;
 //!
 //! // T1 relaxation: probability grows linearly with time
@@ -140,7 +140,7 @@
 //!
 //! For angle-dependent or gate-type-dependent error rates:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::prelude::*;
 //!
 //! // Angle-dependent two-qubit noise
@@ -166,26 +166,39 @@ mod response;
 
 // Re-export main types
 pub use action::{
-    CrosstalkAction, Emission, FlipOutcomeAction, ForceOutcomeAction, GateAction, Inject,
-    IndependentEmissionWithPartnerDepolarize, InjectCoherentRZ, Leak, LeakedMeasurementAction,
-    Nothing, Pauli, PauliWeights, PartnerDepolarize, RandomOutcome, Seep, SkipGate,
-    TwoQubitEmission, TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak,
+    CrosstalkAction, Emission, FlipOutcomeAction, ForceOutcomeAction, GateAction,
+    IndependentEmissionWithPartnerDepolarize, Inject, InjectCoherentRZ, Leak,
+    LeakedMeasurementAction, Nothing, PartnerDepolarize, Pauli, PauliWeights, RandomOutcome, Seep,
+    SkipGate, TwoQubitEmission, TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak,
 };
 pub use builder::FlowNoiseModelBuilder;
-pub use channel::{BatchFlowChannel, FlowChannel, FlowChannelBuilder, FlowCrosstalkChannel, FlowEventFilter};
+pub use channel::{
+    BatchFlowChannel, FlowChannel, FlowChannelBuilder, FlowCrosstalkChannel, FlowEventFilter,
+};
 pub use compiled::{CompiledAction, CompiledCondition, CompiledPrimitive};
-pub use condition::{Active, Always, AnyQubitLeaked, Condition, FnCondition, GateTypeIs, Leaked, Never, NotLeaked, OutcomeIs, PartnerLeaked};
-pub use primitive::{BoxSample, BoxSeq, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Sample, Seq, SkipIf, TwoStage, When};
+pub use condition::{
+    Active, Always, AnyQubitLeaked, Condition, FnCondition, GateTypeIs, Leaked, Never, NotLeaked,
+    OutcomeIs, PartnerLeaked,
+};
+pub use primitive::{
+    BoxSample, BoxSeq, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Sample, Seq, SkipIf,
+    TwoStage, When,
+};
 pub use response::FlowResponse;
 
 /// Prelude for convenient imports.
 pub mod prelude {
     pub use super::action::actions::*;
     pub use super::builder::FlowNoiseModelBuilder;
-    pub use super::channel::{BatchFlowChannel, FlowChannel, FlowChannelBuilder, FlowCrosstalkChannel, FlowEventFilter};
+    pub use super::channel::{
+        BatchFlowChannel, FlowChannel, FlowChannelBuilder, FlowCrosstalkChannel, FlowEventFilter,
+    };
     pub use super::condition::conditions::*;
     pub use super::primitive::primitives::*;
-    pub use super::{BoxSample, BoxSeq, FlowResponse, GateAction, OutcomeIs, Pauli, PauliWeights, Primitive, ProbFn, ProbLinear, ProbQuadratic, TwoStage};
+    pub use super::{
+        BoxSample, BoxSeq, FlowResponse, GateAction, OutcomeIs, Pauli, PauliWeights, Primitive,
+        ProbFn, ProbLinear, ProbQuadratic, TwoStage,
+    };
     // Re-export GateInfo, IdleInfo, and AngleScaling for use in closures/builders
     pub use crate::noise::two_qubit::AngleScaling;
     pub use crate::noise::{GateInfo, IdleInfo};
@@ -248,19 +261,16 @@ mod tests {
         }
 
         let total = 10000.0;
-        let no_fault_rate = no_fault as f64 / total;
-        let leak_rate = leaked_count as f64 / total;
-        let pauli_rate = pauli_applied as f64 / total;
+        let no_fault_rate = f64::from(no_fault) / total;
+        let leak_rate = f64::from(leaked_count) / total;
+        let pauli_rate = f64::from(pauli_applied) / total;
 
         // Expected: ~99% no fault, ~0.25% leak, ~0.75% pauli
         assert!(
             (no_fault_rate - 0.99).abs() < 0.02,
             "no_fault_rate: {no_fault_rate}"
         );
-        assert!(
-            (leak_rate - 0.0025).abs() < 0.01,
-            "leak_rate: {leak_rate}"
-        );
+        assert!((leak_rate - 0.0025).abs() < 0.01, "leak_rate: {leak_rate}");
         assert!(
             (pauli_rate - 0.0075).abs() < 0.01,
             "pauli_rate: {pauli_rate}"
@@ -304,7 +314,7 @@ mod tests {
         assert!(!ctx.is_leaked(QubitId(0)));
     }
 
-    /// Integration test: FlowChannel with ComposableNoiseModel and ShotRunner.
+    /// Integration test: `FlowChannel` with `ComposableNoiseModel` and `ShotRunner`.
     #[test]
     fn test_flow_channel_with_composable_model() {
         use crate::command::CommandBuilder;
@@ -313,11 +323,7 @@ mod tests {
         use pecos_qsim::SparseStab;
 
         // Build a simple Hadamard circuit
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         // Create a flow-based noise channel with 100% error rate for testing
         let sq_noise = prob(1.0, pauli());
@@ -347,11 +353,7 @@ mod tests {
         use pecos_qsim::SparseStab;
 
         // Build circuit
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         // Flow-based gate noise
         let gate_noise = prob(0.0, pauli()); // No gate noise
@@ -377,8 +379,8 @@ mod tests {
     /// Test outcome condition evaluation.
     #[test]
     fn test_outcome_condition() {
-        use crate::noise::flow::condition::OutcomeIs;
         use crate::noise::flow::Condition;
+        use crate::noise::flow::condition::OutcomeIs;
 
         let mut ctx = NoiseContext::new();
 
@@ -401,7 +403,7 @@ mod tests {
         assert!(!OutcomeIs::zero().evaluate(QubitId(0), &ctx));
     }
 
-    /// Test on_outcome primitive.
+    /// Test `on_outcome` primitive.
     #[test]
     fn test_on_outcome_primitive() {
         let mut ctx = NoiseContext::new();
@@ -430,8 +432,8 @@ mod tests {
         // Asymmetric noise: 2% error on 0, 5% error on 1
         // (using 100% here for deterministic testing)
         let meas_noise = seq![
-            on_zero(prob(1.0, flip_outcome())),   // Always flip 0 -> 1
-            on_one(prob(0.0, flip_outcome())),    // Never flip 1 -> 0
+            on_zero(prob(1.0, flip_outcome())), // Always flip 0 -> 1
+            on_one(prob(0.0, flip_outcome())),  // Never flip 1 -> 0
         ];
 
         // Test with outcome 0 - should flip
@@ -445,7 +447,7 @@ mod tests {
         assert!(!response.flips_outcome());
     }
 
-    /// Test force_outcome action.
+    /// Test `force_outcome` action.
     #[test]
     fn test_force_outcome_action() {
         let mut ctx = NoiseContext::new();
@@ -464,7 +466,7 @@ mod tests {
         assert!(response.forces_outcome().is_some());
     }
 
-    /// Test dynamic probability (prob_fn) through FlowChannel.
+    /// Test dynamic probability (`prob_fn`) through `FlowChannel`.
     #[test]
     fn test_prob_fn_through_channel() {
         use crate::command::GateType;
@@ -475,9 +477,8 @@ mod tests {
         // Half turn (pi) -> 50%, quarter turn (pi/2) -> 25%
         let angle_dependent_noise = prob_fn(
             |gate| {
-                gate.and_then(|g| g.angle())
-                    .map(|a| a.to_radians() / (2.0 * std::f64::consts::PI))
-                    .unwrap_or(0.0)
+                gate.and_then(super::super::context::GateInfo::angle)
+                    .map_or(0.0, |a| a.to_radians() / (2.0 * std::f64::consts::PI))
             },
             pauli(),
         );
@@ -494,7 +495,8 @@ mod tests {
             gate_type: GateType::RZ,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut error_count = 0;
         for _ in 0..1000 {
@@ -503,7 +505,7 @@ mod tests {
                 error_count += 1;
             }
         }
-        let error_rate = error_count as f64 / 1000.0;
+        let error_rate = f64::from(error_count) / 1000.0;
         assert!(
             (error_rate - 0.5).abs() < 0.1,
             "Expected ~50% error rate for half turn, got {error_rate}"
@@ -515,7 +517,8 @@ mod tests {
             gate_type: GateType::RZ,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         error_count = 0;
         for _ in 0..1000 {
@@ -524,14 +527,14 @@ mod tests {
                 error_count += 1;
             }
         }
-        let error_rate = error_count as f64 / 1000.0;
+        let error_rate = f64::from(error_count) / 1000.0;
         assert!(
             (error_rate - 0.25).abs() < 0.1,
             "Expected ~25% error rate for quarter turn, got {error_rate}"
         );
     }
 
-    /// Test crosstalk channel integration with ComposableNoiseModel.
+    /// Test crosstalk channel integration with `ComposableNoiseModel`.
     #[test]
     fn test_crosstalk_with_composable_model() {
         use crate::command::CommandBuilder;
@@ -541,11 +544,11 @@ mod tests {
 
         // Create a circuit that measures qubit 0
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
-            .prep(2)
+            .pz(0)
+            .pz(1)
+            .pz(2)
             .h(0)
-            .measure(0)
+            .mz(0)
             .build();
 
         // Create crosstalk channel: 100% chance to flip other qubits during measurement
@@ -565,7 +568,7 @@ mod tests {
         // Detailed behavior is tested in unit tests
     }
 
-    /// Test gate-type dependent noise through FlowChannel.
+    /// Test gate-type dependent noise through `FlowChannel`.
     #[test]
     fn test_gate_type_dependent_noise() {
         use crate::command::GateType;
@@ -576,10 +579,7 @@ mod tests {
         // - H gates get 1% error
         // Using 100% and 0% for deterministic testing
         let gate_dependent_noise = prob_fn(
-            |gate| {
-                gate.map(|g| if g.is_two_qubit() { 1.0 } else { 0.0 })
-                    .unwrap_or(0.0)
-            },
+            |gate| gate.map_or(0.0, |g| if g.is_two_qubit() { 1.0 } else { 0.0 }),
             pauli(),
         );
 
@@ -594,7 +594,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits_1q,
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
 
         for _ in 0..100 {
             let response = channel.apply(&event_h, &mut ctx, &mut rng);
@@ -607,7 +608,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits_2q,
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut error_count = 0;
         for _ in 0..100 {
@@ -624,7 +626,7 @@ mod tests {
     // Comparison Tests (Flow vs Traditional Channels)
     // ========================================================================
 
-    /// Compare flow-based single-qubit depolarizing to traditional SingleQubitChannel.
+    /// Compare flow-based single-qubit depolarizing to traditional `SingleQubitChannel`.
     #[test]
     fn test_flow_vs_traditional_single_qubit() {
         use crate::command::CommandBuilder;
@@ -636,13 +638,13 @@ mod tests {
 
         // Build a circuit with repeated H gates
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0)
             .h(0)
             .h(0)
             .h(0)
             .h(0)
-            .measure(0)
+            .mz(0)
             .build();
 
         // Run both with same seeds and count differences
@@ -665,7 +667,7 @@ mod tests {
                 .with_noise(traditional_noise)
                 .with_seed(seed);
             let outcomes_trad = runner_trad.execute(&commands);
-            if outcomes_trad.get(QubitId(0)).map(|o| o.outcome) != Some(false) {
+            if outcomes_trad.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 traditional_errors += 1;
             }
 
@@ -678,14 +680,14 @@ mod tests {
                 .with_noise(flow_noise_model)
                 .with_seed(seed);
             let outcomes_flow = runner_flow.execute(&commands);
-            if outcomes_flow.get(QubitId(0)).map(|o| o.outcome) != Some(false) {
+            if outcomes_flow.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 flow_errors += 1;
             }
         }
 
         // Both should have similar error rates (within statistical tolerance)
-        let trad_rate = traditional_errors as f64 / shots as f64;
-        let flow_rate = flow_errors as f64 / shots as f64;
+        let trad_rate = f64::from(traditional_errors) / shots as f64;
+        let flow_rate = f64::from(flow_errors) / shots as f64;
 
         // With 10% error rate per gate and 5 gates, we expect ~40% overall error rate
         // Allow 10% tolerance for statistical variation
@@ -695,7 +697,7 @@ mod tests {
         );
     }
 
-    /// Compare flow-based measurement noise to traditional MeasurementChannel.
+    /// Compare flow-based measurement noise to traditional `MeasurementChannel`.
     #[test]
     fn test_flow_vs_traditional_measurement() {
         use crate::command::CommandBuilder;
@@ -705,7 +707,7 @@ mod tests {
 
         let p_meas = 0.1; // 10% measurement error
 
-        let commands = CommandBuilder::new().prep(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).mz(0).build();
 
         // Run many shots and compare flip rates
         let shots = 1000;
@@ -722,7 +724,7 @@ mod tests {
                 .with_seed(seed);
             let outcomes_trad = runner_trad.execute(&commands);
             // Prep |0> and measure - should be 0 without error
-            if outcomes_trad.get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if outcomes_trad.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 traditional_flips += 1;
             }
 
@@ -736,13 +738,13 @@ mod tests {
                 .with_noise(flow_noise_model)
                 .with_seed(seed);
             let outcomes_flow = runner_flow.execute(&commands);
-            if outcomes_flow.get(QubitId(0)).map(|o| o.outcome) == Some(true) {
+            if outcomes_flow.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 flow_flips += 1;
             }
         }
 
-        let trad_rate = traditional_flips as f64 / shots as f64;
-        let flow_rate = flow_flips as f64 / shots as f64;
+        let trad_rate = f64::from(traditional_flips) / shots as f64;
+        let flow_rate = f64::from(flow_flips) / shots as f64;
 
         // Both should be close to 10% flip rate
         assert!(
@@ -759,7 +761,7 @@ mod tests {
         );
     }
 
-    /// Test that flow-based noise can replicate a complex GeneralNoiseModel configuration.
+    /// Test that flow-based noise can replicate a complex `GeneralNoiseModel` configuration.
     #[test]
     fn test_flow_replicates_general_noise_model() {
         use crate::command::CommandBuilder;
@@ -771,7 +773,7 @@ mod tests {
         let p_meas = 0.02;
 
         // Build circuit: prep, several gates, measure
-        let commands = CommandBuilder::new().prep(0).h(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
 
         // Run both and compare error distributions
         let shots = 500;
@@ -791,8 +793,7 @@ mod tests {
             if runner_trad
                 .execute(&commands)
                 .get(QubitId(0))
-                .map(|o| o.outcome)
-                == Some(true)
+                .is_some_and(|o| o.outcome)
             {
                 traditional_ones += 1;
             }
@@ -815,15 +816,14 @@ mod tests {
             if runner_flow
                 .execute(&commands)
                 .get(QubitId(0))
-                .map(|o| o.outcome)
-                == Some(true)
+                .is_some_and(|o| o.outcome)
             {
                 flow_ones += 1;
             }
         }
 
-        let trad_rate = traditional_ones as f64 / shots as f64;
-        let flow_rate = flow_ones as f64 / shots as f64;
+        let trad_rate = f64::from(traditional_ones) / shots as f64;
+        let flow_rate = f64::from(flow_ones) / shots as f64;
 
         // Both should produce similar overall error rates
         // The exact rates depend on the interaction of errors, but should be close
@@ -837,7 +837,7 @@ mod tests {
     // Idle Noise Tests
     // ========================================================================
 
-    /// Test idle noise through FlowChannel with prob_linear primitive.
+    /// Test idle noise through `FlowChannel` with `prob_linear` primitive.
     #[test]
     fn test_idle_noise_linear() {
         use crate::noise::NoiseChannel;
@@ -886,14 +886,14 @@ mod tests {
                 error_count += 1;
             }
         }
-        let rate = error_count as f64 / 1000.0;
+        let rate = f64::from(error_count) / 1000.0;
         assert!(
             (rate - 0.5).abs() < 0.1,
             "Expected ~50% error rate for duration=5, got {rate}"
         );
     }
 
-    /// Test idle noise through FlowChannel with prob_quadratic primitive.
+    /// Test idle noise through `FlowChannel` with `prob_quadratic` primitive.
     #[test]
     fn test_idle_noise_quadratic() {
         use crate::noise::NoiseChannel;
@@ -929,7 +929,7 @@ mod tests {
         );
     }
 
-    /// Test flow-based idle noise vs traditional IdleChannel.
+    /// Test flow-based idle noise vs traditional `IdleChannel`.
     #[test]
     fn test_flow_vs_traditional_idle() {
         use crate::noise::{IdleChannel, NoiseChannel};
@@ -972,8 +972,8 @@ mod tests {
             }
         }
 
-        let trad_rate = trad_count as f64 / 1000.0;
-        let flow_rate = flow_count as f64 / 1000.0;
+        let trad_rate = f64::from(trad_count) / 1000.0;
+        let flow_rate = f64::from(flow_count) / 1000.0;
 
         // Both should be close to 30% error rate
         assert!(
@@ -990,7 +990,7 @@ mod tests {
     // Crosstalk Action Tests
     // ========================================================================
 
-    /// Test state-dependent crosstalk using CrosstalkAction.
+    /// Test state-dependent crosstalk using `CrosstalkAction`.
     #[test]
     fn test_crosstalk_action_integration() {
         use super::Primitive;
@@ -1021,20 +1021,20 @@ mod tests {
         // With symmetric_with_leakage: 1/3 each
         let total = 3000.0;
         assert!(
-            (no_change as f64 / total - 0.33).abs() < 0.1,
+            (f64::from(no_change) / total - 0.33).abs() < 0.1,
             "Expected ~33% no change"
         );
         assert!(
-            (flip as f64 / total - 0.33).abs() < 0.1,
+            (f64::from(flip) / total - 0.33).abs() < 0.1,
             "Expected ~33% flip"
         );
         assert!(
-            (leak as f64 / total - 0.33).abs() < 0.1,
+            (f64::from(leak) / total - 0.33).abs() < 0.1,
             "Expected ~33% leak"
         );
     }
 
-    /// Test measuring leaked qubits with RandomOutcome.
+    /// Test measuring leaked qubits with `RandomOutcome`.
     #[test]
     fn test_leaked_qubit_measurement() {
         // Build measurement noise for leaked qubits:
@@ -1066,7 +1066,7 @@ mod tests {
         }
 
         // With uniform random, should be ~50%
-        let one_rate = ones as f64 / 1000.0;
+        let one_rate = f64::from(ones) / 1000.0;
         assert!(
             (one_rate - 0.5).abs() < 0.1,
             "Expected ~50% ones for uniform random, got {one_rate}"
@@ -1091,7 +1091,7 @@ mod tests {
         }
 
         // Should be roughly 10% affected (half of 10% probability since flip_only has 50% no change)
-        let rate = affected as f64 / 1000.0;
+        let rate = f64::from(affected) / 1000.0;
         assert!(
             (rate - 0.05).abs() < 0.05,
             "Expected ~5% affected, got {rate}"
@@ -1115,12 +1115,12 @@ mod tests {
         // Stage 1: 100% emission probability (always fires)
         // Stage 2: If partner fired and I didn't, apply Pauli
         let noise = two_stage(
-            prob(1.0, sample_emission()), // Stage 1: 100% emission
+            prob(1.0, sample_emission()),                   // Stage 1: 100% emission
             when(partner_only_fired(), pauli(), nothing()), // Stage 2: partner depolarizing
         );
 
-        let channel = FlowChannel::new("two_stage_test", noise)
-            .with_filter(FlowEventFilter::TwoQubitGate);
+        let channel =
+            FlowChannel::new("two_stage_test", noise).with_filter(FlowEventFilter::TwoQubitGate);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1131,7 +1131,8 @@ mod tests {
             gate_type: crate::command::GateType::CX,
             qubits: &qubits,
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
 
         // With 100% emission probability, both qubits should emit/leak
         // Since both fired, partner_only_fired should be false for both
@@ -1158,8 +1159,8 @@ mod tests {
             when(partner_only_fired(), pauli(), nothing()),
         );
 
-        let channel = FlowChannel::new("partial_test", noise)
-            .with_filter(FlowEventFilter::TwoQubitGate);
+        let channel =
+            FlowChannel::new("partial_test", noise).with_filter(FlowEventFilter::TwoQubitGate);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1169,7 +1170,8 @@ mod tests {
             gate_type: crate::command::GateType::CX,
             qubits: &qubits,
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
 
         // Run multiple times and count leakage patterns
         let mut both_leaked = 0;
@@ -1199,9 +1201,9 @@ mod tests {
         // - ~50% exactly one emits (partner should get Pauli)
         // - ~25% neither emits
         let total = 1000.0;
-        let both_rate = both_leaked as f64 / total;
-        let one_rate = one_leaked as f64 / total;
-        let neither_rate = neither_leaked as f64 / total;
+        let both_rate = f64::from(both_leaked) / total;
+        let one_rate = f64::from(one_leaked) / total;
+        let neither_rate = f64::from(neither_leaked) / total;
 
         // Allow wide tolerance for statistical tests
         assert!(
@@ -1222,7 +1224,7 @@ mod tests {
     // Channel Adapter Tests
     // ========================================================================
 
-    /// Test that channel_action wraps a traditional channel as a flow primitive.
+    /// Test that `channel_action` wraps a traditional channel as a flow primitive.
     #[test]
     fn test_channel_action_wraps_traditional_channel() {
         use crate::command::GateType;
@@ -1231,14 +1233,16 @@ mod tests {
         let p1 = 0.5; // High error rate for clear signal
 
         // Create a traditional SingleQubitChannel
-        let traditional_channel =
-            SingleQubitChannel::new(p1, crate::noise::PauliWeights::uniform(), 0.0, Default::default(), 0.0);
+        let traditional_channel = SingleQubitChannel::new(
+            p1,
+            crate::noise::PauliWeights::uniform(),
+            0.0,
+            crate::noise::SingleQubitEmissionWeights::default(),
+            0.0,
+        );
 
         // Wrap it in a flow primitive and use within a decision tree
-        let flow_noise = seq![
-            skip_if_leaked(),
-            channel_action(traditional_channel),
-        ];
+        let flow_noise = seq![skip_if_leaked(), channel_action(traditional_channel),];
 
         // Build a FlowChannel from it
         let channel = FlowChannelBuilder::single_qubit("adapted_channel", flow_noise);
@@ -1256,7 +1260,8 @@ mod tests {
                 gate_type: GateType::H,
                 qubits: &[QubitId(0)],
                 angles: &[],
-            gate_id: None, };
+                gate_id: None,
+            };
             let response = channel.apply(&event, &mut ctx, &mut rng);
             if !response.is_none() {
                 error_count += 1;
@@ -1270,19 +1275,24 @@ mod tests {
         );
     }
 
-    /// Test channel_action in a conditional decision tree.
+    /// Test `channel_action` in a conditional decision tree.
     #[test]
     fn test_channel_action_in_decision_tree() {
         use crate::command::GateType;
         use crate::noise::{NoiseChannel, SingleQubitChannel};
 
         // Traditional channel with 100% error rate (for deterministic testing)
-        let always_error_channel =
-            SingleQubitChannel::new(1.0, crate::noise::PauliWeights::uniform(), 0.0, Default::default(), 0.0);
+        let always_error_channel = SingleQubitChannel::new(
+            1.0,
+            crate::noise::PauliWeights::uniform(),
+            0.0,
+            crate::noise::SingleQubitEmissionWeights::default(),
+            0.0,
+        );
 
         // Use channel_action in a conditional: only apply when not leaked
         let noise = when_leaked(
-            nothing(), // Do nothing if leaked
+            nothing(),                            // Do nothing if leaked
             channel_action(always_error_channel), // Apply channel if not leaked
         );
 
@@ -1298,7 +1308,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &[QubitId(0)],
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
         let _response = channel.apply(&event, &mut ctx, &mut rng);
         // The channel has 100% error rate, so we should see some response
         // (though the exact response depends on the Pauli sampled)
@@ -1308,14 +1319,17 @@ mod tests {
         let response = channel.apply(&event, &mut ctx, &mut rng);
         // When leaked, the `when_leaked` condition is true, so we execute `nothing()`
         // and skip_if_leaked() isn't in this tree, so we get None
-        assert!(response.is_none(), "Leaked qubit should not get errors from channel");
+        assert!(
+            response.is_none(),
+            "Leaked qubit should not get errors from channel"
+        );
     }
 
     // ========================================================================
     // Introspection Tests
     // ========================================================================
 
-    /// Test that primitives have useful describe() output.
+    /// Test that primitives have useful `describe()` output.
     #[test]
     fn test_primitive_describe() {
         // Simple action
@@ -1325,16 +1339,16 @@ mod tests {
         // Prob with inner
         let prob_noise = prob(0.01, pauli());
         let desc = prob_noise.describe();
-        assert!(desc.contains("0.01"), "Should contain probability: {}", desc);
-        assert!(desc.contains("pauli"), "Should contain inner: {}", desc);
+        assert!(desc.contains("0.01"), "Should contain probability: {desc}");
+        assert!(desc.contains("pauli"), "Should contain inner: {desc}");
 
         // When with branches
         let when_noise = when_leaked(seep(), pauli());
         let desc = when_noise.describe();
-        assert!(desc.contains("leaked"), "Should contain condition: {}", desc);
+        assert!(desc.contains("leaked"), "Should contain condition: {desc}");
     }
 
-    /// Test that describe_tree() produces readable tree output.
+    /// Test that `describe_tree()` produces readable tree output.
     #[test]
     fn test_primitive_describe_tree() {
         use crate::noise::flow::Primitive;
@@ -1342,32 +1356,29 @@ mod tests {
         // Build a complex decision tree
         let noise = seq![
             skip_if_leaked(),
-            prob(0.01, when_leaked(
-                seep(),
-                sample![
-                    (0.25, leak()),
-                    (0.75, pauli()),
-                ],
-            )),
+            prob(
+                0.01,
+                when_leaked(seep(), sample![(0.25, leak()), (0.75, pauli()),],)
+            ),
         ];
 
         let tree = noise.describe_tree();
 
         // Should have tree structure
-        assert!(tree.contains("Seq"), "Should have Seq node: {}", tree);
-        assert!(tree.contains("Prob"), "Should have Prob node: {}", tree);
-        assert!(tree.contains("When"), "Should have When node: {}", tree);
-        assert!(tree.contains("Sample"), "Should have Sample node: {}", tree);
-        assert!(tree.contains("skip_if"), "Should have skip_if: {}", tree);
-        assert!(tree.contains("seep"), "Should have seep: {}", tree);
-        assert!(tree.contains("pauli"), "Should have pauli: {}", tree);
-        assert!(tree.contains("leak"), "Should have leak: {}", tree);
+        assert!(tree.contains("Seq"), "Should have Seq node: {tree}");
+        assert!(tree.contains("Prob"), "Should have Prob node: {tree}");
+        assert!(tree.contains("When"), "Should have When node: {tree}");
+        assert!(tree.contains("Sample"), "Should have Sample node: {tree}");
+        assert!(tree.contains("skip_if"), "Should have skip_if: {tree}");
+        assert!(tree.contains("seep"), "Should have seep: {tree}");
+        assert!(tree.contains("pauli"), "Should have pauli: {tree}");
+        assert!(tree.contains("leak"), "Should have leak: {tree}");
 
         // Print for manual inspection during development
         // println!("{}", tree);
     }
 
-    /// Test ComposableNoiseModel introspection.
+    /// Test `ComposableNoiseModel` introspection.
     #[test]
     fn test_model_introspection() {
         use crate::noise::ComposableNoiseModel;
@@ -1389,8 +1400,14 @@ mod tests {
 
         // Check describe output
         let desc = model.describe();
-        assert!(desc.contains("ComposableNoiseModel"), "Should have header: {}", desc);
-        assert!(desc.contains("Channels: 2"), "Should show count: {}", desc);
-        assert!(desc.contains("sq_depolarizing"), "Should list channels: {}", desc);
+        assert!(
+            desc.contains("ComposableNoiseModel"),
+            "Should have header: {desc}"
+        );
+        assert!(desc.contains("Channels: 2"), "Should show count: {desc}");
+        assert!(
+            desc.contains("sq_depolarizing"),
+            "Should list channels: {desc}"
+        );
     }
 }

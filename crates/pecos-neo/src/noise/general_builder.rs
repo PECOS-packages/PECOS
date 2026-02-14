@@ -17,7 +17,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::GeneralNoiseModelBuilder;
 //!
 //! let noise = GeneralNoiseModelBuilder::new()
@@ -59,9 +59,9 @@ use pecos_core::TimeScale;
 ///
 /// You can mix traditional channels with flow channels using [`with_channel`]:
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::noise::GeneralNoiseModelBuilder;
-/// use pecos_neo::noise::flow::{FlowChannelBuilder, prelude::*};
+/// use pecos_neo::noise::flow::prelude::*;
 ///
 /// let model = GeneralNoiseModelBuilder::new()
 ///     .with_p1(0.001)                    // Traditional 1Q channel
@@ -196,9 +196,9 @@ impl GeneralNoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::noise::GeneralNoiseModelBuilder;
-    /// use pecos_neo::noise::flow::{FlowChannelBuilder, prelude::*};
+    /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// let model = GeneralNoiseModelBuilder::new()
     ///     .with_p1(0.001)  // Traditional single-qubit noise
@@ -449,7 +449,7 @@ impl GeneralNoiseModelBuilder {
     /// When set, convenience methods like `with_idle_t1_t2()` become available.
     ///
     /// # Example
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::GeneralNoiseModelBuilder;
     /// use pecos_core::TimeScale;
     ///
@@ -495,7 +495,8 @@ impl GeneralNoiseModelBuilder {
         self.p_prep_leak_ratio > 0.0
             || self.p1_emission_ratio > 0.0
             || self.p2_emission_ratio > 0.0
-            || self.p_meas_crosstalk_transitions
+            || self
+                .p_meas_crosstalk_transitions
                 .as_ref()
                 .is_some_and(|t| t.from_0_leak > 0.0 || t.from_1_leak > 0.0)
     }
@@ -557,10 +558,7 @@ impl GeneralNoiseModelBuilder {
 
         // Measurement channel
         if self.p_meas_0 > 0.0 || self.p_meas_1 > 0.0 {
-            model = model.add_channel(MeasurementChannel::asymmetric(
-                self.p_meas_0,
-                self.p_meas_1,
-            ));
+            model = model.add_channel(MeasurementChannel::asymmetric(self.p_meas_0, self.p_meas_1));
         }
 
         // Crosstalk channel (handles both prep and measurement crosstalk)
@@ -600,6 +598,29 @@ impl GeneralNoiseModelBuilder {
     }
 }
 
+/// Create a general noise model builder.
+///
+/// This is a convenience entry point equivalent to [`GeneralNoiseModelBuilder::new()`],
+/// providing API consistency with other free functions like [`sparse_stab()`](crate::tool::sparse_stab)
+/// and [`state_vector()`](crate::tool::state_vector).
+///
+/// # Example
+///
+/// ```
+/// use pecos_neo::noise::general_noise;
+///
+/// let noise = general_noise()
+///     .with_p1(0.001)
+///     .with_p2(0.01)
+///     .with_p_meas(0.02, 0.03)
+///     .with_p_prep(0.005)
+///     .build();
+/// ```
+#[must_use]
+pub fn general_noise() -> GeneralNoiseModelBuilder {
+    GeneralNoiseModelBuilder::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,6 +631,45 @@ mod tests {
         // Should have CorePlugin's handlers but no noise channels
         assert_eq!(model.event_handler_count(), 2); // Prep + Meas handlers
         assert_eq!(model.channel_count(), 0);
+    }
+
+    #[test]
+    fn test_general_noise_equivalence() {
+        // general_noise() should produce identical results to GeneralNoiseModelBuilder::new()
+        use crate::command::CommandBuilder;
+        use crate::runner::ShotRunner;
+        use pecos_core::QubitId;
+        use pecos_qsim::SparseStab;
+
+        let commands = CommandBuilder::new().pz(0).z(0).mz(0).build();
+
+        let noise_a = general_noise()
+            .with_p1(0.3)
+            .with_p_meas_symmetric(0.1)
+            .build();
+
+        let noise_b = GeneralNoiseModelBuilder::new()
+            .with_p1(0.3)
+            .with_p_meas_symmetric(0.1)
+            .build();
+
+        let mut runner_a = ShotRunner::new(SparseStab::new(1))
+            .with_noise(noise_a)
+            .with_seed(42);
+
+        let mut runner_b = ShotRunner::new(SparseStab::new(1))
+            .with_noise(noise_b)
+            .with_seed(42);
+
+        for _ in 0..50 {
+            let a = runner_a.run_shot(&commands);
+            let b = runner_b.run_shot(&commands);
+            assert_eq!(
+                a.get_bit(QubitId(0)),
+                b.get_bit(QubitId(0)),
+                "general_noise() and GeneralNoiseModelBuilder::new() should be equivalent"
+            );
+        }
     }
 
     #[test]
@@ -709,12 +769,11 @@ mod tests {
 
         // Mix traditional channels with a flow channel
         let model = GeneralNoiseModelBuilder::new()
-            .with_p1(0.001)  // Traditional 1Q channel
-            .with_p_meas(0.02, 0.03)  // Traditional measurement channel
-            .with_channel(  // Flow 2Q channel
-                FlowChannelBuilder::two_qubit("custom_2q", seq![
-                    prob(0.01, pauli()),
-                ])
+            .with_p1(0.001) // Traditional 1Q channel
+            .with_p_meas(0.02, 0.03) // Traditional measurement channel
+            .with_channel(
+                // Flow 2Q channel
+                FlowChannelBuilder::two_qubit("custom_2q", seq![prob(0.01, pauli()),]),
             )
             .build();
 
@@ -728,9 +787,9 @@ mod tests {
 
         // Mix flow channels with a traditional channel
         let model = FlowNoiseModelBuilder::new()
-            .with_p1(0.001)  // Flow 1Q channel
-            .with_p2(0.01)   // Flow 2Q channel
-            .with_channel(MeasurementChannel::symmetric(0.02))  // Traditional
+            .with_p1(0.001) // Flow 1Q channel
+            .with_p2(0.01) // Flow 2Q channel
+            .with_channel(MeasurementChannel::symmetric(0.02)) // Traditional
             .build();
 
         // 1Q + 2Q + Meas = 3 channels
@@ -746,18 +805,19 @@ mod tests {
 
         // Create a model with both channel types
         let model = GeneralNoiseModelBuilder::new()
-            .with_p1(0.0)  // No traditional 1Q noise
-            .with_channel(  // But use flow for 2Q
-                FlowChannelBuilder::two_qubit("flow_2q", prob(0.5, pauli()))
+            .with_p1(0.0) // No traditional 1Q noise
+            .with_channel(
+                // But use flow for 2Q
+                FlowChannelBuilder::two_qubit("flow_2q", prob(0.5, pauli())),
             )
             .build();
 
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut runner = ShotRunner::new(SparseStab::new(2))
@@ -786,9 +846,9 @@ mod tests {
 
         // Build commands once
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .identity(0) // Identity gate (gets noise)
-            .measure(0)
+            .mz(0)
             .build();
 
         // Run with GeneralNoiseModelBuilder - count Z basis measurements
@@ -828,14 +888,10 @@ mod tests {
         let tolerance = (0.2 * expected_ones as f64).max(50.0) as i64;
 
         // The two builders should produce similar error rates
-        let rate_diff = (general_ones as i64 - flow_ones as i64).abs();
+        let rate_diff = (i64::from(general_ones) - i64::from(flow_ones)).abs();
         assert!(
             rate_diff < tolerance,
-            "Builders differ too much: general_ones={}, flow_ones={}, diff={}, tolerance={}",
-            general_ones,
-            flow_ones,
-            rate_diff,
-            tolerance
+            "Builders differ too much: general_ones={general_ones}, flow_ones={flow_ones}, diff={rate_diff}, tolerance={tolerance}"
         );
     }
 
@@ -852,11 +908,11 @@ mod tests {
 
         // Build commands once
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         // Run with GeneralNoiseModelBuilder
@@ -895,16 +951,12 @@ mod tests {
         }
 
         // Both should have similar error rates
-        let rate_diff = (general_errors as i64 - flow_errors as i64).abs();
+        let rate_diff = (i64::from(general_errors) - i64::from(flow_errors)).abs();
         let tolerance = (0.15 * shots as f64) as i64;
 
         assert!(
             rate_diff < tolerance,
-            "2Q builders differ too much: general={}, flow={}, diff={}, tolerance={}",
-            general_errors,
-            flow_errors,
-            rate_diff,
-            tolerance
+            "2Q builders differ too much: general={general_errors}, flow={flow_errors}, diff={rate_diff}, tolerance={tolerance}"
         );
     }
 
@@ -920,7 +972,7 @@ mod tests {
         let shots = 1000;
 
         // Build commands once - Prepare |0> and measure
-        let commands = CommandBuilder::new().prep(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).mz(0).build();
 
         // Run with GeneralNoiseModelBuilder - errors should flip to 1
         let mut general_ones = 0;
@@ -961,17 +1013,13 @@ mod tests {
         let tolerance = (0.2 * expected as f64).max(50.0) as i64;
 
         assert!(
-            (general_ones as i64 - expected).abs() < tolerance,
-            "General measurement error rate off: expected ~{}, got {}",
-            expected,
-            general_ones
+            (i64::from(general_ones) - expected).abs() < tolerance,
+            "General measurement error rate off: expected ~{expected}, got {general_ones}"
         );
 
         assert!(
-            (flow_ones as i64 - expected).abs() < tolerance,
-            "Flow measurement error rate off: expected ~{}, got {}",
-            expected,
-            flow_ones
+            (i64::from(flow_ones) - expected).abs() < tolerance,
+            "Flow measurement error rate off: expected ~{expected}, got {flow_ones}"
         );
     }
 }

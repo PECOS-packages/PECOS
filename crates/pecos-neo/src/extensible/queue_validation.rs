@@ -4,8 +4,8 @@
 //! using the extensible gate validators.
 
 use super::{
-    CircuitValidator, GateForValidation, GateRegistry, ValidationError,
-    AngleSnapper, SnapPolicy, SnapError,
+    AngleSnapper, CircuitValidator, GateForValidation, GateRegistry, SnapError, SnapPolicy,
+    ValidationError,
 };
 use crate::command::{CommandQueue, GateCommand, GateType};
 use pecos_core::Angle64;
@@ -16,19 +16,19 @@ pub trait CommandQueueValidation {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::prelude::*;
     /// use pecos_neo::extensible::CommandQueueValidation;
     ///
     /// let commands = CommandBuilder::new()
-    ///     .prep(0)
+    ///     .pz(0)
     ///     .h(0)
-    ///     .measure(0)
+    ///     .mz(0)
     ///     .build();
     ///
     /// let registry = GateRegistry::new();
     /// let validator = CliffordValidator::new();
-    /// commands.validate(&validator, &registry)?;
+    /// commands.validate(&validator, &registry).unwrap();
     /// ```
     fn validate(
         &self,
@@ -92,18 +92,14 @@ pub fn snap_command_queue(
                     SnapPolicy::Exact => {
                         snapped_angles.push(*angle);
                     }
-                    SnapPolicy::SnapOrFail { tolerance: _ } => {
-                        match snapper.snap(*angle) {
-                            Ok(result) => snapped_angles.push(result.snapped),
-                            Err(e) => return Err((idx, e)),
-                        }
-                    }
-                    SnapPolicy::SnapOrKeep { tolerance: _ } => {
-                        match snapper.snap(*angle) {
-                            Ok(result) => snapped_angles.push(result.snapped),
-                            Err(_) => snapped_angles.push(*angle),
-                        }
-                    }
+                    SnapPolicy::SnapOrFail { tolerance: _ } => match snapper.snap(*angle) {
+                        Ok(result) => snapped_angles.push(result.snapped),
+                        Err(e) => return Err((idx, e)),
+                    },
+                    SnapPolicy::SnapOrKeep { tolerance: _ } => match snapper.snap(*angle) {
+                        Ok(result) => snapped_angles.push(result.snapped),
+                        Err(_) => snapped_angles.push(*angle),
+                    },
                 }
             }
 
@@ -160,10 +156,10 @@ pub fn is_clifford_gate_type(gate_type: GateType) -> bool {
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP
-            | GateType::Measure
+            | GateType::MZ
             | GateType::MeasureLeaked
             | GateType::MeasureFree
-            | GateType::Prep
+            | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree
             | GateType::Idle
@@ -193,11 +189,11 @@ mod tests {
     #[test]
     fn test_validate_clifford_circuit() {
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let registry = GateRegistry::new();
@@ -209,9 +205,9 @@ mod tests {
     #[test]
     fn test_validate_rejects_t_gate() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .t(0)  // T gate is not Clifford
-            .measure(0)
+            .pz(0)
+            .t(0) // T gate is not Clifford
+            .mz(0)
             .build();
 
         let registry = GateRegistry::new();
@@ -222,20 +218,11 @@ mod tests {
 
     #[test]
     fn test_is_clifford_circuit() {
-        let clifford = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .sz(0)
-            .measure(0)
-            .build();
+        let clifford = CommandBuilder::new().pz(0).h(0).sz(0).mz(0).build();
 
         assert!(is_clifford_circuit(&clifford));
 
-        let non_clifford = CommandBuilder::new()
-            .prep(0)
-            .t(0)
-            .measure(0)
-            .build();
+        let non_clifford = CommandBuilder::new().pz(0).t(0).mz(0).build();
 
         assert!(!is_clifford_circuit(&non_clifford));
     }
@@ -255,9 +242,9 @@ mod tests {
     #[test]
     fn test_rz_at_clifford_angle_is_clifford() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .rz(0, Angle64::QUARTER_TURN)  // RZ(pi/2) = SZ, Clifford
-            .measure(0)
+            .pz(0)
+            .rz(0, Angle64::QUARTER_TURN) // RZ(pi/2) = SZ, Clifford
+            .mz(0)
             .build();
 
         assert!(is_clifford_circuit(&commands));
@@ -266,9 +253,9 @@ mod tests {
     #[test]
     fn test_rz_at_non_clifford_angle() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .rz(0, Angle64::HALF_TURN / 4)  // RZ(pi/4) = T, not Clifford
-            .measure(0)
+            .pz(0)
+            .rz(0, Angle64::HALF_TURN / 4) // RZ(pi/4) = T, not Clifford
+            .mz(0)
             .build();
 
         assert!(!is_clifford_circuit(&commands));
@@ -277,9 +264,9 @@ mod tests {
     #[test]
     fn test_snap_command_queue_exact() {
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .rz(0, Angle64::QUARTER_TURN)
-            .measure(0)
+            .mz(0)
             .build();
 
         let snapper = AngleSnapper::clifford(1e-9);
@@ -292,19 +279,19 @@ mod tests {
     #[test]
     fn test_to_gate_validations() {
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0)
             .rz(0, Angle64::QUARTER_TURN)
-            .measure(0)
+            .mz(0)
             .build();
 
         let validations = commands.to_gate_validations();
 
         assert_eq!(validations.len(), 4);
-        assert_eq!(validations[0].gate_id, GateType::Prep.to_gate_id());
+        assert_eq!(validations[0].gate_id, GateType::PZ.to_gate_id());
         assert_eq!(validations[1].gate_id, GateType::H.to_gate_id());
         assert_eq!(validations[2].gate_id, GateType::RZ.to_gate_id());
         assert_eq!(validations[2].angles.len(), 1);
-        assert_eq!(validations[3].gate_id, GateType::Measure.to_gate_id());
+        assert_eq!(validations[3].gate_id, GateType::MZ.to_gate_id());
     }
 }

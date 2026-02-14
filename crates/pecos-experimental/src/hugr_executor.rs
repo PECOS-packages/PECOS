@@ -208,7 +208,7 @@ where
         match gate.gate_type {
             // No-op gates: identity, prep/alloc (qubits start in |0⟩), dealloc, idle, crosstalk
             GateType::I
-            | GateType::Prep
+            | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree
             | GateType::Idle
@@ -282,7 +282,7 @@ where
             }
 
             // Measurements (including leaked measurement, treated as regular)
-            GateType::Measure | GateType::MeasureFree | GateType::MeasureLeaked => {
+            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
                 let q = gate.qubits[0].index();
                 sim.mz(q);

@@ -25,17 +25,17 @@ use super::Tool;
 ///
 /// # Example
 ///
-/// ```ignore
-/// use pecos_neo::tool::{Plugin, Tool, Stage};
+/// ```no_run
+/// use pecos_neo::tool::{Plugin, Tool, Stage, Resources};
 ///
-/// struct MyPlugin {
-///     config: MyConfig,
-/// }
+/// struct MyPlugin;
 ///
 /// impl Plugin for MyPlugin {
 ///     fn build(&self, tool: &mut Tool) {
-///         tool.insert_resource(self.config.clone())
-///             .add_system(Stage::Execute, my_system);
+///         tool.insert_resource_mut(42u32);
+///         tool.add_system_mut(Stage::Execute, |res: &mut Resources| {
+///             *res.get_mut::<u32>() += 1;
+///         });
 ///     }
 /// }
 /// ```
@@ -55,15 +55,14 @@ pub trait Plugin: Send + Sync {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use pecos_neo::tool::{PluginGroup, Tool};
 ///
 /// struct DefaultPlugins;
 ///
 /// impl PluginGroup for DefaultPlugins {
 ///     fn build(self, tool: &mut Tool) {
-///         tool.add_plugin(SimulationPlugin)
-///             .add_plugin(NoisePlugin::default());
+///         // Add multiple plugins as a group
 ///     }
 /// }
 /// ```

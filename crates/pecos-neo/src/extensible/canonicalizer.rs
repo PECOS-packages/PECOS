@@ -47,39 +47,40 @@ impl GateCanonicalizer {
 
         // RZ canonicalizations
         canon.add(gates::RZ, A::ZERO, gates::I);
-        canon.add(gates::RZ, A::HALF_TURN / 4, gates::T);           // π/4
+        canon.add(gates::RZ, A::HALF_TURN / 4, gates::T); // π/4
         canon.add(gates::RZ, A::ZERO - A::HALF_TURN / 4, gates::Tdg); // -π/4
-        canon.add(gates::RZ, A::QUARTER_TURN, gates::SZ);           // π/2
+        canon.add(gates::RZ, A::QUARTER_TURN, gates::SZ); // π/2
         canon.add(gates::RZ, A::ZERO - A::QUARTER_TURN, gates::SZdg); // -π/2
-        canon.add(gates::RZ, A::HALF_TURN, gates::Z);               // π
+        canon.add(gates::RZ, A::HALF_TURN, gates::Z); // π
 
         // RX canonicalizations
         canon.add(gates::RX, A::ZERO, gates::I);
-        canon.add(gates::RX, A::QUARTER_TURN, gates::SX);           // π/2
+        canon.add(gates::RX, A::QUARTER_TURN, gates::SX); // π/2
         canon.add(gates::RX, A::ZERO - A::QUARTER_TURN, gates::SXdg); // -π/2
-        canon.add(gates::RX, A::HALF_TURN, gates::X);               // π
+        canon.add(gates::RX, A::HALF_TURN, gates::X); // π
 
         // RY canonicalizations
         canon.add(gates::RY, A::ZERO, gates::I);
-        canon.add(gates::RY, A::QUARTER_TURN, gates::SY);           // π/2
+        canon.add(gates::RY, A::QUARTER_TURN, gates::SY); // π/2
         canon.add(gates::RY, A::ZERO - A::QUARTER_TURN, gates::SYdg); // -π/2
-        canon.add(gates::RY, A::HALF_TURN, gates::Y);               // π
+        canon.add(gates::RY, A::HALF_TURN, gates::Y); // π
 
         // RZZ canonicalizations
-        canon.add(gates::RZZ, A::QUARTER_TURN, gates::SZZ);         // π/2
+        canon.add(gates::RZZ, A::QUARTER_TURN, gates::SZZ); // π/2
         canon.add(gates::RZZ, A::ZERO - A::QUARTER_TURN, gates::SZZdg); // -π/2
 
         // RXX canonicalizations
-        canon.add(gates::RXX, A::QUARTER_TURN, gates::SXX);         // π/2
+        canon.add(gates::RXX, A::QUARTER_TURN, gates::SXX); // π/2
         canon.add(gates::RXX, A::ZERO - A::QUARTER_TURN, gates::SXXdg); // -π/2
 
         // RYY canonicalizations
-        canon.add(gates::RYY, A::QUARTER_TURN, gates::SYY);         // π/2
+        canon.add(gates::RYY, A::QUARTER_TURN, gates::SYY); // π/2
         canon.add(gates::RYY, A::ZERO - A::QUARTER_TURN, gates::SYYdg); // -π/2
 
         // Sort for efficient lookup
         canon.canonicalizations.sort_by(|a, b| {
-            a.from_gate.cmp(&b.from_gate)
+            a.from_gate
+                .cmp(&b.from_gate)
                 .then_with(|| a.angle.cmp(&b.angle))
         });
 
@@ -137,7 +138,9 @@ impl GateCanonicalizer {
     /// Check if a gate can be canonicalized at any angle.
     #[must_use]
     pub fn can_canonicalize(&self, gate_id: GateId) -> bool {
-        self.canonicalizations.iter().any(|c| c.from_gate == gate_id)
+        self.canonicalizations
+            .iter()
+            .any(|c| c.from_gate == gate_id)
     }
 
     /// Get all canonical forms for a given parameterized gate.

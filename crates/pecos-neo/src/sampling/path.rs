@@ -32,14 +32,16 @@
 //!
 //! ## Example
 //!
-//! ```ignore
-//! use pecos_neo::sampling::path::{MeasurementPath, PathExplorer};
+//! ```no_run
+//! use pecos_neo::sampling::path::{MeasurementPath, PathExplorer, PathEnumerator};
+//! use pecos_neo::prelude::*;
+//! use pecos_qsim::SparseStab;
+//!
+//! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//! let mut explorer = PathExplorer::new(SparseStab::new(1));
 //!
 //! // Record a path during execution
-//! let (result, path) = explorer.run_and_record(&commands);
-//!
-//! // Replay the same path
-//! let result2 = explorer.run_with_path(&commands, &path);
+//! let result = explorer.run_and_record(&commands);
 //!
 //! // Enumerate all paths up to 3 measurements
 //! for path in PathEnumerator::new(3) {
@@ -218,7 +220,10 @@ impl PathSignature {
     /// Convert to a binary string for display.
     #[must_use]
     pub fn to_binary_string(&self) -> String {
-        self.bits.iter().map(|&b| if b { '1' } else { '0' }).collect()
+        self.bits
+            .iter()
+            .map(|&b| if b { '1' } else { '0' })
+            .collect()
     }
 }
 
@@ -432,16 +437,20 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
         path: &mut MeasurementPath,
     ) {
         match command.gate_type {
-            GateType::Prep | GateType::QAlloc => {
+            GateType::PZ | GateType::QAlloc => {
                 let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
                 self.simulator.pz(&qubits);
             }
 
-            GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                 for &qubit in &command.qubits {
                     let result = self.simulator.mz(&[qubit]);
                     let r = &result[0];
-                    outcomes.record(MeasurementOutcome::new(qubit, r.outcome, r.is_deterministic));
+                    outcomes.record(MeasurementOutcome::new(
+                        qubit,
+                        r.outcome,
+                        r.is_deterministic,
+                    ));
                     path.record(qubit, r.outcome, r.is_deterministic);
                 }
             }
@@ -462,12 +471,12 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
         path_index: &mut usize,
     ) {
         match command.gate_type {
-            GateType::Prep | GateType::QAlloc => {
+            GateType::PZ | GateType::QAlloc => {
                 let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
                 self.simulator.pz(&qubits);
             }
 
-            GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                 for &qubit in &command.qubits {
                     // Get the forced outcome for this measurement
                     let forced_outcome = if *path_index < forced_path.len {
@@ -507,23 +516,57 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
         let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
 
         match command.gate_type {
-            GateType::I => { self.simulator.identity(&qubits); }
-            GateType::X => { self.simulator.x(&qubits); }
-            GateType::Y => { self.simulator.y(&qubits); }
-            GateType::Z => { self.simulator.z(&qubits); }
-            GateType::H => { self.simulator.h(&qubits); }
-            GateType::SX => { self.simulator.sx(&qubits); }
-            GateType::SXdg => { self.simulator.sxdg(&qubits); }
-            GateType::SY => { self.simulator.sy(&qubits); }
-            GateType::SYdg => { self.simulator.sydg(&qubits); }
-            GateType::SZ => { self.simulator.sz(&qubits); }
-            GateType::SZdg => { self.simulator.szdg(&qubits); }
-            GateType::CX => { self.simulator.cx(&qubits); }
-            GateType::CY => { self.simulator.cy(&qubits); }
-            GateType::CZ => { self.simulator.cz(&qubits); }
-            GateType::SZZ => { self.simulator.szz(&qubits); }
-            GateType::SZZdg => { self.simulator.szzdg(&qubits); }
-            GateType::SWAP => { self.simulator.swap(&qubits); }
+            GateType::I => {
+                self.simulator.identity(&qubits);
+            }
+            GateType::X => {
+                self.simulator.x(&qubits);
+            }
+            GateType::Y => {
+                self.simulator.y(&qubits);
+            }
+            GateType::Z => {
+                self.simulator.z(&qubits);
+            }
+            GateType::H => {
+                self.simulator.h(&qubits);
+            }
+            GateType::SX => {
+                self.simulator.sx(&qubits);
+            }
+            GateType::SXdg => {
+                self.simulator.sxdg(&qubits);
+            }
+            GateType::SY => {
+                self.simulator.sy(&qubits);
+            }
+            GateType::SYdg => {
+                self.simulator.sydg(&qubits);
+            }
+            GateType::SZ => {
+                self.simulator.sz(&qubits);
+            }
+            GateType::SZdg => {
+                self.simulator.szdg(&qubits);
+            }
+            GateType::CX => {
+                self.simulator.cx(&qubits);
+            }
+            GateType::CY => {
+                self.simulator.cy(&qubits);
+            }
+            GateType::CZ => {
+                self.simulator.cz(&qubits);
+            }
+            GateType::SZZ => {
+                self.simulator.szz(&qubits);
+            }
+            GateType::SZZdg => {
+                self.simulator.szzdg(&qubits);
+            }
+            GateType::SWAP => {
+                self.simulator.swap(&qubits);
+            }
             _ => {}
         }
     }
@@ -641,7 +684,10 @@ mod tests {
         assert_eq!(paths.len(), 8);
 
         // Check all combinations are present
-        let strings: Vec<_> = paths.iter().map(|p| p.to_binary_string()).collect();
+        let strings: Vec<_> = paths
+            .iter()
+            .map(super::EnumeratedPath::to_binary_string)
+            .collect();
         assert!(strings.contains(&"000".to_string()));
         assert!(strings.contains(&"001".to_string()));
         assert!(strings.contains(&"010".to_string()));
@@ -654,7 +700,10 @@ mod tests {
 
     #[test]
     fn test_enumerated_path_probability() {
-        let path = EnumeratedPath { bits: 0b101, len: 3 };
+        let path = EnumeratedPath {
+            bits: 0b101,
+            len: 3,
+        };
         assert!((path.probability() - 0.125).abs() < 1e-10); // 0.5^3
 
         assert!(path.outcome(0)); // bit 0 = 1
@@ -665,9 +714,9 @@ mod tests {
     #[test]
     fn test_path_explorer_record() {
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Creates superposition
-            .measure(0)
+            .mz(0)
             .build();
 
         let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
@@ -679,11 +728,7 @@ mod tests {
 
     #[test]
     fn test_path_explorer_replay() {
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut explorer = PathExplorer::new(SparseStab::new(1));
 
@@ -702,11 +747,7 @@ mod tests {
     fn test_path_enumeration_statistics() {
         // Simple circuit: H then measure
         // Should have 50% probability of each outcome
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut explorer = PathExplorer::new(SparseStab::new(1));
         let mut stats = PathStatistics::new();
@@ -739,12 +780,12 @@ mod tests {
         // Bell state: H on q0, CX, measure both
         // Should always get correlated outcomes (00 or 11)
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut explorer = PathExplorer::new(SparseStab::new(2));

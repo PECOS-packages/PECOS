@@ -33,7 +33,7 @@ use pecos_rng::PecosRng;
 ///
 /// # Plugin-Based Usage (Recommended)
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::*;
 /// use pecos_neo::noise::plugins::*;
 ///
@@ -45,7 +45,7 @@ use pecos_rng::PecosRng;
 ///
 /// # Direct Channel Usage (Legacy)
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::*;
 ///
 /// let noise = ComposableNoiseModel::new()
@@ -148,10 +148,11 @@ impl ComposableNoiseModel {
     /// uniform treatment of core and custom gates.
     ///
     /// # Example
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::noise::ComposableNoiseModel;
-    /// use pecos_neo::extensible::GateDefinitions;
+    /// use pecos_neo::extensible::{GateDefinitions, GateSpec, GateCategory};
     ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let gates = GateDefinitions::builder()
     ///     .define_gate("MyGate", GateSpec::new("MyGate").with_quantum_arity(2))
     ///     .with_category_noise(GateCategory::TwoQubitUnitary, 0.02)
@@ -159,6 +160,8 @@ impl ComposableNoiseModel {
     ///
     /// let noise = ComposableNoiseModel::new()
     ///     .with_gate_definitions(gates);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_gate_definitions(mut self, defs: crate::extensible::GateDefinitions) -> Self {
@@ -205,7 +208,7 @@ impl ComposableNoiseModel {
     /// Add a pre-boxed noise channel to the model.
     ///
     /// This is useful when you have a `Box<dyn NoiseChannel>` from a builder
-    /// or other source. For most cases, use [`add_channel`] instead.
+    /// or other source. For most cases, use [`Self::add_channel`] instead.
     #[must_use]
     pub fn add_boxed_channel(mut self, channel: Box<dyn NoiseChannel>) -> Self {
         self.channels.push(channel);
@@ -349,8 +352,9 @@ impl ComposableNoiseModel {
         for channel in &self.channels {
             // try_apply combines responds_to + apply in one call
             // filter out NoiseResponse::None to avoid unnecessary combine calls
-            if let Some(response) =
-                channel.try_apply(&event, &mut self.context, rng).filter(|r| !r.is_none())
+            if let Some(response) = channel
+                .try_apply(&event, &mut self.context, rng)
+                .filter(|r| !r.is_none())
             {
                 combined = combined.combine(response);
             }
@@ -476,6 +480,18 @@ impl ComposableNoiseModel {
 // From implementations for ergonomic noise model construction
 // ============================================================================
 
+impl Clone for ComposableNoiseModel {
+    fn clone(&self) -> Self {
+        Self {
+            event_handlers: self.event_handlers.iter().map(|h| h.clone_box()).collect(),
+            channels: self.channels.iter().map(|c| c.clone_box()).collect(),
+            observers: self.observers.iter().map(|o| o.clone_box()).collect(),
+            context: self.context.clone(),
+            time_scale: self.time_scale,
+        }
+    }
+}
+
 impl<C: NoiseChannel + 'static> From<C> for ComposableNoiseModel {
     fn from(channel: C) -> Self {
         Self::new().add_channel(channel)
@@ -487,12 +503,15 @@ impl From<super::GeneralNoiseModelBuilder> for ComposableNoiseModel {
     ///
     /// This allows passing the builder without calling `.build()`:
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::tool::sim_neo;
     /// use pecos_neo::noise::GeneralNoiseModelBuilder;
+    /// use pecos_neo::command::CommandQueue;
+    ///
+    /// let circuit = CommandQueue::new();
     ///
     /// // Both of these work:
-    /// sim_neo(circuit).noise(GeneralNoiseModelBuilder::new().with_p1(0.01).build());
+    /// sim_neo(circuit.clone()).noise(GeneralNoiseModelBuilder::new().with_p1(0.01).build());
     /// sim_neo(circuit).noise(GeneralNoiseModelBuilder::new().with_p1(0.01));  // No .build()!
     /// ```
     fn from(builder: super::GeneralNoiseModelBuilder) -> Self {
@@ -509,6 +528,7 @@ mod tests {
     use rand::Rng;
 
     // Simple test channel that always responds with an X gate
+    #[derive(Clone)]
     struct TestChannel {
         probability: f64,
     }
@@ -535,6 +555,10 @@ mod tests {
         fn name(&self) -> &'static str {
             "TestChannel"
         }
+
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
     }
 
     #[test]
@@ -554,7 +578,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut rng = PecosRng::seed_from_u64(42);
         let response = model.emit(event, &mut rng);

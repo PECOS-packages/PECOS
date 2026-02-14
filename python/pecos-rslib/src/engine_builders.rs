@@ -780,8 +780,8 @@ impl PyGeneralNoiseModelBuilder {
             "SZZ" => GateType::SZZ,
             "SZZDG" => GateType::SZZdg,
             "RZZ" => GateType::RZZ,
-            "MEASURE" => GateType::Measure,
-            "PREP" => GateType::Prep,
+            "MEASURE" => GateType::MZ,
+            "PREP" => GateType::PZ,
             "IDLE" => GateType::Idle,
             _ => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(

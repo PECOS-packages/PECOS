@@ -9,82 +9,70 @@
 //! - `CircuitValidator`: Trait and implementations for circuit validation
 //! - `GateAdaptor`: Trait for decomposing gates into supported primitives
 
-mod gate_id;
-mod gate_spec;
-mod registry;
-mod canonicalizer;
-mod support_set;
-mod snapper;
-mod validator;
 mod adaptor;
 mod bridge;
-mod queue_validation;
-mod operation;
-mod stabilizer_adaptor;
-mod pauli;
+mod canonicalizer;
+mod gate_id;
+mod gate_spec;
 mod op_builder;
+mod operation;
+mod pauli;
+mod queue_validation;
+mod registry;
+mod snapper;
+mod stabilizer_adaptor;
+mod support_set;
+mod validator;
 #[macro_use]
 mod circuit_macro;
-mod decomposition;
-mod plugin;
 mod batch;
-mod noise_integration;
-mod user_gates;
+mod decomposition;
 mod definitions;
+mod noise_integration;
+mod plugin;
+mod user_gates;
 
-pub use gate_id::{GateId, gates};
-pub use gate_spec::{GateSpec, GateCategory};
-pub use registry::GateRegistry;
-pub use canonicalizer::{GateCanonicalizer, CanonicalForm};
-pub use support_set::GateSupportSet;
-pub use snapper::{AngleSnapper, SnapResult, SnapError, SnapPolicy};
-pub use validator::{
-    CircuitValidator, ValidationError, GateForValidation,
-    CliffordValidator, CliffordTValidator, ExactAngleValidator,
-    AllowListValidator, CompositeValidator,
-};
 pub use adaptor::{
-    GateAdaptor, AdaptedGate, StandardAdaptor, CompositeAdaptor, CustomAdaptor,
-    LiftedAdaptor, CompositeExtendedAdaptor,
+    AdaptedGate, CompositeAdaptor, CompositeExtendedAdaptor, CustomAdaptor, GateAdaptor,
+    LiftedAdaptor, StandardAdaptor,
 };
+pub use batch::{Batch, BatchExecutor, BatchedCircuit, SimpleExecutor};
 pub use bridge::GateIdConversionError;
-pub use queue_validation::{
-    CommandQueueValidation, snap_command_queue, is_clifford_circuit,
-    is_clifford_gate_type, is_clifford_angle,
-};
-pub use operation::{
-    AdaptedOp, AdaptedSequence, AncillaRequirements, ResultId,
-    PrepBasis, MeasBasis,
-};
-pub use stabilizer_adaptor::{
-    ExtendedAdaptor, StabilizerAdaptor, StabilizerMeasurementAdaptor,
-    StabilizerPreparationAdaptor, stabilizer_gates,
-};
-pub use pauli::{
-    Pauli, PauliString, StabilizerMeasurement, StabilizerPreparation,
-};
-pub use op_builder::{OpBuilder, Subcircuit, GateLibrary, ConversionError};
+pub use canonicalizer::{CanonicalForm, GateCanonicalizer};
 pub use decomposition::{
-    Decomposition, DecompositionRegistry, DecompEntry, DecompOp,
-    AngleSource, InstantiatedOp, Resolution, ResolutionError,
-    ResolvedCircuit, ResolvedOp, CircuitResolver,
-};
-pub use plugin::{
-    GatePlugin, CoreGatesPlugin, StandardDecompositionsPlugin,
-    ExtendedDecompositionsPlugin, PluginLoader, PluginError,
-};
-pub use batch::{
-    Batch, BatchedCircuit, BatchExecutor, SimpleExecutor,
-};
-pub use noise_integration::{
-    GateNoiseParams, GateIdNoiseConfig, DecompositionNoiseStrategy,
-};
-pub use user_gates::{
-    UserGateBuilder, UserGateDefinition, UserGatesPlugin, UserGateRegistry,
+    AngleSource, CircuitResolver, DecompEntry, DecompOp, Decomposition, DecompositionRegistry,
+    InstantiatedOp, Resolution, ResolutionError, ResolvedCircuit, ResolvedOp,
 };
 pub use definitions::{
-    GateDefinitions, GateDefinitionsBuilder, GateDefinitionsError,
-    GateExecutor, NoNativeGates,
+    GateDefinitions, GateDefinitionsBuilder, GateDefinitionsError, GateExecutor, NoNativeGates,
+};
+pub use gate_id::{GateId, gates};
+pub use gate_spec::{GateCategory, GateSpec};
+pub use noise_integration::{DecompositionNoiseStrategy, GateIdNoiseConfig, GateNoiseParams};
+pub use op_builder::{ConversionError, GateLibrary, OpBuilder, Subcircuit};
+pub use operation::{
+    AdaptedOp, AdaptedSequence, AncillaRequirements, MeasBasis, PrepBasis, ResultId,
+};
+pub use pauli::{Pauli, PauliString, StabilizerMeasurement, StabilizerPreparation};
+pub use plugin::{
+    CoreGatesPlugin, ExtendedDecompositionsPlugin, GatePlugin, PluginError, PluginLoader,
+    StandardDecompositionsPlugin,
+};
+pub use queue_validation::{
+    CommandQueueValidation, is_clifford_angle, is_clifford_circuit, is_clifford_gate_type,
+    snap_command_queue,
+};
+pub use registry::GateRegistry;
+pub use snapper::{AngleSnapper, SnapError, SnapPolicy, SnapResult};
+pub use stabilizer_adaptor::{
+    ExtendedAdaptor, StabilizerAdaptor, StabilizerMeasurementAdaptor, StabilizerPreparationAdaptor,
+    stabilizer_gates,
+};
+pub use support_set::GateSupportSet;
+pub use user_gates::{UserGateBuilder, UserGateDefinition, UserGateRegistry, UserGatesPlugin};
+pub use validator::{
+    AllowListValidator, CircuitValidator, CliffordTValidator, CliffordValidator,
+    CompositeValidator, ExactAngleValidator, GateForValidation, ValidationError,
 };
 
 #[cfg(test)]

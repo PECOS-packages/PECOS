@@ -25,35 +25,29 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::extensible::*;
 //!
-//! // Build gate definitions
-//! let gates = GateDefinitions::builder()
+//! // Build gate definitions with the builder pattern
+//! let defs = GateDefinitions::builder()
 //!     // Core gates are pre-loaded
 //!     // Define a custom gate
 //!     .define_gate("MySWAP", GateSpec::new("MySWAP")
 //!         .with_quantum_arity(2)
 //!         .with_category(GateCategory::TwoQubitUnitary))
-//!     .with_decomposition_of("MySWAP", |d| d
-//!         .requires(gates::CX)
-//!         .sequence(|q| [
-//!             DecompOp::gate2(gates::CX, q[0], q[1]),
-//!             DecompOp::gate2(gates::CX, q[1], q[0]),
-//!             DecompOp::gate2(gates::CX, q[0], q[1]),
-//!         ]))
-//!     .with_noise_of("MySWAP", 0.02)
-//!     .build()?;
+//!     // Set noise for the custom gate
+//!     .with_noise("MySWAP", 0.02)
+//!     .build()
+//!     .unwrap();
 //!
-//! // Pass to consumers - all see the same definitions
-//! let noise = NoiseModel::new(&gates);
-//! let runner = Runner::new(&gates);
+//! // Look up gate by name
+//! let my_swap = defs.id_by_name("MySWAP").unwrap();
+//! assert_eq!(defs.quantum_arity(my_swap), Some(2));
+//! assert_eq!(defs.error_probability(my_swap), 0.02);
 //! ```
 
-use super::{
-    gates, DecompEntry, GateCategory, GateId, GateSpec, GateSupportSet,
-};
 use super::noise_integration::GateNoiseParams;
+use super::{DecompEntry, GateCategory, GateId, GateSpec, GateSupportSet, gates};
 
 // ============================================================================
 // GateDefinitions - The unified container
@@ -67,14 +61,14 @@ use super::noise_integration::GateNoiseParams;
 /// This is a value type - cheap to clone due to internal structure.
 #[derive(Clone, Debug)]
 pub struct GateDefinitions {
-    /// Gate specifications indexed by GateId.
+    /// Gate specifications indexed by `GateId`.
     /// Index 0-255 = core gates, 256+ = user gates.
     specs: Vec<Option<GateSpec>>,
 
-    /// Gate decompositions indexed by GateId.
+    /// Gate decompositions indexed by `GateId`.
     decompositions: Vec<Option<DecompEntry>>,
 
-    /// Noise parameters indexed by GateId.
+    /// Noise parameters indexed by `GateId`.
     noise: Vec<Option<GateNoiseParams>>,
 
     /// Category-based noise defaults.
@@ -167,7 +161,9 @@ impl GateDefinitions {
     #[inline]
     #[must_use]
     pub fn decomposition(&self, id: GateId) -> Option<&DecompEntry> {
-        self.decompositions.get(id.0 as usize).and_then(|d| d.as_ref())
+        self.decompositions
+            .get(id.0 as usize)
+            .and_then(|d| d.as_ref())
     }
 
     /// Check if a gate has a decomposition. O(1).
@@ -215,9 +211,7 @@ impl GateDefinitions {
     /// Get error probability for a gate. O(1).
     #[must_use]
     pub fn error_probability(&self, id: GateId) -> f64 {
-        self.noise_params(id)
-            .map(|p| p.error_probability)
-            .unwrap_or(0.0)
+        self.noise_params(id).map_or(0.0, |p| p.error_probability)
     }
 
     // ========================================================================
@@ -261,7 +255,8 @@ impl GateDefinitions {
         self.specs[idx] = Some(spec);
 
         // Add to name index (keep sorted)
-        let insert_pos = self.name_to_id
+        let insert_pos = self
+            .name_to_id
             .binary_search_by_key(&name, |(n, _)| *n)
             .unwrap_or_else(|pos| pos);
         self.name_to_id.insert(insert_pos, (name, id));
@@ -308,100 +303,173 @@ impl GateDefinitions {
 
     fn init_core_gates(&mut self) {
         // Single-qubit Paulis
-        self.set_core_spec(gates::I, GateSpec::new("I")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::X, GateSpec::new("X")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::Y, GateSpec::new("Y")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::Z, GateSpec::new("Z")
-            .with_category(GateCategory::SingleQubitUnitary));
+        self.set_core_spec(
+            gates::I,
+            GateSpec::new("I").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::X,
+            GateSpec::new("X").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::Y,
+            GateSpec::new("Y").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::Z,
+            GateSpec::new("Z").with_category(GateCategory::SingleQubitUnitary),
+        );
 
         // Single-qubit Cliffords
-        self.set_core_spec(gates::H, GateSpec::new("H")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::SX, GateSpec::new("SX")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::SXdg, GateSpec::new("SXdg")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::SY, GateSpec::new("SY")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::SYdg, GateSpec::new("SYdg")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::SZ, GateSpec::new("SZ")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::SZdg, GateSpec::new("SZdg")
-            .with_category(GateCategory::SingleQubitUnitary));
+        self.set_core_spec(
+            gates::H,
+            GateSpec::new("H").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SX,
+            GateSpec::new("SX").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SXdg,
+            GateSpec::new("SXdg").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SY,
+            GateSpec::new("SY").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SYdg,
+            GateSpec::new("SYdg").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SZ,
+            GateSpec::new("SZ").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SZdg,
+            GateSpec::new("SZdg").with_category(GateCategory::SingleQubitUnitary),
+        );
 
         // T gates
-        self.set_core_spec(gates::T, GateSpec::new("T")
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::Tdg, GateSpec::new("Tdg")
-            .with_category(GateCategory::SingleQubitUnitary));
+        self.set_core_spec(
+            gates::T,
+            GateSpec::new("T").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::Tdg,
+            GateSpec::new("Tdg").with_category(GateCategory::SingleQubitUnitary),
+        );
 
         // Single-qubit rotations
-        self.set_core_spec(gates::RX, GateSpec::new("RX")
-            .with_angle_arity(1)
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::RY, GateSpec::new("RY")
-            .with_angle_arity(1)
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::RZ, GateSpec::new("RZ")
-            .with_angle_arity(1)
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::U, GateSpec::new("U")
-            .with_angle_arity(3)
-            .with_category(GateCategory::SingleQubitUnitary));
-        self.set_core_spec(gates::R1XY, GateSpec::new("R1XY")
-            .with_angle_arity(2)
-            .with_category(GateCategory::SingleQubitUnitary));
+        self.set_core_spec(
+            gates::RX,
+            GateSpec::new("RX")
+                .with_angle_arity(1)
+                .with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::RY,
+            GateSpec::new("RY")
+                .with_angle_arity(1)
+                .with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::RZ,
+            GateSpec::new("RZ")
+                .with_angle_arity(1)
+                .with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::U,
+            GateSpec::new("U")
+                .with_angle_arity(3)
+                .with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::R1XY,
+            GateSpec::new("R1XY")
+                .with_angle_arity(2)
+                .with_category(GateCategory::SingleQubitUnitary),
+        );
 
         // Two-qubit gates
-        self.set_core_spec(gates::CX, GateSpec::new("CX")
-            .with_quantum_arity(2)
-            .with_category(GateCategory::TwoQubitUnitary));
-        self.set_core_spec(gates::CY, GateSpec::new("CY")
-            .with_quantum_arity(2)
-            .with_category(GateCategory::TwoQubitUnitary));
-        self.set_core_spec(gates::CZ, GateSpec::new("CZ")
-            .with_quantum_arity(2)
-            .with_category(GateCategory::TwoQubitUnitary));
-        self.set_core_spec(gates::SWAP, GateSpec::new("SWAP")
-            .with_quantum_arity(2)
-            .with_category(GateCategory::TwoQubitUnitary));
+        self.set_core_spec(
+            gates::CX,
+            GateSpec::new("CX")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::CY,
+            GateSpec::new("CY")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::CZ,
+            GateSpec::new("CZ")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SWAP,
+            GateSpec::new("SWAP")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
 
         // Two-qubit parameterized
-        self.set_core_spec(gates::RXX, GateSpec::new("RXX")
-            .with_quantum_arity(2)
-            .with_angle_arity(1)
-            .with_category(GateCategory::TwoQubitUnitary));
-        self.set_core_spec(gates::RYY, GateSpec::new("RYY")
-            .with_quantum_arity(2)
-            .with_angle_arity(1)
-            .with_category(GateCategory::TwoQubitUnitary));
-        self.set_core_spec(gates::RZZ, GateSpec::new("RZZ")
-            .with_quantum_arity(2)
-            .with_angle_arity(1)
-            .with_category(GateCategory::TwoQubitUnitary));
+        self.set_core_spec(
+            gates::RXX,
+            GateSpec::new("RXX")
+                .with_quantum_arity(2)
+                .with_angle_arity(1)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::RYY,
+            GateSpec::new("RYY")
+                .with_quantum_arity(2)
+                .with_angle_arity(1)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::RZZ,
+            GateSpec::new("RZZ")
+                .with_quantum_arity(2)
+                .with_angle_arity(1)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
 
         // Three-qubit
-        self.set_core_spec(gates::CCX, GateSpec::new("CCX")
-            .with_quantum_arity(3)
-            .with_category(GateCategory::MultiQubitUnitary));
+        self.set_core_spec(
+            gates::CCX,
+            GateSpec::new("CCX")
+                .with_quantum_arity(3)
+                .with_category(GateCategory::MultiQubitUnitary),
+        );
 
         // Measurement
-        self.set_core_spec(gates::MEASURE, GateSpec::new("Measure")
-            .with_returns_result(true)
-            .with_category(GateCategory::Measurement));
+        self.set_core_spec(
+            gates::MZ,
+            GateSpec::new("MZ")
+                .with_returns_result(true)
+                .with_category(GateCategory::Measurement),
+        );
 
         // Preparation
-        self.set_core_spec(gates::PREP, GateSpec::new("Prep")
-            .with_category(GateCategory::Preparation));
+        self.set_core_spec(
+            gates::PZ,
+            GateSpec::new("PZ").with_category(GateCategory::Preparation),
+        );
 
         // Idle
-        self.set_core_spec(gates::IDLE, GateSpec::new("Idle")
-            .with_param_arity(1)
-            .with_category(GateCategory::Idle));
+        self.set_core_spec(
+            gates::IDLE,
+            GateSpec::new("Idle")
+                .with_param_arity(1)
+                .with_category(GateCategory::Idle),
+        );
     }
 
     fn set_core_spec(&mut self, id: GateId, spec: GateSpec) {
@@ -410,7 +478,8 @@ impl GateDefinitions {
         self.specs[id.0 as usize] = Some(spec);
 
         // Add to name index
-        let insert_pos = self.name_to_id
+        let insert_pos = self
+            .name_to_id
             .binary_search_by_key(&name, |(n, _)| *n)
             .unwrap_or_else(|pos| pos);
         self.name_to_id.insert(insert_pos, (name, id));
@@ -458,7 +527,8 @@ impl GateDefinitionsBuilder {
         if let Some(id) = self.defs.id_by_name(gate_name) {
             self.defs.set_decomposition(id, entry);
         } else {
-            self.errors.push(format!("Unknown gate for decomposition: {}", gate_name));
+            self.errors
+                .push(format!("Unknown gate for decomposition: {gate_name}"));
         }
         self
     }
@@ -476,7 +546,8 @@ impl GateDefinitionsBuilder {
         if let Some(id) = self.defs.id_by_name(gate_name) {
             self.defs.set_noise_error(id, error_probability);
         } else {
-            self.errors.push(format!("Unknown gate for noise: {}", gate_name));
+            self.errors
+                .push(format!("Unknown gate for noise: {gate_name}"));
         }
         self
     }
@@ -491,14 +562,16 @@ impl GateDefinitionsBuilder {
     /// Set category-based noise default.
     #[must_use]
     pub fn with_category_noise(mut self, category: GateCategory, error_probability: f64) -> Self {
-        self.defs.set_category_noise(category, GateNoiseParams::with_error(error_probability));
+        self.defs
+            .set_category_noise(category, GateNoiseParams::with_error(error_probability));
         self
     }
 
     /// Set global noise default.
     #[must_use]
     pub fn with_global_noise(mut self, error_probability: f64) -> Self {
-        self.defs.set_global_noise(GateNoiseParams::with_error(error_probability));
+        self.defs
+            .set_global_noise(GateNoiseParams::with_error(error_probability));
         self
     }
 
@@ -507,7 +580,9 @@ impl GateDefinitionsBuilder {
         if self.errors.is_empty() {
             Ok(self.defs)
         } else {
-            Err(GateDefinitionsError { messages: self.errors })
+            Err(GateDefinitionsError {
+                messages: self.errors,
+            })
         }
     }
 
@@ -527,7 +602,7 @@ pub struct GateDefinitionsError {
 impl std::fmt::Display for GateDefinitionsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for msg in &self.messages {
-            writeln!(f, "- {}", msg)?;
+            writeln!(f, "- {msg}")?;
         }
         Ok(())
     }
@@ -572,12 +647,7 @@ pub trait GateExecutor {
     ///
     /// Returns `true` if the gate was executed, `false` if not supported.
     /// The caller should fall back to decomposition if `false` is returned.
-    fn try_execute(
-        &mut self,
-        gate_id: GateId,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> bool;
+    fn try_execute(&mut self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> bool;
 }
 
 /// Marker for simulators that don't provide native gate optimization.
@@ -590,17 +660,13 @@ impl GateExecutor for NoNativeGates {
         false
     }
 
-    fn try_execute(
-        &mut self,
-        _gate_id: GateId,
-        _qubits: &[QubitId],
-        _angles: &[Angle64],
-    ) -> bool {
+    fn try_execute(&mut self, _gate_id: GateId, _qubits: &[QubitId], _angles: &[Angle64]) -> bool {
         false
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -611,10 +677,13 @@ mod tests {
         // Core gates should be present
         assert!(defs.spec(gates::H).is_some());
         assert!(defs.spec(gates::CX).is_some());
-        assert!(defs.spec(gates::MEASURE).is_some());
+        assert!(defs.spec(gates::MZ).is_some());
 
         // Check properties
-        assert_eq!(defs.category(gates::H), Some(GateCategory::SingleQubitUnitary));
+        assert_eq!(
+            defs.category(gates::H),
+            Some(GateCategory::SingleQubitUnitary)
+        );
         assert_eq!(defs.quantum_arity(gates::CX), Some(2));
         assert!(defs.is_single_qubit(gates::H));
         assert!(defs.is_two_qubit(gates::CX));
@@ -638,7 +707,7 @@ mod tests {
         let my_gate = defs.register(
             GateSpec::new("MyGate")
                 .with_quantum_arity(2)
-                .with_category(GateCategory::TwoQubitUnitary)
+                .with_category(GateCategory::TwoQubitUnitary),
         );
 
         assert!(my_gate.is_user_defined());
@@ -653,7 +722,10 @@ mod tests {
 
         // Set up noise at all three levels
         defs.set_global_noise(GateNoiseParams::with_error(0.1));
-        defs.set_category_noise(GateCategory::SingleQubitUnitary, GateNoiseParams::with_error(0.01));
+        defs.set_category_noise(
+            GateCategory::SingleQubitUnitary,
+            GateNoiseParams::with_error(0.01),
+        );
         defs.set_noise_error(gates::H, 0.001);
 
         // H has per-gate config
@@ -669,9 +741,12 @@ mod tests {
     #[test]
     fn test_builder() {
         let defs = GateDefinitions::builder()
-            .define_gate("CustomGate", GateSpec::new("CustomGate")
-                .with_quantum_arity(1)
-                .with_category(GateCategory::SingleQubitUnitary))
+            .define_gate(
+                "CustomGate",
+                GateSpec::new("CustomGate")
+                    .with_quantum_arity(1)
+                    .with_category(GateCategory::SingleQubitUnitary),
+            )
             .with_noise("CustomGate", 0.005)
             .with_category_noise(GateCategory::TwoQubitUnitary, 0.02)
             .build()

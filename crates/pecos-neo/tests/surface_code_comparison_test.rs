@@ -15,11 +15,11 @@
 //! These tests validate that both noise models produce statistically similar results
 //! when running surface code syndrome extraction at different numbers of rounds.
 
-use pecos_neo::prelude::*;
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::noise::GeneralNoiseModel;
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::{Engine, QuantumSystem};
+use pecos_neo::prelude::*;
 use pecos_qsim::SparseStab;
 use std::collections::HashMap;
 
@@ -297,7 +297,7 @@ fn run_composable_noise_repetition(
 
         // Initialize data qubits
         for &q in &code.data_qubits {
-            builder = builder.prep(q);
+            builder = builder.pz(q);
         }
 
         // Track which measurement index corresponds to which qubit
@@ -307,7 +307,7 @@ fn run_composable_noise_repetition(
         for _round in 0..num_rounds {
             // Prepare ancillas
             for &a in &code.z_ancillas {
-                builder = builder.prep(a);
+                builder = builder.pz(a);
             }
 
             // CNOT gates for parity checks
@@ -318,14 +318,14 @@ fn run_composable_noise_repetition(
 
             // Measure ancillas
             for &a in &code.z_ancillas {
-                builder = builder.measure(a);
+                builder = builder.mz(a);
                 meas_order.push(a);
             }
         }
 
         // Final data measurements
         for &q in &code.data_qubits {
-            builder = builder.measure(q);
+            builder = builder.mz(q);
             meas_order.push(q);
         }
 
@@ -424,7 +424,10 @@ fn test_repetition_code_logical_error_vs_rounds() {
 
     println!("\nRepetition Code Logical Error Rate vs Rounds:");
     println!("  p1={p1}, p2={p2}, p_meas={p_meas}");
-    println!("  {:>8} {:>15} {:>15} {:>10}", "Rounds", "GeneralNM", "ComposableNM", "Match");
+    println!(
+        "  {:>8} {:>15} {:>15} {:>10}",
+        "Rounds", "GeneralNM", "ComposableNM", "Match"
+    );
     println!("  {:->8} {:->15} {:->15} {:->10}", "", "", "", "");
 
     let rounds_to_test = [1, 2, 3, 5, 8];
@@ -433,8 +436,12 @@ fn test_repetition_code_logical_error_vs_rounds() {
     for &num_rounds in &rounds_to_test {
         let general_stats =
             run_general_noise_repetition(&code, general_model.clone(), num_rounds, NUM_SHOTS);
-        let composable_stats =
-            run_composable_noise_repetition(&code, composable_config.clone(), num_rounds, NUM_SHOTS);
+        let composable_stats = run_composable_noise_repetition(
+            &code,
+            composable_config.clone(),
+            num_rounds,
+            NUM_SHOTS,
+        );
 
         let general_rate = general_stats.logical_error_rate();
         let composable_rate = composable_stats.logical_error_rate();
@@ -482,8 +489,7 @@ fn test_repetition_code_syndrome_rates() {
 
     let composable_config = ComposableNoiseConfig { p1, p2, p_meas };
 
-    let general_stats =
-        run_general_noise_repetition(&code, general_model, num_rounds, NUM_SHOTS);
+    let general_stats = run_general_noise_repetition(&code, general_model, num_rounds, NUM_SHOTS);
     let composable_stats =
         run_composable_noise_repetition(&code, composable_config, num_rounds, NUM_SHOTS);
 
@@ -548,8 +554,7 @@ fn test_repetition_code_syndrome_correlations() {
 
     let composable_config = ComposableNoiseConfig { p1, p2, p_meas };
 
-    let general_stats =
-        run_general_noise_repetition(&code, general_model, num_rounds, NUM_SHOTS);
+    let general_stats = run_general_noise_repetition(&code, general_model, num_rounds, NUM_SHOTS);
     let composable_stats =
         run_composable_noise_repetition(&code, composable_config, num_rounds, NUM_SHOTS);
 

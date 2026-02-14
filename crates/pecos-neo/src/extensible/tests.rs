@@ -1,8 +1,9 @@
 //! Tests for the extensible gate system.
+#![allow(clippy::float_cmp)]
 
+use super::validator::GateForValidation;
 use super::*;
 use pecos_core::{Angle64, QubitId};
-use super::validator::GateForValidation;
 
 // ============================================================================
 // GateId Tests
@@ -76,23 +77,39 @@ fn test_core_gate_constants_are_core() {
     assert!(gates::CX.is_core());
     assert!(gates::CZ.is_core());
     assert!(gates::RZ.is_core());
-    assert!(gates::MEASURE.is_core());
-    assert!(gates::PREP.is_core());
+    assert!(gates::MZ.is_core());
+    assert!(gates::PZ.is_core());
 }
 
 #[test]
 fn test_core_gate_constants_unique() {
     // All gate constants should have unique IDs
     let ids = [
-        gates::I, gates::X, gates::Y, gates::Z,
-        gates::H, gates::SX, gates::SY, gates::SZ,
-        gates::T, gates::CX, gates::CZ, gates::RZ,
-        gates::RX, gates::RY, gates::MEASURE, gates::PREP,
+        gates::I,
+        gates::X,
+        gates::Y,
+        gates::Z,
+        gates::H,
+        gates::SX,
+        gates::SY,
+        gates::SZ,
+        gates::T,
+        gates::CX,
+        gates::CZ,
+        gates::RZ,
+        gates::RX,
+        gates::RY,
+        gates::MZ,
+        gates::PZ,
     ];
 
     for i in 0..ids.len() {
         for j in (i + 1)..ids.len() {
-            assert_ne!(ids[i], ids[j], "Gate constants {:?} and {:?} have same ID", ids[i], ids[j]);
+            assert_ne!(
+                ids[i], ids[j],
+                "Gate constants {:?} and {:?} have same ID",
+                ids[i], ids[j]
+            );
         }
     }
 }
@@ -132,8 +149,14 @@ fn test_gate_spec_default() {
 
 #[test]
 fn test_gate_category_equality() {
-    assert_eq!(GateCategory::SingleQubitUnitary, GateCategory::SingleQubitUnitary);
-    assert_ne!(GateCategory::SingleQubitUnitary, GateCategory::TwoQubitUnitary);
+    assert_eq!(
+        GateCategory::SingleQubitUnitary,
+        GateCategory::SingleQubitUnitary
+    );
+    assert_ne!(
+        GateCategory::SingleQubitUnitary,
+        GateCategory::TwoQubitUnitary
+    );
     assert_ne!(GateCategory::Custom(1), GateCategory::Custom(2));
     assert_eq!(GateCategory::Custom(5), GateCategory::Custom(5));
 }
@@ -151,8 +174,8 @@ fn test_registry_new_has_core_gates() {
     assert!(registry.get(gates::H).is_some());
     assert!(registry.get(gates::CX).is_some());
     assert!(registry.get(gates::RZ).is_some());
-    assert!(registry.get(gates::MEASURE).is_some());
-    assert!(registry.get(gates::PREP).is_some());
+    assert!(registry.get(gates::MZ).is_some());
+    assert!(registry.get(gates::PZ).is_some());
 }
 
 #[test]
@@ -179,8 +202,8 @@ fn test_registry_core_gate_specs_correct() {
     assert_eq!(rz.angle_arity, 1);
 
     // Measure gate
-    let meas = registry.get(gates::MEASURE).unwrap();
-    assert_eq!(meas.name, "Measure");
+    let meas = registry.get(gates::MZ).unwrap();
+    assert_eq!(meas.name, "MZ");
     assert!(meas.returns_result);
 }
 
@@ -210,9 +233,18 @@ fn test_registry_register_user_gate() {
 fn test_registry_register_multiple_user_gates() {
     let mut registry = GateRegistry::new();
 
-    let id1 = registry.register(GateSpec { name: "Gate1", ..Default::default() });
-    let id2 = registry.register(GateSpec { name: "Gate2", ..Default::default() });
-    let id3 = registry.register(GateSpec { name: "Gate3", ..Default::default() });
+    let id1 = registry.register(GateSpec {
+        name: "Gate1",
+        ..Default::default()
+    });
+    let id2 = registry.register(GateSpec {
+        name: "Gate2",
+        ..Default::default()
+    });
+    let id3 = registry.register(GateSpec {
+        name: "Gate3",
+        ..Default::default()
+    });
 
     assert_eq!(id1.0, 256);
     assert_eq!(id2.0, 257);
@@ -230,14 +262,17 @@ fn test_registry_lookup_core_gate_by_name() {
     assert_eq!(registry.lookup("H"), Some(gates::H));
     assert_eq!(registry.lookup("CX"), Some(gates::CX));
     assert_eq!(registry.lookup("RZ"), Some(gates::RZ));
-    assert_eq!(registry.lookup("Measure"), Some(gates::MEASURE));
+    assert_eq!(registry.lookup("MZ"), Some(gates::MZ));
 }
 
 #[test]
 fn test_registry_lookup_user_gate_by_name() {
     let mut registry = GateRegistry::new();
 
-    let id = registry.register(GateSpec { name: "MyGate", ..Default::default() });
+    let id = registry.register(GateSpec {
+        name: "MyGate",
+        ..Default::default()
+    });
 
     assert_eq!(registry.lookup("MyGate"), Some(id));
 }
@@ -260,7 +295,10 @@ fn test_registry_contains() {
     assert!(!registry.contains(GateId(256)));
 
     // Register and check again
-    let id = registry.register(GateSpec { name: "Test", ..Default::default() });
+    let id = registry.register(GateSpec {
+        name: "Test",
+        ..Default::default()
+    });
     assert!(registry.contains(id));
 }
 
@@ -269,8 +307,14 @@ fn test_registries_are_independent() {
     let mut registry1 = GateRegistry::new();
     let mut registry2 = GateRegistry::new();
 
-    let id1 = registry1.register(GateSpec { name: "GateA", ..Default::default() });
-    let id2 = registry2.register(GateSpec { name: "GateB", ..Default::default() });
+    let id1 = registry1.register(GateSpec {
+        name: "GateA",
+        ..Default::default()
+    });
+    let id2 = registry2.register(GateSpec {
+        name: "GateB",
+        ..Default::default()
+    });
 
     // Same ID value
     assert_eq!(id1.0, id2.0);
@@ -565,7 +609,7 @@ fn test_registry_iter_ids() {
     // All core gates should be present
     assert!(ids.contains(&gates::H));
     assert!(ids.contains(&gates::CX));
-    assert!(ids.contains(&gates::MEASURE));
+    assert!(ids.contains(&gates::MZ));
 }
 
 #[test]
@@ -586,10 +630,16 @@ fn test_registry_user_gate_count() {
 
     assert_eq!(registry.user_gate_count(), 0);
 
-    registry.register(GateSpec { name: "A", ..Default::default() });
+    registry.register(GateSpec {
+        name: "A",
+        ..Default::default()
+    });
     assert_eq!(registry.user_gate_count(), 1);
 
-    registry.register(GateSpec { name: "B", ..Default::default() });
+    registry.register(GateSpec {
+        name: "B",
+        ..Default::default()
+    });
     assert_eq!(registry.user_gate_count(), 2);
 }
 
@@ -665,7 +715,7 @@ fn test_support_set_intersect() {
     set1.intersect_with(&set2);
 
     assert!(!set1.contains(gates::H)); // Only in set1
-    assert!(set1.contains(gates::X));  // In both
+    assert!(set1.contains(gates::X)); // In both
     assert!(set1.contains(gates::CX)); // In both
     assert!(!set1.contains(gates::CZ)); // Only in set2
     assert_eq!(set1.len(), 2);
@@ -687,10 +737,7 @@ fn test_canonicalizer_custom_rule() {
     );
 
     // Other angles should not canonicalize
-    assert_eq!(
-        canon.canonicalize(custom_rot, &[Angle64::HALF_TURN]),
-        None
-    );
+    assert_eq!(canon.canonicalize(custom_rot, &[Angle64::HALF_TURN]), None);
 }
 
 #[test]
@@ -805,24 +852,53 @@ fn test_all_core_gates_have_correct_arity() {
     let registry = GateRegistry::new();
 
     // Single-qubit gates
-    for id in [gates::I, gates::X, gates::Y, gates::Z, gates::H,
-               gates::SX, gates::SY, gates::SZ, gates::T,
-               gates::RX, gates::RY, gates::RZ] {
+    for id in [
+        gates::I,
+        gates::X,
+        gates::Y,
+        gates::Z,
+        gates::H,
+        gates::SX,
+        gates::SY,
+        gates::SZ,
+        gates::T,
+        gates::RX,
+        gates::RY,
+        gates::RZ,
+    ] {
         let spec = registry.get(id).unwrap();
-        assert_eq!(spec.quantum_arity, 1, "Gate {} should have arity 1", spec.name);
+        assert_eq!(
+            spec.quantum_arity, 1,
+            "Gate {} should have arity 1",
+            spec.name
+        );
     }
 
     // Two-qubit gates
-    for id in [gates::CX, gates::CY, gates::CZ, gates::SWAP,
-               gates::SZZ, gates::RZZ] {
+    for id in [
+        gates::CX,
+        gates::CY,
+        gates::CZ,
+        gates::SWAP,
+        gates::SZZ,
+        gates::RZZ,
+    ] {
         let spec = registry.get(id).unwrap();
-        assert_eq!(spec.quantum_arity, 2, "Gate {} should have arity 2", spec.name);
+        assert_eq!(
+            spec.quantum_arity, 2,
+            "Gate {} should have arity 2",
+            spec.name
+        );
     }
 
     // Three-qubit gates
     for id in [gates::CCX, gates::CCZ, gates::CSWAP] {
         let spec = registry.get(id).unwrap();
-        assert_eq!(spec.quantum_arity, 3, "Gate {} should have arity 3", spec.name);
+        assert_eq!(
+            spec.quantum_arity, 3,
+            "Gate {} should have arity 3",
+            spec.name
+        );
     }
 }
 
@@ -831,15 +907,30 @@ fn test_parameterized_gates_have_angle_arity() {
     let registry = GateRegistry::new();
 
     // Single-angle gates
-    for id in [gates::RX, gates::RY, gates::RZ, gates::RZZ, gates::RXX, gates::RYY] {
+    for id in [
+        gates::RX,
+        gates::RY,
+        gates::RZ,
+        gates::RZZ,
+        gates::RXX,
+        gates::RYY,
+    ] {
         let spec = registry.get(id).unwrap();
-        assert_eq!(spec.angle_arity, 1, "Gate {} should have angle_arity 1", spec.name);
+        assert_eq!(
+            spec.angle_arity, 1,
+            "Gate {} should have angle_arity 1",
+            spec.name
+        );
     }
 
     // Non-parameterized gates
     for id in [gates::H, gates::X, gates::CX, gates::CZ, gates::T] {
         let spec = registry.get(id).unwrap();
-        assert_eq!(spec.angle_arity, 0, "Gate {} should have angle_arity 0", spec.name);
+        assert_eq!(
+            spec.angle_arity, 0,
+            "Gate {} should have angle_arity 0",
+            spec.name
+        );
     }
 }
 
@@ -847,15 +938,23 @@ fn test_parameterized_gates_have_angle_arity() {
 fn test_measurement_gates_return_result() {
     let registry = GateRegistry::new();
 
-    for id in [gates::MEASURE, gates::MEASURE_LEAKED, gates::MEASURE_FREE] {
+    for id in [gates::MZ, gates::MEASURE_LEAKED, gates::MEASURE_FREE] {
         let spec = registry.get(id).unwrap();
-        assert!(spec.returns_result, "Gate {} should return result", spec.name);
+        assert!(
+            spec.returns_result,
+            "Gate {} should return result",
+            spec.name
+        );
     }
 
     // Non-measurement gates should not return result
-    for id in [gates::H, gates::CX, gates::PREP, gates::RZ] {
+    for id in [gates::H, gates::CX, gates::PZ, gates::RZ] {
         let spec = registry.get(id).unwrap();
-        assert!(!spec.returns_result, "Gate {} should not return result", spec.name);
+        assert!(
+            !spec.returns_result,
+            "Gate {} should not return result",
+            spec.name
+        );
     }
 }
 
@@ -889,7 +988,7 @@ fn test_snapper_fails_outside_tolerance() {
     let snapper = AngleSnapper::standard(1e-9);
 
     // Way off from any standard angle
-    let far = Angle64::from_turns(0.123456);
+    let far = Angle64::from_turns(0.123_456);
     let result = snapper.snap(far);
 
     assert!(result.is_err());
@@ -1001,7 +1100,7 @@ fn test_clifford_validator_accepts_clifford_circuit() {
         make_gate(gates::H, &[]),
         make_gate(gates::CX, &[]),
         make_gate(gates::SZ, &[]),
-        make_gate(gates::MEASURE, &[]),
+        make_gate(gates::MZ, &[]),
     ];
 
     assert!(validator.validate(&circuit, &registry).is_ok());
@@ -1031,7 +1130,10 @@ fn test_clifford_validator_rejects_arbitrary_rz() {
     ];
 
     let result = validator.validate(&circuit, &registry);
-    assert!(matches!(result, Err(ValidationError::ForbiddenAngle { .. })));
+    assert!(matches!(
+        result,
+        Err(ValidationError::ForbiddenAngle { .. })
+    ));
 }
 
 #[test]
@@ -1067,9 +1169,7 @@ fn test_clifford_t_validator_accepts_rz_at_t_angle() {
 
     let t_angle = Angle64::HALF_TURN / 4; // pi/4
 
-    let circuit = vec![
-        make_gate(gates::RZ, &[t_angle]),
-    ];
+    let circuit = vec![make_gate(gates::RZ, &[t_angle])];
 
     assert!(validator.validate(&circuit, &registry).is_ok());
 }
@@ -1080,8 +1180,8 @@ fn test_exact_angle_validator_accepts_canonicalizable() {
     let registry = GateRegistry::new();
 
     let circuit = vec![
-        make_gate(gates::RZ, &[Angle64::QUARTER_TURN]),    // -> SZ
-        make_gate(gates::RZ, &[Angle64::HALF_TURN / 4]),   // -> T
+        make_gate(gates::RZ, &[Angle64::QUARTER_TURN]), // -> SZ
+        make_gate(gates::RZ, &[Angle64::HALF_TURN / 4]), // -> T
     ];
 
     assert!(validator.validate(&circuit, &registry).is_ok());
@@ -1097,7 +1197,10 @@ fn test_exact_angle_validator_rejects_non_canonicalizable() {
     ];
 
     let result = validator.validate(&circuit, &registry);
-    assert!(matches!(result, Err(ValidationError::NonCanonicalAngle { .. })));
+    assert!(matches!(
+        result,
+        Err(ValidationError::NonCanonicalAngle { .. })
+    ));
 }
 
 #[test]
@@ -1105,10 +1208,7 @@ fn test_exact_angle_validator_accepts_non_parameterized() {
     let validator = ExactAngleValidator::new();
     let registry = GateRegistry::new();
 
-    let circuit = vec![
-        make_gate(gates::H, &[]),
-        make_gate(gates::CX, &[]),
-    ];
+    let circuit = vec![make_gate(gates::H, &[]), make_gate(gates::CX, &[])];
 
     assert!(validator.validate(&circuit, &registry).is_ok());
 }
@@ -1122,10 +1222,7 @@ fn test_allow_list_validator() {
     let registry = GateRegistry::new();
 
     // Allowed gates pass
-    let circuit = vec![
-        make_gate(gates::H, &[]),
-        make_gate(gates::CX, &[]),
-    ];
+    let circuit = vec![make_gate(gates::H, &[]), make_gate(gates::CX, &[])];
     assert!(validator.validate(&circuit, &registry).is_ok());
 
     // Disallowed gate fails
@@ -1152,9 +1249,7 @@ fn test_composite_validator() {
     assert!(validator.validate(&circuit, &registry).is_ok());
 
     // Fails Clifford check (T is not Clifford)
-    let circuit = vec![
-        make_gate(gates::T, &[]),
-    ];
+    let circuit = vec![make_gate(gates::T, &[])];
     let result = validator.validate(&circuit, &registry);
     assert!(matches!(result, Err(ValidationError::ForbiddenGate { .. })));
 }
@@ -1178,9 +1273,9 @@ fn test_validation_error_display() {
         gate_name: "T".to_string(),
         position: 5,
     };
-    let msg = format!("{}", err);
-    assert!(msg.contains("T"));
-    assert!(msg.contains("5"));
+    let msg = format!("{err}");
+    assert!(msg.contains('T'));
+    assert!(msg.contains('5'));
 
     let err = ValidationError::NonCanonicalAngle {
         gate_id: gates::RZ,
@@ -1188,9 +1283,9 @@ fn test_validation_error_display() {
         angle: Angle64::from_turns(0.123),
         position: 3,
     };
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert!(msg.contains("RZ"));
-    assert!(msg.contains("3"));
+    assert!(msg.contains('3'));
 }
 
 // ============================================================================
@@ -1299,8 +1394,7 @@ fn test_standard_adaptor_ccx_gate() {
 
 #[test]
 fn test_composite_adaptor() {
-    let adaptor = CompositeAdaptor::new()
-        .with(StandardAdaptor::clifford_rz());
+    let adaptor = CompositeAdaptor::new().with(StandardAdaptor::clifford_rz());
 
     assert!(adaptor.can_adapt(gates::T));
     assert!(adaptor.can_adapt(gates::SWAP));

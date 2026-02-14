@@ -5,7 +5,7 @@
 //! - `DecompositionNoiseStrategy`: How to apply noise when gates are decomposed
 //! - Integration helpers for the existing noise system
 
-use super::{gates, GateCategory, GateId, GateSpec};
+use super::{GateCategory, GateId, GateSpec, gates};
 
 /// Noise configuration for a specific gate.
 #[derive(Clone, Debug)]
@@ -79,7 +79,7 @@ fn category_to_index(category: GateCategory) -> usize {
 /// Uses array indexing for core gates (0-255) and sparse storage for user gates.
 #[derive(Clone, Debug)]
 pub struct GateIdNoiseConfig {
-    /// Per-gate noise parameters (indexed by GateId).
+    /// Per-gate noise parameters (indexed by `GateId`).
     core_params: Vec<Option<GateNoiseParams>>,
     /// Default by category when per-gate config is missing.
     category_defaults: [Option<GateNoiseParams>; 8],
@@ -162,9 +162,7 @@ impl GateIdNoiseConfig {
     /// Get error probability for a gate.
     #[must_use]
     pub fn get_error_probability(&self, gate: GateId, spec: Option<&GateSpec>) -> f64 {
-        self.get(gate, spec)
-            .map(|p| p.error_probability)
-            .unwrap_or(0.0)
+        self.get(gate, spec).map_or(0.0, |p| p.error_probability)
     }
 
     /// Mark a gate as noiseless.
@@ -198,13 +196,7 @@ impl GateIdNoiseConfig {
         }
 
         // Two-qubit gates
-        for &gate in &[
-            gates::CX,
-            gates::CY,
-            gates::CZ,
-            gates::SWAP,
-            gates::ISWAP,
-        ] {
+        for &gate in &[gates::CX, gates::CY, gates::CZ, gates::SWAP, gates::ISWAP] {
             self.set_gate_error(gate, p2);
         }
 
@@ -243,11 +235,15 @@ pub enum DecompositionNoiseStrategy {
 impl PartialEq for DecompositionNoiseStrategy {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::PerGate, Self::PerGate) => true,
-            (Self::HighLevel, Self::HighLevel) => true,
-            (Self::Blended { high_level_weight: w1 }, Self::Blended { high_level_weight: w2 }) => {
-                (w1 - w2).abs() < f64::EPSILON
-            }
+            (Self::PerGate, Self::PerGate) | (Self::HighLevel, Self::HighLevel) => true,
+            (
+                Self::Blended {
+                    high_level_weight: w1,
+                },
+                Self::Blended {
+                    high_level_weight: w2,
+                },
+            ) => (w1 - w2).abs() < f64::EPSILON,
             _ => false,
         }
     }
@@ -289,6 +285,7 @@ impl DecompositionNoiseStrategy {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -413,7 +410,7 @@ mod tests {
         // 3 gates with 1% error each
         // Success = 0.99^3 ≈ 0.970299, Error ≈ 0.029701
         let effective = strategy.effective_error(0.03, &[0.01, 0.01, 0.01]);
-        assert!((effective - 0.029701).abs() < 0.0001);
+        assert!((effective - 0.029_701).abs() < 0.0001);
     }
 
     #[test]
@@ -446,7 +443,7 @@ mod tests {
         let strategy1 = DecompositionNoiseStrategy::blended(1.0);
         let high_level = strategy1.effective_error(0.03, &[0.01, 0.01, 0.01]);
 
-        assert!((per_gate - 0.029701).abs() < 0.0001);
+        assert!((per_gate - 0.029_701).abs() < 0.0001);
         assert_eq!(high_level, 0.03);
     }
 

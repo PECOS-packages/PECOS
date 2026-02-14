@@ -21,9 +21,9 @@ use pecos_neo::command::CommandBuilder;
 use pecos_core::QubitId;
 
 let circuit = CommandBuilder::new()
-    .prep(0).prep(1)
+    .pz(0).pz(1)
     .h(0).cx(0, 1)
-    .measure(0).measure(1)
+    .mz(0).mz(1)
     .build();
 
 // Run with importance sampling

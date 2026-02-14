@@ -160,7 +160,7 @@ fn test_general_noise_builder_noiseless_gates() {
         .with_p1_probability(0.5) // Very high error rate
         .with_p2_probability(0.5) // Very high error rate
         .with_noiseless_gate(GateType::H) // H gate is noiseless
-        .with_noiseless_gate(GateType::Measure); // Measurement is noiseless
+        .with_noiseless_gate(GateType::MZ); // Measurement is noiseless
 
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
@@ -332,7 +332,7 @@ fn test_general_noise_builder_with_multiple_noiseless_gates() {
         .with_noiseless_gate(GateType::SZ) // S gate
         .with_noiseless_gate(GateType::T)
         .with_noiseless_gate(GateType::CX)
-        .with_noiseless_gate(GateType::Measure);
+        .with_noiseless_gate(GateType::MZ);
 
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))

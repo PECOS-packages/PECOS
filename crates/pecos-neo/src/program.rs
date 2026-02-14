@@ -28,7 +28,7 @@
 //!
 //! ## Example
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::program::{CommandSource, ProgramRunner};
 //! use pecos_neo::prelude::*;
 //! use pecos_qsim::SparseStab;
@@ -58,15 +58,22 @@
 //!
 //!         // Try again: prep, rotate, measure
 //!         Some(CommandBuilder::new()
-//!             .prep(0)
+//!             .pz(0)
 //!             .h(0)
-//!             .measure(0)
+//!             .mz(0)
 //!             .build())
 //!     }
 //!
 //!     fn is_complete(&self) -> bool {
 //!         self.succeeded || self.current_attempt >= self.max_attempts
 //!     }
+//!
+//!     fn reset(&mut self) {
+//!         self.current_attempt = 0;
+//!         self.succeeded = false;
+//!     }
+//!
+//!     fn num_qubits(&self) -> usize { 1 }
 //! }
 //! ```
 
@@ -74,7 +81,9 @@ use crate::command::CommandQueue;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
 use crate::runner::ShotRunner;
+use pecos_core::rng::RngManageable;
 use pecos_qsim::CliffordGateable;
+use pecos_rng::PecosRng;
 
 /// A source of quantum commands for program execution.
 ///
@@ -202,6 +211,36 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     /// Get a mutable reference to the underlying shot runner.
     pub fn shot_runner_mut(&mut self) -> &mut ShotRunner<S> {
         &mut self.runner
+    }
+}
+
+// ============================================================================
+// DynProgramRunner (type-erased program execution)
+// ============================================================================
+
+/// Type-erased program runner for dynamic dispatch.
+///
+/// This trait abstracts `ProgramRunner<S>` operations, allowing custom simulator
+/// backends to be used through the high-level `sim_neo()` API without knowing
+/// the concrete simulator type at compile time.
+pub trait DynProgramRunner: Send + Sync {
+    /// Execute a single shot of the program.
+    fn run_shot(&mut self, source: &mut dyn CommandSource) -> ProgramResult;
+
+    /// Set the full seed for deterministic execution.
+    fn set_full_seed(&mut self, seed: u64);
+}
+
+impl<S> DynProgramRunner for ProgramRunner<S>
+where
+    S: CliffordGateable + RngManageable<Rng = PecosRng> + Send + Sync,
+{
+    fn run_shot(&mut self, source: &mut dyn CommandSource) -> ProgramResult {
+        ProgramRunner::run_shot(self, source)
+    }
+
+    fn set_full_seed(&mut self, seed: u64) {
+        self.shot_runner_mut().set_full_seed(seed);
     }
 }
 
@@ -384,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_static_program() {
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut program = StaticProgram::new(commands, 1);
         let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
@@ -398,7 +437,7 @@ mod tests {
     #[test]
     fn test_repeated_program() {
         // Simulate QEC: prep, measure syndrome, repeat
-        let round_commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let round_commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut program = RepeatedProgram::new(round_commands, 3, 1);
         let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
@@ -413,12 +452,12 @@ mod tests {
     #[test]
     fn test_conditional_program() {
         // Initial: prep and measure
-        let initial = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         // Branch: if measured 1, apply X correction
         let branch = |outcomes: &MeasurementOutcomes| {
             if outcomes.get_bit(QubitId(0)) == Some(true) {
-                Some(CommandBuilder::new().x(0).measure(0).build())
+                Some(CommandBuilder::new().x(0).mz(0).build())
             } else {
                 None
             }
@@ -435,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_program_reset() {
-        let commands = CommandBuilder::new().prep(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).mz(0).build();
         let mut program = StaticProgram::new(commands, 1);
         let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
 
@@ -451,12 +490,12 @@ mod tests {
     #[test]
     fn test_bell_state_program() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut program = StaticProgram::new(commands, 2);

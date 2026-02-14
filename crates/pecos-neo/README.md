@@ -92,6 +92,7 @@ Implement your own noise channels:
 use pecos_neo::noise::*;
 use pecos_rng::PecosRng;
 
+#[derive(Clone)]
 struct MyCustomChannel {
     error_rate: f64,
 }
@@ -114,6 +115,10 @@ impl NoiseChannel for MyCustomChannel {
     fn name(&self) -> &'static str {
         "MyCustomChannel"
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 ```
 
@@ -125,12 +130,12 @@ use pecos_qsim::SparseStab;
 
 // Build a circuit
 let commands = CommandBuilder::new()
-    .prep(0)
-    .prep(1)
+    .pz(0)
+    .pz(1)
     .h(0)
     .cx(0, 1)
-    .measure(0)
-    .measure(1)
+    .mz(0)
+    .mz(1)
     .build();
 
 // Create a runner with noise
@@ -155,10 +160,10 @@ use pecos_neo::prelude::*;
 use pecos_qsim::StateVec;
 
 let commands = CommandBuilder::new()
-    .prep(0)
+    .pz(0)
     .rx(0, Angle64::HALF_TURN)  // RX(pi) = X gate
     .rzz(0, 1, Angle64::QUARTER_TURN)  // RZZ(pi/2)
-    .measure(0)
+    .mz(0)
     .build();
 
 let mut runner = ShotRunner::new(StateVec::new(2));
@@ -179,9 +184,9 @@ is defined by the noise model configuration.
 use pecos_neo::prelude::*;
 
 let commands = CommandBuilder::new()
-    .prep(0)
+    .pz(0)
     .idle(0, 100u64)  // 100 time units
-    .measure(0)
+    .mz(0)
     .build();
 
 let noise = ComposableNoiseModel::new()

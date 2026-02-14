@@ -6,7 +6,7 @@
 //! - Conditional operations based on measurement outcomes
 //! - Ancilla qubit management
 
-use super::{gates, GateId};
+use super::{GateId, gates};
 use pecos_core::{Angle64, QubitId};
 use smallvec::SmallVec;
 
@@ -55,10 +55,7 @@ pub enum AdaptedOp {
     },
 
     /// Prepare a qubit in a specific basis.
-    Prep {
-        qubit: QubitId,
-        basis: PrepBasis,
-    },
+    Prep { qubit: QubitId, basis: PrepBasis },
 
     /// Measure a qubit, storing the result.
     Measure {
@@ -81,18 +78,13 @@ pub enum AdaptedOp {
     /// XOR a measurement result into another (classical operation).
     ///
     /// `target = target XOR source`
-    XorResult {
-        target: ResultId,
-        source: ResultId,
-    },
+    XorResult { target: ResultId, source: ResultId },
 
     /// Output a result as the operation's return value.
     ///
     /// For operations like MZX that return a measurement outcome,
     /// this specifies which internal result to expose.
-    OutputResult {
-        result: ResultId,
-    },
+    OutputResult { result: ResultId },
 }
 
 impl AdaptedOp {
@@ -128,7 +120,7 @@ impl AdaptedOp {
 
     /// Create a Z-basis preparation.
     #[must_use]
-    pub fn prep_z(qubit: QubitId) -> Self {
+    pub fn pz(qubit: QubitId) -> Self {
         Self::Prep {
             qubit,
             basis: PrepBasis::Z,
@@ -137,7 +129,7 @@ impl AdaptedOp {
 
     /// Create an X-basis preparation.
     #[must_use]
-    pub fn prep_x(qubit: QubitId) -> Self {
+    pub fn px(qubit: QubitId) -> Self {
         Self::Prep {
             qubit,
             basis: PrepBasis::X,
@@ -146,7 +138,7 @@ impl AdaptedOp {
 
     /// Create a Z-basis measurement.
     #[must_use]
-    pub fn meas_z(qubit: QubitId, result: ResultId) -> Self {
+    pub fn mz(qubit: QubitId, result: ResultId) -> Self {
         Self::Measure {
             qubit,
             basis: MeasBasis::Z,
@@ -156,7 +148,7 @@ impl AdaptedOp {
 
     /// Create an X-basis measurement.
     #[must_use]
-    pub fn meas_x(qubit: QubitId, result: ResultId) -> Self {
+    pub fn mx(qubit: QubitId, result: ResultId) -> Self {
         Self::Measure {
             qubit,
             basis: MeasBasis::X,
@@ -213,7 +205,10 @@ impl AncillaRequirements {
     /// Require N dirty ancillas (any state acceptable).
     #[must_use]
     pub fn dirty(count: usize) -> Self {
-        Self { count, clean: false }
+        Self {
+            count,
+            clean: false,
+        }
     }
 }
 
@@ -239,19 +234,18 @@ impl AdaptedSequence {
         let mut max_id = 0usize;
         for op in ops {
             match op {
-                AdaptedOp::Measure { result, .. } => {
+                AdaptedOp::Measure { result, .. } | AdaptedOp::OutputResult { result } => {
                     max_id = max_id.max(result.0 as usize + 1);
                 }
-                AdaptedOp::Conditional { if_one, if_zero, .. } => {
+                AdaptedOp::Conditional {
+                    if_one, if_zero, ..
+                } => {
                     max_id = max_id.max(Self::count_results(if_one));
                     max_id = max_id.max(Self::count_results(if_zero));
                 }
                 AdaptedOp::XorResult { target, source } => {
                     max_id = max_id.max(target.0 as usize + 1);
                     max_id = max_id.max(source.0 as usize + 1);
-                }
-                AdaptedOp::OutputResult { result } => {
-                    max_id = max_id.max(result.0 as usize + 1);
                 }
                 _ => {}
             }
@@ -268,7 +262,11 @@ mod tests {
     fn test_adapted_op_gate_constructors() {
         let h = AdaptedOp::gate1(gates::H, QubitId(0));
         match h {
-            AdaptedOp::Gate { gate_id, qubits, angles } => {
+            AdaptedOp::Gate {
+                gate_id,
+                qubits,
+                angles,
+            } => {
                 assert_eq!(gate_id, gates::H);
                 assert_eq!(qubits.as_slice(), &[QubitId(0)]);
                 assert!(angles.is_empty());
@@ -278,7 +276,9 @@ mod tests {
 
         let cx = AdaptedOp::gate2(gates::CX, QubitId(0), QubitId(1));
         match cx {
-            AdaptedOp::Gate { gate_id, qubits, .. } => {
+            AdaptedOp::Gate {
+                gate_id, qubits, ..
+            } => {
                 assert_eq!(gate_id, gates::CX);
                 assert_eq!(qubits.as_slice(), &[QubitId(0), QubitId(1)]);
             }
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_adapted_op_prep_meas() {
-        let prep = AdaptedOp::prep_z(QubitId(0));
+        let prep = AdaptedOp::pz(QubitId(0));
         match prep {
             AdaptedOp::Prep { qubit, basis } => {
                 assert_eq!(qubit, QubitId(0));
@@ -297,9 +297,13 @@ mod tests {
             _ => panic!("Expected Prep"),
         }
 
-        let meas = AdaptedOp::meas_z(QubitId(0), ResultId(0));
+        let meas = AdaptedOp::mz(QubitId(0), ResultId(0));
         match meas {
-            AdaptedOp::Measure { qubit, basis, result } => {
+            AdaptedOp::Measure {
+                qubit,
+                basis,
+                result,
+            } => {
                 assert_eq!(qubit, QubitId(0));
                 assert_eq!(basis, MeasBasis::Z);
                 assert_eq!(result, ResultId(0));
@@ -325,9 +329,9 @@ mod tests {
     #[test]
     fn test_adapted_sequence_result_count() {
         let ops = vec![
-            AdaptedOp::prep_z(QubitId(0)),
-            AdaptedOp::meas_z(QubitId(0), ResultId(0)),
-            AdaptedOp::meas_z(QubitId(1), ResultId(1)),
+            AdaptedOp::pz(QubitId(0)),
+            AdaptedOp::mz(QubitId(0), ResultId(0)),
+            AdaptedOp::mz(QubitId(1), ResultId(1)),
         ];
         let seq = AdaptedSequence::new(ops);
         assert_eq!(seq.result_count, 2);
@@ -337,7 +341,11 @@ mod tests {
     fn test_conditional_x() {
         let cond_x = AdaptedOp::conditional_x(ResultId(0), QubitId(1));
         match cond_x {
-            AdaptedOp::Conditional { condition, if_one, if_zero } => {
+            AdaptedOp::Conditional {
+                condition,
+                if_one,
+                if_zero,
+            } => {
                 assert_eq!(condition, ResultId(0));
                 assert_eq!(if_one.len(), 1);
                 assert!(if_zero.is_empty());

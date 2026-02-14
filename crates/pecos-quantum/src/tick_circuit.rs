@@ -2105,7 +2105,7 @@ mod tests {
         let counts = tc.gate_counts_by_type();
         assert_eq!(counts.get(&GateType::H), Some(&1));
         assert_eq!(counts.get(&GateType::CX), Some(&1));
-        assert_eq!(counts.get(&GateType::Measure), Some(&1));
+        assert_eq!(counts.get(&GateType::MZ), Some(&1));
     }
 
     #[test]

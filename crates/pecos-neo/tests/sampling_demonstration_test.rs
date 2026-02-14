@@ -13,13 +13,14 @@
 //! Comprehensive demonstration of all sampling techniques in pecos-neo.
 //!
 //! This test file demonstrates:
-//! 1. Path exploration on static circuits (CommandQueue)
+//! 1. Path exploration on static circuits (`CommandQueue`)
 //! 2. Importance sampling for rare event estimation
 //! 3. Measurement outcome biasing for branch exploration
 //! 4. Integration with programs using classical control flow
 //! 5. Subset simulation for very rare event estimation (Au & Beck algorithm)
 //!
 //! Each technique is shown with practical examples relevant to quantum error correction.
+#![allow(clippy::float_cmp)]
 
 use pecos_core::QubitId;
 use pecos_neo::command::CommandBuilder;
@@ -44,9 +45,9 @@ use pecos_qsim::SparseStab;
 fn demo_path_recording() {
     // A simple circuit with non-deterministic measurement
     let circuit = CommandBuilder::new()
-        .prep(0)
+        .pz(0)
         .h(0) // Creates |+> superposition
-        .measure(0)
+        .mz(0)
         .build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
@@ -71,11 +72,7 @@ fn demo_path_recording() {
 /// Demonstrate path replay - forcing specific measurement outcomes.
 #[test]
 fn demo_path_replay() {
-    let circuit = CommandBuilder::new()
-        .prep(0)
-        .h(0)
-        .measure(0)
-        .build();
+    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(1));
 
@@ -105,12 +102,12 @@ fn demo_path_replay() {
 fn demo_path_enumeration() {
     // A circuit with 2 non-deterministic measurements
     let circuit = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .h(1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(2));
@@ -131,17 +128,14 @@ fn demo_path_enumeration() {
         println!(
             "    Path '{}': outcomes ({}, {}), prob={}",
             path.to_binary_string(),
-            o0 as u8,
-            o1 as u8,
+            u8::from(o0),
+            u8::from(o1),
             path.probability()
         );
     }
 
     println!("  P(both=1) = {} (expected 0.25)", stats.mean());
-    println!(
-        "  Total weight = {} (should be 1.0)",
-        stats.total_weight()
-    );
+    println!("  Total weight = {} (should be 1.0)", stats.total_weight());
 
     assert!((stats.mean() - 0.25).abs() < 1e-10);
     assert!((stats.total_weight() - 1.0).abs() < 1e-10);
@@ -151,12 +145,12 @@ fn demo_path_enumeration() {
 #[test]
 fn demo_bell_state_paths() {
     let bell_circuit = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1) // Entangle
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(2));
@@ -172,21 +166,24 @@ fn demo_bell_state_paths() {
         let o1 = result.outcomes.get_bit(QubitId(1)).unwrap();
 
         // Check path details
-        let det0 = result.path.get(0).map(|p| p.is_deterministic).unwrap_or(true);
-        let det1 = result.path.get(1).map(|p| p.is_deterministic).unwrap_or(true);
+        let det0 = result.path.get(0).is_none_or(|p| p.is_deterministic);
+        let det1 = result.path.get(1).is_none_or(|p| p.is_deterministic);
 
         println!(
             "    Path '{}': q0={} (det={}), q1={} (det={})",
             path.to_binary_string(),
-            o0 as u8,
+            u8::from(o0),
             det0,
-            o1 as u8,
+            u8::from(o1),
             det1
         );
 
         assert_eq!(o0, o1, "Bell state outcomes must be correlated");
         assert!(!det0, "First measurement should be non-deterministic");
-        assert!(det1, "Second measurement should be deterministic (correlated)");
+        assert!(
+            det1,
+            "Second measurement should be deterministic (correlated)"
+        );
     }
 }
 
@@ -198,10 +195,7 @@ fn demo_bell_state_paths() {
 #[test]
 fn demo_importance_sampling_boosted_errors() {
     // Circuit that might see an error
-    let circuit = CommandBuilder::new()
-        .prep(0)
-        .measure(0)
-        .build();
+    let circuit = CommandBuilder::new().pz(0).mz(0).build();
 
     // True error rate is low (0.1%)
     let p_true: f64 = 0.001;
@@ -210,9 +204,9 @@ fn demo_importance_sampling_boosted_errors() {
     let p_proposal = (p_true * boost).min(0.5);
 
     println!("\nImportance Sampling Demo (Error Boosting):");
-    println!("  True error rate: {}", p_true);
-    println!("  Proposal rate: {}", p_proposal);
-    println!("  Boost factor: {}x", boost);
+    println!("  True error rate: {p_true}");
+    println!("  Proposal rate: {p_proposal}");
+    println!("  Boost factor: {boost}x");
 
     // Run many shots with boosted error rate
     let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
@@ -246,16 +240,13 @@ fn demo_importance_sampling_boosted_errors() {
 /// Compare importance sampling vs standard Monte Carlo efficiency.
 #[test]
 fn demo_variance_comparison() {
-    let circuit = CommandBuilder::new().prep(0).measure(0).build();
+    let circuit = CommandBuilder::new().pz(0).mz(0).build();
 
     let p_true: f64 = 0.01;
     let boost: f64 = 20.0;
 
     println!("\nVariance Comparison Demo:");
-    println!(
-        "  Comparing standard MC vs importance sampling for p={}",
-        p_true
-    );
+    println!("  Comparing standard MC vs importance sampling for p={p_true}");
 
     // Run both methods multiple times to compare variance
     let num_trials = 10;
@@ -268,8 +259,7 @@ fn demo_variance_comparison() {
         // Standard Monte Carlo (true error rate)
         let mut mc_runner = ShotRunner::new(SparseStab::new(1))
             .with_noise(
-                ComposableNoiseModel::new()
-                    .add_channel(SingleQubitChannel::depolarizing(p_true)),
+                ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p_true)),
             )
             .with_seed(trial as u64);
 
@@ -280,7 +270,7 @@ fn demo_variance_comparison() {
                 mc_count += 1;
             }
         }
-        mc_estimates.push(mc_count as f64 / shots_per_trial as f64);
+        mc_estimates.push(f64::from(mc_count) / f64::from(shots_per_trial));
 
         // Importance sampling (boosted)
         let p_proposal = (p_true * boost).min(0.5_f64);
@@ -302,13 +292,19 @@ fn demo_variance_comparison() {
     }
 
     // Compute means and standard deviations
-    let mc_mean: f64 = mc_estimates.iter().sum::<f64>() / num_trials as f64;
-    let is_mean: f64 = is_estimates.iter().sum::<f64>() / num_trials as f64;
+    let mc_mean: f64 = mc_estimates.iter().sum::<f64>() / f64::from(num_trials);
+    let is_mean: f64 = is_estimates.iter().sum::<f64>() / f64::from(num_trials);
 
-    let mc_var: f64 =
-        mc_estimates.iter().map(|x| (x - mc_mean).powi(2)).sum::<f64>() / num_trials as f64;
-    let is_var: f64 =
-        is_estimates.iter().map(|x| (x - is_mean).powi(2)).sum::<f64>() / num_trials as f64;
+    let mc_var: f64 = mc_estimates
+        .iter()
+        .map(|x| (x - mc_mean).powi(2))
+        .sum::<f64>()
+        / f64::from(num_trials);
+    let is_var: f64 = is_estimates
+        .iter()
+        .map(|x| (x - is_mean).powi(2))
+        .sum::<f64>()
+        / f64::from(num_trials);
 
     println!(
         "  Standard MC: mean={:.6}, std={:.6}",
@@ -320,7 +316,7 @@ fn demo_variance_comparison() {
         is_mean,
         is_var.sqrt()
     );
-    println!("  True value: {}", p_true);
+    println!("  True value: {p_true}");
 
     // Both should estimate the true value
     assert!((mc_mean - p_true).abs() < 0.02);
@@ -335,7 +331,7 @@ fn demo_variance_comparison() {
 #[test]
 fn demo_outcome_biasing() {
     // Circuit that branches based on measurement
-    let prep_and_measure = CommandBuilder::new().prep(0).h(0).measure(0).build();
+    let prep_and_measure = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
     println!("\nOutcome Biasing Demo:");
     println!("  Biasing measurements to explore rare branches.");
@@ -350,7 +346,7 @@ fn demo_outcome_biasing() {
             count_one += 1;
         }
     }
-    println!("  Unbiased: {}% measured '1'", count_one as f64 / 10.0);
+    println!("  Unbiased: {}% measured '1'", f64::from(count_one) / 10.0);
 
     // With biasing toward '1': more '1' outcomes (but with weights)
     let bias_config = OutcomeBiasConfig::bias_toward_one(0.9);
@@ -373,7 +369,7 @@ fn demo_outcome_biasing() {
 
     println!(
         "  Biased (p=0.9): {}% measured '1' (raw)",
-        biased_count_one as f64 / 10.0
+        f64::from(biased_count_one) / 10.0
     );
     println!(
         "  Weighted estimate: {:.4} (should be ~0.50)",
@@ -393,7 +389,7 @@ fn demo_outcome_biasing() {
 #[test]
 fn demo_conditional_program() {
     // Initial circuit: prepare and measure
-    let initial = CommandBuilder::new().prep(0).h(0).measure(0).build();
+    let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
     // Branch function: if measured 1, apply X correction
     let branch_fn = |outcomes: &MeasurementOutcomes| {
@@ -401,7 +397,7 @@ fn demo_conditional_program() {
             Some(
                 CommandBuilder::new()
                     .x(0) // Correction
-                    .measure(0)
+                    .mz(0)
                     .build(),
             )
         } else {
@@ -434,7 +430,7 @@ fn demo_conditional_program() {
             }
         );
     }
-    println!("  Total corrections: {}/10", corrected_count);
+    println!("  Total corrections: {corrected_count}/10");
 }
 
 /// Demonstrate a repeat-until-success pattern.
@@ -453,11 +449,11 @@ fn demo_repeat_until_success() {
             outcomes: Option<&MeasurementOutcomes>,
         ) -> Option<pecos_neo::command::CommandQueue> {
             // Check if previous attempt succeeded (measured 0)
-            if let Some(o) = outcomes {
-                if o.get_bit(QubitId(0)) == Some(false) {
-                    self.success = true;
-                    return None; // Success!
-                }
+            if let Some(o) = outcomes
+                && o.get_bit(QubitId(0)) == Some(false)
+            {
+                self.success = true;
+                return None; // Success!
             }
 
             if self.current_attempt >= self.max_attempts {
@@ -469,9 +465,9 @@ fn demo_repeat_until_success() {
             // Try again: prepare, rotate slightly, measure
             Some(
                 CommandBuilder::new()
-                    .prep(0)
+                    .pz(0)
                     .h(0) // 50% chance of 0
-                    .measure(0)
+                    .mz(0)
                     .build(),
             )
         }
@@ -520,16 +516,16 @@ fn demo_combined_path_and_error_analysis() {
     // A syndrome extraction circuit: 2 data qubits + 1 ancilla
     // Measure ancilla to detect errors
     let syndrome_circuit = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
-        .prep(2) // ancilla
+        .pz(0)
+        .pz(1)
+        .pz(2) // ancilla
         .h(0)
         .h(1)
         .cx(0, 2) // CNOT data -> ancilla
         .cx(1, 2)
-        .measure(2) // Syndrome measurement
-        .measure(0)
-        .measure(1)
+        .mz(2) // Syndrome measurement
+        .mz(0)
+        .mz(1)
         .build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(3));
@@ -561,9 +557,9 @@ fn demo_combined_path_and_error_analysis() {
             println!(
                 "    Path '{}': syn={}, d0={}, d1={}, random_meas={}",
                 path.to_binary_string(),
-                syndrome as u8,
-                d0 as u8,
-                d1 as u8,
+                u8::from(syndrome),
+                u8::from(d0),
+                u8::from(d1),
                 num_random
             );
         }
@@ -602,21 +598,27 @@ fn demo_subset_simulation_bernoulli() {
     let threshold = 20.0;
 
     // First, compute the analytical probability for validation
-    let sim = BernoulliSubsetSimulation::new(p_damage, num_steps, threshold)
-        .with_config(SubsetConfig::new().with_samples_per_level(1000).with_seed(42));
+    let sim = BernoulliSubsetSimulation::new(p_damage, num_steps, threshold).with_config(
+        SubsetConfig::new()
+            .with_samples_per_level(1000)
+            .with_seed(42),
+    );
 
     let analytical = sim.analytical_probability();
-    println!("  Parameters: p={}, n={}, threshold={}", p_damage, num_steps, threshold);
-    println!("  Analytical P(failure): {:.6}", analytical);
+    println!("  Parameters: p={p_damage}, n={num_steps}, threshold={threshold}");
+    println!("  Analytical P(failure): {analytical:.6}");
 
     // Run direct Monte Carlo for comparison
     let direct_mc = sim.run_direct_mc(10000, 12345);
-    println!("  Direct MC P(failure):  {:.6} (10k samples)", direct_mc);
+    println!("  Direct MC P(failure):  {direct_mc:.6} (10k samples)");
 
     // Run subset simulation
     let result = sim.run();
     println!("  Subset result:         {:.6}", result.probability());
-    println!("  Coefficient of variation: {:.4}", result.coefficient_of_variation);
+    println!(
+        "  Coefficient of variation: {:.4}",
+        result.coefficient_of_variation
+    );
 
     // Verify results are reasonable
     let rel_error_mc = (analytical - direct_mc).abs() / analytical;
@@ -674,15 +676,12 @@ fn demo_proper_subset_simulation() {
         BernoulliSubsetSimulation::new(p_damage, num_rounds, failure_threshold / damage_increment);
     let analytical = bernoulli.analytical_probability();
 
-    println!(
-        "  Parameters: p={}, threshold={}, rounds={}",
-        p_damage, failure_threshold, num_rounds
-    );
-    println!("  Analytical P(failure): {:.6}", analytical);
+    println!("  Parameters: p={p_damage}, threshold={failure_threshold}, rounds={num_rounds}");
+    println!("  Analytical P(failure): {analytical:.6}");
 
     // Run direct Monte Carlo
     let direct_mc = sim.run_direct_mc(5000);
-    println!("  Direct MC P(failure):  {:.6}", direct_mc);
+    println!("  Direct MC P(failure):  {direct_mc:.6}");
 
     // Run proper subset simulation
     let result = sim.run();
@@ -700,7 +699,7 @@ fn demo_proper_subset_simulation() {
 
     // The product of conditional probabilities gives the final estimate
     let product: f64 = result.levels.iter().map(|l| l.conditional_prob).product();
-    println!("  Product of conditionals: {:.6}", product);
+    println!("  Product of conditionals: {product:.6}");
 
     // Verify accuracy
     let rel_error = (analytical - result.probability()).abs() / analytical;
@@ -722,9 +721,9 @@ fn demo_proper_subset_simulation() {
 #[test]
 fn demo_technique_summary() {
     let sep = "=".repeat(70);
-    println!("\n{}", sep);
+    println!("\n{sep}");
     println!("SAMPLING TECHNIQUES SUMMARY");
-    println!("{}", sep);
+    println!("{sep}");
 
     println!("\n1. PATH EXPLORATION (path.rs)");
     println!("   Use when: Systematic analysis of all execution paths");
@@ -771,13 +770,13 @@ fn demo_technique_summary() {
     println!("   - Prune trajectories that don't progress");
     println!("   - P(rare) = product of conditional probabilities at each level");
 
-    println!("\n{}", sep);
+    println!("\n{sep}");
     println!("COMBINATIONS:");
     println!("- Path exploration + noise: Enumerate paths, apply noise at each");
     println!("- Importance sampling + outcome bias: Boost errors AND branch exploration");
     println!("- Program runner + importance sampling: Dynamic programs with rare events");
     println!("- Subset sim + ECS World: Clone simulator states for trajectory splitting");
-    println!("{}", sep);
+    println!("{sep}");
 
     println!("\nSELECTION GUIDE:");
     println!("  Error rate 1e-2 to 1e-4: Standard Monte Carlo or Importance Sampling");

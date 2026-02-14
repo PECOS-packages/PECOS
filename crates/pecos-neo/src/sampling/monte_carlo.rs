@@ -35,17 +35,16 @@
 //!
 //! ## Example
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::sampling::MonteCarloRunner;
+//! use pecos_neo::sampling::monte_carlo::MonteCarloConfig;
 //! use pecos_neo::prelude::*;
 //! use pecos_qsim::SparseStab;
+//! use pecos_core::QubitId;
 //!
 //! let commands = CommandBuilder::new()
-//!     .prep(0).h(0).measure(0)
+//!     .pz(0).h(0).mz(0)
 //!     .build();
-//!
-//! let noise = ComposableNoiseModel::new()
-//!     .add_channel(SingleQubitChannel::depolarizing(0.01));
 //!
 //! let config = MonteCarloConfig::new()
 //!     .with_seed(42)
@@ -55,8 +54,8 @@
 //! let count_ones = MonteCarloRunner::run(
 //!     &commands,
 //!     config,
-//!     || ShotRunner::new(SparseStab::new(1)).with_noise(noise.clone()),
-//!     |outcomes| if outcomes.get_bit(QubitId(0)).unwrap() { 1u64 } else { 0u64 },
+//!     || ShotRunner::new(SparseStab::new(1)),
+//!     |outcomes| if outcomes.get_bit(QubitId(0)).unwrap_or(false) { 1u64 } else { 0u64 },
 //! );
 //!
 //! let total_ones: u64 = count_ones.into_iter().sum();
@@ -64,10 +63,10 @@
 
 use crate::command::CommandQueue;
 use crate::outcome::MeasurementOutcomes;
-use crate::sampling::weight::WeightedStatistics;
-use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use crate::runner::ShotRunner;
-use pecos_core::rng::rng_manageable::{derive_seed, RngManageable};
+use crate::sampling::importance_runner::ImportanceSamplingRunner;
+use crate::sampling::weight::WeightedStatistics;
+use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
 use rayon::prelude::*;
@@ -384,11 +383,7 @@ mod tests {
     #[test]
     fn test_monte_carlo_basic() {
         // Basic test that the Monte Carlo runner executes shots and collects results
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let config = MonteCarloConfig::new()
             .with_shots(100)
@@ -420,8 +415,8 @@ mod tests {
     #[test]
     fn test_monte_carlo_with_noise() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .measure(0) // Should always be 0 without noise
+            .pz(0)
+            .mz(0) // Should always be 0 without noise
             .build();
 
         let config = MonteCarloConfig::new()
@@ -433,8 +428,8 @@ mod tests {
             &commands,
             config,
             || {
-                let noise = ComposableNoiseModel::new()
-                    .add_channel(SingleQubitChannel::depolarizing(0.0));
+                let noise =
+                    ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
                 ShotRunner::new(SparseStab::new(1)).with_noise(noise)
             },
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
@@ -447,11 +442,7 @@ mod tests {
 
     #[test]
     fn test_importance_sampling_monte_carlo() {
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let config = MonteCarloConfig::new()
             .with_shots(1000)
@@ -490,8 +481,8 @@ mod tests {
         // Test that runs with the same seed and setup produce consistent results.
         // We verify this by checking that results match expected statistical properties.
         let commands = CommandBuilder::new()
-            .prep(0)
-            .measure(0) // Always 0 without noise or H gate
+            .pz(0)
+            .mz(0) // Always 0 without noise or H gate
             .build();
 
         let config = MonteCarloConfig::new()
@@ -519,9 +510,9 @@ mod tests {
         // Verify that two runs with the same seed produce IDENTICAL results.
         // This tests the hierarchical seeding: config.seed → worker_{id} → noise + simulator
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Creates superposition - outcome depends on RNG
-            .measure(0)
+            .mz(0)
             .build();
 
         let config1 = MonteCarloConfig::new()
@@ -560,9 +551,9 @@ mod tests {
     fn test_different_seeds_produce_different_results() {
         // Verify that different seeds produce different results (with high probability)
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Creates superposition
-            .measure(0)
+            .mz(0)
             .build();
 
         let config1 = MonteCarloConfig::new()

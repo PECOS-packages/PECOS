@@ -31,12 +31,16 @@
 //!
 //! ## Example
 //!
-//! ```ignore
-//! use pecos_neo::sampling::{ImportanceSamplingRunner, ImportanceConfig, WeightedStatistics};
+//! ```no_run
+//! use pecos_neo::sampling::ImportanceSamplingRunner;
+//! use pecos_neo::sampling::weight::WeightedStatistics;
+//! use pecos_neo::prelude::*;
 //! use pecos_qsim::SparseStab;
 //!
+//! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//!
 //! // True error rate: 0.001, boost by 10x for proposal
-//! let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
+//! let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
 //!     .with_single_qubit_boost(0.001, 10.0)
 //!     .with_two_qubit_boost(0.01, 5.0)
 //!     .with_seed(42);
@@ -45,7 +49,7 @@
 //!
 //! for _ in 0..10000 {
 //!     let result = runner.run_shot(&commands);
-//!     let failed = check_logical_error(&result.outcomes);
+//!     let failed = false; // Replace with actual logical error check
 //!     stats.add(if failed { 1.0 } else { 0.0 }, &result.weight);
 //! }
 //!
@@ -57,8 +61,8 @@ use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::sampling::importance::ImportanceConfig;
 use crate::sampling::weight::SampleWeight;
-use pecos_core::rng::rng_manageable::{derive_seed, RngManageable};
 use pecos_core::QubitId;
+use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_qsim::{CliffordGateable, ForcedMeasurement};
 use pecos_rng::PecosRng;
 use rand::Rng;
@@ -75,7 +79,9 @@ use rand_core::SeedableRng;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use pecos_neo::sampling::OutcomeBiasConfig;
+///
 /// // Bias toward outcome 1 with 80% probability (for exploring rare branches)
 /// let config = OutcomeBiasConfig::bias_toward_one(0.8);
 ///
@@ -148,7 +154,10 @@ pub struct ImportanceSampledShot {
 /// For programs with classical control flow based on measurement outcomes,
 /// you can bias the measurement outcomes to explore rare branches more often:
 ///
-/// ```ignore
+/// ```
+/// use pecos_neo::sampling::{ImportanceSamplingRunner, OutcomeBiasConfig};
+/// use pecos_qsim::SparseStab;
+///
 /// let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
 ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
 ///     .with_seed(42);
@@ -239,7 +248,10 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use pecos_neo::sampling::{ImportanceSamplingRunner, OutcomeBiasConfig};
+    /// use pecos_qsim::SparseStab;
+    ///
     /// // Bias toward measuring 1 (80% of the time for non-deterministic measurements)
     /// let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
     ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
@@ -326,13 +338,13 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
         // Execute the gate
         match command.gate_type {
             // Preparation
-            GateType::Prep | GateType::QAlloc => {
+            GateType::PZ | GateType::QAlloc => {
                 self.simulator.pz(&qubits);
                 self.emit_after_preparation(&qubits);
             }
 
             // Measurement
-            GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                 let results = self.simulator.mz(&qubits);
                 let mut outcomes: Vec<bool> = results.iter().map(|r| r.outcome).collect();
 
@@ -711,10 +723,12 @@ where
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// use pecos_neo::sampling::{ImportanceSamplingRunner, OutcomeBiasConfig};
+    /// use pecos_neo::prelude::*;
     /// use pecos_qsim::SparseStab;
     ///
+    /// let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
     /// let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
     ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
     ///     .with_seed(42);
@@ -729,7 +743,7 @@ where
     /// For each measurement:
     /// 1. If deterministic (stabilizer eigenstate): return fixed outcome, no weight change
     /// 2. If non-deterministic (50/50): sample from biased proposal, force that outcome,
-    ///    update weight by P(outcome)/Q(outcome) = 0.5/bias_prob
+    ///    update weight by P(outcome)/Q(outcome) = `0.5/bias_prob`
     pub fn run_shot_biased(&mut self, commands: &CommandQueue) -> ImportanceSampledShot {
         // Reset for new shot
         self.weight = SampleWeight::one();
@@ -764,13 +778,13 @@ where
         // Execute the gate
         match command.gate_type {
             // Preparation
-            GateType::Prep | GateType::QAlloc => {
+            GateType::PZ | GateType::QAlloc => {
                 self.simulator.pz(&qubits);
                 self.emit_after_preparation(&qubits);
             }
 
             // Measurement with outcome biasing
-            GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                 for &qubit in &qubits {
                     let (outcome, is_deterministic) = self.measure_biased(qubit.index());
 
@@ -799,7 +813,7 @@ where
 
     /// Perform a biased measurement using forced outcomes.
     ///
-    /// Returns (outcome, is_deterministic).
+    /// Returns (outcome, `is_deterministic`).
     fn measure_biased(&mut self, qubit: usize) -> (bool, bool) {
         if let Some(ref bias_config) = self.outcome_bias {
             // Sample from proposal distribution to get desired outcome
@@ -837,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_importance_runner_basic() {
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
 
@@ -850,9 +864,9 @@ mod tests {
     #[test]
     fn test_importance_runner_with_boost() {
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Single-qubit gate will trigger importance sampling
-            .measure(0)
+            .mz(0)
             .build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
@@ -870,7 +884,7 @@ mod tests {
         // This test verifies that importance sampling produces
         // unbiased estimates of the true error rate
 
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let true_rate = 0.001;
         let boost = 100.0; // Very aggressive boost
@@ -901,11 +915,11 @@ mod tests {
     #[test]
     fn test_two_qubit_importance_sampling() {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .cx(0, 1) // Two-qubit gate
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(2))
@@ -918,7 +932,7 @@ mod tests {
 
     #[test]
     fn test_measurement_importance_sampling() {
-        let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
             .with_measurement_boost(0.001, 100.0)
@@ -990,9 +1004,9 @@ mod tests {
         // Key test: biased sampling with reweighting should produce
         // the same expected value as unbiased sampling
         let commands = CommandBuilder::new()
-            .prep(0)
+            .pz(0)
             .h(0) // Creates 50/50 superposition
-            .measure(0)
+            .mz(0)
             .build();
 
         let num_shots = 5000;
@@ -1006,7 +1020,7 @@ mod tests {
                 unbiased_ones += 1;
             }
         }
-        let unbiased_rate = unbiased_ones as f64 / num_shots as f64;
+        let unbiased_rate = f64::from(unbiased_ones) / num_shots as f64;
 
         // ========== Biased sampling with reweighting ==========
         // Bias heavily toward 1 (80%)
@@ -1051,11 +1065,7 @@ mod tests {
     fn test_biased_measurement_explores_branches() {
         // Test that biasing actually causes more of the biased outcome to occur
         // (before reweighting)
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let num_shots = 1000;
 
@@ -1072,7 +1082,7 @@ mod tests {
             }
         }
 
-        let ones_rate = ones as f64 / num_shots as f64;
+        let ones_rate = f64::from(ones) / num_shots as f64;
 
         // Should see ~90% ones (the bias rate), not 50%
         assert!(
@@ -1086,8 +1096,8 @@ mod tests {
         // Deterministic measurements should not be affected by outcome biasing
         // Prep |0> then measure should always give 0
         let commands = CommandBuilder::new()
-            .prep(0)
-            .measure(0) // No H, so deterministic
+            .pz(0)
+            .mz(0) // No H, so deterministic
             .build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))

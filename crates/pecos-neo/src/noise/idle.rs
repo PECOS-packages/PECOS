@@ -16,7 +16,7 @@
 //! declarative noise models with conditional logic, see `FlowChannel` in
 //! `pecos_neo::noise::flow::prelude`.
 //!
-//! ## When to use this vs FlowChannel
+//! ## When to use this vs `FlowChannel`
 //!
 //! **Use `IdleChannel` when:**
 //! - You want standard T1/T2 decay with linear/quadratic scaling
@@ -253,7 +253,9 @@ impl NoiseChannel for IdleChannel {
                 if p_quad > 0.0 {
                     for &qubit in *qubits {
                         // Skip leaked qubits (fast path skips check if no leakage exists)
-                        if (!has_any_leakage || !ctx.is_leaked(qubit)) && rng.random::<f64>() < p_quad {
+                        if (!has_any_leakage || !ctx.is_leaked(qubit))
+                            && rng.random::<f64>() < p_quad
+                        {
                             gates.push(GateCommand::new(GateType::Z, smallvec::smallvec![qubit]));
                         }
                     }
@@ -270,6 +272,10 @@ impl NoiseChannel for IdleChannel {
 
     fn name(&self) -> &'static str {
         "IdleChannel"
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
     }
 }
 
@@ -330,7 +336,8 @@ mod tests {
     #[test]
     fn test_linear_with_custom_weights() {
         // X-biased linear noise
-        let channel = IdleChannel::linear(1.0).with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0));
+        let channel =
+            IdleChannel::linear(1.0).with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0));
 
         let qubits = [QubitId(0)];
         let duration = TimeUnits::new(1);
@@ -367,8 +374,7 @@ mod tests {
 
     #[test]
     fn test_coherent_dephasing() {
-        let channel = IdleChannel::default()
-            .with_coherent_dephasing(true);
+        let channel = IdleChannel::default().with_coherent_dephasing(true);
         let channel = IdleChannel {
             quadratic_rate: 1.0, // 1 rad/ns
             ..channel

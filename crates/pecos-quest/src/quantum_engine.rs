@@ -162,14 +162,14 @@ impl Engine for QuestStateVecEngine {
                             .r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits);
                     }
                 }
-                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
                         let outcome = u32::from(meas_result.outcome);
                         measurements.push(outcome);
                     }
                 }
-                GateType::Prep | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc => {
                     self.simulator.pz(&cmd.qubits);
                 }
                 GateType::I
@@ -367,14 +367,14 @@ impl Engine for QuestDensityMatrixEngine {
                             .r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits);
                     }
                 }
-                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
                         let outcome = u32::from(meas_result.outcome);
                         measurements.push(outcome);
                     }
                 }
-                GateType::Prep | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc => {
                     self.simulator.pz(&cmd.qubits);
                 }
                 GateType::I
@@ -985,14 +985,14 @@ impl Engine for QuestCudaStateVecEngine {
                         }
                     }
                 }
-                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     for q in &cmd.qubits {
                         let qubit = **q as i32;
                         let outcome = unsafe { (self.backend.measure)(self.qureg_handle, qubit) };
                         measurements.push(u32::try_from(outcome).unwrap());
                     }
                 }
-                GateType::Prep | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc => {
                     // Prepare in |0> state: measure and flip if result is 1
                     for q in &cmd.qubits {
                         let qubit = **q as i32;

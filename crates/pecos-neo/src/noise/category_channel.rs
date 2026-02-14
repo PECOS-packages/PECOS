@@ -17,7 +17,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::{CategoryBasedChannel, ComposableNoiseModel};
 //! use pecos_neo::extensible::{GateCategory, GateDefinitions};
 //!
@@ -54,7 +54,9 @@ struct CategoryConfig {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::CategoryBasedChannel;
+/// # use pecos_neo::extensible::GateCategory;
 /// let channel = CategoryBasedChannel::new()
 ///     .with_category(GateCategory::SingleQubitUnitary, 0.001)
 ///     .with_category(GateCategory::TwoQubitUnitary, 0.01)
@@ -154,9 +156,8 @@ impl NoiseChannel for CategoryBasedChannel {
             return NoiseResponse::None;
         };
 
-        let category = match ctx.category(*gate_id) {
-            Some(c) => c,
-            None => return NoiseResponse::None, // No definitions or unknown gate
+        let Some(category) = ctx.category(*gate_id) else {
+            return NoiseResponse::None; // No definitions or unknown gate
         };
 
         let error_prob = self.error_for_category(category);
@@ -167,8 +168,7 @@ impl NoiseChannel for CategoryBasedChannel {
         let default_weights = PauliWeights::uniform();
         let pauli_weights = self
             .get_config(category)
-            .map(|c| &c.pauli_weights)
-            .unwrap_or(&default_weights);
+            .map_or(&default_weights, |c| &c.pauli_weights);
 
         let mut gates = SmallVec::new();
 
@@ -198,6 +198,10 @@ impl NoiseChannel for CategoryBasedChannel {
     fn name(&self) -> &'static str {
         "CategoryBasedChannel"
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 /// Convert category to array index.
@@ -217,8 +221,8 @@ fn category_to_index(category: GateCategory) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extensible::{gates, GateDefinitions};
     use crate::command::GateType;
+    use crate::extensible::{GateDefinitions, gates};
     use pecos_core::QubitId;
 
     #[test]
@@ -281,11 +285,10 @@ mod tests {
         let my_gate = gates_def.register(
             crate::extensible::GateSpec::new("MyGate")
                 .with_quantum_arity(2)
-                .with_category(GateCategory::TwoQubitUnitary)
+                .with_category(GateCategory::TwoQubitUnitary),
         );
 
-        let channel = CategoryBasedChannel::new()
-            .with_category(GateCategory::TwoQubitUnitary, 1.0);
+        let channel = CategoryBasedChannel::new().with_category(GateCategory::TwoQubitUnitary, 1.0);
 
         let mut ctx = NoiseContext::new();
         ctx.set_gate_definitions(gates_def);
@@ -308,8 +311,8 @@ mod tests {
 
     #[test]
     fn test_category_channel_no_definitions() {
-        let channel = CategoryBasedChannel::new()
-            .with_category(GateCategory::SingleQubitUnitary, 1.0);
+        let channel =
+            CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 1.0);
 
         // No gate definitions set
         let mut ctx = NoiseContext::new();

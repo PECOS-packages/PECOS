@@ -57,12 +57,7 @@ pub trait GateAdaptor: Send + Sync {
     ///
     /// The adaptor receives the gate ID, qubits, and angles, and returns
     /// a sequence of gates that are equivalent to the original.
-    fn adapt(
-        &self,
-        gate_id: GateId,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> Vec<AdaptedGate>;
+    fn adapt(&self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> Vec<AdaptedGate>;
 
     /// Get the set of gates this adaptor can decompose.
     fn adaptable_gates(&self) -> GateSupportSet;
@@ -99,7 +94,9 @@ impl StandardAdaptor {
         bits.insert(gates::RYY);
         bits.insert(gates::CCX);
 
-        Self { can_adapt_bits: bits }
+        Self {
+            can_adapt_bits: bits,
+        }
     }
 
     /// Create an empty adaptor (for adding custom decompositions).
@@ -120,12 +117,7 @@ impl GateAdaptor for StandardAdaptor {
         self.can_adapt_bits.clone()
     }
 
-    fn adapt(
-        &self,
-        gate_id: GateId,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> Vec<AdaptedGate> {
+    fn adapt(&self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> Vec<AdaptedGate> {
         match gate_id {
             id if id == gates::T => {
                 // T = RZ(π/4)
@@ -244,7 +236,7 @@ impl GateAdaptor for StandardAdaptor {
             }
 
             _ => {
-                panic!("StandardAdaptor cannot adapt gate {:?}", gate_id);
+                panic!("StandardAdaptor cannot adapt gate {gate_id:?}");
             }
         }
     }
@@ -296,27 +288,25 @@ impl GateAdaptor for CompositeAdaptor {
         result
     }
 
-    fn adapt(
-        &self,
-        gate_id: GateId,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> Vec<AdaptedGate> {
+    fn adapt(&self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> Vec<AdaptedGate> {
         for adaptor in &self.adaptors {
             if adaptor.can_adapt(gate_id) {
                 return adaptor.adapt(gate_id, qubits, angles);
             }
         }
-        panic!("CompositeAdaptor cannot adapt gate {:?}", gate_id);
+        panic!("CompositeAdaptor cannot adapt gate {gate_id:?}");
     }
 }
+
+/// Decomposition function type for custom adaptors.
+type DecomposeFn = Box<dyn Fn(&[QubitId], &[Angle64]) -> Vec<AdaptedGate> + Send + Sync>;
 
 /// Custom adaptor for user-defined decompositions.
 pub struct CustomAdaptor {
     /// Gate ID this adaptor handles
     gate_id: GateId,
     /// Decomposition function
-    decompose: Box<dyn Fn(&[QubitId], &[Angle64]) -> Vec<AdaptedGate> + Send + Sync>,
+    decompose: DecomposeFn,
 }
 
 impl CustomAdaptor {
@@ -343,12 +333,7 @@ impl GateAdaptor for CustomAdaptor {
         set
     }
 
-    fn adapt(
-        &self,
-        _gate_id: GateId,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> Vec<AdaptedGate> {
+    fn adapt(&self, _gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> Vec<AdaptedGate> {
         (self.decompose)(qubits, angles)
     }
 }
@@ -523,7 +508,7 @@ impl ExtendedAdaptor for CompositeExtendedAdaptor {
                 return adaptor.adapt(gate_id, qubits, angles, ancillas);
             }
         }
-        panic!("CompositeExtendedAdaptor cannot adapt gate {:?}", gate_id);
+        panic!("CompositeExtendedAdaptor cannot adapt gate {gate_id:?}");
     }
 }
 
@@ -538,7 +523,11 @@ mod extended_tests {
         let op = gate.to_op();
 
         match op {
-            AdaptedOp::Gate { gate_id, qubits, angles } => {
+            AdaptedOp::Gate {
+                gate_id,
+                qubits,
+                angles,
+            } => {
                 assert_eq!(gate_id, gates::H);
                 assert_eq!(qubits.as_slice(), &[QubitId(0)]);
                 assert!(angles.is_empty());

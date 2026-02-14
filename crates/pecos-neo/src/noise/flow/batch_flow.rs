@@ -20,21 +20,26 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::batch_flow::*;
+//! use pecos_neo::noise::flow::prelude::*;
+//! use pecos_neo::noise::NoiseContext;
+//! use pecos_rng::PecosRng;
 //!
 //! // Create optimized batch processor
 //! let processor = fast_depolarizing(1e-4, pauli());
 //!
 //! // Process all qubits
-//! let mut state = BatchState::new(1_000_000);
+//! let mut state = BatchState::new(1_000);
 //! state.mark_all_active();
+//! let mut ctx = NoiseContext::new();
+//! let mut rng = PecosRng::seed_from_u64(42);
 //! let result = processor.process_all(&state, &mut ctx, &mut rng);
 //! ```
 
+use super::Primitive;
 use super::batch::GeometricSampler;
 use super::response::FlowResponse;
-use super::Primitive;
 use crate::noise::NoiseContext;
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
@@ -58,8 +63,9 @@ pub struct BatchState {
 
 impl BatchState {
     /// Create a new batch state.
+    #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let num_words = (num_qubits + 63) / 64;
+        let num_words = num_qubits.div_ceil(64);
         Self {
             num_qubits,
             leaked: vec![0; num_words],
@@ -69,12 +75,14 @@ impl BatchState {
 
     /// Get the number of qubits.
     #[inline]
+    #[must_use]
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
     }
 
     /// Check if a qubit is leaked.
     #[inline]
+    #[must_use]
     pub fn is_leaked(&self, qubit: QubitId) -> bool {
         let idx = qubit.0;
         if idx >= self.num_qubits {
@@ -109,6 +117,7 @@ impl BatchState {
 
     /// Check if a qubit is active.
     #[inline]
+    #[must_use]
     pub fn is_active(&self, qubit: QubitId) -> bool {
         let idx = qubit.0;
         if idx >= self.num_qubits {
@@ -142,11 +151,13 @@ impl BatchState {
     }
 
     /// Count leaked qubits.
+    #[must_use]
     pub fn count_leaked(&self) -> usize {
         self.leaked.iter().map(|w| w.count_ones() as usize).sum()
     }
 
     /// Count active qubits.
+    #[must_use]
     pub fn count_active(&self) -> usize {
         self.active.iter().map(|w| w.count_ones() as usize).sum()
     }
@@ -177,6 +188,7 @@ pub struct BatchFlowResult {
 
 impl BatchFlowResult {
     /// Check if empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.skip.is_empty()
             && self.leaked.is_empty()
@@ -199,7 +211,7 @@ impl BatchFlowResult {
 ///
 /// For 1M qubits at p=1e-4:
 /// - ~100 geometric samples generated
-/// - ~100 filter checks (is_leaked lookups)
+/// - ~100 filter checks (`is_leaked` lookups)
 /// - ~99 actions applied
 /// - **Total: ~4 µs**
 ///
@@ -385,8 +397,7 @@ mod tests {
         for (q, _) in &result.responses {
             assert!(
                 !state.is_leaked(*q),
-                "Leaked qubit {:?} should not be affected",
-                q
+                "Leaked qubit {q:?} should not be affected"
             );
         }
 
@@ -419,8 +430,7 @@ mod tests {
         for (q, _) in &result.responses {
             assert!(
                 !state.is_leaked(*q),
-                "Leaked qubit {:?} should not be affected",
-                q
+                "Leaked qubit {q:?} should not be affected"
             );
         }
     }
@@ -439,10 +449,6 @@ mod tests {
 
         // Should be ~1000 affected (1% of 100K)
         let count = result.responses.len();
-        assert!(
-            count > 800 && count < 1200,
-            "Expected ~1000, got {}",
-            count
-        );
+        assert!(count > 800 && count < 1200, "Expected ~1000, got {count}");
     }
 }

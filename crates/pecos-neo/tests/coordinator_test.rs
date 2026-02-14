@@ -65,12 +65,12 @@ fn distributions_match(
 fn test_coordinator_vs_monte_carlo_bell_state() {
     // Compare ParallelCoordinator against MonteCarloRunner for Bell state
     let commands = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     // Run with MonteCarloRunner
@@ -86,7 +86,11 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
-            format!("{}{}", if b0 { '1' } else { '0' }, if b1 { '1' } else { '0' })
+            format!(
+                "{}{}",
+                if b0 { '1' } else { '0' },
+                if b1 { '1' } else { '0' }
+            )
         },
     );
 
@@ -108,12 +112,12 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
         || SparseStab::new(2),
         |world| {
             let commands = CommandBuilder::new()
-                .prep(0)
-                .prep(1)
+                .pz(0)
+                .pz(1)
                 .h(0)
                 .cx(0, 1)
-                .measure(0)
-                .measure(1)
+                .mz(0)
+                .mz(1)
                 .build();
 
             world
@@ -122,13 +126,17 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
                     let sim_comp = world.simulators.get(entity).unwrap();
                     let rng_comp = world.rngs.get(entity).unwrap();
 
-                    let mut runner = ShotRunner::new(sim_comp.simulator.clone())
-                        .with_rng(rng_comp.rng.clone());
+                    let mut runner =
+                        ShotRunner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
 
                     let outcomes = runner.run_shot(&commands);
                     let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
                     let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
-                    format!("{}{}", if b0 { '1' } else { '0' }, if b1 { '1' } else { '0' })
+                    format!(
+                        "{}{}",
+                        if b0 { '1' } else { '0' },
+                        if b1 { '1' } else { '0' }
+                    )
                 })
                 .collect()
         },
@@ -143,8 +151,14 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
     let mc_valid = mc_counts.get("00").unwrap_or(&0) + mc_counts.get("11").unwrap_or(&0);
     let coord_valid = coord_counts.get("00").unwrap_or(&0) + coord_counts.get("11").unwrap_or(&0);
 
-    assert_eq!(mc_valid, NUM_SHOTS, "MC: Bell state should only produce correlated outcomes");
-    assert_eq!(coord_valid, NUM_SHOTS, "Coord: Bell state should only produce correlated outcomes");
+    assert_eq!(
+        mc_valid, NUM_SHOTS,
+        "MC: Bell state should only produce correlated outcomes"
+    );
+    assert_eq!(
+        coord_valid, NUM_SHOTS,
+        "Coord: Bell state should only produce correlated outcomes"
+    );
 
     // Distributions should match
     assert!(
@@ -158,11 +172,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
     // Compare with depolarizing noise
     let p1 = 0.05;
 
-    let commands = CommandBuilder::new()
-        .prep(0)
-        .x(0)
-        .measure(0)
-        .build();
+    let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
     // Run with MonteCarloRunner
     let mc_config = MonteCarloConfig::new()
@@ -174,8 +184,8 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
         &commands,
         mc_config,
         || {
-            let noise = ComposableNoiseModel::new()
-                .add_channel(SingleQubitChannel::depolarizing(p1));
+            let noise =
+                ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p1));
             ShotRunner::new(SparseStab::new(1)).with_noise(noise)
         },
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
@@ -195,11 +205,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
     let coord_results = coordinator.run(
         || SparseStab::new(1),
         |world| {
-            let commands = CommandBuilder::new()
-                .prep(0)
-                .x(0)
-                .measure(0)
-                .build();
+            let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
             world
                 .entities()
@@ -254,11 +260,7 @@ fn test_coordinator_determinism() {
         .run(
             || SparseStab::new(1),
             |world| {
-                let commands = CommandBuilder::new()
-                    .prep(0)
-                    .h(0)
-                    .measure(0)
-                    .build();
+                let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
                 world
                     .entities()
@@ -282,11 +284,7 @@ fn test_coordinator_determinism() {
         .run(
             || SparseStab::new(1),
             |world| {
-                let commands = CommandBuilder::new()
-                    .prep(0)
-                    .h(0)
-                    .measure(0)
-                    .build();
+                let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
                 world
                     .entities()
@@ -307,14 +305,17 @@ fn test_coordinator_determinism() {
         .collect();
 
     // Results should be identical
-    assert_eq!(results1, results2, "Same seed should produce identical results");
+    assert_eq!(
+        results1, results2,
+        "Same seed should produce identical results"
+    );
 }
 
 #[test]
 fn test_coordinator_sync_points() {
     // Test that sync points are called correctly
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let config = ParallelConfig::new()
         .with_workers(2)
@@ -361,11 +362,7 @@ fn test_coordinator_hadamard_distribution() {
     let results = coordinator.run(
         || SparseStab::new(1),
         |world| {
-            let commands = CommandBuilder::new()
-                .prep(0)
-                .h(0)
-                .measure(0)
-                .build();
+            let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
             world
                 .entities()
@@ -373,8 +370,8 @@ fn test_coordinator_hadamard_distribution() {
                     let sim_comp = world.simulators.get(entity).unwrap();
                     let rng_comp = world.rngs.get(entity).unwrap();
 
-                    let mut runner = ShotRunner::new(sim_comp.simulator.clone())
-                        .with_rng(rng_comp.rng.clone());
+                    let mut runner =
+                        ShotRunner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
 
                     let outcomes = runner.run_shot(&commands);
                     outcomes.get_bit(QubitId(0)).unwrap_or(false)

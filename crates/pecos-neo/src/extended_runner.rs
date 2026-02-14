@@ -37,18 +37,20 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
+//! # use pecos_neo::prelude::*;
 //! use pecos_neo::extended_runner::{ExtendedRunner, GateOverrides};
 //! use pecos_neo::extensible::{GateDefinitions, OpBuilder, gates};
-//! use pecos_qsim::{SparseStab, StateVec};
+//! use pecos_qsim::{CliffordGateable, SparseStab, StateVec};
 //!
+//! # fn main() -> Result<(), ExecutionError> {
 //! let definitions = GateDefinitions::new();
 //!
 //! // Clifford-only circuit with Clifford simulator
 //! let clifford_circuit = OpBuilder::new()
-//!     .prep_z(QubitId(0))
+//!     .pz(QubitId(0))
 //!     .h(QubitId(0))
-//!     .meas_z(QubitId(0), ResultId(0))
+//!     .mz(QubitId(0), ResultId(0))
 //!     .build();
 //!
 //! let mut runner = ExtendedRunner::new(SparseStab::new(1), definitions.clone());
@@ -56,36 +58,38 @@
 //!
 //! // Circuit with rotations using rotation-capable simulator
 //! let rotation_circuit = OpBuilder::new()
-//!     .prep_z(QubitId(0))
+//!     .pz(QubitId(0))
 //!     .rx(QubitId(0), Angle64::QUARTER_TURN)
-//!     .meas_z(QubitId(0), ResultId(0))
+//!     .mz(QubitId(0), ResultId(0))
 //!     .build();
 //!
 //! let mut runner = ExtendedRunner::rotations(StateVec::new(1), definitions.clone());
 //! let outcomes = runner.run(&rotation_circuit)?;  // Same run() method!
 //!
 //! // With custom gate overrides
-//! let overrides = GateOverrides::new()
+//! # let my_custom_gate = gates::H;
+//! let overrides: GateOverrides<SparseStab> = GateOverrides::new()
 //!     .register(my_custom_gate, |sim, qubits, _angles| {
 //!         sim.h(qubits);  // Implement as H
 //!         true
 //!     });
-//! let mut runner = ExtendedRunner::new(sim, definitions)
+//! let mut runner = ExtendedRunner::new(SparseStab::new(1), definitions)
 //!     .with_overrides(overrides);
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::command::GateType;
 use crate::extensible::{
-    AdaptedOp, AdaptedSequence, GateDefinitions, GateId,
-    MeasBasis, PrepBasis, ResultId,
+    AdaptedOp, AdaptedSequence, GateDefinitions, GateId, MeasBasis, PrepBasis, ResultId,
 };
-use std::collections::HashMap;
 use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use pecos_core::{Angle64, QubitId};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_rng::PecosRng;
 use rand_core::SeedableRng;
+use std::collections::HashMap;
 
 /// Function signature for custom gate executors.
 ///
@@ -107,11 +111,14 @@ type RotationExecutorFn<S> = fn(&mut S, GateId, &[QubitId], &[Angle64]) -> bool;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_qsim::SparseStab;
+/// use pecos_qsim::CliffordGateable;
 /// use pecos_neo::extended_runner::GateOverrides;
 /// use pecos_neo::extensible::gates;
 ///
 /// // Register a custom implementation for a gate
+/// # let my_custom_gate = gates::X;
 /// let overrides: GateOverrides<SparseStab> = GateOverrides::new()
 ///     .register(my_custom_gate, |sim, qubits, _angles| {
 ///         sim.h(qubits);
@@ -208,22 +215,34 @@ impl<S> GateOverrides<S> {
 /// # Usage
 ///
 /// For Clifford-only simulators (e.g., `SparseStab`):
-/// ```ignore
+/// ```
+/// # use pecos_neo::prelude::*;
+/// # use pecos_qsim::SparseStab;
+/// # let definitions = GateDefinitions::new();
+/// # let circuit = OpBuilder::new().pz(QubitId(0)).mz(QubitId(0), ResultId(0)).build();
 /// let mut runner = ExtendedRunner::new(SparseStab::new(2), definitions);
-/// let outcomes = runner.run(&circuit)?;
+/// let outcomes = runner.run(&circuit).unwrap();
 /// ```
 ///
 /// For rotation-capable simulators (e.g., `StateVec`):
-/// ```ignore
+/// ```
+/// # use pecos_neo::prelude::*;
+/// # use pecos_qsim::StateVec;
+/// # let definitions = GateDefinitions::new();
+/// # let circuit = OpBuilder::new().pz(QubitId(0)).mz(QubitId(0), ResultId(0)).build();
 /// let mut runner = ExtendedRunner::rotations(StateVec::new(2), definitions);
-/// let outcomes = runner.run(&circuit)?;  // Rotation gates work automatically
+/// let outcomes = runner.run(&circuit).unwrap();  // Rotation gates work automatically
 /// ```
 ///
 /// With custom gate overrides:
-/// ```ignore
+/// ```
+/// # use pecos_neo::prelude::*;
+/// # use pecos_qsim::{SparseStab, CliffordGateable};
+/// # let definitions = GateDefinitions::new();
+/// # let my_gate = gates::X;
 /// let overrides = GateOverrides::new()
-///     .register(my_gate, |sim, qubits, _| { sim.h(qubits); true });
-/// let mut runner = ExtendedRunner::new(sim, definitions)
+///     .register(my_gate, |sim: &mut SparseStab, qubits, _| { sim.h(qubits); true });
+/// let mut runner = ExtendedRunner::new(SparseStab::new(1), definitions)
 ///     .with_overrides(overrides);
 /// ```
 pub struct ExtendedRunner<S: CliffordGateable> {
@@ -336,7 +355,10 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
     }
 
     /// Execute a circuit and return measurement outcomes.
-    pub fn run(&mut self, circuit: &AdaptedSequence) -> Result<&MeasurementOutcomes, ExecutionError> {
+    pub fn run(
+        &mut self,
+        circuit: &AdaptedSequence,
+    ) -> Result<&MeasurementOutcomes, ExecutionError> {
         self.outcomes.clear();
         self.results.clear();
         self.results.resize(circuit.result_count, false);
@@ -347,7 +369,10 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
     }
 
     /// Execute a single shot and return outcomes, then reset.
-    pub fn run_shot(&mut self, circuit: &AdaptedSequence) -> Result<MeasurementOutcomes, ExecutionError> {
+    pub fn run_shot(
+        &mut self,
+        circuit: &AdaptedSequence,
+    ) -> Result<MeasurementOutcomes, ExecutionError> {
         self.run(circuit)?;
         let outcomes = std::mem::take(&mut self.outcomes);
 
@@ -375,17 +400,33 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
     /// Execute a single operation.
     fn execute_op(&mut self, op: &AdaptedOp, depth: usize) -> Result<(), ExecutionError> {
         match op {
-            AdaptedOp::Gate { gate_id, qubits, angles } => {
+            AdaptedOp::Gate {
+                gate_id,
+                qubits,
+                angles,
+            } => {
                 self.execute_gate(*gate_id, qubits, angles, depth)?;
             }
             AdaptedOp::Prep { qubit, basis } => {
                 self.execute_prep(*qubit, *basis);
             }
-            AdaptedOp::Measure { qubit, basis, result } => {
+            AdaptedOp::Measure {
+                qubit,
+                basis,
+                result,
+            } => {
                 self.execute_measure(*qubit, *basis, *result);
             }
-            AdaptedOp::Conditional { condition, if_one, if_zero } => {
-                let result_val = self.results.get(condition.0 as usize).copied().unwrap_or(false);
+            AdaptedOp::Conditional {
+                condition,
+                if_one,
+                if_zero,
+            } => {
+                let result_val = self
+                    .results
+                    .get(condition.0 as usize)
+                    .copied()
+                    .unwrap_or(false);
                 if result_val {
                     self.execute_ops(if_one, depth)?;
                 } else {
@@ -393,7 +434,11 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
                 }
             }
             AdaptedOp::XorResult { target, source } => {
-                let src_val = self.results.get(source.0 as usize).copied().unwrap_or(false);
+                let src_val = self
+                    .results
+                    .get(source.0 as usize)
+                    .copied()
+                    .unwrap_or(false);
                 if let Some(tgt) = self.results.get_mut(target.0 as usize) {
                     *tgt ^= src_val;
                 }
@@ -432,7 +477,8 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
         // 3. Rotation gates (if enabled via rotations() constructor)
         let executed = self.try_execute_override(gate_id, qubits, angles)
             || self.try_execute_clifford(gate_id, qubits)
-            || self.rotation_executor
+            || self
+                .rotation_executor
                 .is_some_and(|executor| executor(&mut self.simulator, gate_id, qubits, angles));
 
         if !executed {
@@ -449,7 +495,12 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
     /// Try to execute a gate via registered overrides.
     ///
     /// Returns `true` if an override was found and executed successfully.
-    fn try_execute_override(&mut self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> bool {
+    fn try_execute_override(
+        &mut self,
+        gate_id: GateId,
+        qubits: &[QubitId],
+        angles: &[Angle64],
+    ) -> bool {
         self.overrides
             .as_ref()
             .and_then(|o| o.get(gate_id))
@@ -472,26 +523,74 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
             GateType::I | GateType::Idle => true,
 
             // Single-qubit Paulis
-            GateType::X => { self.simulator.x(qubits); true }
-            GateType::Y => { self.simulator.y(qubits); true }
-            GateType::Z => { self.simulator.z(qubits); true }
+            GateType::X => {
+                self.simulator.x(qubits);
+                true
+            }
+            GateType::Y => {
+                self.simulator.y(qubits);
+                true
+            }
+            GateType::Z => {
+                self.simulator.z(qubits);
+                true
+            }
 
             // Single-qubit Cliffords
-            GateType::H => { self.simulator.h(qubits); true }
-            GateType::SX => { self.simulator.sx(qubits); true }
-            GateType::SXdg => { self.simulator.sxdg(qubits); true }
-            GateType::SY => { self.simulator.sy(qubits); true }
-            GateType::SYdg => { self.simulator.sydg(qubits); true }
-            GateType::SZ => { self.simulator.sz(qubits); true }
-            GateType::SZdg => { self.simulator.szdg(qubits); true }
+            GateType::H => {
+                self.simulator.h(qubits);
+                true
+            }
+            GateType::SX => {
+                self.simulator.sx(qubits);
+                true
+            }
+            GateType::SXdg => {
+                self.simulator.sxdg(qubits);
+                true
+            }
+            GateType::SY => {
+                self.simulator.sy(qubits);
+                true
+            }
+            GateType::SYdg => {
+                self.simulator.sydg(qubits);
+                true
+            }
+            GateType::SZ => {
+                self.simulator.sz(qubits);
+                true
+            }
+            GateType::SZdg => {
+                self.simulator.szdg(qubits);
+                true
+            }
 
             // Two-qubit Cliffords
-            GateType::CX => { self.simulator.cx(qubits); true }
-            GateType::CY => { self.simulator.cy(qubits); true }
-            GateType::CZ => { self.simulator.cz(qubits); true }
-            GateType::SWAP => { self.simulator.swap(qubits); true }
-            GateType::SZZ => { self.simulator.szz(qubits); true }
-            GateType::SZZdg => { self.simulator.szzdg(qubits); true }
+            GateType::CX => {
+                self.simulator.cx(qubits);
+                true
+            }
+            GateType::CY => {
+                self.simulator.cy(qubits);
+                true
+            }
+            GateType::CZ => {
+                self.simulator.cz(qubits);
+                true
+            }
+            GateType::SWAP => {
+                self.simulator.swap(qubits);
+                true
+            }
+            GateType::SZZ => {
+                self.simulator.szz(qubits);
+                true
+            }
+            GateType::SZZdg => {
+                self.simulator.szzdg(qubits);
+                true
+            }
 
             // Everything else: rotation gates, prep/measure, multi-qubit gates
             // These either need ArbitraryRotationGateable or decomposition
@@ -535,7 +634,9 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
         // Rotate to target basis
         match basis {
             PrepBasis::Z => {} // Already in Z
-            PrepBasis::X => { self.simulator.h(&[qubit]); }
+            PrepBasis::X => {
+                self.simulator.h(&[qubit]);
+            }
             PrepBasis::Y => {
                 self.simulator.h(&[qubit]);
                 self.simulator.sz(&[qubit]);
@@ -548,7 +649,9 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
         // Rotate to Z basis for measurement
         match basis {
             MeasBasis::Z => {}
-            MeasBasis::X => { self.simulator.h(&[qubit]); }
+            MeasBasis::X => {
+                self.simulator.h(&[qubit]);
+            }
             MeasBasis::Y => {
                 self.simulator.szdg(&[qubit]);
                 self.simulator.h(&[qubit]);
@@ -567,12 +670,15 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
         }
 
         // Record in outcomes
-        self.outcomes.record(MeasurementOutcome::new(qubit, outcome, is_deterministic));
+        self.outcomes
+            .record(MeasurementOutcome::new(qubit, outcome, is_deterministic));
 
         // Rotate back (for non-destructive measurement semantics)
         match basis {
             MeasBasis::Z => {}
-            MeasBasis::X => { self.simulator.h(&[qubit]); }
+            MeasBasis::X => {
+                self.simulator.h(&[qubit]);
+            }
             MeasBasis::Y => {
                 self.simulator.h(&[qubit]);
                 self.simulator.sz(&[qubit]);
@@ -581,7 +687,12 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
     }
 
     /// Emit before-gate noise event, returns true if gate should be skipped.
-    fn emit_before_gate(&mut self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> bool {
+    fn emit_before_gate(
+        &mut self,
+        gate_id: GateId,
+        qubits: &[QubitId],
+        angles: &[Angle64],
+    ) -> bool {
         let Some(ref mut noise) = self.noise else {
             return false;
         };
@@ -642,9 +753,15 @@ impl<S: CliffordGateable> ExtendedRunner<S> {
                     let qubits = gate_cmd.qubits.as_slice();
                     match gate_cmd.gate_type {
                         GateType::I => {} // Identity - no action
-                        GateType::X => { self.simulator.x(qubits); }
-                        GateType::Y => { self.simulator.y(qubits); }
-                        GateType::Z => { self.simulator.z(qubits); }
+                        GateType::X => {
+                            self.simulator.x(qubits);
+                        }
+                        GateType::Y => {
+                            self.simulator.y(qubits);
+                        }
+                        GateType::Z => {
+                            self.simulator.z(qubits);
+                        }
                         other => {
                             panic!(
                                 "ExtendedRunner: noise channel injected unsupported gate type {other:?}. \
@@ -707,19 +824,20 @@ where
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::prelude::*;
     /// use pecos_qsim::StateVec;
     ///
     /// let circuit = OpBuilder::new()
-    ///     .prep_z(QubitId(0))
-    ///     .gate1_angle(gates::RX, QubitId(0), Angle64::QUARTER_TURN)
-    ///     .meas_z(QubitId(0), ResultId(0))
+    ///     .pz(QubitId(0))
+    ///     .rx(QubitId(0), Angle64::QUARTER_TURN)
+    ///     .mz(QubitId(0), ResultId(0))
     ///     .build();
     ///
     /// // RX is executed natively via ArbitraryRotationGateable
+    /// let definitions = GateDefinitions::new();
     /// let mut runner = ExtendedRunner::rotations(StateVec::new(1), definitions);
-    /// let outcomes = runner.run(&circuit)?;
+    /// let outcomes = runner.run(&circuit).unwrap();
     /// ```
     pub fn rotations(simulator: S, definitions: GateDefinitions) -> Self {
         let mut runner = Self::new(simulator, definitions);
@@ -730,14 +848,25 @@ where
     /// Execute a rotation gate natively.
     ///
     /// This is a static function used as a callback when rotation support is enabled.
-    fn execute_rotation_gate(sim: &mut S, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> bool {
+    fn execute_rotation_gate(
+        sim: &mut S,
+        gate_id: GateId,
+        qubits: &[QubitId],
+        angles: &[Angle64],
+    ) -> bool {
         let Some(gate_type) = gate_id.try_to_gate_type() else {
             return false;
         };
 
         match gate_type {
-            GateType::T => { sim.t(qubits); true }
-            GateType::Tdg => { sim.tdg(qubits); true }
+            GateType::T => {
+                sim.t(qubits);
+                true
+            }
+            GateType::Tdg => {
+                sim.tdg(qubits);
+                true
+            }
             GateType::RX => {
                 if let Some(&angle) = angles.first() {
                     sim.rx(angle, qubits);
@@ -789,7 +918,6 @@ where
             _ => false,
         }
     }
-
 }
 
 /// Errors during execution.
@@ -819,20 +947,19 @@ impl std::error::Error for ExecutionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extensible::{GateSpec, GateCategory, OpBuilder, gates};
+    use crate::extensible::{GateCategory, GateSpec, OpBuilder, gates};
     use pecos_qsim::SparseStab;
 
     #[test]
     fn test_basic_execution() {
         let gates_def = GateDefinitions::new();
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
+            .pz(QubitId(0))
             .h(QubitId(0))
-            .meas_z(QubitId(0), ResultId(0))
+            .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def)
-            .with_seed(42);
+        let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def).with_seed(42);
 
         let outcomes = runner.run(&circuit).unwrap();
         assert_eq!(outcomes.len(), 1);
@@ -842,16 +969,15 @@ mod tests {
     fn test_bell_state() {
         let gates_def = GateDefinitions::new();
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
-            .prep_z(QubitId(1))
+            .pz(QubitId(0))
+            .pz(QubitId(1))
             .h(QubitId(0))
             .cx(QubitId(0), QubitId(1))
-            .meas_z(QubitId(0), ResultId(0))
-            .meas_z(QubitId(1), ResultId(1))
+            .mz(QubitId(0), ResultId(0))
+            .mz(QubitId(1), ResultId(1))
             .build();
 
-        let mut runner = ExtendedRunner::new(SparseStab::new(2), gates_def)
-            .with_seed(42);
+        let mut runner = ExtendedRunner::new(SparseStab::new(2), gates_def).with_seed(42);
 
         let outcomes = runner.run(&circuit).unwrap();
         assert_eq!(outcomes.len(), 2);
@@ -868,16 +994,15 @@ mod tests {
 
         // Prepare |1⟩, measure, conditionally apply X
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
-            .prep_z(QubitId(1))
-            .x(QubitId(0))  // |1⟩
-            .meas_z(QubitId(0), ResultId(0))
-            .if_one(ResultId(0), |b| b.x(QubitId(1)))  // Flip qubit 1 if qubit 0 is 1
-            .meas_z(QubitId(1), ResultId(1))
+            .pz(QubitId(0))
+            .pz(QubitId(1))
+            .x(QubitId(0)) // |1⟩
+            .mz(QubitId(0), ResultId(0))
+            .if_one(ResultId(0), |b| b.x(QubitId(1))) // Flip qubit 1 if qubit 0 is 1
+            .mz(QubitId(1), ResultId(1))
             .build();
 
-        let mut runner = ExtendedRunner::new(SparseStab::new(2), gates_def)
-            .with_seed(42);
+        let mut runner = ExtendedRunner::new(SparseStab::new(2), gates_def).with_seed(42);
 
         let outcomes = runner.run(&circuit).unwrap();
 
@@ -894,13 +1019,13 @@ mod tests {
         let custom_id = gates_def.register(
             GateSpec::new("CustomNoDecomp")
                 .with_quantum_arity(1)
-                .with_category(GateCategory::SingleQubitUnitary)
+                .with_category(GateCategory::SingleQubitUnitary),
         );
 
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
+            .pz(QubitId(0))
             .gate1(custom_id, QubitId(0))
-            .meas_z(QubitId(0), ResultId(0))
+            .mz(QubitId(0), ResultId(0))
             .build();
 
         let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def);
@@ -908,19 +1033,21 @@ mod tests {
         // Should fail because no decomposition
         let result = runner.run(&circuit);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ExecutionError::NoDecomposition { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ExecutionError::NoDecomposition { .. }
+        ));
     }
 
     #[test]
     fn test_run_shot_resets() {
         let gates_def = GateDefinitions::new();
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
-            .meas_z(QubitId(0), ResultId(0))
+            .pz(QubitId(0))
+            .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def)
-            .with_seed(42);
+        let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def).with_seed(42);
 
         let outcomes1 = runner.run_shot(&circuit).unwrap();
         let outcomes2 = runner.run_shot(&circuit).unwrap();
@@ -935,15 +1062,17 @@ mod tests {
 
         // Prepare |+⟩ and measure in X basis - should always give 0
         let circuit = OpBuilder::new()
-            .prep_x(QubitId(0))
-            .meas_x(QubitId(0), ResultId(0))
+            .px(QubitId(0))
+            .mx(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def)
-            .with_seed(42);
+        let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def).with_seed(42);
 
         let outcomes = runner.run(&circuit).unwrap();
-        assert!(!outcomes.get_bit(QubitId(0)).unwrap(), "|+⟩ measured in X should give 0");
+        assert!(
+            !outcomes.get_bit(QubitId(0)).unwrap(),
+            "|+⟩ measured in X should give 0"
+        );
     }
 
     #[test]
@@ -954,20 +1083,20 @@ mod tests {
         let custom_id = gates_def.register(
             GateSpec::new("CustomGate")
                 .with_quantum_arity(1)
-                .with_category(GateCategory::SingleQubitUnitary)
+                .with_category(GateCategory::SingleQubitUnitary),
         );
 
         // Provide an override that implements it as X
-        let overrides: GateOverrides<SparseStab> = GateOverrides::new()
-            .register(custom_id, |sim, qubits, _angles| {
+        let overrides: GateOverrides<SparseStab> =
+            GateOverrides::new().register(custom_id, |sim, qubits, _angles| {
                 sim.x(qubits);
                 true
             });
 
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
-            .gate1(custom_id, QubitId(0))  // Should apply X via override
-            .meas_z(QubitId(0), ResultId(0))
+            .pz(QubitId(0))
+            .gate1(custom_id, QubitId(0)) // Should apply X via override
+            .mz(QubitId(0), ResultId(0))
             .build();
 
         let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def)
@@ -976,7 +1105,10 @@ mod tests {
 
         let outcomes = runner.run(&circuit).unwrap();
         // Prep |0⟩, apply X, measure -> should get 1
-        assert!(outcomes.get_bit(QubitId(0)).unwrap(), "X gate should flip |0⟩ to |1⟩");
+        assert!(
+            outcomes.get_bit(QubitId(0)).unwrap(),
+            "X gate should flip |0⟩ to |1⟩"
+        );
     }
 
     #[test]
@@ -984,16 +1116,16 @@ mod tests {
         let gates_def = GateDefinitions::new();
 
         // Override the H gate to do nothing (identity)
-        let overrides: GateOverrides<SparseStab> = GateOverrides::new()
-            .register(gates::H, |_sim, _qubits, _angles| {
+        let overrides: GateOverrides<SparseStab> =
+            GateOverrides::new().register(gates::H, |_sim, _qubits, _angles| {
                 // Do nothing - override H with identity
                 true
             });
 
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
-            .h(QubitId(0))  // Should do nothing due to override
-            .meas_z(QubitId(0), ResultId(0))
+            .pz(QubitId(0))
+            .h(QubitId(0)) // Should do nothing due to override
+            .mz(QubitId(0), ResultId(0))
             .build();
 
         let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def)
@@ -1002,7 +1134,10 @@ mod tests {
 
         let outcomes = runner.run(&circuit).unwrap();
         // Prep |0⟩, H overridden to I, measure -> should get 0
-        assert!(!outcomes.get_bit(QubitId(0)).unwrap(), "Overridden H should leave |0⟩ unchanged");
+        assert!(
+            !outcomes.get_bit(QubitId(0)).unwrap(),
+            "Overridden H should leave |0⟩ unchanged"
+        );
     }
 
     #[test]
@@ -1011,7 +1146,10 @@ mod tests {
         assert!(overrides.is_empty());
         assert_eq!(overrides.len(), 0);
 
-        overrides.insert(gates::H, |sim, qubits, _| { sim.h(qubits); true });
+        overrides.insert(gates::H, |sim, qubits, _| {
+            sim.h(qubits);
+            true
+        });
         assert!(!overrides.is_empty());
         assert_eq!(overrides.len(), 1);
         assert!(overrides.contains(gates::H));
@@ -1030,20 +1168,25 @@ mod tests {
 
         // Circuit with RX(pi) which flips |0⟩ to |1⟩
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
+            .pz(QubitId(0))
             .rx(QubitId(0), Angle64::HALF_TURN) // RX(pi)
-            .meas_z(QubitId(0), ResultId(0))
+            .mz(QubitId(0), ResultId(0))
             .build();
 
         // Use rotations() constructor - run() handles rotations automatically
-        let mut runner = ExtendedRunner::rotations(StateVec::new(1), gates_def)
-            .with_seed(42);
+        let mut runner = ExtendedRunner::rotations(StateVec::new(1), gates_def).with_seed(42);
 
-        assert!(runner.has_rotation_support(), "rotations() should enable rotation support");
+        assert!(
+            runner.has_rotation_support(),
+            "rotations() should enable rotation support"
+        );
 
         let outcomes = runner.run(&circuit).unwrap();
         // RX(pi) on |0⟩ gives |1⟩
-        assert!(outcomes.get_bit(QubitId(0)).unwrap(), "RX(pi) should flip |0⟩ to |1⟩");
+        assert!(
+            outcomes.get_bit(QubitId(0)).unwrap(),
+            "RX(pi) should flip |0⟩ to |1⟩"
+        );
     }
 
     #[test]
@@ -1053,19 +1196,25 @@ mod tests {
         let gates_def = GateDefinitions::new();
 
         let circuit = OpBuilder::new()
-            .prep_z(QubitId(0))
-            .gate1(gates::T, QubitId(0))  // T gate - not Clifford
-            .meas_z(QubitId(0), ResultId(0))
+            .pz(QubitId(0))
+            .gate1(gates::T, QubitId(0)) // T gate - not Clifford
+            .mz(QubitId(0), ResultId(0))
             .build();
 
         // Use new() - no rotation support, T will try to decompose
         let mut runner = ExtendedRunner::new(SparseStab::new(1), gates_def);
 
-        assert!(!runner.has_rotation_support(), "new() should not enable rotation support");
+        assert!(
+            !runner.has_rotation_support(),
+            "new() should not enable rotation support"
+        );
 
         // Should fail because T gate has no decomposition in default GateDefinitions
         let result = runner.run(&circuit);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ExecutionError::NoDecomposition { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ExecutionError::NoDecomposition { .. }
+        ));
     }
 }

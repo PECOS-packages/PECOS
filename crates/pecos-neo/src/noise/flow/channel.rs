@@ -16,9 +16,9 @@
 //! and implements the `NoiseChannel` trait, allowing flow-based noise models
 //! to be used with the existing `ComposableNoiseModel`.
 
+use super::Primitive;
 use super::batch::GeometricSampler;
 use super::response::FlowResponse;
-use super::Primitive;
 use crate::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
@@ -93,7 +93,7 @@ impl FlowEventFilter {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 /// use pecos_neo::noise::flow::channel::{FlowChannel, FlowEventFilter};
 /// use pecos_neo::noise::ComposableNoiseModel;
@@ -122,6 +122,20 @@ pub struct FlowChannel<P: Primitive> {
     geometric_threshold: f64,
     /// Minimum qubit count for geometric sampling (default: 100).
     min_qubits_for_geometric: usize,
+}
+
+impl<P: Primitive + Clone> Clone for FlowChannel<P> {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            primitive: self.primitive.clone(),
+            filters: self.filters.clone(),
+            priority: self.priority,
+            sampler: self.sampler,
+            geometric_threshold: self.geometric_threshold,
+            min_qubits_for_geometric: self.min_qubits_for_geometric,
+        }
+    }
 }
 
 impl<P: Primitive> FlowChannel<P> {
@@ -202,7 +216,10 @@ impl<P: Primitive> FlowChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let sampler = self.sampler.as_ref().expect("sampler must be set for geometric");
+        let sampler = self
+            .sampler
+            .as_ref()
+            .expect("sampler must be set for geometric");
         let indices = sampler.sample_range(0, qubits.len(), rng);
 
         if indices.is_empty() {
@@ -222,7 +239,9 @@ impl<P: Primitive> FlowChannel<P> {
             let qubit = qubits[idx];
 
             // Only set outcome context for measurement events
-            if let Some(outcomes) = outcomes && idx < outcomes.len() {
+            if let Some(outcomes) = outcomes
+                && idx < outcomes.len()
+            {
                 ctx.set_current_outcome(outcomes[idx]);
             }
 
@@ -269,7 +288,9 @@ impl<P: Primitive> FlowChannel<P> {
         let mut combined = NoiseResponse::None;
         for (i, &qubit) in qubits.iter().enumerate() {
             // If probability is set, do threshold check
-            if let Some(thresh) = threshold && rng.next_u64() >= thresh {
+            if let Some(thresh) = threshold
+                && rng.next_u64() >= thresh
+            {
                 continue;
             }
 
@@ -277,7 +298,9 @@ impl<P: Primitive> FlowChannel<P> {
             ctx.set_current_qubit_index(i, qubits);
 
             // Only set outcome context for measurement events
-            if let Some(outcomes) = outcomes && i < outcomes.len() {
+            if let Some(outcomes) = outcomes
+                && i < outcomes.len()
+            {
                 ctx.set_current_outcome(outcomes[i]);
             }
 
@@ -293,7 +316,7 @@ impl<P: Primitive> FlowChannel<P> {
         combined
     }
 
-    /// Apply using two-pass processing for TwoStage primitives.
+    /// Apply using two-pass processing for `TwoStage` primitives.
     ///
     /// Pass 1: Run `apply_stage1` on all qubits (sampling phase)
     /// Pass 2: Run `apply_stage2` on all qubits (effect phase)
@@ -312,13 +335,17 @@ impl<P: Primitive> FlowChannel<P> {
         for (i, &qubit) in qubits.iter().enumerate() {
             // If probability is set, do threshold check
             // Note: For two-stage, the probability is typically in stage1
-            if let Some(thresh) = threshold && rng.next_u64() >= thresh {
+            if let Some(thresh) = threshold
+                && rng.next_u64() >= thresh
+            {
                 continue;
             }
 
             ctx.set_current_qubit_index(i, qubits);
 
-            if let Some(outcomes) = outcomes && i < outcomes.len() {
+            if let Some(outcomes) = outcomes
+                && i < outcomes.len()
+            {
                 ctx.set_current_outcome(outcomes[i]);
             }
 
@@ -335,7 +362,9 @@ impl<P: Primitive> FlowChannel<P> {
         for (i, &qubit) in qubits.iter().enumerate() {
             ctx.set_current_qubit_index(i, qubits);
 
-            if let Some(outcomes) = outcomes && i < outcomes.len() {
+            if let Some(outcomes) = outcomes
+                && i < outcomes.len()
+            {
                 ctx.set_current_outcome(outcomes[i]);
             }
 
@@ -352,7 +381,7 @@ impl<P: Primitive> FlowChannel<P> {
     }
 }
 
-impl<P: Primitive + 'static> NoiseChannel for FlowChannel<P> {
+impl<P: Primitive + Clone + 'static> NoiseChannel for FlowChannel<P> {
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         self.filters.iter().any(|f| f.matches(event))
     }
@@ -405,6 +434,10 @@ impl<P: Primitive + 'static> NoiseChannel for FlowChannel<P> {
 
     fn priority(&self) -> i32 {
         self.priority
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
     }
 }
 
@@ -501,7 +534,7 @@ impl FlowChannelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // T1-like relaxation with linear time dependence
@@ -536,7 +569,7 @@ impl FlowChannelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // Apply preparation-like noise after reset
@@ -556,7 +589,7 @@ impl FlowChannelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // Initialize all qubits with small preparation error
@@ -585,7 +618,7 @@ impl FlowChannelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::flow::prelude::*;
     ///
     /// // Apply dephasing between circuit layers
@@ -634,7 +667,7 @@ pub type BoxedFlowChannel = FlowChannel<Box<dyn Primitive>>;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 /// use pecos_neo::noise::flow::channel::BatchFlowChannel;
 ///
@@ -658,6 +691,20 @@ pub struct BatchFlowChannel<P: Primitive> {
     geometric_threshold: f64,
     /// Minimum qubit count for geometric sampling (default: 100)
     min_qubits_for_geometric: usize,
+}
+
+impl<P: Primitive + Clone> Clone for BatchFlowChannel<P> {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            sampler: self.sampler,
+            primitive: self.primitive.clone(),
+            filters: self.filters.clone(),
+            priority: self.priority,
+            geometric_threshold: self.geometric_threshold,
+            min_qubits_for_geometric: self.min_qubits_for_geometric,
+        }
+    }
 }
 
 impl<P: Primitive> BatchFlowChannel<P> {
@@ -794,7 +841,7 @@ impl<P: Primitive> BatchFlowChannel<P> {
     }
 }
 
-impl<P: Primitive + 'static> NoiseChannel for BatchFlowChannel<P> {
+impl<P: Primitive + Clone + 'static> NoiseChannel for BatchFlowChannel<P> {
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         self.filters.iter().any(|f| f.matches(event))
     }
@@ -850,6 +897,10 @@ impl<P: Primitive + 'static> NoiseChannel for BatchFlowChannel<P> {
     fn priority(&self) -> i32 {
         self.priority
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 /// Builder methods for batch channels.
@@ -886,8 +937,7 @@ impl FlowChannelBuilder {
         probability: f64,
         primitive: P,
     ) -> BatchFlowChannel<P> {
-        BatchFlowChannel::new(name, probability, primitive)
-            .with_filter(FlowEventFilter::AnyGate)
+        BatchFlowChannel::new(name, probability, primitive).with_filter(FlowEventFilter::AnyGate)
     }
 
     /// Create a batch idle noise channel with geometric sampling.
@@ -897,8 +947,7 @@ impl FlowChannelBuilder {
         probability: f64,
         primitive: P,
     ) -> BatchFlowChannel<P> {
-        BatchFlowChannel::new(name, probability, primitive)
-            .with_filter(FlowEventFilter::IdleTime)
+        BatchFlowChannel::new(name, probability, primitive).with_filter(FlowEventFilter::IdleTime)
     }
 
     /// Create a batch reset noise channel with geometric sampling.
@@ -908,8 +957,7 @@ impl FlowChannelBuilder {
         probability: f64,
         primitive: P,
     ) -> BatchFlowChannel<P> {
-        BatchFlowChannel::new(name, probability, primitive)
-            .with_filter(FlowEventFilter::AfterReset)
+        BatchFlowChannel::new(name, probability, primitive).with_filter(FlowEventFilter::AfterReset)
     }
 
     /// Create a batch before-circuit noise channel with geometric sampling.
@@ -960,7 +1008,7 @@ pub type NeighborFn = fn(&[QubitId]) -> Vec<QubitId>;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::flow::prelude::*;
 ///
 /// // Create crosstalk that applies Pauli errors to other qubits during measurement
@@ -975,6 +1023,18 @@ pub struct FlowCrosstalkChannel<P: Primitive> {
     /// If Some, only affect these qubits as neighbors. If None, affect all active qubits.
     neighbor_fn: Option<NeighborFn>,
     priority: i32,
+}
+
+impl<P: Primitive + Clone> Clone for FlowCrosstalkChannel<P> {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            primitive: self.primitive.clone(),
+            events: self.events.clone(),
+            neighbor_fn: self.neighbor_fn,
+            priority: self.priority,
+        }
+    }
 }
 
 impl<P: Primitive> FlowCrosstalkChannel<P> {
@@ -1046,7 +1106,7 @@ impl<P: Primitive> FlowCrosstalkChannel<P> {
     }
 }
 
-impl<P: Primitive + 'static> NoiseChannel for FlowCrosstalkChannel<P> {
+impl<P: Primitive + Clone + 'static> NoiseChannel for FlowCrosstalkChannel<P> {
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         self.events.iter().any(|f| f.matches(event))
     }
@@ -1082,6 +1142,10 @@ impl<P: Primitive + 'static> NoiseChannel for FlowCrosstalkChannel<P> {
     fn priority(&self) -> i32 {
         self.priority
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 impl FlowChannelBuilder {
@@ -1109,6 +1173,7 @@ impl FlowChannelBuilder {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::command::GateType;
@@ -1126,7 +1191,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
 
@@ -1136,7 +1202,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits2,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
         assert!(!NoiseChannel::responds_to(&channel, &event2));
     }
 
@@ -1155,7 +1222,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
 
@@ -1186,7 +1254,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
         assert!(response.should_skip_gate());
@@ -1206,7 +1275,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
 
@@ -1233,7 +1303,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
 
@@ -1255,10 +1326,7 @@ mod tests {
     #[test]
     fn test_flow_channel_complex_tree() {
         // Build realistic SQ noise
-        let noise = seq![
-            skip_if_leaked(),
-            prob(0.5, when_leaked(seep(), pauli())),
-        ];
+        let noise = seq![skip_if_leaked(), prob(0.5, when_leaked(seep(), pauli())),];
 
         let channel = FlowChannelBuilder::single_qubit("sq_noise", noise);
 
@@ -1271,7 +1339,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         // Run multiple times to get statistical coverage
         let mut pauli_count = 0;
@@ -1280,7 +1349,10 @@ mod tests {
             match response {
                 NoiseResponse::InjectGates(_) => pauli_count += 1,
                 NoiseResponse::Multiple(ref rs) => {
-                    if rs.iter().any(|r| matches!(r, NoiseResponse::InjectGates(_))) {
+                    if rs
+                        .iter()
+                        .any(|r| matches!(r, NoiseResponse::InjectGates(_)))
+                    {
                         pauli_count += 1;
                     }
                 }
@@ -1289,7 +1361,7 @@ mod tests {
         }
 
         // Should be roughly 50%
-        let rate = pauli_count as f64 / 1000.0;
+        let rate = f64::from(pauli_count) / 1000.0;
         assert!(
             (rate - 0.5).abs() < 0.1,
             "Expected ~50% pauli rate, got {rate}"
@@ -1382,7 +1454,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(NoiseChannel::responds_to(&crosstalk, &event));
 
@@ -1455,7 +1528,7 @@ mod tests {
         }
 
         // Should be roughly 50%
-        let rate = affected_count as f64 / 1000.0;
+        let rate = f64::from(affected_count) / 1000.0;
         assert!(
             (rate - 0.5).abs() < 0.1,
             "Expected ~50% crosstalk rate, got {rate}"
@@ -1543,7 +1616,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
 
@@ -1554,7 +1628,7 @@ mod tests {
                 assert_eq!(gates.len(), 1);
                 assert_eq!(gates[0].gate_type, GateType::X);
             }
-            _ => panic!("Expected InjectGates response, got {:?}", response),
+            _ => panic!("Expected InjectGates response, got {response:?}"),
         }
     }
 
@@ -1574,7 +1648,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         // Very low probability - should almost always be empty
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1597,18 +1672,23 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         // Run once and check we get roughly 10% affected
         let response = channel.apply(&event, &mut ctx, &mut rng);
         let count = match response {
-            NoiseResponse::None => 0,
             NoiseResponse::InjectGates(gates) => gates.len(),
-            NoiseResponse::Multiple(responses) => {
-                responses.iter().filter_map(|r| {
-                    if let NoiseResponse::InjectGates(g) = r { Some(g.len()) } else { None }
-                }).sum()
-            }
+            NoiseResponse::Multiple(responses) => responses
+                .iter()
+                .filter_map(|r| {
+                    if let NoiseResponse::InjectGates(g) = r {
+                        Some(g.len())
+                    } else {
+                        None
+                    }
+                })
+                .sum(),
             _ => 0,
         };
 
@@ -1635,26 +1715,28 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         // Run and verify roughly 0.1% affected
         let response = channel.apply(&event, &mut ctx, &mut rng);
         let count = match response {
-            NoiseResponse::None => 0,
             NoiseResponse::InjectGates(gates) => gates.len(),
-            NoiseResponse::Multiple(responses) => {
-                responses.iter().filter_map(|r| {
-                    if let NoiseResponse::InjectGates(g) = r { Some(g.len()) } else { None }
-                }).sum()
-            }
+            NoiseResponse::Multiple(responses) => responses
+                .iter()
+                .filter_map(|r| {
+                    if let NoiseResponse::InjectGates(g) = r {
+                        Some(g.len())
+                    } else {
+                        None
+                    }
+                })
+                .sum(),
             _ => 0,
         };
 
         // Should be roughly 10 (0.1% of 10000)
-        assert!(
-            count < 50,
-            "Expected ~10 events at p=0.001, got {count}"
-        );
+        assert!(count < 50, "Expected ~10 events at p=0.001, got {count}");
     }
 
     #[test]
@@ -1696,8 +1778,8 @@ mod tests {
 
     #[test]
     fn test_two_stage_fired_flags_integration() {
-        use crate::noise::flow::condition::{Condition, IFired, PartnerFired, PartnerOnlyFired};
         use crate::noise::flow::action::SampleEmissionWithProb;
+        use crate::noise::flow::condition::{Condition, IFired, PartnerFired, PartnerOnlyFired};
 
         // Simulate two-stage processing manually
         let mut ctx = NoiseContext::new();
@@ -1711,31 +1793,51 @@ mod tests {
         // Qubit 0: fires
         ctx.set_current_qubit_index(0, &qubits);
         let action0 = SampleEmissionWithProb::new(1.0);
-        let _ = crate::noise::flow::action::GateAction::apply(&action0, QubitId(0), &mut ctx, &mut rng);
+        let _ =
+            crate::noise::flow::action::GateAction::apply(&action0, QubitId(0), &mut ctx, &mut rng);
 
         // Qubit 1: does not fire (0% probability)
         ctx.set_current_qubit_index(1, &qubits);
         let action1 = SampleEmissionWithProb::new(0.0);
-        let _ = crate::noise::flow::action::GateAction::apply(&action1, QubitId(1), &mut ctx, &mut rng);
+        let _ =
+            crate::noise::flow::action::GateAction::apply(&action1, QubitId(1), &mut ctx, &mut rng);
 
         // Stage 2: Check conditions
         // From qubit 0's perspective
         ctx.set_current_qubit_index(0, &qubits);
-        assert!(IFired.evaluate(QubitId(0), &ctx), "Qubit 0 should have fired");
-        assert!(!PartnerFired.evaluate(QubitId(0), &ctx), "Partner (qubit 1) should NOT have fired");
-        assert!(!PartnerOnlyFired.evaluate(QubitId(0), &ctx), "PartnerOnlyFired should be false (I fired)");
+        assert!(
+            IFired.evaluate(QubitId(0), &ctx),
+            "Qubit 0 should have fired"
+        );
+        assert!(
+            !PartnerFired.evaluate(QubitId(0), &ctx),
+            "Partner (qubit 1) should NOT have fired"
+        );
+        assert!(
+            !PartnerOnlyFired.evaluate(QubitId(0), &ctx),
+            "PartnerOnlyFired should be false (I fired)"
+        );
 
         // From qubit 1's perspective
         ctx.set_current_qubit_index(1, &qubits);
-        assert!(!IFired.evaluate(QubitId(1), &ctx), "Qubit 1 should NOT have fired");
-        assert!(PartnerFired.evaluate(QubitId(1), &ctx), "Partner (qubit 0) should have fired");
-        assert!(PartnerOnlyFired.evaluate(QubitId(1), &ctx), "PartnerOnlyFired should be true");
+        assert!(
+            !IFired.evaluate(QubitId(1), &ctx),
+            "Qubit 1 should NOT have fired"
+        );
+        assert!(
+            PartnerFired.evaluate(QubitId(1), &ctx),
+            "Partner (qubit 0) should have fired"
+        );
+        assert!(
+            PartnerOnlyFired.evaluate(QubitId(1), &ctx),
+            "PartnerOnlyFired should be true"
+        );
     }
 
     #[test]
     fn test_two_stage_partner_depolarize_scenario() {
-        use crate::noise::flow::action::{GateAction, IndependentEmissionWithPartnerDepolarize};
         use crate::noise::flow::FlowResponse;
+        use crate::noise::flow::action::{GateAction, IndependentEmissionWithPartnerDepolarize};
 
         // Test the full emission-with-partner-depolarize action
         let emission_prob = 0.5;
@@ -1775,7 +1877,10 @@ mod tests {
                         _partner_depolarize_count += 1;
                     }
                     FlowResponse::Multiple(ref parts) => {
-                        if parts.iter().any(|p| matches!(p, FlowResponse::InjectGates(_))) {
+                        if parts
+                            .iter()
+                            .any(|p| matches!(p, FlowResponse::InjectGates(_)))
+                        {
                             _partner_depolarize_count += 1;
                         }
                     }
@@ -1793,13 +1898,13 @@ mod tests {
 
         // Verify we got reasonable distribution
         assert!(
-            (both_leaked_count as i32 - (shots / 4) as i32).abs() < tolerance,
+            (both_leaked_count - (shots / 4) as i32).abs() < tolerance,
             "Both leaked count off: expected ~{}, got {}",
             shots / 4,
             both_leaked_count
         );
         assert!(
-            (neither_leaked_count as i32 - (shots / 4) as i32).abs() < tolerance,
+            (neither_leaked_count - (shots / 4) as i32).abs() < tolerance,
             "Neither leaked count off: expected ~{}, got {}",
             shots / 4,
             neither_leaked_count
@@ -1832,7 +1937,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         // Qubit 0 perspective: partner (qubit 1) didn't fire, I did -> PartnerOnlyFired = false
         ctx.set_current_qubit_index(0, &qubits);
@@ -1848,16 +1954,9 @@ mod tests {
 
         // Without fired flags set, neither should trigger PartnerOnlyFired
         // So we should get None responses (nothing() action)
-        match response {
-            NoiseResponse::None => {} // Expected - neither partner triggered
-            NoiseResponse::Multiple(responses) => {
-                // All should be None
-                assert!(responses.iter().all(|r| matches!(r, NoiseResponse::None)));
-            }
-            NoiseResponse::InjectGates(_) => {
-                // This is also possible if the random sampling triggered
-            }
-            _ => {}
+        if let NoiseResponse::Multiple(responses) = response {
+            // All should be None
+            assert!(responses.iter().all(|r| matches!(r, NoiseResponse::None)));
         }
     }
 
@@ -1899,7 +1998,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
         assert!(!NoiseChannel::responds_to(&channel, &gate_event));
 
         // Apply and verify
@@ -1930,7 +2030,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &[],
-        gate_id: None, };
+            gate_id: None,
+        };
         assert!(!NoiseChannel::responds_to(&channel, &gate_event));
     }
 
@@ -1943,7 +2044,9 @@ mod tests {
         assert!(NoiseChannel::responds_to(&channel, &circuit_event));
 
         // Should NOT respond to preparation
-        let prep_event = NoiseEvent::AfterPreparation { qubits: &[QubitId(0)] };
+        let prep_event = NoiseEvent::AfterPreparation {
+            qubits: &[QubitId(0)],
+        };
         assert!(!NoiseChannel::responds_to(&channel, &prep_event));
     }
 
@@ -1976,7 +2079,10 @@ mod tests {
             match response {
                 NoiseResponse::InjectGates(_) => z_count += 1,
                 NoiseResponse::Multiple(ref rs) => {
-                    if rs.iter().any(|r| matches!(r, NoiseResponse::InjectGates(_))) {
+                    if rs
+                        .iter()
+                        .any(|r| matches!(r, NoiseResponse::InjectGates(_)))
+                    {
                         z_count += 1;
                     }
                 }
@@ -1985,7 +2091,7 @@ mod tests {
         }
 
         // Should be roughly 50% per qubit (2 qubits), so high overall
-        let rate = z_count as f64 / 1000.0;
+        let rate = f64::from(z_count) / 1000.0;
         assert!(
             rate > 0.3 && rate < 0.95,
             "Expected moderate injection rate, got {rate}"

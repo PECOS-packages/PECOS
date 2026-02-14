@@ -23,7 +23,7 @@ use crate::noise::two_qubit::TwoQubitChannel;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::plugins::DepolarizingPlugin;
 ///
 /// // 1% single-qubit errors, 2% two-qubit errors

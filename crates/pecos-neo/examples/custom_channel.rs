@@ -13,17 +13,17 @@
 //! Custom noise channel example for pecos-neo.
 //!
 //! This example demonstrates:
-//! - Implementing the NoiseChannel trait
+//! - Implementing the `NoiseChannel` trait
 //! - Creating gate-specific noise
 //! - Building correlated noise models
 //! - Using context for stateful noise
 //!
-//! Run with: cargo run --example custom_channel
+//! Run with: cargo run --example `custom_channel`
 
-use pecos_neo::prelude::*;
 use pecos_neo::command::GateCommand;
-use pecos_rng::PecosRng;
+use pecos_neo::prelude::*;
 use pecos_qsim::SparseStab;
+use pecos_rng::PecosRng;
 use rand::Rng;
 use std::collections::HashMap;
 
@@ -94,6 +94,10 @@ impl NoiseChannel for AmplitudeDampingChannel {
     fn name(&self) -> &'static str {
         "AmplitudeDampingChannel"
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 fn example_amplitude_damping() {
@@ -101,9 +105,9 @@ fn example_amplitude_damping() {
 
     // Circuit: prepare |1⟩ and measure
     let commands = CommandBuilder::new()
-        .prep(0)
-        .x(0)  // Prepare |1⟩
-        .measure(0)
+        .pz(0)
+        .x(0) // Prepare |1⟩
+        .mz(0)
         .build();
 
     for gamma in [0.0, 0.1, 0.3, 0.5] {
@@ -129,7 +133,7 @@ fn example_amplitude_damping() {
         println!(
             "  gamma={:.1}: {:.1}% decayed to |0⟩",
             gamma,
-            decays as f64 / shots as f64 * 100.0
+            f64::from(decays) / f64::from(shots) * 100.0
         );
     }
     println!();
@@ -179,11 +183,18 @@ impl NoiseChannel for GateSpecificChannel {
         _ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let NoiseEvent::AfterGate { gate_type, qubits, .. } = event else {
+        let NoiseEvent::AfterGate {
+            gate_type, qubits, ..
+        } = event
+        else {
             return NoiseResponse::None;
         };
 
-        let rate = self.rates.get(gate_type).copied().unwrap_or(self.default_rate);
+        let rate = self
+            .rates
+            .get(gate_type)
+            .copied()
+            .unwrap_or(self.default_rate);
 
         if rate <= 0.0 {
             return NoiseResponse::None;
@@ -213,6 +224,10 @@ impl NoiseChannel for GateSpecificChannel {
     fn name(&self) -> &'static str {
         "GateSpecificChannel"
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 fn example_gate_specific_noise() {
@@ -222,10 +237,10 @@ fn example_gate_specific_noise() {
 
     // Test H gate
     let h_commands = CommandBuilder::new()
-        .prep(0)
+        .pz(0)
         .h(0)
-        .h(0)  // H^2 = I, should return to |0⟩
-        .measure(0)
+        .h(0) // H^2 = I, should return to |0⟩
+        .mz(0)
         .build();
 
     let noise_h = ComposableNoiseModel::new()
@@ -234,7 +249,7 @@ fn example_gate_specific_noise() {
             GateSpecificChannel::new()
                 .with_rate(GateType::H, 0.20)
                 .with_rate(GateType::SZ, 0.02)
-                .with_default(0.05)
+                .with_default(0.05),
         );
 
     let mut runner = ShotRunner::new(SparseStab::new(1))
@@ -251,10 +266,10 @@ fn example_gate_specific_noise() {
 
     // Test SZ gate
     let sz_commands = CommandBuilder::new()
-        .prep(0)
+        .pz(0)
         .sz(0)
-        .szdg(0)  // SZ * SZ^dag = I
-        .measure(0)
+        .szdg(0) // SZ * SZ^dag = I
+        .mz(0)
         .build();
 
     let noise_sz = ComposableNoiseModel::new()
@@ -263,7 +278,7 @@ fn example_gate_specific_noise() {
             GateSpecificChannel::new()
                 .with_rate(GateType::H, 0.20)
                 .with_rate(GateType::SZ, 0.02)
-                .with_default(0.05)
+                .with_default(0.05),
         );
 
     let mut runner = ShotRunner::new(SparseStab::new(1))
@@ -278,8 +293,14 @@ fn example_gate_specific_noise() {
         }
     }
 
-    println!("  H gate (20% rate): {:.1}% logical errors", h_errors as f64 / shots as f64 * 100.0);
-    println!("  SZ gate (2% rate): {:.1}% logical errors", sz_errors as f64 / shots as f64 * 100.0);
+    println!(
+        "  H gate (20% rate): {:.1}% logical errors",
+        f64::from(h_errors) / f64::from(shots) * 100.0
+    );
+    println!(
+        "  SZ gate (2% rate): {:.1}% logical errors",
+        f64::from(sz_errors) / f64::from(shots) * 100.0
+    );
     println!();
 }
 
@@ -361,6 +382,10 @@ impl NoiseChannel for CorrelatedNoiseChannel {
     fn name(&self) -> &'static str {
         "CorrelatedNoiseChannel"
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 fn example_correlated_noise() {
@@ -375,10 +400,12 @@ fn example_correlated_noise() {
 
         // Bell state circuit
         let commands = CommandBuilder::new()
-            .prep(0).prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0).measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut runner = ShotRunner::new(SparseStab::new(2))
@@ -403,8 +430,8 @@ fn example_correlated_noise() {
         println!(
             "  correlation={:.1}: {:.1}% correlated, {:.1}% anti-correlated",
             correlation,
-            both_same as f64 / shots as f64 * 100.0,
-            both_different as f64 / shots as f64 * 100.0
+            f64::from(both_same) / f64::from(shots) * 100.0,
+            f64::from(both_different) / f64::from(shots) * 100.0
         );
     }
     println!("  (Higher correlation → more correlated errors → less anti-correlation)");
@@ -456,7 +483,6 @@ impl NoiseChannel for ContextAwareChannel {
             let state = ctx.qubit_state(qubit);
 
             let rate = match state {
-                Some(QubitState::Active) => self.active_rate,
                 Some(QubitState::Leaked) => self.leaked_rate,
                 _ => self.active_rate,
             };
@@ -476,6 +502,10 @@ impl NoiseChannel for ContextAwareChannel {
     fn name(&self) -> &'static str {
         "ContextAwareChannel"
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 fn example_context_aware_noise() {
@@ -487,13 +517,13 @@ fn example_context_aware_noise() {
     // Test with active qubits (normal circuit)
     let active_noise = ComposableNoiseModel::new()
         .add_plugin(CorePlugin)
-        .add_channel(ContextAwareChannel::new(0.05, 0.50));  // 5% active, 50% leaked
+        .add_channel(ContextAwareChannel::new(0.05, 0.50)); // 5% active, 50% leaked
 
     let commands = CommandBuilder::new()
-        .prep(0)
+        .pz(0)
         .h(0)
-        .h(0)  // Should return to |0⟩
-        .measure(0)
+        .h(0) // Should return to |0⟩
+        .mz(0)
         .build();
 
     let mut runner = ShotRunner::new(SparseStab::new(1))
@@ -510,7 +540,10 @@ fn example_context_aware_noise() {
 
     // Demonstrate the channel checks context - here we just show the active case
     // In a real scenario, leaked qubits would get the higher error rate
-    println!("  Active qubits (5% rate): {:.1}% errors", active_errors as f64 / shots as f64 * 100.0);
+    println!(
+        "  Active qubits (5% rate): {:.1}% errors",
+        f64::from(active_errors) / f64::from(shots) * 100.0
+    );
     println!("  (Leaked qubits would get 50% rate - higher error due to heating)");
     println!("  (This demonstrates using NoiseContext to make state-dependent decisions)");
     println!();
@@ -520,7 +553,7 @@ fn example_context_aware_noise() {
 // Example 5: Built-in GateDependentChannel
 // ============================================================================
 
-/// Demonstrate the built-in GateDependentChannel for gate-specific error rates.
+/// Demonstrate the built-in `GateDependentChannel` for gate-specific error rates.
 fn example_builtin_gate_dependent() {
     use pecos_neo::noise::{GateDependentChannel, GateNoiseConfig};
 
@@ -530,20 +563,20 @@ fn example_builtin_gate_dependent() {
 
     // Create a gate-dependent channel with different error rates per gate
     let gate_noise = GateDependentChannel::new()
-        .with_gate_error(GateType::H, 0.20)   // 20% error on H gates
-        .with_gate_error(GateType::SZ, 0.02)  // 2% error on SZ gates
+        .with_gate_error(GateType::H, 0.20) // 20% error on H gates
+        .with_gate_error(GateType::SZ, 0.02) // 2% error on SZ gates
         .with_gate(
             GateType::CX,
             GateNoiseConfig::new(0.10).with_pauli_weights(PauliWeights::z_biased(0.8)),
-        )  // 10% Z-biased error on CX
-        .with_default(0.05);  // 5% default for unlisted gates
+        ) // 10% Z-biased error on CX
+        .with_default(0.05); // 5% default for unlisted gates
 
     // Test H gate (high error rate)
     let h_commands = CommandBuilder::new()
-        .prep(0)
+        .pz(0)
         .h(0)
-        .h(0)  // H^2 = I
-        .measure(0)
+        .h(0) // H^2 = I
+        .mz(0)
         .build();
 
     let noise = ComposableNoiseModel::new()
@@ -564,10 +597,10 @@ fn example_builtin_gate_dependent() {
 
     // Test SZ gate (low error rate)
     let sz_commands = CommandBuilder::new()
-        .prep(0)
+        .pz(0)
         .sz(0)
-        .szdg(0)  // SZ * SZ^dag = I
-        .measure(0)
+        .szdg(0) // SZ * SZ^dag = I
+        .mz(0)
         .build();
 
     let noise = ComposableNoiseModel::new()
@@ -587,8 +620,14 @@ fn example_builtin_gate_dependent() {
     }
 
     println!("  Using built-in GateDependentChannel:");
-    println!("  H gate (20% rate): {:.1}% errors", h_errors as f64 / shots as f64 * 100.0);
-    println!("  SZ gate (2% rate): {:.1}% errors", sz_errors as f64 / shots as f64 * 100.0);
+    println!(
+        "  H gate (20% rate): {:.1}% errors",
+        f64::from(h_errors) / f64::from(shots) * 100.0
+    );
+    println!(
+        "  SZ gate (2% rate): {:.1}% errors",
+        f64::from(sz_errors) / f64::from(shots) * 100.0
+    );
     println!("  (Built-in channel provides same functionality with cleaner API)");
     println!();
 }
@@ -597,7 +636,7 @@ fn example_builtin_gate_dependent() {
 // Example 6: Built-in CorrelatedNoiseChannel
 // ============================================================================
 
-/// Demonstrate the built-in CorrelatedNoiseChannel for spatially correlated errors.
+/// Demonstrate the built-in `CorrelatedNoiseChannel` for spatially correlated errors.
 fn example_builtin_correlated() {
     use pecos_neo::noise::CorrelatedNoiseChannel;
 
@@ -612,10 +651,12 @@ fn example_builtin_correlated() {
 
         // Bell state circuit
         let commands = CommandBuilder::new()
-            .prep(0).prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0).measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         let mut runner = ShotRunner::new(SparseStab::new(2))
@@ -640,8 +681,8 @@ fn example_builtin_correlated() {
         println!(
             "  correlation={:.1}: {:.1}% correlated, {:.1}% anti-correlated",
             correlation,
-            both_same as f64 / shots as f64 * 100.0,
-            both_different as f64 / shots as f64 * 100.0
+            f64::from(both_same) / f64::from(shots) * 100.0,
+            f64::from(both_different) / f64::from(shots) * 100.0
         );
     }
     println!("  (Higher correlation -> more correlated errors -> less anti-correlation)");

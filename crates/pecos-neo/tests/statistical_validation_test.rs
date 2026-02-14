@@ -88,11 +88,7 @@ fn chi_square_test(
 fn test_hadamard_distribution_high_statistics() {
     println!("\n=== Hadamard Distribution Test ({NUM_SHOTS} shots) ===\n");
 
-    let commands = CommandBuilder::new()
-        .prep(0)
-        .h(0)
-        .measure(0)
-        .build();
+    let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
     // MonteCarloRunner
     let mc_config = MonteCarloConfig::new()
@@ -122,7 +118,7 @@ fn test_hadamard_distribution_high_statistics() {
     let coord_results = coordinator.run(
         || SparseStab::new(1),
         |world| {
-            let commands = CommandBuilder::new().prep(0).h(0).measure(0).build();
+            let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
             world
                 .entities()
@@ -130,8 +126,8 @@ fn test_hadamard_distribution_high_statistics() {
                     let sim = world.simulators.get(entity).unwrap();
                     let rng = world.rngs.get(entity).unwrap();
 
-                    let mut runner = ShotRunner::new(sim.simulator.clone())
-                        .with_rng(rng.rng.clone());
+                    let mut runner =
+                        ShotRunner::new(sim.simulator.clone()).with_rng(rng.rng.clone());
                     let outcomes = runner.run_shot(&commands);
                     outcomes.get_bit(QubitId(0)).unwrap_or(false)
                 })
@@ -144,7 +140,10 @@ fn test_hadamard_distribution_high_statistics() {
     let coord_ci = binomial_ci_halfwidth(coord_rate, coord_results.len());
 
     println!("MonteCarloRunner:     {mc_rate:.4} +/- {mc_ci:.4} ({mc_ones}/{NUM_SHOTS} ones)");
-    println!("ParallelCoordinator:  {coord_rate:.4} +/- {coord_ci:.4} ({coord_ones}/{} ones)", coord_results.len());
+    println!(
+        "ParallelCoordinator:  {coord_rate:.4} +/- {coord_ci:.4} ({coord_ones}/{} ones)",
+        coord_results.len()
+    );
     println!("Expected:             0.5000 (Hadamard on |0>)");
 
     // Both should be statistically consistent with 0.5
@@ -173,12 +172,12 @@ fn test_bell_state_distribution_high_statistics() {
     println!("\n=== Bell State Distribution Test ({NUM_SHOTS} shots) ===\n");
 
     let commands = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     // MonteCarloRunner
@@ -194,7 +193,11 @@ fn test_bell_state_distribution_high_statistics() {
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
-            format!("{}{}", if b0 { '1' } else { '0' }, if b1 { '1' } else { '0' })
+            format!(
+                "{}{}",
+                if b0 { '1' } else { '0' },
+                if b1 { '1' } else { '0' }
+            )
         },
     );
 
@@ -209,10 +212,26 @@ fn test_bell_state_distribution_high_statistics() {
     let mc_10 = *mc_counts.get("10").unwrap_or(&0) as f64 / NUM_SHOTS as f64;
 
     println!("MonteCarloRunner distribution:");
-    println!("  00: {:.4} ({} shots)", mc_00, mc_counts.get("00").unwrap_or(&0));
-    println!("  11: {:.4} ({} shots)", mc_11, mc_counts.get("11").unwrap_or(&0));
-    println!("  01: {:.4} ({} shots)", mc_01, mc_counts.get("01").unwrap_or(&0));
-    println!("  10: {:.4} ({} shots)", mc_10, mc_counts.get("10").unwrap_or(&0));
+    println!(
+        "  00: {:.4} ({} shots)",
+        mc_00,
+        mc_counts.get("00").unwrap_or(&0)
+    );
+    println!(
+        "  11: {:.4} ({} shots)",
+        mc_11,
+        mc_counts.get("11").unwrap_or(&0)
+    );
+    println!(
+        "  01: {:.4} ({} shots)",
+        mc_01,
+        mc_counts.get("01").unwrap_or(&0)
+    );
+    println!(
+        "  10: {:.4} ({} shots)",
+        mc_10,
+        mc_counts.get("10").unwrap_or(&0)
+    );
 
     // Bell state: only 00 and 11 should occur
     let anti_correlated = mc_01 + mc_10;
@@ -247,11 +266,7 @@ fn test_depolarizing_noise_rate_validation() {
     for &p1 in &test_rates {
         // Circuit: |0> -> X -> measure (should give 1 without noise)
         // With depolarizing noise on X gate, some shots will give 0
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .x(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let mc_config = MonteCarloConfig::new()
             .with_shots(NUM_SHOTS)
@@ -281,8 +296,13 @@ fn test_depolarizing_noise_rate_validation() {
         let expected_error = 2.0 * p1 / 3.0;
         let ci = binomial_ci_halfwidth(expected_error, NUM_SHOTS);
 
-        println!("p1={:.2}: observed error={:.4}, expected={:.4} +/- {:.4}",
-                 p1, error_rate, expected_error, 3.0 * ci);
+        println!(
+            "p1={:.2}: observed error={:.4}, expected={:.4} +/- {:.4}",
+            p1,
+            error_rate,
+            expected_error,
+            3.0 * ci
+        );
 
         // Should be within 3-sigma
         assert!(
@@ -301,10 +321,7 @@ fn test_measurement_error_rate_validation() {
     for &p_meas in &test_rates {
         // Circuit: |0> -> measure (should give 0 without noise)
         // With measurement error, some shots will give 1
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).mz(0).build();
 
         let mc_config = MonteCarloConfig::new()
             .with_shots(NUM_SHOTS)
@@ -327,8 +344,13 @@ fn test_measurement_error_rate_validation() {
         let error_rate = ones as f64 / NUM_SHOTS as f64;
         let ci = binomial_ci_halfwidth(p_meas, NUM_SHOTS);
 
-        println!("p_meas={:.2}: observed error={:.4}, expected={:.4} +/- {:.4}",
-                 p_meas, error_rate, p_meas, 3.0 * ci);
+        println!(
+            "p_meas={:.2}: observed error={:.4}, expected={:.4} +/- {:.4}",
+            p_meas,
+            error_rate,
+            p_meas,
+            3.0 * ci
+        );
 
         // Should be within 3-sigma of p_meas
         assert!(
@@ -384,12 +406,12 @@ fn test_neo_vs_engines_bell_state_comparison() {
 
     // Run with pecos-neo MonteCarloRunner
     let commands = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     let mc_config = MonteCarloConfig::new()
@@ -404,7 +426,11 @@ fn test_neo_vs_engines_bell_state_comparison() {
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
-            format!("{}{}", if b0 { '1' } else { '0' }, if b1 { '1' } else { '0' })
+            format!(
+                "{}{}",
+                if b0 { '1' } else { '0' },
+                if b1 { '1' } else { '0' }
+            )
         },
     );
 
@@ -484,12 +510,12 @@ fn test_neo_vs_engines_noisy_comparison() {
 
     // pecos-neo
     let commands = CommandBuilder::new()
-        .prep(0)
-        .prep(1)
+        .pz(0)
+        .pz(1)
         .h(0)
         .cx(0, 1)
-        .measure(0)
-        .measure(1)
+        .mz(0)
+        .mz(1)
         .build();
 
     let mc_config = MonteCarloConfig::new()
@@ -510,7 +536,11 @@ fn test_neo_vs_engines_noisy_comparison() {
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
-            format!("{}{}", if b0 { '1' } else { '0' }, if b1 { '1' } else { '0' })
+            format!(
+                "{}{}",
+                if b0 { '1' } else { '0' },
+                if b1 { '1' } else { '0' }
+            )
         },
     );
 
@@ -530,9 +560,11 @@ fn test_neo_vs_engines_noisy_comparison() {
 
     // Check decorrelation rates are similar
     let engines_decorr = (*engines_counts.get("01").unwrap_or(&0)
-                         + *engines_counts.get("10").unwrap_or(&0)) as f64 / NUM_SHOTS as f64;
-    let neo_decorr = (*neo_counts.get("01").unwrap_or(&0)
-                     + *neo_counts.get("10").unwrap_or(&0)) as f64 / NUM_SHOTS as f64;
+        + *engines_counts.get("10").unwrap_or(&0)) as f64
+        / NUM_SHOTS as f64;
+    let neo_decorr = (*neo_counts.get("01").unwrap_or(&0) + *neo_counts.get("10").unwrap_or(&0))
+        as f64
+        / NUM_SHOTS as f64;
 
     println!("\nDecorrelation rates:");
     println!("  pecos-engines: {engines_decorr:.4}");
@@ -562,8 +594,14 @@ fn test_print_validation_summary() {
     println!();
     println!("For binomial proportions at p=0.5 with n={NUM_SHOTS}:");
     println!("  Standard error: {:.4}", (0.25 / NUM_SHOTS as f64).sqrt());
-    println!("  95% CI width:   +/- {:.4}", binomial_ci_halfwidth(0.5, NUM_SHOTS));
-    println!("  99% CI width:   +/- {:.4}", 2.58 * (0.25 / NUM_SHOTS as f64).sqrt());
+    println!(
+        "  95% CI width:   +/- {:.4}",
+        binomial_ci_halfwidth(0.5, NUM_SHOTS)
+    );
+    println!(
+        "  99% CI width:   +/- {:.4}",
+        2.58 * (0.25 / NUM_SHOTS as f64).sqrt()
+    );
     println!();
     println!("=================================================================");
 }

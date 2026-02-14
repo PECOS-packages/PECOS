@@ -16,11 +16,11 @@
 //! using bit vector operations internally.
 //!
 //! The context provides:
-//! - O(1) qubit state lookups (is_leaked, is_active, exists)
-//! - O(1) state modifications (mark_leaked, mark_prepared, etc.)
+//! - O(1) qubit state lookups (`is_leaked`, `is_active`, exists)
+//! - O(1) state modifications (`mark_leaked`, `mark_prepared`, etc.)
 //! - Efficient bitwise operations for crosstalk queries
 //!
-//! Run with: cargo run --example large_scale --release
+//! Run with: cargo run --example `large_scale` --release
 
 use pecos_core::QubitId;
 use pecos_neo::noise::NoiseContext;
@@ -33,7 +33,7 @@ fn main() {
     for &num_qubits in &[1_000, 10_000, 100_000, 1_000_000] {
         println!("--- {} qubits ---", format_number(num_qubits));
         let time = benchmark_context(num_qubits);
-        println!("  Time: {:>10.3} ms\n", time);
+        println!("  Time: {time:>10.3} ms\n");
     }
 }
 
@@ -72,7 +72,7 @@ fn benchmark_context(num_qubits: usize) -> f64 {
     }
 
     // Check crosstalk targets for a sample of qubits
-    let sample_size = (num_qubits / 100).max(100).min(1000);
+    let sample_size = (num_qubits / 100).clamp(100, 1000);
     let mut total_targets = 0;
     for i in (0..num_qubits).step_by(num_qubits / sample_size) {
         let targets = ctx.crosstalk_targets(&[QubitId(i)]);

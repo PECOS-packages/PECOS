@@ -25,7 +25,7 @@
 //!
 //! This builder lets you work at whatever level of abstraction you need:
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Simple: just set error rates
@@ -41,21 +41,21 @@
 //!         prob(0.001, when_leaked(seep(), pauli())),
 //!     ])
 //!     .with_two_qubit_noise(seq![
-//!         skip_if_any_leaked(),
-//!         prob(0.01, two_qubit_depolarizing()),
+//!         skip_if_leaked(),
+//!         prob(0.01, two_qubit_pauli()),
 //!     ])
 //!     .build();
 //!
 //! // Mixed: combine both approaches
 //! let mixed = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)  // Simple base rates
-//!     .with_channel(custom_leakage_channel())  // Add custom channel
+//!     .with_channel(LeakageChannel::new())  // Add custom channel
 //!     .build();
 //! ```
 
 use super::crosstalk::CrosstalkChannel;
-use super::flow::channel::{FlowChannel, FlowChannelBuilder};
 use super::flow::Primitive;
+use super::flow::channel::{FlowChannel, FlowChannelBuilder};
 use super::idle::IdleChannel;
 use super::leakage::LeakageChannel;
 use super::measurement::MeasurementChannel;
@@ -82,7 +82,7 @@ use pecos_core::TimeScale;
 ///
 /// ## Simple depolarizing noise
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::prelude::*;
 ///
 /// let model = NoiseModelBuilder::new()
@@ -92,7 +92,7 @@ use pecos_core::TimeScale;
 ///
 /// ## Custom composed noise
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::prelude::*;
 ///
 /// let model = NoiseModelBuilder::new()
@@ -105,7 +105,7 @@ use pecos_core::TimeScale;
 ///
 /// ## Adding existing channels
 ///
-/// ```ignore
+/// ```
 /// use pecos_neo::noise::prelude::*;
 ///
 /// let custom = SingleQubitChannel::depolarizing(0.001);
@@ -113,6 +113,7 @@ use pecos_core::TimeScale;
 ///     .with_channel(custom)
 ///     .build();
 /// ```
+#[allow(clippy::struct_excessive_bools)]
 pub struct NoiseModelBuilder {
     // ========================================================================
     // Simple parameter-based configuration
@@ -239,7 +240,7 @@ impl NoiseModelBuilder {
     /// Set depolarizing error rates for single-qubit (p1) and two-qubit (p2) gates.
     ///
     /// This is the simplest way to add gate noise. For more control, use
-    /// [`with_single_qubit_noise`] or [`with_two_qubit_noise`].
+    /// `with_single_qubit_noise` or `with_two_qubit_noise`.
     #[must_use]
     pub fn with_depolarizing(mut self, p1: f64, p2: f64) -> Self {
         self.p1 = p1;
@@ -392,7 +393,7 @@ impl NoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::prelude::*;
     ///
     /// let model = NoiseModelBuilder::new()
@@ -403,7 +404,7 @@ impl NoiseModelBuilder {
     ///     .build();
     /// ```
     #[must_use]
-    pub fn with_single_qubit_noise<P: Primitive + 'static>(mut self, primitive: P) -> Self {
+    pub fn with_single_qubit_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
         let channel = FlowChannelBuilder::single_qubit("single_qubit", primitive);
         self.custom_channels.push(Box::new(channel));
         self.single_qubit_override = true;
@@ -414,7 +415,7 @@ impl NoiseModelBuilder {
     ///
     /// This overrides the simple p2-based configuration.
     #[must_use]
-    pub fn with_two_qubit_noise<P: Primitive + 'static>(mut self, primitive: P) -> Self {
+    pub fn with_two_qubit_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
         let channel = FlowChannelBuilder::two_qubit("two_qubit", primitive);
         self.custom_channels.push(Box::new(channel));
         self.two_qubit_override = true;
@@ -425,7 +426,7 @@ impl NoiseModelBuilder {
     ///
     /// This overrides the simple p_meas-based configuration.
     #[must_use]
-    pub fn with_measurement_noise<P: Primitive + 'static>(mut self, primitive: P) -> Self {
+    pub fn with_measurement_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
         let channel = FlowChannelBuilder::after_measurement("measurement", primitive);
         self.custom_channels.push(Box::new(channel));
         self.measurement_override = true;
@@ -436,7 +437,7 @@ impl NoiseModelBuilder {
     ///
     /// This overrides the simple p_prep-based configuration.
     #[must_use]
-    pub fn with_preparation_noise<P: Primitive + 'static>(mut self, primitive: P) -> Self {
+    pub fn with_preparation_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
         let channel = FlowChannelBuilder::preparation("preparation", primitive);
         self.custom_channels.push(Box::new(channel));
         self.preparation_override = true;
@@ -447,24 +448,20 @@ impl NoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::prelude::*;
     ///
     /// let model = NoiseModelBuilder::new()
     ///     .with_custom_channel(
-    ///         FlowChannelBuilder::any_gate("custom_cx", seq![
+    ///         FlowChannelBuilder::any_gate("custom_noise", seq![
     ///             skip_if_leaked(),
     ///             prob(0.05, pauli()),
     ///         ])
-    ///         .with_filter(FlowEventFilter::gate_type(GateType::CX))
     ///     )
     ///     .build();
     /// ```
     #[must_use]
-    pub fn with_custom_channel<P: Primitive + 'static>(
-        mut self,
-        channel: FlowChannel<P>,
-    ) -> Self {
+    pub fn with_custom_channel<P: Primitive + Clone + 'static>(mut self, channel: FlowChannel<P>) -> Self {
         self.custom_channels.push(Box::new(channel));
         self
     }
@@ -479,10 +476,10 @@ impl NoiseModelBuilder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_neo::noise::prelude::*;
     ///
-    /// let leakage = LeakageChannel::new(1.0);
+    /// let leakage = LeakageChannel::new();
     /// let model = NoiseModelBuilder::new()
     ///     .with_depolarizing(0.001, 0.01)
     ///     .with_channel(leakage)
@@ -652,7 +649,7 @@ mod tests {
         let p1 = 0.1;
         let shots = 500;
 
-        let commands = CommandBuilder::new().prep(0).h(0).h(0).measure(0).build();
+        let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
 
         // Simple configuration
         let mut simple_errors = 0;
@@ -662,7 +659,7 @@ mod tests {
                 .with_noise(model)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            if outcomes.get(QubitId(0)).map(|o| o.outcome) != Some(false) {
+            if outcomes.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 simple_errors += 1;
             }
         }
@@ -677,14 +674,14 @@ mod tests {
                 .with_noise(model)
                 .with_seed(seed);
             let outcomes = runner.execute(&commands);
-            if outcomes.get(QubitId(0)).map(|o| o.outcome) != Some(false) {
+            if outcomes.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 composed_errors += 1;
             }
         }
 
         // Both should have similar error rates (within statistical tolerance)
-        let simple_rate = simple_errors as f64 / shots as f64;
-        let composed_rate = composed_errors as f64 / shots as f64;
+        let simple_rate = f64::from(simple_errors) / shots as f64;
+        let composed_rate = f64::from(composed_errors) / shots as f64;
 
         assert!(
             (simple_rate - composed_rate).abs() < 0.15,

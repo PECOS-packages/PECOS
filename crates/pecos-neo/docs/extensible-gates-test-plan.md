@@ -74,7 +74,7 @@ fn test_registry_has_core_gates() {
     assert!(registry.get(gates::X).is_some());
     assert!(registry.get(gates::H).is_some());
     assert!(registry.get(gates::CX).is_some());
-    assert!(registry.get(gates::MEASURE).is_some());
+    assert!(registry.get(gates::MZ).is_some());
 }
 
 #[test]

@@ -45,7 +45,7 @@
 //!
 //! ## Example
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::ecs::{ParallelCoordinator, ParallelConfig};
 //! use pecos_qsim::SparseStab;
 //!
@@ -57,17 +57,18 @@
 //! let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 //!
 //! // Run simulation with a step function
-//! let results = coordinator.run(|world, commands| {
-//!     // Execute one step of simulation on each entity
-//!     for entity in world.active_entities() {
-//!         // ... execute simulation ...
-//!     }
-//! });
+//! let results = coordinator.run(
+//!     || SparseStab::new(1),
+//!     |world| {
+//!         // Execute one step of simulation on each entity
+//!         world.entities().map(|e| e.0).collect()
+//!     },
+//! );
 //! ```
 
 use super::component::StatusComponent;
 use super::world::World;
-use pecos_core::rng::rng_manageable::{derive_seed, RngManageable};
+use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
 use rayon::prelude::*;
@@ -307,11 +308,7 @@ impl<S: CliffordGateable + Clone + Send + Sync> ParallelCoordinator<S> {
     ///
     /// # Returns
     /// Aggregated results from all entities in deterministic order.
-    pub fn run<F, G, T>(
-        &self,
-        make_simulator: F,
-        step: G,
-    ) -> ParallelResult<T>
+    pub fn run<F, G, T>(&self, make_simulator: F, step: G) -> ParallelResult<T>
     where
         F: Fn() -> S + Send + Sync,
         G: Fn(&mut World<S>) -> Vec<T> + Send + Sync,
@@ -356,10 +353,7 @@ impl<S: CliffordGateable + Clone + Send + Sync> ParallelCoordinator<S> {
         let mut sorted_results = results.lock().unwrap();
         sorted_results.sort_by(|(w1, e1, _), (w2, e2, _)| w1.cmp(w2).then(e1.cmp(e2)));
 
-        let final_results: Vec<T> = sorted_results
-            .drain(..)
-            .map(|(_, _, r)| r)
-            .collect();
+        let final_results: Vec<T> = sorted_results.drain(..).map(|(_, _, r)| r).collect();
         drop(sorted_results);
 
         let final_stats = stats.lock().unwrap().clone();
@@ -554,21 +548,18 @@ mod tests {
             .with_seed(42);
 
         // Run twice with same config
-        let coordinator1: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config.clone());
+        let coordinator1: ParallelCoordinator<SparseStab> =
+            ParallelCoordinator::new(config.clone());
         let coordinator2: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 
         let results1 = coordinator1.run(
             || SparseStab::new(1),
-            |world| {
-                world.entities().map(|e| world.base_seed() + e.0).collect()
-            },
+            |world| world.entities().map(|e| world.base_seed() + e.0).collect(),
         );
 
         let results2 = coordinator2.run(
             || SparseStab::new(1),
-            |world| {
-                world.entities().map(|e| world.base_seed() + e.0).collect()
-            },
+            |world| world.entities().map(|e| world.base_seed() + e.0).collect(),
         );
 
         // Results should be identical
@@ -585,11 +576,7 @@ mod tests {
 
         let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 
-        let commands = CommandBuilder::new()
-            .prep(0)
-            .h(0)
-            .measure(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let results = coordinator.run(
             || SparseStab::new(1),

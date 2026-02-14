@@ -29,7 +29,7 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::crosstalk::CrosstalkChannel;
 //!
 //! // Create a crosstalk channel with different local and global rates
@@ -38,7 +38,9 @@
 //!     .with_global_rate(0.001); // 0.1% chance per global qubit
 //! ```
 
-use super::{CrosstalkResult, CrosstalkTransitions, NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
+use super::{
+    CrosstalkResult, CrosstalkTransitions, NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse,
+};
 use crate::command::{GateCommand, GateType};
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
@@ -195,9 +197,7 @@ impl CrosstalkChannel {
                     GateType::X,
                     smallvec::smallvec![qubit],
                 )),
-                CrosstalkResult::Leak => {
-                    NoiseResponse::MarkLeaked(smallvec::smallvec![qubit])
-                }
+                CrosstalkResult::Leak => NoiseResponse::MarkLeaked(smallvec::smallvec![qubit]),
             };
         }
 
@@ -303,6 +303,10 @@ impl NoiseChannel for CrosstalkChannel {
         // Lower priority - apply after main gate noise
         -10
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 #[cfg(test)]
@@ -385,7 +389,7 @@ mod tests {
         }
 
         let channel = CrosstalkChannel::new()
-            .with_local_rate(1.0)  // Always hit local
+            .with_local_rate(1.0) // Always hit local
             .with_global_rate(0.0) // Never hit global
             .with_neighbor_function(neighbors);
 

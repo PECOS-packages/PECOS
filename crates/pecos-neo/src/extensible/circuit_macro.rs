@@ -4,13 +4,12 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::prelude::*;
-//! use pecos_neo::circuit;
 //!
 //! let (q0, q1) = (QubitId(0), QubitId(1));
 //!
-//! let seq = circuit! {
+//! let seq = pecos_neo::circuit! {
 //!     pz(q0);
 //!     pz(q1);
 //!     h(q0);
@@ -73,11 +72,11 @@ macro_rules! circuit {
 
     // === Preparations (short names) ===
     (@munch $b:ident, $rc:ident ; pz($q:expr); $($rest:tt)*) => {
-        $b = $b.prep_z($q);
+        $b = $b.pz($q);
         $crate::circuit!(@munch $b, $rc ; $($rest)*);
     };
     (@munch $b:ident, $rc:ident ; px($q:expr); $($rest:tt)*) => {
-        $b = $b.prep_x($q);
+        $b = $b.px($q);
         $crate::circuit!(@munch $b, $rc ; $($rest)*);
     };
     (@munch $b:ident, $rc:ident ; py($q:expr); $($rest:tt)*) => {
@@ -173,13 +172,13 @@ macro_rules! circuit {
     (@munch $b:ident, $rc:ident ; let $r:ident = mz($q:expr); $($rest:tt)*) => {
         let $r = $crate::ResultId($rc);
         $rc += 1;
-        $b = $b.meas_z($q, $r);
+        $b = $b.mz($q, $r);
         $crate::circuit!(@munch $b, $rc ; $($rest)*);
     };
     (@munch $b:ident, $rc:ident ; let $r:ident = mx($q:expr); $($rest:tt)*) => {
         let $r = $crate::ResultId($rc);
         $rc += 1;
-        $b = $b.meas_x($q, $r);
+        $b = $b.mx($q, $r);
         $crate::circuit!(@munch $b, $rc ; $($rest)*);
     };
 
@@ -292,7 +291,7 @@ mod tests {
             let _r1 = mz(q1);
         };
 
-        // bell = prep_z, prep_z, h, cx (4) + 2 meas
+        // bell = pz, pz, h, cx (4) + 2 meas
         assert_eq!(seq.ops.len(), 6);
     }
 

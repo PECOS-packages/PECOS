@@ -26,10 +26,10 @@
 //!
 //! # Neighbor Functions
 //!
-//! Use these with [`FlowCrosstalkChannel::local()`] to define which qubits
+//! Use these with `FlowCrosstalkChannel::local()` to define which qubits
 //! are affected by crosstalk:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // 1D chain: qubit i has neighbors i-1 and i+1
@@ -60,7 +60,7 @@
 //!
 //! Calculate separation between qubits for distance-weighted correlations:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //! use pecos_core::QubitId;
 //!
@@ -76,7 +76,7 @@
 //!
 //! Model how correlations decrease with distance:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Exponential: corr * exp(-distance / decay_length)
@@ -95,7 +95,7 @@
 //!
 //! For non-standard topologies (e.g., heavy-hex), use custom connectivity:
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::topology::hex_neighbors_from_connectivity;
 //!
 //! // Define edges as (qubit_a, qubit_b) pairs
@@ -134,7 +134,8 @@ pub fn chain_neighbors(gated: &[QubitId]) -> Vec<QubitId> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::topology::grid_neighbors;
 /// // 5x4 grid (5 columns, 4 rows)
 /// let neighbors_fn = grid_neighbors(5);
 /// ```
@@ -181,16 +182,36 @@ fn grid_neighbors_impl(gated: &[QubitId], cols: usize) -> Vec<QubitId> {
     neighbors
 }
 
-fn grid_neighbors_1(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 1) }
-fn grid_neighbors_2(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 2) }
-fn grid_neighbors_3(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 3) }
-fn grid_neighbors_4(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 4) }
-fn grid_neighbors_5(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 5) }
-fn grid_neighbors_6(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 6) }
-fn grid_neighbors_7(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 7) }
-fn grid_neighbors_8(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 8) }
-fn grid_neighbors_9(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 9) }
-fn grid_neighbors_10(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(gated, 10) }
+fn grid_neighbors_1(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 1)
+}
+fn grid_neighbors_2(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 2)
+}
+fn grid_neighbors_3(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 3)
+}
+fn grid_neighbors_4(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 4)
+}
+fn grid_neighbors_5(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 5)
+}
+fn grid_neighbors_6(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 6)
+}
+fn grid_neighbors_7(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 7)
+}
+fn grid_neighbors_8(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 8)
+}
+fn grid_neighbors_9(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 9)
+}
+fn grid_neighbors_10(gated: &[QubitId]) -> Vec<QubitId> {
+    grid_neighbors_impl(gated, 10)
+}
 
 /// Create a neighbor function for a heavy-hex topology.
 ///
@@ -203,7 +224,8 @@ fn grid_neighbors_10(gated: &[QubitId]) -> Vec<QubitId> { grid_neighbors_impl(ga
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use pecos_neo::noise::topology::hex_neighbors_from_connectivity;
 /// let hex_neighbors = hex_neighbors_from_connectivity(&[
 ///     (0, 1), (1, 2), (1, 3), // etc.
 /// ]);
@@ -296,6 +318,7 @@ pub fn power_law_decay(base_correlation: f64, exponent: f64) -> impl Fn(f64) -> 
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 

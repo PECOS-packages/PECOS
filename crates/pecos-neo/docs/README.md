@@ -24,6 +24,10 @@ This directory contains documentation for `pecos-neo`, a quantum circuit simulat
 
 - **[noise-usage-guide.md](noise-usage-guide.md)** - Practical guide to using the noise system. Covers `FlowNoiseModelBuilder`, `ComposableNoiseModel`, and common noise patterns.
 
+### Signals and Dispatch
+
+- **[tags-and-dispatch-design.md](tags-and-dispatch-design.md)** - Design and implementation of the signal/dispatch system. Covers typed signals in the command stream, gate event handlers, `DispatchContext`, and integration with `NoiseEvent::Signal`.
+
 ### Sampling and Rare Event Estimation
 
 - **[subset-simulation.md](subset-simulation.md)** - Guide to subset simulation for estimating very rare event probabilities (e.g., logical error rates in QEC). Covers `SubsetSimulation`, `ProperSubsetSimulation`, and `QecSubsetSimulation`.
@@ -45,9 +49,9 @@ use pecos_neo::tool::sim_neo;
 use pecos_neo::command::CommandBuilder;
 
 let circuit = CommandBuilder::new()
-    .prep(0).prep(1)
+    .pz(0).pz(1)
     .h(0).cx(0, 1)
-    .measure(0).measure(1)
+    .mz(0).mz(1)
     .build();
 
 // Run 1000 shots with depolarizing noise
@@ -111,9 +115,9 @@ use pecos_qsim::SparseStab;
 
 let definitions = GateDefinitions::new();
 let circuit = OpBuilder::new()
-    .prep_z(QubitId(0))
+    .pz(QubitId(0))
     .h(QubitId(0))
-    .meas_z(QubitId(0), ResultId(0))
+    .mz(QubitId(0), ResultId(0))
     .build();
 
 let mut runner = ExtendedRunner::new(SparseStab::new(1), definitions)
@@ -150,6 +154,8 @@ pecos-neo/
 │   ├── core.rs        # Tool, Resources, Plugin system
 │   └── ...
 ├── command/           # Circuit representation (CommandQueue, GateCommand)
+│   ├── signal_store.rs # Type-erased signal storage (SignalStore)
+│   └── ...
 ├── extensible/        # GateId-based gate system
 │   ├── definitions.rs # GateDefinitions, GateSpec
 │   ├── op_builder.rs  # OpBuilder for AdaptedSequence
@@ -157,13 +163,14 @@ pecos-neo/
 │   └── ...
 ├── noise/             # Noise modeling system
 │   ├── flow/          # Composable primitive-based noise
-│   │   ├── primitive.rs   # Core primitives (Prob, When, Sample, Seq)
+│   │   ├── primitive.rs   # Core Primitive trait and composites
 │   │   ├── action.rs      # Terminal actions (Pauli, Leak, Seep, etc.)
 │   │   ├── condition.rs   # Conditions (Leaked, OutcomeIs, etc.)
 │   │   ├── channel.rs     # FlowChannel integration
 │   │   └── builder.rs     # FlowNoiseModelBuilder
-│   ├── composer.rs    # ComposableNoiseModel
-│   └── ...            # Legacy channel-based noise
+│   ├── composer.rs    # ComposableNoiseModel (Clone for parallel)
+│   ├── plugin.rs      # NoisePlugin, EventHandler, ContextObserver
+│   └── ...            # Channel-based noise (single/two qubit, etc.)
 ├── sampling/          # Advanced sampling techniques
 │   ├── subset.rs      # Subset simulation
 │   ├── importance*.rs # Importance sampling
@@ -182,15 +189,16 @@ The `sim_neo` API supports different execution strategies via orchestrators:
 | Orchestrator | Use Case |
 |--------------|----------|
 | `Sequential` (default) | Simple sequential execution |
-| `MonteCarlo { workers }` | Parallel execution for noiseless circuits |
+| `MonteCarlo { workers }` | Parallel execution (noiseless or noisy) |
 | `ImportanceSampling` | Biased sampling for rare event estimation |
 
 ```rust
 // Sequential (default)
 sim_neo(circuit).shots(1000).run();
 
-// Parallel Monte Carlo
+// Parallel Monte Carlo (works with or without noise)
 sim_neo(circuit).workers(4).shots(1000).run();
+sim_neo(circuit).depolarizing(0.01).workers(4).shots(1000).run();
 
 // Importance sampling
 sim_neo(circuit)
@@ -198,6 +206,51 @@ sim_neo(circuit)
     .shots(10000)
     .run();
 ```
+
+### Signals and Dispatch
+
+The command stream can carry typed signals alongside gate operations, enabling
+communication between circuit layers and noise/analysis tools:
+
+```rust
+use pecos_neo::command::CommandBuilder;
+use pecos_core::Signal;
+
+#[derive(Debug, Clone)]
+struct RoundBoundary(pub usize);
+impl Signal for RoundBoundary {}
+
+let mut commands = CommandBuilder::new()
+    .pz(0).h(0).cx(0, 1).mz(0).mz(1)
+    .build();
+commands.signal(RoundBoundary(1));  // Inject signal into command stream
+```
+
+Noise channels can observe signals via `NoiseEvent::Signal`, and gate event
+handlers can react to gate operations via `DispatchContext`. See
+[tags-and-dispatch-design.md](tags-and-dispatch-design.md) for full details.
+
+### Cloneability and Parallel Execution
+
+`ComposableNoiseModel` implements `Clone`, enabling parallel Monte Carlo
+execution for noisy circuits. Each parallel worker gets its own clone of the
+noise model with independent state:
+
+```rust
+// Parallel noisy simulation -- each worker clones the noise model
+sim_neo(circuit)
+    .depolarizing(0.01)
+    .workers(4)
+    .shots(10000)
+    .seed(42)
+    .run();
+```
+
+Custom `NoiseChannel` and `Primitive` implementations must provide a
+`clone_box()` method that returns `Box<dyn NoiseChannel>` or
+`Box<dyn Primitive>`. This enables cloning trait objects without requiring
+`Clone` as a supertrait. See the [clone_box pattern](design-patterns.md#the-clone_box-pattern-for-trait-objects)
+in the design patterns guide.
 
 ### Noise Primitives
 

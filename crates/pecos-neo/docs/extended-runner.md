@@ -46,11 +46,11 @@ use pecos_qsim::SparseStab;
 let definitions = GateDefinitions::new();
 
 let circuit = OpBuilder::new()
-    .prep_z(QubitId(0))
+    .pz(QubitId(0))
     .h(QubitId(0))
     .cx(QubitId(0), QubitId(1))
-    .meas_z(QubitId(0), ResultId(0))
-    .meas_z(QubitId(1), ResultId(1))
+    .mz(QubitId(0), ResultId(0))
+    .mz(QubitId(1), ResultId(1))
     .build();
 
 let mut runner = ExtendedRunner::new(SparseStab::new(2), definitions);
@@ -66,10 +66,10 @@ use pecos_qsim::StateVec;
 let definitions = GateDefinitions::new();
 
 let circuit = OpBuilder::new()
-    .prep_z(QubitId(0))
+    .pz(QubitId(0))
     .rx(QubitId(0), Angle64::QUARTER_TURN)  // Rotation gate
     .t(QubitId(0))                           // T gate
-    .meas_z(QubitId(0), ResultId(0))
+    .mz(QubitId(0), ResultId(0))
     .build();
 
 // Use rotations() constructor for native rotation support
@@ -133,9 +133,9 @@ let my_gate = definitions.register(
 );
 
 let circuit = OpBuilder::new()
-    .prep_z(QubitId(0))
+    .pz(QubitId(0))
     .gate1(my_gate, QubitId(0))  // Decomposes to H-SZ-H
-    .meas_z(QubitId(0), ResultId(0))
+    .mz(QubitId(0), ResultId(0))
     .build();
 
 let mut runner = ExtendedRunner::new(SparseStab::new(1), definitions);

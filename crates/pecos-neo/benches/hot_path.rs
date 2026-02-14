@@ -18,10 +18,10 @@
 //! - Entity operations (spawn, clone, split)
 //! - Redistribution operations
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use pecos_core::QubitId;
 use pecos_neo::command::{CommandBuilder, GateType};
-use pecos_neo::ecs::{redistribute_by_weight, World, WorkerState};
+use pecos_neo::ecs::{WorkerState, World, redistribute_by_weight};
 use pecos_neo::noise::{
     ComposableNoiseModel, MeasurementChannel, NoiseEvent, SingleQubitChannel, TwoQubitChannel,
 };
@@ -59,7 +59,8 @@ fn bench_noise_emission(c: &mut Criterion) {
                 gate_type: GateType::H,
                 qubits: &qubits,
                 angles: &[],
-            gate_id: None, };
+                gate_id: None,
+            };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -70,7 +71,8 @@ fn bench_noise_emission(c: &mut Criterion) {
                 gate_type: GateType::CX,
                 qubits: &qubits_2q,
                 angles: &[],
-            gate_id: None, };
+                gate_id: None,
+            };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -97,23 +99,23 @@ fn bench_shot_execution(c: &mut Criterion) {
 
     // Bell state circuit
     let bell_circuit = CommandBuilder::new()
-        .prep_all(0..2)
+        .pz_all(0..2)
         .h(0)
         .cx(0, 1)
-        .measure_all(0..2)
+        .mz_all(0..2)
         .build();
 
     // Larger circuit: 10 qubits, many gates
     let large_circuit = {
         let mut builder = CommandBuilder::new();
-        builder = builder.prep_all(0..10);
+        builder = builder.pz_all(0..10);
         for i in 0..10 {
             builder = builder.h(i);
         }
         for i in 0..9 {
             builder = builder.cx(i, i + 1);
         }
-        builder = builder.measure_all(0..10);
+        builder = builder.mz_all(0..10);
         builder.build()
     };
 
@@ -163,10 +165,10 @@ fn bench_multi_shot(c: &mut Criterion) {
     let mut group = c.benchmark_group("multi_shot");
 
     let bell_circuit = CommandBuilder::new()
-        .prep_all(0..2)
+        .pz_all(0..2)
         .h(0)
         .cx(0, 1)
-        .measure_all(0..2)
+        .mz_all(0..2)
         .build();
 
     for shots in [100, 1000] {
@@ -183,8 +185,9 @@ fn bench_multi_shot(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("bell_with_noise", shots), |b| {
             b.iter(|| {
-                let mut runner =
-                    ShotRunner::new(SparseStab::new(2)).with_noise(make_noise_model()).with_seed(42);
+                let mut runner = ShotRunner::new(SparseStab::new(2))
+                    .with_noise(make_noise_model())
+                    .with_seed(42);
                 for _ in 0..shots {
                     black_box(runner.run_shot(&bell_circuit));
                 }
@@ -195,14 +198,14 @@ fn bench_multi_shot(c: &mut Criterion) {
     // Compare clone-per-shot vs run_shot_fresh for larger qubit counts
     let large_circuit = {
         let mut builder = CommandBuilder::new();
-        builder = builder.prep_all(0..50);
+        builder = builder.pz_all(0..50);
         for i in 0..50 {
             builder = builder.h(i);
         }
         for i in 0..49 {
             builder = builder.cx(i, i + 1);
         }
-        builder = builder.measure_all(0..50);
+        builder = builder.mz_all(0..50);
         builder.build()
     };
 
@@ -472,18 +475,9 @@ fn bench_memory_usage(c: &mut Criterion) {
 
     // Detailed breakdown of NoiseResponse size
     println!("\n=== NoiseResponse Size Breakdown ===");
-    println!(
-        "QubitId: {} bytes",
-        std::mem::size_of::<QubitId>()
-    );
-    println!(
-        "Angle64: {} bytes",
-        std::mem::size_of::<Angle64>()
-    );
-    println!(
-        "GateType: {} bytes",
-        std::mem::size_of::<GateType>()
-    );
+    println!("QubitId: {} bytes", std::mem::size_of::<QubitId>());
+    println!("Angle64: {} bytes", std::mem::size_of::<Angle64>());
+    println!("GateType: {} bytes", std::mem::size_of::<GateType>());
     println!(
         "SmallVec<[QubitId; 4]>: {} bytes",
         std::mem::size_of::<SmallVec<[QubitId; 4]>>()
@@ -492,10 +486,7 @@ fn bench_memory_usage(c: &mut Criterion) {
         "SmallVec<[Angle64; 2]>: {} bytes",
         std::mem::size_of::<SmallVec<[Angle64; 2]>>()
     );
-    println!(
-        "GateCommand: {} bytes",
-        std::mem::size_of::<GateCommand>()
-    );
+    println!("GateCommand: {} bytes", std::mem::size_of::<GateCommand>());
     println!(
         "SmallVec<[GateCommand; 4]>: {} bytes",
         std::mem::size_of::<SmallVec<[GateCommand; 4]>>()
@@ -559,9 +550,9 @@ fn bench_memory_usage(c: &mut Criterion) {
 // Monte Carlo Engine Comparison Benchmarks
 // ============================================================================
 
-/// Compare pecos-neo MonteCarloRunner against pecos-engines MonteCarloEngine
+/// Compare pecos-neo `MonteCarloRunner` against pecos-engines `MonteCarloEngine`
 ///
-/// Both systems use QASMEngine for parsing, with QASM parsing done once in setup
+/// Both systems use `QASMEngine` for parsing, with QASM parsing done once in setup
 /// (outside the timed section) to ensure a fair comparison of Monte Carlo execution.
 fn bench_monte_carlo_comparison(c: &mut Criterion) {
     use criterion::BatchSize;
@@ -588,10 +579,10 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
 
     // Pre-build commands for pecos-neo (equivalent to pre-parsing QASM)
     let bell_commands = CommandBuilder::new()
-        .prep_all(0..2)
+        .pz_all(0..2)
         .h(0)
         .cx(0, 1)
-        .measure_all(0..2)
+        .mz_all(0..2)
         .build();
 
     for num_shots in [100, 1000] {
@@ -599,29 +590,26 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
 
         // pecos-engines MonteCarloEngine (no noise)
         // QASM parsing done in setup, only Monte Carlo execution is timed
-        group.bench_function(
-            BenchmarkId::new("engines_bell_no_noise", num_shots),
-            |b| {
-                b.iter_batched(
-                    || {
-                        // Setup: parse QASM once (not timed)
-                        QASMEngine::from_str(bell_qasm).unwrap()
-                    },
-                    |engine| {
-                        // Timed: Monte Carlo execution only
-                        let results = MonteCarloEngine::run_with_noise_model(
-                            Box::new(engine),
-                            Box::new(PassThroughNoiseModel::builder().build()),
-                            num_shots,
-                            1,
-                            Some(42),
-                        );
-                        black_box(results)
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
+        group.bench_function(BenchmarkId::new("engines_bell_no_noise", num_shots), |b| {
+            b.iter_batched(
+                || {
+                    // Setup: parse QASM once (not timed)
+                    QASMEngine::from_str(bell_qasm).unwrap()
+                },
+                |engine| {
+                    // Timed: Monte Carlo execution only
+                    let results = MonteCarloEngine::run_with_noise_model(
+                        Box::new(engine),
+                        Box::new(PassThroughNoiseModel::builder().build()),
+                        num_shots,
+                        1,
+                        Some(42),
+                    );
+                    black_box(results)
+                },
+                BatchSize::SmallInput,
+            );
+        });
 
         // pecos-neo MonteCarloRunner (no noise)
         group.bench_function(BenchmarkId::new("neo_bell_no_noise", num_shots), |b| {
@@ -729,14 +717,14 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
 
     let large_commands = {
         let mut builder = CommandBuilder::new();
-        builder = builder.prep_all(0..10);
+        builder = builder.pz_all(0..10);
         for i in 0..10 {
             builder = builder.h(i);
         }
         for i in 0..9 {
             builder = builder.cx(i, i + 1);
         }
-        builder = builder.measure_all(0..10);
+        builder = builder.mz_all(0..10);
         builder.build()
     };
 
@@ -791,10 +779,10 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
 // Flow vs Channel Noise System Comparison
 // ============================================================================
 
-/// Compare flow-based noise (FlowNoiseModelBuilder) vs channel-based (GeneralNoiseModelBuilder)
+/// Compare flow-based noise (`FlowNoiseModelBuilder`) vs channel-based (`GeneralNoiseModelBuilder`)
 fn bench_flow_vs_channel_noise(c: &mut Criterion) {
-    use pecos_neo::noise::flow::FlowNoiseModelBuilder;
     use pecos_neo::noise::GeneralNoiseModelBuilder;
+    use pecos_neo::noise::flow::FlowNoiseModelBuilder;
 
     let mut group = c.benchmark_group("flow_vs_channel");
 
@@ -804,16 +792,16 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
 
     // Bell circuit
     let bell_circuit = CommandBuilder::new()
-        .prep_all(0..2)
+        .pz_all(0..2)
         .h(0)
         .cx(0, 1)
-        .measure_all(0..2)
+        .mz_all(0..2)
         .build();
 
     // Larger circuit for more realistic comparison
     let large_circuit = {
         let mut builder = CommandBuilder::new();
-        builder = builder.prep_all(0..20);
+        builder = builder.pz_all(0..20);
         for i in 0..20 {
             builder = builder.h(i);
         }
@@ -823,7 +811,7 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
         for i in 0..20 {
             builder = builder.h(i);
         }
-        builder = builder.measure_all(0..20);
+        builder = builder.mz_all(0..20);
         builder.build()
     };
 
@@ -841,16 +829,14 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
                 gate_type: GateType::H,
                 qubits: &qubits,
                 angles: &[],
-            gate_id: None, };
+                gate_id: None,
+            };
             black_box(noise.emit(event, &mut rng))
         });
     });
 
     group.bench_function("flow_noise_emission_1q", |b| {
-        let mut noise = FlowNoiseModelBuilder::new()
-            .with_p1(p1)
-            .with_p2(p2)
-            .build();
+        let mut noise = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0)];
 
@@ -859,7 +845,8 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
                 gate_type: GateType::H,
                 qubits: &qubits,
                 angles: &[],
-            gate_id: None, };
+                gate_id: None,
+            };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -877,16 +864,14 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
                 gate_type: GateType::CX,
                 qubits: &qubits,
                 angles: &[],
-            gate_id: None, };
+                gate_id: None,
+            };
             black_box(noise.emit(event, &mut rng))
         });
     });
 
     group.bench_function("flow_noise_emission_2q", |b| {
-        let mut noise = FlowNoiseModelBuilder::new()
-            .with_p1(p1)
-            .with_p2(p2)
-            .build();
+        let mut noise = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0), QubitId(1)];
 
@@ -895,7 +880,8 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
                 gate_type: GateType::CX,
                 qubits: &qubits,
                 angles: &[],
-            gate_id: None, };
+                gate_id: None,
+            };
             black_box(noise.emit(event, &mut rng))
         });
     });
@@ -914,10 +900,7 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
     });
 
     group.bench_function("flow_bell_shot", |b| {
-        let noise = FlowNoiseModelBuilder::new()
-            .with_p1(p1)
-            .with_p2(p2)
-            .build();
+        let noise = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
         let mut runner = ShotRunner::new(SparseStab::new(2)).with_noise(noise);
         b.iter(|| {
             let outcomes = runner.run_shot(&bell_circuit);
@@ -939,10 +922,7 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
     });
 
     group.bench_function("flow_20q_shot", |b| {
-        let noise = FlowNoiseModelBuilder::new()
-            .with_p1(p1)
-            .with_p2(p2)
-            .build();
+        let noise = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
         let mut runner = ShotRunner::new(SparseStab::new(20)).with_noise(noise);
         b.iter(|| {
             let outcomes = runner.run_shot(&large_circuit);
@@ -992,9 +972,7 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
 
 /// Benchmark batch probability filtering at scale
 fn bench_batch_filtering(c: &mut Criterion) {
-    use pecos_neo::noise::flow::batch::{
-        filter_by_probability, filter_range_by_probability,
-    };
+    use pecos_neo::noise::flow::batch::{filter_by_probability, filter_range_by_probability};
     use pecos_neo::noise::flow::batch_flow::BatchState;
 
     let mut group = c.benchmark_group("batch_filtering");
@@ -1004,66 +982,45 @@ fn bench_batch_filtering(c: &mut Criterion) {
         let qubits: Vec<_> = (0..num_qubits).map(QubitId).collect();
 
         // Low probability (p=0.001) - geometric should shine here
-        group.bench_function(
-            BenchmarkId::new("filter_p0.001", num_qubits),
-            |b| {
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    black_box(filter_by_probability(&qubits, 0.001, &mut rng))
-                });
-            },
-        );
+        group.bench_function(BenchmarkId::new("filter_p0.001", num_qubits), |b| {
+            let mut rng = PecosRng::seed_from_u64(42);
+            b.iter(|| black_box(filter_by_probability(&qubits, 0.001, &mut rng)));
+        });
 
         // Medium probability (p=0.01)
-        group.bench_function(
-            BenchmarkId::new("filter_p0.01", num_qubits),
-            |b| {
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    black_box(filter_by_probability(&qubits, 0.01, &mut rng))
-                });
-            },
-        );
+        group.bench_function(BenchmarkId::new("filter_p0.01", num_qubits), |b| {
+            let mut rng = PecosRng::seed_from_u64(42);
+            b.iter(|| black_box(filter_by_probability(&qubits, 0.01, &mut rng)));
+        });
 
         // Higher probability (p=0.1) - linear should be fine here
-        group.bench_function(
-            BenchmarkId::new("filter_p0.1", num_qubits),
-            |b| {
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    black_box(filter_by_probability(&qubits, 0.1, &mut rng))
-                });
-            },
-        );
+        group.bench_function(BenchmarkId::new("filter_p0.1", num_qubits), |b| {
+            let mut rng = PecosRng::seed_from_u64(42);
+            b.iter(|| black_box(filter_by_probability(&qubits, 0.1, &mut rng)));
+        });
     }
 
     // Compare filter_range (no pre-allocated vec) at 1M
     group.bench_function("filter_range_1M_p0.001", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            black_box(filter_range_by_probability(0, 1_000_000, 0.001, &mut rng))
-        });
+        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 0.001, &mut rng)));
     });
 
     // Compare with RngProbabilityExt optimized version
     use pecos_neo::noise::flow::batch::{
-        filter_by_probability_fast, sample_noise_1q_batch, ProbabilityThreshold,
+        ProbabilityThreshold, filter_by_probability_fast, sample_noise_1q_batch,
     };
 
     group.bench_function("rng_ext_filter_1M_p0.001", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
         let threshold = ProbabilityThreshold::new(0.001, &rng);
-        b.iter(|| {
-            black_box(filter_by_probability_fast(1_000_000, &threshold, &mut rng))
-        });
+        b.iter(|| black_box(filter_by_probability_fast(1_000_000, &threshold, &mut rng)));
     });
 
     group.bench_function("rng_ext_noise_1q_1M_p0.001", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
         let threshold = ProbabilityThreshold::new(0.001, &rng);
-        b.iter(|| {
-            black_box(sample_noise_1q_batch(1_000_000, &threshold, &mut rng))
-        });
+        b.iter(|| black_box(sample_noise_1q_batch(1_000_000, &threshold, &mut rng)));
     });
 
     // ========================================================================
@@ -1072,45 +1029,31 @@ fn bench_batch_filtering(c: &mut Criterion) {
 
     // p = 1e-4 (0.0001) - typical gate error rate
     for num_qubits in [100_000, 1_000_000] {
-        group.bench_function(
-            BenchmarkId::new("geometric_p1e-4", num_qubits),
-            |b| {
-                let qubits: Vec<_> = (0..num_qubits).map(QubitId).collect();
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    black_box(filter_by_probability(&qubits, 1e-4, &mut rng))
-                });
-            },
-        );
+        group.bench_function(BenchmarkId::new("geometric_p1e-4", num_qubits), |b| {
+            let qubits: Vec<_> = (0..num_qubits).map(QubitId).collect();
+            let mut rng = PecosRng::seed_from_u64(42);
+            b.iter(|| black_box(filter_by_probability(&qubits, 1e-4, &mut rng)));
+        });
     }
 
     // p = 1e-5 (0.00001) - very low error rate
     for num_qubits in [100_000, 1_000_000] {
-        group.bench_function(
-            BenchmarkId::new("geometric_p1e-5", num_qubits),
-            |b| {
-                let qubits: Vec<_> = (0..num_qubits).map(QubitId).collect();
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    black_box(filter_by_probability(&qubits, 1e-5, &mut rng))
-                });
-            },
-        );
+        group.bench_function(BenchmarkId::new("geometric_p1e-5", num_qubits), |b| {
+            let qubits: Vec<_> = (0..num_qubits).map(QubitId).collect();
+            let mut rng = PecosRng::seed_from_u64(42);
+            b.iter(|| black_box(filter_by_probability(&qubits, 1e-5, &mut rng)));
+        });
     }
 
     // Compare: filter_range (avoids vec allocation) at low probabilities
     group.bench_function("filter_range_1M_p1e-4", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            black_box(filter_range_by_probability(0, 1_000_000, 1e-4, &mut rng))
-        });
+        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 1e-4, &mut rng)));
     });
 
     group.bench_function("filter_range_1M_p1e-5", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            black_box(filter_range_by_probability(0, 1_000_000, 1e-5, &mut rng))
-        });
+        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 1e-5, &mut rng)));
     });
 
     // Benchmark BatchState operations at scale
@@ -1153,9 +1096,9 @@ fn bench_batch_filtering(c: &mut Criterion) {
 // Batch Processor Comparison
 // ============================================================================
 
-/// Compare FastBatchProcessor vs BatchFlowChannel vs FlowChannel at scale
+/// Compare `FastBatchProcessor` vs `BatchFlowChannel` vs `FlowChannel` at scale
 fn bench_batch_processor(c: &mut Criterion) {
-    use pecos_neo::noise::flow::batch_flow::{fast_depolarizing, BatchState};
+    use pecos_neo::noise::flow::batch_flow::{BatchState, fast_depolarizing};
     use pecos_neo::noise::flow::prelude::*;
     use pecos_neo::noise::{NoiseChannel, NoiseContext, NoiseEvent};
 
@@ -1167,82 +1110,65 @@ fn bench_batch_processor(c: &mut Criterion) {
         let angles = [];
 
         // FastBatchProcessor (geometric + lazy filter) - OPTIMAL
-        group.bench_function(
-            BenchmarkId::new("fast_processor_p1e-4", num_qubits),
-            |b| {
-                let mut state = BatchState::new(num_qubits);
-                state.mark_all_active();
-                // Mark 1% as leaked for realistic scenario
-                for i in (0..num_qubits).step_by(100) {
-                    state.mark_leaked(QubitId(i));
-                }
+        group.bench_function(BenchmarkId::new("fast_processor_p1e-4", num_qubits), |b| {
+            let mut state = BatchState::new(num_qubits);
+            state.mark_all_active();
+            // Mark 1% as leaked for realistic scenario
+            for i in (0..num_qubits).step_by(100) {
+                state.mark_leaked(QubitId(i));
+            }
 
-                let mut ctx = NoiseContext::new();
-                let mut rng = PecosRng::seed_from_u64(42);
-                let processor = fast_depolarizing(1e-4, pauli());
+            let mut ctx = NoiseContext::new();
+            let mut rng = PecosRng::seed_from_u64(42);
+            let processor = fast_depolarizing(1e-4, pauli());
 
-                b.iter(|| {
-                    black_box(processor.process_all(&state, &mut ctx, &mut rng))
-                });
-            },
-        );
+            b.iter(|| black_box(processor.process_all(&state, &mut ctx, &mut rng)));
+        });
 
         // BatchFlowChannel (geometric sampling via NoiseChannel interface)
         let batch_channel = FlowChannelBuilder::batch_single_qubit("batch", 1e-4, pauli());
-        group.bench_function(
-            BenchmarkId::new("batch_channel_p1e-4", num_qubits),
-            |b| {
-                let mut ctx = NoiseContext::new();
-                let mut rng = PecosRng::seed_from_u64(42);
-                let event = NoiseEvent::AfterGate {
-                    gate_type: GateType::H,
-                    qubits: &qubits,
-                    angles: &angles,
-                gate_id: None, };
-                b.iter(|| {
-                    black_box(batch_channel.apply(&event, &mut ctx, &mut rng))
-                });
-            },
-        );
+        group.bench_function(BenchmarkId::new("batch_channel_p1e-4", num_qubits), |b| {
+            let mut ctx = NoiseContext::new();
+            let mut rng = PecosRng::seed_from_u64(42);
+            let event = NoiseEvent::AfterGate {
+                gate_type: GateType::H,
+                qubits: &qubits,
+                angles: &angles,
+                gate_id: None,
+            };
+            b.iter(|| black_box(batch_channel.apply(&event, &mut ctx, &mut rng)));
+        });
 
         // FlowChannel with probability (geometric sampling - new consolidated API)
         let flow_with_prob = FlowChannel::new("flow_fast", pauli())
             .with_probability(1e-4)
             .with_filter(FlowEventFilter::SingleQubitGate);
-        group.bench_function(
-            BenchmarkId::new("flow_with_prob_p1e-4", num_qubits),
-            |b| {
+        group.bench_function(BenchmarkId::new("flow_with_prob_p1e-4", num_qubits), |b| {
+            let mut ctx = NoiseContext::new();
+            let mut rng = PecosRng::seed_from_u64(42);
+            let event = NoiseEvent::AfterGate {
+                gate_type: GateType::H,
+                qubits: &qubits,
+                angles: &angles,
+                gate_id: None,
+            };
+            b.iter(|| black_box(flow_with_prob.apply(&event, &mut ctx, &mut rng)));
+        });
+
+        // FlowChannel (linear, no probability) - skip for 1M (too slow)
+        if num_qubits <= 100_000 {
+            let flow_channel = FlowChannelBuilder::single_qubit("flow", prob(1e-4, pauli()));
+            group.bench_function(BenchmarkId::new("flow_linear_p1e-4", num_qubits), |b| {
                 let mut ctx = NoiseContext::new();
                 let mut rng = PecosRng::seed_from_u64(42);
                 let event = NoiseEvent::AfterGate {
                     gate_type: GateType::H,
                     qubits: &qubits,
                     angles: &angles,
-                gate_id: None, };
-                b.iter(|| {
-                    black_box(flow_with_prob.apply(&event, &mut ctx, &mut rng))
-                });
-            },
-        );
-
-        // FlowChannel (linear, no probability) - skip for 1M (too slow)
-        if num_qubits <= 100_000 {
-            let flow_channel = FlowChannelBuilder::single_qubit("flow", prob(1e-4, pauli()));
-            group.bench_function(
-                BenchmarkId::new("flow_linear_p1e-4", num_qubits),
-                |b| {
-                    let mut ctx = NoiseContext::new();
-                    let mut rng = PecosRng::seed_from_u64(42);
-                    let event = NoiseEvent::AfterGate {
-                        gate_type: GateType::H,
-                        qubits: &qubits,
-                        angles: &angles,
-                    gate_id: None, };
-                    b.iter(|| {
-                        black_box(flow_channel.apply(&event, &mut ctx, &mut rng))
-                    });
-                },
-            );
+                    gate_id: None,
+                };
+                b.iter(|| black_box(flow_channel.apply(&event, &mut ctx, &mut rng)));
+            });
         }
     }
 
@@ -1250,12 +1176,16 @@ fn bench_batch_processor(c: &mut Criterion) {
     let num_qubits = 100_000;
     for leaked_pct in [0, 1, 10, 50] {
         group.bench_function(
-            BenchmarkId::new(format!("fast_{}pct_leaked", leaked_pct), num_qubits),
+            BenchmarkId::new(format!("fast_{leaked_pct}pct_leaked"), num_qubits),
             |b| {
                 let mut state = BatchState::new(num_qubits);
                 state.mark_all_active();
                 // Mark leaked_pct% as leaked
-                let step = if leaked_pct > 0 { 100 / leaked_pct } else { num_qubits + 1 };
+                let step = if leaked_pct > 0 {
+                    100 / leaked_pct
+                } else {
+                    num_qubits + 1
+                };
                 for i in (0..num_qubits).step_by(step) {
                     state.mark_leaked(QubitId(i));
                 }
@@ -1264,9 +1194,7 @@ fn bench_batch_processor(c: &mut Criterion) {
                 let mut rng = PecosRng::seed_from_u64(42);
                 let processor = fast_depolarizing(1e-4, pauli());
 
-                b.iter(|| {
-                    black_box(processor.process_all(&state, &mut ctx, &mut rng))
-                });
+                b.iter(|| black_box(processor.process_all(&state, &mut ctx, &mut rng)));
             },
         );
     }
@@ -1276,9 +1204,9 @@ fn bench_batch_processor(c: &mut Criterion) {
 
 /// Compare trait object dispatch vs compiled enum dispatch for flow primitives
 fn bench_dispatch_comparison(c: &mut Criterion) {
+    use pecos_neo::noise::NoiseContext;
     use pecos_neo::noise::flow::prelude::*;
     use pecos_neo::noise::flow::{CompiledAction, CompiledCondition, CompiledPrimitive};
-    use pecos_neo::noise::NoiseContext;
 
     let mut group = c.benchmark_group("dispatch_comparison");
 
@@ -1292,13 +1220,7 @@ fn bench_dispatch_comparison(c: &mut Criterion) {
     );
 
     // More complex tree with conditions
-    let trait_complex = seq![
-        skip_if_leaked(),
-        prob(
-            0.01,
-            when_leaked(seep(), pauli())
-        ),
-    ];
+    let trait_complex = seq![skip_if_leaked(), prob(0.01, when_leaked(seep(), pauli())),];
     let compiled_complex = CompiledPrimitive::seq(vec![
         CompiledPrimitive::skip_if(CompiledCondition::Leaked),
         CompiledPrimitive::prob(
@@ -1315,34 +1237,26 @@ fn bench_dispatch_comparison(c: &mut Criterion) {
     group.bench_function("trait_simple_pauli", |b| {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            black_box(trait_simple.apply(QubitId(0), &mut ctx, &mut rng))
-        });
+        b.iter(|| black_box(trait_simple.apply(QubitId(0), &mut ctx, &mut rng)));
     });
 
     group.bench_function("compiled_simple_pauli", |b| {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            black_box(compiled_simple.apply(QubitId(0), &mut ctx, &mut rng))
-        });
+        b.iter(|| black_box(compiled_simple.apply(QubitId(0), &mut ctx, &mut rng)));
     });
 
     // Benchmark complex tree
     group.bench_function("trait_complex_tree", |b| {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            black_box(trait_complex.apply(QubitId(0), &mut ctx, &mut rng))
-        });
+        b.iter(|| black_box(trait_complex.apply(QubitId(0), &mut ctx, &mut rng)));
     });
 
     group.bench_function("compiled_complex_tree", |b| {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            black_box(compiled_complex.apply(QubitId(0), &mut ctx, &mut rng))
-        });
+        b.iter(|| black_box(compiled_complex.apply(QubitId(0), &mut ctx, &mut rng)));
     });
 
     // Benchmark many iterations to amortize setup

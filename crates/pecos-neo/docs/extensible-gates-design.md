@@ -149,10 +149,10 @@ Users write circuits with readable gate names:
 ```rust
 // User-facing API uses strings
 let circuit = CircuitBuilder::new()
-    .gate("Prep", &[0, 1])
+    .gate("PZ", &[0, 1])
     .gate("H", &[0])
     .gate("MyRotation", &[0, 1], &[0.5, 0.25, 0.1])  // Custom gate by name
-    .gate("Measure", &[0, 1])
+    .gate("MZ", &[0, 1])
     .build();
 ```
 
@@ -502,7 +502,7 @@ fn apply_noise_system(
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Simulator                                │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  GateSupport: I, X, Y, Z, H, CX, CZ, RZ, Measure, ...      │ │
+│  │  GateSupport: I, X, Y, Z, H, CX, CZ, RZ, MZ, ...           │ │
 │  │  handlers[GateId] → Option<ExecuteFn>                      │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
@@ -781,7 +781,7 @@ static CORE_QUANTUM_ARITY: [u8; 256] = {
 
 static CORE_RETURNS_RESULT: [bool; 256] = {
     let mut table = [false; 256];
-    table[gates::MEASURE.0 as usize] = true;
+    table[gates::MZ.0 as usize] = true;
     // ...
     table
 };
@@ -858,7 +858,7 @@ impl<S: CliffordGateable> GateDispatcher<S> {
         handlers[gates::X.0 as usize] = Some(|s, q, _, _| { s.x(q); None });
         handlers[gates::H.0 as usize] = Some(|s, q, _, _| { s.h(q); None });
         handlers[gates::CX.0 as usize] = Some(|s, q, _, _| { s.cx(q); None });
-        handlers[gates::MEASURE.0 as usize] = Some(|s, q, _, _| {
+        handlers[gates::MZ.0 as usize] = Some(|s, q, _, _| {
             Some(s.mz(q).iter().map(|r| r.outcome).collect())
         });
         // ... etc
@@ -1584,8 +1584,8 @@ static CORE_ANGLE_ARITY: [u8; 256] = const {
 static CORE_CATEGORY: [GateCategory; 256] = const {
     let mut table = [GateCategory::SingleQubitUnitary; 256];
     table[gates::CX.0 as usize] = GateCategory::TwoQubitUnitary;
-    table[gates::MEASURE.0 as usize] = GateCategory::Measurement;
-    table[gates::PREP.0 as usize] = GateCategory::Preparation;
+    table[gates::MZ.0 as usize] = GateCategory::Measurement;
+    table[gates::PZ.0 as usize] = GateCategory::Preparation;
     // ...
     table
 };
@@ -1671,9 +1671,9 @@ impl GateAdaptor for MyGateAdaptor {
 
 // Build a circuit using the custom gate
 let circuit = CircuitBuilder::new()
-    .prep(&[0, 1])
+    .pz(&[0, 1])
     .gate(my_gate_id, &[0, 1], &[angle1, angle2, angle3])  // Use custom gate
-    .measure(&[0, 1])
+    .mz(&[0, 1])
     .build();
 
 // Outer builder has circuit - passes to sub-builders internally for validation
@@ -1872,7 +1872,7 @@ header:
 
 body:
   gates:
-    - { gate: Prep, qubits: [0, 1] }
+    - { gate: PZ, qubits: [0, 1] }
     - { gate: H, qubits: [0] }
     - { gate: 256, qubits: [0, 1], angles: [0.5, 0.25, 0.1] }  # MyRotation
     - { gate: 257, qubits: [0] }  # MyMeasure

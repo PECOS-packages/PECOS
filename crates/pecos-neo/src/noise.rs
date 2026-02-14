@@ -23,7 +23,7 @@
 //!
 //! Import everything with the prelude:
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Simple: just set error rates
@@ -39,8 +39,14 @@
 //!         prob(0.001, when_leaked(seep(), pauli())),
 //!     ])
 //!     .build();
+//! ```
 //!
+//! Mixed approach (combine builder with custom channels):
+//!
+//! ```
+//! # use pecos_neo::noise::prelude::*;
 //! // Mixed: combine both approaches
+//! let custom_channel = MeasurementChannel::symmetric(0.02);
 //! let mixed = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)
 //!     .with_channel(custom_channel)
@@ -104,11 +110,11 @@ pub mod idle;
 pub mod introspection;
 pub mod leakage;
 pub mod measurement;
+pub mod patterns;
 pub mod plugin;
 pub mod plugins;
 pub mod prelude;
 pub mod preparation;
-pub mod patterns;
 pub mod single_qubit;
 pub mod topology;
 pub mod two_qubit;
@@ -122,7 +128,7 @@ pub use correlated::{CorrelatedNoiseChannel, CorrelationStats};
 pub use crosstalk::CrosstalkChannel;
 pub use gate_dependent::{GateDependentChannel, GateNoiseConfig};
 pub use gate_id_dependent::{GateIdDependentChannel, GateIdNoiseConfig};
-pub use general_builder::GeneralNoiseModelBuilder;
+pub use general_builder::{GeneralNoiseModelBuilder, general_noise};
 pub use idle::IdleChannel;
 pub use leakage::LeakageChannel;
 pub use measurement::MeasurementChannel;
@@ -134,9 +140,10 @@ pub use two_qubit::TwoQubitChannel;
 use crate::command::GateCommand;
 use crate::command::GateType;
 use crate::extensible::GateId;
-use pecos_core::{Angle64, QubitId, TimeUnits};
+use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
 use pecos_rng::PecosRng;
 use smallvec::SmallVec;
+use std::any::{Any, TypeId};
 
 /// Events that can trigger noise in the simulation.
 ///
@@ -224,10 +231,26 @@ pub enum NoiseEvent<'a> {
         qubits: &'a [QubitId],
         layer_index: usize,
     },
+
+    /// A typed signal from the command stream.
+    ///
+    /// Signals carry user-defined metadata that flows alongside gate commands.
+    /// Use [`NoiseEvent::signal()`] for typed access and [`NoiseEvent::is_signal()`]
+    /// to check the type.
+    ///
+    /// The `type_id` enables O(1) filtering in `responds_to()` without
+    /// downcasting. The `data` field carries the actual signal value,
+    /// accessible via `signal::<T>()`.
+    Signal {
+        /// The concrete signal type's `TypeId`, for fast filtering.
+        type_id: TypeId,
+        /// Type-erased signal data. Use `signal::<T>()` for typed access.
+        data: &'a dyn Any,
+    },
 }
 
 impl<'a> NoiseEvent<'a> {
-    /// Create a BeforeGate event with gate ID derived from gate type.
+    /// Create a `BeforeGate` event with gate ID derived from gate type.
     ///
     /// The `gate_id` is automatically set to `gate_type.to_gate_id()`, enabling
     /// uniform gate identification in noise channels regardless of whether
@@ -242,7 +265,7 @@ impl<'a> NoiseEvent<'a> {
         }
     }
 
-    /// Create a BeforeGate event with an explicit custom gate ID.
+    /// Create a `BeforeGate` event with an explicit custom gate ID.
     ///
     /// Use this when you need to override the gate ID (e.g., for tracking
     /// the original custom gate through decomposition).
@@ -261,7 +284,7 @@ impl<'a> NoiseEvent<'a> {
         }
     }
 
-    /// Create an AfterGate event with gate ID derived from gate type.
+    /// Create an `AfterGate` event with gate ID derived from gate type.
     ///
     /// The `gate_id` is automatically set to `gate_type.to_gate_id()`, enabling
     /// uniform gate identification in noise channels regardless of whether
@@ -276,7 +299,7 @@ impl<'a> NoiseEvent<'a> {
         }
     }
 
-    /// Create an AfterGate event with an explicit custom gate ID.
+    /// Create an `AfterGate` event with an explicit custom gate ID.
     ///
     /// Use this when you need to override the gate ID (e.g., for tracking
     /// the original custom gate through decomposition).
@@ -324,7 +347,7 @@ impl<'a> NoiseEvent<'a> {
             | Self::IdleTime { qubits, .. }
             | Self::AfterReset { qubits }
             | Self::BetweenLayers { qubits, .. } => qubits,
-            Self::BeforeCircuit { .. } | Self::AfterCircuit { .. } => &[],
+            Self::BeforeCircuit { .. } | Self::AfterCircuit { .. } | Self::Signal { .. } => &[],
         }
     }
 
@@ -355,6 +378,75 @@ impl<'a> NoiseEvent<'a> {
         matches!(self, Self::AfterReset { .. })
     }
 
+    /// Check if this is a signal event.
+    #[must_use]
+    pub fn is_signal_event(&self) -> bool {
+        matches!(self, Self::Signal { .. })
+    }
+
+    /// Create a `Signal` event from a typed signal value.
+    #[must_use]
+    pub fn from_signal<S: Signal>(signal: &'a S) -> Self {
+        Self::Signal {
+            type_id: TypeId::of::<S>(),
+            data: signal,
+        }
+    }
+
+    /// Try to extract a typed signal from this event.
+    ///
+    /// Returns `Some(&S)` if this is a `Signal` event carrying data of type `S`,
+    /// `None` otherwise.
+    ///
+    /// ```
+    /// use pecos_core::impl_signal;
+    /// use pecos_neo::noise::NoiseEvent;
+    ///
+    /// #[derive(Copy, Clone, Debug)]
+    /// struct Temperature(pub f64);
+    /// impl_signal!(Temperature);
+    ///
+    /// let temp = Temperature(300.0);
+    /// let event = NoiseEvent::from_signal(&temp);
+    ///
+    /// assert_eq!(event.signal::<Temperature>().unwrap().0, 300.0);
+    /// ```
+    #[must_use]
+    pub fn signal<S: Signal>(&self) -> Option<&S> {
+        match self {
+            Self::Signal { data, .. } => data.downcast_ref::<S>(),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a signal of a specific type.
+    ///
+    /// This is cheaper than `signal::<T>()` when you only need to check the type
+    /// (no downcast needed, just `TypeId` comparison).
+    ///
+    /// ```
+    /// use pecos_core::impl_signal;
+    /// use pecos_neo::noise::NoiseEvent;
+    ///
+    /// #[derive(Copy, Clone, Debug)]
+    /// struct Temperature(pub f64);
+    /// impl_signal!(Temperature);
+    ///
+    /// #[derive(Copy, Clone, Debug)]
+    /// struct RoundBoundary(pub i64);
+    /// impl_signal!(RoundBoundary);
+    ///
+    /// let temp = Temperature(300.0);
+    /// let event = NoiseEvent::from_signal(&temp);
+    ///
+    /// assert!(event.is_signal::<Temperature>());
+    /// assert!(!event.is_signal::<RoundBoundary>());
+    /// ```
+    #[must_use]
+    pub fn is_signal<S: Signal>(&self) -> bool {
+        matches!(self, Self::Signal { type_id, .. } if *type_id == TypeId::of::<S>())
+    }
+
     /// Apply inherent state updates for this event to the context.
     ///
     /// This captures the fundamental semantics of each event type:
@@ -379,14 +471,15 @@ impl<'a> NoiseEvent<'a> {
                     ctx.mark_measured(qubit);
                 }
             }
-            // Circuit-level and other events don't have inherent per-qubit state effects
+            // Circuit-level, signal, and other events don't have inherent per-qubit state effects
             Self::BeforeGate { .. }
             | Self::AfterGate { .. }
             | Self::BeforeMeasurement { .. }
             | Self::IdleTime { .. }
             | Self::BeforeCircuit { .. }
             | Self::AfterCircuit { .. }
-            | Self::BetweenLayers { .. } => {}
+            | Self::BetweenLayers { .. }
+            | Self::Signal { .. } => {}
         }
     }
 }
@@ -433,7 +526,7 @@ pub enum NoiseResponse {
 
     /// Force measurement outcomes to specific values.
     ///
-    /// Each tuple is (qubit, forced_value). The outcome for the qubit
+    /// Each tuple is (qubit, `forced_value`). The outcome for the qubit
     /// will be set to the forced value regardless of the actual measurement.
     ForceOutcomes(SmallVec<[(QubitId, bool); 4]>),
 
@@ -565,6 +658,11 @@ pub trait NoiseChannel: Send + Sync {
     fn priority(&self) -> i32 {
         0
     }
+
+    /// Clone this channel into a boxed trait object.
+    ///
+    /// Required for cloning `ComposableNoiseModel` to support parallel execution.
+    fn clone_box(&self) -> Box<dyn NoiseChannel>;
 }
 
 /// Distribution of Pauli errors for single-qubit noise.
@@ -1151,7 +1249,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert_eq!(event.qubits(), &qubits);
     }
@@ -1164,7 +1263,8 @@ mod tests {
             gate_type: GateType::RZ,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert_eq!(event.angles(), &angles);
     }
@@ -1253,10 +1353,22 @@ mod tests {
     #[test]
     fn test_two_qubit_paulis_ordering() {
         // Verify the ordering matches the documentation
-        assert_eq!(TwoQubitPauliWeights::get_paulis(0), (GateType::X, GateType::I)); // XI
-        assert_eq!(TwoQubitPauliWeights::get_paulis(3), (GateType::I, GateType::X)); // IX
-        assert_eq!(TwoQubitPauliWeights::get_paulis(6), (GateType::X, GateType::X)); // XX
-        assert_eq!(TwoQubitPauliWeights::get_paulis(14), (GateType::Z, GateType::Z)); // ZZ
+        assert_eq!(
+            TwoQubitPauliWeights::get_paulis(0),
+            (GateType::X, GateType::I)
+        ); // XI
+        assert_eq!(
+            TwoQubitPauliWeights::get_paulis(3),
+            (GateType::I, GateType::X)
+        ); // IX
+        assert_eq!(
+            TwoQubitPauliWeights::get_paulis(6),
+            (GateType::X, GateType::X)
+        ); // XX
+        assert_eq!(
+            TwoQubitPauliWeights::get_paulis(14),
+            (GateType::Z, GateType::Z)
+        ); // ZZ
     }
 
     // ========================================================================

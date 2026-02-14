@@ -663,7 +663,7 @@ impl NoisyMeasurementHistoryBuilder {
             // Track measurement positions
             if matches!(
                 gate.gate_type,
-                GateType::Measure | GateType::MeasureFree | GateType::MeasureLeaked
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
             ) {
                 measurement_positions.insert(gate_locations.len(), measurement_count);
                 measurement_count += 1;
@@ -794,7 +794,7 @@ impl NoisyMeasurementHistoryBuilder {
             }
 
             // State preparation: X error with probability p_prep
-            GateType::Prep | GateType::QAlloc => {
+            GateType::PZ | GateType::QAlloc => {
                 if self.noise_model.p_prep > 0.0 && !location.qubits.is_empty() {
                     let q = location.qubits[0];
 
@@ -818,7 +818,7 @@ impl NoisyMeasurementHistoryBuilder {
             }
 
             // Measurement: flip the measurement outcome with probability p_meas
-            GateType::Measure | GateType::MeasureFree | GateType::MeasureLeaked => {
+            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
                 if self.noise_model.p_meas > 0.0 {
                     // Measurement fault directly flips this measurement
                     if let Some(&meas_idx) = measurement_positions.get(&loc_idx) {
@@ -906,7 +906,7 @@ impl NoisyMeasurementHistoryBuilder {
                 }
 
                 // Measurements
-                GateType::Measure | GateType::MeasureFree | GateType::MeasureLeaked => {
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
                     if !location.qubits.is_empty() {
                         let q = location.qubits[0];
                         // Check if this fault would flip the measurement
@@ -989,7 +989,7 @@ impl NoisyMeasurementHistoryBuilder {
                         prop.h(&[q2]).cx(&[q1, q2]).h(&[q2]);
                     }
                 }
-                GateType::Measure | GateType::MeasureFree | GateType::MeasureLeaked => {
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
                     if !location.qubits.is_empty() {
                         let q = location.qubits[0];
                         if prop.contains_x(q)

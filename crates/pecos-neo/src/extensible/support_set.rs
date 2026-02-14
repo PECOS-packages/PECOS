@@ -79,9 +79,7 @@ impl GateSupportSet {
     /// Intersection with another set (modifies self).
     pub fn intersect_with(&mut self, other: &GateSupportSet) {
         // Collect IDs to remove first to avoid iterator invalidation
-        let to_remove: Vec<_> = self.iter()
-            .filter(|id| !other.contains(*id))
-            .collect();
+        let to_remove: Vec<_> = self.iter().filter(|id| !other.contains(*id)).collect();
 
         for id in to_remove {
             self.remove(id);

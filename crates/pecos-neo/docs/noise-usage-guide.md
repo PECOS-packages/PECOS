@@ -146,12 +146,12 @@ use pecos_qsim::SparseStab;
 
 // Build circuit
 let circuit = CommandBuilder::new()
-    .prep(0)
-    .prep(1)
+    .pz(0)
+    .pz(1)
     .h(0)
     .cx(0, 1)
-    .measure(0)
-    .measure(1)
+    .mz(0)
+    .mz(1)
     .build();
 
 // Build noise model

@@ -27,17 +27,21 @@
 //! For programs with measurement-dependent branching (like QEC with feedback),
 //! you can systematically explore all paths:
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_neo::sampling::path::{PathExplorer, PathEnumerator, PathStatistics};
+//! use pecos_neo::prelude::*;
+//! use pecos_qsim::SparseStab;
 //!
+//! let n = 5;
+//! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 //! let mut explorer = PathExplorer::new(SparseStab::new(n));
 //! let mut stats = PathStatistics::new();
 //!
 //! // Enumerate all paths up to 10 non-deterministic measurements
 //! for path in PathEnumerator::new(10) {
 //!     let result = explorer.run_with_path(&commands, &path);
-//!     let failed = check_logical_error(&result.outcomes);
-//!     stats.add(if failed { 1.0 } else { 0.0 }, path.probability());
+//!     // Check outcomes and accumulate statistics
+//!     stats.add(0.0, path.probability());
 //! }
 //!
 //! println!("Logical error rate: {}", stats.mean());
@@ -52,16 +56,17 @@ pub mod weight;
 
 pub use importance::{ImportanceConfig, ImportanceSamplingNoise};
 pub use importance_runner::{ImportanceSampledShot, ImportanceSamplingRunner, OutcomeBiasConfig};
-pub use monte_carlo::{ImportanceSamplingResults, MonteCarloConfig, MonteCarloResults, MonteCarloRunner};
+pub use monte_carlo::{
+    ImportanceSamplingResults, MonteCarloConfig, MonteCarloResults, MonteCarloRunner,
+};
 pub use path::{
-    EnumeratedPath, MeasurementPath, PathEnumerator, PathExplorer, PathOutcome,
-    PathRecordedResult, PathSignature, PathStatistics,
+    EnumeratedPath, MeasurementPath, PathEnumerator, PathExplorer, PathOutcome, PathRecordedResult,
+    PathSignature, PathStatistics,
 };
 pub use subset::{
-    bit_flip_syndrome_circuit, phase_flip_syndrome_circuit, BernoulliSubsetSimulation,
-    EcsSubsetSimulation, HistoryTrajectory, ProperSubsetSimulation, QecCheckpoint,
-    QecHistoryTrajectory, QecSubsetConfig, QecSubsetSimulation, QecTrajectory, RoundResult,
-    SubsetConfig, SubsetResult, SubsetSimulation, SyndromeScore, Trajectory,
-    TrajectoryCheckpoint,
+    BernoulliSubsetSimulation, EcsSubsetSimulation, HistoryTrajectory, ProperSubsetSimulation,
+    QecCheckpoint, QecHistoryTrajectory, QecSubsetConfig, QecSubsetSimulation, QecTrajectory,
+    RoundResult, SubsetConfig, SubsetResult, SubsetSimulation, SyndromeScore, Trajectory,
+    TrajectoryCheckpoint, bit_flip_syndrome_circuit, phase_flip_syndrome_circuit,
 };
 pub use weight::{SampleWeight, WeightedOutcome, WeightedStatistics};

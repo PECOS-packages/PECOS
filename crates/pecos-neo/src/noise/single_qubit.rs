@@ -16,7 +16,7 @@
 //! declarative noise models with conditional logic, see `FlowChannel` in
 //! `pecos_neo::noise::flow::prelude`.
 //!
-//! ## When to use this vs FlowChannel
+//! ## When to use this vs `FlowChannel`
 //!
 //! **Use `SingleQubitChannel` when:**
 //! - You want a simple, direct noise model
@@ -34,8 +34,8 @@
 //! - Seepage for leaked qubits
 
 use super::{
-    NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights,
-    SingleQubitEmissionResult, SingleQubitEmissionWeights,
+    NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights, SingleQubitEmissionResult,
+    SingleQubitEmissionWeights,
 };
 use crate::command::GateCommand;
 use pecos_rng::PecosRng;
@@ -152,12 +152,8 @@ impl SingleQubitChannel {
         self.emission_threshold = PecosRng::probability_threshold(ratio);
         // Distribute remaining probability among X, Y, Z
         let pauli_prob = (1.0 - leakage_prob) / 3.0;
-        self.emission_weights = SingleQubitEmissionWeights::custom(
-            pauli_prob,
-            pauli_prob,
-            pauli_prob,
-            leakage_prob,
-        );
+        self.emission_weights =
+            SingleQubitEmissionWeights::custom(pauli_prob, pauli_prob, pauli_prob, leakage_prob);
         self
     }
 
@@ -223,8 +219,9 @@ impl NoiseChannel for SingleQubitChannel {
         }
         // Respond to BeforeGate for leaked qubit handling and AfterGate for noise
         match event {
-            NoiseEvent::BeforeGate { gate_type, .. }
-            | NoiseEvent::AfterGate { gate_type, .. } => gate_type.is_single_qubit(),
+            NoiseEvent::BeforeGate { gate_type, .. } | NoiseEvent::AfterGate { gate_type, .. } => {
+                gate_type.is_single_qubit()
+            }
             _ => false,
         }
     }
@@ -307,6 +304,10 @@ impl NoiseChannel for SingleQubitChannel {
     fn priority(&self) -> i32 {
         // Higher priority to handle leakage checks first
         10
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
     }
 }
 
@@ -410,7 +411,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(channel.responds_to(&event));
 
@@ -432,7 +434,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         assert!(!channel.responds_to(&event));
     }
@@ -447,7 +450,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -467,7 +471,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(0));
@@ -488,7 +493,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);

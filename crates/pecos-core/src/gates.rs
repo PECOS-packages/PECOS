@@ -490,7 +490,7 @@ impl Gate {
     #[must_use]
     pub fn measure(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
-            GateType::Measure,
+            GateType::MZ,
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
@@ -508,7 +508,7 @@ impl Gate {
     #[must_use]
     pub fn prep(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
-            GateType::Prep,
+            GateType::PZ,
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
@@ -733,7 +733,7 @@ mod tests {
 
         // Measure gates
         let measure_gate = Gate::measure(&[2, 3]);
-        assert_eq!(measure_gate.gate_type, GateType::Measure);
+        assert_eq!(measure_gate.gate_type, GateType::MZ);
         assert_eq!(
             measure_gate.qubits.as_slice(),
             &[QubitId::from(2), QubitId::from(3)]

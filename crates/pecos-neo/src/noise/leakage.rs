@@ -120,6 +120,10 @@ impl NoiseChannel for LeakageChannel {
         // High priority - leakage checks should happen before other noise channels
         100
     }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
 }
 
 impl LeakageChannel {
@@ -236,7 +240,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(0));
@@ -257,7 +262,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(1)); // Only target is leaked
@@ -279,7 +285,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -295,10 +302,11 @@ mod tests {
         let qubits = [QubitId(0)];
         let angles = [];
         let event = NoiseEvent::BeforeGate {
-            gate_type: GateType::Measure,
+            gate_type: GateType::MZ,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(0));
@@ -346,7 +354,8 @@ mod tests {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         ctx.mark_leaked(QubitId(0)); // Control is leaked
@@ -373,7 +382,8 @@ mod tests {
             gate_type: GateType::H,
             qubits: &qubits,
             angles: &angles,
-        gate_id: None, };
+            gate_id: None,
+        };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);

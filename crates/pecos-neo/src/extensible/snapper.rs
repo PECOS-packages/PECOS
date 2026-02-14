@@ -68,12 +68,12 @@ impl AngleSnapper {
         Self {
             targets: vec![
                 A::ZERO,
-                A::HALF_TURN / 4,                 // pi/4 (T)
-                A::QUARTER_TURN,                  // pi/2 (S)
-                A::HALF_TURN / 4 + A::QUARTER_TURN, // 3pi/4
-                A::HALF_TURN,                     // pi (Z)
-                A::HALF_TURN + A::HALF_TURN / 4,  // 5pi/4
-                A::THREE_QUARTERS_TURN,           // 3pi/2
+                A::HALF_TURN / 4,                                  // pi/4 (T)
+                A::QUARTER_TURN,                                   // pi/2 (S)
+                A::HALF_TURN / 4 + A::QUARTER_TURN,                // 3pi/4
+                A::HALF_TURN,                                      // pi (Z)
+                A::HALF_TURN + A::HALF_TURN / 4,                   // 5pi/4
+                A::THREE_QUARTERS_TURN,                            // 3pi/2
                 A::HALF_TURN + A::HALF_TURN / 4 + A::QUARTER_TURN, // 7pi/4
             ],
             tolerance,
@@ -182,23 +182,19 @@ pub enum SnapPolicy {
     #[default]
     Exact,
     /// Snap within tolerance, fail if no target close enough
-    SnapOrFail {
-        tolerance: f64,
-    },
+    SnapOrFail { tolerance: f64 },
     /// Snap within tolerance, keep original if no target close enough
-    SnapOrKeep {
-        tolerance: f64,
-    },
+    SnapOrKeep { tolerance: f64 },
 }
 
 impl SnapPolicy {
-    /// Create a SnapOrFail policy with the given tolerance.
+    /// Create a `SnapOrFail` policy with the given tolerance.
     #[must_use]
     pub fn snap_or_fail(tolerance: f64) -> Self {
         Self::SnapOrFail { tolerance }
     }
 
-    /// Create a SnapOrKeep policy with the given tolerance.
+    /// Create a `SnapOrKeep` policy with the given tolerance.
     #[must_use]
     pub fn snap_or_keep(tolerance: f64) -> Self {
         Self::SnapOrKeep { tolerance }

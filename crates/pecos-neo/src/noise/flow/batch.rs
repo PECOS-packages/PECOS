@@ -49,8 +49,9 @@
 //! For high-level batch noise processing, see [`batch_flow`](super::batch_flow).
 //! This module provides the low-level sampling primitives.
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::noise::flow::batch::GeometricSampler;
+//! use pecos_rng::PecosRng;
 //!
 //! let mut rng = PecosRng::seed_from_u64(42);
 //!
@@ -67,8 +68,8 @@
 //! ```
 
 use pecos_core::QubitId;
-use pecos_rng::rng_ext::RngProbabilityExt;
 use pecos_rng::PecosRng;
+use pecos_rng::rng_ext::RngProbabilityExt;
 use rand::Rng;
 
 // ============================================================================
@@ -155,11 +156,7 @@ impl GeometricSampler {
         };
 
         let pos = start + skip;
-        if pos < end {
-            Some(pos)
-        } else {
-            None
-        }
+        if pos < end { Some(pos) } else { None }
     }
 
     /// Sample all events in the range [0, count).
@@ -168,7 +165,11 @@ impl GeometricSampler {
     #[inline]
     pub fn sample_range(&self, start: usize, end: usize, rng: &mut PecosRng) -> Vec<usize> {
         // Pre-allocate based on expected events (2x to avoid reallocation)
-        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
         let expected = (((end - start) as f64) * self.probability * 2.0) as usize;
         let mut result = Vec::with_capacity(expected.max(16));
 
@@ -191,7 +192,7 @@ impl GeometricSampler {
         result
     }
 
-    /// Sample events and return as QubitIds.
+    /// Sample events and return as `QubitIds`.
     #[inline]
     pub fn sample_qubits(&self, start: usize, end: usize, rng: &mut PecosRng) -> Vec<QubitId> {
         self.sample_range(start, end, rng)
@@ -324,7 +325,11 @@ pub fn sample_noise_1q_batch(
     threshold: &ProbabilityThreshold,
     rng: &mut PecosRng,
 ) -> Vec<(QubitId, u8)> {
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     let expected = ((num_qubits as f64) * threshold.probability * 2.0) as usize;
     let mut results = Vec::with_capacity(expected.max(16));
 
@@ -343,7 +348,11 @@ pub fn sample_noise_2q_batch(
     threshold: &ProbabilityThreshold,
     rng: &mut PecosRng,
 ) -> Vec<(QubitId, u8)> {
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     let expected = ((num_qubits as f64) * threshold.probability * 2.0) as usize;
     let mut results = Vec::with_capacity(expected.max(16));
 
@@ -489,7 +498,7 @@ mod tests {
 
         // All Paulis should be valid
         for (_, pauli) in &result {
-            assert!(*pauli < 3, "Invalid Pauli: {}", pauli);
+            assert!(*pauli < 3, "Invalid Pauli: {pauli}");
         }
     }
 
@@ -502,7 +511,7 @@ mod tests {
 
         // All Paulis should be valid
         for (_, pauli) in &result {
-            assert!(*pauli < 15, "Invalid 2Q Pauli: {}", pauli);
+            assert!(*pauli < 15, "Invalid 2Q Pauli: {pauli}");
         }
     }
 
@@ -523,9 +532,7 @@ mod tests {
         let expected = 10000;
         assert!(
             total_events > expected * 9 / 10 && total_events < expected * 11 / 10,
-            "Total events {} outside expected range around {}",
-            total_events,
-            expected
+            "Total events {total_events} outside expected range around {expected}"
         );
     }
 }

@@ -26,24 +26,13 @@
 //!
 //! ## Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_neo::sampling::{ImportanceConfig, ImportanceSamplingNoise};
-//! use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
 //!
-//! // True noise model (what we want to estimate)
-//! let true_noise = ComposableNoiseModel::new()
-//!     .add_channel(SingleQubitChannel::depolarizing(0.001));
-//!
-//! // Proposal: 10x higher error rate to see more errors
-//! let proposal_noise = ComposableNoiseModel::new()
-//!     .add_channel(SingleQubitChannel::depolarizing(0.01));
-//!
-//! // Wrap for importance sampling
-//! let config = ImportanceConfig {
-//!     true_model: true_noise,
-//!     proposal_model: proposal_noise,
-//! };
-//! let mut importance_noise = ImportanceSamplingNoise::new(config);
+//! // Create importance sampling noise with boosted error rates
+//! let mut importance_noise = ImportanceSamplingNoise::new()
+//!     .with_single_qubit(0.001, 10.0)   // True: 0.001, proposal: 0.01
+//!     .with_two_qubit(0.01, 5.0);       // True: 0.01, proposal: 0.05
 //!
 //! // Run shot, get weight
 //! // ... execute circuit with importance_noise ...
@@ -148,7 +137,7 @@ impl<C: NoiseChannel> ImportanceSamplingChannel<C> {
     }
 }
 
-impl<C: NoiseChannel> NoiseChannel for ImportanceSamplingChannel<C> {
+impl<C: NoiseChannel + Clone + 'static> NoiseChannel for ImportanceSamplingChannel<C> {
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         self.inner.responds_to(event)
     }
@@ -177,6 +166,10 @@ impl<C: NoiseChannel> NoiseChannel for ImportanceSamplingChannel<C> {
 
     fn name(&self) -> &'static str {
         "ImportanceSamplingChannel"
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
     }
 }
 

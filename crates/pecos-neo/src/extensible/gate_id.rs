@@ -106,14 +106,14 @@ pub mod gates {
     pub const CSWAP: GateId = GateId(82);
 
     // Measurement
-    pub const MEASURE: GateId = GateId(100);
+    pub const MZ: GateId = GateId(100);
     pub const MEASURE_LEAKED: GateId = GateId(101);
     pub const MEASURE_FREE: GateId = GateId(102);
 
     // State preparation
-    pub const PREP: GateId = GateId(110);
-    pub const PREP_X: GateId = GateId(111);
-    pub const PREP_Y: GateId = GateId(112);
+    pub const PZ: GateId = GateId(110);
+    pub const PX: GateId = GateId(111);
+    pub const PY: GateId = GateId(112);
 
     // Qubit management
     pub const QALLOC: GateId = GateId(120);

@@ -12,15 +12,28 @@
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 
 
 class Generator(ABC):
-    """An abstract class representing a code generator for an SLR block."""
+    """An abstract class representing a code generator for an SLR block.
+
+    .. deprecated::
+        Direct SLR generators are deprecated. Use :func:`pecos.slr.generate`
+        or :mod:`pecos.slr.ast.codegen` instead, which provide validation,
+        analysis, and optimization capabilities.
+    """
 
     @abstractmethod
     def __init__(self, includes: list[str] | None = None):
-        pass
+        warnings.warn(
+            f"{type(self).__name__} is deprecated. Use pecos.slr.generate() or "
+            "pecos.slr.ast.codegen.generate() instead for AST-based code generation "
+            "with validation and analysis support.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     @abstractmethod
     def generate_block(self, block):

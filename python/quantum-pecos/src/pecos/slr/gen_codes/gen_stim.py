@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 from pecos.slr.gen_codes.generator import Generator
@@ -22,7 +23,11 @@ if TYPE_CHECKING:
 
 
 class StimGenerator(Generator):
-    """Generate Stim circuits from SLR programs."""
+    """Generate Stim circuits from SLR programs.
+
+    .. deprecated::
+        Use :func:`pecos.slr.generate` with ``target="stim"`` instead.
+    """
 
     def __init__(self, *, add_comments: bool = True):
         """Initialize the Stim generator.
@@ -30,6 +35,11 @@ class StimGenerator(Generator):
         Args:
             add_comments: Whether to add comments for unsupported operations
         """
+        warnings.warn(
+            "StimGenerator is deprecated. Use pecos.slr.generate(prog, 'stim') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.circuit = None  # Will be initialized when needed
         self.qubit_map = {}  # Maps (reg_name, index) to qubit_id
         self.next_qubit_id = 0

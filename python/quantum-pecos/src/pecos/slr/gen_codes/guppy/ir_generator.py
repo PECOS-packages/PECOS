@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 from pecos.slr.gen_codes.generator import Generator
@@ -16,10 +17,20 @@ if TYPE_CHECKING:
 
 
 class IRGuppyGenerator(Generator):
-    """Generator that uses IR for two-pass Guppy code generation."""
+    """Generator that uses IR for two-pass Guppy code generation.
+
+    .. deprecated::
+        Use :func:`pecos.slr.generate` with ``target="guppy"`` instead.
+    """
 
     def __init__(self):
         """Initialize the IR-based generator."""
+        warnings.warn(
+            "GuppyGenerator/IRGuppyGenerator is deprecated. "
+            "Use pecos.slr.generate(prog, 'guppy') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.output = []
         self.variable_context = {}
         self.dependency_analyzer = DependencyAnalyzer()

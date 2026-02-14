@@ -11,11 +11,19 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pecos as pc
 from pecos.slr.gen_codes.generator import Generator
 
 
 class QASMGenerator(Generator):
+    """Generate QASM code from SLR programs.
+
+    .. deprecated::
+        Use :func:`pecos.slr.generate` with ``target="qasm"`` instead.
+    """
+
     def __init__(
         self,
         includes: list[str] | None = None,
@@ -23,6 +31,11 @@ class QASMGenerator(Generator):
         skip_headers: bool = False,
         add_versions: bool = True,
     ):
+        warnings.warn(
+            "QASMGenerator is deprecated. Use pecos.slr.generate(prog, 'qasm') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.output = []
         self.current_scope = None
         self.includes = includes

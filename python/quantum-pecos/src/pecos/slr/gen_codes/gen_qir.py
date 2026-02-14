@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
@@ -205,9 +206,18 @@ class MzToBit(QIRFunc):
 
 
 class QIRGenerator(Generator):
-    """Class to generate QIR from SLR. This should enable better compilation of conditional programs."""
+    """Class to generate QIR from SLR. This should enable better compilation of conditional programs.
+
+    .. deprecated::
+        Use :func:`pecos.slr.generate` with ``target="qir"`` instead.
+    """
 
     def __init__(self):
+        warnings.warn(
+            "QIRGenerator is deprecated. Use pecos.slr.generate(prog, 'qir') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # NOTE: Include files don't exist in QIR
         self.current_block: Block = None
         self.setup_module()

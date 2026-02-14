@@ -18,17 +18,22 @@ into other circuit data-structures.
 Modules:
     checks2circuit: Convert check matrices to circuits.
     hugr_to_dag: Convert HUGR (from Guppy) to DAG (requires hugr package).
+    hugr_to_ast: Convert HUGR (from Guppy) to SLR-AST (requires hugr package).
 """
 
 from pecos.circuit_converters.checks2circuit import Check2Circuits
 
-# hugr_to_dag requires the optional hugr package
+# hugr_to_dag and hugr_to_ast require the optional hugr package
 try:
     from pecos.circuit_converters.hugr_to_dag import (
         UnsupportedHugrStructureError,
         dag_to_gate_sequence,
         guppy_to_dag,
         hugr_to_dag,
+    )
+    from pecos.circuit_converters.hugr_to_ast import (
+        guppy_to_ast,
+        hugr_to_ast,
     )
 
     _HAS_HUGR = True
@@ -45,4 +50,7 @@ if _HAS_HUGR:
         "dag_to_gate_sequence",
         "guppy_to_dag",
         "hugr_to_dag",
+        # HUGR to AST conversion
+        "guppy_to_ast",
+        "hugr_to_ast",
     ]

@@ -541,22 +541,21 @@ def _generate_guppy_body(block: CodeBlock) -> list[str]:
         '"""',
         "",
         "    # Guppy needs file-based execution for inspect.getsourcelines()",
-        '    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:',
-        "        f.write(code)",
-        "        temp_path = f.name",
+        "    # Run in temp directory to avoid polluting project root with generated files",
+        "    with tempfile.TemporaryDirectory() as tmpdir:",
+        "        temp_path = Path(tmpdir) / 'test_code.py'",
+        "        temp_path.write_text(code)",
         "",
-        "    try:",
         "        result = subprocess.run(",
-        "            [sys.executable, temp_path],",
+        "            [sys.executable, str(temp_path)],",
         "            capture_output=True,",
         "            text=True,",
         "            timeout=60,",
         "            check=False,",
+        "            cwd=tmpdir,",
         "        )",
         "        if result.returncode != 0:",
         '            pytest.fail(f"Guppy code failed:\\n{result.stderr}")',
-        "    finally:",
-        "        Path(temp_path).unlink(missing_ok=True)",
     ]
 
 
@@ -570,6 +569,7 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
 
     if _uses_guppy_decorator(block.code):
         # Guppy code needs subprocess execution
+        # Run in temp directory to avoid polluting project root with generated files
         lines = [
             "    import subprocess",
             "    import sys",
@@ -582,23 +582,21 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
             '"""',
             f'    expected_pattern = r"{escaped_pattern}"',
             "",
-            '    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:',
-            "        f.write(code)",
-            "        temp_path = f.name",
+            "    with tempfile.TemporaryDirectory() as tmpdir:",
+            "        temp_path = Path(tmpdir) / 'test_code.py'",
+            "        temp_path.write_text(code)",
             "",
-            "    try:",
             "        result = subprocess.run(",
-            "            [sys.executable, temp_path],",
+            "            [sys.executable, str(temp_path)],",
             "            capture_output=True,",
             "            text=True,",
             "            timeout=60,",
             "            check=False,",
+            "            cwd=tmpdir,",
             "        )",
             "        assert result.returncode != 0, 'Expected code to fail but it succeeded'",
             "        assert re.search(expected_pattern, result.stderr), \\",
             '            f"Error did not match pattern {expected_pattern!r}:\\n{result.stderr}"',
-            "    finally:",
-            "        Path(temp_path).unlink(missing_ok=True)",
         ]
     else:
         # Regular code can use subprocess with -c
@@ -857,6 +855,7 @@ def _generate_expect_output_body(block: CodeBlock) -> list[str]:
 
     if _uses_guppy_decorator(block.code):
         # Guppy code needs file-based execution
+        # Run in temp directory to avoid polluting project root with generated files
         lines = [
             "    import subprocess",
             "    import sys",
@@ -868,24 +867,22 @@ def _generate_expect_output_body(block: CodeBlock) -> list[str]:
             '"""',
             f'    expected_output = "{escaped_output}"',
             "",
-            '    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:',
-            "        f.write(code)",
-            "        temp_path = f.name",
+            "    with tempfile.TemporaryDirectory() as tmpdir:",
+            "        temp_path = Path(tmpdir) / 'test_code.py'",
+            "        temp_path.write_text(code)",
             "",
-            "    try:",
             "        result = subprocess.run(",
-            "            [sys.executable, temp_path],",
+            "            [sys.executable, str(temp_path)],",
             "            capture_output=True,",
             "            text=True,",
             "            timeout=60,",
             "            check=False,",
+            "            cwd=tmpdir,",
             "        )",
             "        if result.returncode != 0:",
             '            pytest.fail(f"Code failed:\\n{result.stderr}")',
             "        assert expected_output in result.stdout, \\",
             '            f"Expected output containing {expected_output!r}, got:\\n{result.stdout}"',
-            "    finally:",
-            "        Path(temp_path).unlink(missing_ok=True)",
         ]
     else:
         # Regular code can use subprocess with -c

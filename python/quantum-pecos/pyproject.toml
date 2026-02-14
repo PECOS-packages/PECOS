@@ -87,6 +87,9 @@ test = [
 numpy-compat = [
     "numpy>=1.15.0",  # NumPy compatibility tests - core functionality uses pecos.num
 ]
+dev = [
+    "pytest-xdist>=3.8.0",
+]
 
 [tool.uv]
 # default-groups = ["dev", "test"]  # Uncommented now that dependency-groups is defined

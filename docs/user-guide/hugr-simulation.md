@@ -129,6 +129,8 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
     First, let's compile a Guppy function to a HUGR file:
 
     ```python
+    import os
+
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
 
@@ -142,15 +144,10 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 
     # Compile and save to file
+    os.makedirs("/tmp/pecos-doc-tests", exist_ok=True)
     hugr = my_circuit.compile()
-    with open("circuit.hugr", "w") as f:
+    with open("/tmp/pecos-doc-tests/circuit.hugr", "w") as f:
         f.write(hugr.to_str())
-    ```
-
-    ```hidden-python
-    import shutil
-    # Also save for Rust tests
-    shutil.copy("circuit.hugr", "/tmp/pecos-doc-tests/circuit.hugr")
     ```
 
     Now load and run the pre-compiled HUGR:
@@ -161,11 +158,14 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
     # From file
     results = (
-        sim(Hugr.from_file("circuit.hugr")).qubits(2).quantum(state_vector()).run(1000)
+        sim(Hugr.from_file("/tmp/pecos-doc-tests/circuit.hugr"))
+        .qubits(2)
+        .quantum(state_vector())
+        .run(1000)
     )
 
     # Or from bytes
-    with open("circuit.hugr", "rb") as f:
+    with open("/tmp/pecos-doc-tests/circuit.hugr", "rb") as f:
         hugr_bytes = f.read()
     results = sim(Hugr(hugr_bytes)).qubits(2).quantum(state_vector()).run(1000)
     ```

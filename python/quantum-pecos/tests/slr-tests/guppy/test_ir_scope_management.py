@@ -27,7 +27,7 @@ def test_conditional_resource_balancing() -> None:
         ),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -90,7 +90,7 @@ def test_nested_conditional_scopes() -> None:
         # q[2] and q[3] might not be measured
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -115,7 +115,7 @@ def test_function_scope_returns() -> None:
         # q[1] should be cleaned up
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

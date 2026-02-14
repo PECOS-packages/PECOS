@@ -15,7 +15,7 @@ def test_permute_identity() -> None:
         Measure(q) > CReg("c", 3),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -39,7 +39,7 @@ def test_permute_reverse() -> None:
         Measure(q) > CReg("c", 5),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -57,7 +57,7 @@ def test_permute_rotate() -> None:
         Measure(q) > CReg("c", 4),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -79,7 +79,7 @@ def test_permute_complex_pattern() -> None:
         Measure(a) > CReg("c", 6),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -99,7 +99,7 @@ def test_permute_partial_registers() -> None:
         Measure(y) > CReg("cy", 3),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -123,7 +123,7 @@ def test_permute_with_gates() -> None:
         Measure(q) > CReg("c", 3),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -142,7 +142,7 @@ def test_permute_error_mismatched_elements() -> None:
         Measure(b) > CReg("cb", 2),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -162,7 +162,7 @@ def test_permute_single_cycle() -> None:
         Measure(q) > CReg("c", 7),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

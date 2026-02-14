@@ -1,5 +1,7 @@
 # SLR Qubit Allocator Proposal
 
+<!--skip: proposal document with design pseudocode-->
+
 ## Status
 
 **Design decisions finalized.** Ready for implementation.

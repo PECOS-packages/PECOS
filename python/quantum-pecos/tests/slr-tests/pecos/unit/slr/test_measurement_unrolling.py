@@ -60,13 +60,13 @@ def test_measurement_unrolling_qasm() -> None:
     print(qasm)
 
     # Verify that the register-wide measurement is unrolled correctly
-    # After permutations:
-    # a[0] -> c[0]
-    # a[1] -> c[1]
-    # a[2] -> c[2]
+    # After permutation composition:
+    # First perm: a[0] -> c[2], b[1] -> a[0], c[2] -> b[1]
+    # Second perm (a <-> c swap): compose with first
+    # Result: a[0] -> a[2], a[1] -> c[1], a[2] -> c[2]
     assert (
-        "measure c[0] -> m[0];" in qasm
-    ), f"Expected 'measure c[0] -> m[0];' not found in QASM:\n{qasm}"
+        "measure a[2] -> m[0];" in qasm
+    ), f"Expected 'measure a[2] -> m[0];' not found in QASM:\n{qasm}"
     assert (
         "measure c[1] -> m[1];" in qasm
     ), f"Expected 'measure c[1] -> m[1];' not found in QASM:\n{qasm}"

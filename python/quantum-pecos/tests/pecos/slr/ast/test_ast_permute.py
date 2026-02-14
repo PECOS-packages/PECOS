@@ -38,8 +38,9 @@ class TestPermuteConversion:
         assert len(permute_ops) == 1
 
         permute = permute_ops[0]
-        assert permute.sources == ("a",)
-        assert permute.targets == ("b",)
+        # Whole register swap uses bidirectional representation
+        assert permute.sources == ("a", "b")
+        assert permute.targets == ("b", "a")
 
     def test_permute_with_comment(self) -> None:
         """Test Permute with comment flag."""
@@ -117,8 +118,8 @@ class TestPermuteCodegen:
         ast = slr_to_ast(prog)
 
         qasm = generate(ast, "qasm")
-        # Should contain a comment about permute
-        assert "Permute" in qasm or "permute" in qasm.lower()
+        # Should contain a comment about permutation
+        assert "Permutation" in qasm or "permutation" in qasm.lower()
 
     def test_permute_stim_codegen(self) -> None:
         """Test Permute works with Stim codegen."""
@@ -175,8 +176,9 @@ class TestPermuteSerialization:
         # Check PermuteOp preserved
         permute_ops = [s for s in restored.body if isinstance(s, PermuteOp)]
         assert len(permute_ops) == 1
-        assert permute_ops[0].sources == ("a",)
-        assert permute_ops[0].targets == ("b",)
+        # Whole register swap uses bidirectional representation
+        assert permute_ops[0].sources == ("a", "b")
+        assert permute_ops[0].targets == ("b", "a")
 
 
 class TestPermutePrettyPrint:

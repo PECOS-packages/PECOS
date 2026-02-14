@@ -29,17 +29,19 @@ class StimGenerator(Generator):
         Use :func:`pecos.slr.generate` with ``target="stim"`` instead.
     """
 
-    def __init__(self, *, add_comments: bool = True):
+    def __init__(self, *, add_comments: bool = True, _internal: bool = False):
         """Initialize the Stim generator.
 
         Args:
             add_comments: Whether to add comments for unsupported operations
+            _internal: Internal flag to suppress deprecation warnings
         """
-        warnings.warn(
-            "StimGenerator is deprecated. Use pecos.slr.generate(prog, 'stim') instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if not _internal:
+            warnings.warn(
+                "StimGenerator is deprecated. Use pecos.slr.generate(prog, 'stim') instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.circuit = None  # Will be initialized when needed
         self.qubit_map = {}  # Maps (reg_name, index) to qubit_id
         self.next_qubit_id = 0

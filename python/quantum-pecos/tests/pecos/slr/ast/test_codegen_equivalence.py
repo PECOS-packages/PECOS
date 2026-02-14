@@ -66,7 +66,7 @@ class TestQASMEquivalence:
         ast_qasm = generate(ast, "qasm")
 
         # Direct SLR path
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -90,7 +90,7 @@ class TestQASMEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -112,7 +112,7 @@ class TestQASMEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -142,7 +142,7 @@ class TestStimEquivalence:
         ast_stim = generate(ast, "stim")
 
         # Direct SLR path
-        gen = StimGenerator()
+        gen = StimGenerator(_internal=True)
         gen.generate_block(prog)
         direct_stim = str(gen.get_circuit())
 
@@ -166,7 +166,7 @@ class TestStimEquivalence:
         ast = slr_to_ast(prog)
         ast_stim = generate(ast, "stim")
 
-        gen = StimGenerator()
+        gen = StimGenerator(_internal=True)
         gen.generate_block(prog)
         direct_stim = str(gen.get_circuit())
 
@@ -192,7 +192,7 @@ class TestGuppyEquivalence:
         ast_guppy = generate(ast, "guppy")
 
         # Direct SLR path
-        gen = GuppyGenerator()
+        gen = GuppyGenerator(_internal=True)
         gen.generate_block(prog)
         direct_guppy = gen.get_output()
 
@@ -224,7 +224,7 @@ class TestQIREquivalence:
         ast_qir = generate(ast, "qir")
 
         # Direct SLR path
-        gen = QIRGenerator()
+        gen = QIRGenerator(_internal=True)
         gen.generate_block(prog)
         direct_qir = gen.get_output()
 
@@ -253,7 +253,7 @@ class TestQuantumCircuitEquivalence:
         ast_qc = generate(ast, "quantum_circuit")
 
         # Direct SLR path
-        gen = QuantumCircuitGenerator()
+        gen = QuantumCircuitGenerator(_internal=True)
         gen.generate_block(prog)
         direct_qc = gen.get_circuit()
 
@@ -292,7 +292,7 @@ class TestRepeatEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -323,7 +323,7 @@ class TestConditionalEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -349,7 +349,7 @@ class TestMultipleRegistersEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -374,7 +374,7 @@ class TestMultipleRegistersEquivalence:
         ast = slr_to_ast(prog)
         ast_stim = generate(ast, "stim")
 
-        gen = StimGenerator()
+        gen = StimGenerator(_internal=True)
         gen.generate_block(prog)
         direct_stim = str(gen.get_circuit())
 
@@ -400,7 +400,7 @@ class TestRotationGatesEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -420,7 +420,7 @@ class TestRotationGatesEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -439,7 +439,7 @@ class TestRotationGatesEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -460,7 +460,7 @@ class TestRotationGatesEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -498,7 +498,7 @@ class TestNestedControlFlowEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -523,7 +523,7 @@ class TestNestedControlFlowEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -553,7 +553,7 @@ class TestNestedControlFlowEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -575,7 +575,7 @@ class TestTGateEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -593,7 +593,7 @@ class TestTGateEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -615,7 +615,7 @@ class TestTGateEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -639,7 +639,7 @@ class TestSqrtGatesEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -660,7 +660,7 @@ class TestSqrtGatesEquivalence:
         ast = slr_to_ast(prog)
         ast_stim = generate(ast, "stim")
 
-        gen = StimGenerator()
+        gen = StimGenerator(_internal=True)
         gen.generate_block(prog)
         direct_stim = str(gen.get_circuit())
 
@@ -685,7 +685,7 @@ class TestComplexCircuitEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -713,7 +713,7 @@ class TestComplexCircuitEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 
@@ -738,7 +738,7 @@ class TestComplexCircuitEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True)
+        gen = QASMGenerator(skip_headers=True, _internal=True)
         gen.generate_block(prog)
         direct_qasm = "\n".join(gen.output)
 

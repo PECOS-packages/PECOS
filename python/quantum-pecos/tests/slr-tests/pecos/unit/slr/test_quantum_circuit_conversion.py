@@ -128,7 +128,7 @@ class TestSLRToQuantumCircuit:
 
         # Use the already imported generator
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -179,7 +179,7 @@ class TestSLRToQuantumCircuit:
             qubit.Measure(q[1]) > c[1],
         )
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -200,7 +200,7 @@ class TestSLRToQuantumCircuit:
             qubit.CX(q[0], q[1]),
         )
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -237,7 +237,7 @@ class TestSLRToQuantumCircuit:
             ),
         )
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -266,7 +266,7 @@ class TestSLRToQuantumCircuit:
             ),
         )
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -288,7 +288,7 @@ class TestQuantumCircuitRoundTrip:
         slr_prog = SlrConverter.from_quantum_circuit(original)
 
         # Convert back to QuantumCircuit
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(slr_prog)
         reconstructed = generator.get_circuit()
 
@@ -324,7 +324,7 @@ class TestQuantumCircuitRoundTrip:
         )
 
         # Convert to QuantumCircuit
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(original)
         qc = generator.get_circuit()
 
@@ -374,7 +374,7 @@ class TestQuantumCircuitRoundTrip:
         )
 
         # Convert to QuantumCircuit and back
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 

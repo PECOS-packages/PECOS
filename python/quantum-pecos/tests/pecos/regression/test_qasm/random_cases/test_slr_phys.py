@@ -82,7 +82,8 @@ def test_bell() -> None:
         "creg m[2];\n"
         "h q[0];\n"
         "cx q[0], q[1];\n"
-        "measure q -> m;"
+        "measure q[0] -> m[0];\n"
+        "measure q[1] -> m[1];"
     )
 
     assert SlrConverter(prog).qasm() == qasm
@@ -178,11 +179,12 @@ def test_strange_program() -> None:
         "qreg q[2];\n"
         "creg c[4];\n"
         "creg b[4];\n"
+        "// Repeat 3 times (unrolled)\n"
         "c = 3;\n"
         "c = 3;\n"
         "c = 3;\n"
         "// Here is some injected QASM:\n"
-        "c = b & 1;\n"
+        "c = (b & 1);\n"
         "// Permutation: q[0] -> q[1], q[1] -> q[0]\n"
         "h q[1];"
     )

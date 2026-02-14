@@ -134,6 +134,11 @@ class GateKind(Enum):
     SZZdg = auto()
     RZZ = auto()
 
+    # Controlled rotation gates (parameterized)
+    CRX = auto()
+    CRY = auto()
+    CRZ = auto()
+
     # Face rotations
     F = auto()
     Fdg = auto()
@@ -155,13 +160,24 @@ class GateKind(Enum):
             GateKind.SYYdg,
             GateKind.SZZdg,
             GateKind.RZZ,
+            GateKind.CRX,
+            GateKind.CRY,
+            GateKind.CRZ,
         }
         return 2 if self in two_qubit else 1
 
     @property
     def is_parameterized(self) -> bool:
         """Whether this gate takes angle parameters."""
-        return self in {GateKind.RX, GateKind.RY, GateKind.RZ, GateKind.RZZ}
+        return self in {
+            GateKind.RX,
+            GateKind.RY,
+            GateKind.RZ,
+            GateKind.RZZ,
+            GateKind.CRX,
+            GateKind.CRY,
+            GateKind.CRZ,
+        }
 
 
 class BinaryOp(Enum):

@@ -44,7 +44,7 @@ class TestConversionConsistency:
         slr_qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         # Convert SLR -> QuantumCircuit -> SLR -> QASM
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(slr_prog)
         qc = generator.get_circuit()
 
@@ -142,7 +142,7 @@ class TestConversionConsistency:
         assert "cx q[2],q[3]" in qasm or "cx q[2], q[3]" in qasm
 
         # Test through QuantumCircuit conversion
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -181,7 +181,7 @@ class TestConversionConsistency:
         assert cx_count == 3, f"Expected 3 CX gates, got {cx_count}"
 
         # Test through QuantumCircuit conversion
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -273,7 +273,7 @@ class TestConversionConsistency:
         assert qasm.count("measure") == 3
 
         # Test through QuantumCircuit
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 

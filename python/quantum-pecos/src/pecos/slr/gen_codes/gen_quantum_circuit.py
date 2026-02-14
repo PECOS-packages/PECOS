@@ -32,14 +32,15 @@ class QuantumCircuitGenerator(Generator):
         Use :func:`pecos.slr.generate` with ``target="quantum_circuit"`` instead.
     """
 
-    def __init__(self):
+    def __init__(self, *, _internal: bool = False):
         """Initialize the QuantumCircuit generator."""
-        warnings.warn(
-            "QuantumCircuitGenerator is deprecated. "
-            "Use pecos.slr.generate(prog, 'quantum_circuit') instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if not _internal:
+            warnings.warn(
+                "QuantumCircuitGenerator is deprecated. "
+                "Use pecos.slr.generate(prog, 'quantum_circuit') instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.circuit = QuantumCircuit()
         self.qubit_map = {}  # Maps (reg_name, index) to qubit_id
         self.next_qubit_id = 0

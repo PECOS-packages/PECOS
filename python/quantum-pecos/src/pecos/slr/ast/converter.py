@@ -113,6 +113,10 @@ GATE_KIND_MAP: dict[str, GateKind] = {
     "SYYdg": GateKind.SYYdg,
     "SZZdg": GateKind.SZZdg,
     "RZZ": GateKind.RZZ,
+    # Controlled rotation gates
+    "CRX": GateKind.CRX,
+    "CRY": GateKind.CRY,
+    "CRZ": GateKind.CRZ,
     # Face rotations
     "F": GateKind.F,
     "Fdg": GateKind.Fdg,
@@ -311,7 +315,12 @@ class SlrToAst:
         for op in ops:
             stmt = self._convert_statement(op)
             if stmt is not None:
-                statements.append(stmt)
+                # Handle flattening of nested blocks
+                if isinstance(stmt, tuple) and len(stmt) == 2 and stmt[0] == "__FLATTEN__":
+                    # Flatten the nested statements into this list
+                    statements.extend(stmt[1])
+                else:
+                    statements.append(stmt)
         return statements
 
     def _convert_statement(self, op: Any) -> Statement | None:
@@ -355,16 +364,11 @@ class SlrToAst:
         if op_class == "SET":
             return self._convert_assignment(op)
 
-        # Nested blocks
+        # Nested blocks (Block subclasses)
         if hasattr(op, "ops"):
-            # This is a nested block - convert its statements
-            # For now, we flatten it
-            stmts = self._convert_statements(op.ops)
-            if len(stmts) == 1:
-                return stmts[0]
-            # Multiple statements - wrap in parallel? Or just return first?
-            # For now, return None and handle nested blocks elsewhere
-            return None
+            # This is a nested block - flatten its statements into the parent
+            # We return a special marker that _convert_statements will handle
+            return ("__FLATTEN__", self._convert_statements(op.ops))
 
         return None
 
@@ -386,44 +390,130 @@ class SlrToAst:
             msg = f"Unknown gate type: {gate_name}"
             raise ValueError(msg)
 
+        # Check if qargs contains tuples of qubit pairs (for multi-qubit gates)
+        # Pattern: CX((q1, q2), (q3, q4), ...) where each tuple is one gate application
+        if (
+            gate.qargs
+            and gate_kind.arity > 1
+            and isinstance(gate.qargs[0], tuple)
+        ):
+            # Each element of qargs is a tuple of qubits for one gate application
+            gates = []
+            for qubit_tuple in gate.qargs:
+                # Expand any registers in the tuple
+                expanded_tuple = self._expand_qubit_args(list(qubit_tuple))
+                targets = tuple(self._convert_qubit_ref(q) for q in expanded_tuple)
+                params: tuple = ()
+                if gate.params:
+                    params = tuple(self._convert_expression(p) for p in gate.params)
+                gates.append(GateOp(gate=gate_kind, targets=targets, params=params))
+            return ("__FLATTEN__", gates)
+
+        # Expand full registers into individual qubits
+        expanded_qargs = self._expand_qubit_args(gate.qargs)
+
+        # For single-qubit gates applied to full register, generate multiple gates
+        if gate_kind.arity == 1 and len(expanded_qargs) > 1:
+            # Return a special marker to generate multiple gate operations
+            gates = []
+            for q in expanded_qargs:
+                target = self._convert_qubit_ref(q)
+                params: tuple = ()
+                if gate.params:
+                    params = tuple(self._convert_expression(p) for p in gate.params)
+                gates.append(GateOp(gate=gate_kind, targets=(target,), params=params))
+            # Return flattening marker
+            return ("__FLATTEN__", gates)
+
         # Convert targets
-        targets = tuple(self._convert_qubit_ref(q) for q in gate.qargs)
+        targets = tuple(self._convert_qubit_ref(q) for q in expanded_qargs)
 
         # Convert parameters if present
-        params: tuple = ()
+        params = ()
         if gate.params:
             params = tuple(self._convert_expression(p) for p in gate.params)
 
         return GateOp(gate=gate_kind, targets=targets, params=params)
 
-    def _convert_prep(self, gate: Any) -> PrepareOp:
-        """Convert an SLR Prep gate to an AST PrepareOp."""
+    def _convert_prep(self, gate: Any) -> Statement:
+        """Convert an SLR Prep gate to an AST PrepareOp or flattened list."""
         if not gate.qargs:
             msg = "Prep gate has no qubit arguments"
             raise ValueError(msg)
 
-        # Get allocator name and slot indices
-        first_qubit = gate.qargs[0]
+        # Expand full registers into individual qubits
+        expanded_qargs = self._expand_qubit_args(gate.qargs)
+
+        if not expanded_qargs:
+            msg = "Prep gate has no expanded qubit arguments"
+            raise ValueError(msg)
+
+        # Get allocator name and slot indices from expanded qargs
+        first_qubit = expanded_qargs[0]
         allocator = (
             first_qubit.reg.sym
-            if hasattr(first_qubit.reg, "sym")
-            else str(first_qubit.reg)
+            if hasattr(first_qubit, "reg") and hasattr(first_qubit.reg, "sym")
+            else str(first_qubit.reg) if hasattr(first_qubit, "reg")
+            else str(first_qubit)
         )
 
-        slots = tuple(q.index for q in gate.qargs)
+        slots = tuple(q.index for q in expanded_qargs)
 
         return PrepareOp(allocator=allocator, slots=slots)
 
     def _convert_measure(self, gate: Any) -> MeasureOp:
         """Convert an SLR Measure gate to an AST MeasureOp."""
-        targets = tuple(self._convert_qubit_ref(q) for q in gate.qargs)
+        # Expand full registers into individual qubits
+        expanded_qargs = self._expand_qubit_args(gate.qargs)
+        targets = tuple(self._convert_qubit_ref(q) for q in expanded_qargs)
 
         # Convert classical output bits if present
         results: tuple = ()
         if gate.cout:
-            results = tuple(self._convert_bit_ref(b) for b in gate.cout)
+            expanded_cout = self._expand_bit_args(gate.cout)
+            results = tuple(self._convert_bit_ref(b) for b in expanded_cout)
 
         return MeasureOp(targets=targets, results=results)
+
+    def _expand_qubit_args(self, qargs: list) -> list:
+        """Expand qubit arguments, converting full registers to individual qubits.
+
+        Filters out non-qubit arguments like strings (e.g., basis state "Z" in Prep).
+        """
+        expanded = []
+        for q in qargs:
+            if isinstance(q, str):
+                # Skip string arguments (e.g., basis state in Prep)
+                continue
+            if isinstance(q, list):
+                # This is a slice (list of qubits) - recursively expand
+                expanded.extend(self._expand_qubit_args(q))
+            elif hasattr(q, "size") and hasattr(q, "elems"):
+                # This is a full register (QReg) - expand to all qubits
+                expanded.extend(q.elems)
+            elif hasattr(q, "index") and isinstance(q.index, int):
+                # This is an individual qubit with integer index
+                expanded.append(q)
+            elif hasattr(q, "reg"):
+                # This is an individual qubit reference
+                expanded.append(q)
+            # Skip other non-qubit arguments
+        return expanded
+
+    def _expand_bit_args(self, bits: list) -> list:
+        """Expand bit arguments, converting full registers to individual bits."""
+        expanded = []
+        for b in bits:
+            if isinstance(b, list):
+                # This is a slice (list of bits) - recursively expand
+                expanded.extend(self._expand_bit_args(b))
+            elif hasattr(b, "size") and hasattr(b, "elems"):
+                # This is a full register (CReg) - expand to all bits
+                expanded.extend(b.elems)
+            else:
+                # This is an individual bit
+                expanded.append(b)
+        return expanded
 
     def _convert_qubit_ref(self, qubit: Any) -> SlotRef:
         """Convert an SLR Qubit/QubitRef to an AST SlotRef."""
@@ -529,9 +619,28 @@ class SlrToAst:
 
     def _convert_permute(self, op: Any) -> PermuteOp:
         """Convert an SLR Permute to an AST PermuteOp."""
+        elems_i = op.elems_i
+        elems_f = op.elems_f
+        add_comment = getattr(op, "comment", True)
+
+        # Check for whole register swap: Permute(reg_a, reg_b)
+        # This is a special case where both arguments are single register objects
+        if (
+            hasattr(elems_i, "sym")
+            and hasattr(elems_f, "sym")
+            and not hasattr(elems_i, "__iter__")
+            and not hasattr(elems_f, "__iter__")
+        ):
+            # Whole register swap: a <-> b
+            # Represented as sources=[a, b], targets=[b, a]
+            return PermuteOp(
+                sources=(elems_i.sym, elems_f.sym),
+                targets=(elems_f.sym, elems_i.sym),
+                add_comment=add_comment,
+            )
+
         # Extract register/allocator names from sources (elems_i)
         sources: list[str] = []
-        elems_i = op.elems_i
         if hasattr(elems_i, "__iter__") and not isinstance(elems_i, str):
             for elem in elems_i:
                 if hasattr(elem, "sym"):
@@ -549,7 +658,6 @@ class SlrToAst:
 
         # Extract register/allocator names from targets (elems_f)
         targets: list[str] = []
-        elems_f = op.elems_f
         if hasattr(elems_f, "__iter__") and not isinstance(elems_f, str):
             for elem in elems_f:
                 if hasattr(elem, "sym"):
@@ -564,8 +672,6 @@ class SlrToAst:
             targets.append(elems_f.name)
         else:
             targets.append(str(elems_f))
-
-        add_comment = getattr(op, "comment", True)
 
         return PermuteOp(
             sources=tuple(sources),

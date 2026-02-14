@@ -1,3 +1,5 @@
+OPENQASM 2.0;
+include "hqslib1.inc";
 // Logical SZdg
 rz(pi/2) q_test[0];
 rz(pi/2) q_test[1];

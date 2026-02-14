@@ -130,7 +130,7 @@ class QGate:
         # TODO: Get rid of this as much as possible...
         if isinstance(target, str):
             if target == "qasm":
-                target = QASMGenerator(add_versions=add_versions)
+                target = QASMGenerator(add_versions=add_versions, _internal=True)
             else:
                 msg = f"Code gen target '{target}' is not supported."
                 raise NotImplementedError(msg)

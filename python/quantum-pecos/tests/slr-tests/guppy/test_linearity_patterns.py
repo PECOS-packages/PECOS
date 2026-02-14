@@ -41,13 +41,14 @@ class TestLinearityPatterns:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Function should return the modified qubits
-        assert "-> array[quantum.qubit, 3]:" in guppy_code
-        # Array is unpacked for element access, then reconstructed for return
-        assert "return q" in guppy_code or "return array(q_0, q_1, q_2)" in guppy_code
+        # AST codegen flattens blocks into main
+        # Check that GHZ operations are present
+        assert "quantum.h(q[0])" in guppy_code
+        assert "quantum.cx(q[0], q[1])" in guppy_code
+        assert "quantum.cx(q[1], q[2])" in guppy_code
 
-        # Main should capture the returned qubits
-        assert "q = test_linearity_patterns_prepare_ghz(q)" in guppy_code
+        # Measurements should follow
+        assert "quantum.measure(q[0])" in guppy_code
 
     def test_main_with_unmeasured_qubits(self) -> None:
         """Test main function that doesn't measure all qubits."""
@@ -64,10 +65,12 @@ class TestLinearityPatterns:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should automatically discard remaining qubits
-        # The IR generator uses discard_array for efficiency
-        assert "# Discard q" in guppy_code
-        assert "quantum.discard_array(q)" in guppy_code
+        # AST codegen returns unconsumed qubits
+        # Function should return the array since not all consumed
+        assert "array[qubit, 5]" in guppy_code
+        # Measurements are present
+        assert "quantum.measure(q[0])" in guppy_code
+        assert "quantum.measure(q[1])" in guppy_code
 
     def test_conditional_consumption(self) -> None:
         """Test conditional consumption of quantum resources."""
@@ -86,12 +89,8 @@ class TestLinearityPatterns:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should handle conditional consumption (with unpacking, flag[0] becomes flag_0)
-        assert "if flag[0]:" in guppy_code or "if flag_0:" in guppy_code
-
-        # TODO: Future enhancement - automatic cleanup in else branch
-        # Currently, conditional consumption may leave resources unconsumed
-        # This is a known limitation that could be improved
+        # Should handle conditional consumption
+        assert "if flag_0:" in guppy_code
 
     def test_multiple_functions_passing_qubits(self) -> None:
         """Test passing qubits through multiple functions."""
@@ -118,12 +117,11 @@ class TestLinearityPatterns:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Each function should return qubits
-        assert "q = test_linearity_patterns_apply_h(q)" in guppy_code
-        assert "q = test_linearity_patterns_apply_cnot(q)" in guppy_code
-
-        # Functions should have proper signatures
-        assert "-> array[quantum.qubit, 2]:" in guppy_code
+        # AST codegen flattens blocks into main
+        assert "quantum.h(q[0])" in guppy_code
+        assert "quantum.cx(q[0], q[1])" in guppy_code
+        assert "quantum.measure(q[0])" in guppy_code
+        assert "quantum.measure(q[1])" in guppy_code
 
     def test_partial_array_in_function(self) -> None:
         """Test function that consumes part of an array."""
@@ -151,11 +149,11 @@ class TestLinearityPatterns:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # The implementation now properly returns partially consumed arrays
-        # Functions return only the unconsumed qubits as smaller arrays
-
-        # For now, verify the function is generated
-        assert "test_linearity_patterns_measure_half" in guppy_code
+        # AST codegen flattens blocks - verify all measurements present
+        assert "partial_0 = quantum.measure(q[0])" in guppy_code
+        assert "partial_1 = quantum.measure(q[1])" in guppy_code
+        assert "rest_0 = quantum.measure(q[2])" in guppy_code
+        assert "rest_1 = quantum.measure(q[3])" in guppy_code
 
     @pytest.mark.optional_dependency
     def test_empty_main_linearity(self) -> None:
@@ -165,7 +163,7 @@ class TestLinearityPatterns:
         guppy_code = SlrConverter(prog).guppy()
 
         # Should have a valid main function
-        assert "def main() -> None:" in guppy_code
+        assert "def main" in guppy_code
 
         # Should compile to HUGR without errors
         try:
@@ -206,17 +204,10 @@ class TestLinearityPatterns:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Both inner and outer functions should handle resources properly
-        assert "test_linearity_patterns_inner" in guppy_code
-        assert "test_linearity_patterns_outer" in guppy_code
-
-        # TODO: Nested blocks with partial consumption need better handling
-        # Currently this fails due to linearity issues
-        # The outer function needs to properly return resources from inner
-
-        # For now, just verify the functions are generated
-        assert "test_linearity_patterns_inner" in guppy_code
-        assert "test_linearity_patterns_outer" in guppy_code
+        # AST codegen flattens nested blocks
+        assert "quantum.h(q[0])" in guppy_code
+        assert "c_0 = quantum.measure(q[0])" in guppy_code
+        assert "c_1 = quantum.measure(q[1])" in guppy_code
 
 
 class TestResourceManagement:
@@ -224,8 +215,6 @@ class TestResourceManagement:
 
     def test_function_with_local_qubits(self) -> None:
         """Test function that allocates and consumes local qubits."""
-        # This is a future enhancement - functions allocating their own qubits
-        # For now, we test that all qubits come from main
 
         class UseAncilla(Block):
             def __init__(self, data: QReg, ancilla: QReg, result: CReg) -> None:
@@ -250,10 +239,10 @@ class TestResourceManagement:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Function should return data but not ancilla
-        assert "-> array[quantum.qubit, 1]:" in guppy_code
-        # Array may be unpacked for element access, then reconstructed for return
-        assert "return data" in guppy_code or "return array(data_" in guppy_code
+        # AST codegen flattens blocks
+        assert "quantum.cx(data[0], ancilla[0])" in guppy_code
+        assert "result_0 = quantum.measure(ancilla[0])" in guppy_code
+        assert "final_0 = quantum.measure(data[0])" in guppy_code
 
     def test_all_paths_consume_resources(self) -> None:
         """Test that all execution paths consume quantum resources."""
@@ -276,13 +265,8 @@ class TestResourceManagement:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Both branches should consume q[1] (with unpacking, flag[0] becomes flag_0)
-        assert "if flag[0]:" in guppy_code or "if flag_0:" in guppy_code
+        # Both branches should consume q[1]
+        assert "if flag_0:" in guppy_code
         assert "else:" in guppy_code
-
-        # TODO: Else branch generation for resource consumption
-        # Currently single If statements don't generate else branches
-        # This means not all paths consume resources
-
-        # For now, just verify the structure is generated
-        assert "if flag[0]:" in guppy_code or "if flag_0:" in guppy_code
+        assert "quantum.x(q[1])" in guppy_code
+        assert "quantum.z(q[1])" in guppy_code

@@ -1,3 +1,5 @@
+OPENQASM 2.0;
+include "hqslib1.inc";
 // Logical X
 x q_test[4];
 x q_test[5];

@@ -86,7 +86,7 @@ def test_basic_permutation_qasm(basic_permutation_program: tuple) -> None:
     from pecos.slr.slr_converter import SlrConverter
 
     # Create a custom QASM generator to debug the permutation map
-    generator = QASMGenerator()
+    generator = QASMGenerator(_internal=True)
     generator.generate_block(prog)
     qasm = generator.get_output()
 

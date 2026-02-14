@@ -1,3 +1,5 @@
+OPENQASM 2.0;
+include "hqslib1.inc";
 // Measure logical X with no flagging
 reset a_test[0];
 h a_test[0];

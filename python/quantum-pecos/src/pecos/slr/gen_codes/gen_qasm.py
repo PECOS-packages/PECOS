@@ -30,12 +30,14 @@ class QASMGenerator(Generator):
         *,
         skip_headers: bool = False,
         add_versions: bool = True,
+        _internal: bool = False,
     ):
-        warnings.warn(
-            "QASMGenerator is deprecated. Use pecos.slr.generate(prog, 'qasm') instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if not _internal:
+            warnings.warn(
+                "QASMGenerator is deprecated. Use pecos.slr.generate(prog, 'qasm') instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.output = []
         self.current_scope = None
         self.includes = includes

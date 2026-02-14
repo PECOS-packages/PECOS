@@ -104,6 +104,10 @@ GATE_TO_GUPPY: dict[GateKind, str] = {
     GateKind.SYYdg: "quantum.syydg",
     GateKind.SZZdg: "quantum.szzdg",
     GateKind.RZZ: "quantum.rzz",
+    # Controlled rotation gates
+    GateKind.CRX: "quantum.crx",
+    GateKind.CRY: "quantum.cry",
+    GateKind.CRZ: "quantum.crz",
     # Face rotations
     GateKind.F: "quantum.f",
     GateKind.Fdg: "quantum.fdg",
@@ -788,7 +792,8 @@ class AstToGuppy(BaseVisitor[list[str]]):
         if isinstance(expr, VarExpr):
             return expr.name
         if isinstance(expr, BitExpr):
-            return f"{expr.ref.register}[{expr.ref.index}]"
+            # Use underscore naming to match measurement variable names
+            return f"{expr.ref.register}_{expr.ref.index}"
         if isinstance(expr, BinaryExpr):
             return self._render_binary(expr)
         if isinstance(expr, UnaryExpr):

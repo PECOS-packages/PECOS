@@ -21,7 +21,7 @@ def test_ir_simple_permute() -> None:
         Measure(b) > CReg("c_b", 2),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -56,7 +56,7 @@ def test_ir_permute_with_operations() -> None:
         Measure(q2) > CReg("c2", 3),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -85,7 +85,7 @@ def test_ir_complex_permute_cycle() -> None:
         Measure(a) > CReg("result", 3),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -104,7 +104,7 @@ def test_ir_complex_permute_multiple_swaps() -> None:
         Measure(q) > CReg("result", 4),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

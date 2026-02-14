@@ -1,5 +1,7 @@
 # SLR Abstract Syntax Tree (AST) Proposal
 
+<!--skip: proposal document with design pseudocode-->
+
 ## Status
 
 **Draft** - Ready for review

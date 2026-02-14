@@ -14,7 +14,7 @@ def test_ir_simple_measurement() -> None:
         Measure(q[0]) > c[0],
         Measure(q[1]) > c[1],
     )
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -48,7 +48,7 @@ def test_ir_full_array_measurement() -> None:
         c := CReg("c", 3),
         Measure(q) > c,
     )
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -67,7 +67,7 @@ def test_ir_quantum_gates() -> None:
         qubit.CX(q[0], q[1]),
         Measure(q) > c,
     )
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -87,7 +87,7 @@ def test_ir_conditional_resources() -> None:
             Measure(q[1]) > c[1],
         ),
     )
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -106,7 +106,7 @@ def test_ir_variable_renaming() -> None:
         array := CReg("array", 2),  # Conflicts with array() function
         Measure(result) > array,
     )
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

@@ -26,14 +26,15 @@ class Generator(ABC):
     """
 
     @abstractmethod
-    def __init__(self, includes: list[str] | None = None):
-        warnings.warn(
-            f"{type(self).__name__} is deprecated. Use pecos.slr.generate() or "
-            "pecos.slr.ast.codegen.generate() instead for AST-based code generation "
-            "with validation and analysis support.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
+    def __init__(self, includes: list[str] | None = None, *, _internal: bool = False):
+        if not _internal:
+            warnings.warn(
+                f"{type(self).__name__} is deprecated. Use pecos.slr.generate() or "
+                "pecos.slr.ast.codegen.generate() instead for AST-based code generation "
+                "with validation and analysis support.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
     @abstractmethod
     def generate_block(self, block):

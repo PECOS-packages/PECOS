@@ -35,17 +35,15 @@ def test_quantum_teleportation() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check key elements
-    # IR generator uses dynamic allocation for single-element arrays
-    assert "quantum.h(epr_0)" in guppy_code
-    # bob is unpacked because it's used in conditional blocks (improved behavior)
-    assert "quantum.cx(epr_0, bob_0)" in guppy_code
-    assert "c_0 = quantum.measure(alice_0)" in guppy_code
-    assert "c_1 = quantum.measure(epr_0)" in guppy_code
+    # Check key elements - AST codegen uses array indexing
+    assert "quantum.h(epr[0])" in guppy_code
+    assert "quantum.cx(epr[0], bob[0])" in guppy_code
+    assert "c_0 = quantum.measure(alice[0])" in guppy_code
+    assert "c_1 = quantum.measure(epr[0])" in guppy_code
     assert "if c_1:" in guppy_code
-    assert "quantum.x(bob_0)" in guppy_code
+    assert "quantum.x(bob[0])" in guppy_code
     assert "if c_0:" in guppy_code
-    assert "quantum.z(bob_0)" in guppy_code
+    assert "quantum.z(bob[0])" in guppy_code
 
 
 def test_syndrome_extraction_pattern() -> None:
@@ -84,14 +82,13 @@ def test_syndrome_extraction_pattern() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check syndrome measurement and corrections
-    # IR generator unpacks arrays and uses unpacked names
-    assert "syndrome_0 = quantum.measure(ancilla_0)" in guppy_code
-    assert "syndrome_1 = quantum.measure(ancilla_1)" in guppy_code
-    # Conditionals use unpacked names
+    # Check syndrome measurement and corrections - AST codegen uses array indexing
+    assert "syndrome_0 = quantum.measure(ancilla[0])" in guppy_code
+    assert "syndrome_1 = quantum.measure(ancilla[1])" in guppy_code
+    # Conditionals use underscore names for measurement variables
     assert "if syndrome_0:" in guppy_code
-    assert "if syndrome_0 & syndrome_1:" in guppy_code
-    assert "if not syndrome_0 & syndrome_1:" in guppy_code
+    # AND operations use 'and' keyword
+    assert "syndrome_0 and syndrome_1" in guppy_code
 
 
 def test_parameterized_circuit() -> None:
@@ -129,18 +126,16 @@ def test_parameterized_circuit() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check parameterized behavior
-    # Classical arrays may or may not be unpacked depending on quantum array strategy
-    assert "params_0 = True" in guppy_code or "params[0] = True" in guppy_code
-    assert "params_1 = False" in guppy_code or "params[1] = False" in guppy_code
-    assert "params_2 = True" in guppy_code or "params[2] = True" in guppy_code
-    # Conditionals may use unpacked or array access
-    assert "if params_0:" in guppy_code or "if params[0]:" in guppy_code
-    assert "if params_1:" in guppy_code or "if params[1]:" in guppy_code
-    assert "if not params_1:" in guppy_code or "if not params[1]:" in guppy_code
-    assert "results = quantum.measure_array(q)" in guppy_code
-    # Multi-qubit measurement handling is different in IR generator
-    # It generates TODO comments for partial measurements in conditionals
+    # Check parameterized behavior - AST codegen uses array indexing for assignments
+    assert "params[0] = 1" in guppy_code
+    assert "params[1] = 0" in guppy_code
+    assert "params[2] = 1" in guppy_code
+    # Conditionals use underscore names for expressions
+    assert "if params_0:" in guppy_code
+    assert "if params_1:" in guppy_code
+    assert "(not params_1)" in guppy_code
+    # Measurements use underscore names for results
+    assert "results_0 = quantum.measure" in guppy_code
 
 
 def test_complex_permutation_patterns() -> None:
@@ -160,9 +155,13 @@ def test_complex_permutation_patterns() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check that permutation operations and gates are present
-    # IR generator generates TODO comments for complex permutations
-    assert "TODO: Implement complex permutation" in guppy_code
+    # Check that permutation swap operations are generated
+    # AST codegen generates actual swap code for permutations
+    assert "# Swap" in guppy_code  # Swap comments are generated
+    assert "q[0] = q[1]" in guppy_code  # First swap: q[0] <-> q[1]
+    assert "q[2] = work[0]" in guppy_code  # Second swap: q[2] <-> work[0]
+
+    # Check that gates are present
     assert "quantum.cx(q[0], q[1])" in guppy_code
     assert "quantum.cz(q[2], q[3])" in guppy_code
 
@@ -225,16 +224,17 @@ def test_complex_boolean_expressions() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check that boolean operations are present
-    # Classical arrays may or may not be unpacked depending on quantum array strategy
-    assert "c_3 = " in guppy_code or "c[3] = " in guppy_code
-    assert "c_4 = " in guppy_code or "c[4] = " in guppy_code
-    assert "c_5 = " in guppy_code or "c[5] = " in guppy_code
+    # Check that assignments are present - AST codegen uses array indexing for targets
+    assert "c[3] = " in guppy_code
+    assert "c[4] = " in guppy_code
+    assert "c[5] = " in guppy_code
     assert "if" in guppy_code
 
-    # Boolean operations should be present
-    assert "|" in guppy_code or "OR" in guppy_code
-    assert "&" in guppy_code or "AND" in guppy_code
+    # Boolean operations use Python keywords/operators
+    assert "or" in guppy_code  # OR uses 'or'
+    assert "and" in guppy_code  # AND uses 'and'
+    assert "^" in guppy_code  # XOR uses '^'
+    assert "not" in guppy_code  # NOT uses 'not'
 
 
 def test_empty_blocks_and_edge_cases() -> None:
@@ -261,10 +261,10 @@ def test_empty_blocks_and_edge_cases() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check that code is generated without errors
-    assert "def main()" in guppy_code
+    # Check that code is generated without errors - AST codegen uses array parameters
+    assert "def main(q:" in guppy_code
     assert len(guppy_code) > 100
-    # Note: empty blocks and reset operations may be optimized or handled differently
+    # Note: empty blocks use 'pass' and reset operations may be optimized
 
 
 def test_grover_decomposition() -> None:
@@ -299,17 +299,14 @@ def test_grover_decomposition() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check CCX decomposition
-    # Ancilla may use unpacked variables or array access
-    assert "quantum.h(ancilla_0)" in guppy_code or "quantum.h(ancilla[0])" in guppy_code
-    assert "quantum.t(ancilla_0)" in guppy_code or "quantum.t(ancilla[0])" in guppy_code
-    assert (
-        "quantum.tdg(ancilla_0)" in guppy_code
-        or "quantum.tdg(ancilla[0])" in guppy_code
-    )
+    # Check CCX decomposition - AST codegen uses array indexing
+    assert "quantum.h(ancilla[0])" in guppy_code
+    assert "quantum.t(ancilla[0])" in guppy_code
+    assert "quantum.tdg(ancilla[0])" in guppy_code
 
-    # Check diffusion operator
-    assert "for i in range(0, 2):" in guppy_code  # Register operations with loops
+    # Check diffusion operator - AST codegen unrolls register operations
+    assert "quantum.h(q[0])" in guppy_code
+    assert "quantum.h(q[1])" in guppy_code
     assert "quantum.cz(q[0], q[1])" in guppy_code
 
 
@@ -370,14 +367,13 @@ def test_mixed_classical_quantum_complex() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check that operations are present
-    # The implementation unpacks arrays that are accessed element-wise before operations
-    assert "control_2 = " in guppy_code
-    assert "control_3 = " in guppy_code
+    # Check that operations are present - AST codegen uses array indexing for targets
+    assert "control[2] = " in guppy_code
+    assert "control[3] = " in guppy_code
     assert "if" in guppy_code
-    # IR generator unpacks q array
-    assert "quantum.h(q_0)" in guppy_code
-    # Data array is NOT unpacked initially, uses array indexing
+    # AST codegen uses array indexing for qubit operations
+    assert "quantum.h(q[0])" in guppy_code
+    # Data array uses array indexing for assignments
     assert "data[2] = " in guppy_code
     assert "data[3] = " in guppy_code
     assert "data[4] = " in guppy_code

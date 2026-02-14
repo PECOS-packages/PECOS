@@ -211,12 +211,13 @@ class QIRGenerator(Generator):
         Use :func:`pecos.slr.generate` with ``target="qir"`` instead.
     """
 
-    def __init__(self):
-        warnings.warn(
-            "QIRGenerator is deprecated. Use pecos.slr.generate(prog, 'qir') instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+    def __init__(self, *, _internal: bool = False):
+        if not _internal:
+            warnings.warn(
+                "QIRGenerator is deprecated. Use pecos.slr.generate(prog, 'qir') instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         # NOTE: Include files don't exist in QIR
         self.current_block: Block = None
         self.setup_module()

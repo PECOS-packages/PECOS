@@ -23,14 +23,15 @@ class IRGuppyGenerator(Generator):
         Use :func:`pecos.slr.generate` with ``target="guppy"`` instead.
     """
 
-    def __init__(self):
+    def __init__(self, *, _internal: bool = False):
         """Initialize the IR-based generator."""
-        warnings.warn(
-            "GuppyGenerator/IRGuppyGenerator is deprecated. "
-            "Use pecos.slr.generate(prog, 'guppy') instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if not _internal:
+            warnings.warn(
+                "GuppyGenerator/IRGuppyGenerator is deprecated. "
+                "Use pecos.slr.generate(prog, 'guppy') instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.output = []
         self.variable_context = {}
         self.dependency_analyzer = DependencyAnalyzer()

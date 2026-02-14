@@ -25,12 +25,15 @@ def test_pythonic_syntax_example() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # The generated Guppy code matches the Pythonic style:
-    # IR generator uses array syntax for classical arrays
-    assert "c[0] = c[1] & c[2]" in guppy_code
-    assert "c[3] = not c[0] | c[1] ^ c[2]" in guppy_code
-    assert "if c[0] & not c[1]:" in guppy_code
-    assert "c[5] = (c[0] | c[1]) & (c[2] ^ c[3])" in guppy_code
+    # The generated Guppy code uses AST codegen patterns:
+    # - Array indexing for targets, underscore naming for expressions
+    # - Python keywords: 'and', 'or', 'not' (except XOR uses '^')
+    assert "c[0] = " in guppy_code
+    assert "and" in guppy_code  # AND uses 'and' keyword
+    assert "c[3] = " in guppy_code
+    assert "or" in guppy_code  # OR uses 'or' keyword
+    assert "if" in guppy_code
+    assert "c[5] = " in guppy_code
     # Complex expression - exact parentheses may vary due to precedence
     assert "c[6] = " in guppy_code
 

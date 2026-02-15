@@ -29,10 +29,10 @@
 use log::debug;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
-use crate::engine::HugrEngine;
+use crate::engine::GuppyHugrEngine;
 use crate::engine::types::{ClassicalOp, ClassicalOpType, ClassicalValue};
 
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Execute a classical operation and return the output values.
     ///
     /// Returns a vector of (`port_index`, value) pairs for output ports.

@@ -1,5 +1,5 @@
 [package]
-name = "pecos-hugr"
+name = "pecos-guppy-hugr"
 version.workspace = true
 edition.workspace = true
 readme = "README.md"
@@ -9,7 +9,7 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Direct HUGR interpreter engine for PECOS quantum simulator"
+description = "Guppy HUGR interpreter engine for PECOS quantum simulator"
 
 [features]
 default = ["wasm"]

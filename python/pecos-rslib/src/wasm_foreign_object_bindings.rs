@@ -52,7 +52,7 @@ pub struct PyWasmForeignObject {
 }
 
 impl PyWasmForeignObject {
-    /// Get a cloned boxed `ForeignObject` for use with `HugrEngine`
+    /// Get a cloned boxed `ForeignObject` for use with `GuppyHugrEngine`
     pub fn clone_boxed(&self) -> Box<dyn ForeignObject> {
         self.inner.clone_box()
     }

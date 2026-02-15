@@ -15,7 +15,7 @@ use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
 
 use crate::engine_builders::{
-    PyHugr, PyHugrEngineBuilder, PyHugrSimBuilder, PyPhirJson, PyPhirJsonEngineBuilder,
+    PyGuppyHugrEngineBuilder, PyGuppyHugrSimBuilder, PyHugr, PyPhirJson, PyPhirJsonEngineBuilder,
     PyPhirJsonSimBuilder, PyQasm, PyQasmEngineBuilder, PyQasmSimBuilder, PyQis,
     PyQisControlSimBuilder, PyQisEngineBuilder,
 };
@@ -149,7 +149,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
         log::info!("HUGR program loaded successfully via direct interpreter");
 
         Ok(PySimBuilder {
-            inner: SimBuilderInner::Hugr(crate::engine_builders::PyHugrSimBuilder {
+            inner: SimBuilderInner::Hugr(crate::engine_builders::PyGuppyHugrSimBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(engine_builder))),
                 seed: None,
                 workers: None,
@@ -205,7 +205,7 @@ pub struct PySimBuilder {
 pub(crate) enum SimBuilderInner {
     Qasm(PyQasmSimBuilder),
     QisControl(PyQisControlSimBuilder), // Unified QIS/HUGR engine via LLVM
-    Hugr(PyHugrSimBuilder),             // Direct HUGR interpreter
+    Hugr(PyGuppyHugrSimBuilder),        // Direct HUGR interpreter
     PhirJson(PyPhirJsonSimBuilder),
     Empty, // For creating SimBuilder without a program
 }
@@ -269,14 +269,15 @@ impl PySimBuilder {
                     }
                 }
                 SimBuilderInner::Hugr(sim_builder) => {
-                    if let Ok(hugr_engine) = engine_builder.extract::<PyHugrEngineBuilder>(py) {
+                    if let Ok(hugr_engine) = engine_builder.extract::<PyGuppyHugrEngineBuilder>(py)
+                    {
                         sim_builder.engine_builder = Arc::new(Mutex::new(Some(hugr_engine.inner)));
                         Ok(PySimBuilder {
                             inner: self.inner.clone(),
                         })
                     } else {
                         Err(PyTypeError::new_err(
-                            "For direct HUGR programs, classical() requires a HugrEngineBuilder",
+                            "For direct HUGR programs, classical() requires a GuppyHugrEngineBuilder",
                         ))
                     }
                 }
@@ -1138,7 +1139,7 @@ impl PySimBuilder {
 
                     Ok(Py::new(
                         py,
-                        crate::engine_builders::PyHugrSimulation {
+                        crate::engine_builders::PyGuppyHugrSimulation {
                             inner: Arc::new(Mutex::new(engine)),
                             temp_dir,
                         },
@@ -1195,7 +1196,7 @@ impl Clone for SimBuilderInner {
                 noise_builder: builder.noise_builder.as_ref().map(|obj| obj.clone_ref(py)),
                 explicit_num_qubits: builder.explicit_num_qubits,
             }),
-            SimBuilderInner::Hugr(builder) => SimBuilderInner::Hugr(PyHugrSimBuilder {
+            SimBuilderInner::Hugr(builder) => SimBuilderInner::Hugr(PyGuppyHugrSimBuilder {
                 engine_builder: builder.engine_builder.clone(),
                 seed: builder.seed,
                 workers: builder.workers,

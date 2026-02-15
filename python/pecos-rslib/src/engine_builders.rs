@@ -13,7 +13,7 @@ use pecos::prelude::*;
 type RustQasmEngineBuilder = pecos::QasmEngineBuilder;
 type RustQisEngineBuilder = pecos::QisEngineBuilder;
 type RustPhirJsonEngineBuilder = pecos::PhirJsonEngineBuilder;
-type RustHugrEngineBuilder = pecos::HugrEngineBuilder;
+type RustGuppyHugrEngineBuilder = pecos::GuppyHugrEngineBuilder;
 type RustSparseStabilizerEngineBuilder = SparseStabilizerEngineBuilder;
 type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
@@ -364,14 +364,14 @@ pub struct PyPhirJsonSimBuilder {
 ///
 /// This engine directly interprets HUGR programs without LLVM compilation,
 /// making it faster for simple circuits and useful for testing.
-#[pyclass(name = "HugrEngineBuilder")]
+#[pyclass(name = "GuppyHugrEngineBuilder")]
 #[derive(Clone)]
-pub struct PyHugrEngineBuilder {
-    pub(crate) inner: RustHugrEngineBuilder,
+pub struct PyGuppyHugrEngineBuilder {
+    pub(crate) inner: RustGuppyHugrEngineBuilder,
 }
 
 #[pymethods]
-impl PyHugrEngineBuilder {
+impl PyGuppyHugrEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
@@ -411,7 +411,7 @@ impl PyHugrEngineBuilder {
     /// Convert to simulation builder
     fn to_sim(&self) -> PyResult<PySimBuilder> {
         Ok(PySimBuilder {
-            inner: SimBuilderInner::Hugr(PyHugrSimBuilder {
+            inner: SimBuilderInner::Hugr(PyGuppyHugrSimBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
                 seed: None,
                 workers: None,
@@ -427,8 +427,8 @@ impl PyHugrEngineBuilder {
 }
 
 /// Internal HUGR simulation builder state
-pub struct PyHugrSimBuilder {
-    pub(crate) engine_builder: Arc<Mutex<Option<RustHugrEngineBuilder>>>,
+pub struct PyGuppyHugrSimBuilder {
+    pub(crate) engine_builder: Arc<Mutex<Option<RustGuppyHugrEngineBuilder>>>,
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
@@ -441,14 +441,14 @@ pub struct PyHugrSimBuilder {
 
 /// Python wrapper for built HUGR simulation
 #[pyclass(name = "HugrSimulation")]
-pub struct PyHugrSimulation {
+pub struct PyGuppyHugrSimulation {
     pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
     /// Path to temp directory containing intermediate files (if `keep_intermediate_files` was true)
     pub(crate) temp_dir: Option<String>,
 }
 
 #[pymethods]
-impl PyHugrSimulation {
+impl PyGuppyHugrSimulation {
     /// Run the simulation
     pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
         let mut engine = self.inner.lock().unwrap();
@@ -610,8 +610,8 @@ pub fn phir_json_engine() -> PyPhirJsonEngineBuilder {
 /// which executes HUGR programs without LLVM compilation.
 /// This is useful for testing and for simple circuits.
 #[pyfunction]
-pub fn hugr_engine() -> PyHugrEngineBuilder {
-    PyHugrEngineBuilder::new()
+pub fn hugr_engine() -> PyGuppyHugrEngineBuilder {
+    PyGuppyHugrEngineBuilder::new()
 }
 
 /// Create a general noise model builder
@@ -1274,7 +1274,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQasmEngineBuilder>()?;
     m.add_class::<PyQisEngineBuilder>()?;
     m.add_class::<PyPhirJsonEngineBuilder>()?;
-    m.add_class::<PyHugrEngineBuilder>()?;
+    m.add_class::<PyGuppyHugrEngineBuilder>()?;
 
     // Simulation builders are now handled by the unified PySimBuilder in sim.rs
 
@@ -1282,7 +1282,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQasmSimulation>()?;
     m.add_class::<PyPhirJsonSimulation>()?;
     m.add_class::<PyQisControlSimulation>()?;
-    m.add_class::<PyHugrSimulation>()?;
+    m.add_class::<PyGuppyHugrSimulation>()?;
 
     // Program types
     m.add_class::<PyQasm>()?;

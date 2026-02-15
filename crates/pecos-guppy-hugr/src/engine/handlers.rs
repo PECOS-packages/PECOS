@@ -29,13 +29,13 @@
 //! - [`guppy`]: Guppy-specific operations (`tket.guppy`, `guppylang`)
 //! - [`debug`]: Debug operations (`tket.debug`)
 //!
-//! Each handler module provides methods on [`HugrEngine`](super::HugrEngine) for processing
-//! specific extension operations. The main dispatcher [`HugrEngine::handle_extension_op`]
+//! Each handler module provides methods on [`GuppyHugrEngine`](super::GuppyHugrEngine) for processing
+//! specific extension operations. The main dispatcher [`GuppyHugrEngine::handle_extension_op`]
 //! routes operations to the appropriate handler based on extension ID.
 //!
 //! # Architecture Notes
 //!
-//! Handlers are implemented as `impl HugrEngine` blocks in separate files to:
+//! Handlers are implemented as `impl GuppyHugrEngine` blocks in separate files to:
 //! - Keep related code together for easier maintenance
 //! - Allow future refactoring toward ECS-like state separation
 //! - Reduce the size of the main engine module
@@ -61,9 +61,9 @@ mod wasm;
 
 use tket::hugr::{Hugr, HugrView, Node};
 
-use super::HugrEngine;
+use super::GuppyHugrEngine;
 
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Handle extension operations from various tket extensions.
     ///
     /// This is the main dispatcher for HUGR extension operations. It routes

@@ -123,7 +123,7 @@ pecos-qis-ffi = { version = "0.1.1", path = "crates/pecos-qis-ffi" }
 pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }
 pecos-qis = { version = "0.1.1", path = "crates/pecos-qis" }
 pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
-pecos-hugr = { version = "0.1.1", path = "crates/pecos-hugr" }
+pecos-guppy-hugr = { version = "0.1.1", path = "crates/pecos-guppy-hugr" }
 pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }

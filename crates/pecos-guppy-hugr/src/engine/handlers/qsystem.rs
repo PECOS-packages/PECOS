@@ -26,10 +26,10 @@ use log::debug;
 use pecos_core::QubitId;
 use tket::hugr::{Hugr, Node};
 
-use crate::engine::HugrEngine;
+use crate::engine::GuppyHugrEngine;
 use crate::engine::types::{ClassicalValue, FutureState, RngContextId, RngContextState};
 
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Handle tket.qsystem operations (lazy measurements, barriers, etc.).
     #[allow(clippy::too_many_lines)] // Operation dispatch is inherently large
     pub(crate) fn handle_qsystem_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {

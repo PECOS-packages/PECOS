@@ -35,10 +35,10 @@
 use log::debug;
 use tket::hugr::{Hugr, HugrView, IncomingPort, PortIndex};
 
-use crate::engine::HugrEngine;
+use crate::engine::GuppyHugrEngine;
 use crate::engine::analysis::all_predecessors_ready;
 
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Complete a function call if the completed CFG belongs to an active Call's `FuncDefn`.
     ///
     /// This method is called when a CFG completes. It checks if that CFG belongs

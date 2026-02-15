@@ -38,11 +38,11 @@ use log::debug;
 use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
-use crate::engine::HugrEngine;
+use crate::engine::GuppyHugrEngine;
 use crate::engine::analysis::all_predecessors_ready;
 use crate::engine::types::{ActiveTailLoopInfo, TailLoopInfo};
 
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Try to resolve the control value for a `TailLoop`'s current iteration.
     /// Returns `Some(0)` for `CONTINUE_TAG` (continue looping) or `Some(1)` for `BREAK_TAG` (exit loop).
     pub(crate) fn try_resolve_tailloop_control(

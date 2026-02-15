@@ -14,13 +14,13 @@
 
 //! Direct HUGR interpreter engine for PECOS.
 //!
-//! This crate provides [`HugrEngine`], a classical control engine that directly
+//! This crate provides [`GuppyHugrEngine`], a classical control engine that directly
 //! interprets HUGR (Hierarchical Unified Graph Representation) programs without
 //! requiring LLVM compilation.
 //!
 //! # Overview
 //!
-//! The `HugrEngine` walks a HUGR graph in topological order, emitting quantum
+//! The `GuppyHugrEngine` walks a HUGR graph in topological order, emitting quantum
 //! commands via [`ByteMessage`] and handling measurement results. This is similar
 //! to how [`QASMEngine`] interprets `OpenQASM` programs.
 //!
@@ -29,7 +29,7 @@
 //! Load a HUGR file and build an engine:
 //!
 //! ```
-//! use pecos_hugr::hugr_engine;
+//! use pecos_guppy_hugr::hugr_engine;
 //! use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
 //!
 //! // Load a HUGR circuit
@@ -49,7 +49,7 @@
 //! For full simulation with quantum execution (requires a quantum backend):
 //!
 //! ```no_run
-//! use pecos_hugr::hugr_sim;
+//! use pecos_guppy_hugr::hugr_sim;
 //!
 //! // Run 100 shots of a HUGR circuit
 //! let hugr_path = concat!(
@@ -78,8 +78,10 @@ mod builder;
 mod engine;
 mod loader;
 
-pub use builder::{HugrEngineBuilder, hugr_engine, hugr_sim};
-pub use engine::{CapturedResult, ClassicalValue, FutureId, HugrEngine, ResultValue, RngContextId};
+pub use builder::{GuppyHugrEngineBuilder, hugr_engine, hugr_sim};
+pub use engine::{
+    CapturedResult, ClassicalValue, FutureId, GuppyHugrEngine, ResultValue, RngContextId,
+};
 pub use loader::{load_hugr_from_bytes, load_hugr_from_file};
 
 // Re-export key types for convenience

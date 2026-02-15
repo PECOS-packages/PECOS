@@ -43,11 +43,11 @@ use pecos_quantum::hugr_convert::{
 use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
-use crate::engine::HugrEngine;
+use crate::engine::GuppyHugrEngine;
 use crate::engine::analysis::find_input_node;
 use crate::engine::types::{ActiveCaseInfo, QuantumOp};
 
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Try to resolve the control value for a Conditional node.
     /// Returns `Some(branch_index)` if the control value is known, None otherwise.
     pub(crate) fn try_resolve_conditional_control(

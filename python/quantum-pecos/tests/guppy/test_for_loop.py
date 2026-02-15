@@ -21,7 +21,7 @@ def loop_with_measure() -> int:
 
 
 if __name__ == "__main__":
-    os.environ["RUST_LOG"] = "pecos_hugr::engine=debug"
+    os.environ["RUST_LOG"] = "pecos_guppy_hugr::engine=debug"
     print("Testing for-loop with measurements...")
     try:
         results = (

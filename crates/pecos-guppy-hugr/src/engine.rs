@@ -14,7 +14,7 @@
 
 //! HUGR interpreter engine.
 //!
-//! This module provides the core [`HugrEngine`] for executing HUGR programs.
+//! This module provides the core [`GuppyHugrEngine`] for executing HUGR programs.
 //!
 //! # Module Structure
 //!
@@ -72,7 +72,7 @@ use analysis::{
 /// 1. The engine pauses execution and waits for measurement results
 /// 2. Based on the result value (0 or 1), the appropriate Case branch is selected
 /// 3. Operations from the selected branch are processed
-pub struct HugrEngine {
+pub struct GuppyHugrEngine {
     /// The HUGR program being executed.
     pub(crate) hugr: Option<Hugr>,
 
@@ -179,11 +179,11 @@ pub struct HugrEngine {
     #[cfg(feature = "wasm")]
     pub(crate) foreign_object: Option<Box<dyn pecos_wasm::ForeignObject>>,
 }
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Maximum batch size for quantum operations.
     const MAX_BATCH_SIZE: usize = 100;
 
-    /// Create a new empty `HugrEngine`.
+    /// Create a new empty `GuppyHugrEngine`.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -240,7 +240,7 @@ impl HugrEngine {
         self.extension_state.global_phase
     }
 
-    /// Create a `HugrEngine` from HUGR bytes.
+    /// Create a `GuppyHugrEngine` from HUGR bytes.
     ///
     /// # Errors
     ///
@@ -251,7 +251,7 @@ impl HugrEngine {
         Ok(Self::from_hugr(hugr))
     }
 
-    /// Create a `HugrEngine` from a file path.
+    /// Create a `GuppyHugrEngine` from a file path.
     ///
     /// # Errors
     ///
@@ -262,7 +262,7 @@ impl HugrEngine {
         Self::from_bytes(&bytes)
     }
 
-    /// Create a `HugrEngine` from a loaded HUGR.
+    /// Create a `GuppyHugrEngine` from a loaded HUGR.
     #[must_use]
     pub fn from_hugr(hugr: Hugr) -> Self {
         let mut engine = Self::new();
@@ -345,7 +345,7 @@ impl HugrEngine {
     /// Reset the engine's internal state for a new shot.
     #[allow(clippy::too_many_lines)]
     fn reset_state(&mut self) {
-        debug!("HugrEngine::reset_state()");
+        debug!("GuppyHugrEngine::reset_state()");
 
         self.work_queue.clear();
         self.processed.clear();
@@ -1481,7 +1481,7 @@ impl HugrEngine {
     }
 }
 
-impl Default for HugrEngine {
+impl Default for GuppyHugrEngine {
     fn default() -> Self {
         Self {
             hugr: None,
@@ -1526,7 +1526,7 @@ impl Default for HugrEngine {
     }
 }
 
-impl ClassicalEngine for HugrEngine {
+impl ClassicalEngine for GuppyHugrEngine {
     fn num_qubits(&self) -> usize {
         // If we've already assigned qubit IDs (during command generation),
         // return the actual count needed.
@@ -1572,7 +1572,7 @@ impl ClassicalEngine for HugrEngine {
     }
 
     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
-        debug!("HugrEngine::generate_commands()");
+        debug!("GuppyHugrEngine::generate_commands()");
 
         match self.process_hugr_impl()? {
             Some(msg) => Ok(msg),
@@ -1581,7 +1581,7 @@ impl ClassicalEngine for HugrEngine {
     }
 
     fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError> {
-        debug!("HugrEngine::handle_measurements()");
+        debug!("GuppyHugrEngine::handle_measurements()");
 
         match message.outcomes() {
             Ok(outcomes) => {
@@ -1709,14 +1709,14 @@ impl ClassicalEngine for HugrEngine {
     }
 }
 
-impl ControlEngine for HugrEngine {
+impl ControlEngine for GuppyHugrEngine {
     type Input = ();
     type Output = Shot;
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
 
     fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
-        debug!("HugrEngine::start()");
+        debug!("GuppyHugrEngine::start()");
 
         self.reset_state();
 
@@ -1733,7 +1733,7 @@ impl ControlEngine for HugrEngine {
         &mut self,
         measurements: ByteMessage,
     ) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
-        debug!("HugrEngine::continue_processing()");
+        debug!("GuppyHugrEngine::continue_processing()");
 
         self.handle_measurements(measurements)?;
 
@@ -1751,12 +1751,12 @@ impl ControlEngine for HugrEngine {
     }
 }
 
-impl Engine for HugrEngine {
+impl Engine for GuppyHugrEngine {
     type Input = ();
     type Output = Shot;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        debug!("HugrEngine::process()");
+        debug!("GuppyHugrEngine::process()");
 
         <Self as ClassicalEngine>::reset(self)?;
 
@@ -1765,7 +1765,7 @@ impl Engine for HugrEngine {
         match stage {
             EngineStage::Complete(result) => Ok(result),
             EngineStage::NeedsProcessing(_) => {
-                debug!("HugrEngine cannot process quantum operations directly");
+                debug!("GuppyHugrEngine cannot process quantum operations directly");
                 Ok(self.get_results()?)
             }
         }
@@ -1776,7 +1776,7 @@ impl Engine for HugrEngine {
     }
 }
 
-impl Clone for HugrEngine {
+impl Clone for GuppyHugrEngine {
     fn clone(&self) -> Self {
         let mut engine = Self {
             hugr: self.hugr.clone(),
@@ -1800,9 +1800,9 @@ impl Clone for HugrEngine {
     }
 }
 
-impl std::fmt::Debug for HugrEngine {
+impl std::fmt::Debug for GuppyHugrEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HugrEngine")
+        f.debug_struct("GuppyHugrEngine")
             .field("has_hugr", &self.hugr.is_some())
             .field("quantum_ops_count", &self.quantum_ops.len())
             .field("work_queue_len", &self.work_queue.len())
@@ -1824,14 +1824,14 @@ mod tests {
 
     #[test]
     fn test_empty_engine() {
-        let engine = HugrEngine::new();
+        let engine = GuppyHugrEngine::new();
         // Empty engine returns minimum of 1 qubit for safety
         assert!(engine.num_qubits() >= 1);
     }
 
     #[test]
     fn test_default_engine() {
-        let engine = HugrEngine::default();
+        let engine = GuppyHugrEngine::default();
         assert!(engine.hugr.is_none());
         assert!(engine.quantum_ops.is_empty());
     }
@@ -1843,7 +1843,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/single_hadamard.hugr"
         );
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         // Should have at least 1 qubit (QAlloc)
         // Note: CFG-style HUGRs use conservative estimates, so we check >= 1
@@ -1863,7 +1863,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/bell_state.hugr"
         );
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         // Should have at least 2 qubits
         // Note: CFG-style HUGRs use conservative estimates, so we check >= 2
@@ -1879,7 +1879,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/single_hadamard.hugr"
         );
-        let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let mut engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         // Generate commands
         let msg = engine.generate_commands();
@@ -1898,10 +1898,10 @@ mod tests {
 
     // ==================== Rotation Gate Tests ====================
 
-    /// Helper to create a `HugrEngine` from a `DagCircuit`
-    fn engine_from_dag(dag: &DagCircuit) -> HugrEngine {
+    /// Helper to create a `GuppyHugrEngine` from a `DagCircuit`
+    fn engine_from_dag(dag: &DagCircuit) -> GuppyHugrEngine {
         let hugr = dag_circuit_to_hugr(dag).expect("Failed to convert DagCircuit to HUGR");
-        HugrEngine::from_hugr(hugr)
+        GuppyHugrEngine::from_hugr(hugr)
     }
 
     #[test]
@@ -2292,7 +2292,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/bell_state.hugr"
         );
-        let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let mut engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         // Generate commands to modify state
         let _ = engine.generate_commands();
@@ -2317,7 +2317,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/single_hadamard.hugr"
         );
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         let cloned = engine.clone();
 
@@ -2331,7 +2331,7 @@ mod tests {
     fn test_empty_hugr() {
         let dag = DagCircuit::new();
         let hugr = dag_circuit_to_hugr(&dag).expect("Failed to convert empty DagCircuit");
-        let mut engine = HugrEngine::from_hugr(hugr);
+        let mut engine = GuppyHugrEngine::from_hugr(hugr);
 
         let msg = engine
             .generate_commands()
@@ -2361,9 +2361,9 @@ mod tests {
 
     #[test]
     fn test_debug_format() {
-        let engine = HugrEngine::new();
+        let engine = GuppyHugrEngine::new();
         let debug_str = format!("{engine:?}");
-        assert!(debug_str.contains("HugrEngine"));
+        assert!(debug_str.contains("GuppyHugrEngine"));
         assert!(debug_str.contains("has_hugr"));
     }
 
@@ -2376,7 +2376,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/bell_state.hugr"
         );
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         assert!(
             engine.conditionals.is_empty(),
@@ -2452,7 +2452,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_x.hugr"
         );
 
-        let result = HugrEngine::from_file(hugr_path);
+        let result = GuppyHugrEngine::from_file(hugr_path);
         assert!(
             result.is_ok(),
             "Failed to load conditional HUGR: {:?}",
@@ -2494,7 +2494,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_x.hugr"
         );
 
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         // This HUGR was generated from a Guppy program with if/else
         // It should have Conditional nodes detected
@@ -2529,7 +2529,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_x.hugr"
         );
 
-        let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let mut engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         println!("Initial state:");
         println!("  Work queue size: {}", engine.work_queue.len());
@@ -2579,7 +2579,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_x.hugr"
         );
 
-        let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let mut engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         // Start execution
         let stage = engine.start(()).expect("Failed to start engine");
@@ -2636,7 +2636,7 @@ mod tests {
 
     #[test]
     fn test_bell_state_with_quest() {
-        // Test HugrEngine with Quest quantum simulator for a Bell state circuit
+        // Test GuppyHugrEngine with Quest quantum simulator for a Bell state circuit
         use pecos_engines::hybrid::HybridEngineBuilder;
         use pecos_quest::QuestStateVecEngine;
 
@@ -2645,11 +2645,11 @@ mod tests {
             "/../pecos/tests/test_data/hugr/bell_state.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let num_qubits = hugr_engine.num_qubits();
         println!("Bell state HUGR has {num_qubits} qubits");
 
-        // Create HybridEngine with HugrEngine and Quest
+        // Create HybridEngine with GuppyHugrEngine and Quest
         let mut hybrid = HybridEngineBuilder::new()
             .with_classical_engine(Box::new(hugr_engine))
             .with_quantum_engine(Box::new(QuestStateVecEngine::new(num_qubits)))
@@ -2687,7 +2687,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/single_hadamard.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let num_qubits = hugr_engine.num_qubits();
         println!("Single hadamard HUGR has {num_qubits} qubits");
 
@@ -2738,7 +2738,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_x.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let num_qubits = hugr_engine.num_qubits();
         println!("Conditional HUGR has {num_qubits} qubits");
         println!("Conditionals detected: {}", hugr_engine.conditionals.len());
@@ -2778,7 +2778,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_x.hugr"
         );
 
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         println!("\n=== Wire Propagation Debug ===");
         println!("QAlloc count (num_qubits): {}", engine.num_qubits());
@@ -2805,7 +2805,7 @@ mod tests {
         }
 
         // Run a single shot with mock measurements to trace wire flow
-        let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let mut engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         // Print initial work queue state
         println!("\nInitial work queue ({} items):", engine.work_queue.len());
@@ -2968,7 +2968,7 @@ mod tests {
         );
 
         let engine =
-            HugrEngine::from_file(hugr_path).expect("Failed to load simple_conditional.hugr");
+            GuppyHugrEngine::from_file(hugr_path).expect("Failed to load simple_conditional.hugr");
 
         println!("Simple conditional HUGR:");
         println!("  Qubits: {}", engine.num_qubits());
@@ -3000,7 +3000,8 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_h.hugr"
         );
 
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load conditional_h.hugr");
+        let engine =
+            GuppyHugrEngine::from_file(hugr_path).expect("Failed to load conditional_h.hugr");
 
         println!("Conditional H HUGR:");
         println!("  Qubits: {}", engine.num_qubits());
@@ -3029,7 +3030,7 @@ mod tests {
         );
 
         let engine =
-            HugrEngine::from_file(hugr_path).expect("Failed to load conditional_branch.hugr");
+            GuppyHugrEngine::from_file(hugr_path).expect("Failed to load conditional_branch.hugr");
 
         println!("Conditional branch HUGR:");
         println!("  Qubits: {}", engine.num_qubits());
@@ -3072,7 +3073,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/simple_conditional.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let estimated_qubits = hugr_engine.num_qubits();
 
         let num_shots = 100;
@@ -3081,7 +3082,7 @@ mod tests {
         let mut violations = 0; // m0 != m1 (should never happen)
 
         for shot_num in 0..num_shots {
-            let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+            let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
                 .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
@@ -3167,7 +3168,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_branch.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let estimated_qubits = hugr_engine.num_qubits();
 
         let num_shots = 100;
@@ -3177,7 +3178,7 @@ mod tests {
         let mut m1_ones = 0;
 
         for shot_num in 0..num_shots {
-            let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+            let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
                 .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
@@ -3263,7 +3264,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/conditional_h.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let estimated_qubits = hugr_engine.num_qubits();
 
         let num_shots = 100;
@@ -3273,7 +3274,7 @@ mod tests {
         let mut control_1_result_1 = 0; // control=1, result=1 (ok, 50/50)
 
         for shot_num in 0..num_shots {
-            let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+            let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
                 .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
@@ -3353,7 +3354,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/simple_while_loop.hugr"
         );
 
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load while loop HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load while loop HUGR");
 
         println!("While loop HUGR loaded:");
         println!("  Quantum ops: {}", engine.quantum_ops.len());
@@ -3417,7 +3418,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/simple_while_loop.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let estimated_qubits = hugr_engine.num_qubits().max(4); // At least 4 qubits for safety
 
         println!("While loop HUGR:");
@@ -3429,7 +3430,7 @@ mod tests {
 
         // Test single shot with manual stepping to trace execution
         println!("\n=== Manual stepping test ===");
-        let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let mut engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         println!("Initial state:");
         println!("  Work queue: {:?}", engine.work_queue);
@@ -3465,7 +3466,7 @@ mod tests {
         let mut failures = 0;
 
         for shot_num in 0..num_shots {
-            let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+            let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
                 .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
@@ -3502,7 +3503,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/function_call.hugr"
         );
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         // Check that we loaded the HUGR
         println!("Function call HUGR:");
@@ -3532,7 +3533,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/function_call.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let estimated_qubits = hugr_engine.num_qubits().max(4);
 
         println!("Function call HUGR:");
@@ -3560,7 +3561,7 @@ mod tests {
         let mut failures = 0;
 
         for shot_num in 0..num_shots {
-            let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+            let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
                 .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
@@ -3618,7 +3619,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/multiple_function_calls.hugr"
         );
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         println!("Multiple function calls HUGR:");
         println!("  Quantum ops: {}", engine.quantum_ops.len());
@@ -3647,7 +3648,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/multiple_function_calls.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let estimated_qubits = hugr_engine.num_qubits().max(4);
 
         println!("Multiple function calls HUGR:");
@@ -3681,7 +3682,7 @@ mod tests {
         let mut failures = 0;
 
         for shot_num in 0..num_shots {
-            let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+            let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
             if shot_num == 0 {
                 println!("\n=== Shot 0 Pre-run state ===");
@@ -3766,7 +3767,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/nested_function_calls.hugr"
         );
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         println!("Nested function calls HUGR:");
         println!("  Quantum ops: {}", engine.quantum_ops.len());
@@ -3798,7 +3799,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/nested_function_calls.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let estimated_qubits = hugr_engine.num_qubits().max(4);
 
         println!("Nested function calls HUGR:");
@@ -3813,7 +3814,7 @@ mod tests {
         let mut failures = 0;
 
         for shot_num in 0..num_shots {
-            let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+            let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
                 .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
@@ -3870,7 +3871,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/multi_qubit_function.hugr"
         );
-        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
         println!("Multi-qubit function HUGR:");
         println!("  Quantum ops: {}", engine.quantum_ops.len());
@@ -3905,7 +3906,7 @@ mod tests {
             "/../pecos/tests/test_data/hugr/multi_qubit_function.hugr"
         );
 
-        let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+        let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
         let estimated_qubits = hugr_engine.num_qubits().max(4);
 
         println!("Multi-qubit function HUGR:");
@@ -3925,7 +3926,7 @@ mod tests {
         let mut failures = 0;
 
         for shot_num in 0..num_shots {
-            let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+            let hugr_engine = GuppyHugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
                 .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))

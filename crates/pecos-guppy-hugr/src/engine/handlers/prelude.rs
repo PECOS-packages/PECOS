@@ -23,10 +23,10 @@
 use log::debug;
 use tket::hugr::{Hugr, HugrView, Node};
 
-use crate::engine::HugrEngine;
+use crate::engine::GuppyHugrEngine;
 use crate::engine::types::ClassicalValue;
 
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Handle prelude extension operations.
     ///
     /// The prelude extension provides fundamental operations used across all HUGR programs.

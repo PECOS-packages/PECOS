@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```
-//! use pecos_hugr::hugr_engine;
+//! use pecos_guppy_hugr::hugr_engine;
 //! use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
 //!
 //! // Build engine from a HUGR file
@@ -25,7 +25,7 @@
 //!
 //! For full simulation with quantum execution, see the `hugr_sim` function.
 
-use crate::engine::HugrEngine;
+use crate::engine::GuppyHugrEngine;
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalControlEngineBuilder;
 use std::path::{Path, PathBuf};
@@ -48,7 +48,7 @@ impl Clone for CloneableForeignObject {
 
 /// Builder for HUGR engines that integrates with the unified simulation API
 #[derive(Default)]
-pub struct HugrEngineBuilder {
+pub struct GuppyHugrEngineBuilder {
     /// The HUGR source (either bytes, file path, or direct Hugr)
     source: Option<HugrSource>,
     /// Optional foreign object for WASM calls
@@ -56,7 +56,7 @@ pub struct HugrEngineBuilder {
     foreign_object: Option<CloneableForeignObject>,
 }
 
-impl Clone for HugrEngineBuilder {
+impl Clone for GuppyHugrEngineBuilder {
     fn clone(&self) -> Self {
         Self {
             source: self.source.clone(),
@@ -76,7 +76,7 @@ enum HugrSource {
     Direct(Arc<Hugr>),
 }
 
-impl HugrEngineBuilder {
+impl GuppyHugrEngineBuilder {
     /// Create a new HUGR engine builder
     #[must_use]
     pub fn new() -> Self {
@@ -119,8 +119,8 @@ impl HugrEngineBuilder {
     }
 }
 
-impl ClassicalControlEngineBuilder for HugrEngineBuilder {
-    type Engine = HugrEngine;
+impl ClassicalControlEngineBuilder for GuppyHugrEngineBuilder {
+    type Engine = GuppyHugrEngine;
 
     /// Build the HUGR engine
     ///
@@ -133,11 +133,11 @@ impl ClassicalControlEngineBuilder for HugrEngineBuilder {
     fn build(self) -> Result<Self::Engine, PecosError> {
         #[allow(unused_mut)]
         let mut engine = match self.source {
-            Some(HugrSource::Bytes(bytes)) => HugrEngine::from_bytes(&bytes)?,
-            Some(HugrSource::File(path)) => HugrEngine::from_file(&path)?,
+            Some(HugrSource::Bytes(bytes)) => GuppyHugrEngine::from_bytes(&bytes)?,
+            Some(HugrSource::File(path)) => GuppyHugrEngine::from_file(&path)?,
             Some(HugrSource::Direct(hugr)) => {
                 // Clone the Hugr from the Arc
-                HugrEngine::from_hugr((*hugr).clone())
+                GuppyHugrEngine::from_hugr((*hugr).clone())
             }
             None => {
                 return Err(PecosError::Input(
@@ -157,9 +157,9 @@ impl ClassicalControlEngineBuilder for HugrEngineBuilder {
     }
 }
 
-impl std::fmt::Debug for HugrEngineBuilder {
+impl std::fmt::Debug for GuppyHugrEngineBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HugrEngineBuilder")
+        f.debug_struct("GuppyHugrEngineBuilder")
             .field("has_source", &self.source.is_some())
             .field("has_foreign_object", &self.foreign_object.is_some())
             .finish()
@@ -175,7 +175,7 @@ impl std::fmt::Debug for HugrEngineBuilder {
 /// Build an engine from a HUGR file:
 ///
 /// ```
-/// use pecos_hugr::hugr_engine;
+/// use pecos_guppy_hugr::hugr_engine;
 /// use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
 ///
 /// let hugr_path = concat!(
@@ -196,7 +196,7 @@ impl std::fmt::Debug for HugrEngineBuilder {
 /// Build an engine from HUGR bytes:
 ///
 /// ```
-/// use pecos_hugr::hugr_engine;
+/// use pecos_guppy_hugr::hugr_engine;
 /// use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
 ///
 /// let hugr_path = concat!(
@@ -213,8 +213,8 @@ impl std::fmt::Debug for HugrEngineBuilder {
 /// assert!(engine.num_qubits() >= 1);
 /// ```
 #[must_use]
-pub fn hugr_engine() -> HugrEngineBuilder {
-    HugrEngineBuilder::new()
+pub fn hugr_engine() -> GuppyHugrEngineBuilder {
+    GuppyHugrEngineBuilder::new()
 }
 
 /// Create a new HUGR simulation builder directly from a file path
@@ -225,7 +225,7 @@ pub fn hugr_engine() -> HugrEngineBuilder {
 /// # Examples
 ///
 /// ```no_run
-/// use pecos_hugr::hugr_sim;
+/// use pecos_guppy_hugr::hugr_sim;
 ///
 /// // Quick simulation from file (requires quantum backend at runtime)
 /// let hugr_path = concat!(

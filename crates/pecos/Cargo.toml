@@ -34,7 +34,7 @@ pecos-phir-json = { workspace = true, optional = true }
 pecos-qis = { workspace = true, optional = true }
 pecos-llvm = { workspace = true, optional = true }
 pecos-hugr-qis = { workspace = true, optional = true }
-pecos-hugr = { workspace = true, optional = true }
+pecos-guppy-hugr = { workspace = true, optional = true }
 pecos-phir = { workspace = true, optional = true, features = ["hugr"] }
 pecos-rng = { workspace = true, optional = true }
 pecos-num = { workspace = true, optional = true }
@@ -102,8 +102,8 @@ llvm = ["sim", "dep:pecos-llvm"]
 # qis: QIS/LLVM IR execution support (Selene runtime)
 qis = ["llvm", "dep:pecos-qis", "pecos-qis/llvm"]
 
-# hugr: HUGR program support (requires QIS) + direct HUGR interpreter
-hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis/hugr", "pecos-quantum/hugr", "dep:pecos-hugr"]
+# hugr: HUGR program support (requires QIS) + direct Guppy HUGR interpreter
+hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis/hugr", "pecos-quantum/hugr", "dep:pecos-guppy-hugr"]
 wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)

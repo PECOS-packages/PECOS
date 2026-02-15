@@ -18,16 +18,16 @@
 //! - `result_bool`, `result_int`, `result_uint`, `result_f64`: Scalar results
 //! - `result_array_bool`, `result_array_int`, `result_array_uint`, `result_array_f64`: Array results
 //!
-//! Captured results are stored in [`HugrEngine::captured_results`](super::super::HugrEngine)
-//! and can be retrieved via [`HugrEngine::get_captured_results`](super::super::HugrEngine::get_captured_results).
+//! Captured results are stored in [`GuppyHugrEngine::captured_results`](super::super::GuppyHugrEngine)
+//! and can be retrieved via [`GuppyHugrEngine::get_captured_results`](super::super::GuppyHugrEngine::get_captured_results).
 
 use log::debug;
 use tket::hugr::{Hugr, HugrView, Node, NodeIndex};
 
-use crate::engine::HugrEngine;
+use crate::engine::GuppyHugrEngine;
 use crate::engine::types::{CapturedResult, ClassicalValue, ResultValue};
 
-impl HugrEngine {
+impl GuppyHugrEngine {
     /// Handle tket.result operations for capturing output values.
     #[allow(clippy::too_many_lines)]
     pub(crate) fn handle_result_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {

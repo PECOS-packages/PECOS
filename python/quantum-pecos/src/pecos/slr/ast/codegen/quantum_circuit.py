@@ -164,7 +164,7 @@ class AstToQuantumCircuit:
         Returns:
             A QuantumCircuit object.
         """
-        from pecos.circuits.quantum_circuit import QuantumCircuit
+        from pecos.circuits.quantum_circuit import QuantumCircuit  # noqa: PLC0415
 
         self.context = QCCodeGenContext()
         self.circuit = QuantumCircuit()
@@ -366,13 +366,13 @@ class AstToQuantumCircuit:
                 f"Cannot unroll For loop with non-integer bounds: "
                 f"start={node.start}, stop={node.stop}"
             )
-            raise ValueError(msg)
+            raise TypeError(msg)
 
     def _process_repeat(self, node: RepeatStmt) -> None:
         """Process a repeat loop by unrolling."""
         if not isinstance(node.count, int):
             msg = f"Cannot unroll Repeat block with non-integer count: {node.count}"
-            raise ValueError(msg)
+            raise TypeError(msg)
 
         for _ in range(node.count):
             for stmt in node.body:

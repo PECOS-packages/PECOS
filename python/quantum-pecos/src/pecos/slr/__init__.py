@@ -148,9 +148,10 @@ def generate(
         >>> qasm = generate(prog, "qasm")
         >>> print(qasm)
     """
-    from pecos.slr.ast import slr_to_ast
-    from pecos.slr.ast.codegen import generate as ast_generate
-    from pecos.slr.ast.validation import validate as ast_validate
+    # Lazy imports to avoid circular dependencies
+    from pecos.slr.ast import slr_to_ast  # noqa: PLC0415
+    from pecos.slr.ast.codegen import generate as ast_generate  # noqa: PLC0415
+    from pecos.slr.ast.validation import validate as ast_validate  # noqa: PLC0415
 
     # Convert SLR to AST
     program_ast = slr_to_ast(program)

@@ -30,7 +30,7 @@ impl ArrayCodegen for SeleneHeapArrayCodegen {
             .builder()
             .build_call(malloc, &[size.into()], "")?
             .try_as_basic_value()
-            .unwrap_left();
+            .expect_basic("heap_alloc should return a value");
         Ok(res.into_pointer_value())
     }
 

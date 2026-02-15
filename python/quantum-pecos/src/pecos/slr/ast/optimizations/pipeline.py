@@ -57,6 +57,7 @@ class OptimizationPipeline:
         self,
         passes: Sequence[OptimizationPass],
         max_iterations: int = 10,
+        *,
         iterate_to_fixed_point: bool = True,
     ):
         self.passes = list(passes)

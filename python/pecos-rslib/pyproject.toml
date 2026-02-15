@@ -48,8 +48,7 @@ numpy-compat = [  # NumPy/SciPy compatibility tests
     "scipy>=1.7",
 ]
 
-[tool.uv.sources]
-pecos-rslib = { workspace = true }
+# No uv.sources needed - this package has no workspace dependencies
 
 [tool.pytest.ini_options]
 markers = [

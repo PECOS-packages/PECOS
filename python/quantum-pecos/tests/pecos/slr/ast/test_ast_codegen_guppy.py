@@ -21,6 +21,7 @@ class TestAstToGuppyBasic:
     """Basic code generation tests."""
 
     def test_empty_program(self) -> None:
+        """Empty program generates valid Guppy boilerplate."""
         prog = Main()
         ast = slr_to_ast(prog)
 
@@ -32,6 +33,7 @@ class TestAstToGuppyBasic:
         assert "def main" in code
 
     def test_program_with_qreg(self) -> None:
+        """Program with QReg generates array parameter."""
         prog = Main(
             _q := QReg("q", 2),
         )
@@ -42,6 +44,7 @@ class TestAstToGuppyBasic:
         assert "q: array[qubit, 2]" in code
 
     def test_program_with_creg(self) -> None:
+        """Program with CReg generates valid code."""
         prog = Main(
             _q := QReg("q", 1),
             _c := CReg("c", 1),
@@ -59,6 +62,7 @@ class TestAstToGuppyGates:
     """Gate code generation tests."""
 
     def test_single_qubit_gate(self) -> None:
+        """Single-qubit gate generates reassignment for linearity."""
         prog = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -72,6 +76,7 @@ class TestAstToGuppyGates:
         assert "q[0] = quantum.h(q[0])" in code
 
     def test_two_qubit_gate(self) -> None:
+        """Two-qubit gate generates tuple assignment."""
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -85,6 +90,7 @@ class TestAstToGuppyGates:
         assert "q[0], q[1] = quantum.cx" in code
 
     def test_multiple_gates(self) -> None:
+        """Multiple gates generate correct sequence."""
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -104,6 +110,7 @@ class TestAstToGuppyPrepMeasure:
     """Prep and measure code generation tests."""
 
     def test_measure_with_result(self) -> None:
+        """Measure with result generates variable and return."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -125,6 +132,7 @@ class TestAstToGuppyControlFlow:
     """Control flow code generation tests."""
 
     def test_if_statement(self) -> None:
+        """If statement generates correct conditional."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -140,6 +148,7 @@ class TestAstToGuppyControlFlow:
         assert "quantum.h" in code
 
     def test_if_else_statement(self) -> None:
+        """If-else statement generates both branches."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -161,6 +170,7 @@ class TestAstToGuppyControlFlow:
         assert "quantum.x" in code
 
     def test_repeat_statement(self) -> None:
+        """Repeat statement generates for-range loop."""
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=3).block(
@@ -180,6 +190,7 @@ class TestAstToGuppyQEC:
     """QEC pattern code generation tests."""
 
     def test_syndrome_extraction(self) -> None:
+        """Syndrome extraction generates correct array parameters."""
         prog = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
@@ -205,6 +216,7 @@ class TestAstToGuppyGenerator:
     """Tests for AstToGuppy generator class."""
 
     def test_generator_reusable(self) -> None:
+        """Generator can be reused for multiple programs."""
         generator = AstToGuppy()
 
         prog1 = Main(
@@ -227,6 +239,7 @@ class TestAstToGuppyGenerator:
         assert "r[0]" in code2
 
     def test_indentation(self) -> None:
+        """Generated code has proper indentation for nested blocks."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -254,6 +267,7 @@ class TestAstToGuppyFullPipeline:
     """End-to-end tests: SLR -> AST -> Guppy."""
 
     def test_full_pipeline(self) -> None:
+        """Full SLR to Guppy pipeline generates valid code."""
         # Create SLR program
         prog = Main(
             q := QReg("q", 3),
@@ -304,5 +318,5 @@ class TestAstToGuppyFullPipeline:
         assert any("def main" in line for line in lines)
 
         # Check gates are in function body (indented)
-        gate_lines = [l for l in lines if "quantum." in l]
-        assert all(l.startswith("    ") for l in gate_lines)
+        gate_lines = [line for line in lines if "quantum." in line]
+        assert all(line.startswith("    ") for line in gate_lines)

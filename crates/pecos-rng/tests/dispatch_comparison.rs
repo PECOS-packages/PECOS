@@ -28,7 +28,7 @@ fn new_path<R: Rng + RngBulkExt>(rng: &mut R, dest: &mut [u64]) {
 }
 
 #[test]
-#[ignore] // Performance test - run explicitly with: cargo test -p pecos-rng -- --ignored
+#[ignore = "Performance test - run explicitly with: cargo test -p pecos-rng -- --ignored"]
 fn compare_dispatch_paths() {
     const ITERATIONS: usize = 1000;
     const SIZE: usize = 10000;

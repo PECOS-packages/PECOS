@@ -40,6 +40,7 @@ class TestAstEqual:
     """Tests for ast_equal function."""
 
     def test_identical_programs(self) -> None:
+        """Identical programs compare as equal."""
         prog1 = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -57,6 +58,7 @@ class TestAstEqual:
         assert ast_equal(ast1, ast2)
 
     def test_different_gates(self) -> None:
+        """Programs with different gates compare as not equal."""
         prog1 = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -72,6 +74,7 @@ class TestAstEqual:
         assert not ast_equal(ast1, ast2)
 
     def test_different_allocator_sizes(self) -> None:
+        """Programs with different allocator sizes compare as not equal."""
         prog1 = Main(_q := QReg("q", 2))
         prog2 = Main(_q := QReg("q", 3))
 
@@ -81,6 +84,7 @@ class TestAstEqual:
         assert not ast_equal(ast1, ast2)
 
     def test_different_body_length(self) -> None:
+        """Programs with different body lengths compare as not equal."""
         prog1 = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -97,6 +101,7 @@ class TestAstEqual:
         assert not ast_equal(ast1, ast2)
 
     def test_empty_programs_equal(self) -> None:
+        """Empty programs compare as equal."""
         prog1 = Main()
         prog2 = Main()
 
@@ -119,6 +124,7 @@ class TestCompareAst:
     """Tests for compare_ast function."""
 
     def test_returns_ast_diff(self) -> None:
+        """compare_ast returns AstDiff object."""
         prog = Main(_q := QReg("q", 1))
         ast = slr_to_ast(prog)
 
@@ -127,6 +133,7 @@ class TestCompareAst:
         assert isinstance(diff, AstDiff)
 
     def test_equal_programs_diff(self) -> None:
+        """Equal programs produce diff with equal=True and no differences."""
         prog1 = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -145,6 +152,7 @@ class TestCompareAst:
         assert len(diff.differences) == 0
 
     def test_different_programs_diff(self) -> None:
+        """Different programs produce diff with differences."""
         prog1 = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -163,6 +171,7 @@ class TestCompareAst:
         assert len(diff.differences) > 0
 
     def test_diff_contains_path_info(self) -> None:
+        """Diff contains path information to differences."""
         prog1 = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -182,6 +191,7 @@ class TestCompareAst:
         assert "body" in diff_text or "gate" in diff_text
 
     def test_diff_str_representation(self) -> None:
+        """Diff has readable string representation."""
         prog1 = Main(_q := QReg("q", 1))
         prog2 = Main(_q := QReg("q", 2))
 
@@ -195,6 +205,7 @@ class TestCompareAst:
         assert "differ" in diff_str.lower() or "mismatch" in diff_str.lower()
 
     def test_equal_diff_str_representation(self) -> None:
+        """Equal diff string contains 'equal'."""
         prog = Main(_q := QReg("q", 1))
         ast = slr_to_ast(prog)
 
@@ -207,6 +218,7 @@ class TestAstDiff:
     """Tests for AstDiff dataclass."""
 
     def test_bool_conversion_true(self) -> None:
+        """AstDiff converts to True when equal."""
         diff = AstDiff(equal=True, differences=[])
 
         assert bool(diff) is True
@@ -215,11 +227,13 @@ class TestAstDiff:
         assert passed
 
     def test_bool_conversion_false(self) -> None:
+        """AstDiff converts to False when not equal."""
         diff = AstDiff(equal=False, differences=["some difference"])
 
         assert bool(diff) is False
 
     def test_str_equal(self) -> None:
+        """Equal diff string contains 'equal'."""
         diff = AstDiff(equal=True, differences=[])
 
         output = str(diff)
@@ -227,6 +241,7 @@ class TestAstDiff:
         assert "equal" in output.lower()
 
     def test_str_with_differences(self) -> None:
+        """Diff string lists all differences."""
         diff = AstDiff(equal=False, differences=["diff1", "diff2"])
 
         output = str(diff)
@@ -240,30 +255,35 @@ class TestNodesEqual:
     """Tests for nodes_equal function."""
 
     def test_slot_refs_equal(self) -> None:
+        """Identical SlotRefs compare as equal."""
         a = SlotRef(allocator="q", index=0)
         b = SlotRef(allocator="q", index=0)
 
         assert nodes_equal(a, b)
 
     def test_slot_refs_different_allocator(self) -> None:
+        """SlotRefs with different allocators compare as not equal."""
         a = SlotRef(allocator="q", index=0)
         b = SlotRef(allocator="r", index=0)
 
         assert not nodes_equal(a, b)
 
     def test_slot_refs_different_index(self) -> None:
+        """SlotRefs with different indices compare as not equal."""
         a = SlotRef(allocator="q", index=0)
         b = SlotRef(allocator="q", index=1)
 
         assert not nodes_equal(a, b)
 
     def test_bit_refs_equal(self) -> None:
+        """Identical BitRefs compare as equal."""
         a = BitRef(register="c", index=2)
         b = BitRef(register="c", index=2)
 
         assert nodes_equal(a, b)
 
     def test_gate_ops_equal(self) -> None:
+        """Identical GateOps compare as equal."""
         a = GateOp(
             gate=GateKind.H,
             targets=(SlotRef(allocator="q", index=0),),
@@ -276,6 +296,7 @@ class TestNodesEqual:
         assert nodes_equal(a, b)
 
     def test_gate_ops_different_kind(self) -> None:
+        """GateOps with different kinds compare as not equal."""
         a = GateOp(
             gate=GateKind.H,
             targets=(SlotRef(allocator="q", index=0),),
@@ -288,18 +309,21 @@ class TestNodesEqual:
         assert not nodes_equal(a, b)
 
     def test_literal_exprs_equal(self) -> None:
+        """Identical LiteralExprs compare as equal."""
         a = LiteralExpr(value=42)
         b = LiteralExpr(value=42)
 
         assert nodes_equal(a, b)
 
     def test_literal_exprs_different(self) -> None:
+        """LiteralExprs with different values compare as not equal."""
         a = LiteralExpr(value=42)
         b = LiteralExpr(value=43)
 
         assert not nodes_equal(a, b)
 
     def test_binary_exprs_equal(self) -> None:
+        """Identical BinaryExprs compare as equal."""
         a = BinaryExpr(
             op=BinaryOp.ADD,
             left=LiteralExpr(value=1),
@@ -314,6 +338,7 @@ class TestNodesEqual:
         assert nodes_equal(a, b)
 
     def test_binary_exprs_different_op(self) -> None:
+        """BinaryExprs with different operators compare as not equal."""
         a = BinaryExpr(
             op=BinaryOp.ADD,
             left=LiteralExpr(value=1),
@@ -332,6 +357,7 @@ class TestSourceLocationHandling:
     """Tests for source location handling in comparison."""
 
     def test_ignores_location_by_default(self) -> None:
+        """Source locations are ignored by default."""
         loc1 = SourceLocation(line=1, column=1)
         loc2 = SourceLocation(line=99, column=99)
 
@@ -341,6 +367,7 @@ class TestSourceLocationHandling:
         assert nodes_equal(a, b)
 
     def test_can_compare_locations(self) -> None:
+        """Locations can be compared when ignore_location=False."""
         loc1 = SourceLocation(line=1, column=1)
         loc2 = SourceLocation(line=99, column=99)
 
@@ -350,6 +377,7 @@ class TestSourceLocationHandling:
         assert not nodes_equal(a, b, ignore_location=False)
 
     def test_locations_equal_when_same(self) -> None:
+        """Same locations compare as equal."""
         loc = SourceLocation(line=10, column=5)
 
         a = SlotRef(allocator="q", index=0, location=loc)
@@ -362,6 +390,7 @@ class TestAstComparator:
     """Tests for AstComparator class."""
 
     def test_reusable(self) -> None:
+        """Comparator can be reused for multiple comparisons."""
         comparator = AstComparator()
 
         prog1 = Main(q := QReg("q", 1), qb.H(q[0]))
@@ -379,6 +408,7 @@ class TestAstComparator:
         assert diff2.equal
 
     def test_ignore_location_option(self) -> None:
+        """Comparator with ignore_location=False detects location differences."""
         comparator = AstComparator(ignore_location=False)
 
         loc1 = SourceLocation(line=1, column=1)
@@ -392,6 +422,7 @@ class TestAstComparator:
         assert not diff.equal
 
     def test_ignore_name_option(self) -> None:
+        """Comparator with ignore_name=True ignores program names."""
         comparator = AstComparator(ignore_name=True)
 
         ast1 = Program(name="program1", declarations=(), body=())
@@ -406,6 +437,7 @@ class TestComplexComparisons:
     """Tests for complex AST comparisons."""
 
     def test_nested_control_flow(self) -> None:
+        """Nested control flow compares correctly."""
         prog1 = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
@@ -431,6 +463,7 @@ class TestComplexComparisons:
         assert ast_equal(ast1, ast2)
 
     def test_nested_control_flow_different(self) -> None:
+        """Nested control flow with differences is detected."""
         prog1 = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
@@ -460,6 +493,7 @@ class TestComplexComparisons:
         assert any("gate" in d.lower() or "body" in d.lower() for d in diff.differences)
 
     def test_repeat_blocks_equal(self) -> None:
+        """Repeat blocks with same count and body compare as equal."""
         prog1 = Main(
             q := QReg("q", 1),
             Repeat(cond=5).block(
@@ -479,6 +513,7 @@ class TestComplexComparisons:
         assert ast_equal(ast1, ast2)
 
     def test_repeat_different_count(self) -> None:
+        """Repeat blocks with different counts compare as not equal."""
         prog1 = Main(
             q := QReg("q", 1),
             Repeat(cond=5).block(
@@ -498,6 +533,7 @@ class TestComplexComparisons:
         assert not ast_equal(ast1, ast2)
 
     def test_hierarchical_allocators(self) -> None:
+        """Hierarchical allocators compare correctly."""
         all1 = QAlloc(4, name="all")
         data1 = QAlloc(2, name="data", parent=all1)
 
@@ -513,6 +549,7 @@ class TestComplexComparisons:
         assert ast_equal(ast1, ast2)
 
     def test_qec_syndrome_extraction(self) -> None:
+        """QEC syndrome extraction pattern compares correctly."""
         prog1 = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
@@ -610,6 +647,7 @@ class TestSerializationRoundtripComparison:
     """Test that serialization round-trip produces equal ASTs."""
 
     def test_serialization_preserves_equality(self) -> None:
+        """Serialization round-trip preserves AST equality."""
         from pecos.slr.ast.serialize import ast_to_json, json_to_ast
 
         prog = Main(
@@ -629,6 +667,7 @@ class TestSerializationRoundtripComparison:
         assert ast_equal(ast, restored)
 
     def test_double_serialization_equal(self) -> None:
+        """Double serialization round-trip preserves equality."""
         from pecos.slr.ast.serialize import ast_to_json, json_to_ast
 
         prog = Main(

@@ -63,12 +63,6 @@ pub struct WireState {
 }
 
 impl WireState {
-    /// Create a new empty wire state.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Reset all wire state for a new execution.
     pub fn reset(&mut self) {
         self.wire_to_qubit.clear();
@@ -95,42 +89,12 @@ pub struct MeasurementState {
 }
 
 impl MeasurementState {
-    /// Create a new empty measurement state.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Reset all measurement state for a new execution.
     pub fn reset(&mut self) {
         self.mappings.clear();
         self.results.clear();
         self.output_wires.clear();
         self.processed_count = 0;
-    }
-
-    /// Record a measurement for a qubit.
-    pub fn add_measurement(&mut self, node: Node, qubit: QubitId) -> usize {
-        let index = self.mappings.len();
-        self.mappings.push((node, qubit));
-        index
-    }
-
-    /// Get the qubit ID for a measurement at the given index.
-    #[must_use]
-    pub fn get_qubit_at(&self, index: usize) -> Option<QubitId> {
-        self.mappings.get(index).map(|(_, q)| *q)
-    }
-
-    /// Store a measurement result.
-    pub fn store_result(&mut self, qubit: QubitId, result: u32) {
-        self.results.insert(qubit, result);
-    }
-
-    /// Get the result for a qubit, if available.
-    #[must_use]
-    pub fn get_result(&self, qubit: QubitId) -> Option<u32> {
-        self.results.get(&qubit).copied()
     }
 }
 
@@ -168,12 +132,6 @@ impl Default for ExtensionState {
 }
 
 impl ExtensionState {
-    /// Create a new extension state.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Reset extension state for a new execution.
     pub fn reset(&mut self) {
         self.futures.clear();
@@ -212,26 +170,6 @@ pub struct QuantumOp {
     pub num_qubit_outputs: usize,
     /// Extracted rotation parameters (in radians).
     pub params: Vec<f64>,
-}
-
-impl QuantumOp {
-    /// Create a new quantum operation.
-    #[must_use]
-    pub fn new(
-        node: Node,
-        gate_type: GateType,
-        num_qubit_inputs: usize,
-        num_qubit_outputs: usize,
-        params: Vec<f64>,
-    ) -> Self {
-        Self {
-            node,
-            gate_type,
-            num_qubit_inputs,
-            num_qubit_outputs,
-            params,
-        }
-    }
 }
 
 // ============================================================================
@@ -321,40 +259,6 @@ pub struct ClassicalOp {
     pub int_info: Option<(u8, bool)>,
     /// Constant value (for const operations).
     pub const_value: Option<ClassicalValue>,
-}
-
-impl ClassicalOp {
-    /// Create a new classical operation.
-    #[must_use]
-    pub fn new(
-        node: Node,
-        op_type: ClassicalOpType,
-        num_inputs: usize,
-        num_outputs: usize,
-    ) -> Self {
-        Self {
-            node,
-            op_type,
-            num_inputs,
-            num_outputs,
-            int_info: None,
-            const_value: None,
-        }
-    }
-
-    /// Set integer type info (`log_width`, `is_signed`).
-    #[must_use]
-    pub fn with_int_info(mut self, log_width: u8, is_signed: bool) -> Self {
-        self.int_info = Some((log_width, is_signed));
-        self
-    }
-
-    /// Set constant value.
-    #[must_use]
-    pub fn with_const_value(mut self, value: ClassicalValue) -> Self {
-        self.const_value = Some(value);
-        self
-    }
 }
 
 // ============================================================================
@@ -662,9 +566,18 @@ pub struct RngContextState {
 
 impl RngContextState {
     /// Create a new RNG context with the given seed.
+    ///
+    /// If the seed is 0, a default non-zero value is used since xorshift64
+    /// would otherwise always produce 0.
     #[must_use]
     pub fn new(seed: u64) -> Self {
-        Self { seed, state: seed }
+        // xorshift64 requires non-zero state
+        let state = if seed == 0 {
+            0x1234_5678_9ABC_DEF0
+        } else {
+            seed
+        };
+        Self { seed, state }
     }
 
     /// Generate the next random u64 value using xorshift64.

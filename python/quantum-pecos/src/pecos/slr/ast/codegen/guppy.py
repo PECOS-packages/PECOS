@@ -389,14 +389,13 @@ class AstToGuppy(BaseVisitor[list[str]]):
                     return_types.append(f"array[qubit, {decl.capacity}]")
 
         if node.allocator and not self.context.is_allocator_fully_consumed(
-            node.allocator.name
+            node.allocator.name,
         ):
             return_types.append(f"array[qubit, {node.allocator.capacity}]")
 
         # Add measurement results (bools)
         if self.context.measurement_vars:
-            for _ in self.context.measurement_vars:
-                return_types.append("bool")
+            return_types.extend("bool" for _ in self.context.measurement_vars)
 
         if not return_types:
             return "None"
@@ -418,7 +417,7 @@ class AstToGuppy(BaseVisitor[list[str]]):
                     return_values.append(decl.name)
 
         if node.allocator and not self.context.is_allocator_fully_consumed(
-            node.allocator.name
+            node.allocator.name,
         ):
             return_values.append(node.allocator.name)
 
@@ -432,11 +431,11 @@ class AstToGuppy(BaseVisitor[list[str]]):
 
     # === Declarations ===
 
-    def visit_allocator_decl(self, node: AllocatorDecl) -> list[str]:
+    def visit_allocator_decl(self, _node: AllocatorDecl) -> list[str]:
         """Allocator declarations are handled at program level."""
         return []
 
-    def visit_register_decl(self, node: RegisterDecl) -> list[str]:
+    def visit_register_decl(self, _node: RegisterDecl) -> list[str]:
         """Register declarations are handled at program level."""
         return []
 
@@ -758,10 +757,10 @@ class AstToGuppy(BaseVisitor[list[str]]):
 
     # === Type expressions ===
 
-    def visit_qubit_type(self, node) -> list[str]:
+    def visit_qubit_type(self, _node: object) -> list[str]:
         return ["qubit"]
 
-    def visit_bit_type(self, node) -> list[str]:
+    def visit_bit_type(self, _node: object) -> list[str]:
         return ["bool"]
 
     def visit_array_type(self, node) -> list[str]:

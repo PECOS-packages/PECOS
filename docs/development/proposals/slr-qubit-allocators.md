@@ -66,8 +66,8 @@ Any allocator can create child allocators that reserve slots from its capacity:
 base = QAlloc(100)
 
 # First level partitioning
-data = base.child(7)       # Reserve 7 slots for data
-ancilla = base.child(6)    # Reserve 6 slots for ancilla
+data = base.child(7)  # Reserve 7 slots for data
+ancilla = base.child(6)  # Reserve 6 slots for ancilla
 # base now has 87 available
 
 # Nested partitioning - any allocator can have children
@@ -118,7 +118,7 @@ Qubits are accessed through their allocator via slot indices:
 ancilla = base.child(4)
 ancilla.prepare(0, 1)  # Prepare slots 0 and 1
 
-H(ancilla[0])                 # Apply H to slot 0
+H(ancilla[0])  # Apply H to slot 0
 CNOT(ancilla[0], ancilla[1])  # CNOT between slots 0 and 1
 ```
 
@@ -150,6 +150,7 @@ def syndrome_round(ancilla: QAlloc[6]) -> Bits:
     # ... syndrome extraction ...
     return Measure(ancilla)
     # ancilla NOT returned → consumed → released to parent
+
 
 def apply_logical_gate(data: QAlloc[7]) -> QAlloc[7]:
     # ... apply gate ...
@@ -239,6 +240,7 @@ class QubitRef:
     Used as arguments to gate operations. Not a standalone qubit -
     always tied to its parent allocator.
     """
+
     allocator: QAlloc
     index: int
 ```
@@ -248,7 +250,7 @@ class QubitRef:
 ```python
 class SlotState(Enum):
     UNPREPARED = "unprepared"  # Not ready for gates (initial or post-measurement)
-    PREPARED = "prepared"       # Ready for gate operations
+    PREPARED = "prepared"  # Ready for gate operations
 ```
 
 Two states only. Simple.
@@ -268,9 +270,9 @@ CNOT(alloc[0], alloc[1])
 CZ(data[0], ancilla[0])  # Can span different allocators
 
 # Measurement (transitions to unprepared)
-result = Measure(alloc[0])        # Single qubit
-results = Measure(alloc)          # All qubits in allocator
-results = Measure(alloc[0:3])     # Slice of allocator
+result = Measure(alloc[0])  # Single qubit
+results = Measure(alloc)  # All qubits in allocator
+results = Measure(alloc[0:3])  # Slice of allocator
 ```
 
 ---
@@ -356,6 +358,7 @@ def process_and_return(alloc: QAlloc[10]) -> QAlloc[10]:
     use(child)  # child released back to alloc
     return alloc
 
+
 # Valid: return all children
 def split_evenly(alloc: QAlloc[10]) -> tuple[QAlloc[5], QAlloc[5]]:
     a = alloc.child(5)
@@ -376,7 +379,7 @@ if condition:
     # ... use extra ...
     # extra released at end of block
 else:
-    # no allocation
+    pass  # no allocation
 ```
 
 **Resolution**: This is fine. The allocation is scoped to the if-block. After the block, resources are back in `base`. Both branches end with `base` having the same available capacity.
@@ -406,11 +409,13 @@ for round in range(1000):
 ```python
 stored_ref = None
 
+
 def bad_function(alloc: QAlloc[5]):
     global stored_ref
     alloc.prepare_all()
     stored_ref = alloc[0]  # Store reference
     # alloc released at end
+
 
 bad_function(base.child(5))
 H(stored_ref)  # ERROR: dangling reference
@@ -503,9 +508,10 @@ def main():
 
     run_qec_rounds(data, ancilla)
 
+
 def run_qec_rounds(data: QAlloc[7], ancilla: QAlloc[6]):
     # Receives allocators as parameters
-    # ...
+    ...
 ```
 
 This replaces the current pattern where `QReg` is declared inside `Block` classes.
@@ -519,10 +525,8 @@ This replaces the current pattern where `QReg` is declared inside `Block` classe
 ```python
 QAlloc[N]  # Allocator with capacity N
 
-def syndrome_extraction(
-    data: QAlloc[7],
-    ancilla: QAlloc[6]
-) -> tuple[Bits, QAlloc[7]]:
+
+def syndrome_extraction(data: QAlloc[7], ancilla: QAlloc[6]) -> tuple[Bits, QAlloc[7]]:
     # Type system knows:
     # - data has 7 slots
     # - ancilla has 6 slots
@@ -638,8 +642,8 @@ def main():
     base = QAlloc(capacity=17)
 
     # Partition into logical groupings
-    data = base.child(9)      # 9 data qubits for surface code
-    ancilla = base.child(8)   # 8 ancilla for syndrome extraction
+    data = base.child(9)  # 9 data qubits for surface code
+    ancilla = base.child(8)  # 8 ancilla for syndrome extraction
 
     # Initialize data qubits
     data.prepare_all()
@@ -656,10 +660,7 @@ def main():
     return result
 
 
-def extract_syndrome(
-    data: QAlloc[9],
-    ancilla: QAlloc[8]
-) -> Bits:
+def extract_syndrome(data: QAlloc[9], ancilla: QAlloc[8]) -> Bits:
     """
     Extract syndrome without consuming data.
     Ancilla is consumed (not returned).

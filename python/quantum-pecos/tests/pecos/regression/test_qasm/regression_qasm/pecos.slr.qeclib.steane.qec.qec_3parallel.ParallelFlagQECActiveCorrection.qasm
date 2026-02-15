@@ -201,15 +201,15 @@ if(flags_test != 0) h a_test[2];
 if(flags_test != 0) measure a_test[0] -> syn_z_test[0];
 if(flags_test != 0) measure a_test[1] -> syn_x_test[1];
 if(flags_test != 0) measure a_test[2] -> syn_x_test[2];
-// 
-=========================
-BEGIN Run X decoder
-=========================
-
+//
+// =========================
+// BEGIN Run X decoder
+// =========================
+//
 if(flags_test != 0) syndromes_test = (syn_x_test ^ last_raw_syn_x_test);
 if(flags_test == 0) syndromes_test = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(syndromes_test == 2) pf_test[1] = (pf_test[1] ^ 1);
 if(syndromes_test == 4) pf_test[1] = (pf_test[1] ^ 1);
 if(syndromes_test == 6) pf_test[1] = (pf_test[1] ^ 1);
@@ -240,7 +240,7 @@ if(flags_test != 0) last_raw_syn_x_test = syn_x_test;
 // =========================
 // END Run X decoder
 // =========================
-
+//
 // ACTIVE ERROR CORRECTION FOR X SYNDROMES
 scratch_test = 0;
 // only part that differs for X vs Z syns V
@@ -263,15 +263,15 @@ last_raw_syn_x_test = 0;
 // syn_x_test = 0;
 // flag_x_test = 0;
 // flags_test = 0;
-// 
-=========================
-BEGIN Run Z decoder
-=========================
-
+//
+// =========================
+// BEGIN Run Z decoder
+// =========================
+//
 if(flags_test != 0) syndromes_test = (syn_z_test ^ last_raw_syn_z_test);
 if(flags_test == 0) syndromes_test = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(syndromes_test == 2) pf_test[0] = (pf_test[0] ^ 1);
 if(syndromes_test == 4) pf_test[0] = (pf_test[0] ^ 1);
 if(syndromes_test == 6) pf_test[0] = (pf_test[0] ^ 1);
@@ -302,7 +302,7 @@ if(flags_test != 0) last_raw_syn_z_test = syn_z_test;
 // =========================
 // END Run Z decoder
 // =========================
-
+//
 // ACTIVE ERROR CORRECTION FOR Z SYNDROMES
 scratch_test = 0;
 // only part that differs for X vs Z syns V

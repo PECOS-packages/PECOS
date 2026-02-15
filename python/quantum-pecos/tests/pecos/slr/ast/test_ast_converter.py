@@ -35,6 +35,7 @@ class TestSlrToAstBasic:
     """Basic conversion tests."""
 
     def test_empty_program(self) -> None:
+        """Empty program converts to Program with no body."""
         prog = Main()
 
         ast = slr_to_ast(prog)
@@ -44,6 +45,7 @@ class TestSlrToAstBasic:
         assert ast.body == ()
 
     def test_program_with_qreg(self) -> None:
+        """QReg converts to AllocatorDecl."""
         prog = Main(
             _q := QReg("q", 2),
         )
@@ -57,6 +59,7 @@ class TestSlrToAstBasic:
         assert decl.capacity == 2
 
     def test_program_with_creg(self) -> None:
+        """CReg converts to RegisterDecl."""
         prog = Main(
             _c := CReg("c", 3),
         )
@@ -71,6 +74,7 @@ class TestSlrToAstBasic:
         assert decl.is_result is True
 
     def test_program_with_both_regs(self) -> None:
+        """Program with QReg and CReg has both declarations."""
         prog = Main(
             _q := QReg("q", 2),
             _c := CReg("c", 2),
@@ -88,6 +92,7 @@ class TestSlrToAstGates:
     """Gate conversion tests."""
 
     def test_single_qubit_gate(self) -> None:
+        """Single-qubit gate converts to GateOp with correct kind and target."""
         prog = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -104,6 +109,7 @@ class TestSlrToAstGates:
         assert gate.targets[0].index == 0
 
     def test_two_qubit_gate(self) -> None:
+        """Two-qubit gate converts to GateOp with two targets."""
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -120,6 +126,7 @@ class TestSlrToAstGates:
         assert gate.targets[1].index == 1
 
     def test_multiple_gates(self) -> None:
+        """Multiple gates convert to multiple GateOps in sequence."""
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -139,6 +146,7 @@ class TestSlrToAstPrepMeasure:
     """Prep and Measure conversion tests."""
 
     def test_prep_operation(self) -> None:
+        """Prep converts to PrepareOp with correct allocator and slots."""
         prog = Main(
             q := QReg("q", 2),
             qb.Prep(q[0]),
@@ -153,6 +161,7 @@ class TestSlrToAstPrepMeasure:
         assert prep.slots == (0,)
 
     def test_measure_operation(self) -> None:
+        """Measure converts to MeasureOp with targets and results."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -176,6 +185,7 @@ class TestSlrToAstControlFlow:
     """Control flow conversion tests."""
 
     def test_if_statement(self) -> None:
+        """If statement converts to IfStmt with then_body."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -193,6 +203,7 @@ class TestSlrToAstControlFlow:
         assert isinstance(if_stmt.then_body[0], GateOp)
 
     def test_if_else_statement(self) -> None:
+        """If-else statement converts to IfStmt with both branches."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -215,6 +226,7 @@ class TestSlrToAstControlFlow:
         assert if_stmt.else_body[0].gate == GateKind.X
 
     def test_condition_expression(self) -> None:
+        """Condition converts to BinaryExpr with correct operator."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -233,6 +245,7 @@ class TestSlrToAstControlFlow:
         assert if_stmt.condition.op == BinaryOp.EQ
 
     def test_repeat_statement(self) -> None:
+        """Repeat statement converts to RepeatStmt with count and body."""
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=5).block(
@@ -253,6 +266,7 @@ class TestSlrToAstConverter:
     """Tests for SlrToAst converter class."""
 
     def test_converter_reusable(self) -> None:
+        """Converter can be reused for multiple programs."""
         converter = SlrToAst()
 
         prog1 = Main(
@@ -279,6 +293,7 @@ class TestSlrToAstQEC:
     """Tests for QEC-related patterns."""
 
     def test_syndrome_extraction_pattern(self) -> None:
+        """Syndrome extraction converts with correct operations."""
         prog = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),

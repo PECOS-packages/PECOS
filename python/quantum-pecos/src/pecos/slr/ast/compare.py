@@ -88,6 +88,18 @@ class AstComparator:
         Returns:
             AstDiff with comparison results.
         """
+        return self.compare_any(a, b)
+
+    def compare_any(self, a: Any, b: Any) -> AstDiff:
+        """Compare two AST nodes of any type.
+
+        Args:
+            a: First node.
+            b: Second node.
+
+        Returns:
+            AstDiff with comparison results.
+        """
         self._differences = []
         self._path = []
         self._compare_nodes(a, b)
@@ -248,5 +260,5 @@ def nodes_equal(a: AstNode, b: AstNode, *, ignore_location: bool = True) -> bool
         True if nodes are equal, False otherwise.
     """
     comparator = AstComparator(ignore_location=ignore_location)
-    comparator._compare_nodes(a, b)
-    return len(comparator._differences) == 0
+    result = comparator.compare_any(a, b)
+    return result.equal

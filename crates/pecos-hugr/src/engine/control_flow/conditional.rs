@@ -222,6 +222,7 @@ impl HugrEngine {
                 let src_op = hugr.get_optype(src_node);
                 if let OpType::Tag(tag_op) = src_op {
                     let tag_value = tag_op.tag;
+                    #[allow(clippy::cast_possible_wrap)] // Tag indices are small
                     self.wire_state
                         .classical_values
                         .insert((cond_node, port_idx), ClassicalValue::Int(tag_value as i64));

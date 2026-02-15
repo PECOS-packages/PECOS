@@ -1,11 +1,9 @@
 [project]
 name = "pecos-workspace"
 version = "0.8.0.dev0"
+# Development dependencies that are optional in quantum-pecos but needed for full dev/test
 dependencies = [
-    "guppylang>=0.21.6",
-    # Note: guppylang is an optional dependency in quantum-pecos
-    # Don't include it here as a direct dependency
-    "stim>=1.15.0",
+    "stim>=1.15.0",  # Optional in quantum-pecos, but needed for stim-related tests
 ]
 
 [tool.uv.workspace]
@@ -16,6 +14,7 @@ members = [
 
 [tool.uv.sources]
 # guppylang = { path = "../guppylang" }  # Commented out to use packaged version
+quantum-pecos = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -46,6 +45,9 @@ test = [ # pinning testing environment
 numpy-compat = [  # NumPy/SciPy compatibility tests - verify compatibility with scientific Python stack
     "numpy>=1.15.0",
     "scipy>=1.1.0",
+]
+cuda = [  # CUDA Python packages for GPU-accelerated simulations (requires CUDA toolkit)
+    "quantum-pecos[cuda]",
 ]
 
 [tool.uv]

@@ -32,6 +32,7 @@ class TestVoidVisitor:
     """Tests for VoidVisitor."""
 
     def test_void_visitor_returns_none(self) -> None:
+        """VoidVisitor returns None for all visits."""
         visitor = VoidVisitor()
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
 
@@ -39,6 +40,7 @@ class TestVoidVisitor:
         assert result is None
 
     def test_void_visitor_traverses_program(self) -> None:
+        """VoidVisitor traverses entire program structure."""
         visitor = VoidVisitor()
         prep = PrepareOp(allocator="q", slots=(0,))
         gate = GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
@@ -52,6 +54,8 @@ class TestCollectingVisitor:
     """Tests for CollectingVisitor."""
 
     def test_collecting_visitor_empty(self) -> None:
+        """CollectingVisitor returns empty list for empty program."""
+
         class GateCollector(CollectingVisitor[str]):
             def visit_gate(self, node: GateOp) -> list[str]:
                 return [node.gate.name]
@@ -63,6 +67,8 @@ class TestCollectingVisitor:
         assert result == []
 
     def test_collecting_visitor_collects_gates(self) -> None:
+        """CollectingVisitor collects items from all visited nodes."""
+
         class GateCollector(CollectingVisitor[str]):
             def visit_gate(self, node: GateOp) -> list[str]:
                 return [node.gate.name]
@@ -84,6 +90,8 @@ class TestCustomVisitor:
     """Tests for custom visitor implementations."""
 
     def test_gate_counter(self) -> None:
+        """Visitor can count gates in AST."""
+
         class GateCounter(BaseVisitor[int]):
             def default_result(self) -> int:
                 return 0
@@ -91,7 +99,7 @@ class TestCustomVisitor:
             def combine_results(self, results: list[int]) -> int:
                 return sum(results)
 
-            def visit_gate(self, node: GateOp) -> int:
+            def visit_gate(self, _node: GateOp) -> int:
                 return 1
 
         visitor = GateCounter()
@@ -107,6 +115,8 @@ class TestCustomVisitor:
         assert count == 3
 
     def test_depth_calculator(self) -> None:
+        """Visitor can calculate AST depth."""
+
         class DepthCalculator(BaseVisitor[int]):
             def default_result(self) -> int:
                 return 0
@@ -135,6 +145,8 @@ class TestCustomVisitor:
         assert depth == 2
 
     def test_qubit_usage_tracker(self) -> None:
+        """Visitor can track qubit usage across AST."""
+
         class QubitTracker(BaseVisitor[set]):
             def default_result(self) -> set:
                 return set()
@@ -163,6 +175,8 @@ class TestCustomVisitor:
         assert ("r", 0) in used
 
     def test_code_generator_simple(self) -> None:
+        """Visitor can generate code from AST."""
+
         class SimpleCodeGen(BaseVisitor[str]):
             def default_result(self) -> str:
                 return ""
@@ -205,6 +219,8 @@ class TestVisitorTraversal:
     """Tests for visitor traversal behavior."""
 
     def test_visits_all_children(self) -> None:
+        """Visitor traverses all child nodes."""
+
         class VisitTracker(VoidVisitor):
             def __init__(self) -> None:
                 self.visited = []
@@ -233,6 +249,8 @@ class TestVisitorTraversal:
         assert ("slot", "q[0]") in visitor.visited
 
     def test_visits_control_flow_children(self) -> None:
+        """Visitor traverses control flow branches."""
+
         class VisitTracker(VoidVisitor):
             def __init__(self) -> None:
                 self.visited = []

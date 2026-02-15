@@ -21,6 +21,7 @@ class TestAstToQasmBasic:
     """Basic code generation tests."""
 
     def test_empty_program(self) -> None:
+        """Empty program generates QASM header."""
         prog = Main()
         ast = slr_to_ast(prog)
 
@@ -30,6 +31,7 @@ class TestAstToQasmBasic:
         assert 'include "hqslib1.inc";' in code
 
     def test_no_header(self) -> None:
+        """Program without header excludes version and includes."""
         prog = Main()
         ast = slr_to_ast(prog)
 
@@ -39,6 +41,7 @@ class TestAstToQasmBasic:
         assert "include" not in code
 
     def test_program_with_qreg(self) -> None:
+        """Program with QReg generates qreg declaration."""
         prog = Main(
             _q := QReg("q", 2),
         )
@@ -49,6 +52,7 @@ class TestAstToQasmBasic:
         assert "qreg q[2];" in code
 
     def test_program_with_creg(self) -> None:
+        """Program with CReg generates both qreg and creg declarations."""
         prog = Main(
             _q := QReg("q", 1),
             _c := CReg("c", 1),
@@ -65,6 +69,7 @@ class TestAstToQasmGates:
     """Gate code generation tests."""
 
     def test_single_qubit_gate(self) -> None:
+        """Single-qubit gate generates correct syntax."""
         prog = Main(
             q := QReg("q", 1),
             qb.H(q[0]),
@@ -76,6 +81,7 @@ class TestAstToQasmGates:
         assert "h q[0];" in code
 
     def test_two_qubit_gate(self) -> None:
+        """Two-qubit gate generates correct syntax with both targets."""
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -87,6 +93,7 @@ class TestAstToQasmGates:
         assert "cx q[0], q[1];" in code
 
     def test_multiple_gates(self) -> None:
+        """Multiple gates generate in sequence."""
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -102,6 +109,7 @@ class TestAstToQasmGates:
         assert "cz q[0], q[1];" in code
 
     def test_pauli_gates(self) -> None:
+        """Pauli gates (X, Y, Z) generate correctly."""
         prog = Main(
             q := QReg("q", 1),
             qb.X(q[0]),
@@ -117,6 +125,7 @@ class TestAstToQasmGates:
         assert "z q[0];" in code
 
     def test_phase_gates(self) -> None:
+        """Phase gates (SZ, SZdg) generate as rz rotations."""
         prog = Main(
             q := QReg("q", 1),
             qb.SZ(q[0]),
@@ -135,6 +144,7 @@ class TestAstToQasmPrepMeasure:
     """Prep and measure code generation tests."""
 
     def test_measure_with_result(self) -> None:
+        """Measure with result generates arrow syntax."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -147,6 +157,7 @@ class TestAstToQasmPrepMeasure:
         assert "measure q[0] -> c[0];" in code
 
     def test_prep_reset(self) -> None:
+        """Prep generates reset operation."""
         prog = Main(
             q := QReg("q", 1),
             qb.Prep(q[0]),
@@ -162,6 +173,7 @@ class TestAstToQasmControlFlow:
     """Control flow code generation tests."""
 
     def test_if_statement(self) -> None:
+        """If statement generates conditional gate syntax."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -177,6 +189,7 @@ class TestAstToQasmControlFlow:
         assert "if(c[0] == 1) h q[0];" in code
 
     def test_repeat_unrolled(self) -> None:
+        """Repeat generates unrolled loop with comment."""
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=3).block(
@@ -197,6 +210,7 @@ class TestAstToQasmQEC:
     """QEC pattern code generation tests."""
 
     def test_syndrome_extraction(self) -> None:
+        """Syndrome extraction pattern generates correct operations."""
         prog = Main(
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
@@ -224,6 +238,7 @@ class TestAstToQasmGenerator:
     """Tests for AstToQasm generator class."""
 
     def test_generator_reusable(self) -> None:
+        """Generator can be reused for multiple programs."""
         generator = AstToQasm(include_header=False)
 
         prog1 = Main(
@@ -246,6 +261,7 @@ class TestAstToQasmGenerator:
         assert "r[0]" in code2
 
     def test_custom_includes(self) -> None:
+        """Generator can use custom include files."""
         generator = AstToQasm(includes=["custom.inc", "other.inc"])
 
         prog = Main()
@@ -261,6 +277,7 @@ class TestAstToQasmFullPipeline:
     """End-to-end tests: SLR -> AST -> QASM."""
 
     def test_full_pipeline(self) -> None:
+        """Full SLR to QASM pipeline generates valid code."""
         # Create SLR program
         prog = Main(
             q := QReg("q", 3),

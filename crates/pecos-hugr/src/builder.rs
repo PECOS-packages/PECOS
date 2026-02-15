@@ -161,6 +161,7 @@ impl std::fmt::Debug for HugrEngineBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HugrEngineBuilder")
             .field("has_source", &self.source.is_some())
+            .field("has_foreign_object", &self.foreign_object.is_some())
             .finish()
     }
 }

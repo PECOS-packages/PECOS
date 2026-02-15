@@ -186,11 +186,11 @@ class SlrToAst:
         # Check for base allocator (for new-style allocator-based blocks)
         allocator = None
         for var in block.vars:
-            if hasattr(var, "_capacity"):  # QAlloc detection
+            if hasattr(var, "capacity"):  # QAlloc detection
                 allocator = AllocatorDecl(
                     name=var.name,
-                    capacity=var._capacity,
-                    parent=var._parent.name if var._parent else None,
+                    capacity=var.capacity,
+                    parent=var.parent.name if var.parent else None,
                 )
                 break
 
@@ -220,13 +220,12 @@ class SlrToAst:
 
         # Also scan block.ops for QAllocs (they end up in ops when using walrus operator)
         for op in block.ops:
-            if op.__class__.__name__ == "QAlloc":
-                # Only add if not already seen (avoid duplicates)
-                if op.name not in seen_names:
-                    decl = self._convert_var_to_declaration(op)
-                    if decl is not None:
-                        declarations.append(decl)
-                        seen_names.add(decl.name)
+            # Only add if QAlloc and not already seen (avoid duplicates)
+            if op.__class__.__name__ == "QAlloc" and op.name not in seen_names:
+                decl = self._convert_var_to_declaration(op)
+                if decl is not None:
+                    declarations.append(decl)
+                    seen_names.add(decl.name)
 
         return declarations
 
@@ -240,7 +239,7 @@ class SlrToAst:
             Tuple of AST TypeExpr nodes representing return types.
         """
         # Import here to avoid circular imports
-        from pecos.slr.types import ArrayType, ReturnNotSet
+        from pecos.slr.types import ArrayType, ReturnNotSet  # noqa: PLC0415
 
         # Check if block has return type annotation
         block_returns = getattr(block.__class__, "block_returns", ReturnNotSet)
@@ -302,8 +301,8 @@ class SlrToAst:
             # QAlloc maps to AllocatorDecl
             return AllocatorDecl(
                 name=var.name,
-                capacity=var._capacity,
-                parent=var._parent.name if var._parent else None,
+                capacity=var.capacity,
+                parent=var.parent.name if var.parent else None,
             )
 
         # Unknown variable type - skip
@@ -316,7 +315,11 @@ class SlrToAst:
             stmt = self._convert_statement(op)
             if stmt is not None:
                 # Handle flattening of nested blocks
-                if isinstance(stmt, tuple) and len(stmt) == 2 and stmt[0] == "__FLATTEN__":
+                if (
+                    isinstance(stmt, tuple)
+                    and len(stmt) == 2
+                    and stmt[0] == "__FLATTEN__"
+                ):
                     # Flatten the nested statements into this list
                     statements.extend(stmt[1])
                 else:
@@ -392,11 +395,7 @@ class SlrToAst:
 
         # Check if qargs contains tuples of qubit pairs (for multi-qubit gates)
         # Pattern: CX((q1, q2), (q3, q4), ...) where each tuple is one gate application
-        if (
-            gate.qargs
-            and gate_kind.arity > 1
-            and isinstance(gate.qargs[0], tuple)
-        ):
+        if gate.qargs and gate_kind.arity > 1 and isinstance(gate.qargs[0], tuple):
             # Each element of qargs is a tuple of qubits for one gate application
             gates = []
             for qubit_tuple in gate.qargs:
@@ -453,8 +452,11 @@ class SlrToAst:
         allocator = (
             first_qubit.reg.sym
             if hasattr(first_qubit, "reg") and hasattr(first_qubit.reg, "sym")
-            else str(first_qubit.reg) if hasattr(first_qubit, "reg")
-            else str(first_qubit)
+            else (
+                str(first_qubit.reg)
+                if hasattr(first_qubit, "reg")
+                else str(first_qubit)
+            )
         )
 
         slots = tuple(q.index for q in expanded_qargs)

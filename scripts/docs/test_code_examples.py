@@ -20,6 +20,7 @@ to ensure they run correctly. It supports both Python and Rust code examples.
 from __future__ import annotations
 
 import argparse
+import functools
 import re
 import shutil
 import subprocess
@@ -36,17 +37,23 @@ def find_markdown_files() -> list[Path]:
     return list(DOCS_DIR.rglob("*.md"))
 
 
-def _check_cuda_available() -> bool:
+@functools.lru_cache(maxsize=1)
+def is_cuda_available() -> bool:
     """Check if CUDA is available for running GPU examples.
 
     Uses the same pattern as the Justfile: `pecos cuda check -q` for toolkit,
     plus cupy availability check for Python CUDA packages.
+    Result is cached after first call.
     """
     # Check for CUDA toolkit using pecos CLI (same as Justfile pattern)
+    cargo_path = shutil.which("cargo")
+    if cargo_path is None:
+        return False
+
     try:
         result = subprocess.run(
             [
-                "cargo",
+                cargo_path,
                 "run",
                 "-p",
                 "pecos",
@@ -81,18 +88,6 @@ def _check_cuda_available() -> bool:
         return False
 
     return True
-
-
-# Cache CUDA availability at module load
-_CUDA_AVAILABLE: bool | None = None
-
-
-def is_cuda_available() -> bool:
-    """Return cached CUDA availability status."""
-    global _CUDA_AVAILABLE
-    if _CUDA_AVAILABLE is None:
-        _CUDA_AVAILABLE = _check_cuda_available()
-    return _CUDA_AVAILABLE
 
 
 def _dedent_code(code: str) -> str:
@@ -207,7 +202,7 @@ def _uses_guppy_decorator(code_block: str) -> bool:
     return "@guppy" in code_block
 
 
-def test_python_block(
+def run_python_block(
     code_block: str,
     block_number: int,
     file_path: str | Path,
@@ -315,7 +310,7 @@ def test_python_block(
         return True
 
 
-def test_rust_block(
+def run_rust_block(
     code_block: str,
     block_number: int,
     file_path: str | Path,
@@ -444,7 +439,7 @@ def main() -> None:
                 print(f"SKIP: Python block #{i} from {file_path}")
                 python_skipped += 1
                 continue
-            result = test_python_block(block, i, file_path, expected_error)
+            result = run_python_block(block, i, file_path, expected_error)
             python_results.append((file_path, i, result))
 
     # Test Rust code blocks
@@ -457,7 +452,7 @@ def main() -> None:
                     if not skip_rust:  # Only print if individually skipped
                         print(f"SKIP: Rust block #{i} from {file_path}")
                     continue
-                result = test_rust_block(block, i, file_path)
+                result = run_rust_block(block, i, file_path)
                 rust_results.append((file_path, i, result))
 
     # Print summary

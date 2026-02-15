@@ -433,10 +433,28 @@ class QAlloc:
 
         # Clear our slots back to parent's reserved set
         if self._parent is not None:
-            self._parent._reserved -= set(self._parent_indices)
-            self._parent._children.remove(self)
+            self._parent.unreserve_slots(self._parent_indices)
+            self._parent.unregister_child(self)
 
         self._released = True
+
+    # --- Parent/Child Coordination ---
+
+    def unreserve_slots(self, indices: list[int]) -> None:
+        """Release the given slot indices back to the available pool.
+
+        Called by child allocators when they are released.
+        Not intended for external use.
+        """
+        self._reserved -= set(indices)
+
+    def unregister_child(self, child: QAlloc) -> None:
+        """Remove a child allocator from this allocator's children list.
+
+        Called by child allocators when they are released.
+        Not intended for external use.
+        """
+        self._children.remove(child)
 
     # --- Validation Helpers ---
 

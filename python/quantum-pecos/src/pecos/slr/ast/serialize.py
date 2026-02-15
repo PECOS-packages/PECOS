@@ -259,5 +259,5 @@ def json_to_ast(json_str: str) -> Program:
     result = dict_to_ast(data)
     if not isinstance(result, Program):
         msg = f"Expected Program, got {type(result).__name__}"
-        raise ValueError(msg)
+        raise ValueError(msg)  # noqa: TRY004
     return result

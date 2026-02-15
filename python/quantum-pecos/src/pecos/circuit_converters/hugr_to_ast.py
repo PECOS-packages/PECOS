@@ -280,8 +280,10 @@ class HugrToAstConverter:
             )
 
         # Add classical register declarations for measurement results
-        for result_var in self.measurement_results.values():
-            decl_list.append(RegisterDecl(name=result_var, size=1, is_result=True))
+        decl_list.extend(
+            RegisterDecl(name=result_var, size=1, is_result=True)
+            for result_var in self.measurement_results.values()
+        )
 
         declarations = tuple(decl_list)
 
@@ -349,9 +351,9 @@ class HugrToAstConverter:
                 continue
 
             if parent_idx in cfg.blocks:
-                op_def = data.op.op_def()
-                ext_name = op_def._extension.name if op_def._extension else None
-                ext_op_name = op_def.name
+                custom_op = data.op.to_custom_op()
+                ext_name = custom_op.extension
+                ext_op_name = custom_op.op_name
 
                 if (
                     ext_name in QUANTUM_EXTENSIONS
@@ -903,12 +905,12 @@ class HugrToAstConverter:
             # For quantum loops, the condition is typically based on a measurement result
             # or a classical counter. Use a placeholder variable for now.
             condition_var = self._get_condition_variable()
-            if condition_var.startswith("m"):
-                # Measurement-based condition
-                condition = VarExpr(name=condition_var)
-            else:
-                # Default to a generic condition
-                condition = VarExpr(name="loop_condition")
+            # Use measurement variable if available, else generic condition
+            condition = (
+                VarExpr(name=condition_var)
+                if condition_var.startswith("m")
+                else VarExpr(name="loop_condition")
+            )
 
             while_stmt = WhileStmt(
                 condition=condition,
@@ -1214,14 +1216,12 @@ class HugrToAstConverter:
         Returns:
             List of (source_node_idx, source_port, dest_port) tuples.
         """
-        incoming = []
-        for in_port, out_ports in self.hugr.incoming_links(node):
-            for out_port in out_ports:
-                if in_port.offset >= 0 and out_port.offset >= 0:
-                    incoming.append(
-                        (out_port.node.idx, out_port.offset, in_port.offset),
-                    )
-        return incoming
+        return [
+            (out_port.node.idx, out_port.offset, in_port.offset)
+            for in_port, out_ports in self.hugr.incoming_links(node)
+            for out_port in out_ports
+            if in_port.offset >= 0 and out_port.offset >= 0
+        ]
 
     def _get_outgoing_connections(self, node: Node) -> list[tuple[int, int, int]]:
         """Get outgoing connections for a node.
@@ -1229,12 +1229,12 @@ class HugrToAstConverter:
         Returns:
             List of (source_port, dest_node_idx, dest_port) tuples.
         """
-        outgoing = []
-        for out_port, in_ports in self.hugr.outgoing_links(node):
-            for in_port in in_ports:
-                if out_port.offset >= 0 and in_port.offset >= 0:
-                    outgoing.append((out_port.offset, in_port.node.idx, in_port.offset))
-        return outgoing
+        return [
+            (out_port.offset, in_port.node.idx, in_port.offset)
+            for out_port, in_ports in self.hugr.outgoing_links(node)
+            for in_port in in_ports
+            if out_port.offset >= 0 and in_port.offset >= 0
+        ]
 
     def _extract_function_name(self) -> str:
         """Extract the function name from the HUGR."""

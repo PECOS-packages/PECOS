@@ -40,6 +40,7 @@ class TestAstToDict:
     """Tests for ast_to_dict function."""
 
     def test_simple_program(self) -> None:
+        """Simple program converts to dict correctly."""
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -54,6 +55,7 @@ class TestAstToDict:
         assert len(data["body"]) == 1
 
     def test_gate_op_serialization(self) -> None:
+        """GateOp serializes with gate kind and targets."""
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -69,6 +71,7 @@ class TestAstToDict:
         assert len(gate_data["targets"]) == 2
 
     def test_slot_ref_serialization(self) -> None:
+        """SlotRef serializes with allocator and index."""
         slot = SlotRef(allocator="q", index=5)
 
         data = ast_to_dict(slot)
@@ -78,6 +81,7 @@ class TestAstToDict:
         assert data["index"] == 5
 
     def test_bit_ref_serialization(self) -> None:
+        """BitRef serializes with register and index."""
         bit = BitRef(register="c", index=3)
 
         data = ast_to_dict(bit)
@@ -87,6 +91,7 @@ class TestAstToDict:
         assert data["index"] == 3
 
     def test_literal_expr_serialization(self) -> None:
+        """LiteralExpr serializes with value."""
         expr = LiteralExpr(value=42)
 
         data = ast_to_dict(expr)
@@ -95,6 +100,7 @@ class TestAstToDict:
         assert data["value"] == 42
 
     def test_binary_expr_serialization(self) -> None:
+        """BinaryExpr serializes with operator and operands."""
         expr = BinaryExpr(
             op=BinaryOp.EQ,
             left=LiteralExpr(value=1),
@@ -112,6 +118,7 @@ class TestDictToAst:
     """Tests for dict_to_ast function."""
 
     def test_simple_program_roundtrip(self) -> None:
+        """Program survives dict roundtrip."""
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -127,6 +134,7 @@ class TestDictToAst:
         assert len(restored.body) == len(ast.body)
 
     def test_gate_kind_preserved(self) -> None:
+        """GateKind enum is preserved through roundtrip."""
         prog = Main(
             q := QReg("q", 2),
             qb.CX(q[0], q[1]),
@@ -141,6 +149,7 @@ class TestDictToAst:
         assert gate_op.gate == GateKind.CX
 
     def test_slot_ref_roundtrip(self) -> None:
+        """SlotRef survives dict roundtrip."""
         slot = SlotRef(allocator="data", index=7)
 
         data = ast_to_dict(slot)
@@ -151,6 +160,7 @@ class TestDictToAst:
         assert restored.index == 7
 
     def test_binary_op_preserved(self) -> None:
+        """BinaryOp enum is preserved through roundtrip."""
         expr = BinaryExpr(
             op=BinaryOp.LT,
             left=LiteralExpr(value=5),
@@ -164,12 +174,14 @@ class TestDictToAst:
         assert restored.op == BinaryOp.LT
 
     def test_unknown_type_raises_error(self) -> None:
+        """Unknown type raises ValueError."""
         data = {"_type": "UnknownNodeType"}
 
         with pytest.raises(ValueError, match="Unknown node type"):
             dict_to_ast(data)
 
     def test_missing_type_raises_error(self) -> None:
+        """Missing _type field raises ValueError."""
         data = {"name": "test"}
 
         with pytest.raises(ValueError, match="missing '_type' field"):
@@ -180,6 +192,7 @@ class TestJsonSerialization:
     """Tests for JSON serialization functions."""
 
     def test_ast_to_json_produces_valid_json(self) -> None:
+        """ast_to_json produces parseable JSON."""
         prog = Main(
             q := QReg("q", 2),
             qb.H(q[0]),
@@ -194,6 +207,7 @@ class TestJsonSerialization:
         assert parsed["_type"] == "Program"
 
     def test_json_roundtrip_basic(self) -> None:
+        """Basic program survives JSON roundtrip."""
         prog = Main(
             q := QReg("q", 3),
             qb.H(q[0]),
@@ -209,6 +223,7 @@ class TestJsonSerialization:
         assert len(restored.body) == len(ast.body)
 
     def test_json_roundtrip_with_creg(self) -> None:
+        """Program with CReg survives JSON roundtrip."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -225,6 +240,7 @@ class TestJsonSerialization:
         assert len(measure_op.results) == 1
 
     def test_json_roundtrip_with_if_statement(self) -> None:
+        """Program with If statement survives JSON roundtrip."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -242,6 +258,7 @@ class TestJsonSerialization:
         assert len(if_stmt.then_body) == 1
 
     def test_json_roundtrip_with_repeat(self) -> None:
+        """Program with Repeat survives JSON roundtrip."""
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=5).block(
@@ -258,6 +275,7 @@ class TestJsonSerialization:
         assert repeat_stmt.count == 5
 
     def test_json_to_ast_non_program_raises_error(self) -> None:
+        """json_to_ast raises error for non-Program JSON."""
         slot = SlotRef(allocator="q", index=0)
         json_str = json.dumps(ast_to_dict(slot))
 
@@ -265,6 +283,7 @@ class TestJsonSerialization:
             json_to_ast(json_str)
 
     def test_json_compact_output(self) -> None:
+        """JSON can be output without indentation."""
         prog = Main(_q := QReg("q", 1))
         ast = slr_to_ast(prog)
 
@@ -419,6 +438,7 @@ class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
     def test_empty_program(self) -> None:
+        """Empty program survives JSON roundtrip."""
         prog = Main()
         ast = slr_to_ast(prog)
 

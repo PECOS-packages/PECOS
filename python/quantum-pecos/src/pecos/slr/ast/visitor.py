@@ -166,10 +166,10 @@ class BaseVisitor(ABC, Generic[T]):
         results = self.visit_children(node)
         return self.combine_results(results)
 
-    def visit_allocator_decl(self, node: AllocatorDecl) -> T:
+    def visit_allocator_decl(self, _node: AllocatorDecl) -> T:
         return self.default_result()
 
-    def visit_register_decl(self, node: RegisterDecl) -> T:
+    def visit_register_decl(self, _node: RegisterDecl) -> T:
         return self.default_result()
 
     # Statements
@@ -178,7 +178,7 @@ class BaseVisitor(ABC, Generic[T]):
         results = self.visit_children(node)
         return self.combine_results(results)
 
-    def visit_prepare(self, node: PrepareOp) -> T:
+    def visit_prepare(self, _node: PrepareOp) -> T:
         return self.default_result()
 
     def visit_measure(self, node: MeasureOp) -> T:
@@ -189,17 +189,17 @@ class BaseVisitor(ABC, Generic[T]):
         results = self.visit_children(node)
         return self.combine_results(results)
 
-    def visit_barrier(self, node: BarrierOp) -> T:
+    def visit_barrier(self, _node: BarrierOp) -> T:
         return self.default_result()
 
-    def visit_comment(self, node: CommentOp) -> T:
+    def visit_comment(self, _node: CommentOp) -> T:
         return self.default_result()
 
     def visit_return(self, node: ReturnOp) -> T:
         results = self.visit_children(node)
         return self.combine_results(results)
 
-    def visit_permute(self, node: PermuteOp) -> T:
+    def visit_permute(self, _node: PermuteOp) -> T:
         return self.default_result()
 
     # Control flow
@@ -226,18 +226,18 @@ class BaseVisitor(ABC, Generic[T]):
 
     # References
 
-    def visit_slot_ref(self, node: SlotRef) -> T:
+    def visit_slot_ref(self, _node: SlotRef) -> T:
         return self.default_result()
 
-    def visit_bit_ref(self, node: BitRef) -> T:
+    def visit_bit_ref(self, _node: BitRef) -> T:
         return self.default_result()
 
     # Expressions
 
-    def visit_literal(self, node: LiteralExpr) -> T:
+    def visit_literal(self, _node: LiteralExpr) -> T:
         return self.default_result()
 
-    def visit_var(self, node: VarExpr) -> T:
+    def visit_var(self, _node: VarExpr) -> T:
         return self.default_result()
 
     def visit_bit_expr(self, node: BitExpr) -> T:
@@ -254,17 +254,17 @@ class BaseVisitor(ABC, Generic[T]):
 
     # Types
 
-    def visit_qubit_type(self, node: QubitTypeExpr) -> T:
+    def visit_qubit_type(self, _node: QubitTypeExpr) -> T:
         return self.default_result()
 
-    def visit_bit_type(self, node: BitTypeExpr) -> T:
+    def visit_bit_type(self, _node: BitTypeExpr) -> T:
         return self.default_result()
 
     def visit_array_type(self, node: ArrayTypeExpr) -> T:
         results = self.visit_children(node)
         return self.combine_results(results)
 
-    def visit_allocator_type(self, node: AllocatorTypeExpr) -> T:
+    def visit_allocator_type(self, _node: AllocatorTypeExpr) -> T:
         return self.default_result()
 
 
@@ -274,7 +274,7 @@ class VoidVisitor(BaseVisitor[None]):
     def default_result(self) -> None:
         return None
 
-    def combine_results(self, results: list[None]) -> None:
+    def combine_results(self, _results: list[None]) -> None:
         return None
 
 

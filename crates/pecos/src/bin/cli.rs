@@ -157,6 +157,12 @@ pub enum CudaCommands {
         /// Path to CUDA installation (uses detected path if not specified)
         path: Option<String>,
     },
+
+    /// Install CUDA Python packages (cupy, cuquantum, pytket-cutensornet)
+    ///
+    /// Requires CUDA toolkit to be installed first (pecos cuda install or system CUDA).
+    /// Installs quantum-pecos[cuda] which includes cupy, cuquantum, and pytket-cutensornet.
+    SetupPython,
 }
 
 // ============================================================================

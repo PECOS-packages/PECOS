@@ -264,13 +264,13 @@ pub fn find_block_successors(hugr: &Hugr, block: Node, num_successors: usize) ->
     let mut successors = vec![None; num_successors];
 
     // Iterate over each output port and find what CFG-related node it connects to
-    for port_idx in 0..num_successors {
+    for (port_idx, successor) in successors.iter_mut().enumerate() {
         let out_port = OutgoingPort::from(port_idx);
         // linked_inputs returns an iterator over (Node, IncomingPort) connected to this output
         for (target_node, _) in hugr.linked_inputs(block, out_port) {
             match hugr.get_optype(target_node) {
                 OpType::DataflowBlock(_) | OpType::ExitBlock(_) => {
-                    successors[port_idx] = Some(target_node);
+                    *successor = Some(target_node);
                     break; // Only expect one CFG successor per port
                 }
                 _ => {}

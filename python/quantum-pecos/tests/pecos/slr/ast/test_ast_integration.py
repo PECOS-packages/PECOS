@@ -612,7 +612,7 @@ class TestMultipleCodegenTargets:
     """Test that all codegen targets work with various patterns."""
 
     @pytest.mark.parametrize("target", ["qasm", "guppy", "stim", "qir"])
-    def test_bell_state_all_targets(self, target) -> None:
+    def test_bell_state_all_targets(self, target: str) -> None:
         """Test Bell state generation for all targets."""
         prog = Main(
             q := QReg("q", 2),
@@ -626,7 +626,7 @@ class TestMultipleCodegenTargets:
         assert len(code) > 0
 
     @pytest.mark.parametrize("target", ["qasm", "guppy", "stim", "qir"])
-    def test_with_measurement_all_targets(self, target) -> None:
+    def test_with_measurement_all_targets(self, target: str) -> None:
         """Test measurement generation for all targets."""
         prog = Main(
             q := QReg("q", 1),

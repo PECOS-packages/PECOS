@@ -1,14 +1,14 @@
 OPENQASM 2.0;
 include "hqslib1.inc";
-// 
-=========================
-BEGIN Run Y decoder
-=========================
-
+//
+// =========================
+// BEGIN Run Y decoder
+// =========================
+//
 if(flags_test != 0) syndromes_test = (syn_test ^ raw_syn_test);
 if(flags_test == 0) syndromes_test = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(syndromes_test == 2) pf_test[0] = (pf_test[0] ^ 1);
 if(syndromes_test == 4) pf_test[0] = (pf_test[0] ^ 1);
 if(syndromes_test == 6) pf_test[0] = (pf_test[0] ^ 1);
@@ -39,3 +39,4 @@ if(flags_test != 0) raw_syn_test = syn_test;
 // =========================
 // END Run Y decoder
 // =========================
+//

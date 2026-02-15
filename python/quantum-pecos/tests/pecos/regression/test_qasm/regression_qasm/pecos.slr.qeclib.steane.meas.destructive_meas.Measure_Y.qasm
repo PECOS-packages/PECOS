@@ -21,3 +21,4 @@ measure q_test[6] -> meas_creg_test[6];
 // ============================
 log_raw_test = ((meas_creg_test[4] ^ meas_creg_test[5]) ^ meas_creg_test[6]);
 //
+//

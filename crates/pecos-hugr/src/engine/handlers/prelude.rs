@@ -115,9 +115,7 @@ impl HugrEngine {
                             self.wire_state.classical_values.insert((node, port), value);
                         }
                     }
-                    debug!(
-                        "UnpackTuple at {node:?}: unpacked to {num_outputs} outputs"
-                    );
+                    debug!("UnpackTuple at {node:?}: unpacked to {num_outputs} outputs");
                 } else {
                     // Input not a tuple or not available - try pass-through as fallback
                     debug!("UnpackTuple at {node:?}: input not a tuple, attempting pass-through");

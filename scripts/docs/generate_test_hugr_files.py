@@ -6,6 +6,7 @@ Output goes to docs/assets/test-data/
 """
 
 import sys
+import traceback
 from pathlib import Path
 
 # Add parent directory to path if needed
@@ -82,10 +83,8 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"  Error generating repetition code: {e}")
-        import traceback
-
         traceback.print_exc()
         return 1
 

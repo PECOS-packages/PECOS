@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import pecos as pc
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     AssignOp,
@@ -61,6 +62,15 @@ if TYPE_CHECKING:
         Program,
         Statement,
     )
+
+# Optional LLVM dependency - imported at module level for efficiency
+try:
+    from pecos_rslib.llvm import ir as llvm_ir
+
+    LLVM_AVAILABLE = True
+except ImportError:
+    llvm_ir = None  # type: ignore[assignment]
+    LLVM_AVAILABLE = False
 
 # Mapping from AST GateKind to QIR gate names
 GATE_TO_QIR: dict[GateKind, str] = {
@@ -164,30 +174,35 @@ class AstToQir:
 
         Returns:
             QIR as an LLVM IR string.
-        """
-        from pecos_rslib.llvm import ir
 
-        import pecos as pc
+        Raises:
+            ImportError: If LLVM dependencies are not available.
+        """
+        if not LLVM_AVAILABLE:
+            msg = (
+                "LLVM dependencies not available. Install with 'pip install pecos[qir]'"
+            )
+            raise ImportError(msg)
 
         self.context = QirCodeGenContext()
         self._gate_cache = {}
         self._creg_ptrs = {}
 
         # Setup LLVM module
-        self._module = ir.Module(name="ast_qir_module")
+        self._module = llvm_ir.Module(name="ast_qir_module")
 
         # Setup types
         qubit_ty = self._module.context.get_identified_type("Qubit")
         result_ty = self._module.context.get_identified_type("Result")
 
         self._types = {
-            "void": ir.VoidType(),
-            "bool": ir.IntType(1),
-            "int": ir.IntType(64),
-            "double": ir.DoubleType(),
+            "void": llvm_ir.VoidType(),
+            "bool": llvm_ir.IntType(1),
+            "int": llvm_ir.IntType(64),
+            "double": llvm_ir.DoubleType(),
             "qubit_ptr": qubit_ty.as_pointer(),
             "result_ptr": result_ty.as_pointer(),
-            "tag": ir.IntType(8).as_pointer(),
+            "tag": llvm_ir.IntType(8).as_pointer(),
         }
 
         # Setup creg helper functions
@@ -205,10 +220,10 @@ class AstToQir:
         )
 
         # Setup main function
-        main_fnty = ir.FunctionType(self._types["void"], [])
-        self._main_func = ir.Function(self._module, main_fnty, name="main")
+        main_fnty = llvm_ir.FunctionType(self._types["void"], [])
+        self._main_func = llvm_ir.Function(self._module, main_fnty, name="main")
         entry_block = self._main_func.append_basic_block(name="entry")
-        self._builder = ir.IRBuilder(entry_block)
+        self._builder = llvm_ir.IRBuilder(entry_block)
         self._builder.comment(
             f"// Generated from AST using: PECOS version {pc.__version__}",
         )
@@ -274,35 +289,31 @@ class AstToQir:
 
     def _declare_function(self, name: str, ret_ty: Any, arg_tys: list) -> Any:
         """Declare an LLVM function."""
-        from pecos_rslib.llvm import ir
-
-        fnty = ir.FunctionType(ret_ty, arg_tys)
-        return ir.Function(self._module, fnty, name=name)
+        fnty = llvm_ir.FunctionType(ret_ty, arg_tys)
+        return llvm_ir.Function(self._module, fnty, name=name)
 
     def _setup_op_map(self) -> None:
         """Setup binary operator mapping."""
         self._op_map = {
-            BinaryOp.EQ: lambda l, r: self._builder.icmp_signed("==", l, r),
-            BinaryOp.NE: lambda l, r: self._builder.icmp_signed("!=", l, r),
-            BinaryOp.LT: lambda l, r: self._builder.icmp_signed("<", l, r),
-            BinaryOp.GT: lambda l, r: self._builder.icmp_signed(">", l, r),
-            BinaryOp.LE: lambda l, r: self._builder.icmp_signed("<=", l, r),
-            BinaryOp.GE: lambda l, r: self._builder.icmp_signed(">=", l, r),
-            BinaryOp.MUL: lambda l, r: self._builder.mul(l, r),
-            BinaryOp.DIV: lambda l, r: self._builder.udiv(l, r),
-            BinaryOp.XOR: lambda l, r: self._builder.xor(l, r),
-            BinaryOp.AND: lambda l, r: self._builder.and_(l, r),
-            BinaryOp.OR: lambda l, r: self._builder.or_(l, r),
-            BinaryOp.ADD: lambda l, r: self._builder.add(l, r),
-            BinaryOp.SUB: lambda l, r: self._builder.sub(l, r),
-            BinaryOp.RSHIFT: lambda l, r: self._builder.lshr(l, r),
-            BinaryOp.LSHIFT: lambda l, r: self._builder.shl(l, r),
+            BinaryOp.EQ: lambda lhs, rhs: self._builder.icmp_signed("==", lhs, rhs),
+            BinaryOp.NE: lambda lhs, rhs: self._builder.icmp_signed("!=", lhs, rhs),
+            BinaryOp.LT: lambda lhs, rhs: self._builder.icmp_signed("<", lhs, rhs),
+            BinaryOp.GT: lambda lhs, rhs: self._builder.icmp_signed(">", lhs, rhs),
+            BinaryOp.LE: lambda lhs, rhs: self._builder.icmp_signed("<=", lhs, rhs),
+            BinaryOp.GE: lambda lhs, rhs: self._builder.icmp_signed(">=", lhs, rhs),
+            BinaryOp.MUL: lambda lhs, rhs: self._builder.mul(lhs, rhs),
+            BinaryOp.DIV: lambda lhs, rhs: self._builder.udiv(lhs, rhs),
+            BinaryOp.XOR: lambda lhs, rhs: self._builder.xor(lhs, rhs),
+            BinaryOp.AND: lambda lhs, rhs: self._builder.and_(lhs, rhs),
+            BinaryOp.OR: lambda lhs, rhs: self._builder.or_(lhs, rhs),
+            BinaryOp.ADD: lambda lhs, rhs: self._builder.add(lhs, rhs),
+            BinaryOp.SUB: lambda lhs, rhs: self._builder.sub(lhs, rhs),
+            BinaryOp.RSHIFT: lambda lhs, rhs: self._builder.lshr(lhs, rhs),
+            BinaryOp.LSHIFT: lambda lhs, rhs: self._builder.shl(lhs, rhs),
         }
 
     def _process_declarations(self, program: Program) -> None:
         """Process declarations to allocate qubits and classical registers."""
-        from pecos_rslib.llvm import ir
-
         # First pass: collect allocator parent info
         for decl in program.declarations:
             if isinstance(decl, AllocatorDecl):
@@ -328,7 +339,7 @@ class AstToQir:
                 if decl.size < 64:
                     self._creg_ptrs[decl.name] = self._builder.call(
                         self._creg_funcs["create_creg"],
-                        [ir.Constant(self._types["int"], decl.size)],
+                        [llvm_ir.Constant(self._types["int"], decl.size)],
                         name=decl.name,
                     )
 
@@ -400,8 +411,6 @@ class AstToQir:
 
     def _process_single_qubit_gate(self, node: GateOp, qir_name: str) -> None:
         """Process a single-qubit gate."""
-        from pecos_rslib.llvm import ir
-
         # Get or create gate function
         gate_func = self._get_or_create_gate(
             qir_name,
@@ -414,16 +423,16 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                for param in node.params:
-                    args.append(ir.Constant(self._types["double"], float(param)))
+                args.extend(
+                    llvm_ir.Constant(self._types["double"], float(p))
+                    for p in node.params
+                )
             args.append(qubit_ptr)
 
             self._builder.call(gate_func, args, name="")
 
     def _process_two_qubit_gate(self, node: GateOp, qir_name: str) -> None:
         """Process a two-qubit gate."""
-        from pecos_rslib.llvm import ir
-
         gate_func = self._get_or_create_gate(
             qir_name,
             has_params=node.gate in PARAMETERIZED_GATES,
@@ -436,8 +445,10 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                for param in node.params:
-                    args.append(ir.Constant(self._types["double"], float(param)))
+                args.extend(
+                    llvm_ir.Constant(self._types["double"], float(p))
+                    for p in node.params
+                )
             args.extend([q0_ptr, q1_ptr])
 
             self._builder.call(gate_func, args, name="")
@@ -450,8 +461,6 @@ class AstToQir:
         num_qubits: int,
     ) -> Any:
         """Get or create a QIR gate function declaration."""
-        from pecos_rslib.llvm import ir
-
         cache_key = f"{qir_name}_{has_params}_{num_qubits}"
         if cache_key in self._gate_cache:
             return self._gate_cache[cache_key]
@@ -466,25 +475,21 @@ class AstToQir:
         suffix = "__body" if "adj" not in qir_name else ""
         mangled_name = f"__quantum__qis__{qir_name}{suffix}"
 
-        fnty = ir.FunctionType(self._types["void"], arg_tys)
-        gate_func = ir.Function(self._module, fnty, name=mangled_name)
+        fnty = llvm_ir.FunctionType(self._types["void"], arg_tys)
+        gate_func = llvm_ir.Function(self._module, fnty, name=mangled_name)
 
         self._gate_cache[cache_key] = gate_func
         return gate_func
 
     def _get_qubit_ptr(self, target: SlotRef) -> Any:
         """Get a qubit pointer for a target."""
-        from pecos_rslib.llvm import ir
-
         qubit_index = self.context.get_qubit_index(target.allocator, target.index)
-        return ir.Constant(self._types["int"], qubit_index).inttoptr(
+        return llvm_ir.Constant(self._types["int"], qubit_index).inttoptr(
             self._types["qubit_ptr"],
         )
 
     def _process_measure(self, node: MeasureOp) -> None:
         """Process a measurement operation."""
-        from pecos_rslib.llvm import ir
-
         for i, target in enumerate(node.targets):
             self.context.measurement_count += 1
             qubit_ptr = self._get_qubit_ptr(target)
@@ -493,7 +498,7 @@ class AstToQir:
                 result = node.results[i]
                 if result.register in self._creg_ptrs:
                     creg_ptr = self._creg_ptrs[result.register]
-                    bit_index = ir.Constant(self._types["int"], result.index)
+                    bit_index = llvm_ir.Constant(self._types["int"], result.index)
                     self._builder.call(
                         self._mz_to_bit,
                         [qubit_ptr, creg_ptr, bit_index],
@@ -515,43 +520,37 @@ class AstToQir:
 
     def _process_barrier(self, node: BarrierOp) -> None:
         """Process a barrier operation."""
-        from pecos_rslib.llvm import ir
-
         # Collect all qubits involved
         qubits = []
         if node.allocators:
             for alloc in node.allocators:
-                for key in self.context.qubit_map:
-                    if key[0] == alloc:
-                        qubits.append(
-                            self._get_qubit_ptr(
-                                SlotRef(allocator=key[0], index=key[1]),
-                            ),
-                        )
+                qubits.extend(
+                    self._get_qubit_ptr(SlotRef(allocator=key[0], index=key[1]))
+                    for key in self.context.qubit_map
+                    if key[0] == alloc
+                )
 
         if not qubits:
             return
 
         # Create barrier function if needed
         barrier_name = f"__quantum__qis__barrier{len(qubits)}__body"
-        fnty = ir.FunctionType(
+        fnty = llvm_ir.FunctionType(
             self._types["void"],
             [self._types["qubit_ptr"]] * len(qubits),
         )
-        barrier_func = ir.Function(self._module, fnty, name=barrier_name)
+        barrier_func = llvm_ir.Function(self._module, fnty, name=barrier_name)
         self._builder.call(barrier_func, qubits, name="")
 
     def _process_assign(self, node: AssignOp) -> None:
         """Process an assignment operation."""
-        from pecos_rslib.llvm import ir
-
         if isinstance(node.target, BitRef):
             reg_name = node.target.register
             if reg_name not in self._creg_ptrs:
                 return
 
             creg_ptr = self._creg_ptrs[reg_name]
-            bit_index = ir.Constant(self._types["int"], node.target.index)
+            bit_index = llvm_ir.Constant(self._types["int"], node.target.index)
 
             # Evaluate RHS
             rhs = self._eval_expression(node.value)
@@ -564,23 +563,21 @@ class AstToQir:
 
     def _eval_expression(self, expr: Expression) -> Any:
         """Evaluate an expression to an LLVM value."""
-        from pecos_rslib.llvm import ir
-
         if isinstance(expr, LiteralExpr):
             if isinstance(expr.value, bool):
-                return ir.Constant(self._types["bool"], 1 if expr.value else 0)
+                return llvm_ir.Constant(self._types["bool"], 1 if expr.value else 0)
             if isinstance(expr.value, int):
-                return ir.Constant(self._types["int"], expr.value)
+                return llvm_ir.Constant(self._types["int"], expr.value)
             if isinstance(expr.value, float):
-                return ir.Constant(self._types["double"], expr.value)
-            return ir.Constant(self._types["int"], expr.value)
+                return llvm_ir.Constant(self._types["double"], expr.value)
+            return llvm_ir.Constant(self._types["int"], expr.value)
 
         if isinstance(expr, BitExpr):
             reg_name = expr.ref.register
             if reg_name not in self._creg_ptrs:
-                return ir.Constant(self._types["bool"], 0)
+                return llvm_ir.Constant(self._types["bool"], 0)
             creg_ptr = self._creg_ptrs[reg_name]
-            bit_index = ir.Constant(self._types["int"], expr.ref.index)
+            bit_index = llvm_ir.Constant(self._types["int"], expr.ref.index)
             return self._builder.call(
                 self._creg_funcs["get_creg_bit"],
                 [creg_ptr, bit_index],
@@ -589,7 +586,7 @@ class AstToQir:
 
         if isinstance(expr, VarExpr):
             # Variable lookup - for now just return 0
-            return ir.Constant(self._types["int"], 0)
+            return llvm_ir.Constant(self._types["int"], 0)
 
         if isinstance(expr, BinaryExpr):
             left = self._eval_expression(expr.left)
@@ -606,7 +603,7 @@ class AstToQir:
                 return self._builder.not_(operand)
             return operand
 
-        return ir.Constant(self._types["int"], 0)
+        return llvm_ir.Constant(self._types["int"], 0)
 
     def _process_if(self, node: IfStmt) -> None:
         """Process an if statement."""
@@ -670,14 +667,12 @@ class AstToQir:
 
     def _generate_results(self) -> None:
         """Generate result output calls."""
-        from pecos_rslib.llvm import ir
-
         for reg_name, creg_ptr in self._creg_ptrs.items():
             # Create tag for the register name
             reg_name_bytes = bytearray(reg_name.encode("utf-8"))
-            tag_type = ir.ArrayType(ir.IntType(8), len(reg_name))
-            reg_tag = ir.GlobalVariable(self._module, tag_type, reg_name)
-            reg_tag.initializer = ir.Constant(tag_type, reg_name_bytes)
+            tag_type = llvm_ir.ArrayType(llvm_ir.IntType(8), len(reg_name))
+            reg_tag = llvm_ir.GlobalVariable(self._module, tag_type, reg_name)
+            reg_tag.initializer = llvm_ir.Constant(tag_type, reg_name_bytes)
             reg_tag.global_constant = True
             reg_tag.linkage = "private"
 
@@ -688,7 +683,10 @@ class AstToQir:
                 name="",
             )
             reg_tag_gep = reg_tag.gep(
-                (ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)),
+                (
+                    llvm_ir.Constant(llvm_ir.IntType(32), 0),
+                    llvm_ir.Constant(llvm_ir.IntType(32), 0),
+                ),
             )
             self._builder.call(
                 self._creg_funcs["int_result"],

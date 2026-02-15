@@ -1090,7 +1090,7 @@ impl HugrEngine {
             // =================================================================
             let current_op = hugr.get_optype(current_node);
             if matches!(current_op, OpType::LoadConstant(_)) {
-                if let Some(value) = self.try_load_constant(&hugr, current_node) {
+                if let Some(value) = Self::try_load_constant(&hugr, current_node) {
                     self.wire_state
                         .classical_values
                         .insert((current_node, 0), value);
@@ -1252,6 +1252,7 @@ impl HugrEngine {
     ///
     /// This handles all gate types and their decompositions.
     /// Returns true if the gate was a measurement (requires pause for results).
+    #[allow(clippy::too_many_lines)] // Gate emission has many gate type cases
     fn emit_quantum_gate(
         &mut self,
         hugr: &Hugr,

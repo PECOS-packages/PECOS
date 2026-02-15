@@ -73,29 +73,29 @@ class SlrConverter:
         Args:
             target: The target language (Language enum value)
             skip_headers: For QASM, whether to skip the OPENQASM header
-            add_versions: For QASM, whether to add version comments (not supported in AST codegen)
+            add_versions: Deprecated, ignored (kept for backwards compatibility)
 
         Returns:
             Generated code as a string
         """
+        del add_versions  # Deprecated parameter, kept for backwards compatibility
         if target == Language.QASM:
             return self._generate_qasm(include_header=not skip_headers)
-        elif target in [Language.QIR, Language.QIRBC]:
+        if target in [Language.QIR, Language.QIRBC]:
             return self._generate_qir(bytecode=(target == Language.QIRBC))
-        elif target == Language.GUPPY:
+        if target == Language.GUPPY:
             return self._generate_guppy()
-        elif target == Language.HUGR:
+        if target == Language.HUGR:
             msg = "Use the hugr() method directly to compile to HUGR"
             raise ValueError(msg)
-        elif target == Language.STIM:
+        if target == Language.STIM:
             # For backwards compatibility, generate() returns string
             return str(self.stim())
-        elif target == Language.QUANTUM_CIRCUIT:
+        if target == Language.QUANTUM_CIRCUIT:
             # For backwards compatibility, generate() returns string representation
             return str(self.quantum_circuit())
-        else:
-            msg = f"Code gen target '{target}' is not supported."
-            raise NotImplementedError(msg)
+        msg = f"Code gen target '{target}' is not supported."
+        raise NotImplementedError(msg)
 
     def _generate_qasm(self, *, include_header: bool = True) -> str:
         """Generate QASM code using AST-based codegen."""
@@ -138,11 +138,12 @@ class SlrConverter:
 
         Args:
             skip_headers: Whether to skip the OPENQASM header
-            add_versions: Whether to add version comments (deprecated, ignored)
+            add_versions: Deprecated, ignored (kept for backwards compatibility)
 
         Returns:
             Generated QASM code as a string
         """
+        del add_versions  # Deprecated parameter, kept for backwards compatibility
         return self._generate_qasm(include_header=not skip_headers)
 
     def qir(self) -> str:
@@ -180,7 +181,7 @@ class SlrConverter:
             RuntimeError: If compilation fails
         """
         # Generate Guppy code
-        guppy_code = self._generate_guppy()
+        self._generate_guppy()
 
         # Compile to HUGR
         try:

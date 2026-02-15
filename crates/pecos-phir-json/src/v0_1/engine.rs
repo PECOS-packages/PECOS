@@ -198,8 +198,9 @@ impl PhirJsonEngine {
         self.current_op = 0;
 
         // Log operations for debugging if needed
-        if log::log_enabled!(log::Level::Debug) && self.program.is_some() {
-            let program = self.program.as_ref().unwrap();
+        if log::log_enabled!(log::Level::Debug)
+            && let Some(program) = self.program.as_ref()
+        {
             debug!("Operations to process after reset: {}", program.ops.len());
         }
 

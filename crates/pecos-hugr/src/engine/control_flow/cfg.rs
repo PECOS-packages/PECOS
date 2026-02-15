@@ -307,6 +307,7 @@ impl HugrEngine {
     }
 
     /// Check if a CFG block is complete after processing an operation.
+    #[allow(clippy::too_many_lines)] // CFG control flow logic is inherently complex
     pub(crate) fn check_cfg_block_completion(&mut self, hugr: &Hugr, processed_node: Node) {
         // Find which CFG block (if any) this node belongs to
         let mut block_completions = Vec::new();
@@ -916,6 +917,7 @@ impl HugrEngine {
     }
 
     /// Propagate wire mappings from a completed block to a successor block.
+    #[allow(clippy::too_many_lines)] // Wire propagation logic is inherently complex
     pub(crate) fn propagate_block_outputs_to_successor(
         &mut self,
         hugr: &Hugr,

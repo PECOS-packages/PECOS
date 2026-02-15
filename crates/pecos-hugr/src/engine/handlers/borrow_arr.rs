@@ -82,6 +82,7 @@ impl HugrEngine {
                 // Input port 0 = borrow_array, port 1 = int index
                 // Output port 0 = borrow_array (unchanged for simulation), port 1 = element
                 let array = self.get_input_value(hugr, node, 0);
+                #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
                 let index = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint())
@@ -120,6 +121,7 @@ impl HugrEngine {
                 // Input port 0 = borrow_array, port 1 = index (usize), port 2 = element
                 // Output port 0 = updated array
                 let array = self.get_input_value(hugr, node, 0);
+                #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
                 let index = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint())

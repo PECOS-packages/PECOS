@@ -163,7 +163,7 @@ class AstToStim:
         Returns:
             A stim.Circuit object.
         """
-        import stim
+        import stim  # noqa: PLC0415
 
         self.context = StimCodeGenContext()
         self.circuit = stim.Circuit()
@@ -351,7 +351,7 @@ class AstToStim:
 
     def _process_repeat(self, node: RepeatStmt) -> None:
         """Process a repeat loop using Stim's REPEAT block."""
-        import stim
+        import stim  # noqa: PLC0415
 
         if node.count <= 0:
             return

@@ -320,9 +320,11 @@ class TestPrettyPrintIndentation:
         lines = result.split("\n")
         # Find a content line (not Main( or ))
         content_lines = [
-            l
-            for l in lines
-            if l.strip() and not l.strip().startswith("Main") and l.strip() != ")"
+            line
+            for line in lines
+            if line.strip()
+            and not line.strip().startswith("Main")
+            and line.strip() != ")"
         ]
         assert len(content_lines) > 0
         # Should start with 4 spaces
@@ -340,9 +342,11 @@ class TestPrettyPrintIndentation:
 
         lines = result.split("\n")
         content_lines = [
-            l
-            for l in lines
-            if l.strip() and not l.strip().startswith("Main") and l.strip() != ")"
+            line
+            for line in lines
+            if line.strip()
+            and not line.strip().startswith("Main")
+            and line.strip() != ")"
         ]
         assert len(content_lines) > 0
         # Should start with 2 spaces, not 4

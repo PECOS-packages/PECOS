@@ -486,8 +486,7 @@ def generate_test_function(block: CodeBlock, file_stem: str) -> str:
             '@pytest.mark.skipif(not cuda_available(), reason="CUDA not available")',
         )
 
-    for mark in block.marks:
-        lines.append(f"@pytest.mark.{mark}")
+    lines.extend(f"@pytest.mark.{mark}" for mark in block.marks)
 
     # Function signature
     lines.append(f"def {func_name}():")
@@ -945,13 +944,15 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
                 "        import sys",
                 "        try:",
                 "            # Check CUDA toolkit",
-                '            result = subprocess.run(["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],',
+                "            result = subprocess.run(",
+                '                ["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],',
                 "                capture_output=True, timeout=30, check=False)",
                 "            if result.returncode != 0:",
                 "                _CUDA_AVAILABLE = False",
                 "            else:",
                 "                # Check cupy",
-                '                result = subprocess.run([sys.executable, "-c", "import cupy; print(cupy.cuda.is_available())"],',
+                "                result = subprocess.run(",
+                '                    [sys.executable, "-c", "import cupy; print(cupy.cuda.is_available())"],',
                 "                    capture_output=True, text=True, timeout=10, check=False)",
                 '                _CUDA_AVAILABLE = result.returncode == 0 and "True" in result.stdout',
                 "        except Exception:",

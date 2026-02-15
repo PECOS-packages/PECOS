@@ -35,7 +35,12 @@ from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 
-def run_circuit(guppy_func, num_qubits: int, shots: int = 100, seed: int = 42):
+def run_circuit(
+    guppy_func: object,
+    num_qubits: int,
+    shots: int = 100,
+    seed: int = 42,
+) -> dict:
     """Run a Guppy function with PECOS direct HUGR interpreter."""
     return (
         sim(Guppy(guppy_func))
@@ -47,7 +52,7 @@ def run_circuit(guppy_func, num_qubits: int, shots: int = 100, seed: int = 42):
     )
 
 
-def get_measurements(results):
+def get_measurements(results: dict) -> list:
     """Extract measurements from results."""
     return results.get("measurements", [])
 

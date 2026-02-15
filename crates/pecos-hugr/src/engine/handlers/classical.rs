@@ -427,6 +427,7 @@ impl HugrEngine {
     }
 
     /// Handle `tket.bool` operations.
+    #[allow(clippy::too_many_lines)] // Boolean operation dispatch is inherently large
     pub(crate) fn handle_bool_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.bool operation: {op_name} at {node:?}");
 

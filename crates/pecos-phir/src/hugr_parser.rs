@@ -52,7 +52,7 @@ pub fn parse_hugr_bytes_to_phir(hugr_bytes: &[u8]) -> Result<ModuleOp> {
         collections::list::EXTENSION.clone(),
         collections::array::EXTENSION.clone(),
         collections::static_array::EXTENSION.clone(),
-        collections::value_array::EXTENSION.clone(),
+        collections::borrow_array::EXTENSION.clone(),
         futures::EXTENSION.clone(),
         result::EXTENSION.clone(),
         qsystem::EXTENSION.clone(),

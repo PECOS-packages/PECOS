@@ -31,6 +31,7 @@ use crate::engine::types::{ClassicalValue, FutureState, RngContextId, RngContext
 
 impl HugrEngine {
     /// Handle tket.qsystem operations (lazy measurements, barriers, etc.).
+    #[allow(clippy::too_many_lines)] // Operation dispatch is inherently large
     pub(crate) fn handle_qsystem_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.qsystem operation: {op_name} at {node:?}");
 
@@ -198,15 +199,9 @@ impl HugrEngine {
                 let ctx_id = self.extension_state.next_rng_context_id;
                 self.extension_state.next_rng_context_id += 1;
 
-                // Initialize xorshift64 state with seed (avoid 0)
-                let state = if seed == 0 {
-                    0x1234_5678_9ABC_DEF0
-                } else {
-                    seed
-                };
                 self.extension_state
                     .rng_contexts
-                    .insert(ctx_id, RngContextState { seed, state });
+                    .insert(ctx_id, RngContextState::new(seed));
 
                 self.wire_state
                     .classical_values
@@ -324,26 +319,18 @@ impl HugrEngine {
     }
 
     /// Generate a random float in [0, 1) using xorshift64.
-    ///
-    /// Uses the standard technique of taking 53 bits and dividing by 2^53
-    /// to produce a uniform float in [0, 1).
-    #[allow(clippy::cast_precision_loss)] // Standard PRNG technique, precision loss is expected
     pub(crate) fn generate_random_float(&mut self, ctx_id: RngContextId) -> f64 {
-        let random_u64 = self.generate_random_u64(ctx_id);
-        // Convert to float in [0, 1) using 53-bit mantissa
-        (random_u64 >> 11) as f64 / (1u64 << 53) as f64
+        if let Some(ctx) = self.extension_state.rng_contexts.get_mut(&ctx_id) {
+            ctx.next_f64()
+        } else {
+            0.0
+        }
     }
 
     /// Generate a random u64 using xorshift64.
     pub(crate) fn generate_random_u64(&mut self, ctx_id: RngContextId) -> u64 {
         if let Some(ctx) = self.extension_state.rng_contexts.get_mut(&ctx_id) {
-            // xorshift64
-            let mut x = ctx.state;
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            ctx.state = x;
-            x
+            ctx.next_u64()
         } else {
             0
         }

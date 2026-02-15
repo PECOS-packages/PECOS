@@ -31,7 +31,7 @@ dependencies = [
     "pecos-rslib==0.8.0.dev0",
     "phir>=0.3.3",
     "networkx>=2.1.0",
-    "guppylang>=0.21.0",
+    "guppylang>=0.21.6",
     "hugr>=0.13.0",
     "selene-sim~=0.2.0",
 ]
@@ -80,20 +80,8 @@ cuda = [
 ]
 # Install with: uv pip install -e .[cuda]
 
-[dependency-groups]
-test = [
-    # Core testing dependencies
-]
-numpy-compat = [
-    "numpy>=1.15.0",  # NumPy compatibility tests - core functionality uses pecos.num
-]
-dev = [
-    "pytest-xdist>=3.8.0",
-]
-
-[tool.uv]
-# default-groups = ["dev", "test"]  # Uncommented now that dependency-groups is defined
-default-groups = ["test"]
+# Dependency groups are defined at workspace root (pyproject.toml)
+# Package-specific groups can be added here if needed
 
 [tool.uv.sources]
 pecos-rslib = { workspace = true }

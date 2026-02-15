@@ -27,12 +27,9 @@ from pecos.slr.ast.codegen import (
 from pecos.slr.qeclib import qubit as qb
 
 
-def tick_to_dict(tick):
+def tick_to_dict(tick: object) -> dict[str, set]:
     """Convert TickView to a dict {gate_symbol: set(locations)}."""
-    result = {}
-    for symbol, locations, _ in tick.items():
-        result[symbol] = locations
-    return result
+    return {symbol: locations for symbol, locations, _ in tick.items()}
 
 
 class TestRoundTripStructure:
@@ -110,13 +107,13 @@ class TestRoundTripQASM:
 
         # Verify essential QASM elements
         lines = qasm.strip().split("\n")
-        non_empty = [l.strip() for l in lines if l.strip()]
+        non_empty = [line.strip() for line in lines if line.strip()]
 
         # Should have: header, include, qreg, h, cx
-        assert any("OPENQASM" in l for l in non_empty)
-        assert any("qreg q[2]" in l for l in non_empty)
-        assert any("h q[0]" in l for l in non_empty)
-        assert any("cx q[0], q[1]" in l for l in non_empty)
+        assert any("OPENQASM" in line for line in non_empty)
+        assert any("qreg q[2]" in line for line in non_empty)
+        assert any("h q[0]" in line for line in non_empty)
+        assert any("cx q[0], q[1]" in line for line in non_empty)
 
     def test_ghz_state_qasm_structure(self) -> None:
         """Test GHZ state generates correct QASM structure."""
@@ -229,10 +226,12 @@ class TestRoundTripStim:
     """Round-trip tests through Stim generation."""
 
     @pytest.fixture
-    def stim(self):
+    def _require_stim(self) -> object:
+        """Skip tests if stim is not available."""
         return pytest.importorskip("stim")
 
-    def test_bell_state_stim_simulation(self, stim) -> None:
+    @pytest.mark.usefixtures("_require_stim")
+    def test_bell_state_stim_simulation(self) -> None:
         """Test Bell state can be simulated with Stim."""
         from pecos.slr.ast.codegen import ast_to_stim
 
@@ -257,7 +256,8 @@ class TestRoundTripStim:
         for sample in samples:
             assert sample[0] == sample[1], "Bell state qubits should be correlated"
 
-    def test_ghz_state_stim_simulation(self, stim) -> None:
+    @pytest.mark.usefixtures("_require_stim")
+    def test_ghz_state_stim_simulation(self) -> None:
         """Test GHZ state can be simulated with Stim."""
         from pecos.slr.ast.codegen import ast_to_stim
 
@@ -285,7 +285,8 @@ class TestRoundTripStim:
                 sample[0] == sample[1] == sample[2]
             ), "GHZ state qubits should all be correlated"
 
-    def test_repeat_block_preserved(self, stim) -> None:
+    @pytest.mark.usefixtures("_require_stim")
+    def test_repeat_block_preserved(self) -> None:
         """Test repeat blocks are preserved in Stim."""
         from pecos.slr.ast.codegen import ast_to_stim_str
 
@@ -359,10 +360,12 @@ class TestRoundTripQIR:
     """Round-trip tests through QIR generation."""
 
     @pytest.fixture
-    def llvm(self):
+    def _require_llvm(self) -> object:
+        """Skip tests if LLVM is not available."""
         return pytest.importorskip("pecos_rslib.llvm")
 
-    def test_bell_state_qir_structure(self, llvm) -> None:
+    @pytest.mark.usefixtures("_require_llvm")
+    def test_bell_state_qir_structure(self) -> None:
         """Test Bell state generates valid QIR."""
         from pecos.slr.ast.codegen import ast_to_qir
 
@@ -381,7 +384,8 @@ class TestRoundTripQIR:
         assert "__quantum__qis__cnot__body" in qir
         assert "ret void" in qir
 
-    def test_qir_qubit_count_attribute(self, llvm) -> None:
+    @pytest.mark.usefixtures("_require_llvm")
+    def test_qir_qubit_count_attribute(self) -> None:
         """Test QIR includes correct qubit count attribute."""
         from pecos.slr.ast.codegen import ast_to_qir
 
@@ -395,7 +399,8 @@ class TestRoundTripQIR:
 
         assert 'required_num_qubits"="5"' in qir
 
-    def test_qir_measurement_count_attribute(self, llvm) -> None:
+    @pytest.mark.usefixtures("_require_llvm")
+    def test_qir_measurement_count_attribute(self) -> None:
         """Test QIR includes correct measurement count attribute."""
         from pecos.slr.ast.codegen import ast_to_qir
 

@@ -37,8 +37,8 @@ def normalize_whitespace(s: str) -> str:
 def extract_gates_qasm(qasm: str) -> list[str]:
     """Extract gate operations from QASM, ignoring headers and declarations."""
     gates = []
-    for line in qasm.split("\n"):
-        line = line.strip().lower()
+    for raw_line in qasm.split("\n"):
+        line = raw_line.strip().lower()
         # Skip empty lines, headers, includes, declarations, comments
         if not line:
             continue

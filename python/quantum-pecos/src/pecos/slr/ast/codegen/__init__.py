@@ -102,14 +102,14 @@ def generate_with_validation(
         ...     print(f"T-count: {result.t_count.t_count}")
         ...
     """
-    from pecos.slr.ast.analysis import (
+    from pecos.slr.ast.analysis import (  # noqa: PLC0415
         analyze_connectivity,
         analyze_depth,
         analyze_parallelism,
         analyze_t_count,
         count_resources,
     )
-    from pecos.slr.ast.validation import validate
+    from pecos.slr.ast.validation import validate  # noqa: PLC0415
 
     # Validate
     validation_result = validate(program)
@@ -150,14 +150,14 @@ def generate_with_options(
     Returns:
         CodegenResult with code and requested metadata.
     """
-    from pecos.slr.ast.analysis import (
+    from pecos.slr.ast.analysis import (  # noqa: PLC0415
         analyze_connectivity,
         analyze_depth,
         analyze_parallelism,
         analyze_t_count,
         count_resources,
     )
-    from pecos.slr.ast.validation import validate
+    from pecos.slr.ast.validation import validate  # noqa: PLC0415
 
     if options is None:
         options = CodegenOptions()

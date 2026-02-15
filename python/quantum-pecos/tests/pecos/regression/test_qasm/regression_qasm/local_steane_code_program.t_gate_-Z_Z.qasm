@@ -122,8 +122,8 @@ x sin_d[6];
 saux_scratch = 0;
 reset saux_d[6];
 ry(0.7853981633974483) saux_d[6];
-// 
-Encoding circuit
+//
+// Encoding circuit
 // ---------------
 reset saux_d[0];
 reset saux_d[1];
@@ -131,27 +131,27 @@ reset saux_d[2];
 reset saux_d[3];
 reset saux_d[4];
 reset saux_d[5];
-// 
-q[6] is the input qubit
-
+//
+// q[6] is the input qubit
+//
 cx saux_d[6], saux_d[5];
 h saux_d[1];
 cx saux_d[1], saux_d[0];
 h saux_d[2];
 cx saux_d[2], saux_d[4];
-// 
----------------
+//
+// ---------------
 h saux_d[3];
 cx saux_d[3], saux_d[5];
 cx saux_d[2], saux_d[0];
 cx saux_d[6], saux_d[4];
-// 
----------------
+//
+// ---------------
 cx saux_d[2], saux_d[6];
 cx saux_d[3], saux_d[4];
 cx saux_d[1], saux_d[5];
-// 
----------------
+//
+// ---------------
 cx saux_d[1], saux_d[6];
 cx saux_d[3], saux_d[0];
 // Measure check HHHHHHH
@@ -343,23 +343,23 @@ measure saux_d[6] -> saux_raw_meas[6];
 // determine raw logical output
 // ============================
 saux_c[1] = ((saux_raw_meas[4] ^ saux_raw_meas[5]) ^ saux_raw_meas[6]);
-// 
-
-// 
-=================== //
-PROCESS MEASUREMENT //
-=================== //
-
-Determine correction to get logical output
-==========================================
+//
+//
+//
+// =================== //
+// PROCESS MEASUREMENT //
+// =================== //
+//
+// Determine correction to get logical output
+// ==========================================
 saux_syn_meas[0] = (((saux_raw_meas[0] ^ saux_raw_meas[1]) ^ saux_raw_meas[2]) ^ saux_raw_meas[3]);
 saux_syn_meas[1] = (((saux_raw_meas[1] ^ saux_raw_meas[2]) ^ saux_raw_meas[4]) ^ saux_raw_meas[5]);
 saux_syn_meas[2] = (((saux_raw_meas[2] ^ saux_raw_meas[3]) ^ saux_raw_meas[5]) ^ saux_raw_meas[6]);
-// 
-XOR syndromes
+//
+// XOR syndromes
 saux_syn_meas = (saux_syn_meas ^ saux_last_raw_syn_z);
-// 
-Correct logical output based on measured out syndromes
+//
+// Correct logical output based on measured out syndromes
 saux_c[2] = saux_c[1];
 if(saux_syn_meas == 2) saux_c[2] = (saux_c[2] ^ 1);
 if(saux_syn_meas == 4) saux_c[2] = (saux_c[2] ^ 1);
@@ -388,23 +388,23 @@ measure sin_d[6] -> sin_raw_meas[6];
 // determine raw logical output
 // ============================
 sin_c[1] = ((sin_raw_meas[4] ^ sin_raw_meas[5]) ^ sin_raw_meas[6]);
-// 
-
-// 
-=================== //
-PROCESS MEASUREMENT //
-=================== //
-
-Determine correction to get logical output
-==========================================
+//
+//
+//
+// =================== //
+// PROCESS MEASUREMENT //
+// =================== //
+//
+// Determine correction to get logical output
+// ==========================================
 sin_syn_meas[0] = (((sin_raw_meas[0] ^ sin_raw_meas[1]) ^ sin_raw_meas[2]) ^ sin_raw_meas[3]);
 sin_syn_meas[1] = (((sin_raw_meas[1] ^ sin_raw_meas[2]) ^ sin_raw_meas[4]) ^ sin_raw_meas[5]);
 sin_syn_meas[2] = (((sin_raw_meas[2] ^ sin_raw_meas[3]) ^ sin_raw_meas[5]) ^ sin_raw_meas[6]);
-// 
-XOR syndromes
+//
+// XOR syndromes
 sin_syn_meas = (sin_syn_meas ^ sin_last_raw_syn_z);
-// 
-Correct logical output based on measured out syndromes
+//
+// Correct logical output based on measured out syndromes
 sin_c[2] = sin_c[1];
 if(sin_syn_meas == 2) sin_c[2] = (sin_c[2] ^ 1);
 if(sin_syn_meas == 4) sin_c[2] = (sin_c[2] ^ 1);
@@ -416,8 +416,8 @@ m_out[0] = sin_c[2];
 saux_scratch = 0;
 reset saux_d[6];
 ry(0.7853981633974483) saux_d[6];
-// 
-Encoding circuit
+//
+// Encoding circuit
 // ---------------
 reset saux_d[0];
 reset saux_d[1];
@@ -425,27 +425,27 @@ reset saux_d[2];
 reset saux_d[3];
 reset saux_d[4];
 reset saux_d[5];
-// 
-q[6] is the input qubit
-
+//
+// q[6] is the input qubit
+//
 cx saux_d[6], saux_d[5];
 h saux_d[1];
 cx saux_d[1], saux_d[0];
 h saux_d[2];
 cx saux_d[2], saux_d[4];
-// 
----------------
+//
+// ---------------
 h saux_d[3];
 cx saux_d[3], saux_d[5];
 cx saux_d[2], saux_d[0];
 cx saux_d[6], saux_d[4];
-// 
----------------
+//
+// ---------------
 cx saux_d[2], saux_d[6];
 cx saux_d[3], saux_d[4];
 cx saux_d[1], saux_d[5];
-// 
----------------
+//
+// ---------------
 cx saux_d[1], saux_d[6];
 cx saux_d[3], saux_d[0];
 // Measure check HHHHHHH
@@ -602,8 +602,8 @@ saux_scratch[2] = ((((saux_scratch[0] | saux_scratch[1]) | saux_flags[0]) | saux
 // Repeat 1 times (unrolled)
 if(saux_scratch[2] != 0) reset saux_d[6];
 if(saux_scratch[2] != 0) ry(0.7853981633974483) saux_d[6];
-// 
-Encoding circuit
+//
+// Encoding circuit
 // ---------------
 if(saux_scratch[2] != 0) reset saux_d[0];
 if(saux_scratch[2] != 0) reset saux_d[1];
@@ -611,27 +611,27 @@ if(saux_scratch[2] != 0) reset saux_d[2];
 if(saux_scratch[2] != 0) reset saux_d[3];
 if(saux_scratch[2] != 0) reset saux_d[4];
 if(saux_scratch[2] != 0) reset saux_d[5];
-// 
-q[6] is the input qubit
-
+//
+// q[6] is the input qubit
+//
 if(saux_scratch[2] != 0) cx saux_d[6], saux_d[5];
 if(saux_scratch[2] != 0) h saux_d[1];
 if(saux_scratch[2] != 0) cx saux_d[1], saux_d[0];
 if(saux_scratch[2] != 0) h saux_d[2];
 if(saux_scratch[2] != 0) cx saux_d[2], saux_d[4];
-// 
----------------
+//
+// ---------------
 if(saux_scratch[2] != 0) h saux_d[3];
 if(saux_scratch[2] != 0) cx saux_d[3], saux_d[5];
 if(saux_scratch[2] != 0) cx saux_d[2], saux_d[0];
 if(saux_scratch[2] != 0) cx saux_d[6], saux_d[4];
-// 
----------------
+//
+// ---------------
 if(saux_scratch[2] != 0) cx saux_d[2], saux_d[6];
 if(saux_scratch[2] != 0) cx saux_d[3], saux_d[4];
 if(saux_scratch[2] != 0) cx saux_d[1], saux_d[5];
-// 
----------------
+//
+// ---------------
 if(saux_scratch[2] != 0) cx saux_d[1], saux_d[6];
 if(saux_scratch[2] != 0) cx saux_d[3], saux_d[0];
 // Measure check HHHHHHH
@@ -881,23 +881,23 @@ measure saux_d[6] -> saux_raw_meas[6];
 // determine raw logical output
 // ============================
 saux_c[1] = ((saux_raw_meas[4] ^ saux_raw_meas[5]) ^ saux_raw_meas[6]);
-// 
-
-// 
-=================== //
-PROCESS MEASUREMENT //
-=================== //
-
-Determine correction to get logical output
-==========================================
+//
+//
+//
+// =================== //
+// PROCESS MEASUREMENT //
+// =================== //
+//
+// Determine correction to get logical output
+// ==========================================
 saux_syn_meas[0] = (((saux_raw_meas[0] ^ saux_raw_meas[1]) ^ saux_raw_meas[2]) ^ saux_raw_meas[3]);
 saux_syn_meas[1] = (((saux_raw_meas[1] ^ saux_raw_meas[2]) ^ saux_raw_meas[4]) ^ saux_raw_meas[5]);
 saux_syn_meas[2] = (((saux_raw_meas[2] ^ saux_raw_meas[3]) ^ saux_raw_meas[5]) ^ saux_raw_meas[6]);
-// 
-XOR syndromes
+//
+// XOR syndromes
 saux_syn_meas = (saux_syn_meas ^ saux_last_raw_syn_z);
-// 
-Correct logical output based on measured out syndromes
+//
+// Correct logical output based on measured out syndromes
 saux_c[2] = saux_c[1];
 if(saux_syn_meas == 2) saux_c[2] = (saux_c[2] ^ 1);
 if(saux_syn_meas == 4) saux_c[2] = (saux_c[2] ^ 1);
@@ -926,23 +926,23 @@ measure sin_d[6] -> sin_raw_meas[6];
 // determine raw logical output
 // ============================
 sin_c[1] = ((sin_raw_meas[4] ^ sin_raw_meas[5]) ^ sin_raw_meas[6]);
-// 
-
-// 
-=================== //
-PROCESS MEASUREMENT //
-=================== //
-
-Determine correction to get logical output
-==========================================
+//
+//
+//
+// =================== //
+// PROCESS MEASUREMENT //
+// =================== //
+//
+// Determine correction to get logical output
+// ==========================================
 sin_syn_meas[0] = (((sin_raw_meas[0] ^ sin_raw_meas[1]) ^ sin_raw_meas[2]) ^ sin_raw_meas[3]);
 sin_syn_meas[1] = (((sin_raw_meas[1] ^ sin_raw_meas[2]) ^ sin_raw_meas[4]) ^ sin_raw_meas[5]);
 sin_syn_meas[2] = (((sin_raw_meas[2] ^ sin_raw_meas[3]) ^ sin_raw_meas[5]) ^ sin_raw_meas[6]);
-// 
-XOR syndromes
+//
+// XOR syndromes
 sin_syn_meas = (sin_syn_meas ^ sin_last_raw_syn_z);
-// 
-Correct logical output based on measured out syndromes
+//
+// Correct logical output based on measured out syndromes
 sin_c[2] = sin_c[1];
 if(sin_syn_meas == 2) sin_c[2] = (sin_c[2] ^ 1);
 if(sin_syn_meas == 4) sin_c[2] = (sin_c[2] ^ 1);

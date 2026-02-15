@@ -330,7 +330,7 @@ impl HugrEngine {
     ///
     /// Supports integer constants (`ConstInt`), float constants (`ConstF64`),
     /// and boolean constants (`ConstBool`).
-    pub(crate) fn try_load_constant(&self, hugr: &Hugr, node: Node) -> Option<ClassicalValue> {
+    pub(crate) fn try_load_constant(hugr: &Hugr, node: Node) -> Option<ClassicalValue> {
         use tket::extension::bool::ConstBool;
         use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
         use tket::hugr::std_extensions::arithmetic::int_types::ConstInt;

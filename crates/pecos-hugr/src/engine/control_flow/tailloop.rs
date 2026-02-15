@@ -273,6 +273,7 @@ impl HugrEngine {
     }
 
     /// Continue a `TailLoop` with a new iteration after receiving `CONTINUE_TAG`.
+    #[allow(clippy::too_many_lines)] // Loop iteration control flow is inherently complex
     pub(crate) fn continue_tailloop_iteration(&mut self, hugr: &Hugr, tailloop_node: Node) {
         let Some(tailloop_info) = self.tailloops.get(&tailloop_node).cloned() else {
             return;

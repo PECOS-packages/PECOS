@@ -40,6 +40,8 @@ from pecos.slr.ast.nodes import (
 from pecos.slr.ast.visitor import BaseVisitor
 
 if TYPE_CHECKING:
+    from typing_extensions import Self
+
     from pecos.slr.ast.nodes import (
         AssignOp,
         BarrierOp,
@@ -116,6 +118,14 @@ class AstPrettyPrinter(BaseVisitor[str]):
         """Apply current indentation level to a line."""
         return f"{self._indent * self._level}{line}"
 
+    def increment_level(self) -> None:
+        """Increment indentation level."""
+        self._level += 1
+
+    def decrement_level(self) -> None:
+        """Decrement indentation level."""
+        self._level -= 1
+
     def _with_indent(self) -> _IndentContext:
         """Context manager to increase indent level."""
         return _IndentContext(self)
@@ -156,8 +166,9 @@ class AstPrettyPrinter(BaseVisitor[str]):
                 )
 
         # Body statements
-        for stmt in node.body:
-            lines.append(self._indented(f"{self._format_statement(stmt)},"))
+        lines.extend(
+            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
+        )
 
         self._level -= 1
         lines.append(")")
@@ -175,7 +186,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     # Statements
 
-    def _format_statement(self, stmt: Statement) -> str:
+    def format_statement(self, stmt: Statement) -> str:
         """Format a statement."""
         return stmt.accept(self)
 
@@ -185,7 +196,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
         targets = ", ".join(self.visit_slot_ref(t) for t in node.targets)
 
         if node.params:
-            params = ", ".join(self._format_expression(p) for p in node.params)
+            params = ", ".join(self.format_expression(p) for p in node.params)
             return f"qb.{gate_name}[{params}]({targets})"
         return f"qb.{gate_name}({targets})"
 
@@ -213,7 +224,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
             if isinstance(node.target, BitRef)
             else node.target
         )
-        value = self._format_expression(node.value)
+        value = self.format_expression(node.value)
         return f"{target} = {value}"
 
     def visit_barrier(self, node: BarrierOp) -> str:
@@ -231,7 +242,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
         """Visit return."""
         if node.values:
             vals = ", ".join(
-                self._format_expression(v) if isinstance(v, Expression) else str(v)
+                self.format_expression(v) if isinstance(v, Expression) else str(v)
                 for v in node.values
             )
             return f"Return({vals})"
@@ -247,19 +258,22 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_if(self, node: IfStmt) -> str:
         """Visit if statement."""
-        cond = self._format_expression(node.condition)
+        cond = self.format_expression(node.condition)
         lines = [f"If({cond}).Then("]
 
         self._level += 1
-        for stmt in node.then_body:
-            lines.append(self._indented(f"{self._format_statement(stmt)},"))
+        lines.extend(
+            self._indented(f"{self.format_statement(stmt)},") for stmt in node.then_body
+        )
         self._level -= 1
 
         if node.else_body:
             lines.append(").Else(")
             self._level += 1
-            for stmt in node.else_body:
-                lines.append(self._indented(f"{self._format_statement(stmt)},"))
+            lines.extend(
+                self._indented(f"{self.format_statement(stmt)},")
+                for stmt in node.else_body
+            )
             self._level -= 1
 
         lines.append(")")
@@ -267,12 +281,13 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_while(self, node: WhileStmt) -> str:
         """Visit while statement."""
-        cond = self._format_expression(node.condition)
+        cond = self.format_expression(node.condition)
         lines = [f"While({cond}).block("]
 
         self._level += 1
-        for stmt in node.body:
-            lines.append(self._indented(f"{self._format_statement(stmt)},"))
+        lines.extend(
+            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
+        )
         self._level -= 1
 
         lines.append(")")
@@ -280,17 +295,18 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_for(self, node: ForStmt) -> str:
         """Visit for statement."""
-        start = self._format_expression(node.start)
-        stop = self._format_expression(node.stop)
+        start = self.format_expression(node.start)
+        stop = self.format_expression(node.stop)
         if node.step:
-            step = self._format_expression(node.step)
+            step = self.format_expression(node.step)
             lines = [f"For({node.variable}, {start}, {stop}, {step}).block("]
         else:
             lines = [f"For({node.variable}, {start}, {stop}).block("]
 
         self._level += 1
-        for stmt in node.body:
-            lines.append(self._indented(f"{self._format_statement(stmt)},"))
+        lines.extend(
+            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
+        )
         self._level -= 1
 
         lines.append(")")
@@ -301,8 +317,9 @@ class AstPrettyPrinter(BaseVisitor[str]):
         lines = [f"Repeat(cond={node.count}).block("]
 
         self._level += 1
-        for stmt in node.body:
-            lines.append(self._indented(f"{self._format_statement(stmt)},"))
+        lines.extend(
+            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
+        )
         self._level -= 1
 
         lines.append(")")
@@ -313,8 +330,9 @@ class AstPrettyPrinter(BaseVisitor[str]):
         lines = ["Parallel("]
 
         self._level += 1
-        for stmt in node.body:
-            lines.append(self._indented(f"{self._format_statement(stmt)},"))
+        lines.extend(
+            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
+        )
         self._level -= 1
 
         lines.append(")")
@@ -332,7 +350,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     # Expressions
 
-    def _format_expression(self, expr: Expression) -> str:
+    def format_expression(self, expr: Expression) -> str:
         """Format an expression."""
         return expr.accept(self)
 
@@ -357,24 +375,24 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_binary(self, node: BinaryExpr) -> str:
         """Visit binary expression."""
-        left = self._format_expression(node.left)
-        right = self._format_expression(node.right)
+        left = self.format_expression(node.left)
+        right = self.format_expression(node.right)
         op = _BINARY_OP_SYMBOLS.get(node.op, str(node.op))
         return f"({left} {op} {right})"
 
     def visit_unary(self, node: UnaryExpr) -> str:
         """Visit unary expression."""
-        operand = self._format_expression(node.operand)
+        operand = self.format_expression(node.operand)
         op = _UNARY_OP_SYMBOLS.get(node.op, str(node.op))
         return f"{op}{operand}"
 
     # Type expressions (not commonly used in output)
 
-    def visit_qubit_type(self, node) -> str:
+    def visit_qubit_type(self, _node: object) -> str:
         """Visit qubit type."""
         return "Qubit"
 
-    def visit_bit_type(self, node) -> str:
+    def visit_bit_type(self, _node: object) -> str:
         """Visit bit type."""
         return "Bit"
 
@@ -389,17 +407,20 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
 
 class _IndentContext:
-    """Context manager for indentation."""
+    """Context manager for indentation.
+
+    This is an internal helper that accesses the printer's private methods.
+    """
 
     def __init__(self, printer: AstPrettyPrinter):
         self._printer = printer
 
-    def __enter__(self):
-        self._printer._level += 1
+    def __enter__(self) -> Self:
+        self._printer.increment_level()
         return self
 
-    def __exit__(self, *args):
-        self._printer._level -= 1
+    def __exit__(self, *_args: object) -> None:
+        self._printer.decrement_level()
 
 
 def pretty_print(program: Program, *, indent: str = "    ") -> str:
@@ -436,7 +457,7 @@ def format_statement(stmt: Statement, *, indent: str = "    ") -> str:
         String representation of the statement.
     """
     printer = AstPrettyPrinter(indent=indent)
-    return printer._format_statement(stmt)
+    return printer.format_statement(stmt)
 
 
 def format_expression(expr: Expression) -> str:
@@ -449,4 +470,4 @@ def format_expression(expr: Expression) -> str:
         String representation of the expression.
     """
     printer = AstPrettyPrinter()
-    return printer._format_expression(expr)
+    return printer.format_expression(expr)

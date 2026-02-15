@@ -466,7 +466,7 @@ impl PySimBuilder {
                     Python::attach(|py| -> PyResult<_> {
                         let fo_bound = fo_py.bind(py);
                         let wasm_obj: PyRef<'_, PyWasmForeignObject> =
-                            fo_bound.downcast::<PyWasmForeignObject>()?.borrow();
+                            fo_bound.cast::<PyWasmForeignObject>()?.borrow();
                         // Get WASM bytes and create QasmEngineWasm
                         let wasm_bytes = wasm_obj.inner.wasm_bytes().to_vec();
                         let qasm_wasm = QasmEngineWasm::from_bytes(wasm_bytes);
@@ -661,7 +661,7 @@ impl PySimBuilder {
                     Python::attach(|py| -> PyResult<_> {
                         let fo_bound = fo_py.bind(py);
                         let wasm_obj: PyRef<'_, PyWasmForeignObject> =
-                            fo_bound.downcast::<PyWasmForeignObject>()?.borrow();
+                            fo_bound.cast::<PyWasmForeignObject>()?.borrow();
                         Ok(engine_builder.foreign_object(wasm_obj.clone_boxed()))
                     })?
                 } else {
@@ -760,7 +760,7 @@ impl PySimBuilder {
                     let engine_builder = if let Some(ref fo_py) = builder.foreign_object {
                         let fo_bound = fo_py.bind(py);
                         let wasm_obj: PyRef<'_, PyWasmForeignObject> =
-                            fo_bound.downcast::<PyWasmForeignObject>()?.borrow();
+                            fo_bound.cast::<PyWasmForeignObject>()?.borrow();
                         // Get WASM bytes and create QasmEngineWasm
                         let wasm_bytes = wasm_obj.inner.wasm_bytes().to_vec();
                         let qasm_wasm = QasmEngineWasm::from_bytes(wasm_bytes);
@@ -1022,7 +1022,7 @@ impl PySimBuilder {
                     let engine_builder = if let Some(ref fo_py) = builder.foreign_object {
                         let fo_bound = fo_py.bind(py);
                         let wasm_obj: PyRef<'_, PyWasmForeignObject> =
-                            fo_bound.downcast::<PyWasmForeignObject>()?.borrow();
+                            fo_bound.cast::<PyWasmForeignObject>()?.borrow();
                         engine_builder.foreign_object(wasm_obj.clone_boxed())
                     } else {
                         engine_builder

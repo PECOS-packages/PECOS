@@ -431,15 +431,15 @@ if(smid_flags != 0) h smid_a[2];
 if(smid_flags != 0) measure smid_a[0] -> smid_syn_z[0];
 if(smid_flags != 0) measure smid_a[1] -> smid_syn_x[1];
 if(smid_flags != 0) measure smid_a[2] -> smid_syn_x[2];
-// 
-=========================
-BEGIN Run X decoder
-=========================
-
+//
+// =========================
+// BEGIN Run X decoder
+// =========================
+//
 if(smid_flags != 0) smid_syndromes = (smid_syn_x ^ smid_last_raw_syn_x);
 if(smid_flags == 0) smid_syndromes = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(smid_syndromes == 2) smid_c[4] = (smid_c[4] ^ 1);
 if(smid_syndromes == 4) smid_c[4] = (smid_c[4] ^ 1);
 if(smid_syndromes == 6) smid_c[4] = (smid_c[4] ^ 1);
@@ -470,7 +470,7 @@ if(smid_flags != 0) smid_last_raw_syn_x = smid_syn_x;
 // =========================
 // END Run X decoder
 // =========================
-
+//
 // ACTIVE ERROR CORRECTION FOR X SYNDROMES
 smid_scratch = 0;
 // only part that differs for X vs Z syns V
@@ -493,15 +493,15 @@ smid_last_raw_syn_x = 0;
 // smid_syn_x = 0;
 // smid_flag_x = 0;
 // smid_flags = 0;
-// 
-=========================
-BEGIN Run Z decoder
-=========================
-
+//
+// =========================
+// BEGIN Run Z decoder
+// =========================
+//
 if(smid_flags != 0) smid_syndromes = (smid_syn_z ^ smid_last_raw_syn_z);
 if(smid_flags == 0) smid_syndromes = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(smid_syndromes == 2) smid_c[3] = (smid_c[3] ^ 1);
 if(smid_syndromes == 4) smid_c[3] = (smid_c[3] ^ 1);
 if(smid_syndromes == 6) smid_c[3] = (smid_c[3] ^ 1);
@@ -532,7 +532,7 @@ if(smid_flags != 0) smid_last_raw_syn_z = smid_syn_z;
 // =========================
 // END Run Z decoder
 // =========================
-
+//
 // ACTIVE ERROR CORRECTION FOR Z SYNDROMES
 smid_scratch = 0;
 // only part that differs for X vs Z syns V
@@ -756,15 +756,15 @@ if(sout_flags != 0) h sout_a[2];
 if(sout_flags != 0) measure sout_a[0] -> sout_syn_z[0];
 if(sout_flags != 0) measure sout_a[1] -> sout_syn_x[1];
 if(sout_flags != 0) measure sout_a[2] -> sout_syn_x[2];
-// 
-=========================
-BEGIN Run X decoder
-=========================
-
+//
+// =========================
+// BEGIN Run X decoder
+// =========================
+//
 if(sout_flags != 0) sout_syndromes = (sout_syn_x ^ sout_last_raw_syn_x);
 if(sout_flags == 0) sout_syndromes = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(sout_syndromes == 2) sout_c[4] = (sout_c[4] ^ 1);
 if(sout_syndromes == 4) sout_c[4] = (sout_c[4] ^ 1);
 if(sout_syndromes == 6) sout_c[4] = (sout_c[4] ^ 1);
@@ -795,7 +795,7 @@ if(sout_flags != 0) sout_last_raw_syn_x = sout_syn_x;
 // =========================
 // END Run X decoder
 // =========================
-
+//
 // ACTIVE ERROR CORRECTION FOR X SYNDROMES
 sout_scratch = 0;
 // only part that differs for X vs Z syns V
@@ -818,15 +818,15 @@ sout_last_raw_syn_x = 0;
 // sout_syn_x = 0;
 // sout_flag_x = 0;
 // sout_flags = 0;
-// 
-=========================
-BEGIN Run Z decoder
-=========================
-
+//
+// =========================
+// BEGIN Run Z decoder
+// =========================
+//
 if(sout_flags != 0) sout_syndromes = (sout_syn_z ^ sout_last_raw_syn_z);
 if(sout_flags == 0) sout_syndromes = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(sout_syndromes == 2) sout_c[3] = (sout_c[3] ^ 1);
 if(sout_syndromes == 4) sout_c[3] = (sout_c[3] ^ 1);
 if(sout_syndromes == 6) sout_c[3] = (sout_c[3] ^ 1);
@@ -857,7 +857,7 @@ if(sout_flags != 0) sout_last_raw_syn_z = sout_syn_z;
 // =========================
 // END Run Z decoder
 // =========================
-
+//
 // ACTIVE ERROR CORRECTION FOR Z SYNDROMES
 sout_scratch = 0;
 // only part that differs for X vs Z syns V
@@ -1167,15 +1167,15 @@ if(sin_flags != 0) h sin_a[2];
 if(sin_flags != 0) measure sin_a[0] -> sin_syn_z[0];
 if(sin_flags != 0) measure sin_a[1] -> sin_syn_x[1];
 if(sin_flags != 0) measure sin_a[2] -> sin_syn_x[2];
-// 
-=========================
-BEGIN Run X decoder
-=========================
-
+//
+// =========================
+// BEGIN Run X decoder
+// =========================
+//
 if(sin_flags != 0) sin_syndromes = (sin_syn_x ^ sin_last_raw_syn_x);
 if(sin_flags == 0) sin_syndromes = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(sin_syndromes == 2) sin_c[4] = (sin_c[4] ^ 1);
 if(sin_syndromes == 4) sin_c[4] = (sin_c[4] ^ 1);
 if(sin_syndromes == 6) sin_c[4] = (sin_c[4] ^ 1);
@@ -1206,7 +1206,7 @@ if(sin_flags != 0) sin_last_raw_syn_x = sin_syn_x;
 // =========================
 // END Run X decoder
 // =========================
-
+//
 // ACTIVE ERROR CORRECTION FOR X SYNDROMES
 sin_scratch = 0;
 // only part that differs for X vs Z syns V
@@ -1229,15 +1229,15 @@ sin_last_raw_syn_x = 0;
 // sin_syn_x = 0;
 // sin_flag_x = 0;
 // sin_flags = 0;
-// 
-=========================
-BEGIN Run Z decoder
-=========================
-
+//
+// =========================
+// BEGIN Run Z decoder
+// =========================
+//
 if(sin_flags != 0) sin_syndromes = (sin_syn_z ^ sin_last_raw_syn_z);
 if(sin_flags == 0) sin_syndromes = 0;
-// 
-apply corrections
+//
+// apply corrections
 if(sin_syndromes == 2) sin_c[3] = (sin_c[3] ^ 1);
 if(sin_syndromes == 4) sin_c[3] = (sin_c[3] ^ 1);
 if(sin_syndromes == 6) sin_c[3] = (sin_c[3] ^ 1);
@@ -1268,7 +1268,7 @@ if(sin_flags != 0) sin_last_raw_syn_z = sin_syn_z;
 // =========================
 // END Run Z decoder
 // =========================
-
+//
 // ACTIVE ERROR CORRECTION FOR Z SYNDROMES
 sin_scratch = 0;
 // only part that differs for X vs Z syns V
@@ -1321,23 +1321,23 @@ measure sin_d[6] -> sin_raw_meas[6];
 // determine raw logical output
 // ============================
 sin_c[1] = ((sin_raw_meas[4] ^ sin_raw_meas[5]) ^ sin_raw_meas[6]);
-// 
-
-// 
-=================== //
-PROCESS MEASUREMENT //
-=================== //
-
-Determine correction to get logical output
-==========================================
+//
+//
+//
+// =================== //
+// PROCESS MEASUREMENT //
+// =================== //
+//
+// Determine correction to get logical output
+// ==========================================
 sin_syn_meas[0] = (((sin_raw_meas[0] ^ sin_raw_meas[1]) ^ sin_raw_meas[2]) ^ sin_raw_meas[3]);
 sin_syn_meas[1] = (((sin_raw_meas[1] ^ sin_raw_meas[2]) ^ sin_raw_meas[4]) ^ sin_raw_meas[5]);
 sin_syn_meas[2] = (((sin_raw_meas[2] ^ sin_raw_meas[3]) ^ sin_raw_meas[5]) ^ sin_raw_meas[6]);
-// 
-XOR syndromes
+//
+// XOR syndromes
 sin_syn_meas = (sin_syn_meas ^ sin_last_raw_syn_z);
-// 
-Correct logical output based on measured out syndromes
+//
+// Correct logical output based on measured out syndromes
 sin_c[2] = sin_c[1];
 if(sin_syn_meas == 2) sin_c[2] = (sin_c[2] ^ 1);
 if(sin_syn_meas == 4) sin_c[2] = (sin_c[2] ^ 1);
@@ -1358,23 +1358,23 @@ measure smid_d[6] -> smid_raw_meas[6];
 // determine raw logical output
 // ============================
 smid_c[1] = ((smid_raw_meas[4] ^ smid_raw_meas[5]) ^ smid_raw_meas[6]);
-// 
-
-// 
-=================== //
-PROCESS MEASUREMENT //
-=================== //
-
-Determine correction to get logical output
-==========================================
+//
+//
+//
+// =================== //
+// PROCESS MEASUREMENT //
+// =================== //
+//
+// Determine correction to get logical output
+// ==========================================
 smid_syn_meas[0] = (((smid_raw_meas[0] ^ smid_raw_meas[1]) ^ smid_raw_meas[2]) ^ smid_raw_meas[3]);
 smid_syn_meas[1] = (((smid_raw_meas[1] ^ smid_raw_meas[2]) ^ smid_raw_meas[4]) ^ smid_raw_meas[5]);
 smid_syn_meas[2] = (((smid_raw_meas[2] ^ smid_raw_meas[3]) ^ smid_raw_meas[5]) ^ smid_raw_meas[6]);
-// 
-XOR syndromes
+//
+// XOR syndromes
 smid_syn_meas = (smid_syn_meas ^ smid_last_raw_syn_z);
-// 
-Correct logical output based on measured out syndromes
+//
+// Correct logical output based on measured out syndromes
 smid_c[2] = smid_c[1];
 if(smid_syn_meas == 2) smid_c[2] = (smid_c[2] ^ 1);
 if(smid_syn_meas == 4) smid_c[2] = (smid_c[2] ^ 1);
@@ -1411,23 +1411,23 @@ measure sout_d[6] -> sout_raw_meas[6];
 // determine raw logical output
 // ============================
 sout_c[1] = ((sout_raw_meas[4] ^ sout_raw_meas[5]) ^ sout_raw_meas[6]);
-// 
-
-// 
-=================== //
-PROCESS MEASUREMENT //
-=================== //
-
-Determine correction to get logical output
-==========================================
+//
+//
+//
+// =================== //
+// PROCESS MEASUREMENT //
+// =================== //
+//
+// Determine correction to get logical output
+// ==========================================
 sout_syn_meas[0] = (((sout_raw_meas[0] ^ sout_raw_meas[1]) ^ sout_raw_meas[2]) ^ sout_raw_meas[3]);
 sout_syn_meas[1] = (((sout_raw_meas[1] ^ sout_raw_meas[2]) ^ sout_raw_meas[4]) ^ sout_raw_meas[5]);
 sout_syn_meas[2] = (((sout_raw_meas[2] ^ sout_raw_meas[3]) ^ sout_raw_meas[5]) ^ sout_raw_meas[6]);
-// 
-XOR syndromes
+//
+// XOR syndromes
 sout_syn_meas = (sout_syn_meas ^ sout_last_raw_syn_x);
-// 
-Correct logical output based on measured out syndromes
+//
+// Correct logical output based on measured out syndromes
 sout_c[2] = sout_c[1];
 if(sout_syn_meas == 2) sout_c[2] = (sout_c[2] ^ 1);
 if(sout_syn_meas == 4) sout_c[2] = (sout_c[2] ^ 1);

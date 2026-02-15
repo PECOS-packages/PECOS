@@ -40,11 +40,11 @@ from selene_sim.backends import Quest, SimpleRuntime
 
 
 def run_with_selene_reference(
-    guppy_func,
+    guppy_func: object,
     num_qubits: int,
     shots: int = 100,
     seed: int = 42,
-):
+) -> dict:
     """Run a Guppy function using the true Selene reference implementation.
 
     This uses selene-sim directly to build and run the program, which is
@@ -76,7 +76,12 @@ def run_with_selene_reference(
     return {"shots": results}
 
 
-def run_with_direct_hugr(guppy_func, num_qubits: int, shots: int = 100, seed: int = 42):
+def run_with_direct_hugr(
+    guppy_func: object,
+    num_qubits: int,
+    shots: int = 100,
+    seed: int = 42,
+) -> dict:
     """Run a Guppy function using the direct HUGR interpreter.
 
     This uses the pecos-hugr Rust crate to directly interpret the HUGR graph
@@ -92,7 +97,12 @@ def run_with_direct_hugr(guppy_func, num_qubits: int, shots: int = 100, seed: in
     return results.to_dict()
 
 
-def run_with_selene_llvm(guppy_func, num_qubits: int, shots: int = 100, seed: int = 42):
+def run_with_selene_llvm(
+    guppy_func: object,
+    num_qubits: int,
+    shots: int = 100,
+    seed: int = 42,
+) -> dict:
     """Run a Guppy function using the PECOS Selene/LLVM execution path.
 
     This compiles the HUGR to LLVM IR using Selene's hugr-qis compiler,

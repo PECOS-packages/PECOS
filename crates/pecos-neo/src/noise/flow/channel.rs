@@ -473,7 +473,10 @@ fn flow_to_noise_response(flow: FlowResponse, qubit: QubitId) -> NoiseResponse {
 
             match converted.len() {
                 0 => NoiseResponse::None,
-                1 => converted.into_iter().next().unwrap(),
+                1 => converted
+                    .into_iter()
+                    .next()
+                    .expect("len is 1, so next() returns Some"),
                 _ => NoiseResponse::Multiple(converted),
             }
         }

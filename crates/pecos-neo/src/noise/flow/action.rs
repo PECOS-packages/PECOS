@@ -2344,7 +2344,10 @@ pub mod actions {
 
                 match converted.len() {
                     0 => FlowResponse::None,
-                    1 => converted.into_iter().next().unwrap(),
+                    1 => converted
+                        .into_iter()
+                        .next()
+                        .expect("len is 1, so next() returns Some"),
                     _ => FlowResponse::Multiple(converted),
                 }
             }

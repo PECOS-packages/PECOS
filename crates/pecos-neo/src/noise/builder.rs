@@ -461,7 +461,10 @@ impl NoiseModelBuilder {
     ///     .build();
     /// ```
     #[must_use]
-    pub fn with_custom_channel<P: Primitive + Clone + 'static>(mut self, channel: FlowChannel<P>) -> Self {
+    pub fn with_custom_channel<P: Primitive + Clone + 'static>(
+        mut self,
+        channel: FlowChannel<P>,
+    ) -> Self {
         self.custom_channels.push(Box::new(channel));
         self
     }

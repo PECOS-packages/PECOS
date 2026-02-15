@@ -19,8 +19,8 @@ pub struct CanonicalForm {
 /// Uses exact Angle64 comparison - no floating-point tolerance needed
 /// because Angle64 is fixed-point and standard angles are exactly representable.
 pub struct GateCanonicalizer {
-    /// Known canonicalizations, sorted by `(from_gate, angle)` for binary search
-    canonicalizations: Vec<CanonicalForm>,
+    /// Known rules, sorted by `(from_gate, angle)` for binary search
+    rules: Vec<CanonicalForm>,
 }
 
 impl Default for GateCanonicalizer {
@@ -33,9 +33,7 @@ impl GateCanonicalizer {
     /// Create an empty canonicalizer.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            canonicalizations: Vec::new(),
-        }
+        Self { rules: Vec::new() }
     }
 
     /// Create a canonicalizer with standard gate mappings.
@@ -45,7 +43,7 @@ impl GateCanonicalizer {
 
         let mut canon = Self::new();
 
-        // RZ canonicalizations
+        // RZ rules
         canon.add(gates::RZ, A::ZERO, gates::I);
         canon.add(gates::RZ, A::HALF_TURN / 4, gates::T); // π/4
         canon.add(gates::RZ, A::ZERO - A::HALF_TURN / 4, gates::Tdg); // -π/4
@@ -53,32 +51,32 @@ impl GateCanonicalizer {
         canon.add(gates::RZ, A::ZERO - A::QUARTER_TURN, gates::SZdg); // -π/2
         canon.add(gates::RZ, A::HALF_TURN, gates::Z); // π
 
-        // RX canonicalizations
+        // RX rules
         canon.add(gates::RX, A::ZERO, gates::I);
         canon.add(gates::RX, A::QUARTER_TURN, gates::SX); // π/2
         canon.add(gates::RX, A::ZERO - A::QUARTER_TURN, gates::SXdg); // -π/2
         canon.add(gates::RX, A::HALF_TURN, gates::X); // π
 
-        // RY canonicalizations
+        // RY rules
         canon.add(gates::RY, A::ZERO, gates::I);
         canon.add(gates::RY, A::QUARTER_TURN, gates::SY); // π/2
         canon.add(gates::RY, A::ZERO - A::QUARTER_TURN, gates::SYdg); // -π/2
         canon.add(gates::RY, A::HALF_TURN, gates::Y); // π
 
-        // RZZ canonicalizations
+        // RZZ rules
         canon.add(gates::RZZ, A::QUARTER_TURN, gates::SZZ); // π/2
         canon.add(gates::RZZ, A::ZERO - A::QUARTER_TURN, gates::SZZdg); // -π/2
 
-        // RXX canonicalizations
+        // RXX rules
         canon.add(gates::RXX, A::QUARTER_TURN, gates::SXX); // π/2
         canon.add(gates::RXX, A::ZERO - A::QUARTER_TURN, gates::SXXdg); // -π/2
 
-        // RYY canonicalizations
+        // RYY rules
         canon.add(gates::RYY, A::QUARTER_TURN, gates::SYY); // π/2
         canon.add(gates::RYY, A::ZERO - A::QUARTER_TURN, gates::SYYdg); // -π/2
 
         // Sort for efficient lookup
-        canon.canonicalizations.sort_by(|a, b| {
+        canon.rules.sort_by(|a, b| {
             a.from_gate
                 .cmp(&b.from_gate)
                 .then_with(|| a.angle.cmp(&b.angle))
@@ -89,7 +87,7 @@ impl GateCanonicalizer {
 
     /// Add a canonicalization rule.
     pub fn add(&mut self, from_gate: GateId, angle: Angle64, to_gate: GateId) {
-        self.canonicalizations.push(CanonicalForm {
+        self.rules.push(CanonicalForm {
             from_gate,
             angle,
             to_gate,
@@ -111,9 +109,9 @@ impl GateCanonicalizer {
 
         let angle = angles[0];
 
-        // Linear search through canonicalizations for matching gate
+        // Linear search through rules for matching gate
         // (could use binary search if list gets large)
-        for canon in &self.canonicalizations {
+        for canon in &self.rules {
             if canon.from_gate == gate_id && canon.angle == angle {
                 return Some(canon.to_gate);
             }
@@ -127,7 +125,7 @@ impl GateCanonicalizer {
     /// This is the reverse of canonicalization.
     #[must_use]
     pub fn expand(&self, gate_id: GateId) -> Option<(GateId, Angle64)> {
-        for canon in &self.canonicalizations {
+        for canon in &self.rules {
             if canon.to_gate == gate_id {
                 return Some((canon.from_gate, canon.angle));
             }
@@ -138,15 +136,13 @@ impl GateCanonicalizer {
     /// Check if a gate can be canonicalized at any angle.
     #[must_use]
     pub fn can_canonicalize(&self, gate_id: GateId) -> bool {
-        self.canonicalizations
-            .iter()
-            .any(|c| c.from_gate == gate_id)
+        self.rules.iter().any(|c| c.from_gate == gate_id)
     }
 
     /// Get all canonical forms for a given parameterized gate.
     #[must_use]
     pub fn get_forms_for(&self, gate_id: GateId) -> Vec<&CanonicalForm> {
-        self.canonicalizations
+        self.rules
             .iter()
             .filter(|c| c.from_gate == gate_id)
             .collect()

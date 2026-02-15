@@ -445,11 +445,7 @@ mod tests {
 
     #[test]
     fn test_prep_all_measure_all() {
-        let commands = CommandBuilder::new()
-            .pz_all(0..4)
-            .h(0)
-            .mz_all(0..4)
-            .build();
+        let commands = CommandBuilder::new().pz_all(0..4).h(0).mz_all(0..4).build();
 
         assert_eq!(commands.len(), 9); // 4 preps + 1 H + 4 measures
     }

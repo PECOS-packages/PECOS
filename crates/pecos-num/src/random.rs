@@ -40,9 +40,9 @@
 
 use ndarray::Array1;
 use pecos_rng::PecosRng;
+use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::SliceRandom;
-use rand::Rng;
 use std::cell::RefCell;
 
 // Thread-local seeded RNG for reproducibility

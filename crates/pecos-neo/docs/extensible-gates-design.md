@@ -1000,7 +1000,7 @@ angle == Angle64::QUARTER_TURN  // ✓ Works perfectly
 
 This eliminates floating-point tolerance issues entirely for standard gate angles.
 
-### Standard Canonicalizations
+### Standard Canonicalization Rules
 
 ```rust
 /// Known angle → fixed gate mappings
@@ -1008,7 +1008,7 @@ This eliminates floating-point tolerance issues entirely for standard gate angle
 pub struct GateCanonicalizer {
     /// Maps (parameterized_gate_id, angle) → fixed_gate_id
     /// Uses sorted vec indexed by (gate_id, angle.fraction) for fast lookup
-    canonicalizations: Vec<CanonicalForm>,
+    rules: Vec<CanonicalForm>,
 }
 
 pub struct CanonicalForm {
@@ -1019,14 +1019,14 @@ pub struct CanonicalForm {
 }
 
 impl GateCanonicalizer {
-    /// Standard canonicalizations for core gates
+    /// Standard rules for core gates
     /// All angles are EXACT Angle64 values - no approximation
     pub fn standard() -> Self {
         use Angle64 as A;
 
         Self {
-            canonicalizations: vec![
-                // RZ canonicalizations - exact angles
+            rules: vec![
+                // RZ rules - exact angles
                 CanonicalForm { from_gate: gates::RZ, angle: A::ZERO,                        to_gate: gates::I },
                 CanonicalForm { from_gate: gates::RZ, angle: A::HALF_TURN / 4,               to_gate: gates::T },      // π/4
                 CanonicalForm { from_gate: gates::RZ, angle: A::ZERO - A::HALF_TURN / 4,     to_gate: gates::Tdg },    // -π/4
@@ -1034,19 +1034,19 @@ impl GateCanonicalizer {
                 CanonicalForm { from_gate: gates::RZ, angle: A::ZERO - A::QUARTER_TURN,      to_gate: gates::SZdg },   // -π/2
                 CanonicalForm { from_gate: gates::RZ, angle: A::HALF_TURN,                   to_gate: gates::Z },      // π
 
-                // RX canonicalizations
+                // RX rules
                 CanonicalForm { from_gate: gates::RX, angle: A::ZERO,                        to_gate: gates::I },
                 CanonicalForm { from_gate: gates::RX, angle: A::QUARTER_TURN,                to_gate: gates::SX },
                 CanonicalForm { from_gate: gates::RX, angle: A::ZERO - A::QUARTER_TURN,      to_gate: gates::SXdg },
                 CanonicalForm { from_gate: gates::RX, angle: A::HALF_TURN,                   to_gate: gates::X },
 
-                // RY canonicalizations
+                // RY rules
                 CanonicalForm { from_gate: gates::RY, angle: A::ZERO,                        to_gate: gates::I },
                 CanonicalForm { from_gate: gates::RY, angle: A::QUARTER_TURN,                to_gate: gates::SY },
                 CanonicalForm { from_gate: gates::RY, angle: A::ZERO - A::QUARTER_TURN,      to_gate: gates::SYdg },
                 CanonicalForm { from_gate: gates::RY, angle: A::HALF_TURN,                   to_gate: gates::Y },
 
-                // RZZ canonicalizations
+                // RZZ rules
                 CanonicalForm { from_gate: gates::RZZ, angle: A::QUARTER_TURN,               to_gate: gates::SZZ },
                 CanonicalForm { from_gate: gates::RZZ, angle: A::ZERO - A::QUARTER_TURN,     to_gate: gates::SZZdg },
             ],
@@ -1063,7 +1063,7 @@ impl GateCanonicalizer {
         let angle = angles[0];
 
         // Exact equality check - Angle64 is fixed-point
-        for canon in &self.canonicalizations {
+        for canon in &self.rules {
             if canon.from_gate == gate_id && canon.angle == angle {
                 return Some(canon.to_gate);
             }
@@ -1108,9 +1108,9 @@ impl CircuitBuilder {
 }
 ```
 
-### User-Defined Canonicalizations
+### User-Defined Canonicalization Rules
 
-Users can register their own canonicalizations for custom gates:
+Users can register their own rules for custom gates:
 
 ```rust
 // Register a custom gate
@@ -1150,7 +1150,7 @@ impl GateCanonicalizer {
     /// Expand fixed gate to parameterized form
     pub fn expand(&self, gate_id: GateId) -> Option<(GateId, Angle64)> {
         // Reverse lookup
-        for canon in &self.canonicalizations {
+        for canon in &self.rules {
             if canon.to_gate == gate_id {
                 return Some((canon.from_gate, Angle64::from_turns(canon.angle_turns)));
             }

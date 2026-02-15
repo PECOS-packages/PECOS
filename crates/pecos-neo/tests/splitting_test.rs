@@ -855,12 +855,7 @@ fn test_quantum_circuit_subset_simulation() {
 
             // Build circuit for this round - need to reset simulator for rounds after first
             let circuit = if round == 0 {
-                CommandBuilder::new()
-                    .pz(0)
-                    .pz(1)
-                    .cx(0, 1)
-                    .mz(1)
-                    .build()
+                CommandBuilder::new().pz(0).pz(1).cx(0, 1).mz(1).build()
             } else {
                 syndrome_circuit()
             };
@@ -911,12 +906,7 @@ fn test_quantum_circuit_subset_simulation() {
                     .with_rng(PecosRng::seed_from_u64(seed));
 
                 let circuit = if round == 0 {
-                    CommandBuilder::new()
-                        .pz(0)
-                        .pz(1)
-                        .cx(0, 1)
-                        .mz(1)
-                        .build()
+                    CommandBuilder::new().pz(0).pz(1).cx(0, 1).mz(1).build()
                 } else {
                     syndrome_circuit()
                 };

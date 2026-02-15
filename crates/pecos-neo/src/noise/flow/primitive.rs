@@ -820,8 +820,12 @@ impl<P: Primitive> Primitive for Sample<P> {
             }
         }
 
-        // Fallback to last branch (should not normally reach here)
-        self.branches.last().unwrap().1.apply(qubit, ctx, rng)
+        // Fallback to last branch (floating-point rounding guard)
+        self.branches
+            .last()
+            .expect("Sample must have at least one branch")
+            .1
+            .apply(qubit, ctx, rng)
     }
 
     fn describe(&self) -> String {
@@ -1145,8 +1149,12 @@ impl Primitive for BoxSample {
             }
         }
 
-        // Fallback to last branch (should not normally reach here)
-        self.branches.last().unwrap().1.apply(qubit, ctx, rng)
+        // Fallback to last branch (floating-point rounding guard)
+        self.branches
+            .last()
+            .expect("BoxSample must have at least one branch")
+            .1
+            .apply(qubit, ctx, rng)
     }
 
     fn describe(&self) -> String {

@@ -247,7 +247,11 @@ impl CompiledPrimitive {
                         return branches[i].1.apply(qubit, ctx, rng);
                     }
                 }
-                branches.last().unwrap().1.apply(qubit, ctx, rng)
+                branches
+                    .last()
+                    .expect("CompiledPrimitive::Sample must have at least one branch")
+                    .1
+                    .apply(qubit, ctx, rng)
             }
             Self::Seq(primitives) => {
                 let mut combined = FlowResponse::None;
@@ -546,7 +550,10 @@ impl CompiledPrimitive {
 
         // Optimize single-element sequences
         if flattened.len() == 1 {
-            return flattened.into_iter().next().unwrap();
+            return flattened
+                .into_iter()
+                .next()
+                .expect("flattened has exactly 1 element");
         }
 
         Self::Seq(flattened)

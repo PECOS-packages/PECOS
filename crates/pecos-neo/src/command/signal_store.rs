@@ -92,12 +92,7 @@ impl<S: Signal> SignalVec for TypedSignalVec<S> {
     }
 
     fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}[{}]",
-            S::name(),
-            self.positions.len(),
-        )
+        write!(f, "{}[{}]", S::name(), self.positions.len(),)
     }
 
     fn positions(&self) -> &[u32] {
@@ -141,7 +136,7 @@ impl SignalStore {
         } else {
             self.channels
                 .push((type_id, Box::new(TypedSignalVec::<S>::new())));
-            &mut self.channels.last_mut().unwrap().1
+            &mut self.channels.last_mut().expect("just pushed an element").1
         };
 
         let typed = vec
@@ -242,7 +237,12 @@ impl fmt::Debug for SignalStore {
         if self.is_empty() {
             return write!(f, "SignalStore(empty)");
         }
-        write!(f, "SignalStore({} signals, {} types: [", self.total_count, self.channels.len())?;
+        write!(
+            f,
+            "SignalStore({} signals, {} types: [",
+            self.total_count,
+            self.channels.len()
+        )?;
         for (i, (_, vec)) in self.channels.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
@@ -321,7 +321,10 @@ mod tests {
         assert_eq!(store.type_count(), 2);
 
         let temps: Vec<_> = store.iter::<Temperature>().collect();
-        assert_eq!(temps, vec![(0, &Temperature(300.0)), (5, &Temperature(350.0))]);
+        assert_eq!(
+            temps,
+            vec![(0, &Temperature(300.0)), (5, &Temperature(350.0))]
+        );
 
         let rounds: Vec<_> = store.iter::<RoundBoundary>().collect();
         assert_eq!(rounds, vec![(3, &RoundBoundary(1))]);
@@ -371,7 +374,9 @@ mod tests {
         let entries: Vec<_> = store.iter::<CalibrationData>().collect();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, 10);
-        assert_eq!(entries[0].1.rates, [0.01, 0.02, 0.03, 0.04]);
+        for (actual, expected) in entries[0].1.rates.iter().zip(&[0.01, 0.02, 0.03, 0.04]) {
+            assert!((actual - expected).abs() < f64::EPSILON);
+        }
     }
 
     #[test]
@@ -400,7 +405,13 @@ mod tests {
         assert_eq!(type_id, TypeId::of::<Temperature>());
         assert_eq!(channel.len(), 2);
         assert_eq!(channel.positions(), &[0, 5]);
-        assert!(channel.entry_data(0).unwrap().downcast_ref::<Temperature>().is_some());
+        assert!(
+            channel
+                .entry_data(0)
+                .unwrap()
+                .downcast_ref::<Temperature>()
+                .is_some()
+        );
 
         let (type_id, channel) = store.channel_at(1).unwrap();
         assert_eq!(type_id, TypeId::of::<RoundBoundary>());
@@ -423,10 +434,18 @@ mod tests {
         assert_eq!(positions, &[0, 5, 10]);
 
         // Data accessible separately
-        let t0 = channel.entry_data(0).unwrap().downcast_ref::<Temperature>().unwrap();
-        assert_eq!(t0.0, 100.0);
-        let t2 = channel.entry_data(2).unwrap().downcast_ref::<Temperature>().unwrap();
-        assert_eq!(t2.0, 300.0);
+        let t0 = channel
+            .entry_data(0)
+            .unwrap()
+            .downcast_ref::<Temperature>()
+            .unwrap();
+        assert!((t0.0 - 100.0).abs() < f64::EPSILON);
+        let t2 = channel
+            .entry_data(2)
+            .unwrap()
+            .downcast_ref::<Temperature>()
+            .unwrap();
+        assert!((t2.0 - 300.0).abs() < f64::EPSILON);
         assert!(channel.entry_data(3).is_none());
     }
 }

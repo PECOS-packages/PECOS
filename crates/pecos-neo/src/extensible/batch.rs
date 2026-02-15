@@ -135,7 +135,11 @@ impl BatchedCircuit {
                     continue;
                 }
                 // Flush current batch and start new one
-                batched.batches.push(current_batch.take().unwrap());
+                batched.batches.push(
+                    current_batch
+                        .take()
+                        .expect("current_batch is Some in this branch"),
+                );
             }
 
             // Start a new batch

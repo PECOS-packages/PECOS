@@ -142,7 +142,10 @@ fn main() {
     }
 
     println!("\n--- Summary ---\n");
-    println!("{:>8} {:>14} {:>14} {:>14} {:>8}", "Qubits", "No-noise", "With-noise", "Overhead", "Pct");
+    println!(
+        "{:>8} {:>14} {:>14} {:>14} {:>8}",
+        "Qubits", "No-noise", "With-noise", "Overhead", "Pct"
+    );
     for (q, nn, wn, oh) in &results {
         let pct = (oh / nn) * 100.0;
         println!("{q:>8} {nn:>12.1} ns {wn:>12.1} ns {oh:>12.1} ns {pct:>6.1}%");

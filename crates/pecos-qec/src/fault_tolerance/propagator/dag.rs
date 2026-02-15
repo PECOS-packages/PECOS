@@ -857,8 +857,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
         for &node in &topo_order {
             if let Some(gate) = propagator.gate(node) {
-                let is_measurement =
-                    matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
+                let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
                 let is_prep = matches!(gate.gate_type, GateType::PZ | GateType::QAlloc);
 
                 // Convert QubitId to usize

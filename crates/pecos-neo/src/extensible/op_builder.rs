@@ -1344,10 +1344,11 @@ mod negative_tests {
     #[test]
     fn if_then_else_fails_conversion() {
         let q = QubitId(0);
-        let builder = OpBuilder::new()
-            .pz(q)
-            .mz(q, ResultId(0))
-            .if_then_else(ResultId(0), |b| b.x(q), |b| b.z(q));
+        let builder = OpBuilder::new().pz(q).mz(q, ResultId(0)).if_then_else(
+            ResultId(0),
+            |b| b.x(q),
+            |b| b.z(q),
+        );
 
         let result = builder.to_command_queue();
         assert!(result.is_err());

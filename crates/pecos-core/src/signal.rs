@@ -126,7 +126,10 @@ mod tests {
         let temp = Temperature(300.0);
         let any_ref: &dyn Any = &temp;
         assert!(any_ref.downcast_ref::<Temperature>().is_some());
-        assert_eq!(any_ref.downcast_ref::<Temperature>().unwrap().0, 300.0);
+        let t = any_ref
+            .downcast_ref::<Temperature>()
+            .expect("downcast to Temperature");
+        assert!((t.0 - 300.0).abs() < f64::EPSILON);
     }
 
     #[test]

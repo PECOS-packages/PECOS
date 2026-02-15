@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::{Angle64, QubitId, RngManageable};
-use pecos_rng::{resolve_seed, PecosRng, RngCore, RngProbabilityExt, SeedableRng};
+use pecos_rng::{PecosRng, RngCore, RngProbabilityExt, SeedableRng, resolve_seed};
 
 use core::fmt::Debug;
 

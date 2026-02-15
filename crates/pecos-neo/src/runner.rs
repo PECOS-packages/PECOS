@@ -31,7 +31,8 @@ use std::any::{Any, TypeId};
 type ErasedHandler = Box<dyn Fn(&dyn Any) + Send + Sync>;
 
 /// Type-erased response-producing signal handler.
-type ErasedResponseHandler = Box<dyn Fn(&dyn Any, &DispatchContext<'_>) -> NoiseResponse + Send + Sync>;
+type ErasedResponseHandler =
+    Box<dyn Fn(&dyn Any, &DispatchContext<'_>) -> NoiseResponse + Send + Sync>;
 
 /// Registry of signal handlers, keyed by signal `TypeId`.
 ///
@@ -59,7 +60,11 @@ impl SignalHandlerRegistry {
     }
 
     fn add_response(&mut self, type_id: TypeId, handler: ErasedResponseHandler) {
-        if let Some((_, handlers)) = self.response_handlers.iter_mut().find(|(id, _)| *id == type_id) {
+        if let Some((_, handlers)) = self
+            .response_handlers
+            .iter_mut()
+            .find(|(id, _)| *id == type_id)
+        {
             handlers.push(handler);
         } else {
             self.response_handlers.push((type_id, vec![handler]));
@@ -74,7 +79,12 @@ impl SignalHandlerRegistry {
         }
     }
 
-    fn call_response(&self, type_id: TypeId, data: &dyn Any, ctx: &DispatchContext<'_>) -> NoiseResponse {
+    fn call_response(
+        &self,
+        type_id: TypeId,
+        data: &dyn Any,
+        ctx: &DispatchContext<'_>,
+    ) -> NoiseResponse {
         let mut combined = NoiseResponse::None;
         if let Some((_, handlers)) = self.response_handlers.iter().find(|(id, _)| *id == type_id) {
             for handler in handlers {
@@ -261,7 +271,10 @@ impl<S: CliffordGateable> ShotRunner<S> {
     ///     counter_clone.fetch_add(1, Ordering::Relaxed);
     /// });
     /// ```
-    pub fn on_signal<Sig: Signal>(&mut self, handler: impl Fn(&Sig) + Send + Sync + 'static) -> &mut Self {
+    pub fn on_signal<Sig: Signal>(
+        &mut self,
+        handler: impl Fn(&Sig) + Send + Sync + 'static,
+    ) -> &mut Self {
         let erased: ErasedHandler = Box::new(move |data: &dyn Any| {
             if let Some(signal) = data.downcast_ref::<Sig>() {
                 handler(signal);
@@ -300,14 +313,16 @@ impl<S: CliffordGateable> ShotRunner<S> {
         &mut self,
         handler: impl Fn(&Sig, &DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
     ) -> &mut Self {
-        let erased: ErasedResponseHandler = Box::new(move |data: &dyn Any, ctx: &DispatchContext<'_>| {
-            if let Some(signal) = data.downcast_ref::<Sig>() {
-                handler(signal, ctx)
-            } else {
-                NoiseResponse::None
-            }
-        });
-        self.signal_handlers.add_response(TypeId::of::<Sig>(), erased);
+        let erased: ErasedResponseHandler =
+            Box::new(move |data: &dyn Any, ctx: &DispatchContext<'_>| {
+                if let Some(signal) = data.downcast_ref::<Sig>() {
+                    handler(signal, ctx)
+                } else {
+                    NoiseResponse::None
+                }
+            });
+        self.signal_handlers
+            .add_response(TypeId::of::<Sig>(), erased);
         self
     }
 
@@ -721,8 +736,7 @@ impl<S: CliffordGateable> ShotRunner<S> {
 
         // 1. User before-gate handlers
         let ctx = self.gate_context(command);
-        let user_response =
-            GateEventHandlers::dispatch(&self.gate_handlers.before_gate, &ctx);
+        let user_response = GateEventHandlers::dispatch(&self.gate_handlers.before_gate, &ctx);
 
         // 2. Noise model BeforeGate
         let noise_response = self.emit_before_gate_noise_raw(command);
@@ -747,8 +761,7 @@ impl<S: CliffordGateable> ShotRunner<S> {
 
         // 2. User after-gate handlers
         let ctx = self.gate_context(command);
-        let user_response =
-            GateEventHandlers::dispatch(&self.gate_handlers.after_gate, &ctx);
+        let user_response = GateEventHandlers::dispatch(&self.gate_handlers.after_gate, &ctx);
 
         // 3. Combine and apply
         let combined = noise_response.combine(user_response);
@@ -855,8 +868,7 @@ impl<S: CliffordGateable> ShotRunner<S> {
             duration: Some(duration),
             noise_context: self.noise.as_ref().map(ComposableNoiseModel::context),
         };
-        let user_response =
-            GateEventHandlers::dispatch(&self.gate_handlers.idle, &ctx);
+        let user_response = GateEventHandlers::dispatch(&self.gate_handlers.idle, &ctx);
 
         // 3. Combine and apply
         let combined = noise_response.combine(user_response);
@@ -982,9 +994,12 @@ impl<S: CliffordGateable> ShotRunner<S> {
         execute_fn: fn(&mut Self, &GateCommand),
     ) {
         let store = commands.signals();
-        let mut cursors: SmallVec<[SignalCursor; 4]> = SmallVec::with_capacity(store.channel_count());
+        let mut cursors: SmallVec<[SignalCursor; 4]> =
+            SmallVec::with_capacity(store.channel_count());
         for ch_idx in 0..store.channel_count() {
-            let (type_id, channel) = store.channel_at(ch_idx).unwrap();
+            let (type_id, channel) = store
+                .channel_at(ch_idx)
+                .expect("ch_idx is within 0..channel_count()");
             cursors.push(SignalCursor {
                 type_id,
                 channel_idx: ch_idx,
@@ -1006,12 +1021,7 @@ impl<S: CliffordGateable> ShotRunner<S> {
     /// Uses the positions slice directly (contiguous `u32`s, no vtable call
     /// per element) for the hot-path position check. Signal data is only
     /// accessed on match via a single vtable call.
-    fn dispatch_signals_at(
-        &mut self,
-        pos: u32,
-        store: &SignalStore,
-        cursors: &mut [SignalCursor],
-    ) {
+    fn dispatch_signals_at(&mut self, pos: u32, store: &SignalStore, cursors: &mut [SignalCursor]) {
         let has_response_handlers = self.signal_handlers.has_response_handlers();
 
         for cursor in cursors.iter_mut() {
@@ -1036,7 +1046,9 @@ impl<S: CliffordGateable> ShotRunner<S> {
                 // 2. Call response-producing signal handlers
                 if has_response_handlers {
                     let ctx = self.signal_context();
-                    let response = self.signal_handlers.call_response(cursor.type_id, data, &ctx);
+                    let response = self
+                        .signal_handlers
+                        .call_response(cursor.type_id, data, &ctx);
                     if !response.is_none() {
                         self.apply_noise_response(response);
                     }
@@ -2031,8 +2043,8 @@ mod tests {
     mod signal_tests {
         use super::*;
         use pecos_core::impl_signal;
-        use std::sync::atomic::{AtomicU64, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
 
         #[derive(Copy, Clone, Debug)]
         struct RoundBoundary(pub i64);
@@ -2223,8 +2235,8 @@ mod tests {
         #[test]
         fn signal_emitted_to_noise_model() {
             use crate::noise::NoiseChannel;
-            use pecos_rng::PecosRng;
             use crate::noise::context::NoiseContext;
+            use pecos_rng::PecosRng;
             use std::sync::atomic::AtomicBool;
 
             // Create a custom noise channel that records if it received a signal
@@ -2244,10 +2256,10 @@ mod tests {
                     _context: &mut NoiseContext,
                     _rng: &mut PecosRng,
                 ) -> NoiseResponse {
-                    if let NoiseEvent::Signal { data, .. } = event {
-                        if data.downcast_ref::<RoundBoundary>().is_some() {
-                            self.received.store(true, Ordering::Relaxed);
-                        }
+                    if let NoiseEvent::Signal { data, .. } = event
+                        && data.downcast_ref::<RoundBoundary>().is_some()
+                    {
+                        self.received.store(true, Ordering::Relaxed);
                     }
                     NoiseResponse::None
                 }
@@ -2311,14 +2323,8 @@ mod tests {
             let o1 = runner1.execute(&commands_no_signals);
             let o2 = runner2.execute(&commands_with_signals);
 
-            assert_eq!(
-                o1.get_bit(QubitId(0)),
-                o2.get_bit(QubitId(0)),
-            );
-            assert_eq!(
-                o1.get_bit(QubitId(1)),
-                o2.get_bit(QubitId(1)),
-            );
+            assert_eq!(o1.get_bit(QubitId(0)), o2.get_bit(QubitId(0)),);
+            assert_eq!(o1.get_bit(QubitId(1)), o2.get_bit(QubitId(1)),);
             // Both should be 1
             assert_eq!(o2.get_bit(QubitId(0)), Some(true));
             assert_eq!(o2.get_bit(QubitId(1)), Some(true));
@@ -2567,8 +2573,8 @@ mod tests {
 
     mod gate_handler_tests {
         use super::*;
-        use std::sync::atomic::{AtomicU64, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
 
         #[test]
         fn before_gate_handler_called_with_correct_context() {
@@ -2579,10 +2585,10 @@ mod tests {
 
             let mut runner = ShotRunner::new(SparseStab::new(1)).with_seed(42);
             runner.on_before_gate(move |ctx: &DispatchContext<'_>| {
-                seen_clone.lock().unwrap().push((
-                    ctx.gate_type,
-                    ctx.qubits.to_vec(),
-                ));
+                seen_clone
+                    .lock()
+                    .unwrap()
+                    .push((ctx.gate_type, ctx.qubits.to_vec()));
                 NoiseResponse::None
             });
 
@@ -2668,7 +2674,10 @@ mod tests {
             let outcomes = runner.execute(&commands);
             // If H is skipped, qubit stays in |0> state -> measure 0
             let outcome = outcomes.get_bit(QubitId(0)).unwrap();
-            assert!(!outcome, "H gate should have been skipped, so result should be 0");
+            assert!(
+                !outcome,
+                "H gate should have been skipped, so result should be 0"
+            );
         }
 
         #[test]
@@ -2742,8 +2751,8 @@ mod tests {
 
             let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-            let noise = ComposableNoiseModel::new()
-                .add_channel(SingleQubitChannel::depolarizing(0.0)); // No actual noise
+            let noise =
+                ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0)); // No actual noise
 
             let mut runner = ShotRunner::new(SparseStab::new(1))
                 .with_noise(noise)
@@ -2824,11 +2833,7 @@ mod tests {
             let duration_seen = Arc::new(std::sync::Mutex::new(Vec::new()));
             let dc = duration_seen.clone();
 
-            let commands = CommandBuilder::new()
-                .pz(0)
-                .idle(0, 100u64)
-                .mz(0)
-                .build();
+            let commands = CommandBuilder::new().pz(0).idle(0, 100u64).mz(0).build();
 
             let mut runner = ShotRunner::new(SparseStab::new(1)).with_seed(42);
             runner.on_idle(move |ctx: &DispatchContext<'_>| {
@@ -2869,8 +2874,8 @@ mod tests {
 
             let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-            let noise = ComposableNoiseModel::new()
-                .add_channel(SingleQubitChannel::depolarizing(0.0));
+            let noise =
+                ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
 
             let mut runner = ShotRunner::new(SparseStab::new(1))
                 .with_noise(noise)
@@ -2925,8 +2930,8 @@ mod tests {
                 .mz(1)
                 .build();
 
-            let noise = ComposableNoiseModel::new()
-                .add_channel(SingleQubitChannel::depolarizing(0.0));
+            let noise =
+                ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
 
             let mut runner = ShotRunner::new(SparseStab::new(2))
                 .with_noise(noise)
@@ -3027,7 +3032,9 @@ mod tests {
 
             let mut runner = ShotRunner::new(StateVec::new(2)).with_seed(42);
             runner.on_before_gate(move |ctx: &DispatchContext<'_>| {
-                gd.lock().unwrap().push((ctx.gate_type, ctx.gate_id.unwrap()));
+                gd.lock()
+                    .unwrap()
+                    .push((ctx.gate_type, ctx.gate_id.unwrap()));
                 NoiseResponse::None
             });
 
@@ -3069,20 +3076,13 @@ mod tests {
             let od = outcome_data.clone();
 
             // Prep both, X on q0 only -> q0=1, q1=0
-            let commands = CommandBuilder::new()
-                .pz(0)
-                .pz(1)
-                .x(0)
-                .mz(0)
-                .mz(1)
-                .build();
+            let commands = CommandBuilder::new().pz(0).pz(1).x(0).mz(0).mz(1).build();
 
             let mut runner = ShotRunner::new(SparseStab::new(2)).with_seed(42);
             runner.on_after_measurement(move |ctx: &DispatchContext<'_>| {
-                od.lock().unwrap().push((
-                    ctx.qubits.to_vec(),
-                    ctx.outcomes.unwrap().to_vec(),
-                ));
+                od.lock()
+                    .unwrap()
+                    .push((ctx.qubits.to_vec(), ctx.outcomes.unwrap().to_vec()));
                 NoiseResponse::None
             });
 
@@ -3299,27 +3299,58 @@ mod tests {
             let ic = idle_count.clone();
 
             let commands = CommandBuilder::new()
-                .pz(0)              // triggers after_preparation
-                .h(0)               // triggers after_gate
+                .pz(0) // triggers after_preparation
+                .h(0) // triggers after_gate
                 .idle(0, TimeUnits::new(10)) // triggers idle
-                .h(0)               // triggers after_gate
-                .mz(0)              // triggers before/after_measurement
+                .h(0) // triggers after_gate
+                .mz(0) // triggers before/after_measurement
                 .build();
 
             let mut runner = ShotRunner::new(StateVec::new(1)).with_seed(42);
 
-            runner.on_after_gate(move |_| { ag.fetch_add(1, Ordering::Relaxed); NoiseResponse::None });
-            runner.on_before_measurement(move |_| { bm.fetch_add(1, Ordering::Relaxed); NoiseResponse::None });
-            runner.on_after_measurement(move |_| { am.fetch_add(1, Ordering::Relaxed); NoiseResponse::None });
-            runner.on_after_preparation(move |_| { ap.fetch_add(1, Ordering::Relaxed); NoiseResponse::None });
-            runner.on_idle(move |_| { ic.fetch_add(1, Ordering::Relaxed); NoiseResponse::None });
+            runner.on_after_gate(move |_| {
+                ag.fetch_add(1, Ordering::Relaxed);
+                NoiseResponse::None
+            });
+            runner.on_before_measurement(move |_| {
+                bm.fetch_add(1, Ordering::Relaxed);
+                NoiseResponse::None
+            });
+            runner.on_after_measurement(move |_| {
+                am.fetch_add(1, Ordering::Relaxed);
+                NoiseResponse::None
+            });
+            runner.on_after_preparation(move |_| {
+                ap.fetch_add(1, Ordering::Relaxed);
+                NoiseResponse::None
+            });
+            runner.on_idle(move |_| {
+                ic.fetch_add(1, Ordering::Relaxed);
+                NoiseResponse::None
+            });
 
             runner.execute_all(&commands);
 
-            assert_eq!(after_gate_count.load(Ordering::Relaxed), 2, "after_gate for 2 H gates");
-            assert_eq!(before_meas_count.load(Ordering::Relaxed), 1, "before_measurement");
-            assert_eq!(after_meas_count.load(Ordering::Relaxed), 1, "after_measurement");
-            assert_eq!(after_prep_count.load(Ordering::Relaxed), 1, "after_preparation");
+            assert_eq!(
+                after_gate_count.load(Ordering::Relaxed),
+                2,
+                "after_gate for 2 H gates"
+            );
+            assert_eq!(
+                before_meas_count.load(Ordering::Relaxed),
+                1,
+                "before_measurement"
+            );
+            assert_eq!(
+                after_meas_count.load(Ordering::Relaxed),
+                1,
+                "after_measurement"
+            );
+            assert_eq!(
+                after_prep_count.load(Ordering::Relaxed),
+                1,
+                "after_preparation"
+            );
             assert_eq!(idle_count.load(Ordering::Relaxed), 1, "idle");
         }
 

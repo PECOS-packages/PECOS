@@ -62,8 +62,7 @@ pub fn extract_spacetime_locations(
     for (tick_idx, tick) in circuit.iter_ticks() {
         for (gate_idx, gate) in tick.gates().iter().enumerate() {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-            let is_measurement =
-                matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
+            let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
 
             locations.push(SpacetimeLocation::new(
                 tick_idx,

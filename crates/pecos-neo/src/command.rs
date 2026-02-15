@@ -152,10 +152,7 @@ impl GateType {
     /// Returns true if this is a measurement operation.
     #[must_use]
     pub const fn is_measurement(self) -> bool {
-        matches!(
-            self,
-            Self::MZ | Self::MeasureLeaked | Self::MeasureFree
-        )
+        matches!(self, Self::MZ | Self::MeasureLeaked | Self::MeasureFree)
     }
 
     /// Returns true if this is a preparation operation.

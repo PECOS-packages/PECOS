@@ -162,7 +162,6 @@ pub enum QuantumBackend {
     Custom(Box<dyn SimulatorFactory>),
 }
 
-
 impl std::fmt::Debug for QuantumBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -519,7 +518,7 @@ impl SimNeoInput for pecos_programs::Program {
         let typed = match self {
             pecos_programs::Program::Qasm(p) => TypedProgram::Qasm(p),
             // Add other program types as support is added
-            _ => TypedProgram::Unsupported(format!("{}", self.program_type())),
+            _ => TypedProgram::Unsupported(self.program_type().to_string()),
         };
         SimNeoBuilder::with_typed_program(typed)
     }
@@ -878,10 +877,7 @@ impl SimulationResults {
     /// assert_eq!(columns["c"].len(), 100);
     /// ```
     #[must_use]
-    pub fn as_register_columns(
-        &self,
-        register: &RegisterMap,
-    ) -> BTreeMap<String, Vec<Vec<bool>>> {
+    pub fn as_register_columns(&self, register: &RegisterMap) -> BTreeMap<String, Vec<Vec<bool>>> {
         let mut columns: BTreeMap<String, Vec<Vec<bool>>> = BTreeMap::new();
 
         for name in register.register_names() {
@@ -2029,11 +2025,7 @@ fn unified_simulation_startup(resources: &mut Resources) {
             QuantumRunner::StateVec(runner)
         }
         QuantumBackend::Custom(factory) => {
-            let runner = factory.create_runner(
-                num_qubits,
-                noise.map(|n| n.0),
-                config.seed,
-            );
+            let runner = factory.create_runner(num_qubits, noise.map(|n| n.0), config.seed);
             QuantumRunner::Custom(runner)
         }
     };
@@ -3064,17 +3056,10 @@ mod tests {
     fn test_sim_neo_noisy_parallel_deterministic() {
         // Two parallel noisy runs with the same seed should produce identical results.
 
-        let circuit = CommandBuilder::new()
-            .pz(0)
-            .h(0)
-            .z(0)
-            .mz(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).h(0).z(0).mz(0).build();
 
-        let noise1 =
-            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
-        let noise2 =
-            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+        let noise1 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
+        let noise2 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
 
         let results1 = sim_neo(circuit.clone())
             .noise(noise1)
@@ -3451,7 +3436,7 @@ mod tests {
             .build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .quantum(custom_backend(SparseStab::new))
             .shots(10)
             .seed(42)
             .build()
@@ -3484,12 +3469,15 @@ mod tests {
             .run();
 
         let custom_results = sim_neo(circuit)
-            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .quantum(custom_backend(SparseStab::new))
             .shots(50)
             .seed(42)
             .run();
 
-        assert_eq!(builtin_results.outcomes.len(), custom_results.outcomes.len());
+        assert_eq!(
+            builtin_results.outcomes.len(),
+            custom_results.outcomes.len()
+        );
         for (i, (builtin, custom)) in builtin_results
             .outcomes
             .iter()
@@ -3515,7 +3503,7 @@ mod tests {
         let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .quantum(custom_backend(SparseStab::new))
             .noise(noise)
             .shots(100)
             .seed(42)
@@ -3542,13 +3530,13 @@ mod tests {
         let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
         let results1 = sim_neo(circuit.clone())
-            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .quantum(custom_backend(SparseStab::new))
             .shots(20)
             .seed(42)
             .run();
 
         let results2 = sim_neo(circuit)
-            .quantum(custom_backend(|n| SparseStab::new(n)))
+            .quantum(custom_backend(SparseStab::new))
             .shots(20)
             .seed(42)
             .run();
@@ -3565,14 +3553,10 @@ mod tests {
     #[test]
     fn test_custom_backend_state_vector() {
         // Verify StateVec also works via custom_backend
-        let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0)
-            .mz(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(|n| StateVec::new(n)))
+            .quantum(custom_backend(StateVec::new))
             .shots(10)
             .seed(42)
             .run();
@@ -3607,10 +3591,7 @@ mod tests {
             counts.contains_key(&vec![false]),
             "Should have |0> outcomes"
         );
-        assert!(
-            counts.contains_key(&vec![true]),
-            "Should have |1> outcomes"
-        );
+        assert!(counts.contains_key(&vec![true]), "Should have |1> outcomes");
 
         let total: usize = counts.values().sum();
         assert_eq!(total, 200, "Total counts should equal number of shots");
@@ -3634,8 +3615,11 @@ mod tests {
         let counts = results.register_counts(&reg, "c");
 
         // Bell state: only |00> and |11> should appear
-        for (bitstring, _count) in &counts {
-            assert_eq!(bitstring[0], bitstring[1], "Bell state qubits must be correlated: got {bitstring:?}");
+        for bitstring in counts.keys() {
+            assert_eq!(
+                bitstring[0], bitstring[1],
+                "Bell state qubits must be correlated: got {bitstring:?}"
+            );
         }
     }
 
@@ -3679,6 +3663,9 @@ mod tests {
         let results = sim_neo(circuit).shots(10).seed(42).run();
         let counts = results.register_counts(&reg, "missing");
 
-        assert!(counts.is_empty(), "Unmeasured register should have no counts");
+        assert!(
+            counts.is_empty(),
+            "Unmeasured register should have no counts"
+        );
     }
 }

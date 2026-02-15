@@ -31,7 +31,7 @@
 use crate::GpuStab;
 use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, QuantumSimulator};
-use pecos_rng::{time_seed, PecosRng};
+use pecos_rng::{PecosRng, time_seed};
 use std::fmt::Debug;
 
 /// Represents a Pauli operator for noise injection

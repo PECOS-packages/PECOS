@@ -74,7 +74,7 @@ fn bench_noise_application<M: Measurement>(c: &mut Criterion<M>) {
                 // Build command queue once
                 let mut builder = CommandBuilder::new();
                 for i in 0..n {
-                    builder = builder.prep(i % 100).h(i % 100);
+                    builder = builder.pz(i % 100).h(i % 100);
                 }
                 let commands = builder.build();
 
@@ -98,14 +98,12 @@ fn bench_noise_application<M: Measurement>(c: &mut Criterion<M>) {
             |b, &n| {
                 let mut builder = CommandBuilder::new();
                 for i in 0..n {
-                    builder = builder.prep(i % 100).h(i % 100);
+                    builder = builder.pz(i % 100).h(i % 100);
                 }
                 let commands = builder.build();
 
                 b.iter(|| {
-                    let noise = NeoNoiseModelBuilder::new()
-                        .with_p1(0.001)
-                        .build();
+                    let noise = NeoNoiseModelBuilder::new().with_p1(0.001).build();
                     let mut runner = ShotRunner::new(SparseStab::new(100))
                         .with_noise(noise)
                         .with_seed(42);
@@ -154,12 +152,12 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
     // pecos-neo with ShotRunner
     group.bench_function("pecos-neo/bell_state", |b| {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         b.iter(|| {
@@ -181,12 +179,12 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
     // Benchmark with multiple noise channels
     group.bench_function("pecos-neo/multi_channel", |b| {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         b.iter(|| {
@@ -210,12 +208,12 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
     // Benchmark without noise (baseline)
     group.bench_function("pecos-neo/no_noise", |b| {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         b.iter(|| {
@@ -245,12 +243,12 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
             &num_shots,
             |b, &n| {
                 let commands = CommandBuilder::new()
-                    .prep(0)
-                    .prep(1)
+                    .pz(0)
+                    .pz(1)
                     .h(0)
                     .cx(0, 1)
-                    .measure(0)
-                    .measure(1)
+                    .mz(0)
+                    .mz(1)
                     .build();
 
                 b.iter(|| {
@@ -292,12 +290,12 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
                         || SparseStab::new(2),
                         |world| {
                             let commands = CommandBuilder::new()
-                                .prep(0)
-                                .prep(1)
+                                .pz(0)
+                                .pz(1)
                                 .h(0)
                                 .cx(0, 1)
-                                .measure(0)
-                                .measure(1)
+                                .mz(0)
+                                .mz(1)
                                 .build();
 
                             world
@@ -332,12 +330,12 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
     // pecos-neo MonteCarloRunner with noise
     noisy_group.bench_function("MonteCarloRunner/depolarizing", |b| {
         let commands = CommandBuilder::new()
-            .prep(0)
-            .prep(1)
+            .pz(0)
+            .pz(1)
             .h(0)
             .cx(0, 1)
-            .measure(0)
-            .measure(1)
+            .mz(0)
+            .mz(1)
             .build();
 
         b.iter(|| {

@@ -543,13 +543,7 @@ mod tests {
         use pecos_qsim::SparseStab;
 
         // Create a circuit that measures qubit 0
-        let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .pz(2)
-            .h(0)
-            .mz(0)
-            .build();
+        let commands = CommandBuilder::new().pz(0).pz(1).pz(2).h(0).mz(0).build();
 
         // Create crosstalk channel: 100% chance to flip other qubits during measurement
         let crosstalk = FlowCrosstalkChannel::new("test_crosstalk", inject_x())

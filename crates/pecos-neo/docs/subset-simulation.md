@@ -284,7 +284,7 @@ use pecos_neo::ecs::{World, SplitDecision};
 use pecos_neo::sampling::subset::EcsSubsetSimulation;
 
 // World manages entities with:
-// - Simulator state (clonable)
+// - Simulator state (cloneable)
 // - Sample weight
 // - Trajectory metadata
 

@@ -97,8 +97,8 @@ pub use plugin::{Plugin, PluginGroup};
 pub use resource::{Resource, Resources};
 pub use simulation::{
     Circuit, CustomBackendBuilder, ImportanceSamplingBuilder, NoiseResource, Orchestrator,
-    QuantumBackend, SimConfig, SimNeoBuilder, SimNeoInput, SimulatorFactory, Simulation,
-    SimulationPlugin, SimulationResults, SparseStabBuilder, StateVecBuilder, custom_backend,
+    QuantumBackend, SimConfig, SimNeoBuilder, SimNeoInput, Simulation, SimulationPlugin,
+    SimulationResults, SimulatorFactory, SparseStabBuilder, StateVecBuilder, custom_backend,
     importance_sampling, sim_neo, sim_neo_builder, sparse_stab, state_vector,
 };
 #[cfg(feature = "engines-adapter")]

@@ -990,7 +990,7 @@ impl QisHeliosInterface {
         type DllDirectoryCookie = *mut std::ffi::c_void;
 
         #[link(name = "kernel32")]
-        extern "system" {
+        unsafe extern "system" {
             fn AddDllDirectory(path: *const u16) -> DllDirectoryCookie;
             fn RemoveDllDirectory(cookie: DllDirectoryCookie) -> i32;
             fn SetDefaultDllDirectories(flags: u32) -> i32;

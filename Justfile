@@ -175,7 +175,7 @@ build-selene:
 
     # Copy libraries to Python package directories
     echo "Copying libraries to Python packages..."
-    {{pecos}} selene install
+    {{pecos}} selene install --profile release
 
     # Install Python packages in editable mode
     echo "Installing Selene plugins in editable mode..."

@@ -141,7 +141,8 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
             )
 
         # Run cargo build from the PECOS workspace root
-        workspace_root = root.parent.parent  # Go up to PECOS root
+        # Plugin is at python/selene-plugins/<plugin>/, so 3 levels up to workspace
+        workspace_root = root.parent.parent.parent
         cargo_cmd = [
             "cargo",
             "build",

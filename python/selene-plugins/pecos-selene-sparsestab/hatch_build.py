@@ -103,7 +103,8 @@ class PecosSeleneSparsestabBuildHook(BuildHookInterface):
         self.app.display_info(f"Building {cargo_package}...")
 
         # Run cargo build from the PECOS workspace root
-        workspace_root = root.parent.parent  # Go up to PECOS root
+        # Plugin is at python/selene-plugins/<plugin>/, so 3 levels up to workspace
+        workspace_root = root.parent.parent.parent
         result = subprocess.run(
             [
                 "cargo",

@@ -23,8 +23,13 @@ pub use crate::rng_pcg;
 pub use crate::scalar_rng;
 
 // Re-export rand traits for convenience
-pub use rand::Rng;
-pub use rand_core::{RngCore, SeedableRng};
+// Note: In rand 0.10, RngCore was renamed to Rng, old Rng renamed to RngExt
+pub use rand::RngExt;
+pub use rand_core::{Rng, SeedableRng, TryRng};
+
+// Backwards compatibility alias
+#[allow(deprecated)]
+pub use rand_core::RngCore;
 
 // Re-export types
 pub use crate::quality_rng::{PecosQualityRng, SimdXoshiro256PlusPlus};

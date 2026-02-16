@@ -93,9 +93,9 @@ bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.17"
 
 # RNG
-rand = "0.9"
-rand_core = "0.9"
-rand_xoshiro = "0.7"
+rand = "0.10"
+rand_core = "0.10"
+rand_xoshiro = "0.8"
 rapidhash = { version = "4", features = ["rng"] }
 
 # Concurrency

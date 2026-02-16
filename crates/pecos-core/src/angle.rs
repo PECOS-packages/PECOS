@@ -469,7 +469,7 @@ impl<T: Unsigned + ToPrimitive + Bounded + Copy> fmt::Display for Angle<T> {
 mod tests {
     use super::LossyInto;
     use super::*;
-    use rand::Rng;
+    use rand::RngExt;
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
     // Basic Construction and Properties

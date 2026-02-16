@@ -63,6 +63,7 @@ impl<E: Element> VecSet<E> {
     }
 
     #[inline]
+    #[must_use]
     pub fn elements(&self) -> &[E] {
         &self.elements
     }

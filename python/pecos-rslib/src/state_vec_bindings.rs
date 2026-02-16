@@ -756,7 +756,20 @@ impl PyStateVec {
         // Return (StateVec._from_pickle, (num_qubits, state_bytes))
         let cls = py.get_type::<PyStateVec>();
         let from_pickle = cls.getattr("_from_pickle")?;
-        PyTuple::new(py, &[from_pickle.into_any(), PyTuple::new(py, &[num_qubits.into_pyobject(py)?.into_any(), state_bytes.into_any()])?.into_any()])
+        PyTuple::new(
+            py,
+            &[
+                from_pickle.into_any(),
+                PyTuple::new(
+                    py,
+                    &[
+                        num_qubits.into_pyobject(py)?.into_any(),
+                        state_bytes.into_any(),
+                    ],
+                )?
+                .into_any(),
+            ],
+        )
     }
 
     #[staticmethod]
@@ -777,7 +790,7 @@ impl PyStateVec {
             state.push(num_complex::Complex64::new(re, im));
         }
 
-        let rng = PecosRng::from_os_rng();
+        let rng: PecosRng = rand::make_rng();
         Ok(PyStateVec {
             inner: StateVec::from_state(state, rng),
         })

@@ -158,13 +158,20 @@ impl PyCoinToss {
 
     fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let cls = py.get_type::<PyCoinToss>();
-        pyo3::types::PyTuple::new(py, &[
-            cls.into_any(),
-            pyo3::types::PyTuple::new(py, &[
-                self.inner.num_qubits().into_pyobject(py)?.into_any(),
-                self.inner.prob().into_pyobject(py)?.into_any(),
-            ])?.into_any(),
-        ])
+        pyo3::types::PyTuple::new(
+            py,
+            &[
+                cls.into_any(),
+                pyo3::types::PyTuple::new(
+                    py,
+                    &[
+                        self.inner.num_qubits().into_pyobject(py)?.into_any(),
+                        self.inner.prob().into_pyobject(py)?.into_any(),
+                    ],
+                )?
+                .into_any(),
+            ],
+        )
     }
 
     /// String representation of the simulator

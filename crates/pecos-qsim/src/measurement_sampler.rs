@@ -51,7 +51,7 @@
 
 use crate::symbolic_sparse_stab::MeasurementHistory;
 use pecos_core::{Bit, Bits};
-use pecos_rng::{PecosRng, Rng, RngBulkExt, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngBulkExt, RngExt};
 use wide::u64x4;
 
 // ============================================================================
@@ -389,7 +389,7 @@ impl SequentialMeasurementSampler {
     #[inline]
     #[must_use]
     pub fn sample(&self, shots: usize) -> SampleResult {
-        let mut rng = PecosRng::from_os_rng();
+        let mut rng = rand::make_rng::<PecosRng>();
         self.sample_with_rng(shots, &mut rng)
     }
 
@@ -927,7 +927,7 @@ impl MeasurementSampler {
     #[inline]
     #[must_use]
     pub fn sample(&self, shots: usize) -> SampleResult {
-        let mut rng = PecosRng::from_os_rng();
+        let mut rng = rand::make_rng::<PecosRng>();
         self.sample_with_rng(shots, &mut rng)
     }
 

@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::RngManageable;
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
 
 use core::fmt::Debug;
 use num_complex::Complex64;
@@ -26,7 +26,7 @@ use num_complex::Complex64;
 /// memory that scales exponentially with the number of qubits.
 ///
 /// # Type Parameters
-/// * `R` - Random number generator type implementing `RngCore + SeedableRng` traits
+/// * `R` - Random number generator type implementing `Rng + SeedableRng` traits
 ///
 /// # Examples
 /// ```rust
@@ -41,7 +41,7 @@ use num_complex::Complex64;
 #[derive(Clone, Debug)]
 pub struct StateVec<R = PecosRng>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     num_qubits: usize,
     state: Vec<Complex64>,
@@ -65,7 +65,7 @@ impl StateVec {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> StateVec<PecosRng> {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         StateVec::with_rng(num_qubits, rng)
     }
 
@@ -95,7 +95,7 @@ impl StateVec {
 
 impl<R> StateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Returns the number of qubits in the system
     ///
@@ -120,7 +120,7 @@ where
     ///
     /// # Arguments
     /// * `num_qubits` - Number of qubits in the system
-    /// * `rng` - Random number generator implementing `RngCore + SeedableRng` traits
+    /// * `rng` - Random number generator implementing `Rng + SeedableRng` traits
     ///
     /// # Examples
     /// ```rust
@@ -158,7 +158,7 @@ where
     ///     Complex64::new(0.0, 0.0),
     /// ];
     ///
-    /// let state_vec = StateVec::from_state(custom_state, PecosRng::from_os_rng());
+    /// let state_vec = StateVec::from_state(custom_state, rand::make_rng::<PecosRng>());
     /// ```
     ///
     /// # Panics
@@ -441,7 +441,7 @@ where
 
 impl<R> QuantumSimulator for StateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// # Examples
     /// ```rust
@@ -468,7 +468,7 @@ where
 
 impl<R> CliffordGateable<usize> for StateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Implementation of Pauli-X gate for state vectors.
     ///
@@ -869,7 +869,7 @@ where
 
 impl<R> ArbitraryRotationGateable<usize> for StateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Implementation of rotation around the X-axis.
     ///
@@ -1202,7 +1202,7 @@ where
 
 impl<R> RngManageable for StateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     type Rng = R;
 
@@ -1212,7 +1212,7 @@ where
     /// which is useful for setting seeds after initialization.
     ///
     /// # Arguments
-    /// * `rng` - A new random number generator implementing the `RngCore + SeedableRng` traits
+    /// * `rng` - A new random number generator implementing the `Rng + SeedableRng` traits
     #[inline]
     fn set_rng(&mut self, rng: R) {
         self.rng = rng;

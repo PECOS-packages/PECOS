@@ -4,7 +4,7 @@
 use pecos_core::rng::{RecordingRng, ReplayingRng};
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::StateVec;
-use pecos_rng::{PecosRng, Rng};
+use pecos_rng::{PecosRng, RngExt};
 use std::fmt::Display;
 
 // Custom wrapper for a simulator with a RecordingRng

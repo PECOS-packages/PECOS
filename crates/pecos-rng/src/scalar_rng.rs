@@ -40,7 +40,8 @@
 //! }
 //! ```
 
-use rand_core::{RngCore, SeedableRng};
+use core::convert::Infallible;
+use rand_core::{SeedableRng, TryRng};
 use rapidhash::rng::RapidRng;
 use wide::u64x4;
 
@@ -93,10 +94,10 @@ impl PecosScalarRng {
     #[inline]
     pub fn next_u64x4(&mut self) -> u64x4 {
         u64x4::new([
-            self.parallel_rngs[0].next_u64(),
-            self.parallel_rngs[1].next_u64(),
-            self.parallel_rngs[2].next_u64(),
-            self.parallel_rngs[3].next_u64(),
+            self.parallel_rngs[0].next(),
+            self.parallel_rngs[1].next(),
+            self.parallel_rngs[2].next(),
+            self.parallel_rngs[3].next(),
         ])
     }
 
@@ -113,7 +114,7 @@ impl PecosScalarRng {
         // Handle remainder using scalar RNG
         let remainder = chunks.into_remainder();
         for val in remainder {
-            *val = self.scalar_rng.next_u64();
+            *val = self.scalar_rng.next();
         }
     }
 
@@ -122,28 +123,28 @@ impl PecosScalarRng {
     /// No buffering - direct `RapidRng` access for minimal overhead.
     #[inline]
     pub fn next_u64(&mut self) -> u64 {
-        self.scalar_rng.next_u64()
+        self.scalar_rng.next()
     }
 
     /// Generate a single random u32.
     #[inline]
     #[allow(clippy::cast_possible_truncation)]
     pub fn next_u32(&mut self) -> u32 {
-        self.scalar_rng.next_u64() as u32
+        self.scalar_rng.next() as u32
     }
 
     /// Generate a random f64 in [0, 1).
     #[inline]
     #[allow(clippy::cast_precision_loss)]
     pub fn next_f64(&mut self) -> f64 {
-        (self.scalar_rng.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
+        (self.scalar_rng.next() >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
     }
 
     /// Generate a random bool using bit-packed extraction.
     #[inline]
     pub fn next_bool_fast(&mut self) -> bool {
         if self.bool_remaining == 0 {
-            self.bool_bits = self.scalar_rng.next_u64();
+            self.bool_bits = self.scalar_rng.next();
             self.bool_remaining = 64;
         }
         self.bool_remaining -= 1;
@@ -176,7 +177,7 @@ impl PecosScalarRng {
     /// Check if a random event occurs with the given precomputed probability threshold.
     #[inline]
     pub fn check_probability(&mut self, threshold: u64) -> bool {
-        self.scalar_rng.next_u64() < threshold
+        self.scalar_rng.next() < threshold
     }
 
     /// Check 4 probabilities at once using parallel RNGs.
@@ -208,7 +209,7 @@ impl PecosScalarRng {
         }
 
         for _ in 0..(count % 4) {
-            total += usize::from(self.scalar_rng.next_u64() < threshold);
+            total += usize::from(self.scalar_rng.next() < threshold);
         }
 
         total
@@ -249,7 +250,7 @@ impl PecosScalarRng {
 
         let remainder_start = full_chunks * 4;
         for i in 0..(count % 4) {
-            if self.scalar_rng.next_u64() < threshold {
+            if self.scalar_rng.next() < threshold {
                 indices.push(remainder_start + i);
             }
         }
@@ -262,32 +263,35 @@ impl PecosScalarRng {
 // rand_core trait implementations
 // ============================================================================
 
-impl RngCore for PecosScalarRng {
+impl TryRng for PecosScalarRng {
+    type Error = Infallible;
+
     #[inline]
-    fn next_u32(&mut self) -> u32 {
-        self.next_u32()
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.next_u32())
     }
 
     #[inline]
-    fn next_u64(&mut self) -> u64 {
-        self.next_u64()
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.next_u64())
     }
 
     #[inline]
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         let mut chunks = dest.chunks_exact_mut(8);
         for chunk in chunks.by_ref() {
-            let bytes = self.scalar_rng.next_u64().to_le_bytes();
+            let bytes = self.scalar_rng.next().to_le_bytes();
             chunk.copy_from_slice(&bytes);
         }
 
         let remainder = chunks.into_remainder();
         if !remainder.is_empty() {
-            let bytes = self.scalar_rng.next_u64().to_le_bytes();
+            let bytes = self.scalar_rng.next().to_le_bytes();
             for (i, byte) in remainder.iter_mut().enumerate() {
                 *byte = bytes[i];
             }
         }
+        Ok(())
     }
 }
 

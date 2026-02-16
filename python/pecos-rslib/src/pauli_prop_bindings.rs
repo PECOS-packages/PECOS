@@ -315,16 +315,23 @@ impl PyPauliProp {
 
         let cls = py.get_type::<PyPauliProp>();
         let from_pickle = cls.getattr("_from_pickle")?;
-        pyo3::types::PyTuple::new(py, &[
-            from_pickle.into_any(),
-            pyo3::types::PyTuple::new(py, &[
-                self.num_qubits.into_pyobject(py)?.into_any(),
-                self.track_sign.into_pyobject(py)?.to_owned().into_any(),
-                faults.into_bound(py).into_any(),
-                sign.into_pyobject(py)?.to_owned().into_any(),
-                img.into_pyobject(py)?.into_any(),
-            ])?.into_any(),
-        ])
+        pyo3::types::PyTuple::new(
+            py,
+            &[
+                from_pickle.into_any(),
+                pyo3::types::PyTuple::new(
+                    py,
+                    &[
+                        self.num_qubits.into_pyobject(py)?.into_any(),
+                        self.track_sign.into_pyobject(py)?.to_owned().into_any(),
+                        faults.into_bound(py).into_any(),
+                        sign.into_pyobject(py)?.to_owned().into_any(),
+                        img.into_pyobject(py)?.into_any(),
+                    ],
+                )?
+                .into_any(),
+            ],
+        )
     }
 
     #[staticmethod]

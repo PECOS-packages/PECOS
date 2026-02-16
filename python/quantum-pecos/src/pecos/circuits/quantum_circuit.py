@@ -684,7 +684,7 @@ class QuantumCircuit(MutableSequence):
                 gate_type_str = str(gate.gate_type)
                 # Extract gate type name from "GateType.H" format
                 if "." in gate_type_str:
-                    gate_type_str = gate_type_str.split(".")[-1]
+                    gate_type_str = gate_type_str.rsplit(".", maxsplit=1)[-1]
                 symbol = _GATETYPE_TO_SYMBOL.get(gate_type_str, gate_type_str)
 
             qubits = list(gate.qubits)

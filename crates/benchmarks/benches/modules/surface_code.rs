@@ -20,7 +20,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
 use pecos::qsim::measurement_sampler::{MeasurementSampler, SequentialMeasurementSampler};
-use rand::Rng;
+use rand::RngExt;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {

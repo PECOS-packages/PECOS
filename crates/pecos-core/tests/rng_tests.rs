@@ -1,7 +1,8 @@
 // Tests for RNG functionality in pecos-core
 
 use pecos_core::rng::{RecordingRng, ReplayingRng};
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{RngExt, SeedableRng};
+use rand_core::Rng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 // Epsilon value for floating-point comparisons

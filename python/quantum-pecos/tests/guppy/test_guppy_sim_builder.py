@@ -257,13 +257,7 @@ def test_simulation_reset() -> None:
         return measure(q)
 
     # Build a simulation
-    sim_obj = (
-        sim(superposition)
-        .qubits(10)
-        .quantum(state_vector())
-        .seed(42)
-        .build()
-    )
+    sim_obj = sim(superposition).qubits(10).quantum(state_vector()).seed(42).build()
 
     # Run once
     results1 = sim_obj.run(100)
@@ -279,11 +273,7 @@ def test_simulation_reset() -> None:
 
     # With the same seed, reset should give reproducible results
     sim_obj_seeded = (
-        sim(superposition)
-        .qubits(10)
-        .quantum(state_vector())
-        .seed(42)
-        .build()
+        sim(superposition).qubits(10).quantum(state_vector()).seed(42).build()
     )
     results_a = sim_obj_seeded.run(50)
     sim_obj_seeded.reset()
@@ -310,19 +300,15 @@ def test_reset_returns_to_zero_state() -> None:
 
     # Build a simulation
     sim_obj = (
-        sim(measure_without_gates)
-        .qubits(10)
-        .quantum(state_vector())
-        .seed(42)
-        .build()
+        sim(measure_without_gates).qubits(10).quantum(state_vector()).seed(42).build()
     )
 
     # First run - all measurements should be 0 since qubit starts in |0⟩
     results1 = sim_obj.run(100)
     measurements1 = results1.to_dict().get("measurements", [])
-    assert all(m == 0 or m == [0] or m == (0,) or m is False for m in measurements1), (
-        f"Expected all measurements to be 0, got: {measurements1[:5]}..."
-    )
+    assert all(
+        m == 0 or m == [0] or m == (0,) or m is False for m in measurements1
+    ), f"Expected all measurements to be 0, got: {measurements1[:5]}..."
 
     # Reset the simulator
     sim_obj.reset()
@@ -330,6 +316,6 @@ def test_reset_returns_to_zero_state() -> None:
     # After reset, qubit should be back in |0⟩, so all measurements should still be 0
     results2 = sim_obj.run(100)
     measurements2 = results2.to_dict().get("measurements", [])
-    assert all(m == 0 or m == [0] or m == (0,) or m is False for m in measurements2), (
-        f"After reset, expected all measurements to be 0, got: {measurements2[:5]}..."
-    )
+    assert all(
+        m == 0 or m == [0] or m == (0,) or m is False for m in measurements2
+    ), f"After reset, expected all measurements to be 0, got: {measurements2[:5]}..."

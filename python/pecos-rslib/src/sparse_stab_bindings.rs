@@ -547,14 +547,21 @@ impl PySparseSim {
 
         let cls = py.get_type::<PySparseSim>();
         let from_pickle = cls.getattr("_from_pickle")?;
-        PyTuple::new(py, &[
-            from_pickle.into_any(),
-            PyTuple::new(py, &[
-                num_qubits.into_pyobject(py)?.into_any(),
-                stabs_dict.into_bound(py).into_any(),
-                destabs_dict.into_bound(py).into_any(),
-            ])?.into_any(),
-        ])
+        PyTuple::new(
+            py,
+            &[
+                from_pickle.into_any(),
+                PyTuple::new(
+                    py,
+                    &[
+                        num_qubits.into_pyobject(py)?.into_any(),
+                        stabs_dict.into_bound(py).into_any(),
+                        destabs_dict.into_bound(py).into_any(),
+                    ],
+                )?
+                .into_any(),
+            ],
+        )
     }
 
     #[staticmethod]
@@ -579,9 +586,9 @@ impl PySparseSim {
             };
 
             let list_to_vecset = |key: &str| -> PyResult<VecSet<usize>> {
-                let list = dict
-                    .get_item(key)?
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>(key.to_string()))?;
+                let list = dict.get_item(key)?.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyKeyError, _>(key.to_string())
+                })?;
                 let elems: Vec<usize> = list.extract()?;
                 Ok(elems.into_iter().collect())
             };

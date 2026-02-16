@@ -17,29 +17,28 @@ import pickle
 import sys
 
 import pytest
-
 from pecos_rslib import CoinToss, PauliProp, SparseSim, StateVec
 
 
-def _statevec_worker(sim_bytes):
+def _statevec_worker(sim_bytes: bytes) -> int:
     sim = pickle.loads(sim_bytes)
     sim.run_1q_gate("H", 0)
     return sim.num_qubits
 
 
-def _sparsesim_worker(sim_bytes):
+def _sparsesim_worker(sim_bytes: bytes) -> int:
     sim = pickle.loads(sim_bytes)
     sim.run_1q_gate("H", 0)
     return sim.num_qubits
 
 
-def _cointoss_worker(sim_bytes):
+def _cointoss_worker(sim_bytes: bytes) -> int:
     sim = pickle.loads(sim_bytes)
     sim.run_measure(0)
     return sim.num_qubits
 
 
-def _pauliprop_worker(sim_bytes):
+def _pauliprop_worker(sim_bytes: bytes) -> int:
     sim = pickle.loads(sim_bytes)
     sim.h(0)
     return sim.weight()
@@ -51,7 +50,10 @@ _MP_CONTEXT = "fork" if sys.platform == "linux" else "spawn"
 
 
 class TestMultiprocessingStateVec:
-    def test_pool_map(self):
+    """Tests for multiprocessing StateVec simulators via pickle."""
+
+    def test_pool_map(self) -> None:
+        """Test StateVec serialization works with multiprocessing Pool.map."""
         sim = StateVec(3, seed=42)
         sim.run_1q_gate("H", 0)
         sim_bytes = pickle.dumps(sim)
@@ -62,7 +64,10 @@ class TestMultiprocessingStateVec:
 
 
 class TestMultiprocessingSparseSim:
-    def test_pool_map(self):
+    """Tests for multiprocessing SparseSim simulators via pickle."""
+
+    def test_pool_map(self) -> None:
+        """Test SparseSim serialization works with multiprocessing Pool.map."""
         sim = SparseSim(4)
         sim.run_1q_gate("H", 0)
         sim.run_2q_gate("CX", (0, 1), None)
@@ -74,7 +79,10 @@ class TestMultiprocessingSparseSim:
 
 
 class TestMultiprocessingCoinToss:
-    def test_pool_map(self):
+    """Tests for multiprocessing CoinToss simulators via pickle."""
+
+    def test_pool_map(self) -> None:
+        """Test CoinToss serialization works with multiprocessing Pool.map."""
         sim = CoinToss(5, prob=0.3)
         sim_bytes = pickle.dumps(sim)
         ctx = multiprocessing.get_context(_MP_CONTEXT)
@@ -84,7 +92,10 @@ class TestMultiprocessingCoinToss:
 
 
 class TestMultiprocessingPauliProp:
-    def test_pool_map(self):
+    """Tests for multiprocessing PauliProp simulators via pickle."""
+
+    def test_pool_map(self) -> None:
+        """Test PauliProp serialization works with multiprocessing Pool.map."""
         sim = PauliProp(num_qubits=3, track_sign=True)
         sim.add_x(0)
         sim_bytes = pickle.dumps(sim)

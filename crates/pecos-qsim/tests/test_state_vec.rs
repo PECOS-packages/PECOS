@@ -1364,7 +1364,7 @@ mod detailed_tq_gate_cases {
 
     #[test]
     fn test_ryy_randomized() {
-        use rand::Rng;
+        use rand::RngExt;
 
         let mut rng = rand::rng();
         let theta = rng.random_range(0.0..2.0 * PI);

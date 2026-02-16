@@ -15,6 +15,7 @@ readme = "README.md"
 pecos-core.workspace = true
 pecos-quantum.workspace = true
 pecos-rng.workspace = true
+rand.workspace = true
 num-complex.workspace = true
 wide.workspace = true
 

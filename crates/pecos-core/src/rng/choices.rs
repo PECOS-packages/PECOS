@@ -12,6 +12,7 @@
 
 use rand::distr::weighted::WeightedIndex;
 use rand::prelude::*;
+use rand_core::Rng;
 
 const EPSILON: f64 = 1e-9;
 
@@ -59,7 +60,7 @@ impl<T> Choices<T> {
 
     /// Sample a choice based on the weights
     #[inline]
-    pub fn sample<R: RngCore + ?Sized>(&self, rng: &mut R) -> &T {
+    pub fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> &T {
         let index = self.weighted_index.sample(rng);
         &self.items[index]
     }

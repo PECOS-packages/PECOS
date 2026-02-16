@@ -319,10 +319,11 @@ impl PyPhirJsonSimulation {
     ///
     /// Returns the simulation object for method chaining.
     fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        {let mut engine = slf.inner.lock().unwrap();
-        engine
-            .reset()
-            .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+        {
+            let mut engine = slf.inner.lock().unwrap();
+            engine
+                .reset()
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
         }
         Ok(slf)
     }
@@ -378,10 +379,11 @@ impl PyQisControlSimulation {
     ///
     /// Returns the simulation object for method chaining.
     fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        {let mut engine = slf.inner.lock().unwrap();
-        engine
-            .reset()
-            .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+        {
+            let mut engine = slf.inner.lock().unwrap();
+            engine
+                .reset()
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
         }
         Ok(slf)
     }
@@ -514,10 +516,11 @@ impl PyGuppyHugrSimulation {
     ///
     /// Returns the simulation object for method chaining.
     fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        {let mut engine = slf.inner.lock().unwrap();
-        engine
-            .reset()
-            .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+        {
+            let mut engine = slf.inner.lock().unwrap();
+            engine
+                .reset()
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
         }
         Ok(slf)
     }

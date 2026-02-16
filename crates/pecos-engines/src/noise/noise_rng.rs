@@ -17,7 +17,7 @@
 
 use crate::Gate;
 use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
 use rand::prelude::Distribution;
 use std::ops::Range;
 
@@ -140,14 +140,11 @@ impl<R: Rng + Clone> NoiseRng<R> {
     }
 }
 
-impl<R: Rng + Clone> Default for NoiseRng<R>
-where
-    R: SeedableRng,
-{
+impl<R: Rng + Clone + SeedableRng> Default for NoiseRng<R> {
     fn default() -> Self {
-        // Using from_entropy() to seed the RNG from the OS
+        // Using make_rng() to seed the RNG from the OS
         Self {
-            rng: R::try_from_os_rng().expect("Failed to create RNG from OS entropy"),
+            rng: rand::make_rng(),
         }
     }
 }

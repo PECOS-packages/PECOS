@@ -24,7 +24,7 @@ use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
 use pecos_rng::PecosRng;
-use rand::{RngCore, SeedableRng};
+use rand_core::{Rng, SeedableRng};
 use std::fmt::Debug;
 
 /// A quantum state simulator using Qulacs C++ backend.
@@ -33,10 +33,10 @@ use std::fmt::Debug;
 /// for n qubits using the high-performance Qulacs C++ library.
 ///
 /// # Type Parameters
-/// * `R` - Random number generator type implementing `RngCore + SeedableRng` traits
+/// * `R` - Random number generator type implementing `Rng + SeedableRng` traits
 pub struct QulacsStateVec<R = PecosRng>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     state: cxx::UniquePtr<ffi::QulacsState>,
     num_qubits: usize,
@@ -46,7 +46,7 @@ where
 // Implement Clone for QulacsStateVec
 impl<R> Clone for QulacsStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     fn clone(&self) -> Self {
         let mut new_rng = self.rng.clone();
@@ -67,7 +67,7 @@ impl QulacsStateVec {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> QulacsStateVec<PecosRng> {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         QulacsStateVec::with_rng(num_qubits, rng)
     }
 
@@ -82,7 +82,7 @@ impl QulacsStateVec {
 
 impl<R> QulacsStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Create a new state vector with a custom random number generator.
     #[inline]
@@ -219,7 +219,7 @@ where
 // Implement QuantumSimulator trait
 impl<R> QuantumSimulator for QulacsStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     fn reset(&mut self) -> &mut Self {
         ffi::reset(self.state.pin_mut());
@@ -230,7 +230,7 @@ where
 // Implement CliffordGateable trait
 impl<R, I> CliffordGateable<I> for QulacsStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
     I: IndexableElement,
 {
     fn x(&mut self, q: I) -> &mut Self {
@@ -343,7 +343,7 @@ where
 // Implement ArbitraryRotationGateable trait
 impl<R, I> ArbitraryRotationGateable<I> for QulacsStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
     I: IndexableElement,
 {
     fn rx(&mut self, angle: f64, q: I) -> &mut Self {
@@ -405,7 +405,7 @@ where
 // Implement RngManageable trait
 impl<R> RngManageable for QulacsStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     type Rng = R;
 
@@ -430,9 +430,9 @@ where
 // 2. UniquePtr provides exclusive ownership
 // 3. The RNG is required to be Send + Sync
 // 4. All operations on QulacsState are self-contained
-unsafe impl<R> Send for QulacsStateVec<R> where R: RngCore + SeedableRng + Debug + Send {}
+unsafe impl<R> Send for QulacsStateVec<R> where R: Rng + SeedableRng + Debug + Send {}
 
-unsafe impl<R> Sync for QulacsStateVec<R> where R: RngCore + SeedableRng + Debug + Sync {}
+unsafe impl<R> Sync for QulacsStateVec<R> where R: Rng + SeedableRng + Debug + Sync {}
 
 #[cfg(test)]
 mod tests;

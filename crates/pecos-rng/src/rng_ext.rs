@@ -13,7 +13,7 @@
 //! Extension trait for probability-based RNG operations.
 //!
 //! This module provides [`RngProbabilityExt`], a trait that adds fixed-point
-//! probability checking methods to any RNG implementing [`RngCore`].
+//! probability checking methods to any RNG implementing [`Rng`].
 //!
 //! # Usage
 //!
@@ -37,11 +37,11 @@
 //!
 //! # Performance
 //!
-//! The default implementations work with any [`RngCore`] type. However,
+//! The default implementations work with any [`Rng`] type. However,
 //! [`PecosRng`](crate::PecosRng) provides optimized implementations that use
 //! SIMD to process multiple values at once, achieving ~20% better performance.
 
-use rand_core::RngCore;
+use rand_core::Rng;
 
 /// Extension trait providing fixed-point probability operations for RNGs.
 ///
@@ -51,7 +51,7 @@ use rand_core::RngCore;
 ///
 /// # Default Implementations
 ///
-/// All methods have default implementations that work with any [`RngCore`].
+/// All methods have default implementations that work with any [`Rng`].
 /// RNG implementations can override these with optimized versions.
 ///
 /// # Example
@@ -70,7 +70,7 @@ use rand_core::RngCore;
 ///     }
 /// }
 /// ```
-pub trait RngProbabilityExt: RngCore {
+pub trait RngProbabilityExt: Rng {
     /// Convert a probability to a u64 threshold for use with [`check_probability`](Self::check_probability).
     ///
     /// This allows precomputing the threshold once and reusing it for many
@@ -526,8 +526,8 @@ pub trait RngProbabilityExt: RngCore {
     }
 }
 
-// Blanket implementation for all RngCore types
-impl<T: RngCore> RngProbabilityExt for T {}
+// Blanket implementation for all Rng types
+impl<T: Rng> RngProbabilityExt for T {}
 
 // ============================================================================
 // RngBulkExt: Optimized bulk operations
@@ -548,7 +548,7 @@ impl<T: RngCore> RngProbabilityExt for T {}
 /// let mut data = vec![0u64; 1000];
 /// rng.fill_u64_bulk(&mut data);  // Uses optimized implementation
 /// ```
-pub trait RngBulkExt: RngCore {
+pub trait RngBulkExt: Rng {
     /// Fill a slice with random u64 values using optimized bulk generation.
     ///
     /// This method is designed for high-performance scenarios where many

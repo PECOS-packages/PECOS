@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::RngManageable;
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
 
 use core::fmt::Debug;
 
@@ -27,7 +27,7 @@ use core::fmt::Debug;
 /// - Rapid prototyping where quantum coherence isn't important
 ///
 /// # Type Parameters
-/// * `R` - Random number generator type implementing `RngCore + SeedableRng` traits
+/// * `R` - Random number generator type implementing `Rng + SeedableRng` traits
 ///
 /// # Examples
 /// ```rust
@@ -42,7 +42,7 @@ use core::fmt::Debug;
 #[derive(Clone, Debug)]
 pub struct CoinToss<R = PecosRng>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     num_qubits: usize,
     prob: f64,
@@ -143,7 +143,7 @@ impl CoinToss<PecosRng> {
 
 impl<R> CoinToss<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Returns the number of qubits in the system
     ///
@@ -227,7 +227,7 @@ where
 
 impl<R> QuantumSimulator for CoinToss<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     fn reset(&mut self) -> &mut Self {
         // CoinToss is stateless, so reset is a no-op
@@ -237,7 +237,7 @@ where
 
 impl<R> RngManageable for CoinToss<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     type Rng = R;
 
@@ -256,7 +256,7 @@ where
 
 impl<R> CliffordGateable<usize> for CoinToss<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     // All quantum gates are no-ops in CoinToss - they all return self for chaining
     fn h(&mut self, _qubit: usize) -> &mut Self {
@@ -295,7 +295,7 @@ where
 
 impl<R> ArbitraryRotationGateable<usize> for CoinToss<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     // All rotation gates are no-ops in CoinToss - they all return self for chaining
     fn rx(&mut self, _theta: f64, _q: usize) -> &mut Self {

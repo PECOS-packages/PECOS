@@ -15,7 +15,7 @@
 use core::fmt::Debug;
 use num_complex::Complex64;
 use pecos_rng::PecosRng;
-use rand::{RngCore, SeedableRng};
+use rand_core::{Rng, SeedableRng};
 use std::f64::consts::FRAC_PI_4;
 use thiserror::Error;
 
@@ -125,7 +125,7 @@ unsafe impl Sync for QuregWrapper {}
 #[derive(Debug)]
 pub struct QuestStateVec<R = PecosRng>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     num_qubits: usize,
     // The QuEST environment must be kept alive for the lifetime of the simulator.
@@ -158,7 +158,7 @@ impl QuestStateVec {
 
 impl<R> QuestStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Creates a new `QuestStateVec` with the specified number of qubits and seed.
     ///
@@ -269,7 +269,7 @@ where
 
 impl<R> Clone for QuestStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     fn clone(&self) -> Self {
         // Create a new independent instance with same parameters
@@ -293,7 +293,7 @@ where
 
 impl<R> QuantumSimulator for QuestStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     fn reset(&mut self) -> &mut Self {
         unsafe {
@@ -305,7 +305,7 @@ where
 
 impl<R> CliffordGateable<usize> for QuestStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     fn h(&mut self, qubit: usize) -> &mut Self {
         self.check_qubit_index(qubit).expect("Invalid qubit index");
@@ -390,7 +390,7 @@ where
     // }
 
     fn mz(&mut self, qubit: usize) -> MeasurementResult {
-        use rand::Rng;
+        use rand::RngExt;
 
         self.check_qubit_index(qubit).expect("Invalid qubit index");
         let quest_qubit = self.convert_qubit_index(qubit);
@@ -414,7 +414,7 @@ where
 
 impl<R> ArbitraryRotationGateable<usize> for QuestStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     fn rx(&mut self, angle: f64, qubit: usize) -> &mut Self {
         self.check_qubit_index(qubit).expect("Invalid qubit index");
@@ -477,7 +477,7 @@ where
 
 impl<R> RngManageable for QuestStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     type Rng = R;
 
@@ -497,7 +497,7 @@ where
 // Additional methods for QuestStateVec
 impl<R> QuestStateVec<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Returns the complex amplitude of the specified computational basis state.
     ///
@@ -515,15 +515,15 @@ where
     }
 }
 
-unsafe impl<R> Send for QuestStateVec<R> where R: RngCore + SeedableRng + Debug + Send {}
+unsafe impl<R> Send for QuestStateVec<R> where R: Rng + SeedableRng + Debug + Send {}
 
-unsafe impl<R> Sync for QuestStateVec<R> where R: RngCore + SeedableRng + Debug + Sync {}
+unsafe impl<R> Sync for QuestStateVec<R> where R: Rng + SeedableRng + Debug + Sync {}
 
 /// A quantum density matrix simulator using `QuEST`'s density matrix representation
 #[derive(Debug)]
 pub struct QuestDensityMatrix<R = PecosRng>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     num_qubits: usize,
     // The QuEST environment must be kept alive for the lifetime of the simulator.
@@ -556,7 +556,7 @@ impl QuestDensityMatrix {
 
 impl<R> QuestDensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Creates a new `QuestDensityMatrix` with the specified number of qubits and seed.
     ///
@@ -671,7 +671,7 @@ where
 
 impl<R> Clone for QuestDensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     fn clone(&self) -> Self {
         // Create a new independent instance with same parameters
@@ -703,7 +703,7 @@ where
 // Implement traits for QuestDensityMatrix (same as QuestStateVec for compatibility)
 impl<R> QuantumSimulator for QuestDensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     fn reset(&mut self) -> &mut Self {
         unsafe {
@@ -715,7 +715,7 @@ where
 
 impl<R> CliffordGateable<usize> for QuestDensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     fn h(&mut self, qubit: usize) -> &mut Self {
         self.check_qubit_index(qubit).expect("Invalid qubit index");
@@ -800,7 +800,7 @@ where
     // }
 
     fn mz(&mut self, qubit: usize) -> MeasurementResult {
-        use rand::Rng;
+        use rand::RngExt;
 
         self.check_qubit_index(qubit).expect("Invalid qubit index");
         let quest_qubit = self.convert_qubit_index(qubit);
@@ -824,7 +824,7 @@ where
 
 impl<R> ArbitraryRotationGateable<usize> for QuestDensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     fn rx(&mut self, angle: f64, qubit: usize) -> &mut Self {
         self.check_qubit_index(qubit).expect("Invalid qubit index");
@@ -887,7 +887,7 @@ where
 
 impl<R> RngManageable for QuestDensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     type Rng = R;
 
@@ -907,7 +907,7 @@ where
 // Additional methods for QuestDensityMatrix
 impl<R> QuestDensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     /// Returns the complex density matrix element at the specified index.
     ///
@@ -925,9 +925,9 @@ where
     }
 }
 
-unsafe impl<R> Send for QuestDensityMatrix<R> where R: RngCore + SeedableRng + Debug + Send {}
+unsafe impl<R> Send for QuestDensityMatrix<R> where R: Rng + SeedableRng + Debug + Send {}
 
-unsafe impl<R> Sync for QuestDensityMatrix<R> where R: RngCore + SeedableRng + Debug + Sync {}
+unsafe impl<R> Sync for QuestDensityMatrix<R> where R: Rng + SeedableRng + Debug + Sync {}
 
 #[cfg(test)]
 mod tests;

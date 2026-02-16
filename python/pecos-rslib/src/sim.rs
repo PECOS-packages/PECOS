@@ -196,7 +196,7 @@ pub fn sim_builder() -> PySimBuilder {
 ///
 /// This builder follows the same fluent API as the Rust `SimBuilder`,
 /// allowing method chaining to configure the simulation.
-#[pyclass(name = "SimBuilder", module = "pecos_rslib")]
+#[pyclass(name = "SimBuilder", module = "pecos_rslib", from_py_object)]
 #[derive(Clone)]
 pub struct PySimBuilder {
     pub(crate) inner: SimBuilderInner,

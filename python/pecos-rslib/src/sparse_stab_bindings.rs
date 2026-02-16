@@ -13,9 +13,9 @@ use pecos::prelude::*;
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 
-#[pyclass(name = "SparseSim")]
+#[pyclass(name = "SparseSim", module = "pecos_rslib")]
 pub struct PySparseSim {
     inner: SparseStab<VecSet<usize>, usize>,
 }
@@ -505,6 +505,105 @@ impl PySparseSim {
     ) -> PyResult<()> {
         self.run_circuit(circuit, removed_locations, py)?;
         Ok(())
+    }
+
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let num_qubits = self.inner.num_qubits();
+
+        // Helper closure to serialize a Gens into a Python dict
+        let serialize_gens = |gens: &Gens<VecSet<usize>, usize>| -> PyResult<Py<PyDict>> {
+            let dict = PyDict::new(py);
+
+            let vecset_to_list = |sets: &[VecSet<usize>]| -> PyResult<Py<PyList>> {
+                let items: Vec<Py<PyList>> = sets
+                    .iter()
+                    .map(|s| {
+                        let elems: Vec<usize> = s.elements().to_vec();
+                        Ok(PyList::new(py, &elems)?.unbind())
+                    })
+                    .collect::<PyResult<_>>()?;
+                Ok(PyList::new(py, &items)?.unbind())
+            };
+
+            dict.set_item("col_x", vecset_to_list(&gens.col_x)?)?;
+            dict.set_item("col_z", vecset_to_list(&gens.col_z)?)?;
+            dict.set_item("row_x", vecset_to_list(&gens.row_x)?)?;
+            dict.set_item("row_z", vecset_to_list(&gens.row_z)?)?;
+
+            let set_to_list = |s: &VecSet<usize>| -> Py<PyList> {
+                let elems: Vec<usize> = s.elements().to_vec();
+                PyList::new(py, &elems).unwrap().unbind()
+            };
+
+            dict.set_item("sign", set_to_list(&gens.sign))?;
+            dict.set_item("signs_minus", set_to_list(&gens.signs_minus))?;
+            dict.set_item("signs_i", set_to_list(&gens.signs_i))?;
+
+            Ok(dict.unbind())
+        };
+
+        let stabs_dict = serialize_gens(self.inner.stabs())?;
+        let destabs_dict = serialize_gens(self.inner.destabs())?;
+
+        let cls = py.get_type::<PySparseSim>();
+        let from_pickle = cls.getattr("_from_pickle")?;
+        PyTuple::new(py, &[
+            from_pickle.into_any(),
+            PyTuple::new(py, &[
+                num_qubits.into_pyobject(py)?.into_any(),
+                stabs_dict.into_bound(py).into_any(),
+                destabs_dict.into_bound(py).into_any(),
+            ])?.into_any(),
+        ])
+    }
+
+    #[staticmethod]
+    fn _from_pickle(
+        num_qubits: usize,
+        stabs_dict: &Bound<'_, PyDict>,
+        destabs_dict: &Bound<'_, PyDict>,
+    ) -> PyResult<Self> {
+        let deserialize_gens = |dict: &Bound<'_, PyDict>| -> PyResult<Gens<VecSet<usize>, usize>> {
+            let list_to_vecsets = |key: &str| -> PyResult<Vec<VecSet<usize>>> {
+                let list: Bound<'_, PyList> = dict
+                    .get_item(key)?
+                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>(key.to_string()))?
+                    .cast_into()?;
+                let mut result = Vec::with_capacity(list.len());
+                for item in list.iter() {
+                    let inner_list: Vec<usize> = item.extract()?;
+                    let set: VecSet<usize> = inner_list.into_iter().collect();
+                    result.push(set);
+                }
+                Ok(result)
+            };
+
+            let list_to_vecset = |key: &str| -> PyResult<VecSet<usize>> {
+                let list = dict
+                    .get_item(key)?
+                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>(key.to_string()))?;
+                let elems: Vec<usize> = list.extract()?;
+                Ok(elems.into_iter().collect())
+            };
+
+            Ok(Gens::from_parts(
+                num_qubits,
+                list_to_vecsets("col_x")?,
+                list_to_vecsets("col_z")?,
+                list_to_vecsets("row_x")?,
+                list_to_vecsets("row_z")?,
+                list_to_vecset("sign")?,
+                list_to_vecset("signs_minus")?,
+                list_to_vecset("signs_i")?,
+            ))
+        };
+
+        let stabs = deserialize_gens(stabs_dict)?;
+        let destabs = deserialize_gens(destabs_dict)?;
+
+        Ok(PySparseSim {
+            inner: SparseStab::from_parts(num_qubits, stabs, destabs),
+        })
     }
 
     #[getter]

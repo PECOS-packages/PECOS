@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 ///
 /// This simulator tracks how Pauli operators propagate through Clifford circuits.
 /// It's particularly useful for fault propagation and stabilizer simulations.
-#[pyclass(name = "PauliProp")]
+#[pyclass(name = "PauliProp", module = "pecos_rslib")]
 pub struct PyPauliProp {
     inner: StdPauliProp,
     num_qubits: Option<usize>,
@@ -306,6 +306,46 @@ impl PyPauliProp {
     /// Alias for weight (backwards compatibility with `PauliFaultProp`)
     pub fn fault_wt(&self) -> usize {
         self.inner.weight()
+    }
+
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+        let faults = self.build_faults_dict(py)?;
+        let sign = self.inner.get_sign();
+        let img = self.inner.get_img();
+
+        let cls = py.get_type::<PyPauliProp>();
+        let from_pickle = cls.getattr("_from_pickle")?;
+        pyo3::types::PyTuple::new(py, &[
+            from_pickle.into_any(),
+            pyo3::types::PyTuple::new(py, &[
+                self.num_qubits.into_pyobject(py)?.into_any(),
+                self.track_sign.into_pyobject(py)?.to_owned().into_any(),
+                faults.into_bound(py).into_any(),
+                sign.into_pyobject(py)?.to_owned().into_any(),
+                img.into_pyobject(py)?.into_any(),
+            ])?.into_any(),
+        ])
+    }
+
+    #[staticmethod]
+    fn _from_pickle(
+        num_qubits: Option<usize>,
+        track_sign: bool,
+        faults: &Bound<'_, PyDict>,
+        sign: bool,
+        img: u8,
+    ) -> PyResult<Self> {
+        let mut obj = PyPauliProp::new(num_qubits, track_sign);
+        obj.add_paulis(faults)?;
+        // Restore sign: if stored sign is negative, flip it (default is false/positive)
+        if sign {
+            obj.inner.flip_sign();
+        }
+        // Restore img: add the stored imaginary count
+        if img > 0 {
+            obj.inner.flip_img(img as usize);
+        }
+        Ok(obj)
     }
 
     /// String representation

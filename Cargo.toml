@@ -24,7 +24,7 @@ keywords = ["scientific", "quantum", "QEC"]
 categories = ["science", "simulation"]
 
 [workspace.dependencies]
-pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3 = { version = "0.28", features = ["extension-module"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4.5"
@@ -42,7 +42,7 @@ pest = "2"
 pest_derive = "2"
 tempfile = "3"
 assert_cmd = "2"
-wasmtime = { version = "40", default-features = false, features = [
+wasmtime = { version = "41", default-features = false, features = [
   "cranelift",
   "runtime",
   "wat",
@@ -53,11 +53,11 @@ ron = "0.12"
 tket = { version = "0.17", default-features = false }
 tket-qsystem = { version = "0.23", default-features = false }
 cc = "1"
-cxx = "1.0.187"
-cxx-build = "1.0.187"
-reqwest = { version = "0.12", default-features = false, features = [
+cxx = "1"
+cxx-build = "1"
+reqwest = { version = "0.13", default-features = false, features = [
   "blocking",
-  "rustls-tls",
+  "rustls",
 ] }
 flate2 = "1"
 sha2 = "0.10"
@@ -65,7 +65,7 @@ dirs = "6"
 inkwell = "0.8"
 cargo_metadata = "0.23"
 random_tester = "0.1"
-toml = "0.9"
+toml = "1"
 wide = "1"
 
 # Archive handling

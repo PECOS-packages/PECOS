@@ -86,8 +86,8 @@ pub enum PythonCommands {
     /// Uses maturin to build the Rust library and installs quantum-pecos
     /// in editable mode.
     Build {
-        /// Build profile (debug, release, native)
-        #[arg(long, default_value = "debug")]
+        /// Build profile (dev/debug, release, native)
+        #[arg(long, default_value = "dev")]
         profile: String,
 
         /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
@@ -180,8 +180,8 @@ pub enum JuliaCommands {
 
     /// Build Julia FFI library
     Build {
-        /// Build profile (debug, release, native)
-        #[arg(long, default_value = "release")]
+        /// Build profile (dev/debug, release, native)
+        #[arg(long, default_value = "dev")]
         profile: String,
 
         /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
@@ -218,8 +218,8 @@ pub enum GoCommands {
 
     /// Build Go FFI library
     Build {
-        /// Build profile (debug, release, native)
-        #[arg(long, default_value = "release")]
+        /// Build profile (dev/debug, release, native)
+        #[arg(long, default_value = "dev")]
         profile: String,
 
         /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
@@ -253,8 +253,8 @@ pub enum SeleneCommands {
         #[arg(short, long)]
         plugin: Option<String>,
 
-        /// Build profile to use (debug, release, native)
-        #[arg(long, default_value = "release")]
+        /// Build profile to use (dev/debug, release, native)
+        #[arg(long, default_value = "dev")]
         profile: String,
 
         /// Show what would be copied without copying

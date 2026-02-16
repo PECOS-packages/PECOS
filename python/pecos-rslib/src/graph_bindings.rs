@@ -98,7 +98,7 @@ fn attribute_to_python(py: Python<'_>, attr: &RustAttribute) -> PyResult<Py<PyAn
 /// # Compute maximum weight matching
 /// matching = graph.max_weight_matching()
 /// ```
-#[pyclass(name = "Graph", module = "pecos_rslib.graph")]
+#[pyclass(name = "Graph", module = "pecos_rslib.graph", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraph {
     /// The underlying Rust graph
@@ -1202,7 +1202,7 @@ impl PyGraphAttrsView {
 /// # Topological sort
 /// order = g.topological_sort()  # Returns [n0, n1, n2] or None if cyclic
 /// ```
-#[pyclass(name = "DiGraph", module = "pecos_rslib.graph")]
+#[pyclass(name = "DiGraph", module = "pecos_rslib.graph", from_py_object)]
 #[derive(Clone)]
 pub struct PyDiGraph {
     inner: RustDiGraph,
@@ -1640,7 +1640,7 @@ impl PyDiGraphAttrsView {
 /// roots = g.roots()      # Nodes with no predecessors
 /// leaves = g.leaves()    # Nodes with no successors
 /// ```
-#[pyclass(name = "DAG", module = "pecos_rslib.graph")]
+#[pyclass(name = "DAG", module = "pecos_rslib.graph", from_py_object)]
 #[derive(Clone)]
 pub struct PyDAG {
     inner: RustDAG,

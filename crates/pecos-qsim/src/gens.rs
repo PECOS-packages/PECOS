@@ -68,6 +68,31 @@ where
         self.signs_i.clear();
     }
 
+    #[must_use]
+    #[inline]
+    pub fn from_parts(
+        num_qubits: usize,
+        col_x: Vec<T>,
+        col_z: Vec<T>,
+        row_x: Vec<T>,
+        row_z: Vec<T>,
+        sign: T,
+        signs_minus: T,
+        signs_i: T,
+    ) -> Self {
+        Self {
+            num_qubits,
+            col_x,
+            col_z,
+            row_x,
+            row_z,
+            sign,
+            signs_minus,
+            signs_i,
+            _marker: PhantomData,
+        }
+    }
+
     #[inline]
     pub fn init_all_z(&mut self) {
         self.clear();

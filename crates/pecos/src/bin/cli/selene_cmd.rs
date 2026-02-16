@@ -98,8 +98,10 @@ fn get_lib_filename(lib_name: &str) -> String {
 }
 
 /// Get the target directory for a given profile
+/// Note: Cargo's "dev" profile outputs to target/debug/, so we normalize "dev" to "debug"
 fn get_target_dir(repo_root: &Path, profile: &str) -> PathBuf {
-    repo_root.join("target").join(profile)
+    let dir_name = if profile == "dev" { "debug" } else { profile };
+    repo_root.join("target").join(dir_name)
 }
 
 /// Install Selene plugins by copying compiled libraries to Python package directories

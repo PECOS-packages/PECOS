@@ -116,7 +116,7 @@ fn py_dict_to_attrs(
 }
 
 /// Python wrapper for `QubitId`.
-#[pyclass(name = "QubitId", module = "pecos_rslib.quantum")]
+#[pyclass(name = "QubitId", module = "pecos_rslib.quantum", from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyQubitId {
     inner: QubitId,
@@ -166,7 +166,7 @@ impl From<PyQubitId> for QubitId {
 }
 
 /// Python wrapper for `GateType`.
-#[pyclass(name = "GateType", module = "pecos_rslib.quantum")]
+#[pyclass(name = "GateType", module = "pecos_rslib.quantum", from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PyGateType {
     inner: GateType,
@@ -421,7 +421,7 @@ impl From<PyGateType> for GateType {
 }
 
 /// Python wrapper for `Gate`.
-#[pyclass(name = "Gate", module = "pecos_rslib.quantum")]
+#[pyclass(name = "Gate", module = "pecos_rslib.quantum", from_py_object)]
 #[derive(Clone)]
 pub struct PyGate {
     inner: Gate,
@@ -741,7 +741,7 @@ pyo3::create_exception!(
 ///
 /// A directed acyclic graph representation of a quantum circuit where nodes are gates
 /// and edges are qubit wires flowing between gates.
-#[pyclass(name = "DagCircuit", module = "pecos_rslib.quantum")]
+#[pyclass(name = "DagCircuit", module = "pecos_rslib.quantum", from_py_object)]
 #[derive(Clone)]
 pub struct PyDagCircuit {
     pub(crate) inner: DagCircuit,
@@ -1436,7 +1436,7 @@ fn py_is_quantum_operation(op_name: &str) -> bool {
 /// Python wrapper for `Nanoseconds`.
 ///
 /// Represents a time duration in nanoseconds.
-#[pyclass(name = "Nanoseconds", module = "pecos_rslib")]
+#[pyclass(name = "Nanoseconds", module = "pecos_rslib", from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PyNanoseconds {
     inner: Nanoseconds,
@@ -1574,7 +1574,7 @@ impl From<PyNanoseconds> for Nanoseconds {
 /// Python wrapper for `TimeUnits`.
 ///
 /// Represents an abstract time duration in arbitrary units.
-#[pyclass(name = "TimeUnits", module = "pecos_rslib")]
+#[pyclass(name = "TimeUnits", module = "pecos_rslib", from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PyTimeUnits {
     inner: TimeUnits,

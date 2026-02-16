@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 // use core::prelude::rng_pcg::PCGRandom;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Copy)]
 pub struct RngPcg {
     global_state: PCGRandom,

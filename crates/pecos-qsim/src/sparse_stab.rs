@@ -167,6 +167,27 @@ where
     }
 
     #[inline]
+    pub fn stabs(&self) -> &Gens<T, E> {
+        &self.stabs
+    }
+
+    #[inline]
+    pub fn destabs(&self) -> &Gens<T, E> {
+        &self.destabs
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn from_parts(num_qubits: usize, stabs: Gens<T, E>, destabs: Gens<T, E>) -> Self {
+        Self {
+            num_qubits,
+            stabs,
+            destabs,
+            rng: R::from_os_rng(),
+        }
+    }
+
+    #[inline]
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
         let mut stab = Self {
             num_qubits,

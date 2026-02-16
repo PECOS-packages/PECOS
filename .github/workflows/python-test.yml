@@ -24,12 +24,23 @@ defaults:
 jobs:
   python-test:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 150
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        # Full Python version matrix on Ubuntu (fast)
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          # Windows/macOS: only test oldest and newest stable Python (slow platforms)
+          - os: windows-latest
+            python-version: "3.10"
+          - os: windows-latest
+            python-version: "3.14"
+          - os: macOS-latest
+            python-version: "3.10"
+          - os: macOS-latest
+            python-version: "3.14"
 
     steps:
     - name: Free Disk Space (Ubuntu)

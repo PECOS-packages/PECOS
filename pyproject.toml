@@ -40,6 +40,7 @@ dev = [
 test = [ # pinning testing environment
     "pytest==8.3.3", # 8.3.4 seems to be causing errors
     "pytest-cov==6.0.0",
+    "pytest-timeout>=2.3.1",
     "hypothesis==6.122.3",
 ]
 numpy-compat = [  # NumPy/SciPy compatibility tests - verify compatibility with scientific Python stack

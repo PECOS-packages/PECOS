@@ -1,0 +1,144 @@
+name: Debug multiprocessing spawn
+
+# Temporary diagnostic workflow to investigate multiprocessing spawn hang on macOS/Windows.
+# Remove this workflow once the root cause is identified and fixed.
+
+env:
+  RUSTFLAGS: -C debuginfo=0
+  RUST_BACKTRACE: 1
+  PYTHONUTF8: 1
+
+on:
+  push:
+    branches: [ "docs" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  debug-multiprocessing:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macOS-latest, windows-latest]
+        python-version: ["3.10", "3.14"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Set up Visual Studio environment on Windows
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+
+    - name: Set up Rust
+      run: rustup show
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: python/pecos-rslib
+
+    - name: Install LLVM 14.0.6 using pecos-llvm (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        echo "Installing LLVM using pecos..."
+        cargo run -p pecos --features cli --release -- llvm install
+
+        echo "Setting LLVM environment variables..."
+        export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
+        export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
+
+        echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
+        echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
+
+        echo "Verifying LLVM installation..."
+        cargo run -p pecos --features cli --release -- llvm check
+
+    - name: Install LLVM 14.0.6 using pecos-llvm (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "Installing LLVM using pecos..."
+        cargo run -p pecos --features cli --release -- llvm install
+
+        Write-Host "Setting LLVM environment variables..."
+        $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)
+        $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
+
+        "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+        Write-Host "Verifying LLVM installation..."
+        cargo run -p pecos --features cli --release -- llvm check
+
+    - name: Configure MSVC linker (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # Find MSVC link.exe and create cargo config
+        $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vsPath = & $vsWhere -latest -property installationPath
+        $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
+                    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
+                    Select-Object -First 1 -ExpandProperty FullName
+
+        if ($linkPath) {
+          New-Item -ItemType Directory -Force -Path .cargo | Out-Null
+          $escapedPath = $linkPath.Replace('\', '/')
+          $escapedLLVMPath = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
+          $configContent = "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`"`n`n[env]`nLLVM_SYS_140_PREFIX = `"$escapedLLVMPath`""
+          $configContent | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
+          New-Item -ItemType Directory -Force -Path "python\pecos-rslib\.cargo" | Out-Null
+          $configContent | Out-File -FilePath "python\pecos-rslib\.cargo\config.toml" -Encoding UTF8
+          New-Item -ItemType Directory -Force -Path "python\pecos-rslib\rust\.cargo" | Out-Null
+          $configContent | Out-File -FilePath "python\pecos-rslib\rust\.cargo\config.toml" -Encoding UTF8
+          [System.Environment]::SetEnvironmentVariable("LLVM_SYS_140_PREFIX", $env:LLVM_SYS_140_PREFIX, "User")
+          [System.Environment]::SetEnvironmentVariable("LLVM_SYS_140_PREFIX", $env:LLVM_SYS_140_PREFIX, "Process")
+        } else {
+          Write-Error "Could not find MSVC link.exe"
+          exit 1
+        }
+
+    - name: Configure macOS environment
+      if: runner.os == 'macOS'
+      run: |
+        unset LIBRARY_PATH
+        unset LD_LIBRARY_PATH
+        unset DYLD_LIBRARY_PATH
+        unset DYLD_FALLBACK_LIBRARY_PATH
+        unset PKG_CONFIG_PATH
+        export LIBRARY_PATH=/usr/lib
+        echo "LIBRARY_PATH=/usr/lib" >> $GITHUB_ENV
+
+    - name: Build PECOS (debug)
+      run: just build-debug
+
+    - name: Run diagnostic script
+      run: uv run python scripts/debug_multiprocessing_spawn.py
+
+    - name: Run multiprocessing test with timeout
+      run: |
+        uv run pytest python/quantum-pecos/tests/pecos/integration/test_pickle_multiprocessing.py -v --timeout=120 -x

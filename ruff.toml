@@ -144,7 +144,7 @@ ignore = [
 "python/pecos-rslib/tests/*.py" = ["INP001"]  # Test files don't need __init__.py
 
 # Scripts and examples - not packages
-"scripts/**/*.py" = ["INP001", "S603"]  # Script files don't need __init__.py and may run subprocess calls for testing
+"scripts/**/*.py" = ["INP001", "S603", "PLC0415", "S301", "BLE001"]  # Script files: no __init__.py, subprocess calls, lazy imports, pickle, broad except
 "examples/**/*.py" = ["INP001", "BLE001"]  # Example files don't need __init__.py and can use broad exception handling
 
 

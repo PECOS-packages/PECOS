@@ -47,8 +47,10 @@ def _pauliprop_worker(sim_bytes: bytes) -> int:
 # Use fork context on Linux (fast, avoids spawn serialization issues with test files).
 # On macOS/Windows where fork is unavailable or unsafe, use spawn.
 _MP_CONTEXT = "fork" if sys.platform == "linux" else "spawn"
+_POOL_TIMEOUT = 60  # seconds -- fail fast instead of hanging CI
 
 
+@pytest.mark.timeout(120)
 class TestMultiprocessingStateVec:
     """Tests for multiprocessing StateVec simulators via pickle."""
 
@@ -59,10 +61,13 @@ class TestMultiprocessingStateVec:
         sim_bytes = pickle.dumps(sim)
         ctx = multiprocessing.get_context(_MP_CONTEXT)
         with ctx.Pool(processes=2) as pool:
-            results = pool.map(_statevec_worker, [sim_bytes, sim_bytes])
+            results = pool.map_async(_statevec_worker, [sim_bytes, sim_bytes]).get(
+                timeout=_POOL_TIMEOUT,
+            )
         assert results == [3, 3]
 
 
+@pytest.mark.timeout(120)
 class TestMultiprocessingSparseSim:
     """Tests for multiprocessing SparseSim simulators via pickle."""
 
@@ -74,10 +79,13 @@ class TestMultiprocessingSparseSim:
         sim_bytes = pickle.dumps(sim)
         ctx = multiprocessing.get_context(_MP_CONTEXT)
         with ctx.Pool(processes=2) as pool:
-            results = pool.map(_sparsesim_worker, [sim_bytes, sim_bytes])
+            results = pool.map_async(_sparsesim_worker, [sim_bytes, sim_bytes]).get(
+                timeout=_POOL_TIMEOUT,
+            )
         assert results == [4, 4]
 
 
+@pytest.mark.timeout(120)
 class TestMultiprocessingCoinToss:
     """Tests for multiprocessing CoinToss simulators via pickle."""
 
@@ -87,10 +95,13 @@ class TestMultiprocessingCoinToss:
         sim_bytes = pickle.dumps(sim)
         ctx = multiprocessing.get_context(_MP_CONTEXT)
         with ctx.Pool(processes=2) as pool:
-            results = pool.map(_cointoss_worker, [sim_bytes, sim_bytes])
+            results = pool.map_async(_cointoss_worker, [sim_bytes, sim_bytes]).get(
+                timeout=_POOL_TIMEOUT,
+            )
         assert results == [5, 5]
 
 
+@pytest.mark.timeout(120)
 class TestMultiprocessingPauliProp:
     """Tests for multiprocessing PauliProp simulators via pickle."""
 
@@ -101,6 +112,8 @@ class TestMultiprocessingPauliProp:
         sim_bytes = pickle.dumps(sim)
         ctx = multiprocessing.get_context(_MP_CONTEXT)
         with ctx.Pool(processes=2) as pool:
-            results = pool.map(_pauliprop_worker, [sim_bytes, sim_bytes])
+            results = pool.map_async(_pauliprop_worker, [sim_bytes, sim_bytes]).get(
+                timeout=_POOL_TIMEOUT,
+            )
         # After H on qubit 0: X->Z, so weight should still be 1
         assert all(r == 1 for r in results)

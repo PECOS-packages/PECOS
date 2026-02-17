@@ -20,7 +20,7 @@ This guide will help you get up and running with PECOS quickly.
         ```bash
         pip install quantum-pecos --pre
         ```
-        Or a specific version: `pip install quantum-pecos==0.8.0.dev0`
+        Or a specific version: `pip install quantum-pecos==0.8.0.dev1`
 
 === ":fontawesome-brands-rust: Rust"
 

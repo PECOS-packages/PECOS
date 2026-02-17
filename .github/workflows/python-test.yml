@@ -241,12 +241,7 @@ jobs:
 
         # Build and test
         just build-debug
-        # Skip generated doc tests on Windows to reduce CI time (390 tests)
-        # Run core tests
-        uv run pytest python/pecos-rslib/tests -m "not performance and not numpy" -v
-        uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not numpy" --ignore=python/quantum-pecos/tests/docs/generated -v
-        # Run numpy compat tests
-        uv run --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance" -v
+        just pytest-all
 
     - name: Install PECOS CLI (non-Windows)
       if: runner.os != 'Windows'
@@ -313,16 +308,7 @@ jobs:
           fi
         fi
 
-        # On macOS, skip generated doc tests to reduce CI time (390 tests)
-        if [[ "${{ runner.os }}" == "macOS" ]]; then
-          # Run core tests
-          uv run pytest python/pecos-rslib/tests -m "not performance and not numpy" -v
-          uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not numpy" --ignore=python/quantum-pecos/tests/docs/generated -v
-          # Run numpy compat tests
-          uv run --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance" -v
-        else
-          just pytest-all
-        fi
+        just pytest-all
 
     - name: Run linting
       run: |

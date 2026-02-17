@@ -26,6 +26,7 @@ import pickle
 import sys
 import time
 
+from pecos._mp_workers import deserialize_and_call
 from pecos_rslib import StateVec
 
 TIMEOUT = 60  # seconds per stage
@@ -34,26 +35,6 @@ TIMEOUT = 60  # seconds per stage
 def _worker_basic(_: object) -> str:
     """Worker that returns a constant -- no imports needed."""
     return "ok"
-
-
-def _worker_import(_: object) -> str:
-    """Worker that imports pecos_rslib."""
-    import pecos_rslib  # noqa: F401
-
-    return "import_ok"
-
-
-def _worker_pickle_statevec(data: bytes) -> str:
-    """Worker that unpickles a StateVec."""
-    obj = pickle.loads(data)
-    return f"unpickled_statevec_qubits={obj.num_qubits}"
-
-
-def _worker_full_pattern(data: bytes) -> int:
-    """Worker replicating the test pattern: unpickle + operate."""
-    sim = pickle.loads(data)
-    sim.run_1q_gate("H", 0)
-    return sim.num_qubits
 
 
 def _log(msg: str) -> None:
@@ -106,36 +87,19 @@ def _main() -> None:
         _log("FAILED at basic spawn -- multiprocessing itself is broken")
         sys.exit(1)
 
-    # Stage 2: Import pecos_rslib in worker
-    if not _run_stage("import_pecos_rslib", _worker_import, [None, None], ctx):
-        _log("FAILED at import -- pecos_rslib import hangs in spawned child")
-        sys.exit(2)
-
-    # Stage 3: Pickle/unpickle StateVec in worker
-    _log("Preparing StateVec for stage 3...")
+    # Stage 2: Pickle/unpickle StateVec + operate (using importable worker)
+    _log("Preparing StateVec for stage 2...")
     sim = StateVec(3, seed=42)
     sim.run_1q_gate("H", 0)
     sim_bytes = pickle.dumps(sim)
     _log(f"  Pickled StateVec: {len(sim_bytes)} bytes")
 
-    if not _run_stage(
-        "pickle_statevec",
-        _worker_pickle_statevec,
-        [sim_bytes, sim_bytes],
-        ctx,
-    ):
-        _log("FAILED at pickle -- StateVec unpickling hangs in spawned child")
-        sys.exit(3)
-
-    # Stage 4: Full test pattern (unpickle + operate)
-    if not _run_stage(
-        "full_pattern",
-        _worker_full_pattern,
-        [sim_bytes, sim_bytes],
-        ctx,
-    ):
-        _log("FAILED at full pattern -- operation on unpickled StateVec hangs")
-        sys.exit(4)
+    worker_args = [(sim_bytes, "run_1q_gate", ("H", 0), "num_qubits", ())] * 2
+    if not _run_stage("deserialize_and_call", deserialize_and_call, worker_args, ctx):
+        _log(
+            "FAILED at deserialize_and_call -- multiprocessing with pecos workers broken",
+        )
+        sys.exit(2)
 
     _log("ALL STAGES PASSED")
     sys.exit(0)

@@ -133,6 +133,9 @@ jobs:
         export LIBRARY_PATH=/usr/lib
         echo "LIBRARY_PATH=/usr/lib" >> $GITHUB_ENV
 
+    - name: Install PECOS CLI
+      run: cargo install --path crates/pecos --features cli
+
     - name: Build PECOS (debug)
       run: just build-debug
 

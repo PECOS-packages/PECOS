@@ -967,6 +967,21 @@ impl QisHeliosInterface {
     ) -> Result<(Library, Library), InterfaceError> {
         use std::os::windows::ffi::OsStrExt;
 
+        // AddDllDirectory FFI - adds directories to the DLL search path
+        // This is better than SetDllDirectoryW because it allows multiple directories
+        type DllDirectoryCookie = *mut std::ffi::c_void;
+
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn AddDllDirectory(path: *const u16) -> DllDirectoryCookie;
+            fn RemoveDllDirectory(cookie: DllDirectoryCookie) -> i32;
+            fn SetDefaultDllDirectories(flags: u32) -> i32;
+        }
+
+        // LOAD_LIBRARY_SEARCH flags
+        const LOAD_LIBRARY_SEARCH_DEFAULT_DIRS: u32 = 0x0000_1000;
+        const LOAD_LIBRARY_SEARCH_USER_DIRS: u32 = 0x0000_0400;
+
         // On Windows, there's no RTLD_GLOBAL flag. DLL dependencies need to be
         // findable via the standard DLL search order. For program.dll, we need
         // pecos_qis_ffi.dll and the shim DLL to be findable.
@@ -985,21 +1000,6 @@ impl QisHeliosInterface {
         let dll_dirs: Vec<&std::path::Path> =
             [qis_ffi_dir, shim_dir].into_iter().flatten().collect();
 
-        // AddDllDirectory FFI - adds directories to the DLL search path
-        // This is better than SetDllDirectoryW because it allows multiple directories
-        type DllDirectoryCookie = *mut std::ffi::c_void;
-
-        #[link(name = "kernel32")]
-        unsafe extern "system" {
-            fn AddDllDirectory(path: *const u16) -> DllDirectoryCookie;
-            fn RemoveDllDirectory(cookie: DllDirectoryCookie) -> i32;
-            fn SetDefaultDllDirectories(flags: u32) -> i32;
-        }
-
-        // LOAD_LIBRARY_SEARCH flags
-        const LOAD_LIBRARY_SEARCH_DEFAULT_DIRS: u32 = 0x00001000;
-        const LOAD_LIBRARY_SEARCH_USER_DIRS: u32 = 0x00000400;
-
         // Set the default search order to include user-added directories
         unsafe {
             SetDefaultDllDirectories(
@@ -1012,11 +1012,11 @@ impl QisHeliosInterface {
         for dir in &dll_dirs {
             let dir_wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
             let cookie = unsafe { AddDllDirectory(dir_wide.as_ptr()) };
-            if !cookie.is_null() {
+            if cookie.is_null() {
+                warn!("Windows: Failed to add DLL directory: {}", dir.display());
+            } else {
                 debug!("Windows: Added DLL search directory: {}", dir.display());
                 cookies.push(cookie);
-            } else {
-                warn!("Windows: Failed to add DLL directory: {}", dir.display());
             }
         }
 

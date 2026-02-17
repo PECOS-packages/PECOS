@@ -33,16 +33,10 @@ def precompute(instr: LogicalInstructionProtocol) -> dict[str, Any]:
     """
     qecc = instr.qecc
 
-    if (
-        qecc.name == "4.4.4.4 Surface Code"
-        and qecc.circuit_compiler.name == "Check2Circuits"
-    ):
+    if qecc.name == "4.4.4.4 Surface Code" and qecc.circuit_compiler.name == "Check2Circuits":
         precomputed_data = code_surface4444(instr)
 
-    elif (
-        qecc.name == "Medial 4.4.4.4 Surface Code"
-        and qecc.circuit_compiler.name == "Check2Circuits"
-    ):
+    elif qecc.name == "Medial 4.4.4.4 Surface Code" and qecc.circuit_compiler.name == "Check2Circuits":
         precomputed_data = code_surface4444medial(instr)
 
     else:

@@ -239,9 +239,7 @@ class QAlloc:
             raise ValueError(msg)
 
         # Find available indices to reserve
-        available_indices = [
-            i for i in range(self._capacity) if i not in self._reserved
-        ]
+        available_indices = [i for i in range(self._capacity) if i not in self._reserved]
         indices_to_reserve = available_indices[:size]
 
         # Mark as reserved
@@ -354,26 +352,18 @@ class QAlloc:
 
     def all_prepared(self) -> bool:
         """Check if all non-reserved slots are prepared."""
-        return all(
-            self._slot_states[i] == SlotState.PREPARED
-            for i in range(self._capacity)
-            if i not in self._reserved
-        )
+        return all(self._slot_states[i] == SlotState.PREPARED for i in range(self._capacity) if i not in self._reserved)
 
     def prepared_count(self) -> int:
         """Count of prepared slots."""
         return sum(
-            1
-            for i in range(self._capacity)
-            if i not in self._reserved and self._slot_states[i] == SlotState.PREPARED
+            1 for i in range(self._capacity) if i not in self._reserved and self._slot_states[i] == SlotState.PREPARED
         )
 
     def unprepared_count(self) -> int:
         """Count of unprepared slots."""
         return sum(
-            1
-            for i in range(self._capacity)
-            if i not in self._reserved and self._slot_states[i] == SlotState.UNPREPARED
+            1 for i in range(self._capacity) if i not in self._reserved and self._slot_states[i] == SlotState.UNPREPARED
         )
 
     # --- Slot Access ---

@@ -59,18 +59,10 @@ def test_slr_converter_guppy_does_not_have_undefined_variables() -> None:
     defined_vars = set()
     for line in lines:
         stripped_line = line.strip()
-        if (
-            "=" in stripped_line
-            and not stripped_line.startswith("#")
-            and not stripped_line.startswith("@")
-        ):
+        if "=" in stripped_line and not stripped_line.startswith("#") and not stripped_line.startswith("@"):
             # Extract variable definitions (left side of =)
             left_side = stripped_line.split("=")[0].strip()
-            vars_defined = (
-                [v.strip() for v in left_side.split(",")]
-                if "," in left_side
-                else [left_side]
-            )
+            vars_defined = [v.strip() for v in left_side.split(",")] if "," in left_side else [left_side]
             defined_vars.update(vars_defined)
 
     # Now check that we don't have obvious undefined variable usage
@@ -80,18 +72,13 @@ def test_slr_converter_guppy_does_not_have_undefined_variables() -> None:
         if line.strip().startswith("#") or line.strip().startswith("@"):
             continue
         # Skip import and function definition lines
-        if any(
-            keyword in line
-            for keyword in ["import", "from", "def ", "class ", "return"]
-        ):
+        if any(keyword in line for keyword in ["import", "from", "def ", "class ", "return"]):
             continue
 
     # At minimum, check that we don't reference common undefined variables
     undefined_vars = ["c_a", "c_a_0"]  # Common issues we've seen
     for var in undefined_vars:
-        assert (
-            var not in guppy_code
-        ), f"Generated code contains undefined variable: {var}"
+        assert var not in guppy_code, f"Generated code contains undefined variable: {var}"
 
 
 def test_slr_converter_hugr_simple() -> None:
@@ -192,9 +179,7 @@ def test_slr_converter_parallel_blocks_guppy() -> None:
     # Should not have undefined variables
     undefined_vars = ["c_a", "c_a_0"]
     for var in undefined_vars:
-        assert (
-            var not in guppy_code
-        ), f"Generated code contains undefined variable: {var}"
+        assert var not in guppy_code, f"Generated code contains undefined variable: {var}"
 
 
 def test_slr_converter_guppy_has_main_function() -> None:

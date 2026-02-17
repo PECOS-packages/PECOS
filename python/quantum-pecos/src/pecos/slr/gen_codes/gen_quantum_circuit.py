@@ -36,8 +36,7 @@ class QuantumCircuitGenerator(Generator):
         """Initialize the QuantumCircuit generator."""
         if not _internal:
             warnings.warn(
-                "QuantumCircuitGenerator is deprecated. "
-                "Use pecos.slr.generate(prog, 'quantum_circuit') instead.",
+                "QuantumCircuitGenerator is deprecated. Use pecos.slr.generate(prog, 'quantum_circuit') instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -150,11 +149,7 @@ class QuantumCircuitGenerator(Generator):
             elif hasattr(block, "start") and hasattr(block, "stop"):
                 # For(i, start, stop[, step])
                 step = getattr(block, "step", 1)
-                if not (
-                    isinstance(block.start, int)
-                    and isinstance(block.stop, int)
-                    and isinstance(step, int)
-                ):
+                if not (isinstance(block.start, int) and isinstance(block.stop, int) and isinstance(step, int)):
                     msg = (
                         f"Cannot unroll For loop with non-integer bounds: "
                         f"start={block.start}, stop={block.stop}, step={step}"
@@ -414,18 +409,12 @@ class QuantumCircuitGenerator(Generator):
         elif hasattr(target, "parent") and hasattr(target, "index"):
             # Alternative format (e.g., from other sources)
             parent_sym = target.parent.sym if hasattr(target.parent, "sym") else None
-            if (
-                parent_sym
-                and hasattr(target, "index")
-                and isinstance(target.index, int)
-            ):
+            if parent_sym and hasattr(target, "index") and isinstance(target.index, int):
                 key = (parent_sym, target.index)
                 if key in self.qubit_map:
                     indices.append(self.qubit_map[key])
         elif hasattr(target, "sym"):
             # Full register or single qubit
-            indices.extend(
-                self.qubit_map[key] for key in self.qubit_map if key[0] == target.sym
-            )
+            indices.extend(self.qubit_map[key] for key in self.qubit_map if key[0] == target.sym)
 
         return indices

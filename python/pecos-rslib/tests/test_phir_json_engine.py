@@ -229,9 +229,7 @@ def test_register_mapping_simulation() -> None:
     commands = engine.process_program()
 
     # We expect at least 1 measurement command
-    assert (
-        len(commands) >= 1
-    ), f"Expected at least 1 quantum command, got {len(commands)}"
+    assert len(commands) >= 1, f"Expected at least 1 quantum command, got {len(commands)}"
 
     # Verify we have a measurement
     assert commands[0]["gate_type"] == "Measure", "First command should be Measure"
@@ -244,11 +242,7 @@ def test_register_mapping_simulation() -> None:
     more_commands = engine.process_program()
 
     # If we get another measurement, handle it
-    if (
-        len(more_commands) > 0
-        and more_commands[0]["gate_type"] == "Measure"
-        and more_commands[0]["qubits"] == [1]
-    ):
+    if len(more_commands) > 0 and more_commands[0]["gate_type"] == "Measure" and more_commands[0]["qubits"] == [1]:
         engine.handle_measurement(0)  # Second qubit measures 0
 
     # Get results

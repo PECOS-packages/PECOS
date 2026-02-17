@@ -174,8 +174,7 @@ class TypeChecker(ValidationPass):
         if actual_arity != expected_arity:
             self.errors.append(
                 ValidationError(
-                    message=f"Gate {node.gate.name} expects {expected_arity} qubit(s), "
-                    f"got {actual_arity}",
+                    message=f"Gate {node.gate.name} expects {expected_arity} qubit(s), got {actual_arity}",
                     location=node.location,
                     severity=Severity.ERROR,
                     code="E201",

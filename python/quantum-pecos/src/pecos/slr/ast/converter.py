@@ -315,11 +315,7 @@ class SlrToAst:
             stmt = self._convert_statement(op)
             if stmt is not None:
                 # Handle flattening of nested blocks
-                if (
-                    isinstance(stmt, tuple)
-                    and len(stmt) == 2
-                    and stmt[0] == "__FLATTEN__"
-                ):
+                if isinstance(stmt, tuple) and len(stmt) == 2 and stmt[0] == "__FLATTEN__":
                     # Flatten the nested statements into this list
                     statements.extend(stmt[1])
                 else:
@@ -452,11 +448,7 @@ class SlrToAst:
         allocator = (
             first_qubit.reg.sym
             if hasattr(first_qubit, "reg") and hasattr(first_qubit.reg, "sym")
-            else (
-                str(first_qubit.reg)
-                if hasattr(first_qubit, "reg")
-                else str(first_qubit)
-            )
+            else (str(first_qubit.reg) if hasattr(first_qubit, "reg") else str(first_qubit))
         )
 
         slots = tuple(q.index for q in expanded_qargs)
@@ -572,11 +564,7 @@ class SlrToAst:
         else:
             start = self._convert_expression(op.start)
             stop = self._convert_expression(op.stop)
-            step = (
-                self._convert_expression(op.step)
-                if op.step is not None and op.step != 1
-                else None
-            )
+            step = self._convert_expression(op.step) if op.step is not None and op.step != 1 else None
 
         body = tuple(self._convert_statements(op.ops))
 
@@ -725,11 +713,7 @@ class SlrToAst:
             )
 
         # Bit reference as expression
-        if (
-            hasattr(expr, "reg")
-            and hasattr(expr, "index")
-            and expr.__class__.__name__ == "Bit"
-        ):
+        if hasattr(expr, "reg") and hasattr(expr, "index") and expr.__class__.__name__ == "Bit":
             return BitExpr(ref=self._convert_bit_ref(expr))
 
         # Variable reference

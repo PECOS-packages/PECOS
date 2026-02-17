@@ -232,15 +232,11 @@ class HugrToAstConverter:
         self.next_qubit_idx = 0
         self.allocator_name = "q"  # Default allocator name
         self.node_to_qubit: dict[int, int] = {}  # Track qubit for each node
-        self.measurement_results: dict[int, str] = (
-            {}
-        )  # node_idx -> result variable name
+        self.measurement_results: dict[int, str] = {}  # node_idx -> result variable name
         self.next_result_idx = 0
         self.block_input_nodes: dict[int, int] = {}  # block_idx -> Input node idx
         self.block_output_nodes: dict[int, int] = {}  # block_idx -> Output node idx
-        self.block_output_qubit_ports: dict[int, dict[int, int]] = (
-            {}
-        )  # block_idx -> {port: qubit_idx}
+        self.block_output_qubit_ports: dict[int, dict[int, int]] = {}  # block_idx -> {port: qubit_idx}
 
     def convert(self) -> Program:
         """Convert the HUGR to an SLR-AST Program.
@@ -281,8 +277,7 @@ class HugrToAstConverter:
 
         # Add classical register declarations for measurement results
         decl_list.extend(
-            RegisterDecl(name=result_var, size=1, is_result=True)
-            for result_var in self.measurement_results.values()
+            RegisterDecl(name=result_var, size=1, is_result=True) for result_var in self.measurement_results.values()
         )
 
         declarations = tuple(decl_list)
@@ -355,10 +350,7 @@ class HugrToAstConverter:
                 ext_name = custom_op.extension
                 ext_op_name = custom_op.op_name
 
-                if (
-                    ext_name in QUANTUM_EXTENSIONS
-                    and ext_op_name in ALL_QUANTUM_OPERATIONS
-                ):
+                if ext_name in QUANTUM_EXTENSIONS and ext_op_name in ALL_QUANTUM_OPERATIONS:
                     incoming = self._get_incoming_connections(node)
                     outgoing = self._get_outgoing_connections(node)
 
@@ -404,9 +396,7 @@ class HugrToAstConverter:
                     target_block = cfg.blocks[target]
 
                     # Verify it's a loop header (has incoming from before and after)
-                    has_forward_incoming = any(
-                        inc < target for inc in target_block.incoming_blocks
-                    )
+                    has_forward_incoming = any(inc < target for inc in target_block.incoming_blocks)
                     has_back_edge = block_idx in target_block.incoming_blocks
 
                     if has_forward_incoming and has_back_edge:
@@ -528,11 +518,7 @@ class HugrToAstConverter:
             return
 
         # Entry block should have exactly 2 outgoing edges to different blocks
-        block_edges = [
-            (port, target)
-            for port, target, _tport in entry.outgoing_edges
-            if target in cfg.blocks
-        ]
+        block_edges = [(port, target) for port, target, _tport in entry.outgoing_edges if target in cfg.blocks]
 
         if len(block_edges) == 2:
             # Port 0 = else branch, Port 1 = then branch (Guppy convention)
@@ -777,11 +763,7 @@ class HugrToAstConverter:
         # Check if this block is a conditional header (nested conditional)
         if self._is_conditional_header(cfg, block_idx):
             # Get the branches
-            block_edges = [
-                (port, target)
-                for port, target, _tport in block.outgoing_edges
-                if target in cfg.blocks
-            ]
+            block_edges = [(port, target) for port, target, _tport in block.outgoing_edges if target in cfg.blocks]
             block_edges.sort(key=lambda x: x[0])
             nested_else = block_edges[0][1]
             nested_then = block_edges[1][1]
@@ -822,9 +804,7 @@ class HugrToAstConverter:
                     nested_if = IfStmt(
                         condition=nested_condition,
                         then_body=tuple(nested_then_stmts),
-                        else_body=(
-                            tuple(nested_else_stmts) if nested_else_stmts else None
-                        ),
+                        else_body=(tuple(nested_else_stmts) if nested_else_stmts else None),
                     )
                     statements.append(nested_if)
 
@@ -906,11 +886,7 @@ class HugrToAstConverter:
             # or a classical counter. Use a placeholder variable for now.
             condition_var = self._get_condition_variable()
             # Use measurement variable if available, else generic condition
-            condition = (
-                VarExpr(name=condition_var)
-                if condition_var.startswith("m")
-                else VarExpr(name="loop_condition")
-            )
+            condition = VarExpr(name=condition_var) if condition_var.startswith("m") else VarExpr(name="loop_condition")
 
             while_stmt = WhileStmt(
                 condition=condition,
@@ -1042,10 +1018,7 @@ class HugrToAstConverter:
                 qubit_indices = self._resolve_qubit_operands(op)
 
                 if qubit_indices:
-                    slot_refs = tuple(
-                        SlotRef(allocator=self.allocator_name, index=idx)
-                        for idx in qubit_indices
-                    )
+                    slot_refs = tuple(SlotRef(allocator=self.allocator_name, index=idx) for idx in qubit_indices)
                     statements.append(GateOp(gate=gate_kind, targets=slot_refs))
 
                     # Update node_to_qubit for outputs
@@ -1055,10 +1028,7 @@ class HugrToAstConverter:
             elif op_name in MEASURE_OPERATIONS:
                 qubit_indices = self._resolve_qubit_operands(op)
                 if qubit_indices:
-                    slot_refs = tuple(
-                        SlotRef(allocator=self.allocator_name, index=idx)
-                        for idx in qubit_indices
-                    )
+                    slot_refs = tuple(SlotRef(allocator=self.allocator_name, index=idx) for idx in qubit_indices)
 
                     # Create result variable
                     result_var = f"m{self.next_result_idx}"
@@ -1066,9 +1036,7 @@ class HugrToAstConverter:
                     self.next_result_idx += 1
 
                     # Create MeasureOp with result
-                    result_refs = tuple(
-                        BitRef(register=result_var, index=0) for _ in qubit_indices
-                    )
+                    result_refs = tuple(BitRef(register=result_var, index=0) for _ in qubit_indices)
                     statements.append(MeasureOp(targets=slot_refs, results=result_refs))
 
         return statements

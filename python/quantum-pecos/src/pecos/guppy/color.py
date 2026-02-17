@@ -151,18 +151,12 @@ def generate_color_code_source(code: "ColorCode488") -> str:
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)"
-        for stab in code.stabilizers
-    )
+    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)" for stab in code.stabilizers)
 
     lines.append("")
     lines.append("    # X stabilizers")
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)"
-        for stab in code.stabilizers
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)" for stab in code.stabilizers)
 
     lines.extend(
         [
@@ -189,10 +183,7 @@ def generate_color_code_source(code: "ColorCode488") -> str:
         ],
     )
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)"
-        for stab in code.stabilizers
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)" for stab in code.stabilizers)
 
     lines.extend(
         [
@@ -210,10 +201,7 @@ def generate_color_code_source(code: "ColorCode488") -> str:
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)"
-        for stab in code.stabilizers
-    )
+    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)" for stab in code.stabilizers)
 
     lines.extend(
         [
@@ -443,9 +431,7 @@ def make_color_code(distance: int, num_rounds: int, basis: str) -> object:
 
     module = get_color_code_module(distance)
 
-    factory = (
-        module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
-    )
+    factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
 
     return factory(num_rounds)
 

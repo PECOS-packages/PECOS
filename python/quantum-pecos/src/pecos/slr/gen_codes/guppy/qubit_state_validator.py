@@ -259,11 +259,7 @@ class QubitStateValidator:
         # Reset to state before if and validate else
         self.tracker.slot_states = dict(state_before)
 
-        if (
-            hasattr(if_block, "else_block")
-            and if_block.else_block
-            and hasattr(if_block.else_block, "ops")
-        ):
+        if hasattr(if_block, "else_block") and if_block.else_block and hasattr(if_block.else_block, "ops"):
             for op in if_block.else_block.ops:
                 self._validate_operation(op, variable_context)
 
@@ -276,10 +272,7 @@ class QubitStateValidator:
             then_state = state_after_then.get(key, ValidationSlotState.UNPREPARED)
             else_state = state_after_else.get(key, ValidationSlotState.UNPREPARED)
             # Only prepared if prepared in both branches
-            if (
-                then_state == ValidationSlotState.PREPARED
-                and else_state == ValidationSlotState.PREPARED
-            ):
+            if then_state == ValidationSlotState.PREPARED and else_state == ValidationSlotState.PREPARED:
                 merged_state[key] = ValidationSlotState.PREPARED
             else:
                 merged_state[key] = ValidationSlotState.UNPREPARED
@@ -313,9 +306,7 @@ class QubitStateValidator:
 
     def _has_reg_and_index(self, qarg: Any) -> bool:
         """Check if a qubit argument has reg and index attributes."""
-        return (
-            hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index")
-        )
+        return hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index")
 
 
 def validate_qubit_states(

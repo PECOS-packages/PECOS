@@ -18,20 +18,12 @@ class UnpackingReason(Enum):
     """Enumeration of reasons why an array might need unpacking."""
 
     # Required unpacking (semantic necessity)
-    INDIVIDUAL_QUANTUM_MEASUREMENT = (
-        auto()
-    )  # Measuring individual qubits requires unpacking
-    OPERATIONS_AFTER_MEASUREMENT = (
-        auto()
-    )  # Using qubits after measurement requires replacement
-    CONDITIONAL_ELEMENT_ACCESS = (
-        auto()
-    )  # Accessing elements conditionally requires unpacking
+    INDIVIDUAL_QUANTUM_MEASUREMENT = auto()  # Measuring individual qubits requires unpacking
+    OPERATIONS_AFTER_MEASUREMENT = auto()  # Using qubits after measurement requires replacement
+    CONDITIONAL_ELEMENT_ACCESS = auto()  # Accessing elements conditionally requires unpacking
 
     # Optional unpacking (code quality)
-    MULTIPLE_INDIVIDUAL_ACCESSES = (
-        auto()
-    )  # Multiple element accesses cleaner when unpacked
+    MULTIPLE_INDIVIDUAL_ACCESSES = auto()  # Multiple element accesses cleaner when unpacked
     PARTIAL_ARRAY_USAGE = auto()  # Not all elements used together
 
     # No unpacking needed
@@ -105,10 +97,7 @@ class UnpackingDecisionTree:
             return DecisionResult(
                 decision=UnpackingDecision.SHOULD_NOT_UNPACK,
                 reason=UnpackingReason.NO_INDIVIDUAL_ACCESS,
-                explanation=(
-                    f"Array '{info.array_name}' has no individual element access. "
-                    "Keeping as array."
-                ),
+                explanation=(f"Array '{info.array_name}' has no individual element access. Keeping as array."),
             )
 
         # Rule 3: Operations after measurement REQUIRES unpacking (quantum arrays only)
@@ -140,15 +129,10 @@ class UnpackingDecisionTree:
         # Rule 5: Conditional element access REQUIRES unpacking
         # Elements accessed in conditionals need to be separate variables
         # NEW: Use precise element-level tracking if available
-        if (
-            hasattr(info, "conditionally_accessed_elements")
-            and info.conditionally_accessed_elements
-        ):
+        if hasattr(info, "conditionally_accessed_elements") and info.conditionally_accessed_elements:
             # Use precise tracking - only unpack if conditionally accessed elements
             # are also individually accessed
-            conditional_and_accessed = (
-                info.conditionally_accessed_elements & info.element_accesses
-            )
+            conditional_and_accessed = info.conditionally_accessed_elements & info.element_accesses
             if conditional_and_accessed:
                 return DecisionResult(
                     decision=UnpackingDecision.MUST_UNPACK,
@@ -226,8 +210,7 @@ class UnpackingDecisionTree:
             decision=UnpackingDecision.SHOULD_NOT_UNPACK,
             reason=UnpackingReason.NO_INDIVIDUAL_ACCESS,
             explanation=(
-                f"Array '{info.array_name}' does not meet criteria for unpacking. "
-                "Keeping as array for simpler code."
+                f"Array '{info.array_name}' does not meet criteria for unpacking. Keeping as array for simpler code."
             ),
         )
 

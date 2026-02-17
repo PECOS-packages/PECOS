@@ -288,9 +288,7 @@ class TestQuestDensityMatrix:
         results = list(runner.run(simulator, n_qubits=2))
         d = dict(results)
         # Both qubits should always have the same outcome in a Bell state
-        assert (
-            d["q0"] == d["q1"]
-        ), f"Bell state correlation (density matrix) failed: {d}"
+        assert d["q0"] == d["q1"], f"Bell state correlation (density matrix) failed: {d}"
 
     def test_density_matrix_arbitrary_rotation(self) -> None:
         """Test arbitrary rotation with density matrix simulation."""

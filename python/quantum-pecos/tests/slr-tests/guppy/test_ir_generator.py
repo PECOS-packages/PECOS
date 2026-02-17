@@ -22,10 +22,7 @@ def test_ir_simple_measurement() -> None:
     assert "@guppy" in code
     assert "def main() -> None:" in code
     # With optimization, q might be dynamically allocated instead of pre-allocated
-    assert (
-        "q = array(quantum.qubit() for _ in range(2))" in code
-        or "q_0 = quantum.qubit()" in code
-    )
+    assert "q = array(quantum.qubit() for _ in range(2))" in code or "q_0 = quantum.qubit()" in code
     assert "c = array(False for _ in range(2))" in code
 
     # Should have measurements - format depends on allocation strategy

@@ -27,8 +27,7 @@ class IRGuppyGenerator(Generator):
         """Initialize the IR-based generator."""
         if not _internal:
             warnings.warn(
-                "GuppyGenerator/IRGuppyGenerator is deprecated. "
-                "Use pecos.slr.generate(prog, 'guppy') instead.",
+                "GuppyGenerator/IRGuppyGenerator is deprecated. Use pecos.slr.generate(prog, 'guppy') instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )

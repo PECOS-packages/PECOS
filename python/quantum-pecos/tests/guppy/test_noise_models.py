@@ -29,14 +29,7 @@ class TestNoiseModels:
             return measure(q)
 
         # Run with seed for reproducibility
-        results = (
-            sim(deterministic_circuit)
-            .qubits(10)
-            .quantum(state_vector())
-            .seed(42)
-            .run(10)
-            .to_dict()
-        )
+        results = sim(deterministic_circuit).qubits(10).quantum(state_vector()).seed(42).run(10).to_dict()
 
         # Should always measure |1⟩
         raw_measurements = results.get("measurements", [])
@@ -62,24 +55,14 @@ class TestNoiseModels:
         )  # No measurement errors
 
         # High depolarizing probability to see effect
-        results = (
-            sim(simple_circuit)
-            .qubits(10)
-            .quantum(state_vector())
-            .noise(noise)
-            .seed(42)
-            .run(100)
-            .to_dict()
-        )
+        results = sim(simple_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
 
         raw_measurements = results.get("measurements", [])
         measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
 
         # With 0.2 depolarizing on X gate, we should see some 0s
         zeros = sum(1 for r in measurements if r == 0)
-        assert (
-            zeros > 0
-        ), f"Depolarizing noise should introduce errors, got {zeros} zeros"
+        assert zeros > 0, f"Depolarizing noise should introduce errors, got {zeros} zeros"
         assert zeros < 100, "Should not flip all bits"
 
     def test_biased_depolarizing_noise(self) -> None:
@@ -101,15 +84,7 @@ class TestNoiseModels:
             .with_meas_1_probability(0.05)
         )  # Measurement errors for |1⟩
 
-        results = (
-            sim(simple_circuit)
-            .qubits(10)
-            .quantum(state_vector())
-            .noise(noise)
-            .seed(42)
-            .run(100)
-            .to_dict()
-        )
+        results = sim(simple_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
 
         raw_measurements = results.get("measurements", [])
         measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
@@ -129,19 +104,11 @@ class TestNoiseModels:
 
         # Use general noise model with multiple error types
         noise_builder = (
-            general_noise()
-            .with_p1_probability(0.01)  # Single-qubit gate errors
-            .with_prep_probability(0.01)
+            general_noise().with_p1_probability(0.01).with_prep_probability(0.01)  # Single-qubit gate errors
         )  # Preparation errors
 
         results = (
-            sim(simple_circuit)
-            .qubits(10)
-            .quantum(state_vector())
-            .noise(noise_builder)
-            .seed(42)
-            .run(100)
-            .to_dict()
+            sim(simple_circuit).qubits(10).quantum(state_vector()).noise(noise_builder).seed(42).run(100).to_dict()
         )
 
         raw_measurements = results.get("measurements", [])
@@ -165,14 +132,7 @@ class TestNoiseModels:
             return measure(q1), measure(q2)
 
         # Run without noise
-        results_clean = (
-            sim(Guppy(bell_circuit))
-            .qubits(10)
-            .quantum(state_vector())
-            .seed(42)
-            .run(100)
-            .to_dict()
-        )
+        results_clean = sim(Guppy(bell_circuit)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
 
         # Run with depolarizing noise - chain all probability setters
         noise = (
@@ -183,15 +143,7 @@ class TestNoiseModels:
             .with_meas_probability(0.0)
         )  # No measurement errors
 
-        results_noisy = (
-            sim(bell_circuit)
-            .qubits(10)
-            .quantum(state_vector())
-            .noise(noise)
-            .seed(42)
-            .run(100)
-            .to_dict()
-        )
+        results_noisy = sim(bell_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
 
         # Extract measurements - format is [[m0, m1], [m0, m1], ...]
         clean_measurements = results_clean.get("measurements", [])
@@ -228,15 +180,7 @@ def test_noise_model_builder_pattern() -> None:
         .with_seed(1)
     )
 
-    results1 = (
-        sim(simple_x_circuit)
-        .qubits(10)
-        .quantum(state_vector())
-        .noise(noise1)
-        .seed(42)
-        .run(10)
-        .to_dict()
-    )
+    results1 = sim(simple_x_circuit).qubits(10).quantum(state_vector()).noise(noise1).seed(42).run(10).to_dict()
 
     # Different seed should give different results
     noise2 = (
@@ -248,15 +192,7 @@ def test_noise_model_builder_pattern() -> None:
         .with_seed(2)
     )
 
-    results2 = (
-        sim(simple_x_circuit)
-        .qubits(10)
-        .quantum(state_vector())
-        .noise(noise2)
-        .seed(43)
-        .run(10)
-        .to_dict()
-    )
+    results2 = sim(simple_x_circuit).qubits(10).quantum(state_vector()).noise(noise2).seed(43).run(10).to_dict()
 
     raw_measurements1 = results1.get("measurements", [])
     raw_measurements2 = results2.get("measurements", [])
@@ -282,15 +218,7 @@ def test_noise_on_single_qubit_gates() -> None:
     # Configure noise only for single-qubit gates
     noise = general_noise().with_p1_probability(0.3)  # High error rate to see effect
 
-    results = (
-        sim(multi_gate_circuit)
-        .qubits(10)
-        .quantum(state_vector())
-        .noise(noise)
-        .seed(42)
-        .run(100)
-        .to_dict()
-    )
+    results = sim(multi_gate_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
 
     raw_measurements = results.get("measurements", [])
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
@@ -313,15 +241,7 @@ def test_measurement_noise() -> None:
     # Configure noise only for measurements
     noise = general_noise().with_meas_probability(0.2)  # High measurement error
 
-    results = (
-        sim(simple_circuit)
-        .qubits(10)
-        .quantum(state_vector())
-        .noise(noise)
-        .seed(42)
-        .run(100)
-        .to_dict()
-    )
+    results = sim(simple_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
 
     raw_measurements = results.get("measurements", [])
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]

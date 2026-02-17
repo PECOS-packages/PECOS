@@ -42,20 +42,12 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
             # Dictionary-like format
             for _gate_symbol, locations, _params in tick.items():
                 for loc in locations:
-                    max_qubit = (
-                        max(max_qubit, *loc)
-                        if isinstance(loc, tuple)
-                        else max(max_qubit, loc)
-                    )
+                    max_qubit = max(max_qubit, *loc) if isinstance(loc, tuple) else max(max_qubit, loc)
         else:
             # Tuple format
             gate_symbol, locations, _params = tick
             for loc in locations:
-                max_qubit = (
-                    max(max_qubit, *loc)
-                    if isinstance(loc, tuple)
-                    else max(max_qubit, loc)
-                )
+                max_qubit = max(max_qubit, *loc) if isinstance(loc, tuple) else max(max_qubit, loc)
 
     num_qubits = max_qubit + 1 if max_qubit >= 0 else 0
 
@@ -235,23 +227,11 @@ def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
             elif isinstance(loc, tuple) and len(loc) == 1:
                 ops.append(qubit.Tdg(q[loc[0]]))
     elif gate_upper in ["CX", "CNOT"]:
-        ops.extend(
-            qubit.CX(q[loc[0]], q[loc[1]])
-            for loc in locations
-            if isinstance(loc, tuple) and len(loc) == 2
-        )
+        ops.extend(qubit.CX(q[loc[0]], q[loc[1]]) for loc in locations if isinstance(loc, tuple) and len(loc) == 2)
     elif gate_upper == "CY":
-        ops.extend(
-            qubit.CY(q[loc[0]], q[loc[1]])
-            for loc in locations
-            if isinstance(loc, tuple) and len(loc) == 2
-        )
+        ops.extend(qubit.CY(q[loc[0]], q[loc[1]]) for loc in locations if isinstance(loc, tuple) and len(loc) == 2)
     elif gate_upper == "CZ":
-        ops.extend(
-            qubit.CZ(q[loc[0]], q[loc[1]])
-            for loc in locations
-            if isinstance(loc, tuple) and len(loc) == 2
-        )
+        ops.extend(qubit.CZ(q[loc[0]], q[loc[1]]) for loc in locations if isinstance(loc, tuple) and len(loc) == 2)
     elif gate_upper == "SWAP":
         for loc in locations:
             if isinstance(loc, tuple) and len(loc) == 2:

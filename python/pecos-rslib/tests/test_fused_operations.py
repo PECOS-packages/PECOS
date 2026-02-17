@@ -143,13 +143,9 @@ class TestCompareConsistency:
             has_any = pc.random.compare_any(100, 0.1)
 
             if len(indices) > 0:
-                assert (
-                    has_any
-                ), f"Seed {seed_val}: indices non-empty but compare_any is False"
+                assert has_any, f"Seed {seed_val}: indices non-empty but compare_any is False"
             else:
-                assert (
-                    not has_any
-                ), f"Seed {seed_val}: indices empty but compare_any is True"
+                assert not has_any, f"Seed {seed_val}: indices empty but compare_any is True"
 
 
 class TestComparePerformance:
@@ -185,12 +181,8 @@ class TestComparePerformance:
 
         speedup = numpy_time / pecos_time
         print(f"\ncompare_any speedup: {speedup:.2f}x")
-        print(
-            f"  Fused:   {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.3f}ms/iter)"
-        )
-        print(
-            f"  Unfused: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.3f}ms/iter)"
-        )
+        print(f"  Fused:   {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.3f}ms/iter)")
+        print(f"  Unfused: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.3f}ms/iter)")
 
         # Should be at least 1.5x faster (conservative target, expect 2-3x)
         assert speedup > 1.5, f"Expected >1.5x speedup, got {speedup:.2f}x"
@@ -227,12 +219,8 @@ class TestComparePerformance:
 
         speedup = numpy_time / pecos_time
         print(f"\ncompare_indices speedup: {speedup:.2f}x")
-        print(
-            f"  Fused:   {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.3f}ms/iter)"
-        )
-        print(
-            f"  Unfused: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.3f}ms/iter)"
-        )
+        print(f"  Fused:   {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.3f}ms/iter)")
+        print(f"  Unfused: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.3f}ms/iter)")
 
         # Should be at least 1.3x faster (conservative target, expect 1.5-2x)
         assert speedup > 1.3, f"Expected >1.3x speedup, got {speedup:.2f}x"
@@ -258,9 +246,7 @@ class TestErrorModelUsage:
         # Expected probability: P(at least one error) = 1 - (1-p)^n
         expected_prob = 1 - (1 - error_rate) ** n_qubits
         expected_count = n_trials * expected_prob
-        tolerance = 3 * np.sqrt(
-            n_trials * expected_prob * (1 - expected_prob)
-        )  # 3-sigma
+        tolerance = 3 * np.sqrt(n_trials * expected_prob * (1 - expected_prob))  # 3-sigma
 
         assert (
             abs(trials_with_errors - expected_count) < tolerance

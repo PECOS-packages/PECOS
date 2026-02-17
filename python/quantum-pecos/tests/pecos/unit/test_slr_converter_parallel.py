@@ -34,8 +34,7 @@ def test_slr_converter_without_optimization() -> None:
     ops = [
         line.strip()
         for line in qasm.split("\n")
-        if line.strip()
-        and not line.startswith(("OPENQASM", "include", "qreg", "creg", "//"))
+        if line.strip() and not line.startswith(("OPENQASM", "include", "qreg", "creg", "//"))
     ]
     assert ops == ["h q[0];", "x q[1];", "h q[2];", "x q[3];"]
 
@@ -60,8 +59,7 @@ def test_slr_converter_with_optimization() -> None:
     ops = [
         line.strip()
         for line in qasm.split("\n")
-        if line.strip()
-        and not line.startswith(("OPENQASM", "include", "qreg", "creg", "//"))
+        if line.strip() and not line.startswith(("OPENQASM", "include", "qreg", "creg", "//"))
     ]
     assert ops == ["h q[0];", "h q[2];", "x q[1];", "x q[3];"]
 

@@ -109,9 +109,7 @@ class ConnectivityAnalyzer:
         self.coupling_map: dict[tuple[str, int], set[tuple[str, int]]] = defaultdict(
             set,
         )
-        self.edge_weights: dict[tuple[tuple[str, int], tuple[str, int]], int] = (
-            defaultdict(int)
-        )
+        self.edge_weights: dict[tuple[tuple[str, int], tuple[str, int]], int] = defaultdict(int)
         self.gate_types: set[GateKind] = set()
 
     def analyze(self, program: Program) -> ConnectivityResult:

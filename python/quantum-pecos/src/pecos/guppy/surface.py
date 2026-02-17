@@ -156,18 +156,12 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)"
-        for stab in geom.z_stabilizers
-    )
+    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)" for stab in geom.z_stabilizers)
 
     lines.append("")
     lines.append("    # X stabilizers")
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
-        for stab in geom.x_stabilizers
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)" for stab in geom.x_stabilizers)
 
     lines.extend(
         [
@@ -192,10 +186,7 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
         ],
     )
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
-        for stab in geom.x_stabilizers
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)" for stab in geom.x_stabilizers)
 
     lines.extend(
         [
@@ -212,10 +203,7 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)"
-        for stab in geom.z_stabilizers
-    )
+    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)" for stab in geom.z_stabilizers)
 
     lines.extend(
         [
@@ -492,8 +480,6 @@ def make_surface_code(distance: int, num_rounds: int, basis: str) -> object:
 
     module = get_surface_code_module(distance)
 
-    factory = (
-        module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
-    )
+    factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
 
     return factory(num_rounds)

@@ -29,9 +29,7 @@ class ValueUse:
     index: int
     position: int  # Position in operation sequence
     operation_type: str  # e.g., "gate", "measurement", "condition"
-    is_consuming: bool = (
-        False  # True if this use consumes the value (e.g., measurement)
-    )
+    is_consuming: bool = False  # True if this use consumes the value (e.g., measurement)
 
 
 @dataclass
@@ -90,16 +88,11 @@ class DataFlowInfo:
 
         # Check if there are any non-replacement uses after consumption
         for use in self.uses:
-            if (
-                use.position > first_consumption
-                and use.position not in self.replaced_at
-            ):
+            if use.position > first_consumption and use.position not in self.replaced_at:
                 # This is a real use after consumption, not just replacement
                 # However, we need to check if it's AFTER replacement
                 # Find if there's a replacement between consumption and this use
-                replacements_between = [
-                    r for r in self.replaced_at if first_consumption < r < use.position
-                ]
+                replacements_between = [r for r in self.replaced_at if first_consumption < r < use.position]
 
                 if not replacements_between:
                     # Use after consumption with no replacement in between
@@ -287,20 +280,14 @@ class DataFlowAnalyzer:
             classical_targets.extend(
                 (cout.reg.sym, cout.index)
                 for cout in meas.cout
-                if hasattr(cout, "reg")
-                and hasattr(cout.reg, "sym")
-                and hasattr(cout, "index")
+                if hasattr(cout, "reg") and hasattr(cout.reg, "sym") and hasattr(cout, "index")
             )
 
         # Analyze quantum sources
         if hasattr(meas, "qargs") and meas.qargs:
             for i, qarg in enumerate(meas.qargs):
                 # Individual element measurement
-                if (
-                    hasattr(qarg, "reg")
-                    and hasattr(qarg.reg, "sym")
-                    and hasattr(qarg, "index")
-                ):
+                if hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index"):
                     array_name = qarg.reg.sym
                     index = qarg.index
 
@@ -322,11 +309,7 @@ class DataFlowAnalyzer:
         """Analyze a preparation/reset operation."""
         if hasattr(op, "qargs") and op.qargs:
             for qarg in op.qargs:
-                if (
-                    hasattr(qarg, "reg")
-                    and hasattr(qarg.reg, "sym")
-                    and hasattr(qarg, "index")
-                ):
+                if hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index"):
                     array_name = qarg.reg.sym
                     index = qarg.index
                     analysis.add_preparation(array_name, index, self.position_counter)
@@ -335,11 +318,7 @@ class DataFlowAnalyzer:
         """Analyze a quantum gate operation."""
         if hasattr(op, "qargs") and op.qargs:
             for qarg in op.qargs:
-                if (
-                    hasattr(qarg, "reg")
-                    and hasattr(qarg.reg, "sym")
-                    and hasattr(qarg, "index")
-                ):
+                if hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index"):
                     array_name = qarg.reg.sym
                     index = qarg.index
 
@@ -373,11 +352,7 @@ class DataFlowAnalyzer:
                 self._analyze_operation(op, analysis, variable_context)
 
         # Analyze else block
-        if (
-            hasattr(if_block, "else_block")
-            and if_block.else_block
-            and hasattr(if_block.else_block, "ops")
-        ):
+        if hasattr(if_block, "else_block") and if_block.else_block and hasattr(if_block.else_block, "ops"):
             for op in if_block.else_block.ops:
                 self._analyze_operation(op, analysis, variable_context)
 
@@ -387,12 +362,7 @@ class DataFlowAnalyzer:
         """Analyze a condition expression."""
         cond_type = type(cond).__name__
 
-        if (
-            cond_type == "Bit"
-            and hasattr(cond, "reg")
-            and hasattr(cond.reg, "sym")
-            and hasattr(cond, "index")
-        ):
+        if cond_type == "Bit" and hasattr(cond, "reg") and hasattr(cond.reg, "sym") and hasattr(cond, "index"):
             array_name = cond.reg.sym
             index = cond.index
             analysis.add_conditional_use(

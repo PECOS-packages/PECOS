@@ -281,9 +281,7 @@ class TestRoundTripStim:
 
         # GHZ state should have all qubits the same
         for sample in samples:
-            assert (
-                sample[0] == sample[1] == sample[2]
-            ), "GHZ state qubits should all be correlated"
+            assert sample[0] == sample[1] == sample[2], "GHZ state qubits should all be correlated"
 
     @pytest.mark.usefixtures("_require_stim")
     def test_repeat_block_preserved(self) -> None:

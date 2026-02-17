@@ -63,9 +63,7 @@ def test_pipeline_capabilities() -> None:
         if backends.get("rust_backend", False):
             try:
                 # Use sim() API instead of run_guppy
-                result_dict = (
-                    sim(Guppy(test_func)).qubits(10).quantum(state_vector()).run(1)
-                )
+                result_dict = sim(Guppy(test_func)).qubits(10).quantum(state_vector()).run(1)
                 # Extract measurement result
                 if "measurements" in result_dict:
                     result_val = result_dict["measurements"][0]
@@ -92,18 +90,14 @@ def test_pipeline_capabilities() -> None:
         # PHIR pipeline no longer exists - using same sim() backend
         try:
             # Use sim() API for consistency
-            result_dict = (
-                sim(Guppy(test_func)).qubits(10).quantum(state_vector()).run(1)
-            )
+            result_dict = sim(Guppy(test_func)).qubits(10).quantum(state_vector()).run(1)
             # Extract measurement result
             if "measurements" in result_dict:
                 result_val = result_dict["measurements"][0]
             elif "measurement_0" in result_dict:
                 # Handle tuple returns
                 result_val = tuple(
-                    bool(result_dict[f"measurement_{i}"][0])
-                    for i in range(1, 10)
-                    if f"measurement_{i}" in result_dict
+                    bool(result_dict[f"measurement_{i}"][0]) for i in range(1, 10) if f"measurement_{i}" in result_dict
                 )
             else:
                 result_val = result_dict.get("result", [None])[0]

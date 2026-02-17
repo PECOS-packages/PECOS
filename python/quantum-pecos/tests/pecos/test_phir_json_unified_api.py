@@ -80,13 +80,7 @@ def test_phir_json_unified_api_full() -> None:
     }"""
 
     # One-liner unified API using pecos PhirJson
-    result = (
-        phir_json_engine()
-        .program(PhirJson.from_json(json_str))
-        .to_sim()
-        .seed(42)
-        .run(100)
-    )
+    result = phir_json_engine().program(PhirJson.from_json(json_str)).to_sim().seed(42).run(100)
 
     # Check result
     result_dict = result.to_dict()

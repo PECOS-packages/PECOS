@@ -129,14 +129,7 @@ class TestGuppyLLVMPipeline:
 
         # Execute the Bell state circuit
         try:
-            result = (
-                sim(Guppy(bell_state))
-                .qubits(10)
-                .quantum(state_vector())
-                .seed(42)
-                .run(100)
-                .to_dict()
-            )
+            result = sim(Guppy(bell_state)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
         except (RuntimeError, ImportError) as e:
             if "PECOS" in str(e) or "compilation" in str(e):
                 pytest.skip(f"Execution environment issue: {e}")
@@ -187,9 +180,7 @@ class TestGuppyLLVMPipeline:
             check=False,
         )
 
-        assert (
-            result.returncode == 0
-        ), f"Cargo metadata should succeed, got error: {result.stderr[:500]}"
+        assert result.returncode == 0, f"Cargo metadata should succeed, got error: {result.stderr[:500]}"
 
         # Verify output is valid JSON (basic check)
         assert result.stdout.startswith("{"), "Cargo metadata should return JSON"
@@ -244,14 +235,7 @@ def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
 
     # Run the test
     try:
-        result = (
-            sim(superposition_test)
-            .qubits(10)
-            .quantum(state_vector())
-            .seed(42)
-            .run(1000)
-            .to_dict()
-        )
+        result = sim(superposition_test).qubits(10).quantum(state_vector()).seed(42).run(1000).to_dict()
     except (RuntimeError, ImportError) as e:
         pytest.skip(f"Execution issue: {e}")
 

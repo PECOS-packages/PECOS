@@ -90,9 +90,7 @@ def test_runtime_library_finding() -> None:
                 lib_dir = venv_path / "lib"
                 if lib_dir.exists():
                     for ext in lib_extensions:
-                        plugin_pattern = (
-                            f"**/selene_simple_runtime_plugin/_dist/lib/{ext}"
-                        )
+                        plugin_pattern = f"**/selene_simple_runtime_plugin/_dist/lib/{ext}"
                         possible_paths.extend(lib_dir.glob(plugin_pattern))
 
                 site_packages_dirs = [venv_path / "lib"]
@@ -121,6 +119,4 @@ def test_runtime_library_finding() -> None:
             )
 
         # If we found loadable libraries, that's good enough for this diagnostic
-        assert (
-            len(loadable_libraries) > 0
-        ), f"Found {len(loadable_libraries)} loadable Selene runtime libraries"
+        assert len(loadable_libraries) > 0, f"Found {len(loadable_libraries)} loadable Selene runtime libraries"

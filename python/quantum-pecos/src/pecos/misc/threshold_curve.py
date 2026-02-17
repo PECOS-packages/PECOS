@@ -359,9 +359,7 @@ def jackknife_pd(
     resample_indices = [list(range(i)) + list(range(i + 1, n)) for i in range(n)]
 
     # Generate verbose labels
-    verbose_labels = [
-        f"removed index: {i}\np = {plist[i]}, d = {dlist[i]}" for i in range(n)
-    ]
+    verbose_labels = [f"removed index: {i}\np = {plist[i]}, d = {dlist[i]}" for i in range(n)]
 
     return _jackknife_threshold_core(
         plist,

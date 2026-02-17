@@ -117,13 +117,7 @@ class TestQasmSimStructuredConfig:
             measure q -> c;
             """
 
-        sim = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .auto_workers()
-            .build()
-        )
+        sim = qasm_engine().program(Qasm.from_string(qasm)).to_sim().auto_workers().build()
         results = sim.run(100)
 
         results_dict = results.to_dict()
@@ -227,12 +221,7 @@ class TestQasmSimStructuredConfig:
             """
 
         # Create noise using functional API - pass it directly to noise() method
-        noise_builder = (
-            general_noise()
-            .with_seed(42)
-            .with_p1_probability(0.001)
-            .with_p2_probability(0.01)
-        )
+        noise_builder = general_noise().with_seed(42).with_p1_probability(0.001).with_p2_probability(0.01)
 
         # Use builder pattern instead of config dict
         sim = (
@@ -284,14 +273,7 @@ class TestQasmSimStructuredConfig:
             # .with_p1_pauli_model(x=0.5, y=0.3, z=0.2)
         )
 
-        sim = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .seed(42)
-            .noise(noise_builder)
-            .build()
-        )
+        sim = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(noise_builder).build()
         results = sim.run(100)
 
         results_dict = results.to_dict()

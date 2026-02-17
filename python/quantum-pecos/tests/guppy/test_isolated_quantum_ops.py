@@ -67,9 +67,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        assert all(
-            r for r in results.get("measurements", results.get("measurement_0", []))
-        )
+        assert all(r for r in results.get("measurements", results.get("measurement_0", [])))
 
     def test_single_y_gate(self) -> None:
         """Test just Y gate."""
@@ -81,9 +79,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        assert all(
-            r for r in results.get("measurements", results.get("measurement_0", []))
-        )
+        assert all(r for r in results.get("measurements", results.get("measurement_0", [])))
 
     def test_single_z_gate(self) -> None:
         """Test just Z gate."""

@@ -43,13 +43,7 @@ class TestDynamicCircuitExecution:
             return measure(q2)  # Should always be False
 
         # Run the circuit
-        results = (
-            sim(Guppy(conditional_x_from_zero))
-            .qubits(2)
-            .quantum(state_vector())
-            .seed(42)
-            .run(100)
-        )
+        results = sim(Guppy(conditional_x_from_zero)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
         # Extract the return value (last measurement in each shot)
         # Results format: [[m1, m2], [m1, m2], ...] where m2 is the return value
@@ -58,9 +52,7 @@ class TestDynamicCircuitExecution:
 
         # All results should be False since q1 is |0>, so X is never applied to q2
         ones_count = sum(1 for m in return_values if m)
-        assert (
-            ones_count == 0
-        ), f"Conditional X from |0> should never trigger, but got {ones_count}/100 ones"
+        assert ones_count == 0, f"Conditional X from |0> should never trigger, but got {ones_count}/100 ones"
 
     def test_conditional_x_gate_from_one(self) -> None:
         """Test conditional X when source qubit is |1>."""
@@ -84,13 +76,7 @@ class TestDynamicCircuitExecution:
             return measure(q2)  # Should always be True
 
         # Run the circuit
-        results = (
-            sim(Guppy(conditional_x_from_one))
-            .qubits(2)
-            .quantum(state_vector())
-            .seed(42)
-            .run(100)
-        )
+        results = sim(Guppy(conditional_x_from_one)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
         # Extract measurements
         measurements = results.get("measurements", [])
@@ -99,9 +85,7 @@ class TestDynamicCircuitExecution:
 
         # All results should be True since q1 is |1>, so X is always applied to q2
         ones_count = sum(1 for m in measurements if m)
-        assert (
-            ones_count == 100
-        ), f"Conditional X from |1> should always trigger, but got {ones_count}/100 ones"
+        assert ones_count == 100, f"Conditional X from |1> should always trigger, but got {ones_count}/100 ones"
 
     def test_measurement_feedback_entanglement(self) -> None:
         """Test that measurement feedback creates correct correlations.
@@ -130,13 +114,7 @@ class TestDynamicCircuitExecution:
             return result1, measure(q2)
 
         # Run the circuit
-        results = (
-            sim(Guppy(measurement_feedback))
-            .qubits(2)
-            .quantum(state_vector())
-            .seed(42)
-            .run(100)
-        )
+        results = sim(Guppy(measurement_feedback)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
         # Extract measurements - should have two measurements per shot
         # Need to decode the results
@@ -150,10 +128,9 @@ class TestDynamicCircuitExecution:
 
         # Both measurements should always match
         mismatches = sum(1 for (a, b) in measurements if a != b)
-        assert mismatches == 0, (
-            f"Measurement feedback should create perfect correlation, "
-            f"but got {mismatches}/100 mismatches"
-        )
+        assert (
+            mismatches == 0
+        ), f"Measurement feedback should create perfect correlation, but got {mismatches}/100 mismatches"
 
     def test_teleportation_like_protocol(self) -> None:
         """Test a simplified teleportation-like protocol with measurement feedback.
@@ -196,9 +173,7 @@ class TestDynamicCircuitExecution:
             return measure(q2)
 
         # Run the circuit
-        results = (
-            sim(Guppy(teleport_one)).qubits(3).quantum(state_vector()).seed(42).run(100)
-        )
+        results = sim(Guppy(teleport_one)).qubits(3).quantum(state_vector()).seed(42).run(100)
 
         # Extract the return value (last measurement in each shot)
         # Results format: [[m0, m1, m2], ...] where m2 is the return value
@@ -207,10 +182,7 @@ class TestDynamicCircuitExecution:
 
         # The teleported state should be |1>, so we expect all True
         ones_count = sum(1 for m in return_values if m)
-        assert ones_count > 95, (
-            f"Teleportation of |1> should succeed with high probability, "
-            f"got {ones_count}/100 ones"
-        )
+        assert ones_count > 95, f"Teleportation of |1> should succeed with high probability, got {ones_count}/100 ones"
 
 
 if __name__ == "__main__":

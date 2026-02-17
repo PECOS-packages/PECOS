@@ -72,14 +72,7 @@ def test_guppy_with_explicit_qis_override() -> None:
     # Use state vector to avoid stabilizer issues with decomposed gates
     from pecos_rslib import state_vector
 
-    results_auto = (
-        sim(Guppy(bell_state))
-        .quantum(state_vector())
-        .qubits(2)
-        .seed(42)
-        .run(100)
-        .to_binary_dict()
-    )
+    results_auto = sim(Guppy(bell_state)).quantum(state_vector()).qubits(2).seed(42).run(100).to_binary_dict()
 
     # Test 2: Use default auto-detection (since explicit override API changed)
     results_explicit = (
@@ -103,9 +96,7 @@ def test_qasm_with_explicit_override() -> None:
     from pecos import Qasm
 
     # Set include path for QASM parser
-    os.environ["PECOS_QASM_INCLUDES"] = (
-        "/home/ciaranra/Repos/cl_projects/gup/PECOS/crates/pecos-qasm/includes"
-    )
+    os.environ["PECOS_QASM_INCLUDES"] = "/home/ciaranra/Repos/cl_projects/gup/PECOS/crates/pecos-qasm/includes"
 
     # Use standard QASM 2.0 with include
     qasm_code = """OPENQASM 2.0;

@@ -179,9 +179,7 @@ class AstToQir:
             ImportError: If LLVM dependencies are not available.
         """
         if not LLVM_AVAILABLE:
-            msg = (
-                "LLVM dependencies not available. Install with 'pip install pecos[qir]'"
-            )
+            msg = "LLVM dependencies not available. Install with 'pip install pecos[qir]'"
             raise ImportError(msg)
 
         self.context = QirCodeGenContext()
@@ -320,9 +318,7 @@ class AstToQir:
                 self.context.allocator_parents[decl.name] = decl.parent
 
         if program.allocator:
-            self.context.allocator_parents[program.allocator.name] = (
-                program.allocator.parent
-            )
+            self.context.allocator_parents[program.allocator.name] = program.allocator.parent
 
         # Calculate offsets for child allocators
         self._calculate_allocator_offsets(program)
@@ -367,9 +363,7 @@ class AstToQir:
                     parent_next_offset[parent] = 0
 
                 parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = (
-                    parent_offset + parent_next_offset[parent]
-                )
+                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
                 parent_next_offset[parent] += decl.capacity
 
     def _process_statement(self, stmt: Statement) -> None:
@@ -423,10 +417,7 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                args.extend(
-                    llvm_ir.Constant(self._types["double"], float(p))
-                    for p in node.params
-                )
+                args.extend(llvm_ir.Constant(self._types["double"], float(p)) for p in node.params)
             args.append(qubit_ptr)
 
             self._builder.call(gate_func, args, name="")
@@ -445,10 +436,7 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                args.extend(
-                    llvm_ir.Constant(self._types["double"], float(p))
-                    for p in node.params
-                )
+                args.extend(llvm_ir.Constant(self._types["double"], float(p)) for p in node.params)
             args.extend([q0_ptr, q1_ptr])
 
             self._builder.call(gate_func, args, name="")

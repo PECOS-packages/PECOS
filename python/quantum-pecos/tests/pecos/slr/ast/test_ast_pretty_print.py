@@ -266,9 +266,7 @@ class TestPrettyPrintControlFlow:
 
         # Count indentation levels
         lines = output.split("\n")
-        max_indent = max(
-            len(line) - len(line.lstrip()) for line in lines if line.strip()
-        )
+        max_indent = max(len(line) - len(line.lstrip()) for line in lines if line.strip())
 
         # Should have at least 3 levels of indentation for nested if
         assert max_indent >= 8  # 2 levels * 4 spaces

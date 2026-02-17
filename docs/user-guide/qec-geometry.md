@@ -59,20 +59,10 @@ Surface codes are the most widely studied topological QEC codes. PECOS supports 
     ```python
     from pecos.qec.surface import SurfacePatchBuilder, PatchOrientation
 
-    patch = (
-        SurfacePatchBuilder()
-        .with_distance(5)
-        .with_orientation(PatchOrientation.Z_TOP_BOTTOM)
-        .build()
-    )
+    patch = SurfacePatchBuilder().with_distance(5).with_orientation(PatchOrientation.Z_TOP_BOTTOM).build()
 
     # Non-rotated (standard) layout
-    patch = (
-        SurfacePatchBuilder()
-        .with_distance(5)
-        .standard()  # Use standard layout instead of rotated
-        .build()
-    )
+    patch = SurfacePatchBuilder().with_distance(5).standard().build()  # Use standard layout instead of rotated
     ```
 
 ### Accessing Geometry
@@ -91,9 +81,7 @@ print(f"Total qubits: {patch.num_qubits}")  # 11 (9 data + 2 ancilla)
 
 # Stabilizers
 for stab in patch.x_stabilizers:
-    print(
-        f"X stab {stab.index}: qubits={stab.data_qubits}, boundary={stab.is_boundary}"
-    )
+    print(f"X stab {stab.index}: qubits={stab.data_qubits}, boundary={stab.is_boundary}")
 
 for stab in patch.z_stabilizers:
     print(f"Z stab {stab.index}: qubits={stab.data_qubits}, weight={stab.weight}")
@@ -184,9 +172,7 @@ print(f"Stabilizers: {code.num_stabilizers}")
 
 # All stabilizers
 for stab in code.stabilizers:
-    print(
-        f"Stab {stab.index}: color={stab.color}, qubits={stab.qubits}, weight={stab.weight}"
-    )
+    print(f"Stab {stab.index}: color={stab.color}, qubits={stab.qubits}, weight={stab.weight}")
 
 # Filter by color
 red_stabs = code.get_red_stabilizers()

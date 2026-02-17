@@ -99,9 +99,7 @@ class IRPostProcessor:
             if isinstance(stmt, ArrayUnpack):
                 # Record unpacking info for the current function
                 if self.current_function:
-                    self.unpacked_arrays_by_function[self.current_function][
-                        stmt.source
-                    ] = stmt.targets
+                    self.unpacked_arrays_by_function[self.current_function][stmt.source] = stmt.targets
                 # Also update the context
                 var = context.lookup_variable(stmt.source)
                 if var:
@@ -163,9 +161,7 @@ class IRPostProcessor:
                 node.value = self._process_node(node.value, context)
 
         elif isinstance(node, TupleExpression):
-            node.elements = [
-                self._process_node(elem, context) for elem in node.elements
-            ]
+            node.elements = [self._process_node(elem, context) for elem in node.elements]
 
         elif isinstance(node, IfStatement):
             node.condition = self._process_node(node.condition, context)
@@ -238,10 +234,7 @@ class IRPostProcessor:
                 return VariableRef(var.unpacked_names[node.index])
 
             # Also check our function-specific tracking
-            if (
-                self.current_function
-                and self.current_function in self.unpacked_arrays_by_function
-            ):
+            if self.current_function and self.current_function in self.unpacked_arrays_by_function:
                 func_unpacked = self.unpacked_arrays_by_function[self.current_function]
                 if array_name in func_unpacked:
                     unpacked_names = func_unpacked[array_name]

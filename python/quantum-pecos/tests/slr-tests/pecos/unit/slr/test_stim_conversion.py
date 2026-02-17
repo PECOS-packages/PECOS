@@ -97,10 +97,7 @@ class TestStimToSLR:
         slr_prog = SlrConverter.from_stim(circuit)
 
         # Check that the repeat block is preserved
-        assert any(
-            hasattr(op, "__class__") and op.__class__.__name__ == "Repeat"
-            for op in slr_prog.ops
-        )
+        assert any(hasattr(op, "__class__") and op.__class__.__name__ == "Repeat" for op in slr_prog.ops)
 
     def test_parallel_optimization(self) -> None:
         """Test that parallel operations are optimized into Parallel blocks."""
@@ -124,9 +121,7 @@ class TestStimToSLR:
         # Without optimization should be the same (no difference for sequential ops)
         slr_prog_no_opt = SlrConverter.from_stim(circuit, optimize_parallel=False)
         h_ops_no_opt = [op for op in slr_prog_no_opt.ops if type(op).__name__ == "H"]
-        assert (
-            len(h_ops_no_opt) == 3
-        ), f"Should have 3 H operations, got {len(h_ops_no_opt)}"
+        assert len(h_ops_no_opt) == 3, f"Should have 3 H operations, got {len(h_ops_no_opt)}"
 
 
 @pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
@@ -149,25 +144,12 @@ class TestSLRToStim:
 
         # Check the circuit has the expected operations
         instructions = list(stim_circuit)
+        assert any(instr.name == "H" and instr.targets_copy() == [stim.GateTarget(0)] for instr in instructions)
+        assert any(instr.name == "X" and instr.targets_copy() == [stim.GateTarget(1)] for instr in instructions)
+        assert any(instr.name == "Y" and instr.targets_copy() == [stim.GateTarget(2)] for instr in instructions)
+        assert any(instr.name == "Z" and instr.targets_copy() == [stim.GateTarget(0)] for instr in instructions)
         assert any(
-            instr.name == "H" and instr.targets_copy() == [stim.GateTarget(0)]
-            for instr in instructions
-        )
-        assert any(
-            instr.name == "X" and instr.targets_copy() == [stim.GateTarget(1)]
-            for instr in instructions
-        )
-        assert any(
-            instr.name == "Y" and instr.targets_copy() == [stim.GateTarget(2)]
-            for instr in instructions
-        )
-        assert any(
-            instr.name == "Z" and instr.targets_copy() == [stim.GateTarget(0)]
-            for instr in instructions
-        )
-        assert any(
-            instr.name == "CX"
-            and instr.targets_copy() == [stim.GateTarget(0), stim.GateTarget(1)]
+            instr.name == "CX" and instr.targets_copy() == [stim.GateTarget(0), stim.GateTarget(1)]
             for instr in instructions
         )
 
@@ -274,9 +256,7 @@ class TestStimRoundTrip:
 
         # Check both circuits have same operations
         orig_ops = [(instr.name, list(instr.targets_copy())) for instr in original]
-        recon_ops = [
-            (instr.name, list(instr.targets_copy())) for instr in reconstructed
-        ]
+        recon_ops = [(instr.name, list(instr.targets_copy())) for instr in reconstructed]
 
         assert len(orig_ops) == len(recon_ops)
         for orig, recon in zip(orig_ops, recon_ops, strict=False):

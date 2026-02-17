@@ -267,9 +267,7 @@ def eval_cop(
     """
     # Get `t` argument
     # ----------------
-    t = cop_expr[
-        "t"
-    ]  # symbol of where the resulting value will be stored in the output
+    t = cop_expr["t"]  # symbol of where the resulting value will be stored in the output
 
     if isinstance(t, str):
         t_sym = t

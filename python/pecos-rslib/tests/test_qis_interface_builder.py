@@ -57,9 +57,7 @@ class TestQisInterfaceBuilder:
         # Verify distribution is reasonable (allowing for statistical variation)
         assert 20 < count_00 < 80, f"00 count out of expected range: {count_00}"
         assert 20 < count_11 < 80, f"11 count out of expected range: {count_11}"
-        assert (
-            count_00 + count_11 == 100
-        ), f"Total should be 100, got {count_00 + count_11}"
+        assert count_00 + count_11 == 100, f"Total should be 100, got {count_00 + count_11}"
 
     def test_bell_state_with_selene_helios(self):
         """Test Bell state simulation with Selene Helios interface."""
@@ -91,9 +89,7 @@ class TestQisInterfaceBuilder:
         # Verify distribution is reasonable (allowing for statistical variation)
         assert 20 < count_00 < 80, f"00 count out of expected range: {count_00}"
         assert 20 < count_11 < 80, f"11 count out of expected range: {count_11}"
-        assert (
-            count_00 + count_11 == 100
-        ), f"Total should be 100, got {count_00 + count_11}"
+        assert count_00 + count_11 == 100, f"Total should be 100, got {count_00 + count_11}"
 
     def test_ghz_state_with_helios(self):
         """Test 3-qubit GHZ state with Helios interface."""
@@ -125,9 +121,7 @@ class TestQisInterfaceBuilder:
         count_000, count_111 = _count_ghz_results(results)
 
         # Verify we got valid measurements
-        assert (
-            count_000 + count_111 == 100
-        ), f"Total should be 100, got {count_000 + count_111}"
+        assert count_000 + count_111 == 100, f"Total should be 100, got {count_000 + count_111}"
         assert count_000 > 0 or count_111 > 0, "Should have some valid measurements"
 
     def test_ghz_state_with_selene_helios(self):
@@ -160,9 +154,7 @@ class TestQisInterfaceBuilder:
         count_000, count_111 = _count_ghz_results(results)
 
         # Verify we got valid measurements
-        assert (
-            count_000 + count_111 == 100
-        ), f"Total should be 100, got {count_000 + count_111}"
+        assert count_000 + count_111 == 100, f"Total should be 100, got {count_000 + count_111}"
         assert count_000 > 0 or count_111 > 0, "Should have some valid measurements"
 
     def test_missing_interface_gives_helpful_error(self):
@@ -215,9 +207,7 @@ class TestQisInterfaceBuilder:
         qis_program = Qis.from_string(simple_qis)
 
         # Explicitly select Selene Helios
-        engine = (
-            qis_engine().interface(qis_selene_helios_interface()).program(qis_program)
-        )
+        engine = qis_engine().interface(qis_selene_helios_interface()).program(qis_program)
         sim = engine.to_sim().qubits(1)
         results = sim.run(1)
 
@@ -239,9 +229,7 @@ def _count_bell_results(results):
         elif m0 == 1 and m1 == 1:
             count_11 += 1
         else:
-            raise ValueError(
-                f"Bell state should only produce |00⟩ or |11⟩, got: ({m0}, {m1})"
-            )
+            raise ValueError(f"Bell state should only produce |00⟩ or |11⟩, got: ({m0}, {m1})")
 
     return count_00, count_11
 
@@ -262,9 +250,7 @@ def _count_ghz_results(results):
         elif m0 == 1 and m1 == 1 and m2 == 1:
             count_111 += 1
         else:
-            raise ValueError(
-                f"GHZ state should only produce |000⟩ or |111⟩, got: ({m0}, {m1}, {m2})"
-            )
+            raise ValueError(f"GHZ state should only produce |000⟩ or |111⟩, got: ({m0}, {m1}, {m2})")
 
     return count_000, count_111
 

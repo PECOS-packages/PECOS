@@ -233,11 +233,7 @@ def get_bulk_stabilizers(d: int, stab_type: str = "X") -> list[StabilizerSupport
     Returns:
         List of bulk StabilizerSupport objects.
     """
-    supports = (
-        compute_x_stabilizer_supports(d)
-        if stab_type == "X"
-        else compute_z_stabilizer_supports(d)
-    )
+    supports = compute_x_stabilizer_supports(d) if stab_type == "X" else compute_z_stabilizer_supports(d)
     return [s for s in supports if not s.is_boundary]
 
 
@@ -251,11 +247,7 @@ def get_boundary_stabilizers(d: int, stab_type: str = "X") -> list[StabilizerSup
     Returns:
         List of boundary StabilizerSupport objects.
     """
-    supports = (
-        compute_x_stabilizer_supports(d)
-        if stab_type == "X"
-        else compute_z_stabilizer_supports(d)
-    )
+    supports = compute_x_stabilizer_supports(d) if stab_type == "X" else compute_z_stabilizer_supports(d)
     return [s for s in supports if s.is_boundary]
 
 

@@ -296,9 +296,7 @@ class AstToQasm(BaseVisitor[list[str]]):
                     parent_next_offset[parent] = 0
 
                 parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = (
-                    parent_offset + parent_next_offset[parent]
-                )
+                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
                 parent_next_offset[parent] += decl.capacity
 
     # === Declarations ===
@@ -413,22 +411,14 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_assign(self, node: AssignOp) -> list[str]:
         """Generate assignment operation."""
-        target = (
-            f"{node.target.register}[{node.target.index}]"
-            if isinstance(node.target, BitRef)
-            else str(node.target)
-        )
+        target = f"{node.target.register}[{node.target.index}]" if isinstance(node.target, BitRef) else str(node.target)
 
         value = self._render_expression(node.value)
         return [self._maybe_conditional(f"{target} = {value};")]
 
     def visit_barrier(self, node: BarrierOp) -> list[str]:
         """Generate barrier operation."""
-        qubits = (
-            ", ".join(node.allocators)
-            if node.allocators
-            else ", ".join(self.context.allocators.keys())
-        )
+        qubits = ", ".join(node.allocators) if node.allocators else ", ".join(self.context.allocators.keys())
         return [f"barrier {qubits};"]
 
     def visit_comment(self, node: CommentOp) -> list[str]:
@@ -551,18 +541,14 @@ class AstToQasm(BaseVisitor[list[str]]):
                 lines.append(f"_bit_swap[0] = {cycle[0]};")
 
                 # Shift elements: each gets value of next in cycle
-                lines.extend(
-                    f"{cycle[i]} = {cycle[i + 1]};" for i in range(len(cycle) - 1)
-                )
+                lines.extend(f"{cycle[i]} = {cycle[i + 1]};" for i in range(len(cycle) - 1))
 
                 # Last element gets the saved value
                 lines.append(f"{cycle[-1]} = _bit_swap[0];")
 
         # Add comment describing the permutation
         if node.add_comment:
-            perm_strs = [
-                f"{s} -> {t}" for s, t in zip(node.sources, node.targets, strict=False)
-            ]
+            perm_strs = [f"{s} -> {t}" for s, t in zip(node.sources, node.targets, strict=False)]
             lines.append(f"// Permutation: {', '.join(perm_strs)}")
 
         return lines
@@ -604,11 +590,7 @@ class AstToQasm(BaseVisitor[list[str]]):
 
                 # Add new mappings only if source is not already mapped
                 composed.update(
-                    {
-                        src: dst
-                        for src, dst in new_perm.items()
-                        if src not in self.context.permutation_map
-                    },
+                    {src: dst for src, dst in new_perm.items() if src not in self.context.permutation_map},
                 )
 
                 self.context.permutation_map = composed
@@ -629,9 +611,7 @@ class AstToQasm(BaseVisitor[list[str]]):
         lines: list[str] = []
 
         if node.add_comment and node.sources:
-            perm_strs = [
-                f"{s} -> {t}" for s, t in zip(node.sources, node.targets, strict=False)
-            ]
+            perm_strs = [f"{s} -> {t}" for s, t in zip(node.sources, node.targets, strict=False)]
             lines.append(f"// Permutation: {', '.join(perm_strs)}")
 
         # Build the new permutation: src -> where tgt currently points
@@ -650,17 +630,12 @@ class AstToQasm(BaseVisitor[list[str]]):
         # Compose with existing permutation map
         # Update existing mappings: if destination is in new_perm, follow the chain
         composed: dict[tuple[str, int], tuple[str, int]] = {
-            src: new_perm.get(intermediate, intermediate)
-            for src, intermediate in self.context.permutation_map.items()
+            src: new_perm.get(intermediate, intermediate) for src, intermediate in self.context.permutation_map.items()
         }
 
         # Add new mappings only if source is not already in existing map
         composed.update(
-            {
-                src: dst
-                for src, dst in new_perm.items()
-                if src not in self.context.permutation_map
-            },
+            {src: dst for src, dst in new_perm.items() if src not in self.context.permutation_map},
         )
 
         self.context.permutation_map = composed

@@ -103,14 +103,7 @@ A repetition code encodes a single logical qubit across multiple physical qubits
 
     # Run 10 shots with 10% depolarizing noise
     noise = depolarizing_noise().with_uniform_probability(0.1)
-    results = (
-        sim(Guppy(repetition_code))
-        .qubits(5)
-        .quantum(state_vector())
-        .noise(noise)
-        .seed(42)
-        .run(10)
-    )
+    results = sim(Guppy(repetition_code)).qubits(5).quantum(state_vector()).noise(noise).seed(42).run(10)
 
     # Extract syndromes from first two measured qubits (s0, s1)
     d = results.to_dict()

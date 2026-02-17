@@ -190,9 +190,7 @@ class AstToQuantumCircuit:
                 self.context.allocator_parents[decl.name] = decl.parent
 
         if program.allocator:
-            self.context.allocator_parents[program.allocator.name] = (
-                program.allocator.parent
-            )
+            self.context.allocator_parents[program.allocator.name] = program.allocator.parent
 
         # Calculate offsets for child allocators
         self._calculate_allocator_offsets(program)
@@ -230,9 +228,7 @@ class AstToQuantumCircuit:
                     parent_next_offset[parent] = 0
 
                 parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = (
-                    parent_offset + parent_next_offset[parent]
-                )
+                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
                 parent_next_offset[parent] += decl.capacity
 
     def _process_statement(self, stmt: Statement) -> None:
@@ -362,10 +358,7 @@ class AstToQuantumCircuit:
                 for stmt in node.body:
                     self._process_statement(stmt)
         else:
-            msg = (
-                f"Cannot unroll For loop with non-integer bounds: "
-                f"start={node.start}, stop={node.stop}"
-            )
+            msg = f"Cannot unroll For loop with non-integer bounds: start={node.start}, stop={node.stop}"
             raise TypeError(msg)
 
     def _process_repeat(self, node: RepeatStmt) -> None:

@@ -45,11 +45,7 @@ def test_conditional_resource_balancing() -> None:
     # Find the if and else blocks
     # Support both array access and unpacked variable
     if_idx = next(
-        (
-            i
-            for i, line in enumerate(lines)
-            if ("if flag[0]:" in line or "if flag_0:" in line)
-        ),
+        (i for i, line in enumerate(lines) if ("if flag[0]:" in line or "if flag_0:" in line)),
         -1,
     )
     if if_idx == -1:

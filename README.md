@@ -60,14 +60,7 @@ def repetition_code() -> None:
 
 # Run 10 shots with 10% depolarizing noise
 noise = depolarizing_noise().with_uniform_probability(0.1)
-results = (
-    sim(Guppy(repetition_code))
-    .qubits(5)
-    .quantum(state_vector())
-    .noise(noise)
-    .seed(42)
-    .run(10)
-)
+results = sim(Guppy(repetition_code)).qubits(5).quantum(state_vector()).noise(noise).seed(42).run(10)
 print(results["syndrome"])
 # [[1, 1], [0, 1], [0, 0], [1, 1], [0, 0], [0, 1], [1, 1], [0, 0], [0, 1], [0, 1]]
 ```

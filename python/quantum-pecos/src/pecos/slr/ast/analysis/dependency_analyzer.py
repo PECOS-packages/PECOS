@@ -125,9 +125,7 @@ class DependencyAnalyzer:
                 self.result.bit_accesses[decl.name] = set()
 
         if program.allocator:
-            self.result.allocators_used[program.allocator.name] = (
-                program.allocator.capacity
-            )
+            self.result.allocators_used[program.allocator.name] = program.allocator.capacity
             self.result.slot_accesses[program.allocator.name] = set()
 
         # Analyze statements

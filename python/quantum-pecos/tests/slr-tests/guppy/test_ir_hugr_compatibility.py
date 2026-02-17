@@ -41,9 +41,7 @@ def test_ir_handles_array_measurement_patterns() -> None:
             line = lines[i]
             if "quantum.h" in line:
                 # Should use q_0 not q[0] after unpacking
-                assert (
-                    "q_0" in line or "q[0]" not in line
-                ), f"Line {i}: Should use unpacked name after unpacking"
+                assert "q_0" in line or "q[0]" not in line, f"Line {i}: Should use unpacked name after unpacking"
 
 
 def test_ir_handles_mixed_measurements() -> None:

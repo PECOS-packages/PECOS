@@ -333,9 +333,7 @@ def nondeterministic_meas(
     # ---------------------------------------------------------------------
 
     # Use forced outcome if provided, otherwise generate random outcome (0 or 1)
-    meas_outcome = (
-        forced_outcome if forced_outcome > -1 else int(pc.random.randint(0, 2, 1)[0])
-    )
+    meas_outcome = forced_outcome if forced_outcome > -1 else int(pc.random.randint(0, 2, 1)[0])
 
     # Use the random outcome as the sign of the replaced stabilizer
     if meas_outcome:

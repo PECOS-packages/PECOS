@@ -42,14 +42,7 @@ def run_circuit(
     seed: int = 42,
 ) -> dict:
     """Run a Guppy function with PECOS direct HUGR interpreter."""
-    return (
-        sim(Guppy(guppy_func))
-        .qubits(num_qubits)
-        .quantum(state_vector())
-        .seed(seed)
-        .run(shots)
-        .to_dict()
-    )
+    return sim(Guppy(guppy_func)).qubits(num_qubits).quantum(state_vector()).seed(seed).run(shots).to_dict()
 
 
 def get_measurements(results: dict) -> list:

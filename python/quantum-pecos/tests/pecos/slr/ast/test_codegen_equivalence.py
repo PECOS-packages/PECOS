@@ -42,9 +42,7 @@ def extract_gates_qasm(qasm: str) -> list[str]:
         # Skip empty lines, headers, includes, declarations, comments
         if not line:
             continue
-        if any(
-            line.startswith(x) for x in ["openqasm", "include", "qreg", "creg", "//"]
-        ):
+        if any(line.startswith(x) for x in ["openqasm", "include", "qreg", "creg", "//"]):
             continue
         gates.append(line.rstrip(";"))
     return gates
@@ -268,12 +266,9 @@ class TestQuantumCircuitEquivalence:
                 for sym, locs, _ in direct_qc[tick_idx].items()
             }
             ast_ops = {
-                (sym, frozenset(locs) if isinstance(locs, set) else locs)
-                for sym, locs, _ in ast_qc[tick_idx].items()
+                (sym, frozenset(locs) if isinstance(locs, set) else locs) for sym, locs, _ in ast_qc[tick_idx].items()
             }
-            assert (
-                direct_ops == ast_ops
-            ), f"Tick {tick_idx} mismatch: {direct_ops} vs {ast_ops}"
+            assert direct_ops == ast_ops, f"Tick {tick_idx} mismatch: {direct_ops} vs {ast_ops}"
 
 
 class TestRepeatEquivalence:

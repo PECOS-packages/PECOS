@@ -76,9 +76,7 @@ def test_whole_register_permutation_qasm() -> None:
     assert "a = a ^ b;" in qasm, f"Expected 'a = a ^ b;' not found in QASM:\n{qasm}"
 
     # Verify the temporary bit approach is NOT used for whole register permutations
-    assert (
-        "creg _bit_swap[1];" not in qasm
-    ), f"Unexpected 'creg _bit_swap[1];' found in QASM:\n{qasm}"
+    assert "creg _bit_swap[1];" not in qasm, f"Unexpected 'creg _bit_swap[1];' found in QASM:\n{qasm}"
 
     # For classical registers, we're using XOR swap, which swaps the values, not the references.
     # For bit-level operations, the permutation is applied, so b[2].set(1) becomes b[2] = 1;
@@ -124,9 +122,7 @@ def test_whole_register_permutation_qir() -> None:
     qir = SlrConverter(prog).qir()
 
     # Verify the permutation comment is present
-    assert (
-        "; Permutation: a <-> b" in qir
-    ), f"Expected permutation comment not found in QIR:\n{qir}"
+    assert "; Permutation: a <-> b" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
 
     # Verify the XOR operations are present
     assert "xor" in qir, f"Expected XOR operations not found in QIR:\n{qir}"
@@ -135,9 +131,7 @@ def test_whole_register_permutation_qir() -> None:
     assert (
         "_bit_swap = call i1* @create_creg(i64 1)" not in qir
     ), f"Unexpected '_bit_swap = call i1* @create_creg(i64 1)' found in QIR:\n{qir}"
-    assert (
-        "call i1 @get_creg_bit" not in qir
-    ), f"Unexpected 'call i1 @get_creg_bit' found in QIR:\n{qir}"
+    assert "call i1 @get_creg_bit" not in qir, f"Unexpected 'call i1 @get_creg_bit' found in QIR:\n{qir}"
 
     # Verify the set operations are present
     set_pattern = r"call void @set_creg_bit\(i1\* %(\w+), i64 (\d+), i1 (\d+)\)"
@@ -168,12 +162,8 @@ def test_mixed_permutation_qir() -> None:
     print(qir)
 
     # Verify the permutation comments are present
-    assert (
-        "; Permutation: a[0] -> c[1], c[1] -> a[0]" in qir
-    ), f"Expected permutation comment not found in QIR:\n{qir}"
-    assert (
-        "; Permutation: a <-> b" in qir
-    ), f"Expected permutation comment not found in QIR:\n{qir}"
+    assert "; Permutation: a[0] -> c[1], c[1] -> a[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
+    assert "; Permutation: a <-> b" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
 
     # Verify that the QIR contains the correct quantum operations after permutations
     # H gate should be applied to c[1] (after both permutations)

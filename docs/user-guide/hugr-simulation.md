@@ -56,9 +56,7 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
 
     # Run simulation
-    results = (
-        sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(1000)
-    )
+    results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(1000)
 
     print(results.to_dict())
     # Results: always correlated (00 or 11)
@@ -157,12 +155,7 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
     from pecos_rslib import state_vector
 
     # From file
-    results = (
-        sim(Hugr.from_file("/tmp/pecos-doc-tests/circuit.hugr"))
-        .qubits(2)
-        .quantum(state_vector())
-        .run(1000)
-    )
+    results = sim(Hugr.from_file("/tmp/pecos-doc-tests/circuit.hugr")).qubits(2).quantum(state_vector()).run(1000)
 
     # Or from bytes
     with open("/tmp/pecos-doc-tests/circuit.hugr", "rb") as f:
@@ -224,9 +217,7 @@ One of HUGR's key advantages is native support for control flow based on measure
 
 
     # Run simulation
-    results = (
-        sim(Guppy(conditional_x)).qubits(2).quantum(state_vector()).seed(42).run(1000)
-    )
+    results = sim(Guppy(conditional_x)).qubits(2).quantum(state_vector()).seed(42).run(1000)
 
     # Results: m0 and m1 are always equal!
     # - If m0=0: no X applied, m1=0
@@ -262,9 +253,7 @@ One of HUGR's key advantages is native support for control flow based on measure
         return m0, m1
 
 
-    results = (
-        sim(Guppy(if_else_circuit)).qubits(2).quantum(state_vector()).seed(42).run(1000)
-    )
+    results = sim(Guppy(if_else_circuit)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     # m0 always 0, m1 is 50/50 (H applied)
     ```
 
@@ -408,9 +397,7 @@ Add realistic noise to your Guppy simulations:
         .with_meas_1_probability(0.03)
     )
 
-    results = (
-        sim(Guppy(noisy_bell)).qubits(2).quantum(state_vector()).noise(noise).run(1000)
-    )
+    results = sim(Guppy(noisy_bell)).qubits(2).quantum(state_vector()).noise(noise).run(1000)
     ```
 
 ## HUGR vs QASM: When to Use Each

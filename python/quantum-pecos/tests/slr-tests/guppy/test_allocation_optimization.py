@@ -163,10 +163,7 @@ def test_optimization_report_generation() -> None:
     code = gen.get_output()
 
     # Should have detailed optimization or unified planning report
-    assert (
-        "UNIFIED RESOURCE PLANNING REPORT" in code
-        or "=== Qubit Allocation Optimization Report ===" in code
-    )
+    assert "UNIFIED RESOURCE PLANNING REPORT" in code or "=== Qubit Allocation Optimization Report ===" in code
     assert "simple" in code.lower()  # Array name mentioned
     assert "Strategy:" in code
 

@@ -166,9 +166,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
                 )
 
         # Body statements
-        lines.extend(
-            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
-        )
+        lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.body)
 
         self._level -= 1
         lines.append(")")
@@ -219,11 +217,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_assign(self, node: AssignOp) -> str:
         """Visit assignment."""
-        target = (
-            self.visit_bit_ref(node.target)
-            if isinstance(node.target, BitRef)
-            else node.target
-        )
+        target = self.visit_bit_ref(node.target) if isinstance(node.target, BitRef) else node.target
         value = self.format_expression(node.value)
         return f"{target} = {value}"
 
@@ -241,10 +235,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
     def visit_return(self, node: ReturnOp) -> str:
         """Visit return."""
         if node.values:
-            vals = ", ".join(
-                self.format_expression(v) if isinstance(v, Expression) else str(v)
-                for v in node.values
-            )
+            vals = ", ".join(self.format_expression(v) if isinstance(v, Expression) else str(v) for v in node.values)
             return f"Return({vals})"
         return "Return()"
 
@@ -262,18 +253,13 @@ class AstPrettyPrinter(BaseVisitor[str]):
         lines = [f"If({cond}).Then("]
 
         self._level += 1
-        lines.extend(
-            self._indented(f"{self.format_statement(stmt)},") for stmt in node.then_body
-        )
+        lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.then_body)
         self._level -= 1
 
         if node.else_body:
             lines.append(").Else(")
             self._level += 1
-            lines.extend(
-                self._indented(f"{self.format_statement(stmt)},")
-                for stmt in node.else_body
-            )
+            lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.else_body)
             self._level -= 1
 
         lines.append(")")
@@ -285,9 +271,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
         lines = [f"While({cond}).block("]
 
         self._level += 1
-        lines.extend(
-            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
-        )
+        lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.body)
         self._level -= 1
 
         lines.append(")")
@@ -304,9 +288,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
             lines = [f"For({node.variable}, {start}, {stop}).block("]
 
         self._level += 1
-        lines.extend(
-            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
-        )
+        lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.body)
         self._level -= 1
 
         lines.append(")")
@@ -317,9 +299,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
         lines = [f"Repeat(cond={node.count}).block("]
 
         self._level += 1
-        lines.extend(
-            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
-        )
+        lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.body)
         self._level -= 1
 
         lines.append(")")
@@ -330,9 +310,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
         lines = ["Parallel("]
 
         self._level += 1
-        lines.extend(
-            self._indented(f"{self.format_statement(stmt)},") for stmt in node.body
-        )
+        lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.body)
         self._level -= 1
 
         lines.append(")")

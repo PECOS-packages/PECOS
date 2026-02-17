@@ -269,9 +269,7 @@ class TestCurveFitComparison:
         ydata = gaussian(xdata, 2.0, 1.0, 1.5) + 0.01 * np.random.randn(50)
 
         pecos_popt, pecos_pcov = pc.curve_fit(gaussian, xdata, ydata, p0, maxfev=5000)
-        scipy_popt, scipy_pcov = scipy_curve_fit(
-            gaussian, xdata, ydata, p0, maxfev=5000
-        )
+        scipy_popt, scipy_pcov = scipy_curve_fit(gaussian, xdata, ydata, p0, maxfev=5000)
 
         # Parameters should be close (some variation due to optimization differences)
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=0.1, atol=0.1)
@@ -552,12 +550,8 @@ class TestEdgeCases:
         scipy_root = scipy_newton(f, 0.1, fprime=fprime)
 
         # Verify both find a root (may not be exactly 0 due to numerical issues)
-        assert (
-            abs(f(pecos_root)) < 1e-6
-        ), f"PECOS didn't find root: f({pecos_root})={f(pecos_root)}"
-        assert (
-            abs(f(scipy_root)) < 1e-6
-        ), f"Scipy didn't find root: f({scipy_root})={f(scipy_root)}"
+        assert abs(f(pecos_root)) < 1e-6, f"PECOS didn't find root: f({pecos_root})={f(pecos_root)}"
+        assert abs(f(scipy_root)) < 1e-6, f"Scipy didn't find root: f({scipy_root})={f(scipy_root)}"
 
         # Both should be close to 0 (allow larger tolerance due to pathological case)
         assert abs(pecos_root) < 0.01, f"PECOS root too far from 0: {pecos_root}"

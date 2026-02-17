@@ -200,15 +200,11 @@ def main() -> None:
     rust_total = len(rust_results)
 
     print("\n===== SUMMARY =====")
-    python_success_rate = (
-        f"{python_passed / python_total * 100:.1f}%" if python_total > 0 else "N/A"
-    )
+    python_success_rate = f"{python_passed / python_total * 100:.1f}%" if python_total > 0 else "N/A"
     print(
         f"Python: {python_passed}/{python_total} blocks passed ({python_success_rate} success rate)",
     )
-    rust_success_rate = (
-        f"{rust_passed / rust_total * 100:.1f}%" if rust_total > 0 else "N/A"
-    )
+    rust_success_rate = f"{rust_passed / rust_total * 100:.1f}%" if rust_total > 0 else "N/A"
     print(
         f"Rust: {rust_passed}/{rust_total} blocks passed ({rust_success_rate} success rate)",
     )

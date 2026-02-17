@@ -63,9 +63,7 @@ class TestGuppySimBuilder:
 
     def test_direct_run(self) -> None:
         """Test direct run() without explicit build()."""
-        results = (
-            sim(self.single_qubit).qubits(10).quantum(state_vector()).run(10).to_dict()
-        )
+        results = sim(self.single_qubit).qubits(10).quantum(state_vector()).run(10).to_dict()
 
         # Check that we have measurement results
         raw_measurements = results.get("measurements", [])
@@ -99,20 +97,8 @@ class TestGuppySimBuilder:
     def test_seeded_reproducibility(self) -> None:
         """Test that seeded runs are reproducible."""
         # Run with same seed twice
-        results1 = (
-            sim(self.single_qubit)
-            .qubits(10)
-            .quantum(state_vector())
-            .seed(12345)
-            .run(100)
-        )
-        results2 = (
-            sim(self.single_qubit)
-            .qubits(10)
-            .quantum(state_vector())
-            .seed(12345)
-            .run(100)
-        )
+        results1 = sim(self.single_qubit).qubits(10).quantum(state_vector()).seed(12345).run(100)
+        results2 = sim(self.single_qubit).qubits(10).quantum(state_vector()).seed(12345).run(100)
         measurements1 = results1.get(
             "measurements",
             results1.get("measurement_0", results1.get("result", [])),
@@ -126,9 +112,7 @@ class TestGuppySimBuilder:
     def test_config_dict(self) -> None:
         """Test configuration via dictionary."""
         # Test seed configuration (most commonly used)
-        results = (
-            sim(self.bell_state).qubits(10).quantum(state_vector()).seed(42).run(50)
-        )
+        results = sim(self.bell_state).qubits(10).quantum(state_vector()).seed(42).run(50)
         if "measurement_0" in results:
             assert len(results["measurement_0"]) == 50
             assert len(results["measurement_1"]) == 50
@@ -138,14 +122,7 @@ class TestGuppySimBuilder:
 
     def test_bell_state_correlation(self) -> None:
         """Test that Bell state results are correlated."""
-        results = (
-            sim(self.bell_state)
-            .qubits(10)
-            .quantum(state_vector())
-            .seed(42)
-            .run(1000)
-            .to_dict()
-        )
+        results = sim(self.bell_state).qubits(10).quantum(state_vector()).seed(42).run(1000).to_dict()
 
         # Measurements format is [[m0, m1], [m0, m1], ...]
         raw_measurements = results.get("measurements", [])
@@ -158,13 +135,7 @@ class TestGuppySimBuilder:
         """Test keeping intermediate compilation files."""
         import shutil
 
-        sim_obj = (
-            sim(self.single_qubit)
-            .qubits(10)
-            .quantum(state_vector())
-            .keep_intermediate_files(True)
-            .build()
-        )
+        sim_obj = sim(self.single_qubit).qubits(10).quantum(state_vector()).keep_intermediate_files(True).build()
         assert sim_obj.temp_dir is not None
         assert Path(sim_obj.temp_dir).exists()
 
@@ -208,14 +179,7 @@ def test_api_demonstration() -> None:
         return measure(q)
 
     # Show builder pattern
-    sim_obj = (
-        sim(demo_circuit)
-        .qubits(10)
-        .quantum(state_vector())
-        .seed(42)
-        .verbose(True)
-        .build()
-    )
+    sim_obj = sim(demo_circuit).qubits(10).quantum(state_vector()).seed(42).verbose(True).build()
     results = sim_obj.run(100)
     results.get(
         "measurements",
@@ -224,16 +188,12 @@ def test_api_demonstration() -> None:
 
     # print("\n3. Running 1000 shots with a new builder...")
     # Need to create a new builder since the previous one is consumed
-    results = (
-        sim(Guppy(demo_circuit)).qubits(10).quantum(state_vector()).seed(42).run(1000)
-    )
+    results = sim(Guppy(demo_circuit)).qubits(10).quantum(state_vector()).seed(42).run(1000)
     results.get(
         "measurements",
         results.get("measurement_0", results.get("result", [])),
     )
-    results = (
-        sim(Guppy(demo_circuit)).qubits(10).quantum(state_vector()).seed(123).run(50)
-    )
+    results = sim(Guppy(demo_circuit)).qubits(10).quantum(state_vector()).seed(123).run(50)
     results.get(
         "measurements",
         results.get("measurement_0", results.get("result", [])),
@@ -272,9 +232,7 @@ def test_simulation_reset() -> None:
     assert len(results2) == 100
 
     # With the same seed, reset should give reproducible results
-    sim_obj_seeded = (
-        sim(superposition).qubits(10).quantum(state_vector()).seed(42).build()
-    )
+    sim_obj_seeded = sim(superposition).qubits(10).quantum(state_vector()).seed(42).build()
     results_a = sim_obj_seeded.run(50)
     sim_obj_seeded.reset()
     results_b = sim_obj_seeded.run(50)
@@ -299,9 +257,7 @@ def test_reset_returns_to_zero_state() -> None:
         return measure(q)
 
     # Build a simulation
-    sim_obj = (
-        sim(measure_without_gates).qubits(10).quantum(state_vector()).seed(42).build()
-    )
+    sim_obj = sim(measure_without_gates).qubits(10).quantum(state_vector()).seed(42).build()
 
     # First run - all measurements should be 0 since qubit starts in |0⟩
     results1 = sim_obj.run(100)

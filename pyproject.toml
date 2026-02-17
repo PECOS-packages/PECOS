@@ -58,6 +58,9 @@ default-groups = ["dev", "test"]
 # See: https://github.com/astral-sh/uv/issues/11390
 reinstall-package = ["pecos-rslib"]
 
+[tool.black]
+line-length = 120
+
 [tool.pytest.ini_options]
 markers = [
     "optional_dependency: mark a test as using one or more optional dependencies",

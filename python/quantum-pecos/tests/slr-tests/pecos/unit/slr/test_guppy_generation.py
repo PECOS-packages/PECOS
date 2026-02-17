@@ -311,11 +311,7 @@ def test_permute_operations() -> None:
 
     # Check that permutation operations are present
     # Note: The exact syntax may vary based on implementation
-    assert (
-        "# Permute" in guppy_code
-        or "swap" in guppy_code.lower()
-        or ("a[0]" in guppy_code and "b[1]" in guppy_code)
-    )
+    assert "# Permute" in guppy_code or "swap" in guppy_code.lower() or ("a[0]" in guppy_code and "b[1]" in guppy_code)
 
     # Check that gates work after permutation
     assert "quantum.h(" in guppy_code

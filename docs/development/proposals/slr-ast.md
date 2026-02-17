@@ -776,9 +776,7 @@ class ASTStateValidator(BaseVisitor[None]):
     def visit_gate(self, node: GateOp) -> None:
         # Validate all targets are prepared
         for target in node.targets:
-            state = self.slot_states.get(
-                (target.allocator, target.index), SlotState.UNPREPARED
-            )
+            state = self.slot_states.get((target.allocator, target.index), SlotState.UNPREPARED)
             if state == SlotState.UNPREPARED:
                 self.violations.append(StateViolation(...))
 

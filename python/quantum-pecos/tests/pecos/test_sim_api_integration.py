@@ -47,12 +47,8 @@ class TestQASMSimulation:
         zeros = 1000 - ones
 
         # With seed, results should be deterministic but still mixed
-        assert (
-            300 < ones < 700
-        ), f"Should be roughly 50/50 distribution, got {ones} ones"
-        assert (
-            300 < zeros < 700
-        ), f"Should be roughly 50/50 distribution, got {zeros} zeros"
+        assert 300 < ones < 700, f"Should be roughly 50/50 distribution, got {ones} ones"
+        assert 300 < zeros < 700, f"Should be roughly 50/50 distribution, got {zeros} zeros"
 
     def test_sim_api_with_bell_state_qasm(self) -> None:
         """Test sim API with Bell state in QASM."""
@@ -175,9 +171,7 @@ class TestLLVMSimulation:
             if "c" in results:
                 measurements = results["c"]
                 assert len(measurements) == 10, "Should have 10 shots"
-                assert all(
-                    m in [0, 1] for m in measurements
-                ), "Measurements should be binary"
+                assert all(m in [0, 1] for m in measurements), "Measurements should be binary"
 
         except (RuntimeError, ValueError, NotImplementedError) as e:
             # Known LLVM runtime issues
@@ -264,9 +258,7 @@ class TestLLVMSimulation:
 
                 # Bell state should be correlated
                 correlated = sum(1 for i in range(50) if m0[i] == m1[i])
-                assert (
-                    correlated == 50
-                ), f"Bell state should be perfectly correlated, got {correlated}/50"
+                assert correlated == 50, f"Bell state should be perfectly correlated, got {correlated}/50"
 
         except (RuntimeError, ValueError, NotImplementedError) as e:
             error_msg = str(e).lower()
@@ -322,11 +314,7 @@ class TestHUGRSimulation:
             assert isinstance(results, dict), "Results should be a dictionary"
 
             # Check for measurements
-            has_measurements = (
-                "measurement_1" in results
-                or "measurements" in results
-                or len(results) > 0
-            )
+            has_measurements = "measurement_1" in results or "measurements" in results or len(results) > 0
             assert has_measurements, "Should have measurement results"
 
             if "measurement_1" in results:
@@ -335,9 +323,7 @@ class TestHUGRSimulation:
 
                 # Should be roughly 50/50 for H gate
                 ones = sum(measurements)
-                assert (
-                    30 < ones < 70
-                ), f"H gate should give roughly 50/50, got {ones}/100"
+                assert 30 < ones < 70, f"H gate should give roughly 50/50, got {ones}/100"
 
         except (
             ImportError,
@@ -532,9 +518,7 @@ class TestSimAPIFeatures:
 
             # Results might differ between backends but both should be valid
             assert len(results_sv["c"]) == 100, "State vector should give 100 shots"
-            assert (
-                len(results_ss["c"]) == 100
-            ), "Sparse stabilizer should give 100 shots"
+            assert len(results_ss["c"]) == 100, "Sparse stabilizer should give 100 shots"
 
         except (RuntimeError, ValueError) as e:
             if "not supported" in str(e).lower():
@@ -555,8 +539,7 @@ class TestSimAPIFeatures:
             sim(program).run(10)
 
         assert (
-            "invalid" in str(exc_info.value).lower()
-            or "error" in str(exc_info.value).lower()
+            "invalid" in str(exc_info.value).lower() or "error" in str(exc_info.value).lower()
         ), "Should raise error for invalid QASM"
 
     def test_sim_deterministic_seeding(self) -> None:
@@ -591,6 +574,4 @@ class TestSimAPIFeatures:
         results3 = shot_vec3.to_dict()
 
         # Results should differ with different seed (statistically)
-        assert (
-            results1["c"] != results3["c"]
-        ), "Different seeds should give different results"
+        assert results1["c"] != results3["c"], "Different seeds should give different results"

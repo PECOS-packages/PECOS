@@ -206,9 +206,7 @@ The graph itself can store metadata as attributes.
     graph.attrs().insert("version", "1.0").insert("author", "Alice")
 
     # Style 3: Batch update
-    graph.attrs().update(
-        {"date": "2025-01-26", "tags": ["qec", "surface_code"], "validated": True}
-    )
+    graph.attrs().update({"date": "2025-01-26", "tags": ["qec", "surface_code"], "validated": True})
     ```
 
 === ":fontawesome-brands-rust: Rust"

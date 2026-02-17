@@ -103,9 +103,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(
-            f"arr[3:-4:-1]: {pa_result_np} == {np_result} (should be [3.0, 2.0, 1.0])"
-        )
+        print(f"arr[3:-4:-1]: {pa_result_np} == {np_result} (should be [3.0, 2.0, 1.0])")
 
     def test_reverse_empty_stop_negative_1(self):
         """Test: arr[3:-1:-1] - should be empty (start==stop after normalization)."""

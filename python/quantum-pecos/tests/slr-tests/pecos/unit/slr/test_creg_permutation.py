@@ -36,14 +36,10 @@ def test_creg_permutation_qasm() -> None:
     assert "a = a ^ b;" in qasm, f"Expected 'a = a ^ b;' not found in QASM:\n{qasm}"
 
     # Verify the temporary bit approach is NOT used for whole register permutations
-    assert (
-        "creg _bit_swap[1];" not in qasm
-    ), f"Unexpected 'creg _bit_swap[1];' found in QASM:\n{qasm}"
+    assert "creg _bit_swap[1];" not in qasm, f"Unexpected 'creg _bit_swap[1];' found in QASM:\n{qasm}"
 
     # Verify the permutation comment is correct
-    assert (
-        "// Permutation: a <-> b" in qasm
-    ), f"Expected permutation comment not found in QASM:\n{qasm}"
+    assert "// Permutation: a <-> b" in qasm, f"Expected permutation comment not found in QASM:\n{qasm}"
 
     # Verify the operations after the permutation
     # For classical bit permutations, we're physically moving the values,
@@ -68,9 +64,7 @@ def test_creg_permutation_qir() -> None:
     print(qir)
 
     # Verify that the QIR contains a comment about the permutation
-    assert (
-        "Permutation: a <-> b" in qir
-    ), "Expected permutation comment not found in QIR"
+    assert "Permutation: a <-> b" in qir, "Expected permutation comment not found in QIR"
 
     # Verify that the XOR operations are present
     assert "xor" in qir, "Expected XOR operations not found in QIR"
@@ -85,9 +79,7 @@ def test_creg_permutation_qir() -> None:
         r"call void @set_creg_bit\(i1\* %(\w+), i64 (\d+), i1 1\)",
         qir,
     )
-    assert (
-        len(set_creg_bit_calls) >= 1
-    ), "No set_creg_bit call found for bit-level operation"
+    assert len(set_creg_bit_calls) >= 1, "No set_creg_bit call found for bit-level operation"
 
     # Get the register and index for the bit-level operation
     reg_name, index = set_creg_bit_calls[0]
@@ -102,18 +94,14 @@ def test_creg_permutation_qir() -> None:
         r"call void @set_creg_to_int\(i1\* %(\w+), i64 1\)",
         qir,
     )
-    assert (
-        len(set_creg_calls) >= 1
-    ), "No set_creg_to_int call found for register-level operation"
+    assert len(set_creg_calls) >= 1, "No set_creg_to_int call found for register-level operation"
 
     # Get the register for the register-level operation
     reg_name = set_creg_calls[0]
 
     # For register-level operations, the original register name is used
     # So a.set(1) still refers to register a
-    assert (
-        reg_name == "a"
-    ), f"set_creg_to_int applied to register {reg_name}, expected a"
+    assert reg_name == "a", f"set_creg_to_int applied to register {reg_name}, expected a"
 
     # Verify that running QIR generation twice produces consistent results
     qir2 = SlrConverter(prog).qir()

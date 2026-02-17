@@ -421,15 +421,11 @@ class TestControlFlow:
             # We can count the number of measurements to approximate tries, but can't directly verify the int return
             # Just verify that we got measurement results
             measurements = result["result"]["results"]
-            assert (
-                len(measurements) == 100
-            ), f"Expected 100 shots, got {len(measurements)}"
+            assert len(measurements) == 100, f"Expected 100 shots, got {len(measurements)}"
             # Each shot should have at least one measurement (at least 1 try)
             for shot_measurements in measurements:
                 if isinstance(shot_measurements, tuple):
-                    assert (
-                        len(shot_measurements) >= 1
-                    ), "Should have at least 1 measurement per shot"
+                    assert len(shot_measurements) >= 1, "Should have at least 1 measurement per shot"
                 # Can't verify avg_tries since we don't get the integer return value
 
     def test_early_return(self, tester: ExtendedGuppyTester) -> None:
@@ -454,14 +450,10 @@ class TestControlFlow:
             # Each shot should have a tuple of measurements, all should be 1
             for shot_measurements in values:
                 if isinstance(shot_measurements, tuple):
-                    assert all(
-                        m == 1 for m in shot_measurements
-                    ), f"X gate not applied in shot: {shot_measurements}"
+                    assert all(m == 1 for m in shot_measurements), f"X gate not applied in shot: {shot_measurements}"
                 else:
                     # Single measurement case
-                    assert (
-                        shot_measurements == 1
-                    ), f"X gate not applied: {shot_measurements}"
+                    assert shot_measurements == 1, f"X gate not applied: {shot_measurements}"
 
 
 # ============================================================================
@@ -493,9 +485,7 @@ class TestQuantumAlgorithms:
             all_zeros = sum(1 for m in measurements if m == (False, False, False))
             all_ones = sum(1 for m in measurements if m == (True, True, True))
             total_valid = all_zeros + all_ones
-            assert (
-                total_valid > 95
-            ), f"GHZ state invalid, got {total_valid}/100 valid states"
+            assert total_valid > 95, f"GHZ state invalid, got {total_valid}/100 valid states"
 
     def test_quantum_phase_kickback(self, tester: ExtendedGuppyTester) -> None:
         """Test phase kickback principle."""
@@ -586,9 +576,7 @@ class TestQuantumAlgorithms:
 
         # Test simple state comparison
         result_simple = tester.test_function(state_comparison_simple, shots=1000)
-        assert result_simple[
-            "success"
-        ], f"Simple state comparison failed: {result_simple.get('error')}"
+        assert result_simple["success"], f"Simple state comparison failed: {result_simple.get('error')}"
 
         measurements_simple = result_simple["result"]["results"]
         # Count correlated results (both qubits measure the same)
@@ -600,15 +588,11 @@ class TestQuantumAlgorithms:
             correlated = sum(1 for (a, b) in decoded if a == b)
 
         correlation_rate = correlated / len(measurements_simple)
-        assert (
-            correlation_rate > 0.95
-        ), f"Entangled qubits should be highly correlated, got {correlation_rate:.3f}"
+        assert correlation_rate > 0.95, f"Entangled qubits should be highly correlated, got {correlation_rate:.3f}"
 
         # Test different states
         result_different = tester.test_function(state_comparison_different, shots=1000)
-        assert result_different[
-            "success"
-        ], f"Different state comparison failed: {result_different.get('error')}"
+        assert result_different["success"], f"Different state comparison failed: {result_different.get('error')}"
 
         measurements_diff = result_different["result"]["results"]
         # Verify q1 is always 0 and q2 is always 1
@@ -633,9 +617,7 @@ class TestQuantumAlgorithms:
             quantum_interference_test,
             shots=1000,
         )
-        assert result_interference[
-            "success"
-        ], f"Quantum interference test failed: {result_interference.get('error')}"
+        assert result_interference["success"], f"Quantum interference test failed: {result_interference.get('error')}"
 
         measurements_interference = result_interference["result"]["results"]
         ones = sum(measurements_interference)
@@ -644,9 +626,7 @@ class TestQuantumAlgorithms:
         # The S gate behavior might vary by implementation
         # If S gate is not working as expected, we might get 50/50
         # For now, just verify we get measurements
-        assert (
-            0 <= prob_one <= 1
-        ), f"Probability should be between 0 and 1, got {prob_one:.3f}"
+        assert 0 <= prob_one <= 1, f"Probability should be between 0 and 1, got {prob_one:.3f}"
 
         # Note: In ideal case, H-S-H on |0⟩ should give |0⟩ with high probability
         # But current implementation seems to give 50/50, which suggests

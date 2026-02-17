@@ -74,9 +74,7 @@ class TestHUGRCompilation:
         )
 
         # returncode == 0 means SUCCESS, not failure!
-        assert (
-            result.returncode == 0
-        ), f"HUGR crate compilation failed: {result.stderr[:500]}"
+        assert result.returncode == 0, f"HUGR crate compilation failed: {result.stderr[:500]}"
 
     def test_rust_hugr_unit_tests(self) -> None:
         """Test that HUGR unit tests pass."""
@@ -220,15 +218,11 @@ attributes #0 = { "EntryPoint" }
 
             if has_quantum_intrinsics:
                 # If it has quantum operations, should use i64 for indices
-                assert (
-                    has_i64_params
-                ), f"{llvm_file.name} should use i64 for qubit indices"
+                assert has_i64_params, f"{llvm_file.name} should use i64 for qubit indices"
 
             # Check for measurement patterns if present
             if "__quantum__qis__m__body" in content:
-                assert (
-                    "i32" in content
-                ), f"{llvm_file.name} measurements should return i32"
+                assert "i32" in content, f"{llvm_file.name} measurements should return i32"
 
     def test_python_api_availability(self) -> None:
         """Test Python API for HUGR compilation is available."""
@@ -283,9 +277,7 @@ attributes #0 = { "EntryPoint" }
         is_hugr_envelope = hugr_str.startswith("HUGRiHJv")
         is_json = hugr_str.startswith("{") or "{" in hugr_str[:100]
 
-        assert (
-            is_hugr_envelope or is_json
-        ), "HUGR output should be envelope format or JSON"
+        assert is_hugr_envelope or is_json, "HUGR output should be envelope format or JSON"
 
 
 class TestLLVMIRPatterns:
@@ -316,24 +308,16 @@ class TestLLVMIRPatterns:
             # Verify declaration follows expected pattern
             expected_pattern = intrinsic_patterns.get(op_name, "")
             if expected_pattern:
-                assert (
-                    expected_pattern in declaration
-                ), f"{op_name} declaration should contain {expected_pattern}"
+                assert expected_pattern in declaration, f"{op_name} declaration should contain {expected_pattern}"
 
             # Check parameter types
             if op_name in ["hadamard", "pauli_x"]:
-                assert (
-                    "(i64)" in declaration
-                ), f"{op_name} should take single i64 parameter"
+                assert "(i64)" in declaration, f"{op_name} should take single i64 parameter"
             elif op_name == "cnot":
-                assert (
-                    "(i64, i64)" in declaration
-                ), f"{op_name} should take two i64 parameters"
+                assert "(i64, i64)" in declaration, f"{op_name} should take two i64 parameters"
             elif op_name == "measure":
                 assert "i32" in declaration, f"{op_name} should return i32"
-                assert (
-                    "(i64, i64)" in declaration
-                ), f"{op_name} should take two i64 parameters"
+                assert "(i64, i64)" in declaration, f"{op_name} should take two i64 parameters"
 
     def test_result_recording_patterns(self) -> None:
         """Test result recording function patterns."""

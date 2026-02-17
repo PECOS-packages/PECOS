@@ -178,12 +178,7 @@ lets you build the experiment once and rerun it multiple times:
     """
 
     # Build once, run multiple times
-    experiment = (
-        sim(Qasm(qasm_code))
-        .seed(42)
-        .noise(depolarizing_noise().with_uniform_probability(0.01))
-        .build()
-    )
+    experiment = sim(Qasm(qasm_code)).seed(42).noise(depolarizing_noise().with_uniform_probability(0.01)).build()
 
     # Run with different shot counts
     results_100 = experiment.run(100)
@@ -461,11 +456,7 @@ This example shows how noise affects quantum entanglement:
 
     # Build simulation with depolarizing noise
     experiment = (
-        sim(Qasm(qasm_code))
-        .seed(42)
-        .workers(4)
-        .noise(depolarizing_noise().with_uniform_probability(0.01))
-        .build()
+        sim(Qasm(qasm_code)).seed(42).workers(4).noise(depolarizing_noise().with_uniform_probability(0.01)).build()
     )
 
     # Run multiple times

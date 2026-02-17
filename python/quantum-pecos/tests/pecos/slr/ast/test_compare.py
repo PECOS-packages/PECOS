@@ -142,9 +142,7 @@ class TestCompareAst:
         assert not diff.equal
         assert len(diff.differences) > 0
         # Should identify the gate difference
-        assert any(
-            "gate" in d.lower() or "mismatch" in d.lower() for d in diff.differences
-        )
+        assert any("gate" in d.lower() or "mismatch" in d.lower() for d in diff.differences)
 
     def test_diff_string_representation(self) -> None:
         """Diff has useful string representation."""

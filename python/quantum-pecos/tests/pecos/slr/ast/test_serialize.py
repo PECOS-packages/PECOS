@@ -245,9 +245,7 @@ class TestJsonRoundTrip:
         restored = json_to_ast(json_str)
 
         # Find RZ gate
-        rz_gates = [
-            s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ
-        ]
+        rz_gates = [s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ]
         assert len(rz_gates) == 1
         assert rz_gates[0].params[0].value == 0.5
 
@@ -434,9 +432,7 @@ class TestEdgeCases:
         for gate_kind in GateKind:
             gate = GateOp(
                 gate=gate_kind,
-                targets=tuple(
-                    SlotRef(allocator="q", index=i) for i in range(gate_kind.arity)
-                ),
+                targets=tuple(SlotRef(allocator="q", index=i) for i in range(gate_kind.arity)),
                 params=(LiteralExpr(value=0.5),) if gate_kind.is_parameterized else (),
             )
 

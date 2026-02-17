@@ -200,9 +200,7 @@ class RotationMergingPass(OptimizationPass):
     def _optimize_if(self, stmt: IfStmt) -> tuple[IfStmt, int]:
         """Recursively optimize an if statement."""
         then_body, then_count = self._optimize_statements(stmt.then_body)
-        else_body, else_count = (
-            self._optimize_statements(stmt.else_body) if stmt.else_body else ((), 0)
-        )
+        else_body, else_count = self._optimize_statements(stmt.else_body) if stmt.else_body else ((), 0)
 
         optimized = IfStmt(
             condition=stmt.condition,

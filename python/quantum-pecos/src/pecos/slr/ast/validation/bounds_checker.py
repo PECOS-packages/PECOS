@@ -198,8 +198,7 @@ class BoundsChecker(ValidationPass):
         elif ref.index >= size:
             self.errors.append(
                 ValidationError(
-                    message=f"Bit index {ref.index} out of bounds for register "
-                    f"'{ref.register}' (size={size})",
+                    message=f"Bit index {ref.index} out of bounds for register '{ref.register}' (size={size})",
                     location=ref.location,
                     severity=Severity.ERROR,
                     code="E106",

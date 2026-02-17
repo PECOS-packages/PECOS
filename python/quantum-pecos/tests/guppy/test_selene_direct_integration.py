@@ -76,9 +76,7 @@ class TestSeleneDirectIntegration:
                     results.append(shot_data)
 
                 # Verify we got results
-                assert (
-                    len(results) == n_shots
-                ), f"Expected {n_shots} shots, got {len(results)}"
+                assert len(results) == n_shots, f"Expected {n_shots} shots, got {len(results)}"
 
                 # Check that each shot is a dictionary (may be empty for some simulators)
                 for i, shot in enumerate(results):
@@ -87,9 +85,7 @@ class TestSeleneDirectIntegration:
 
                 # For Bell state, measurements should be correlated
                 # With a coinflip simulator this won't be perfect, but we can check structure
-                assert all(
-                    isinstance(shot, dict) for shot in results
-                ), "All results should be dicts"
+                assert all(isinstance(shot, dict) for shot in results), "All results should be dicts"
 
             except (ImportError, RuntimeError, ValueError, AttributeError) as e:
                 # This is expected if Selene's HUGR support isn't fully ready
@@ -160,9 +156,7 @@ class TestSeleneDirectIntegration:
             )
 
             # Verify we got some results
-            assert (
-                len(results) > 0
-            ), "Should get at least one result from LLVM execution"
+            assert len(results) > 0, "Should get at least one result from LLVM execution"
 
         except (ImportError, RuntimeError, ValueError) as e:
             # This is okay - we're learning about the integration
@@ -196,11 +190,7 @@ class TestSeleneDirectIntegration:
             else:
                 # Check what's available in the module
                 sim_attrs = dir(bundled_simulators)
-                simulators = [
-                    attr
-                    for attr in sim_attrs
-                    if not attr.startswith("_") and "Simulator" in attr
-                ]
+                simulators = [attr for attr in sim_attrs if not attr.startswith("_") and "Simulator" in attr]
                 assert len(simulators) > 0, "Should have some simulator classes"
 
         except ImportError:
@@ -245,9 +235,7 @@ class TestSeleneDirectIntegration:
                 params = list(sig.parameters.keys())
 
                 # Verify build has expected parameters
-                assert (
-                    "src" in params or len(params) > 0
-                ), "build() should have parameters"
+                assert "src" in params or len(params) > 0, "build() should have parameters"
 
                 # Try to build the minimal program
                 instance = build(str(program_file))

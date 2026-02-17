@@ -45,9 +45,7 @@ class GenericMachine:
             metadata: Optional metadata dictionary.
             pos: Optional position information for qubits.
         """
-        self.machine_params = (
-            dict(machine_params) if machine_params is not None else None
-        )
+        self.machine_params = dict(machine_params) if machine_params is not None else None
         self.num_qubits = num_qubits
         self.metadata = metadata
         self.pos = pos

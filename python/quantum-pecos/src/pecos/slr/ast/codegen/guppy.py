@@ -345,9 +345,7 @@ class AstToGuppy(BaseVisitor[list[str]]):
                 parent_offset = self.context.allocator_offsets.get(parent, 0)
 
                 # This child's offset is parent's offset + next available slot
-                self.context.allocator_offsets[decl.name] = (
-                    parent_offset + parent_next_offset[parent]
-                )
+                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
 
                 # Reserve space in parent
                 parent_next_offset[parent] += decl.capacity
@@ -514,11 +512,7 @@ class AstToGuppy(BaseVisitor[list[str]]):
 
     def visit_assign(self, node: AssignOp) -> list[str]:
         """Generate assignment operation."""
-        target = (
-            f"{node.target.register}[{node.target.index}]"
-            if isinstance(node.target, BitRef)
-            else str(node.target)
-        )
+        target = f"{node.target.register}[{node.target.index}]" if isinstance(node.target, BitRef) else str(node.target)
 
         value = self._render_expression(node.value)
         return [f"{self.context.indent()}{target} = {value}"]

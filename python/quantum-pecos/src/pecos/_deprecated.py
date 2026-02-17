@@ -30,8 +30,7 @@ def BinArray(*args: Any, **kwargs: Any) -> BitInt:  # noqa: N802, ANN401
     Please update your code to use BitInt directly.
     """
     warnings.warn(
-        "BinArray is deprecated and will be removed in a future version. "
-        "Please use BitInt instead.",
+        "BinArray is deprecated and will be removed in a future version. Please use BitInt instead.",
         DeprecationWarning,
         stacklevel=2,
     )

@@ -471,9 +471,7 @@ class QIRGenerator(Generator):
                 if op.right in (0, 1):
                     rhs = ir.Constant(self._types.bool_type, op.right)
                 else:
-                    msg = (
-                        f"SET operation for bit must have rhs of 0 or 1, got {op.right}"
-                    )
+                    msg = f"SET operation for bit must have rhs of 0 or 1, got {op.right}"
                     raise ValueError(msg)
             elif isinstance(op.right, BinOp):
                 rhs = self._convert_binary_op(op.right)
@@ -777,9 +775,7 @@ class QIRGenerator(Generator):
                 new_gate.qargs = [qubit]
                 self._create_qgate_call(new_gate)
             return
-        if isinstance(gate.qargs, tuple) and all(
-            isinstance(e, tuple) for e in gate.qargs
-        ):
+        if isinstance(gate.qargs, tuple) and all(isinstance(e, tuple) for e in gate.qargs):
             for pair in gate.qargs:
                 new_gate = gate.copy()
                 new_gate.qargs = pair
@@ -808,9 +804,7 @@ class QIRGenerator(Generator):
         gate_declaration = self._gate_declaration_cache[gate.sym]
         gate_args = []
         if gate.has_parameters:
-            gate_args = [
-                ir.Constant(self._types.double_type, param) for param in gate.params
-            ]
+            gate_args = [ir.Constant(self._types.double_type, param) for param in gate.params]
         gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in qargs])
 
         # Create the actual invocation on the builder using the args passed in
@@ -969,11 +963,7 @@ class QIRGenerator(Generator):
                 # Create a new permutation map for this permutation
                 new_perm_map = {}
                 for ei, ef in zip(elems_i, elems_f, strict=True):
-                    if (
-                        hasattr(ei.reg, "sym")
-                        and hasattr(ef.reg, "sym")
-                        and isinstance(ei.reg, QReg)
-                    ):
+                    if hasattr(ei.reg, "sym") and hasattr(ef.reg, "sym") and isinstance(ei.reg, QReg):
                         # Create a key from the input element's register sym and index
                         key = (ei.reg.sym, ei.index)
                         # Map it to the output element's register sym and index
@@ -1139,11 +1129,7 @@ class QIRGenerator(Generator):
 
         # Add new mappings from the new permutation map
         composed_map.update(
-            {
-                src: dst
-                for src, dst in new_perm_map.items()
-                if src not in self.permutation_map
-            },
+            {src: dst for src, dst in new_perm_map.items() if src not in self.permutation_map},
         )
 
         return composed_map

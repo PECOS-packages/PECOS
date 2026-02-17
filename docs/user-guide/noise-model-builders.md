@@ -69,9 +69,7 @@ noise = (
 
 # Total probability (used internally by the engine)
 noise = (
-    GeneralNoiseModelBuilder()
-    .with_p1_probability(0.00133)  # Total for single-qubit
-    .with_p2_probability(0.0133)
+    GeneralNoiseModelBuilder().with_p1_probability(0.00133).with_p2_probability(0.0133)  # Total for single-qubit
 )  # Total for two-qubit
 ```
 

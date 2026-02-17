@@ -672,9 +672,7 @@ class TestAttrsBuilder:
 
         # Test chainable insert
         attrs = graph.edge_attrs(n0, n1)
-        attrs.insert("weight", 5.0).insert("label", "boundary").insert(
-            "path", [1, 2, 3]
-        )
+        attrs.insert("weight", 5.0).insert("label", "boundary").insert("path", [1, 2, 3])
 
         # Verify all values were set
         assert attrs["weight"] == 5.0
@@ -814,9 +812,7 @@ class TestAttrsBuilder:
 
         # Test chainable insert
         attrs = graph.attrs()
-        attrs.insert("author", "Alice").insert("date", "2025-01-01").insert(
-            "version", 2
-        )
+        attrs.insert("author", "Alice").insert("date", "2025-01-01").insert("version", 2)
 
         assert attrs["author"] == "Alice"
         assert attrs["date"] == "2025-01-01"

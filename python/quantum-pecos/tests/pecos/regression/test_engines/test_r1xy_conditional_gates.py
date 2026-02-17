@@ -87,9 +87,7 @@ def test_r1xy_theta_2pi_classified_as_identity() -> None:
 
     # R1XY with theta=2π should be identity, leaving qubit in |0⟩
     zeros = results["a"].count("0")
-    assert (
-        zeros == 100
-    ), f"R1XY(2π, 0) should be identity, but got {100-zeros} non-zero results"
+    assert zeros == 100, f"R1XY(2π, 0) should be identity, but got {100-zeros} non-zero results"
 
 
 def test_r1xy_theta_2_not_identity() -> None:
@@ -153,9 +151,7 @@ def test_r1xy_angles_summing_to_2pi_return_to_identity() -> None:
     # R1XY(π, 0) + R1XY(π, 0) = rotation by 2π = identity (up to global phase)
     # Qubit should remain in |0⟩
     zeros = results["a"].count("0")
-    assert (
-        zeros == 100
-    ), f"Expected all measurements to be 0 (2π rotation = identity), but got {100-zeros} ones"
+    assert zeros == 100, f"Expected all measurements to be 0 (2π rotation = identity), but got {100-zeros} ones"
 
 
 def test_conditional_r1xy_with_false_condition() -> None:
@@ -185,9 +181,7 @@ def test_conditional_r1xy_with_false_condition() -> None:
     # Condition is false (t[0]=0, not 1), so R1XY should not execute
     # Qubit should remain in |0⟩
     zeros = results["a"].count("0")
-    assert (
-        zeros == 100
-    ), f"Expected all zeros (R1XY not executed), but got {100-zeros} ones"
+    assert zeros == 100, f"Expected all zeros (R1XY not executed), but got {100-zeros} ones"
 
 
 def test_r1xy_alternative_angles_summing_to_4pi() -> None:
@@ -223,7 +217,5 @@ def test_r1xy_alternative_angles_summing_to_4pi() -> None:
     zeros = results["a"].count("0")
     ones = results["a"].count("1")
 
-    assert (
-        ones == 0
-    ), f"Expected all measurements to be 0 (4π cancellation), but got {ones} ones"
+    assert ones == 0, f"Expected all measurements to be 0 (4π cancellation), but got {ones} ones"
     assert zeros == 100, f"Expected 100 zeros, but got {zeros}"

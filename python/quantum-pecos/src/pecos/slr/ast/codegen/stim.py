@@ -185,9 +185,7 @@ class AstToStim:
                 self.context.allocator_parents[decl.name] = decl.parent
 
         if program.allocator:
-            self.context.allocator_parents[program.allocator.name] = (
-                program.allocator.parent
-            )
+            self.context.allocator_parents[program.allocator.name] = program.allocator.parent
 
         # Calculate offsets for child allocators
         self._calculate_allocator_offsets(program)
@@ -226,9 +224,7 @@ class AstToStim:
                     parent_next_offset[parent] = 0
 
                 parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = (
-                    parent_offset + parent_next_offset[parent]
-                )
+                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
                 parent_next_offset[parent] += decl.capacity
 
     def _process_statement(self, stmt: Statement) -> None:

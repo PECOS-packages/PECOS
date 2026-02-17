@@ -176,11 +176,7 @@ class StatementListOptimizer(OptimizationPass):
                 continue
 
             # Check for cancellation with next gate
-            if (
-                isinstance(stmt, GateOp)
-                and i + 1 < len(statements)
-                and isinstance(statements[i + 1], GateOp)
-            ):
+            if isinstance(stmt, GateOp) and i + 1 < len(statements) and isinstance(statements[i + 1], GateOp):
                 next_stmt = statements[i + 1]
                 if self._should_cancel(stmt, next_stmt):
                     # Skip both gates
@@ -209,9 +205,7 @@ class StatementListOptimizer(OptimizationPass):
     def _optimize_if(self, stmt: IfStmt) -> tuple[IfStmt, int]:
         """Recursively optimize an if statement."""
         then_body, then_count = self._optimize_statements(stmt.then_body)
-        else_body, else_count = (
-            self._optimize_statements(stmt.else_body) if stmt.else_body else ((), 0)
-        )
+        else_body, else_count = self._optimize_statements(stmt.else_body) if stmt.else_body else ((), 0)
 
         optimized = IfStmt(
             condition=stmt.condition,

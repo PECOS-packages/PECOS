@@ -292,10 +292,7 @@ class AstQubitStateValidator:
             then_state = state_after_then.get(key, ValidationSlotState.UNPREPARED)
             else_state = state_after_else.get(key, ValidationSlotState.UNPREPARED)
 
-            if (
-                then_state == ValidationSlotState.PREPARED
-                and else_state == ValidationSlotState.PREPARED
-            ):
+            if then_state == ValidationSlotState.PREPARED and else_state == ValidationSlotState.PREPARED:
                 merged_state[key] = ValidationSlotState.PREPARED
             else:
                 merged_state[key] = ValidationSlotState.UNPREPARED

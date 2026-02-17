@@ -77,11 +77,7 @@ def verify(simulator: str, qc: QuantumCircuit, final_vector: pc.Array) -> None:
     sim_vector_normalized = sim.vector / (pc.linalg.norm(sim.vector) or 1)
     final_vector_normalized = final_vector / (pc.linalg.norm(final_vector) or 1)
 
-    phase = (
-        final_vector_normalized[0] / sim_vector_normalized[0]
-        if pc.abs(sim_vector_normalized[0]) > 1e-10
-        else 1
-    )
+    phase = final_vector_normalized[0] / sim_vector_normalized[0] if pc.abs(sim_vector_normalized[0]) > 1e-10 else 1
 
     sim_vector_adjusted = sim_vector_normalized * phase
 

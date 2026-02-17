@@ -65,9 +65,7 @@ Use `from_file()` to load a WASM module from disk:
     wasm = WasmForeignObject.from_file("math_functions.wasm", timeout=5.0)
 
     # With memory limit (10 MB)
-    wasm = WasmForeignObject.from_file(
-        "math_functions.wasm", timeout=5.0, memory_size=10 * 1024 * 1024
-    )
+    wasm = WasmForeignObject.from_file("math_functions.wasm", timeout=5.0, memory_size=10 * 1024 * 1024)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -136,9 +134,7 @@ Use `from_bytes()` when you have the WASM binary in memory. This is useful for:
     wasm = WasmForeignObject.from_bytes(wasm_bytes)
 
     # With configuration options
-    wasm = WasmForeignObject.from_bytes(
-        wasm_bytes, timeout=5.0, memory_size=10 * 1024 * 1024
-    )
+    wasm = WasmForeignObject.from_bytes(wasm_bytes, timeout=5.0, memory_size=10 * 1024 * 1024)
     ```
 
 === ":fontawesome-brands-rust: Rust"

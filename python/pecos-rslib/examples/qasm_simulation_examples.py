@@ -49,14 +49,7 @@ def example_bell_state() -> None:
         .with_p1_probability(0.02)
         .with_p2_probability(0.02)
     )
-    results_noisy = (
-        qasm_engine()
-        .program(Qasm.from_string(qasm))
-        .to_sim()
-        .seed(42)
-        .noise(noise)
-        .run(1000)
-    )
+    results_noisy = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(noise).run(1000)
     results_noisy_dict = results_noisy.to_dict()
     counts_noisy = Counter(results_noisy_dict["c"])
 
@@ -143,14 +136,7 @@ def example_biased_depolarizing() -> None:
         .with_p2_probability(0.1)
     )
 
-    results_biased = (
-        qasm_engine()
-        .program(Qasm.from_string(qasm))
-        .to_sim()
-        .seed(42)
-        .noise(noise)
-        .run(1000)
-    )
+    results_biased = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(noise).run(1000)
     results_biased_dict = results_biased.to_dict()
     biased_counts = Counter(results_biased_dict["c"])
 
@@ -179,12 +165,7 @@ def example_quantum_engines() -> None:
     # State vector engine (can handle arbitrary gates)
     try:
         results_sv = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .seed(42)
-            .quantum_engine(state_vector())
-            .run(100)
+            qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).quantum_engine(state_vector()).run(100)
         )
         sv_dict = results_sv.to_dict()
         sv_counts = Counter(sv_dict["c"])
@@ -196,12 +177,7 @@ def example_quantum_engines() -> None:
     # This will fail for non-Clifford gates like rz(0.5)
     try:
         results_stab = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .seed(42)
-            .quantum_engine(sparse_stabilizer())
-            .run(100)
+            qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).quantum_engine(sparse_stabilizer()).run(100)
         )
         stab_dict = results_stab.to_dict()
         stab_counts = Counter(stab_dict["c"])
@@ -263,13 +239,7 @@ def example_builder_pattern() -> None:
         .with_p2_probability(0.005)
     )
 
-    results = (
-        qasm_engine()
-        .program(Qasm.from_string(qasm))
-        .to_sim()
-        .noise(noise_biased)
-        .run(500)
-    )
+    results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().noise(noise_biased).run(500)
 
     results_dict = results.to_dict()
     counts = Counter(results_dict["c"])
@@ -345,28 +315,12 @@ def example_parallel_execution() -> None:
 
     # Single worker
     start = time.time()
-    (
-        qasm_engine()
-        .program(Qasm.from_string(qasm))
-        .to_sim()
-        .seed(42)
-        .noise(noise)
-        .workers(1)
-        .run(10000)
-    )
+    (qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(noise).workers(1).run(10000))
     single_time = time.time() - start
 
     # Multiple workers
     start = time.time()
-    (
-        qasm_engine()
-        .program(Qasm.from_string(qasm))
-        .to_sim()
-        .seed(42)
-        .noise(noise)
-        .workers(4)
-        .run(10000)
-    )
+    (qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(noise).workers(4).run(10000))
     parallel_time = time.time() - start
 
     print("Execution time comparison (10,000 shots):")

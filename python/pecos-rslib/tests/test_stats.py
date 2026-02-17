@@ -1127,12 +1127,8 @@ class TestAxisPerformance:
 
         speedup = numpy_time / pecos_time
         print(f"\nmean(axis=0) on {shape} array:")
-        print(
-            f"  PECOS: {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.2f}ms/iter)"
-        )
-        print(
-            f"  NumPy: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.2f}ms/iter)"
-        )
+        print(f"  PECOS: {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.2f}ms/iter)")
+        print(f"  NumPy: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.2f}ms/iter)")
         print(f"  Ratio: {speedup:.2f}x")
 
         # We expect to be competitive with numpy (within 50x)
@@ -1168,12 +1164,8 @@ class TestAxisPerformance:
 
         speedup = numpy_time / pecos_time
         print(f"\nstd(axis=0) on {shape} array:")
-        print(
-            f"  PECOS: {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.2f}ms/iter)"
-        )
-        print(
-            f"  NumPy: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.2f}ms/iter)"
-        )
+        print(f"  PECOS: {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.2f}ms/iter)")
+        print(f"  NumPy: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.2f}ms/iter)")
         print(f"  Ratio: {speedup:.2f}x")
 
         # We expect to be competitive with numpy (within 50x)
@@ -1209,12 +1201,8 @@ class TestAxisPerformance:
         size_ratio = (sizes[-1][0] * sizes[-1][1]) / (sizes[0][0] * sizes[0][1])
         time_ratio = times[-1] / times[0]
 
-        print(
-            f"\nScaling: {size_ratio:.0f}x more elements, {time_ratio:.1f}x more time"
-        )
-        assert (
-            time_ratio < size_ratio * 2
-        ), f"Poor scaling: {time_ratio:.1f}x vs {size_ratio:.0f}x elements"
+        print(f"\nScaling: {size_ratio:.0f}x more elements, {time_ratio:.1f}x more time")
+        assert time_ratio < size_ratio * 2, f"Poor scaling: {time_ratio:.1f}x vs {size_ratio:.0f}x elements"
 
 
 class TestStateVectorPerformance:
@@ -1281,16 +1269,10 @@ class TestStateVectorPerformance:
             vector_size = 2**num_qubits
 
             print(f"\n{num_qubits:2d} qubits ({vector_size:6d} elements):")
-            print(
-                f"  Rust:   {rust_time*1000:7.2f}ms ({rust_time/iterations*1000:6.2f}ms/iter)"
-            )
-            print(
-                f"  Python: {python_time*1000:7.2f}ms ({python_time/iterations*1000:6.2f}ms/iter)"
-            )
+            print(f"  Rust:   {rust_time*1000:7.2f}ms ({rust_time/iterations*1000:6.2f}ms/iter)")
+            print(f"  Python: {python_time*1000:7.2f}ms ({python_time/iterations*1000:6.2f}ms/iter)")
             print(f"  Speedup: {speedup:6.1f}x")
 
         # We expect at least 50x speedup for 10+ qubits (usually see 150-250x)
         # This validates that we're using the Rust implementation, not Python
-        assert (
-            speedup > 50
-        ), f"Bit reversal too slow: {speedup:.1f}x vs Python (expected >50x)"
+        assert speedup > 50, f"Bit reversal too slow: {speedup:.1f}x vs Python (expected >50x)"

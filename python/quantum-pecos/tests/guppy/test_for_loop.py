@@ -24,14 +24,7 @@ if __name__ == "__main__":
     os.environ["RUST_LOG"] = "pecos_guppy_hugr::engine=debug"
     print("Testing for-loop with measurements...")
     try:
-        results = (
-            sim(Guppy(loop_with_measure))
-            .qubits(10)
-            .quantum(state_vector())
-            .seed(42)
-            .run(1)
-            .to_dict()
-        )
+        results = sim(Guppy(loop_with_measure)).qubits(10).quantum(state_vector()).seed(42).run(1).to_dict()
         print(f"Results: {results}")
     except Exception as e:
         print(f"Error: {e}")

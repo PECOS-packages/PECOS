@@ -187,11 +187,7 @@ def extract_code_blocks(
             preamble.append(cleaned_code)
         else:
             # Visible blocks get preamble prepended
-            full_code = (
-                "\n\n".join(preamble) + "\n\n" + cleaned_code
-                if preamble
-                else cleaned_code
-            )
+            full_code = "\n\n".join(preamble) + "\n\n" + cleaned_code if preamble else cleaned_code
             blocks.append((full_code, should_skip, expected_error))
 
     return blocks
@@ -263,15 +259,13 @@ def run_python_block(
         if expected_error:
             if result.returncode == 0:
                 print(
-                    f"FAIL: Python block #{block_number} from {file_path} "
-                    f"was expected to fail but succeeded",
+                    f"FAIL: Python block #{block_number} from {file_path} was expected to fail but succeeded",
                 )
                 return False
             # Check if error matches expected pattern
             if re.search(expected_error, result.stderr):
                 print(
-                    f"PASS: Python block #{block_number} from {file_path} "
-                    f"(failed as expected with matching error)",
+                    f"PASS: Python block #{block_number} from {file_path} (failed as expected with matching error)",
                 )
                 return True
             print(
@@ -289,8 +283,7 @@ def run_python_block(
     except subprocess.TimeoutExpired:
         if expected_error and re.search(expected_error, "TimeoutExpired"):
             print(
-                f"PASS: Python block #{block_number} from {file_path} "
-                f"(timed out as expected)",
+                f"PASS: Python block #{block_number} from {file_path} (timed out as expected)",
             )
             return True
         print(f"FAIL: Timeout in Python block #{block_number} from {file_path}")
@@ -462,16 +455,12 @@ def main() -> None:
     rust_total = len(rust_results)
 
     print("\n===== SUMMARY =====")
-    python_success_rate = (
-        f"{python_passed / python_total * 100:.1f}%" if python_total > 0 else "N/A"
-    )
+    python_success_rate = f"{python_passed / python_total * 100:.1f}%" if python_total > 0 else "N/A"
     print(
         f"Python: {python_passed}/{python_total} blocks passed, "
         f"{python_skipped} skipped ({python_success_rate} success rate)",
     )
-    rust_success_rate = (
-        f"{rust_passed / rust_total * 100:.1f}%" if rust_total > 0 else "N/A"
-    )
+    rust_success_rate = f"{rust_passed / rust_total * 100:.1f}%" if rust_total > 0 else "N/A"
     print(
         f"Rust: {rust_passed}/{rust_total} blocks passed, "
         f"{rust_skipped} skipped ({rust_success_rate} success rate)",

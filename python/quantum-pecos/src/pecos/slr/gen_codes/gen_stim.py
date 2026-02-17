@@ -372,23 +372,15 @@ class StimGenerator(Generator):
         elif hasattr(target, "parent") and hasattr(target, "index"):
             # QReg element (legacy support)
             parent_sym = target.parent.sym if hasattr(target.parent, "sym") else None
-            if (
-                parent_sym
-                and hasattr(target, "index")
-                and isinstance(target.index, int)
-            ):
+            if parent_sym and hasattr(target, "index") and isinstance(target.index, int):
                 key = (parent_sym, target.index)
                 if key in self.qubit_map:
                     indices.append(self.qubit_map[key])
         elif hasattr(target, "sym"):
             # Full register or single qubit
-            indices.extend(
-                self.qubit_map[key] for key in self.qubit_map if key[0] == target.sym
-            )
+            indices.extend(self.qubit_map[key] for key in self.qubit_map if key[0] == target.sym)
         elif hasattr(target, "name"):
             # Legacy support for name attribute
-            indices.extend(
-                self.qubit_map[key] for key in self.qubit_map if key[0] == target.name
-            )
+            indices.extend(self.qubit_map[key] for key in self.qubit_map if key[0] == target.name)
 
         return indices

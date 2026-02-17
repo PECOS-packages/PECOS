@@ -68,9 +68,7 @@ class LogicalCircuit(QuantumCircuit):
         self.suppress_warning = suppress_warning
 
         # Store logical gates separately (they have .circuits attribute that iter_ticks needs)
-        self._logical_gates: list[
-            list[tuple[LogicalGateProtocol, LocationSet, dict[str, Any]]]
-        ] = []
+        self._logical_gates: list[list[tuple[LogicalGateProtocol, LocationSet, dict[str, Any]]]] = []
 
         super().__init__(**params)
 
@@ -222,10 +220,7 @@ class LogicalCircuit(QuantumCircuit):
         """Return string representation of the logical circuit."""
         ticks_repr = []
         for _tick_idx, tick_gates in enumerate(self._logical_gates):
-            gates_str = ", ".join(
-                f"{getattr(gate, 'symbol', str(gate))}: {locs}"
-                for gate, locs, _ in tick_gates
-            )
+            gates_str = ", ".join(f"{getattr(gate, 'symbol', str(gate))}: {locs}" for gate, locs, _ in tick_gates)
             ticks_repr.append(f"Tick({{{gates_str}}})")
         return f"LogicalCircuit([{', '.join(ticks_repr)}])"
 

@@ -172,12 +172,8 @@ class TestSerializationRoundTrip:
         assert ast_equal(ast, restored, ignore_name=True)
 
         # Verify float values preserved
-        original_rz = next(
-            s for s in ast.body if isinstance(s, GateOp) and s.gate == GateKind.RZ
-        )
-        restored_rz = next(
-            s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ
-        )
+        original_rz = next(s for s in ast.body if isinstance(s, GateOp) and s.gate == GateKind.RZ)
+        restored_rz = next(s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ)
         assert original_rz.params[0].value == restored_rz.params[0].value
 
 

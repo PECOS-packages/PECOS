@@ -169,10 +169,7 @@ def _check_for_unsupported_structures(hugr: Hugr, quantum_op_parents: set[int]) 
                 parent_data = hugr[parent_node]
                 parent_op = parent_data.op.__class__.__name__
                 if parent_op in ("TailLoop", "Conditional", "Case"):
-                    msg = (
-                        f"Nested Conditional (node {current_idx}) containing "
-                        "quantum operations is not supported."
-                    )
+                    msg = f"Nested Conditional (node {current_idx}) containing quantum operations is not supported."
                     raise UnsupportedHugrStructureError(msg)
 
             # Move to parent
@@ -336,11 +333,7 @@ def _trace_back_to_quantum_op(
         try:
             node = Node(current_idx)
             for _in_port, out_ports in hugr.incoming_links(node):
-                stack.extend(
-                    (out_port.node.idx, out_port.offset)
-                    for out_port in out_ports
-                    if out_port.offset >= 0
-                )
+                stack.extend((out_port.node.idx, out_port.offset) for out_port in out_ports if out_port.offset >= 0)
         except (KeyError, IndexError):
             continue
 

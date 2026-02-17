@@ -34,9 +34,7 @@ class TestStateVecPickle:
         data = pickle.dumps(sim)
         restored = pickle.loads(data)
         assert restored.num_qubits == 3
-        np.testing.assert_array_equal(
-            _state_vec_to_numpy(restored), _state_vec_to_numpy(sim)
-        )
+        np.testing.assert_array_equal(_state_vec_to_numpy(restored), _state_vec_to_numpy(sim))
 
     def test_roundtrip_after_gates(self):
         sim = StateVec(2, seed=42)
@@ -46,9 +44,7 @@ class TestStateVecPickle:
 
         restored = pickle.loads(pickle.dumps(sim))
         assert restored.num_qubits == 2
-        np.testing.assert_allclose(
-            _state_vec_to_numpy(restored), original_state, atol=1e-15
-        )
+        np.testing.assert_allclose(_state_vec_to_numpy(restored), original_state, atol=1e-15)
 
     def test_deepcopy(self):
         sim = StateVec(2, seed=42)
@@ -56,9 +52,7 @@ class TestStateVecPickle:
         original_state = _state_vec_to_numpy(sim)
 
         copied = copy.deepcopy(sim)
-        np.testing.assert_allclose(
-            _state_vec_to_numpy(copied), original_state, atol=1e-15
-        )
+        np.testing.assert_allclose(_state_vec_to_numpy(copied), original_state, atol=1e-15)
 
     def test_unpickled_sim_is_functional(self):
         """Ensure the restored sim can continue running gates."""

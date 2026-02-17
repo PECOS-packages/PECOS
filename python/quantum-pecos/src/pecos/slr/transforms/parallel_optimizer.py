@@ -281,14 +281,10 @@ class ParallelOptimizer:
                 "Other",
             ]
             # Use list comprehension to build groups from ordered types
-            grouped.extend(
-                type_groups[op_type] for op_type in order if op_type in type_groups
-            )
+            grouped.extend(type_groups[op_type] for op_type in order if op_type in type_groups)
 
             # Add any remaining types
-            grouped.extend(
-                ops for op_type, ops in type_groups.items() if op_type not in order
-            )
+            grouped.extend(ops for op_type, ops in type_groups.items() if op_type not in order)
 
         return grouped
 

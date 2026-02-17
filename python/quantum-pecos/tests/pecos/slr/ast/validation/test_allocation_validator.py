@@ -131,9 +131,7 @@ class TestAllocationValidatorParentHierarchy:
         prog = Program(
             name="test",
             allocator=AllocatorDecl(name="q", capacity=5),
-            declarations=(
-                AllocatorDecl(name="child", capacity=2, parent="nonexistent"),
-            ),
+            declarations=(AllocatorDecl(name="child", capacity=2, parent="nonexistent"),),
             body=(),
         )
 
@@ -149,9 +147,7 @@ class TestAllocationValidatorParentHierarchy:
             name="test",
             allocator=AllocatorDecl(name="parent", capacity=5),
             declarations=(AllocatorDecl(name="child", capacity=2, parent="parent"),),
-            body=(
-                GateOp(gate=GateKind.H, targets=(SlotRef(allocator="child", index=0),)),
-            ),
+            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="child", index=0),)),),
         )
 
         result = validate_allocations(prog)
@@ -185,9 +181,7 @@ class TestAllocationValidatorWarnings:
             name="test",
             allocator=AllocatorDecl(name="used", capacity=2),
             declarations=(AllocatorDecl(name="unused", capacity=3),),
-            body=(
-                GateOp(gate=GateKind.H, targets=(SlotRef(allocator="used", index=0),)),
-            ),
+            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="used", index=0),)),),
         )
 
         result = validate_allocations(prog)

@@ -11,9 +11,7 @@ instead of [1.0] due to missing dtype validation in the array extraction macro.
 
 import sys
 
-sys.path.insert(
-    0, "/home/ciaranra/Repos/cl_projects/gup/PECOS-alt/python/quantum-pecos/src"
-)
+sys.path.insert(0, "/home/ciaranra/Repos/cl_projects/gup/PECOS-alt/python/quantum-pecos/src")
 
 import pytest
 import numpy as np
@@ -82,9 +80,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize(("value_name", "value"), COMPLEX_VALUES.items())
-    def test_abs_complex_scalars(
-        self, dtype_name, dtype_np, dtype_pc, value_name, value
-    ):
+    def test_abs_complex_scalars(self, dtype_name, dtype_np, dtype_pc, value_name, value):
         """Test abs() on complex scalar values."""
         pc_result = pc.abs(dtype_np(value))
         np_result = np.abs(dtype_np(value))
@@ -100,9 +96,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize(("value_name", "value"), COMPLEX_VALUES.items())
-    def test_abs_complex_arrays(
-        self, dtype_name, dtype_np, dtype_pc, value_name, value
-    ):
+    def test_abs_complex_arrays(self, dtype_name, dtype_np, dtype_pc, value_name, value):
         """Test abs() on complex array values.
 
         This is the critical test that would have caught the original bug
@@ -391,9 +385,7 @@ class TestRegressionOriginalBug:
         assert np.allclose(
             pc_result, np_result
         ), f"REGRESSION: abs([0+1j]) bug has returned! Expected [1.0], got {pc_result}"
-        assert np.isclose(
-            pc_result[0], 1.0
-        ), f"REGRESSION: abs([0+1j]) should be [1.0], got {pc_result}"
+        assert np.isclose(pc_result[0], 1.0), f"REGRESSION: abs([0+1j]) should be [1.0], got {pc_result}"
 
     def test_abs_various_complex_arrays(self):
         """Test abs() on various complex arrays to ensure dtype validation works."""
@@ -450,9 +442,7 @@ class TestMultiElementArrays:
         pc_result = pc.abs(pc_arr)
         np_result = np.abs(np_arr)
 
-        assert np.allclose(
-            pc_result, np_result
-        ), f"abs() failed for {size}-element complex array"
+        assert np.allclose(pc_result, np_result), f"abs() failed for {size}-element complex array"
 
     @pytest.mark.parametrize("size", [2, 5, 10])
     def test_sqrt_complex_multi_element(self, size):
@@ -465,6 +455,4 @@ class TestMultiElementArrays:
         pc_result = pc.sqrt(pc_arr)
         np_result = np.sqrt(np_arr)
 
-        assert np.allclose(
-            pc_result, np_result
-        ), f"sqrt() failed for {size}-element complex array"
+        assert np.allclose(pc_result, np_result), f"sqrt() failed for {size}-element complex array"

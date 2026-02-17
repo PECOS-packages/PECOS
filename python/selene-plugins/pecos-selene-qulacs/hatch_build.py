@@ -38,11 +38,7 @@ class PecosSeleneQulacsBuildHook(BuildHookInterface):
 
         # Get the appropriate platform tag
         tag = next(
-            iter(
-                t
-                for t in sys_tags()
-                if "manylinux" not in t.platform and "musllinux" not in t.platform
-            ),
+            iter(t for t in sys_tags() if "manylinux" not in t.platform and "musllinux" not in t.platform),
         )
         target_platform = tag.platform
         if sys.platform == "darwin":

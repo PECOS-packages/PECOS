@@ -59,8 +59,4 @@ class InverseCancellationPass(StatementListOptimizer):
         2. They act on the same qubits in the same order
         """
         inverse = get_inverse(gate1.gate)
-        return (
-            inverse is not None
-            and gate2.gate == inverse
-            and targets_match(gate1, gate2)
-        )
+        return inverse is not None and gate2.gate == inverse and targets_match(gate1, gate2)

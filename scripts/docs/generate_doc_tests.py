@@ -155,11 +155,7 @@ def _rust_is_incomplete(code: str) -> bool:
             has_executable = False
             for line in lines:
                 stripped = line.strip()
-                if (
-                    stripped
-                    and not stripped.startswith("use ")
-                    and not stripped.startswith("//")
-                ):
+                if stripped and not stripped.startswith("use ") and not stripped.startswith("//"):
                     has_executable = True
                     break
             if has_executable:
@@ -199,11 +195,7 @@ def _rust_wrap_snippet(code: str) -> str:
             if not main_body or stripped.startswith("//") or stripped == "":
                 module_level.append(line)
                 # Check if this is the start of a multi-line use statement
-                if (
-                    stripped.startswith("use ")
-                    and "{" in stripped
-                    and "};" not in stripped
-                ):
+                if stripped.startswith("use ") and "{" in stripped and "};" not in stripped:
                     in_multiline_use = True
             else:
                 main_body.append(line)
@@ -363,9 +355,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
     # Pattern to find code blocks with optional marker comment before them
     # Captures: (marker_comment, hidden_prefix, lang_suffix, code)
     marker_pattern = r"(<!--[^>]*-->\s*)?"
-    fence_pattern = (
-        rf"```(hidden-)?{language}(,(?:skip|ignore|no_run|notest))?\n(.*?)```"
-    )
+    fence_pattern = rf"```(hidden-)?{language}(,(?:skip|ignore|no_run|notest))?\n(.*?)```"
     full_pattern = marker_pattern + fence_pattern
 
     blocks = []
@@ -562,9 +552,7 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
     """Generate test body that expects an error matching a pattern."""
     escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
     # Don't double-escape backslashes in patterns - they're already regex escapes
-    escaped_pattern = (
-        block.expect_error.replace('"', '\\"') if block.expect_error else ""
-    )
+    escaped_pattern = block.expect_error.replace('"', '\\"') if block.expect_error else ""
 
     if _uses_guppy_decorator(block.code):
         # Guppy code needs subprocess execution
@@ -810,9 +798,7 @@ def _generate_rust_cargo_body(block: CodeBlock) -> list[str]:
 def _generate_rust_expect_error_body(block: CodeBlock) -> list[str]:
     """Generate test body for Rust code that expects a compilation error."""
     escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-    escaped_pattern = (
-        block.expect_error.replace('"', '\\"') if block.expect_error else ""
-    )
+    escaped_pattern = block.expect_error.replace('"', '\\"') if block.expect_error else ""
 
     return [
         "    import subprocess",
@@ -848,9 +834,7 @@ def _generate_rust_expect_error_body(block: CodeBlock) -> list[str]:
 def _generate_expect_output_body(block: CodeBlock) -> list[str]:
     """Generate test body that checks stdout contains expected text."""
     escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-    escaped_output = (
-        block.expect_output.replace('"', '\\"') if block.expect_output else ""
-    )
+    escaped_output = block.expect_output.replace('"', '\\"') if block.expect_output else ""
 
     if _uses_guppy_decorator(block.code):
         # Guppy code needs file-based execution
@@ -1130,9 +1114,7 @@ def main() -> None:
         total_skipped += sum(
             1
             for b in all_blocks
-            if b.skip
-            or b.skip_if_no_cuda
-            or (b.language == "rust" and _rust_is_incomplete(b.code))
+            if b.skip or b.skip_if_no_cuda or (b.language == "rust" and _rust_is_incomplete(b.code))
         )
 
         # Generate test file

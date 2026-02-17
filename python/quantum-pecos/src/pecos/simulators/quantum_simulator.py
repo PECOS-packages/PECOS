@@ -121,9 +121,7 @@ class QuantumSimulator:
         except TypeError as e:
             if "seed" in str(e) and "unexpected keyword argument" in str(e):
                 # Simulator doesn't support seed parameter, retry without it
-                params_without_seed = {
-                    k: v for k, v in self.qsim_params.items() if k != "seed"
-                }
+                params_without_seed = {k: v for k, v in self.qsim_params.items() if k != "seed"}
                 self.state = self.state(num_qubits=num_qubits, **params_without_seed)
             else:
                 # Different TypeError, re-raise it

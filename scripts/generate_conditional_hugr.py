@@ -75,14 +75,7 @@ def _create_simple_conditional() -> MainType:
 
 def main() -> None:
     """Generate the conditional HUGR test file."""
-    output_dir = (
-        Path(__file__).parent.parent
-        / "crates"
-        / "pecos"
-        / "tests"
-        / "test_data"
-        / "hugr"
-    )
+    output_dir = Path(__file__).parent.parent / "crates" / "pecos" / "tests" / "test_data" / "hugr"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Try to create and compile the conditional circuit

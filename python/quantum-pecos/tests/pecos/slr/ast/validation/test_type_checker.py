@@ -210,9 +210,7 @@ class TestTypeCheckerMeasurement:
                         SlotRef(allocator="q", index=0),
                         SlotRef(allocator="q", index=1),
                     ),
-                    results=(
-                        BitRef(register="c", index=0),
-                    ),  # Only 1 result for 2 qubits
+                    results=(BitRef(register="c", index=0),),  # Only 1 result for 2 qubits
                 ),
             ),
         )

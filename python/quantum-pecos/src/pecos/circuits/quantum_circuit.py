@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import defaultdict
 from collections.abc import MutableSequence
 from typing import TYPE_CHECKING
 
@@ -968,6 +969,19 @@ class TickView:
     Provides the same interface as the old ParamGateCollection for backwards compatibility.
     """
 
+    class Gate:
+        """Gate representation with symbol, parameters, and locations."""
+
+        __slots__ = ("symbol", "params", "locations")
+
+        def __init__(self, symbol: str, params: JSONDict, locations: set[Location]) -> None:
+            self.symbol = symbol
+            self.params = params
+            self.locations = locations
+
+        def __repr__(self) -> str:
+            return f"Gate(symbol={self.symbol!r}, params={self.params!r}, locations={self.locations!r})"
+
     def __init__(self, circuit: QuantumCircuit, tick_idx: int) -> None:
         """Initialize a TickView.
 
@@ -1003,6 +1017,22 @@ class TickView:
     def metadata(self) -> JSONDict:
         """Returns the circuit metadata."""
         return self._circuit.metadata
+
+    @property
+    def symbols(self) -> dict[str, list[Gate]]:
+        """Returns a dictionary mapping gate symbols to lists of Gate objects.
+
+        Each Gate has .symbol, .params, and .locations attributes.
+
+        Example:
+            >>> tick = circuit[0]
+            >>> for gate in tick.symbols["CX"]:
+            ...     print(gate.locations)
+        """
+        result: dict[str, list[TickView.Gate]] = defaultdict(list)
+        for symbol, locations, params in self.items():
+            result[symbol].append(self.Gate(symbol, params, locations))
+        return dict(result)
 
     def add(
         self,

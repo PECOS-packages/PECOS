@@ -198,3 +198,4 @@ cython_debug/
 # Prevent subdirectory virtual environments
 clib/*/.venv/
 clib/*/uv.lock
+python/selene-plugins/*/uv.lock

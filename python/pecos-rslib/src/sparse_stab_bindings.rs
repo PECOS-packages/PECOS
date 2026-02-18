@@ -638,7 +638,12 @@ impl PySparseSim {
     }
 
     #[getter]
-    fn gens(slf: PyRef<'_, Self>) -> PyResult<(crate::simulator_utils::TableauWrapper, crate::simulator_utils::TableauWrapper)> {
+    fn gens(
+        slf: PyRef<'_, Self>,
+    ) -> PyResult<(
+        crate::simulator_utils::TableauWrapper,
+        crate::simulator_utils::TableauWrapper,
+    )> {
         let py = slf.py();
         let sim_obj_stab: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
         let sim_obj_destab = sim_obj_stab.clone_ref(py);

@@ -972,14 +972,16 @@ class TickView:
     class Gate:
         """Gate representation with symbol, parameters, and locations."""
 
-        __slots__ = ("symbol", "params", "locations")
+        __slots__ = ("locations", "params", "symbol")
 
         def __init__(self, symbol: str, params: JSONDict, locations: set[Location]) -> None:
+            """Initialize a Gate with its symbol, parameters, and locations."""
             self.symbol = symbol
             self.params = params
             self.locations = locations
 
         def __repr__(self) -> str:
+            """Return a string representation of the Gate."""
             return f"Gate(symbol={self.symbol!r}, params={self.params!r}, locations={self.locations!r})"
 
     def __init__(self, circuit: QuantumCircuit, tick_idx: int) -> None:
@@ -1028,6 +1030,7 @@ class TickView:
             >>> tick = circuit[0]
             >>> for gate in tick.symbols["CX"]:
             ...     print(gate.locations)
+            ...
         """
         result: dict[str, list[TickView.Gate]] = defaultdict(list)
         for symbol, locations, params in self.items():

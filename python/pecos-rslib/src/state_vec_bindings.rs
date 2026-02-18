@@ -624,7 +624,7 @@ impl PyStateVec {
         use ndarray::Array1;
 
         let state = self.inner.state();
-        let probs: Vec<f64> = state.iter().map(|c| c.norm_sqr()).collect();
+        let probs: Vec<f64> = state.iter().map(num_complex::Complex::norm_sqr).collect();
         let nd_array = Array1::from(probs);
 
         use crate::pecos_array::ArrayData;

@@ -585,7 +585,11 @@ impl PyQulacs {
     /// Each entry is |amplitude|^2 for the corresponding basis state.
     #[getter]
     fn probabilities(&self) -> Vec<f64> {
-        self.inner.state().iter().map(|c| c.norm_sqr()).collect()
+        self.inner
+            .state()
+            .iter()
+            .map(num_complex::Complex::norm_sqr)
+            .collect()
     }
 
     /// Get the probability of measuring a specific basis state

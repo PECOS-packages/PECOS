@@ -37,9 +37,9 @@ installreqs:
     echo "Installing requirements..."
     if python -c "import cupy" >/dev/null 2>&1; then
         echo "(including CUDA packages)"
-        uv sync --project . --group cuda
+        uv sync --project . --all-packages --group cuda
     else
-        uv sync --project .
+        uv sync --project . --all-packages
     fi
 
 # Install requirements with specific Python version
@@ -49,9 +49,9 @@ installreqs-python version:
     echo "Installing requirements with Python {{version}}..."
     if python -c "import cupy" >/dev/null 2>&1; then
         echo "(including CUDA packages)"
-        uv sync --project . --python "{{version}}" --group cuda
+        uv sync --project . --all-packages --python "{{version}}" --group cuda
     else
-        uv sync --project . --python "{{version}}"
+        uv sync --project . --all-packages --python "{{version}}"
     fi
 
 # =============================================================================
@@ -177,13 +177,7 @@ build-selene:
     echo "Copying libraries to Python packages..."
     {{pecos}} selene install --profile release
 
-    # Install Python packages in editable mode
-    echo "Installing Selene plugins in editable mode..."
-    unset CONDA_PREFIX 2>/dev/null || true
-    uv pip install -e ./python/selene-plugins/pecos-selene-quest
-    uv pip install -e ./python/selene-plugins/pecos-selene-qulacs
-    uv pip install -e ./python/selene-plugins/pecos-selene-sparsestab
-    uv pip install -e ./python/selene-plugins/pecos-selene-statevec
+    # Selene plugins are workspace members, so uv sync --all-packages handles editable installs
     echo "Selene plugins built and installed successfully"
 
 # Build PECOS with CUDA support

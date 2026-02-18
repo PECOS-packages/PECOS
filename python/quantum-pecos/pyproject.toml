@@ -31,8 +31,8 @@ dependencies = [
     "pecos-rslib==0.8.0.dev1",
     "phir>=0.3.3",
     "networkx>=2.1.0",
-    "guppylang>=0.21.6",
-    "hugr>=0.13.0",
+    "guppylang>=0.21.6,<0.22",
+    "hugr>=0.13.0,<0.15",
     "selene-sim~=0.2.0",
 ]
 classifiers = [

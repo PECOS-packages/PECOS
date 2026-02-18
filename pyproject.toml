@@ -9,7 +9,11 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "python/pecos-rslib",
-    "python/quantum-pecos"
+    "python/quantum-pecos",
+    "python/selene-plugins/pecos-selene-quest",
+    "python/selene-plugins/pecos-selene-qulacs",
+    "python/selene-plugins/pecos-selene-sparsestab",
+    "python/selene-plugins/pecos-selene-statevec",
 ]
 
 [tool.uv.sources]

@@ -615,6 +615,36 @@ impl PyStateVec {
         Py::new(py, pecos_array)
     }
 
+    /// Returns the probability of each computational basis state as a real-valued array.
+    ///
+    /// Each entry is |amplitude|^2 for the corresponding basis state.
+    #[getter]
+    #[allow(clippy::items_after_statements)]
+    fn probabilities(&self, py: Python<'_>) -> PyResult<Py<Array>> {
+        use ndarray::Array1;
+
+        let state = self.inner.state();
+        let probs: Vec<f64> = state.iter().map(|c| c.norm_sqr()).collect();
+        let nd_array = Array1::from(probs);
+
+        use crate::pecos_array::ArrayData;
+        let array_data = ArrayData::F64(nd_array.into_dyn());
+        let pecos_array = Array::new(array_data);
+        Py::new(py, pecos_array)
+    }
+
+    /// Get the probability of measuring a specific basis state.
+    fn probability(&self, basis_state: usize) -> PyResult<f64> {
+        let state = self.inner.state();
+        if basis_state >= state.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "basis_state {basis_state} out of range for {} qubits",
+                self.inner.num_qubits()
+            )));
+        }
+        Ok(state[basis_state].norm_sqr())
+    }
+
     /// Get state vector with big-endian qubit ordering (PECOS convention)
     ///
     /// Converts the state vector from little-endian (Rust/hardware convention) to

@@ -580,6 +580,14 @@ impl PyQulacs {
         self.inner.num_qubits()
     }
 
+    /// Returns the probability of each computational basis state as a real-valued array.
+    ///
+    /// Each entry is |amplitude|^2 for the corresponding basis state.
+    #[getter]
+    fn probabilities(&self) -> Vec<f64> {
+        self.inner.state().iter().map(|c| c.norm_sqr()).collect()
+    }
+
     /// Get the probability of measuring a specific basis state
     fn probability(&self, basis_state: usize) -> f64 {
         self.inner.probability(basis_state)

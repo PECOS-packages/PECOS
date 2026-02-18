@@ -636,6 +636,17 @@ impl PySparseSim {
         let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
         Ok(crate::simulator_utils::TableauWrapper::new(sim_obj, false))
     }
+
+    #[getter]
+    fn gens(slf: PyRef<'_, Self>) -> PyResult<(crate::simulator_utils::TableauWrapper, crate::simulator_utils::TableauWrapper)> {
+        let py = slf.py();
+        let sim_obj_stab: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        let sim_obj_destab = sim_obj_stab.clone_ref(py);
+        Ok((
+            crate::simulator_utils::TableauWrapper::new(sim_obj_stab, true),
+            crate::simulator_utils::TableauWrapper::new(sim_obj_destab, false),
+        ))
+    }
 }
 
 /// Adjust tableau string formatting for display.

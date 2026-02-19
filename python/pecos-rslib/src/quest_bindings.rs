@@ -50,8 +50,9 @@ impl QuestStateVec {
     }
 
     /// Resets the quantum state to the all-zero state
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     /// Prepares a computational basis state
@@ -444,8 +445,9 @@ impl QuestDensityMatrix {
     }
 
     /// Resets the quantum state to the all-zero state
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     /// Prepares a computational basis state

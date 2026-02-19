@@ -24,6 +24,14 @@ use std::collections::HashMap;
 
 use crate::sparse_stab_bindings::adjust_tableau_string;
 
+/// Raw generators data: `(col_x, col_z, row_x, row_z)`.
+pub type GensData = (
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+);
+
 /// Special dict that delegates all gate lookups to Rust's `run_gate()`.
 ///
 /// This provides backwards compatibility for code that accesses sim.bindings[`gate_name`].
@@ -177,6 +185,33 @@ impl TableauWrapper {
         }
 
         Ok(lines)
+    }
+
+    /// Helper to get raw gens data from the simulator.
+    fn get_gens_data(&self, py: Python<'_>) -> PyResult<GensData> {
+        self.sim
+            .call_method1(py, "_gens_data", (self.is_stab,))?
+            .extract(py)
+    }
+
+    #[getter]
+    fn col_x(&self, py: Python<'_>) -> PyResult<Vec<Vec<usize>>> {
+        Ok(self.get_gens_data(py)?.0)
+    }
+
+    #[getter]
+    fn col_z(&self, py: Python<'_>) -> PyResult<Vec<Vec<usize>>> {
+        Ok(self.get_gens_data(py)?.1)
+    }
+
+    #[getter]
+    fn row_x(&self, py: Python<'_>) -> PyResult<Vec<Vec<usize>>> {
+        Ok(self.get_gens_data(py)?.2)
+    }
+
+    #[getter]
+    fn row_z(&self, py: Python<'_>) -> PyResult<Vec<Vec<usize>>> {
+        Ok(self.get_gens_data(py)?.3)
     }
 }
 

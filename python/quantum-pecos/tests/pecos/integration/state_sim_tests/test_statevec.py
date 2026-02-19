@@ -398,6 +398,69 @@ def test_all_gate_circ(simulator: str) -> None:
         check_measurement(simulator, qc)
 
 
+def test_statevec_probabilities_initial_state() -> None:
+    """Test that initial |0...0> state has probability 1 for basis state 0."""
+    sim = StateVec(3)
+    probs = sim.probabilities
+    assert pc.isclose(probs[0], 1.0, rtol=0.0, atol=1e-10)
+    for i in range(1, 8):
+        assert pc.isclose(probs[i], 0.0, rtol=0.0, atol=1e-10)
+
+
+def test_statevec_probabilities_bell_state() -> None:
+    """Test probabilities for a Bell state (|00> + |11>)/sqrt(2)."""
+    sim = StateVec(2)
+    sim.run_gate("H", {0})
+    sim.run_gate("CX", {(0, 1)})
+
+    probs = sim.probabilities
+    assert pc.isclose(probs[0], 0.5, rtol=0.0, atol=1e-10)
+    assert pc.isclose(probs[1], 0.0, rtol=0.0, atol=1e-10)
+    assert pc.isclose(probs[2], 0.0, rtol=0.0, atol=1e-10)
+    assert pc.isclose(probs[3], 0.5, rtol=0.0, atol=1e-10)
+
+
+def test_statevec_probability_single() -> None:
+    """Test probability() for individual basis states."""
+    sim = StateVec(2)
+    sim.run_gate("H", {0})
+    sim.run_gate("CX", {(0, 1)})
+
+    assert pc.isclose(sim.probability(0), 0.5, rtol=0.0, atol=1e-10)
+    assert pc.isclose(sim.probability(1), 0.0, rtol=0.0, atol=1e-10)
+    assert pc.isclose(sim.probability(2), 0.0, rtol=0.0, atol=1e-10)
+    assert pc.isclose(sim.probability(3), 0.5, rtol=0.0, atol=1e-10)
+
+
+def test_statevec_probabilities_sum_to_one() -> None:
+    """Test that probabilities sum to 1 after arbitrary gates."""
+    sim = StateVec(3)
+    sim.run_gate("H", {0})
+    sim.run_gate("CX", {(0, 1)})
+    sim.run_gate("H", {2})
+
+    total = pc.sum(sim.probabilities)
+    assert pc.isclose(total, 1.0, rtol=0.0, atol=1e-10)
+
+
+def test_qulacs_probabilities() -> None:
+    """Test that Qulacs probabilities match StateVec probabilities."""
+    check_dependencies("Qulacs")
+
+    sv = StateVec(2)
+    sv.run_gate("H", {0})
+    sv.run_gate("CX", {(0, 1)})
+
+    ql = Qulacs(2)
+    ql.run_gate("H", {0})
+    ql.run_gate("CX", {(0, 1)})
+
+    sv_probs = sv.probabilities
+    ql_probs = ql.probabilities
+    for i in range(4):
+        assert pc.isclose(sv_probs[i], ql_probs[i], rtol=0.0, atol=1e-10)
+
+
 @pytest.mark.parametrize(
     "simulator",
     [

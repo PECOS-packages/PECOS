@@ -56,6 +56,26 @@ class StateVec:
         """
         return self.backend.vector_big_endian()
 
+    @property
+    def probabilities(self) -> Array:  # noqa: F821 - Array is a forward reference
+        """Get the probability distribution over all basis states.
+
+        Returns:
+            Array of probabilities for each computational basis state.
+        """
+        return self.backend.probabilities
+
+    def probability(self, basis_state: int) -> float:
+        """Get the probability of a specific computational basis state.
+
+        Args:
+            basis_state: The index of the basis state.
+
+        Returns:
+            The probability of measuring the given basis state.
+        """
+        return self.backend.probability(basis_state)
+
     def reset(self) -> StateVec:
         """Resets the quantum state to the all-zero state."""
         self.backend.reset()

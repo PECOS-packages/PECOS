@@ -29,8 +29,9 @@ impl PySparseSim {
         }
     }
 
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     #[getter]
@@ -611,6 +612,24 @@ impl PySparseSim {
         Ok(PySparseSim {
             inner: SparseStab::from_parts(num_qubits, stabs, destabs),
         })
+    }
+
+    /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.
+    fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
+        let gens = if is_stab {
+            self.inner.stabs()
+        } else {
+            self.inner.destabs()
+        };
+        let to_vecs = |sets: &[VecSet<usize>]| -> Vec<Vec<usize>> {
+            sets.iter().map(|s| s.elements().to_vec()).collect()
+        };
+        (
+            to_vecs(&gens.col_x),
+            to_vecs(&gens.col_z),
+            to_vecs(&gens.row_x),
+            to_vecs(&gens.row_z),
+        )
     }
 
     #[getter]

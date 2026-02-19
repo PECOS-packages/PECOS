@@ -135,8 +135,9 @@ impl PyQulacs {
     }
 
     /// Resets the quantum state to the all-zero state
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     /// Executes a single-qubit gate based on the provided symbol and location

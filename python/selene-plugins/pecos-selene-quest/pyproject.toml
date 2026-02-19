@@ -1,6 +1,6 @@
 [project]
 name = "pecos-selene-quest"
-version = "0.8.0.dev2"
+version = "0.8.0.dev3"
 requires-python = ">=3.10"
 description = "PECOS Quest simulator plugin for the Selene quantum emulator"
 readme = "README.md"

@@ -1,6 +1,6 @@
 [project]
 name = "pecos-workspace"
-version = "0.8.0.dev1"
+version = "0.8.0.dev2"
 # Development dependencies that are optional in quantum-pecos but needed for full dev/test
 dependencies = [
     "stim>=1.15.0",  # Optional in quantum-pecos, but needed for stim-related tests

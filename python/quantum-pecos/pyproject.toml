@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quantum-pecos"
-version = "0.8.0.dev1"
+version = "0.8.0.dev2"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -28,7 +28,7 @@ requires-python = ">=3.10"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
-    "pecos-rslib==0.8.0.dev1",
+    "pecos-rslib==0.8.0.dev2",
     "phir>=0.3.3",
     "networkx>=2.1.0",
     "guppylang>=0.21.6",

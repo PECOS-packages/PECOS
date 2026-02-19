@@ -1,7 +1,5 @@
 """Test the complete working Guppy→HUGR→LLVM→PECOS pipeline."""
 
-import warnings
-
 import pytest
 from guppylang import guppy
 from guppylang.std.quantum import cx, h, measure, qubit, x
@@ -81,13 +79,7 @@ class TestHUGRToLLVMCompilation:
         # Compile to HUGR - the compile() method returns the Package directly
         package = simple_circuit.compile()
 
-        # Get HUGR JSON format - compile_hugr_to_qis currently requires JSON, not envelope format
-        # We suppress the deprecation warning since we need to use to_json() until
-        # compile_hugr_to_qis is updated to handle the new envelope format from to_str()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            hugr_json = package.to_json()
-        hugr_bytes = hugr_json.encode("utf-8")
+        hugr_bytes = package.to_bytes()
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
         # Try to compile to LLVM
@@ -120,14 +112,7 @@ class TestHUGRToLLVMCompilation:
 
         # Compile to HUGR - the compile() method returns the Package directly
         package = bell_state.compile()
-
-        # Get HUGR JSON format - compile_hugr_to_qis currently requires JSON, not envelope format
-        # We suppress the deprecation warning since we need to use to_json() until
-        # compile_hugr_to_qis is updated to handle the new envelope format from to_str()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            hugr_json = package.to_json()
-        hugr_bytes = hugr_json.encode("utf-8")
+        hugr_bytes = package.to_bytes()
 
         try:
             llvm_ir = compile_hugr_to_qis(hugr_bytes)

@@ -30,8 +30,8 @@ use tket::hugr::{Hugr, HugrView, Node, NodeIndex, ops::OpType};
 /// - Failed to parse HUGR format
 /// - HUGR to PHIR conversion fails
 pub fn parse_hugr_bytes_to_phir(hugr_bytes: &[u8]) -> Result<ModuleOp> {
+    use tket::hugr::envelope::read_envelope;
     use tket::hugr::extension::{ExtensionRegistry, prelude};
-    use tket::hugr::package::Package;
     use tket::hugr::std_extensions::{
         arithmetic::{conversions, float_ops, float_types, int_ops, int_types},
         collections, logic, ptr,
@@ -65,48 +65,20 @@ pub fn parse_hugr_bytes_to_phir(hugr_bytes: &[u8]) -> Result<ModuleOp> {
         wasm::EXTENSION.clone(),
     ]);
 
-    // Load HUGR using the same approach as pecos-hugr-qis
-    let hugr = if hugr_bytes.is_empty() {
+    if hugr_bytes.is_empty() {
         return Err(PhirError::internal("Empty HUGR input".to_string()));
-    } else if hugr_bytes[0] == b'{' {
-        // JSON format - wrap it in an envelope
-        let mut envelope = Vec::new();
-        envelope.extend_from_slice(b"HUGRiHJv");
-        envelope.push(0x3F); // JSON format
-        envelope.push(0x40); // No compression
-        envelope.extend_from_slice(hugr_bytes);
+    }
 
-        // Load using the envelope
-        let mut cursor = std::io::Cursor::new(&envelope);
-        if let Ok(h) = Hugr::load(&mut cursor, Some(&extensions)) {
-            h
-        } else {
-            // If direct HUGR loading fails, try Package loading
-            let mut cursor = std::io::Cursor::new(&envelope);
-            match Package::load(&mut cursor, Some(&extensions)) {
-                Ok(package) => {
-                    // Extract the first HUGR from the package
-                    if let Some(hugr) = package.modules.first() {
-                        hugr.clone()
-                    } else {
-                        return Err(PhirError::internal(
-                            "Package contains no HUGR modules".to_string(),
-                        ));
-                    }
-                }
-                Err(e) => {
-                    return Err(PhirError::internal(format!(
-                        "Failed to load JSON HUGR as envelope: {e}"
-                    )));
-                }
-            }
-        }
+    // Use read_envelope directly (same approach as pecos-hugr-qis and selene)
+    let (_desc, package) = read_envelope(hugr_bytes, &extensions)
+        .map_err(|e| PhirError::internal(format!("Failed to read HUGR: {e}")))?;
+
+    let hugr = if let Some(module) = package.modules.first() {
+        module.clone()
     } else {
-        // Binary envelope format - use TKET's loading mechanism directly
-        // pecos-hugr-qis only uses Hugr::load for binary envelopes, not Package::load
-        let mut cursor = std::io::Cursor::new(hugr_bytes);
-        Hugr::load(&mut cursor, Some(&extensions))
-            .map_err(|e| PhirError::internal(format!("Failed to load HUGR envelope: {e}")))?
+        return Err(PhirError::internal(
+            "Package contains no HUGR modules".to_string(),
+        ));
     };
 
     // Convert HUGR to PHIR using flat approach

@@ -179,17 +179,7 @@ def test_compiler_comparison_simple() -> None:
         pytest.fail(f"Selene compilation failed: {e}")
 
     try:
-        # For Rust compiler, we need to extract the JSON part from HUGR string
-        if hugr_str.startswith("HUGRi"):
-            json_start = hugr_str.find('{"modules"')
-            if json_start != -1:
-                hugr_json = hugr_str[json_start:]
-            else:
-                pytest.fail("Could not extract JSON from HUGR string")
-        else:
-            hugr_json = hugr_str
-
-        rust_llvm = rust_compile(hugr_json.encode("utf-8"), None)
+        rust_llvm = rust_compile(hugr_binary, None)
         print(f"Rust compilation succeeded, produced {len(rust_llvm)} chars")
     except Exception as e:
         pytest.fail(f"Rust compilation failed: {e}")

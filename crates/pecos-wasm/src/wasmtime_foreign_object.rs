@@ -564,18 +564,21 @@ impl ForeignObject for WasmForeignObject {
                 }
             }
             Err(e) => {
-                // Check if the error is a timeout
-                if let Some(trap) = e.downcast_ref::<Trap>()
-                    && trap.to_string().contains("interrupt")
-                {
-                    return Err(PecosError::Processing(format!(
-                        "WebAssembly function '{func_name}' timed out after {}s",
-                        self.timeout_seconds
-                    )));
+                if let Some(trap) = e.downcast_ref::<Trap>() {
+                    let trap_str = trap.to_string();
+                    if trap_str.contains("interrupt") {
+                        return Err(PecosError::Processing(format!(
+                            "WebAssembly execution timed out after {}s (possible infinite loop in '{func_name}')",
+                            self.timeout_seconds
+                        )));
+                    }
+                    if trap_str.contains("integer divide by zero") {
+                        return Err(PecosError::RuntimeDivisionByZero);
+                    }
                 }
 
                 Err(PecosError::Processing(format!(
-                    "WebAssembly function '{func_name}' failed with error: {e}"
+                    "WebAssembly function '{func_name}' trapped: {e}"
                 )))
             }
         }

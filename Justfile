@@ -75,6 +75,35 @@ check-cli:
         exit 1
     fi
 
+    # Check if the installed CLI might be stale
+    stale=false
+    reasons=()
+
+    # Check 1: version mismatch
+    expected_version=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+    installed_version=$(pecos --version 2>/dev/null | awk '{print $2}')
+    if [[ "$installed_version" != "$expected_version" ]]; then
+        stale=true
+        reasons+=("Version mismatch (installed: ${installed_version:-unknown}, expected: $expected_version)")
+    fi
+
+    # Check 2: missing expected subcommands
+    if ! pecos rust --help >/dev/null 2>&1; then
+        stale=true
+        reasons+=("Missing 'rust' subcommand")
+    fi
+
+    if [[ "$stale" == "true" ]]; then
+        echo ""
+        echo "Warning: PECOS CLI may be outdated."
+        for reason in "${reasons[@]}"; do
+            echo "  - $reason"
+        done
+        echo ""
+        echo "  Update with: just reinstall-cli"
+        echo ""
+    fi
+
     # Informational: suggest CUDA Python packages if toolkit available but cupy isn't
     if pecos cuda check -q >/dev/null 2>&1; then
         if ! python -c "import cupy" >/dev/null 2>&1; then

@@ -302,6 +302,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // WebAssembly foreign object (optional)
     #[cfg(feature = "wasm")]
     m.add_class::<PyWasmForeignObject>()?;
+    #[cfg(feature = "wasm")]
+    wasm_foreign_object_bindings::register_wasm_types(m)?;
 
     // Register namespace modules (quantum, noise, llvm) for organizational structure
     // Note: This must come after all the factory functions and classes are registered

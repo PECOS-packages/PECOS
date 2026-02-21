@@ -279,12 +279,7 @@ class SurfacePatchBuilder:
     to create a non-rotated surface code.
 
     Example:
-        >>> patch = (
-        ...     SurfacePatchBuilder()
-        ...     .with_distance(5)
-        ...     .with_orientation(PatchOrientation.Z_TOP_BOTTOM)
-        ...     .build()
-        ... )
+        >>> patch = SurfacePatchBuilder().with_distance(5).with_orientation(PatchOrientation.Z_TOP_BOTTOM).build()
 
         >>> # Non-rotated (standard) surface code:
         >>> patch = SurfacePatchBuilder().with_distance(5).standard().build()

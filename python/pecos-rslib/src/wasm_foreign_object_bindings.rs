@@ -46,9 +46,16 @@ use std::path::Path;
 /// wasm = WasmForeignObject.from_bytes(wasm_bytes)
 /// wasm.init()
 /// ```
-#[pyclass(name = "WasmForeignObject")]
+#[pyclass(name = "WasmForeignObject", module = "pecos_rslib")]
 pub struct PyWasmForeignObject {
-    inner: WasmForeignObject,
+    pub(crate) inner: WasmForeignObject,
+}
+
+impl PyWasmForeignObject {
+    /// Get a cloned boxed `ForeignObject` for use with `GuppyHugrEngine`
+    pub fn clone_boxed(&self) -> Box<dyn ForeignObject> {
+        self.inner.clone_box()
+    }
 }
 
 #[pymethods]
@@ -414,23 +421,19 @@ impl PyWasmForeignObject {
     }
 
     /// Support for pickle (Python serialization)
-    fn __getstate__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.to_dict(py)
-    }
+    ///
+    /// Returns a tuple (callable, args) that can be used to reconstruct the object.
+    /// We use `from_dict` as the callable and the serialized dict as the argument.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
+        // Get the from_dict classmethod
+        let module = py.import("pecos_rslib")?;
+        let cls = module.getattr("WasmForeignObject")?;
+        let from_dict = cls.getattr("from_dict")?;
 
-    /// Support for pickle (Python deserialization)
-    fn __setstate__(&mut self, py: Python<'_>, state: &Bound<'_, PyAny>) -> PyResult<()> {
-        // Create new object and swap the inner value
-        let new_obj = Self::from_dict(py, state)?;
-        // Replace inner by creating a new instance from the same bytes with the same timeout and memory limit
-        let wasm_bytes = new_obj.inner.wasm_bytes();
-        let timeout = new_obj.inner.timeout_seconds();
-        let memory_size = new_obj.inner.memory_size();
-        self.inner = WasmForeignObject::from_bytes_with_limits(wasm_bytes, timeout, memory_size)
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to deserialize WASM object: {e}"))
-            })?;
-        Ok(())
+        // Get the state dict
+        let state = self.to_dict(py)?;
+
+        Ok((from_dict.into(), (state,)))
     }
 }
 

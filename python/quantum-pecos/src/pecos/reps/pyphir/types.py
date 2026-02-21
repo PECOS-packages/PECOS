@@ -14,3 +14,10 @@
 This module provides convenient imports for all PyPHIR (Python PECOS Medium-level Intermediate Representation) types
 including blocks, data types, instructions, and operations.
 """
+
+# ruff: noqa: F401
+
+from pecos.reps.pyphir import block_types as block
+from pecos.reps.pyphir import data_types as data
+from pecos.reps.pyphir import instr_type as instr
+from pecos.reps.pyphir import op_types as opt

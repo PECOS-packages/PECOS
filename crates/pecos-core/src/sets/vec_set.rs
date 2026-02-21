@@ -82,6 +82,12 @@ impl<E: Element> VecSet<E> {
         &self.elements
     }
 
+    #[inline]
+    #[must_use]
+    pub fn elements(&self) -> &[E] {
+        &self.elements
+    }
+
     /// Clear the set and set it to contain exactly one element.
     /// This is an optimized operation for reset scenarios where we know
     /// the set should contain exactly one element.

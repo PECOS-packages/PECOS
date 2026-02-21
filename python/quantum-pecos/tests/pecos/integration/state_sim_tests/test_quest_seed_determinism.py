@@ -56,9 +56,7 @@ def test_measurement_determinism_with_use_seed(qsim: str) -> None:
     results2 = engine2.run(PHIR_BELL_STATE, shots=shots)
 
     # Results should be identical
-    assert (
-        results1["c"] == results2["c"]
-    ), f"{qsim}: Same seed should produce identical measurement results"
+    assert results1["c"] == results2["c"], f"{qsim}: Same seed should produce identical measurement results"
 
 
 @pytest.mark.parametrize("qsim", ["QuestStateVec", "QuestDensityMatrix"])
@@ -76,9 +74,7 @@ def test_measurement_determinism_with_seed_parameter(qsim: str) -> None:
     results2 = engine2.run(PHIR_BELL_STATE, shots=shots, seed=seed)
 
     # Results should be identical
-    assert (
-        results1["c"] == results2["c"]
-    ), f"{qsim}: Same seed parameter should produce identical results"
+    assert results1["c"] == results2["c"], f"{qsim}: Same seed parameter should produce identical results"
 
 
 @pytest.mark.parametrize("qsim", ["QuestStateVec", "QuestDensityMatrix"])
@@ -97,9 +93,7 @@ def test_different_seeds_produce_different_results(qsim: str) -> None:
     results2 = engine2.run(PHIR_BELL_STATE, shots=shots)
 
     # Results should be different (with very high probability)
-    assert (
-        results1["c"] != results2["c"]
-    ), f"{qsim}: Different seeds should produce different results"
+    assert results1["c"] != results2["c"], f"{qsim}: Different seeds should produce different results"
 
 
 @pytest.mark.parametrize("qsim", ["QuestStateVec", "QuestDensityMatrix"])
@@ -146,10 +140,6 @@ def test_seed_produces_reproducible_error_patterns(qsim: str) -> None:
     count_11_2 = sum(1 for x in results2["c"] if x == "11")
 
     # Exact counts should match (not just distributions)
-    assert (
-        count_00_1 == count_00_2
-    ), f"{qsim}: Exact outcome counts should match with same seed"
-    assert (
-        count_11_1 == count_11_2
-    ), f"{qsim}: Exact outcome counts should match with same seed"
+    assert count_00_1 == count_00_2, f"{qsim}: Exact outcome counts should match with same seed"
+    assert count_11_1 == count_11_2, f"{qsim}: Exact outcome counts should match with same seed"
     assert results1["c"] == results2["c"], f"{qsim}: Full sequences should be identical"

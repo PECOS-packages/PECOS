@@ -161,12 +161,8 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
     # Measure ancillas (destructive)
     lines.append("")
     lines.append("    # Measure ancillas")
-    lines.extend(
-        f"    sx{stab.index} = measure(ax{stab.index})" for stab in geom.x_stabilizers
-    )
-    lines.extend(
-        f"    sz{stab.index} = measure(az{stab.index})" for stab in geom.z_stabilizers
-    )
+    lines.extend(f"    sx{stab.index} = measure(ax{stab.index})" for stab in geom.x_stabilizers)
+    lines.extend(f"    sz{stab.index} = measure(az{stab.index})" for stab in geom.z_stabilizers)
 
     x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
     z_calls = ", ".join(f"sz{s.index}" for s in geom.z_stabilizers)
@@ -431,8 +427,6 @@ def make_surface_code(distance: int, num_rounds: int, basis: str) -> object:
 
     module = get_surface_code_module(distance)
 
-    factory = (
-        module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
-    )
+    factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
 
     return factory(num_rounds)

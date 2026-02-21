@@ -10,7 +10,7 @@ use pecos_qec::fault_tolerance::noisy_sampler::{
 };
 use pecos_quantum::DagCircuit;
 use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use rand_core::{Rng, SeedableRng};
 use std::time::Instant;
 use wgpu::util::DeviceExt;
 

@@ -1,7 +1,6 @@
 //! Implementation of the `cuda` subcommand
 
 use pecos_build::Result;
-use pecos_build::cuda::installer::{install_cuda, uninstall_cuda};
 use pecos_build::cuda::{
     find_cuda, get_cuda_version, get_pecos_cuda_dir, is_valid_cuda_installation,
 };
@@ -10,19 +9,12 @@ use pecos_build::errors::Error;
 /// Run the cuda subcommand
 pub fn run(command: super::CudaCommands) -> Result<()> {
     match command {
-        super::CudaCommands::Install { force } => run_install(force),
         super::CudaCommands::Check { quiet } => run_check(quiet),
         super::CudaCommands::Find { export } => run_find(export),
         super::CudaCommands::Version => run_version(),
-        super::CudaCommands::Uninstall => run_uninstall(),
         super::CudaCommands::Validate { path } => run_validate(path),
+        super::CudaCommands::SetupPython => run_setup_python(),
     }
-}
-
-/// Install CUDA Toolkit
-fn run_install(force: bool) -> Result<()> {
-    install_cuda(force)?;
-    Ok(())
 }
 
 /// Check if CUDA is available
@@ -46,7 +38,7 @@ fn run_check(quiet: bool) -> Result<()> {
         if !quiet {
             eprintln!("cuda: not found");
             eprintln!();
-            eprintln!("Install with: pecos cuda install");
+            eprintln!("Install with: pecos install cuda");
             eprintln!("Or set CUDA_PATH to your system CUDA installation");
         }
         Err(Error::Cuda("CUDA not available".to_string()))
@@ -66,7 +58,7 @@ fn run_find(export: bool) -> Result<()> {
     } else {
         eprintln!("CUDA not found");
         eprintln!();
-        eprintln!("Install with: pecos cuda install");
+        eprintln!("Install with: pecos install cuda");
         Err(Error::Cuda("CUDA not found".to_string()))
     }
 }
@@ -94,11 +86,6 @@ fn run_version() -> Result<()> {
         eprintln!("CUDA not found");
         Err(Error::Cuda("CUDA not found".to_string()))
     }
-}
-
-/// Uninstall local CUDA
-fn run_uninstall() -> Result<()> {
-    uninstall_cuda()
 }
 
 /// Validate CUDA installation
@@ -179,5 +166,58 @@ fn run_validate(path: Option<String>) -> Result<()> {
         Err(Error::Cuda(
             "CUDA validation failed - some components are missing".to_string(),
         ))
+    }
+}
+
+/// Install CUDA Python packages
+fn run_setup_python() -> Result<()> {
+    use std::process::Command;
+
+    // First check if CUDA toolkit is available
+    if find_cuda().is_none() {
+        eprintln!("Error: CUDA toolkit not found.");
+        eprintln!();
+        eprintln!("Install CUDA toolkit first with:");
+        eprintln!("  pecos install cuda");
+        eprintln!();
+        eprintln!("Or set CUDA_PATH to your system CUDA installation.");
+        return Err(Error::Cuda(
+            "CUDA toolkit required before installing Python packages".to_string(),
+        ));
+    }
+
+    println!("Installing CUDA Python packages (cupy, cuquantum, pytket-cutensornet)...");
+    println!();
+
+    // Run uv sync --group cuda to install CUDA packages via dependency group
+    let status = Command::new("uv")
+        .args(["sync", "--group", "cuda"])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            println!();
+            println!("CUDA Python packages installed successfully.");
+            println!();
+            println!("Verify with:");
+            println!("  python -c \"import cupy; print('cupy:', cupy.cuda.is_available())\"");
+            Ok(())
+        }
+        Ok(_) => {
+            eprintln!();
+            eprintln!("Failed to install CUDA Python packages.");
+            eprintln!();
+            eprintln!("You may need to install manually:");
+            eprintln!("  uv sync --group cuda");
+            Err(Error::Cuda(
+                "Failed to install CUDA Python packages".to_string(),
+            ))
+        }
+        Err(e) => {
+            eprintln!("Error running uv: {e}");
+            eprintln!();
+            eprintln!("Make sure uv is installed and in your PATH.");
+            Err(Error::Cuda(format!("Failed to run uv: {e}")))
+        }
     }
 }

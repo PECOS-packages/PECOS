@@ -55,6 +55,9 @@ nav:
   - WASM Foreign Objects: user-guide/wasm-foreign-objects.md
   - HUGR & Guppy Simulation: user-guide/hugr-simulation.md
   - Simulators: user-guide/simulators.md
+  - Gate Reference: user-guide/gates.md
+  - Gate Naming Conventions: user-guide/gate-naming-conventions.md
+  - Gate Naming (Future): user-guide/gate-naming-speculation.md
   - Noise Model Builders: user-guide/noise-model-builders.md
   - QEC Geometry: user-guide/qec-geometry.md
   - QEC with Guppy: user-guide/qec-guppy.md
@@ -69,7 +72,10 @@ nav:
 - Development:
   - development/DEVELOPMENT.md
   - Developer Tools CLI: development/dev-tools.md
+  - Documentation Testing: development/doc-testing.md
   - SLR and QECLib: development/slr-qeclib.md
+  - Circuit Representations: development/circuit-representations.md
+  - Parallel Blocks: development/parallel-blocks-and-optimization.md
   - development/QIS_ARCHITECTURE.md
 - Releases:
   - releases/changelog.md

@@ -29,11 +29,7 @@ class TestCRzAngleArithmetic:
         # Check that we have different angle values (indicating proper arithmetic)
         lines = output.split("\n")
         rzz_calls = [line for line in lines if "tail call void @___rzz" in line]
-        rz_calls = [
-            line
-            for line in lines
-            if "tail call void @___rz" in line and "rzz" not in line
-        ]
+        rz_calls = [line for line in lines if "tail call void @___rz" in line and "rzz" not in line]
 
         assert len(rzz_calls) >= 1, "Should have RZZ call"
         assert len(rz_calls) >= 2, "Should have RZ correction calls"

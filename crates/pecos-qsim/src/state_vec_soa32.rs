@@ -23,7 +23,7 @@ use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex;
 use pecos_core::{Angle64, QubitId};
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngExt};
 use std::fmt::Debug;
 use wide::f32x8;
 
@@ -882,7 +882,7 @@ impl StateVecSoA32 {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> StateVecSoA32<PecosRng> {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         StateVecSoA32::with_rng(num_qubits, rng)
     }
 

@@ -9,6 +9,8 @@
 pub mod config;
 pub mod installer;
 
+pub use installer::ensure_cuquantum;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

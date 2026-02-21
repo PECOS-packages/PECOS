@@ -34,7 +34,7 @@
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
 use smallvec::SmallVec;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
@@ -196,7 +196,7 @@ fn row_weight(data: &[u64], words_per_row: usize, row: usize) -> usize {
 /// - `col_x[q*w..(q+1)*w]`: bit vector of which generators have X on qubit q
 /// - `col_z[q*w..(q+1)*w]`: bit vector of which generators have Z on qubit q
 #[derive(Debug, Clone)]
-pub struct DenseStabColOnly<R: RngCore + SeedableRng + Rng + Debug = PecosRng> {
+pub struct DenseStabColOnly<R: SeedableRng + Rng + Debug = PecosRng> {
     num_qubits: usize,
     words_per_col: usize,
 
@@ -223,7 +223,7 @@ impl DenseStabColOnly<PecosRng> {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         Self::with_rng(num_qubits, rng)
     }
 
@@ -235,7 +235,7 @@ impl DenseStabColOnly<PecosRng> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug> DenseStabColOnly<R> {
+impl<R: SeedableRng + Rng + Debug> DenseStabColOnly<R> {
     #[inline]
     #[must_use]
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
@@ -661,14 +661,14 @@ impl<R: RngCore + SeedableRng + Rng + Debug> DenseStabColOnly<R> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStabColOnly<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStabColOnly<R> {
     fn reset(&mut self) -> &mut Self {
         self.init_state();
         self
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> RngManageable for DenseStabColOnly<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> RngManageable for DenseStabColOnly<R> {
     type Rng = R;
 
     fn set_rng(&mut self, rng: Self::Rng) {
@@ -684,7 +684,7 @@ impl<R: RngCore + SeedableRng + Rng + Debug + Clone> RngManageable for DenseStab
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStabColOnly<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStabColOnly<R> {
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.apply_h(q.index());
@@ -725,7 +725,7 @@ impl<R: RngCore + SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseS
 /// - `row_x[g*w..(g+1)*w]`: bit vector of X components for generator g
 /// - `row_z[g*w..(g+1)*w]`: bit vector of Z components for generator g
 #[derive(Debug, Clone)]
-pub struct DenseStabRowOnly<R: RngCore + SeedableRng + Rng + Debug = PecosRng> {
+pub struct DenseStabRowOnly<R: SeedableRng + Rng + Debug = PecosRng> {
     num_qubits: usize,
     words_per_row: usize,
 
@@ -751,7 +751,7 @@ impl DenseStabRowOnly<PecosRng> {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         Self::with_rng(num_qubits, rng)
     }
 
@@ -763,7 +763,7 @@ impl DenseStabRowOnly<PecosRng> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
+impl<R: SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
     #[inline]
     #[must_use]
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
@@ -1158,14 +1158,14 @@ impl<R: RngCore + SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStabRowOnly<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStabRowOnly<R> {
     fn reset(&mut self) -> &mut Self {
         self.init_state();
         self
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> RngManageable for DenseStabRowOnly<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> RngManageable for DenseStabRowOnly<R> {
     type Rng = R;
 
     fn set_rng(&mut self, rng: Self::Rng) {
@@ -1181,7 +1181,7 @@ impl<R: RngCore + SeedableRng + Rng + Debug + Clone> RngManageable for DenseStab
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStabRowOnly<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStabRowOnly<R> {
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.apply_h(q.index());
@@ -1677,13 +1677,13 @@ impl CliffordGateable for SparseColOnly {
 
 use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> ForcedMeasurement for DenseStabColOnly<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> ForcedMeasurement for DenseStabColOnly<R> {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         DenseStabColOnly::mz_forced(self, qubit, forced_outcome)
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> ForcedMeasurement for DenseStabRowOnly<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> ForcedMeasurement for DenseStabRowOnly<R> {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         DenseStabRowOnly::mz_forced(self, qubit, forced_outcome)
     }

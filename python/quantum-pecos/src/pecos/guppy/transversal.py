@@ -226,18 +226,12 @@ def generate_surface_transversal_source(d: int) -> str:
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)"
-        for stab in info["z_stabilizers"]
-    )
+    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)" for stab in info["z_stabilizers"])
 
     lines.append("")
     lines.append("    # X stabilizers")
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
-        for stab in info["x_stabilizers"]
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)" for stab in info["x_stabilizers"])
 
     lines.extend(
         [
@@ -262,10 +256,7 @@ def generate_surface_transversal_source(d: int) -> str:
         ],
     )
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
-        for stab in info["x_stabilizers"]
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)" for stab in info["x_stabilizers"])
 
     lines.extend(
         [
@@ -431,18 +422,12 @@ def generate_color_transversal_source(d: int) -> str:
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)"
-        for stab in info["stabilizers"]
-    )
+    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)" for stab in info["stabilizers"])
 
     lines.append("")
     lines.append("    # X stabilizers")
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)"
-        for stab in info["stabilizers"]
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)" for stab in info["stabilizers"])
 
     lines.extend(
         [
@@ -467,10 +452,7 @@ def generate_color_transversal_source(d: int) -> str:
         ],
     )
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)"
-        for stab in info["stabilizers"]
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)" for stab in info["stabilizers"])
 
     lines.extend(
         [

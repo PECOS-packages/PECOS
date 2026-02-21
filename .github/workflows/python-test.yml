@@ -24,12 +24,23 @@ defaults:
 jobs:
   python-test:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        # Full Python version matrix on Ubuntu (fast)
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          # Windows/macOS: only test oldest and newest stable Python (slow platforms)
+          - os: windows-latest
+            python-version: "3.10"
+          - os: windows-latest
+            python-version: "3.14"
+          - os: macOS-latest
+            python-version: "3.10"
+          - os: macOS-latest
+            python-version: "3.14"
 
     steps:
     - name: Free Disk Space (Ubuntu)
@@ -139,6 +150,13 @@ jobs:
         Write-Host "Verifying LLVM installation..."
         cargo run -p pecos --features cli --release -- llvm check
 
+    - name: Install PECOS CLI (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "Installing PECOS CLI..."
+        cargo install --path crates/pecos --features cli
+
     - name: Build and test PECOS (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
@@ -224,6 +242,12 @@ jobs:
         # Build and test
         just build-debug
         just pytest-all
+
+    - name: Install PECOS CLI (non-Windows)
+      if: runner.os != 'Windows'
+      run: |
+        echo "Installing PECOS CLI..."
+        cargo install --path crates/pecos --features cli
 
     - name: Build and test PECOS (non-Windows)
       if: runner.os != 'Windows'

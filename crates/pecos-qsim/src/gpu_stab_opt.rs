@@ -42,8 +42,8 @@
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
+use pecos_rng::PecosRng;
 use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, SeedableRng};
 
 /// Optimized GPU stabilizer simulator with DOD/ECS architecture.
 #[derive(Clone)]
@@ -88,7 +88,7 @@ impl GpuStabOpt {
     /// Creates a new optimized GPU stabilizer simulator.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        Self::with_rng(num_qubits, PecosRng::from_os_rng())
+        Self::with_rng(num_qubits, rand::make_rng())
     }
 
     /// Creates a new simulator with a specific seed.

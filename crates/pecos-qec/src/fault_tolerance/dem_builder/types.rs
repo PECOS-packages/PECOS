@@ -37,6 +37,7 @@
 //! This indicates an error decomposed into two parts whose XOR equals the
 //! original mechanism.
 
+use rand::RngExt;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};

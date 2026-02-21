@@ -1,9 +1,8 @@
 """Tests for partial array consumption patterns in Guppy code generation.
 
-These tests verify that the Guppy generator correctly handles QEC patterns where:
-- Some qubits are measured while others are preserved
-- Functions return unconsumed quantum resources
-- Arrays are properly unpacked for individual measurements
+Note: The AST codegen flattens Block subclasses into the main function
+rather than generating nested functions. These tests verify that blocks
+are correctly flattened and operations are properly sequenced.
 """
 
 import pytest
@@ -53,16 +52,18 @@ class TestPartialConsumption:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Check function is generated
-        assert "measure_ancillas" in guppy_code
+        # AST codegen flattens blocks
+        # Check ancilla measurements
+        assert "syndrome_0 = quantum.measure(ancilla[0])" in guppy_code
+        assert "syndrome_1 = quantum.measure(ancilla[1])" in guppy_code
+        assert "syndrome_2 = quantum.measure(ancilla[2])" in guppy_code
+        assert "syndrome_3 = quantum.measure(ancilla[3])" in guppy_code
 
-        # Function should measure ancillas into syndrome
-        assert "syndrome" in guppy_code
-        assert "quantum.measure" in guppy_code
-
-        # Ensure data qubits are still available in main
+        # Check that data operations are present
         assert "quantum.x(data[0])" in guppy_code
-        assert "data_result = quantum.measure_array(data)" in guppy_code
+
+        # Check data measurements
+        assert "data_result_0 = quantum.measure(data[0])" in guppy_code
 
     def test_consume_subset_of_qubits(self) -> None:
         """Test consuming only part of a qubit array."""
@@ -99,41 +100,20 @@ class TestPartialConsumption:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Check that function is generated
-        assert "measure_first_half" in guppy_code
+        # AST codegen flattens blocks
+        # Check first half measurements
+        assert "c_first_0 = quantum.measure(q[0])" in guppy_code
+        assert "c_first_1 = quantum.measure(q[1])" in guppy_code
+        assert "c_first_2 = quantum.measure(q[2])" in guppy_code
 
-        # Should measure first half - with unpacking uses individual variables
-        assert (
-            "c_first[0] = quantum.measure(" in guppy_code
-            or "c_first_0 = quantum.measure(" in guppy_code
-        )
-        assert (
-            "c_first[1] = quantum.measure(" in guppy_code
-            or "c_first_1 = quantum.measure(" in guppy_code
-        )
-        assert (
-            "c_first[2] = quantum.measure(" in guppy_code
-            or "c_first_2 = quantum.measure(" in guppy_code
-        )
+        # Check operations on second half
+        assert "quantum.h(q[3])" in guppy_code
+        assert "c_second_0 = quantum.measure(q[3])" in guppy_code
+        assert "c_second_1 = quantum.measure(q[4])" in guppy_code
+        assert "c_second_2 = quantum.measure(q[5])" in guppy_code
 
-        # Check main function measures remaining qubits
-        # Array access patterns may vary with allocation strategy
-        assert "quantum.h(" in guppy_code
-        assert (
-            "c_second[0] = quantum.measure(" in guppy_code
-            or "c_second_0 = quantum.measure(" in guppy_code
-        )
-        assert (
-            "c_second[1] = quantum.measure(" in guppy_code
-            or "c_second_1 = quantum.measure(" in guppy_code
-        )
-        assert (
-            "c_second[2] = quantum.measure(" in guppy_code
-            or "c_second_2 = quantum.measure(" in guppy_code
-        )
-
-    def test_function_returning_quantum_resources(self) -> None:
-        """Test functions that return unconsumed quantum resources."""
+    def test_block_operations_flattened(self) -> None:
+        """Test that block operations are flattened into main."""
 
         class StabilizerMeasurement(Block):
             """Measure stabilizer, return data qubits."""
@@ -168,30 +148,24 @@ class TestPartialConsumption:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Check function is generated
-        assert "stabilizer_measurement" in guppy_code
-        # Array may be unpacked for element access, then reconstructed for return
-        assert "return data" in guppy_code or "return array(data_" in guppy_code
+        # AST codegen flattens blocks
+        # Check stabilizer operations
+        assert "quantum.h(ancilla[0])" in guppy_code
+        assert "quantum.cx(data[0], ancilla[0])" in guppy_code
+        assert "quantum.cx(data[1], ancilla[0])" in guppy_code
+        assert "syndrome_0 = quantum.measure(ancilla[0])" in guppy_code
 
-        # Check function call captures returned resources
-        # With dynamic allocation, ancilla is constructed as array(ancilla_0)
-        assert (
-            "data = test_partial_consumption_stabilizer_measurement(ancilla, data, syndrome)"
-            in guppy_code
-            or "data = test_partial_consumption_stabilizer_measurement(array(ancilla_0), data, syndrome)"
-            in guppy_code
-        )
+        # Check operations after block
+        assert "quantum.z(data[0])" in guppy_code
+        assert "final_0 = quantum.measure(data[0])" in guppy_code
+        assert "final_1 = quantum.measure(data[1])" in guppy_code
 
-        # Should measure ancilla
-        assert "syndrome" in guppy_code
-        assert "quantum.measure" in guppy_code
-
-    def test_consecutive_measurements_optimization(self) -> None:
-        """Test that consecutive individual measurements use measure_array."""
+    def test_consecutive_measurements(self) -> None:
+        """Test that consecutive measurements use array indexing."""
         prog = Main(
             q := QReg("q", 4),
             c := CReg("c", 4),
-            # Consecutive measurements that should be optimized
+            # Consecutive measurements
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             Measure(q[2]) > c[2],
@@ -200,11 +174,11 @@ class TestPartialConsumption:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should measure individually after unpacking
-        assert "c_0 = quantum.measure(q_0)" in guppy_code
-        assert "c_1 = quantum.measure(q_1)" in guppy_code
-        assert "c_2 = quantum.measure(q_2)" in guppy_code
-        assert "c_3 = quantum.measure(q_3)" in guppy_code
+        # AST codegen uses array indexing
+        assert "c_0 = quantum.measure(q[0])" in guppy_code
+        assert "c_1 = quantum.measure(q[1])" in guppy_code
+        assert "c_2 = quantum.measure(q[2])" in guppy_code
+        assert "c_3 = quantum.measure(q[3])" in guppy_code
 
     def test_mixed_destination_measurements(self) -> None:
         """Test measurements to different classical registers."""
@@ -221,24 +195,21 @@ class TestPartialConsumption:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # With dynamic allocation, individual qubits are allocated and measured
-        # No unpacking needed since they're allocated individually
-
         # Results distributed to correct destinations
-        assert "c1_0 = quantum.measure(q_0)" in guppy_code
-        assert "c1_1 = quantum.measure(q_1)" in guppy_code
-        assert "c2_0 = quantum.measure(q_2)" in guppy_code
-        assert "c2_1 = quantum.measure(q_3)" in guppy_code
+        assert "c1_0 = quantum.measure(q[0])" in guppy_code
+        assert "c1_1 = quantum.measure(q[1])" in guppy_code
+        assert "c2_0 = quantum.measure(q[2])" in guppy_code
+        assert "c2_1 = quantum.measure(q[3])" in guppy_code
 
-    def test_array_unpacking_with_gates(self) -> None:
-        """Test that gates work correctly with unpacked arrays."""
+    def test_gates_with_array_indexing(self) -> None:
+        """Test that gates work correctly with array indexing."""
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
             # Apply gates
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
-            # Then measure individually (forces unpacking)
+            # Then measure
             Measure(q[0]) > c[0],
             qubit.X(q[1]),  # Gate between measurements
             Measure(q[1]) > c[1],
@@ -247,24 +218,16 @@ class TestPartialConsumption:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should either unpack or use local allocation
-        # With local allocation: individual qubits created as needed
-        # With pre-allocation: array created then unpacked
-        has_unpacking = "q_0, q_1, q_2 = q" in guppy_code
-        has_local_alloc = "q_0 = quantum.qubit()" in guppy_code
+        # AST codegen uses array indexing
+        assert "quantum.h(q[0])" in guppy_code
+        assert "quantum.cx(q[0], q[1])" in guppy_code
+        assert "c_0 = quantum.measure(q[0])" in guppy_code
+        assert "quantum.x(q[1])" in guppy_code
+        assert "c_1 = quantum.measure(q[1])" in guppy_code
+        assert "c_2 = quantum.measure(q[2])" in guppy_code
 
-        assert (
-            has_unpacking or has_local_alloc
-        ), "Should use either unpacking or local allocation"
-
-        # Gates should use unpacked names (q_1)
-        assert "quantum.x(q_1)" in guppy_code
-
-        # Measurements use unpacked names
-        assert "c_0 = quantum.measure(q_0)" in guppy_code
-
-    def test_single_element_array_unpacking(self) -> None:
-        """Test correct unpacking syntax for single-element arrays."""
+    def test_single_element_block(self) -> None:
+        """Test block with single operation."""
 
         class MeasureSingle(Block):
             def __init__(self, q: QReg, c: CReg) -> None:
@@ -283,27 +246,16 @@ class TestPartialConsumption:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should generate a function
-        assert "measure_single" in guppy_code
-        # With dynamic allocation, no special unpacking syntax needed
-        # Just check that measurement happens
-        assert (
-            "single_0, = single" in guppy_code  # Pre-allocated with unpacking
-            or "single_0 = quantum.qubit()" in guppy_code
-        )  # Dynamic allocation
-        assert (
-            "result_reg[0] = quantum.measure(single_0)" in guppy_code
-            or "result[0] = quantum.measure(single_0)" in guppy_code
-        )
+        # AST codegen flattens blocks
+        assert "result_0 = quantum.measure(single[0])" in guppy_code
 
     @pytest.mark.optional_dependency
     def test_hugr_compilation(self) -> None:
-        """Test that partial consumption patterns compile to HUGR."""
-        # Simple test that should definitely compile
+        """Test that patterns compile to HUGR."""
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
-            # Individual measurements that will use measure_array optimization
+            # Individual measurements
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             Measure(q[2]) > c[2],
@@ -320,8 +272,8 @@ class TestPartialConsumption:
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_empty_function_body(self) -> None:
-        """Test function with no operations."""
+    def test_empty_block(self) -> None:
+        """Test block with no operations."""
 
         class DoNothing(Block):
             def __init__(self, q: QReg) -> None:
@@ -338,13 +290,12 @@ class TestEdgeCases:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should have pass in empty function
-        # Note: function names are prefixed with module name
-        assert "def test_partial_consumption_do_nothing" in guppy_code
-        assert "pass" in guppy_code
+        # Empty blocks are just skipped, measurements should work
+        assert "c_0 = quantum.measure(q[0])" in guppy_code
+        assert "c_1 = quantum.measure(q[1])" in guppy_code
 
-    def test_no_measurements(self) -> None:
-        """Test handling of unconsumed qubits at end of main."""
+    def test_unmeasured_qubits_returned(self) -> None:
+        """Test handling of unconsumed qubits in main return type."""
         prog = Main(
             q := QReg("q", 2),
             # Apply gates but don't measure
@@ -354,6 +305,9 @@ class TestEdgeCases:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should automatically discard unconsumed qubits
-        assert "# Discard q" in guppy_code
-        assert "quantum.discard_array(q)" in guppy_code
+        # Main should have qubit operations
+        assert "quantum.h(q[0])" in guppy_code
+        assert "quantum.cx(q[0], q[1])" in guppy_code
+
+        # Return type should include qubit array since they're not consumed
+        assert "array[qubit, 2]" in guppy_code

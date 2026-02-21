@@ -14,6 +14,7 @@ from typing import NoReturn
 
 from pecos.slr.block import Block
 from pecos.slr.cond_block import CondBlock
+from pecos.slr.vars import LoopVar
 
 
 class While(CondBlock):
@@ -55,7 +56,8 @@ class For(Block):
         """Initialize For loop.
 
         Args:
-            var: Loop variable name (string or symbol)
+            var: Loop variable - can be a string name or a LoopVar object.
+                 Using a LoopVar enables symbolic indexing (e.g., q[i]).
             *args: Either a range object or start, stop, [step] values
             **kwargs: Additional keyword arguments passed to parent Block
         """
@@ -63,7 +65,14 @@ class For(Block):
         ops = kwargs.pop("ops", None)
         allow_no_ops = kwargs.pop("allow_no_ops", True)
         super().__init__(ops=ops, allow_no_ops=allow_no_ops, **kwargs)
-        self.var = var
+        # Accept both string and LoopVar
+        if isinstance(var, str):
+            self.var = LoopVar(var)
+        elif isinstance(var, LoopVar):
+            self.var = var
+        else:
+            msg = f"For loop variable must be a string or LoopVar, got {type(var)}"
+            raise TypeError(msg)
 
         # Parse arguments
         if len(args) == 1 and hasattr(args[0], "__iter__"):

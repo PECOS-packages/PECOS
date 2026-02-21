@@ -80,13 +80,14 @@ fn run_build(profile: &str, rustflags: Option<&str>) -> Result<()> {
     }
 
     // Determine cargo profile flag
+    // Note: "dev" and "debug" are equivalent - Cargo calls it "dev" but outputs to target/debug/
     let cargo_profile_flag: Vec<&str> = match profile {
         "native" => vec!["--profile", "native"],
         "release" => vec!["--release"],
-        "debug" => vec![],
+        "dev" | "debug" => vec![],
         _ => {
             return Err(Error::Config(format!(
-                "Unknown profile: {profile}. Use debug, release, or native."
+                "Unknown profile: {profile}. Use dev/debug, release, or native."
             )));
         }
     };

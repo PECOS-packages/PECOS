@@ -46,9 +46,7 @@ def count_modules_in_hugr(hugr_str: str) -> tuple[int, list[str]]:
             node["name"]
             for module in modules
             for node in module.get("nodes", [])
-            if node.get("op") == "FuncDefn"
-            and "name" in node
-            and node["name"] != "__main__"
+            if node.get("op") == "FuncDefn" and "name" in node and node["name"] != "__main__"
         ]
 
         return len(modules), function_names
@@ -132,12 +130,8 @@ def test_multiple_functions_compilation() -> None:
     single_hugr = single_qubit_test.compile()
 
     # Analyze each HUGR structure
-    bell_hugr_str = (
-        bell_hugr.to_str() if hasattr(bell_hugr, "to_str") else str(bell_hugr)
-    )
-    single_hugr_str = (
-        single_hugr.to_str() if hasattr(single_hugr, "to_str") else str(single_hugr)
-    )
+    bell_hugr_str = bell_hugr.to_str() if hasattr(bell_hugr, "to_str") else str(bell_hugr)
+    single_hugr_str = single_hugr.to_str() if hasattr(single_hugr, "to_str") else str(single_hugr)
 
     bell_modules, bell_functions = count_modules_in_hugr(bell_hugr_str)
     single_modules, single_functions = count_modules_in_hugr(single_hugr_str)
@@ -149,12 +143,8 @@ def test_multiple_functions_compilation() -> None:
     assert bell_modules >= 1, "Bell pair should have at least one module"
     assert single_modules >= 1, "Single qubit should have at least one module"
 
-    assert (
-        "create_bell_pair" in bell_functions
-    ), "Bell HUGR should contain create_bell_pair"
-    assert (
-        "single_qubit_test" in single_functions
-    ), "Single HUGR should contain single_qubit_test"
+    assert "create_bell_pair" in bell_functions, "Bell HUGR should contain create_bell_pair"
+    assert "single_qubit_test" in single_functions, "Single HUGR should contain single_qubit_test"
 
 
 def test_compiler_comparison_simple() -> None:
@@ -189,17 +179,7 @@ def test_compiler_comparison_simple() -> None:
         pytest.fail(f"Selene compilation failed: {e}")
 
     try:
-        # For Rust compiler, we need to extract the JSON part from HUGR string
-        if hugr_str.startswith("HUGRi"):
-            json_start = hugr_str.find('{"modules"')
-            if json_start != -1:
-                hugr_json = hugr_str[json_start:]
-            else:
-                pytest.fail("Could not extract JSON from HUGR string")
-        else:
-            hugr_json = hugr_str
-
-        rust_llvm = rust_compile(hugr_json.encode("utf-8"), None)
+        rust_llvm = rust_compile(hugr_binary, None)
         print(f"Rust compilation succeeded, produced {len(rust_llvm)} chars")
     except Exception as e:
         pytest.fail(f"Rust compilation failed: {e}")

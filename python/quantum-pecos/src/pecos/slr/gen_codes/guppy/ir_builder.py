@@ -131,17 +131,13 @@ class IRBuilder:
         self.block_registry = {}  # Maps block signature to function name
         self.pending_functions = []  # Functions to be generated
         self.generated_functions = set()  # Functions already generated (actually built)
-        self.discovered_functions = (
-            set()
-        )  # Functions discovered but maybe not built yet
+        self.discovered_functions = set()  # Functions discovered but maybe not built yet
         self.function_counter = 0  # For generating unique function names
         self.function_info = {}  # Track metadata about functions
         self.function_return_types = {}  # Maps function name to return type
 
         # Struct generation tracking
-        self.struct_info = (
-            {}
-        )  # Maps prefix -> {fields: [(suffix, type, size)], struct_name: str}
+        self.struct_info = {}  # Maps prefix -> {fields: [(suffix, type, size)], struct_name: str}
 
         # Track all used variable names to avoid conflicts
         self.used_var_names = set()
@@ -221,9 +217,7 @@ class IRBuilder:
             "from guppylang.decorator import guppy",
             "from guppylang.std import quantum",
             "from guppylang.std.quantum import qubit",
-            "from guppylang.std.quantum.functional import ("
-            "reset, h, x, y, z, s, t, sdg, tdg, cx, cy, cz"
-            ")",
+            "from guppylang.std.quantum.functional import (reset, h, x, y, z, s, t, sdg, tdg, cx, cy, cz)",
             "from guppylang.std.builtins import array, owned, result, py",
         ]
 
@@ -281,17 +275,13 @@ class IRBuilder:
                     # Also store which functions refreshed each array
                     if not hasattr(module, "refreshed_by_function_map"):
                         module.refreshed_by_function_map = {}
-                    module.refreshed_by_function_map[func_info[1]] = (
-                        self.refreshed_by_function.copy()
-                    )
+                    module.refreshed_by_function_map[func_info[1]] = self.refreshed_by_function.copy()
                 # Check if building this function added more pending functions
                 # Add any new pending functions, avoiding duplicates
                 for new_func in self.pending_functions:
                     _new_block, new_name, _new_sig = new_func
                     # Check if this function is already built or pending
-                    already_pending = any(
-                        f[1] == new_name for f in all_pending if len(f) >= 2
-                    )
+                    already_pending = any(f[1] == new_name for f in all_pending if len(f) >= 2)
                     if new_name not in self.generated_functions and not already_pending:
                         all_pending.append(new_func)
                 self.pending_functions = []
@@ -350,9 +340,7 @@ class IRBuilder:
                 tuple_match = re.match(r"tuple\[(.*)\]", current_return_type)
                 if tuple_match:
                     # Get parameter names from function params (quantum arrays only)
-                    param_names = [
-                        p[0] for p in func.params if "array[quantum.qubit," in p[1]
-                    ]
+                    param_names = [p[0] for p in func.params if "array[quantum.qubit," in p[1]]
 
                     # For each quantum parameter, check if it was refreshed by a function
                     corrected_types = []
@@ -368,9 +356,7 @@ class IRBuilder:
 
                             # Look up the called function's return type
                             if called_func_name in self.function_return_types:
-                                called_return_type = self.function_return_types[
-                                    called_func_name
-                                ]
+                                called_return_type = self.function_return_types[called_func_name]
 
                                 # If the called function returns a tuple, extract the type for this param
                                 if called_return_type.startswith("tuple["):
@@ -475,9 +461,7 @@ class IRBuilder:
         # Analyze qubit usage patterns
         usage_analyzer = QubitUsageAnalyzer()
         usage_analyzer.analyze_block(block, self.struct_info)
-        self.allocation_recommendations = (
-            usage_analyzer.get_allocation_recommendations()
-        )
+        self.allocation_recommendations = usage_analyzer.get_allocation_recommendations()
 
         # Pre-analyze explicit reset operations (Prep) to distinguish them from automatic replacements
         consumed_in_main = {}
@@ -566,10 +550,7 @@ class IRBuilder:
                     continue
 
                 # Skip dynamically allocated arrays
-                if (
-                    hasattr(self, "dynamic_allocations")
-                    and array_name in self.dynamic_allocations
-                ):
+                if hasattr(self, "dynamic_allocations") and array_name in self.dynamic_allocations:
                     continue
 
                 # Mark quantum arrays that will be unpacked
@@ -601,10 +582,7 @@ class IRBuilder:
                     continue
 
                 # For dynamically allocated arrays, skip unpacking - qubits are allocated on first use
-                if (
-                    hasattr(self, "dynamic_allocations")
-                    and array_name in self.dynamic_allocations
-                ):
+                if hasattr(self, "dynamic_allocations") and array_name in self.dynamic_allocations:
                     # Don't unpack - the array doesn't exist, qubits are allocated individually
                     continue
                 if not info.is_classical:
@@ -617,8 +595,7 @@ class IRBuilder:
                     # For classical arrays, unpack if any quantum array is unpacked
                     # This ensures consistent variable naming patterns
                     should_unpack_classical = len(will_unpack_quantum) > 0 or (
-                        hasattr(self, "dynamic_allocations")
-                        and len(self.dynamic_allocations) > 0
+                        hasattr(self, "dynamic_allocations") and len(self.dynamic_allocations) > 0
                     )
                     if should_unpack_classical:
                         # Unpack classical array to support quantum unpacking pattern
@@ -778,9 +755,7 @@ class IRBuilder:
         # Add quantum parameters (skip those in structs UNLESS they're ancillas)
         for var in sorted(deps["quantum"] & deps["reads"]):
             # Check if this is an ancilla that was excluded from structs
-            is_excluded_ancilla = (
-                hasattr(self, "ancilla_qubits") and var in self.ancilla_qubits
-            )
+            is_excluded_ancilla = hasattr(self, "ancilla_qubits") and var in self.ancilla_qubits
 
             if var in vars_in_structs and not is_excluded_ancilla:
                 continue
@@ -811,9 +786,7 @@ class IRBuilder:
             # Determine type from context
             var_info = self.context.lookup_variable(var)
             # Always use array type for consistency
-            param_type = (
-                f"array[bool, {var_info.size}]" if var_info else "array[bool, 32]"
-            )
+            param_type = f"array[bool, {var_info.size}]" if var_info else "array[bool, 32]"
             params.append((param_name, param_type))
 
         # Create function body
@@ -847,8 +820,7 @@ class IRBuilder:
 
         # Track if this function has @owned struct parameters
         has_owned_struct_params = any(
-            "@owned" in param_type and param_name in self.struct_info
-            for param_name, param_type in params
+            "@owned" in param_type and param_name in self.struct_info for param_name, param_type in params
         )
         self.function_info[func_name] = {
             "has_owned_struct_params": has_owned_struct_params,
@@ -866,10 +838,7 @@ class IRBuilder:
         # Initially add array unpacking for arrays that the analyzer determined need it
         if needs_unpacking:
             for param_name, param_type in params:
-                if (
-                    "array[quantum.qubit," in param_type
-                    and param_name in block_plan.arrays_to_unpack
-                ):
+                if "array[quantum.qubit," in param_type and param_name in block_plan.arrays_to_unpack:
                     # Extract array size
                     import re
 
@@ -877,10 +846,7 @@ class IRBuilder:
                     if match:
                         size = int(match.group(1))
                         # Generate unpacked variable names
-                        element_names = [
-                            self._get_unique_var_name(param_name, i)
-                            for i in range(size)
-                        ]
+                        element_names = [self._get_unique_var_name(param_name, i) for i in range(size)]
                         self.unpacked_vars[param_name] = element_names
 
                         # Add unpacking statement to function body
@@ -894,11 +860,7 @@ class IRBuilder:
         # With the functional pattern, @owned arrays must be unpacked to avoid MoveOutOfSubscriptError
         # UNLESS they're passed to nested blocks
         for param_name, param_type in params:
-            if (
-                "@owned" in param_type
-                and "array[quantum.qubit," in param_type
-                and param_name not in self.unpacked_vars
-            ):
+            if "@owned" in param_type and "array[quantum.qubit," in param_type and param_name not in self.unpacked_vars:
                 # Check if this function has any nested block calls
                 # If so, we can't unpack @owned arrays as we may need to pass them
                 # But this will cause MoveOutOfSubscriptError, so we need a different approach
@@ -939,9 +901,7 @@ class IRBuilder:
                 if match:
                     size = int(match.group(1))
                     # Generate unpacked variable names
-                    element_names = [
-                        self._get_unique_var_name(param_name, i) for i in range(size)
-                    ]
+                    element_names = [self._get_unique_var_name(param_name, i) for i in range(size)]
                     self.unpacked_vars[param_name] = element_names
 
                     # Track that this was unpacked from a parameter (not a return value)
@@ -953,8 +913,7 @@ class IRBuilder:
                     # Add comment explaining why we're unpacking
                     body.statements.append(
                         Comment(
-                            f"Unpack @owned array {param_name} to avoid "
-                            "MoveOutOfSubscriptError",
+                            f"Unpack @owned array {param_name} to avoid MoveOutOfSubscriptError",
                         ),
                     )
 
@@ -966,12 +925,8 @@ class IRBuilder:
                     body.statements.append(unpacking_stmt)
 
         # Add struct unpacking for struct parameters
-        struct_field_vars = (
-            {}
-        )  # Maps original var name to struct field path for @owned structs
-        struct_reconstruction = (
-            {}
-        )  # Maps struct param name to list of field vars for reconstruction
+        struct_field_vars = {}  # Maps original var name to struct field path for @owned structs
+        struct_reconstruction = {}  # Maps struct param name to list of field vars for reconstruction
 
         for param_name, param_type in params:
             if "@owned" in param_type and param_name in self.struct_info:
@@ -1081,10 +1036,7 @@ class IRBuilder:
                         [VariableRef(var) for var in unpack_targets],
                     ),
                     value=TupleExpression(
-                        [
-                            FieldAccess(VariableRef(param_name), field)
-                            for field, _, _ in sorted(struct_info["fields"])
-                        ],
+                        [FieldAccess(VariableRef(param_name), field) for field, _, _ in sorted(struct_info["fields"])],
                     ),
                 )
                 body.statements.append(unpack_stmt)
@@ -1102,9 +1054,7 @@ class IRBuilder:
         # Pre-determine if this function will return quantum arrays
         # (needed for measurement replacement logic)
         will_return_quantum = False
-        has_quantum_arrays = any(
-            "array[quantum.qubit," in ptype for name, ptype in params
-        )
+        has_quantum_arrays = any("array[quantum.qubit," in ptype for name, ptype in params)
         has_structs = any(name in self.struct_info for name, ptype in params)
 
         if has_quantum_arrays or has_structs:
@@ -1119,9 +1069,7 @@ class IRBuilder:
                             break
 
                     # Check if this is an ancilla that was excluded from structs
-                    is_excluded_ancilla = (
-                        hasattr(self, "ancilla_qubits") and name in self.ancilla_qubits
-                    )
+                    is_excluded_ancilla = hasattr(self, "ancilla_qubits") and name in self.ancilla_qubits
 
                     # Check if this array has any live qubits
                     if name in consumed_in_function:
@@ -1180,11 +1128,7 @@ class IRBuilder:
             try:
                 sig = inspect.signature(sample_block.__class__.__init__)
                 return_annotation = sig.return_annotation
-                if (
-                    return_annotation is None
-                    or return_annotation is type(None)
-                    or str(return_annotation) == "None"
-                ):
+                if return_annotation is None or return_annotation is type(None) or str(return_annotation) == "None":
                     is_procedural_block = True
                 else:
                     is_procedural_block = False  # Has return annotation, not procedural
@@ -1213,9 +1157,7 @@ class IRBuilder:
                     # This is necessary for functions like prep_rus that pass parameters to prep_encoding_ft_zero
                     # For simplicity, if the block has nested blocks, make quantum params @owned
                     # If a procedural block calls other blocks, those blocks might need @owned params
-                    should_be_owned = (
-                        True if has_nested_blocks else param_name in consumed_params
-                    )
+                    should_be_owned = True if has_nested_blocks else param_name in consumed_params
                 else:
                     # For functional blocks that return quantum arrays, check if parameter is actually consumed
                     # In Guppy's linear type system:
@@ -1228,10 +1170,7 @@ class IRBuilder:
                         # This is because subscripting marks the array as used
                         consumed_indices = consumed_in_function[param_name]
                         should_be_owned = len(consumed_indices) > 0
-                    elif (
-                        hasattr(self, "subscripted_params")
-                        and param_name in self.subscripted_params
-                    ):
+                    elif hasattr(self, "subscripted_params") and param_name in self.subscripted_params:
                         # Array has subscript access (c_d[0]) which requires @owned
                         should_be_owned = True
                     else:
@@ -1259,9 +1198,7 @@ class IRBuilder:
         # @owned arrays must be unpacked to avoid MoveOutOfSubscriptError when accessing elements
         for param_name, param_type in params:
             # Don't double-unpack
-            is_owned_qubit_array = (
-                "array[quantum.qubit," in param_type and "@owned" in param_type
-            )
+            is_owned_qubit_array = "array[quantum.qubit," in param_type and "@owned" in param_type
             if is_owned_qubit_array and param_name not in self.unpacked_vars:
                 # Adding @owned array unpacking
                 # Extract array size
@@ -1271,9 +1208,7 @@ class IRBuilder:
                 if match:
                     size = int(match.group(1))
                     # Generate unpacked variable names
-                    element_names = [
-                        self._get_unique_var_name(param_name, i) for i in range(size)
-                    ]
+                    element_names = [self._get_unique_var_name(param_name, i) for i in range(size)]
                     self.unpacked_vars[param_name] = element_names
 
                     # Track that this was unpacked from a parameter (not a return value)
@@ -1326,11 +1261,7 @@ class IRBuilder:
 
         # Save the current variable remapping (includes changes from Prep operations)
         # BEFORE restoring previous mapping, as we need it for return statement generation
-        self.function_var_remapping = (
-            self.variable_remapping.copy()
-            if hasattr(self, "variable_remapping")
-            else {}
-        )
+        self.function_var_remapping = self.variable_remapping.copy() if hasattr(self, "variable_remapping") else {}
 
         # Restore previous remapping
         self.var_remapping = prev_var_remapping
@@ -1343,9 +1274,7 @@ class IRBuilder:
         # Black Box Pattern: functions that handle quantum arrays return modified arrays
         # BUT: if function consumes arrays (@owned), don't return them
         # Check if we have quantum arrays or structs to return (regardless of unpacking)
-        has_quantum_arrays = any(
-            "array[quantum.qubit," in ptype for name, ptype in params
-        )
+        has_quantum_arrays = any("array[quantum.qubit," in ptype for name, ptype in params)
         has_structs = any(name in self.struct_info for name, ptype in params)
 
         # For procedural blocks, don't generate return statements
@@ -1394,17 +1323,10 @@ class IRBuilder:
                         # Live indices = unconsumed OR explicitly reset
                         # Explicitly reset qubits are consumed by measurement but recreated by Prep
                         explicitly_reset_indices = set()
-                        if (
-                            hasattr(self, "explicitly_reset_qubits")
-                            and name in self.explicitly_reset_qubits
-                        ):
-                            explicitly_reset_indices = self.explicitly_reset_qubits[
-                                name
-                            ]
+                        if hasattr(self, "explicitly_reset_qubits") and name in self.explicitly_reset_qubits:
+                            explicitly_reset_indices = self.explicitly_reset_qubits[name]
 
-                        live_indices = (
-                            total_indices - consumed_indices
-                        ) | explicitly_reset_indices
+                        live_indices = (total_indices - consumed_indices) | explicitly_reset_indices
                         include_array = bool(
                             live_indices,
                         )  # Only include if has live qubits (unconsumed OR explicitly reset)
@@ -1415,17 +1337,11 @@ class IRBuilder:
                     if include_array:
                         # PRIORITY 1: Check if this array was refreshed by a function call
                         # If so, use the called function's return type instead of consumption analysis
-                        if (
-                            hasattr(self, "refreshed_arrays")
-                            and name in self.refreshed_arrays
-                        ):
+                        if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                             self.refreshed_arrays[name]
                             # Find which function call produced this fresh variable
                             # by looking at the refreshed_by_function mapping
-                            if (
-                                hasattr(self, "refreshed_by_function")
-                                and name in self.refreshed_by_function
-                            ):
+                            if hasattr(self, "refreshed_by_function") and name in self.refreshed_by_function:
                                 func_info = self.refreshed_by_function[name]
                                 # Extract function name from the dict (or handle legacy string format)
                                 called_func_name = (
@@ -1435,9 +1351,7 @@ class IRBuilder:
                                 )
                                 # Look up that function's return type
                                 if called_func_name in self.function_return_types:
-                                    called_func_return = self.function_return_types[
-                                        called_func_name
-                                    ]
+                                    called_func_return = self.function_return_types[called_func_name]
                                     # If it returns a tuple, extract the type for this array
                                     if called_func_return.startswith("tuple["):
                                         # Parse tuple to find the type for this array
@@ -1472,9 +1386,7 @@ class IRBuilder:
 
                                             # Find which position this array is in the function's parameters
                                             quantum_param_names = [
-                                                n
-                                                for n, pt in params
-                                                if "array[quantum.qubit," in pt
+                                                n for n, pt in params if "array[quantum.qubit," in pt
                                             ]
                                             if name in quantum_param_names:
                                                 param_idx = quantum_param_names.index(
@@ -1506,10 +1418,7 @@ class IRBuilder:
                                 consumed_indices = consumed_in_function[name]
 
                                 # Check if any consumed qubits were replaced
-                                if (
-                                    hasattr(self, "replaced_qubits")
-                                    and name in self.replaced_qubits
-                                ):
+                                if hasattr(self, "replaced_qubits") and name in self.replaced_qubits:
                                     self.replaced_qubits[name]
 
                                 # Check if this parameter was fully consumed (all elements measured)
@@ -1518,13 +1427,8 @@ class IRBuilder:
 
                                 # Check if any consumed qubits were explicitly reset
                                 explicitly_reset_indices = set()
-                                if (
-                                    hasattr(self, "explicitly_reset_qubits")
-                                    and name in self.explicitly_reset_qubits
-                                ):
-                                    explicitly_reset_indices = (
-                                        self.explicitly_reset_qubits[name]
-                                    )
+                                if hasattr(self, "explicitly_reset_qubits") and name in self.explicitly_reset_qubits:
+                                    explicitly_reset_indices = self.explicitly_reset_qubits[name]
 
                                 # If fully consumed BUT some were explicitly reset, we should return those
                                 if fully_consumed and not explicitly_reset_indices:
@@ -1544,10 +1448,7 @@ class IRBuilder:
                                         if "array[quantum.qubit," in pt:
                                             # Check if this array is part of a struct
                                             in_struct = False
-                                            if (
-                                                isinstance(self.struct_info, dict)
-                                                and n in self.struct_info.values()
-                                            ):
+                                            if isinstance(self.struct_info, dict) and n in self.struct_info.values():
                                                 in_struct = True
                                             if not in_struct:
                                                 num_quantum_params += 1
@@ -1563,17 +1464,12 @@ class IRBuilder:
                                         hasattr(self, "explicitly_reset_qubits")
                                         and name in self.explicitly_reset_qubits
                                     ):
-                                        explicitly_reset_indices = (
-                                            self.explicitly_reset_qubits[name]
-                                        )
+                                        explicitly_reset_indices = self.explicitly_reset_qubits[name]
 
                                     # Count elements that are either unconsumed OR explicitly reset
                                     elements_to_return_count = 0
                                     for i in range(original_size):
-                                        if (
-                                            i not in consumed_indices
-                                            or i in explicitly_reset_indices
-                                        ):
+                                        if i not in consumed_indices or i in explicitly_reset_indices:
                                             elements_to_return_count += 1
 
                                     remaining_count = elements_to_return_count
@@ -1632,21 +1528,13 @@ class IRBuilder:
                                 # Determine which consumed indices should be returned
                                 # (i.e., those that were explicitly reset)
                                 explicitly_reset_indices = set()
-                                if (
-                                    hasattr(self, "explicitly_reset_qubits")
-                                    and name in self.explicitly_reset_qubits
-                                ):
-                                    explicitly_reset_indices = (
-                                        self.explicitly_reset_qubits[name]
-                                    )
+                                if hasattr(self, "explicitly_reset_qubits") and name in self.explicitly_reset_qubits:
+                                    explicitly_reset_indices = self.explicitly_reset_qubits[name]
 
                                 elements_to_return = []
                                 for i in range(original_size):
                                     # Include if: (1) not consumed, OR (2) explicitly reset
-                                    if (
-                                        i not in consumed_indices
-                                        or i in explicitly_reset_indices
-                                    ):
+                                    if i not in consumed_indices or i in explicitly_reset_indices:
                                         if name in self.unpacked_vars:
                                             # Use unpacked element name directly using original index
                                             # NOTE: index_mapping maps original index →
@@ -1658,11 +1546,9 @@ class IRBuilder:
                                             # Apply variable remapping if element was
                                             # reassigned (e.g., Prep after Measure)
                                             if hasattr(self, "function_var_remapping"):
-                                                element_name = (
-                                                    self.function_var_remapping.get(
-                                                        element_name,
-                                                        element_name,
-                                                    )
+                                                element_name = self.function_var_remapping.get(
+                                                    element_name,
+                                                    element_name,
                                                 )
                                             elements_to_return.append(
                                                 VariableRef(element_name),
@@ -1692,21 +1578,13 @@ class IRBuilder:
 
                             # Get explicitly reset indices
                             explicitly_reset_indices = set()
-                            if (
-                                hasattr(self, "explicitly_reset_qubits")
-                                and name in self.explicitly_reset_qubits
-                            ):
-                                explicitly_reset_indices = self.explicitly_reset_qubits[
-                                    name
-                                ]
+                            if hasattr(self, "explicitly_reset_qubits") and name in self.explicitly_reset_qubits:
+                                explicitly_reset_indices = self.explicitly_reset_qubits[name]
 
                             # Filter: include unconsumed OR explicitly reset
                             elements_to_return = []
                             for i, elem_name in enumerate(element_names):
-                                if (
-                                    i not in consumed_indices
-                                    or i in explicitly_reset_indices
-                                ):
+                                if i not in consumed_indices or i in explicitly_reset_indices:
                                     # Apply variable remapping if element was reassigned (e.g., Prep after Measure)
                                     if hasattr(self, "function_var_remapping"):
                                         elem_name = self.function_var_remapping.get(
@@ -1721,10 +1599,7 @@ class IRBuilder:
                             body.statements.append(
                                 ReturnStatement(value=array_construction),
                             )
-                        elif (
-                            hasattr(self, "refreshed_arrays")
-                            and name in self.refreshed_arrays
-                        ):
+                        elif hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                             # Array was unpacked AND refreshed - return the fresh version
                             fresh_name = self.refreshed_arrays[name]
                             body.statements.append(
@@ -1742,10 +1617,7 @@ class IRBuilder:
                             )
                     elif name in struct_reconstruction:
                         # Struct was decomposed - but check if it was also refreshed by function calls
-                        if (
-                            hasattr(self, "refreshed_arrays")
-                            and name in self.refreshed_arrays
-                        ):
+                        if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                             # Struct was refreshed - return the fresh version directly
                             fresh_name = self.refreshed_arrays[name]
                             body.statements.append(
@@ -1756,10 +1628,7 @@ class IRBuilder:
                             struct_info = self.struct_info[name]
 
                             # Check if this is an @owned struct that was decomposed
-                            is_owned_struct = (
-                                hasattr(self, "owned_structs")
-                                and name in self.owned_structs
-                            )
+                            is_owned_struct = hasattr(self, "owned_structs") and name in self.owned_structs
 
                             # For @owned structs, always reconstruct from decomposed variables
                             # For regular structs, check if the unpacked variables are still valid
@@ -1770,8 +1639,7 @@ class IRBuilder:
                                 # They're only valid if we haven't passed the struct
                                 # to any @owned functions
                                 should_reconstruct = all(
-                                    struct_info["var_names"].get(suffix)
-                                    in self.var_remapping
+                                    struct_info["var_names"].get(suffix) in self.var_remapping
                                     for suffix, _, _ in struct_info["fields"]
                                 )
 
@@ -1787,22 +1655,13 @@ class IRBuilder:
                                     field_var = f"{name}_{suffix}"
 
                                     # Check if we have a fresh version of this field variable
-                                    if (
-                                        hasattr(self, "refreshed_arrays")
-                                        and field_var in self.refreshed_arrays
-                                    ):
+                                    if hasattr(self, "refreshed_arrays") and field_var in self.refreshed_arrays:
                                         field_var = self.refreshed_arrays[field_var]
-                                    elif (
-                                        hasattr(self, "var_remapping")
-                                        and field_var in self.var_remapping
-                                    ):
+                                    elif hasattr(self, "var_remapping") and field_var in self.var_remapping:
                                         field_var = self.var_remapping[field_var]
                                     else:
                                         # Check if the variable was consumed in operations
-                                        if (
-                                            hasattr(self, "consumed_vars")
-                                            and field_var in self.consumed_vars
-                                        ):
+                                        if hasattr(self, "consumed_vars") and field_var in self.consumed_vars:
                                             all_vars_available = False
                                             break
 
@@ -1828,20 +1687,13 @@ class IRBuilder:
                     else:
                         # Check if this variable was refreshed due to being borrowed
                         # (e.g., c_d -> c_d_returned)
-                        if (
-                            hasattr(self, "refreshed_arrays")
-                            and name in self.refreshed_arrays
-                        ):
+                        if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                             # Use the refreshed name for the return
                             return_name = self.refreshed_arrays[name]
                             body.statements.append(
                                 ReturnStatement(value=VariableRef(return_name)),
                             )
-                        elif (
-                            hasattr(self, "owned_structs")
-                            and name in self.owned_structs
-                            and name in self.struct_info
-                        ):
+                        elif hasattr(self, "owned_structs") and name in self.owned_structs and name in self.struct_info:
                             # @owned struct needs reconstruction from decomposed variables
                             struct_info = self.struct_info[name]
 
@@ -1855,22 +1707,13 @@ class IRBuilder:
                                 field_var = f"{name}_{suffix}"
 
                                 # Check if we have a fresh version of this field variable
-                                if (
-                                    hasattr(self, "refreshed_arrays")
-                                    and field_var in self.refreshed_arrays
-                                ):
+                                if hasattr(self, "refreshed_arrays") and field_var in self.refreshed_arrays:
                                     field_var = self.refreshed_arrays[field_var]
-                                elif (
-                                    hasattr(self, "var_remapping")
-                                    and field_var in self.var_remapping
-                                ):
+                                elif hasattr(self, "var_remapping") and field_var in self.var_remapping:
                                     field_var = self.var_remapping[field_var]
                                 else:
                                     # Check if the variable was consumed in operations
-                                    if (
-                                        hasattr(self, "consumed_vars")
-                                        and field_var in self.consumed_vars
-                                    ):
+                                    if hasattr(self, "consumed_vars") and field_var in self.consumed_vars:
                                         all_vars_available = False
                                         break
 
@@ -1887,10 +1730,7 @@ class IRBuilder:
                         else:
                             # Check if this variable has been refreshed by function calls
                             var_to_return = name
-                            if (
-                                hasattr(self, "refreshed_arrays")
-                                and name in self.refreshed_arrays
-                            ):
+                            if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                                 var_to_return = self.refreshed_arrays[name]
                             body.statements.append(
                                 ReturnStatement(value=VariableRef(var_to_return)),
@@ -1905,10 +1745,7 @@ class IRBuilder:
                     for name, ptype in quantum_returns:
                         if name in self.unpacked_vars:
                             # Array was unpacked - check if it was also refreshed by function calls
-                            if (
-                                hasattr(self, "refreshed_arrays")
-                                and name in self.refreshed_arrays
-                            ):
+                            if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                                 # Array was refreshed after unpacking - return the fresh version
                                 fresh_name = self.refreshed_arrays[name]
                                 return_exprs.append(VariableRef(fresh_name))
@@ -1946,17 +1783,12 @@ class IRBuilder:
                                             hasattr(self, "explicitly_reset_qubits")
                                             and name in self.explicitly_reset_qubits
                                         ):
-                                            explicitly_reset_indices = (
-                                                self.explicitly_reset_qubits[name]
-                                            )
+                                            explicitly_reset_indices = self.explicitly_reset_qubits[name]
 
                                         elements_to_return = []
                                         for i in range(len(element_names)):
                                             # Include if: (1) not consumed, OR (2) explicitly reset
-                                            if (
-                                                i not in consumed_indices
-                                                or i in explicitly_reset_indices
-                                            ):
+                                            if i not in consumed_indices or i in explicitly_reset_indices:
                                                 element_name = element_names[i]
                                                 # Apply variable remapping if element was reassigned
                                                 # Use function_var_remapping which includes Prep changes
@@ -1964,11 +1796,9 @@ class IRBuilder:
                                                     self,
                                                     "function_var_remapping",
                                                 ):
-                                                    element_name = (
-                                                        self.function_var_remapping.get(
-                                                            element_name,
-                                                            element_name,
-                                                        )
+                                                    element_name = self.function_var_remapping.get(
+                                                        element_name,
+                                                        element_name,
                                                     )
                                                 elements_to_return.append(
                                                     VariableRef(element_name),
@@ -1995,18 +1825,13 @@ class IRBuilder:
                                             return_exprs.append(EmptyArrayExpression())
                                     else:
                                         # No consumption or not tracked - standard reconstruction from all elements
-                                        array_construction = (
-                                            self._create_array_reconstruction(
-                                                element_names,
-                                            )
+                                        array_construction = self._create_array_reconstruction(
+                                            element_names,
                                         )
                                         return_exprs.append(array_construction)
                         elif name in struct_reconstruction:
                             # Struct was decomposed - but check if it was also refreshed by function calls
-                            if (
-                                hasattr(self, "refreshed_arrays")
-                                and name in self.refreshed_arrays
-                            ):
+                            if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                                 # Struct was refreshed - return the fresh version directly
                                 fresh_name = self.refreshed_arrays[name]
                                 return_exprs.append(VariableRef(fresh_name))
@@ -2016,10 +1841,7 @@ class IRBuilder:
                                 struct_info = self.struct_info[name]
 
                                 # Check if this is an @owned struct that was decomposed
-                                is_owned_struct = (
-                                    hasattr(self, "owned_structs")
-                                    and name in self.owned_structs
-                                )
+                                is_owned_struct = hasattr(self, "owned_structs") and name in self.owned_structs
 
                                 # For @owned structs, always reconstruct from decomposed variables
                                 # For regular structs, check if the unpacked variables are still valid
@@ -2028,8 +1850,7 @@ class IRBuilder:
                                 else:
                                     # Check if the unpacked variables are still valid
                                     unpacked_vars_valid = all(
-                                        struct_info["var_names"].get(suffix)
-                                        in self.var_remapping
+                                        struct_info["var_names"].get(suffix) in self.var_remapping
                                         for suffix, _, _ in struct_info["fields"]
                                     )
 
@@ -2045,22 +1866,13 @@ class IRBuilder:
                                         field_var = f"{name}_{suffix}"
 
                                         # Check if we have a fresh version of this field variable
-                                        if (
-                                            hasattr(self, "refreshed_arrays")
-                                            and field_var in self.refreshed_arrays
-                                        ):
+                                        if hasattr(self, "refreshed_arrays") and field_var in self.refreshed_arrays:
                                             field_var = self.refreshed_arrays[field_var]
-                                        elif (
-                                            hasattr(self, "var_remapping")
-                                            and field_var in self.var_remapping
-                                        ):
+                                        elif hasattr(self, "var_remapping") and field_var in self.var_remapping:
                                             field_var = self.var_remapping[field_var]
                                         else:
                                             # Check if the variable was consumed in operations
-                                            if (
-                                                hasattr(self, "consumed_vars")
-                                                and field_var in self.consumed_vars
-                                            ):
+                                            if hasattr(self, "consumed_vars") and field_var in self.consumed_vars:
                                                 all_vars_available = False
                                                 break
 
@@ -2075,10 +1887,7 @@ class IRBuilder:
                                     else:
                                         # Variables were consumed - handle appropriately
                                         var_to_return = name
-                                        if (
-                                            hasattr(self, "refreshed_arrays")
-                                            and name in self.refreshed_arrays
-                                        ):
+                                        if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                                             var_to_return = self.refreshed_arrays[name]
                                         return_exprs.append(VariableRef(var_to_return))
                                 else:
@@ -2086,10 +1895,7 @@ class IRBuilder:
                                     # return the struct directly
                                     # Check if this variable has been refreshed by function calls
                                     var_to_return = name
-                                    if (
-                                        hasattr(self, "refreshed_arrays")
-                                        and name in self.refreshed_arrays
-                                    ):
+                                    if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                                         var_to_return = self.refreshed_arrays[name]
                                     return_exprs.append(VariableRef(var_to_return))
                         else:
@@ -2111,15 +1917,9 @@ class IRBuilder:
                                     field_var = f"{name}_{suffix}"
 
                                     # Check if we have a fresh version of this field variable
-                                    if (
-                                        hasattr(self, "refreshed_arrays")
-                                        and field_var in self.refreshed_arrays
-                                    ):
+                                    if hasattr(self, "refreshed_arrays") and field_var in self.refreshed_arrays:
                                         field_var = self.refreshed_arrays[field_var]
-                                    elif (
-                                        hasattr(self, "var_remapping")
-                                        and field_var in self.var_remapping
-                                    ):
+                                    elif hasattr(self, "var_remapping") and field_var in self.var_remapping:
                                         field_var = self.var_remapping[field_var]
 
                                     constructor_args.append(VariableRef(field_var))
@@ -2132,10 +1932,7 @@ class IRBuilder:
                             else:
                                 # Check if this variable has been refreshed by function calls
                                 var_to_return = name
-                                if (
-                                    hasattr(self, "refreshed_arrays")
-                                    and name in self.refreshed_arrays
-                                ):
+                                if hasattr(self, "refreshed_arrays") and name in self.refreshed_arrays:
                                     var_to_return = self.refreshed_arrays[name]
                                 return_exprs.append(VariableRef(var_to_return))
 
@@ -2154,11 +1951,7 @@ class IRBuilder:
         if is_procedural_block:
             return_type = "None"
             # Also remove any return statements from the body since this is procedural
-            body.statements = [
-                stmt
-                for stmt in body.statements
-                if not isinstance(stmt, ReturnStatement)
-            ]
+            body.statements = [stmt for stmt in body.statements if not isinstance(stmt, ReturnStatement)]
 
             # Add cleanup for unused quantum arrays that might have been created
             # by function calls but not consumed (e.g., fresh variables)
@@ -2256,12 +2049,7 @@ class IRBuilder:
                 # Fall back to recommendation
                 should_use_dynamic = recommendation.get("allocation") == "dynamic"
 
-            if (
-                should_use_dynamic
-                and not needs_unpacking
-                and not needs_full_array
-                and not is_function_parameter
-            ):
+            if should_use_dynamic and not needs_unpacking and not needs_full_array and not is_function_parameter:
                 # Check if this ancilla array is used as a function parameter
                 # If so, we need to pre-allocate it despite being an ancilla
                 is_function_param = False
@@ -2292,18 +2080,14 @@ class IRBuilder:
                     # Mark this variable as having been decomposed into individual qubits
                     if not hasattr(self, "decomposed_ancilla_arrays"):
                         self.decomposed_ancilla_arrays = {}
-                    self.decomposed_ancilla_arrays[var_name] = [
-                        f"{var_name}_{i}" for i in range(size)
-                    ]
+                    self.decomposed_ancilla_arrays[var_name] = [f"{var_name}_{i}" for i in range(size)]
 
                     # Add a function to reconstruct the array when needed for function calls
                     # This creates: c_a = array(c_a_0, c_a_1, c_a_2)
                     self.current_block.statements.append(
                         Comment(f"# Reconstruct {var_name} array for function calls"),
                     )
-                    array_construction_args = [
-                        VariableRef(f"{var_name}_{i}") for i in range(size)
-                    ]
+                    array_construction_args = [VariableRef(f"{var_name}_{i}") for i in range(size)]
                     reconstruct_expr = FunctionCall(
                         func_name="array",
                         args=array_construction_args,
@@ -2352,9 +2136,7 @@ class IRBuilder:
                         # Mark this variable as having been decomposed into individual qubits
                         if not hasattr(self, "decomposed_ancilla_arrays"):
                             self.decomposed_ancilla_arrays = {}
-                        self.decomposed_ancilla_arrays[var_name] = [
-                            f"{var_name}_{i}" for i in range(size)
-                        ]
+                        self.decomposed_ancilla_arrays[var_name] = [f"{var_name}_{i}" for i in range(size)]
                     else:
                         # Normal dynamic allocation
                         self.current_block.statements.append(
@@ -2449,18 +2231,14 @@ class IRBuilder:
                     # Mark this variable as having been decomposed into individual qubits
                     if not hasattr(self, "decomposed_ancilla_arrays"):
                         self.decomposed_ancilla_arrays = {}
-                    self.decomposed_ancilla_arrays[var_name] = [
-                        f"{var_name}_{i}" for i in range(size)
-                    ]
+                    self.decomposed_ancilla_arrays[var_name] = [f"{var_name}_{i}" for i in range(size)]
 
                     # Add a function to reconstruct the array when needed for function calls
                     # This creates: c_a = array(c_a_0, c_a_1, c_a_2)
                     self.current_block.statements.append(
                         Comment(f"# Reconstruct {var_name} array for function calls"),
                     )
-                    array_construction_args = [
-                        VariableRef(f"{var_name}_{i}") for i in range(size)
-                    ]
+                    array_construction_args = [VariableRef(f"{var_name}_{i}") for i in range(size)]
                     reconstruct_expr = FunctionCall(
                         func_name="array",
                         args=array_construction_args,
@@ -2477,10 +2255,7 @@ class IRBuilder:
                     self.reconstructed_arrays.add(var_name)
                 else:
                     # Check if this ancilla array was already decomposed into individual qubits
-                    if (
-                        hasattr(self, "decomposed_ancilla_arrays")
-                        and var_name in self.decomposed_ancilla_arrays
-                    ):
+                    if hasattr(self, "decomposed_ancilla_arrays") and var_name in self.decomposed_ancilla_arrays:
                         # Skip array creation - individual qubits were already created
                         qubit_list = ", ".join(self.decomposed_ancilla_arrays[var_name])
                         comment_text = f"# {var_name} already decomposed into individual qubits: {qubit_list}"
@@ -2655,11 +2430,7 @@ class IRBuilder:
                             subscripted_arrays.add(array_name)
                         # Also check for register-wide operations that will be converted to loops
                         # (e.g., qubit.H(q) becomes for i in range(7): quantum.h(q[i]))
-                        elif (
-                            hasattr(qarg, "sym")
-                            and hasattr(qarg, "elems")
-                            and len(qarg.elems) > 1
-                        ):
+                        elif hasattr(qarg, "sym") and hasattr(qarg, "elems") and len(qarg.elems) > 1:
                             # This is a register-wide operation - will use subscripts
                             array_name = qarg.sym
                             subscripted_arrays.add(array_name)
@@ -2756,10 +2527,7 @@ class IRBuilder:
 
             # Add explicitly reset qubits (they're consumed but then reset, so should be returned)
             explicitly_reset = set()
-            if (
-                hasattr(self, "explicitly_reset_qubits")
-                and array_name in self.explicitly_reset_qubits
-            ):
+            if hasattr(self, "explicitly_reset_qubits") and array_name in self.explicitly_reset_qubits:
                 explicitly_reset = self.explicitly_reset_qubits[array_name]
 
             returned_elements[array_name] = unconsumed | explicitly_reset
@@ -2907,11 +2675,7 @@ class IRBuilder:
             def render(self, context):
                 _ = context  # Not used
                 # For single element unpacking, we need a trailing comma
-                target_str = (
-                    self.targets[0] + ","
-                    if len(self.targets) == 1
-                    else ", ".join(self.targets)
-                )
+                target_str = self.targets[0] + "," if len(self.targets) == 1 else ", ".join(self.targets)
                 return [f"{target_str} = {self.source}"]
 
         return ArrayUnpackStatement(element_names, array_name)
@@ -3131,8 +2895,7 @@ class IRBuilder:
                             )
                             self.current_block.statements.append(
                                 Comment(
-                                    "This will cause a MoveOutOfSubscriptError "
-                                    "during compilation",
+                                    "This will cause a MoveOutOfSubscriptError during compilation",
                                 ),
                             )
 
@@ -3168,10 +2931,7 @@ class IRBuilder:
             )
 
             # Check if this array was dynamically allocated
-            if (
-                hasattr(self, "dynamic_allocations")
-                and qreg.sym in self.dynamic_allocations
-            ):
+            if hasattr(self, "dynamic_allocations") and qreg.sym in self.dynamic_allocations:
                 # For dynamically allocated arrays, we need to handle this differently
                 # Generate individual measurements
                 stmts = []
@@ -3266,10 +3026,7 @@ class IRBuilder:
                 ):
                     # Check if qreg is using a fresh variable
                     for orig_name, fresh_name in self.refreshed_arrays.items():
-                        if (
-                            fresh_name in self.fresh_variables_to_track
-                            and orig_name == qreg.sym
-                        ):
+                        if fresh_name in self.fresh_variables_to_track and orig_name == qreg.sym:
                             # Mark this fresh variable as used
                             self.fresh_variables_to_track[fresh_name]["used"] = True
                             break
@@ -3285,15 +3042,11 @@ class IRBuilder:
 
                         # Check if this variable is remapped (e.g., function parameter)
                         is_function_param = False
-                        if (
-                            hasattr(self, "var_remapping")
-                            and creg_name in self.var_remapping
-                        ):
+                        if hasattr(self, "var_remapping") and creg_name in self.var_remapping:
                             creg_name = self.var_remapping[creg_name]
                             # Check if this is a function parameter (not in main)
                             is_function_param = (
-                                hasattr(self, "current_function_name")
-                                and self.current_function_name != "main"
+                                hasattr(self, "current_function_name") and self.current_function_name != "main"
                             )
 
                         # For function parameters (classical arrays), we need to update in-place
@@ -3309,10 +3062,7 @@ class IRBuilder:
 
                             for i in range(qreg.size):
                                 # Check if the quantum array was unpacked
-                                if (
-                                    hasattr(self, "unpacked_vars")
-                                    and qreg.sym in self.unpacked_vars
-                                ):
+                                if hasattr(self, "unpacked_vars") and qreg.sym in self.unpacked_vars:
                                     # Use unpacked variable
                                     element_names = self.unpacked_vars[qreg.sym]
                                     qubit_ref = VariableRef(element_names[i])
@@ -3405,11 +3155,7 @@ class IRBuilder:
                 target_ref = self._convert_bit_ref(cout, is_assignment_target=False)
 
             # Track resource consumption for linearity checking
-            if (
-                hasattr(qarg, "reg")
-                and hasattr(qarg.reg, "sym")
-                and hasattr(qarg, "index")
-            ):
+            if hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index"):
                 array_name = qarg.reg.sym
                 qubit_index = qarg.index
                 self.scope_manager.track_resource_usage(
@@ -3441,19 +3187,11 @@ class IRBuilder:
             # Check if this qubit is marked as needing replacement due to reuse
             # (e.g., unified analysis detected it's used again after consumption)
             needs_replacement_for_reuse = False
-            if (
-                self.unified_analysis
-                and hasattr(qarg, "reg")
-                and hasattr(qarg.reg, "sym")
-                and hasattr(qarg, "index")
-            ):
+            if self.unified_analysis and hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index"):
                 array_name = qarg.reg.sym
                 qubit_index = qarg.index
                 resource_plan = self.unified_analysis.get_plan(array_name)
-                if (
-                    resource_plan
-                    and qubit_index in resource_plan.elements_requiring_replacement
-                ):
+                if resource_plan and qubit_index in resource_plan.elements_requiring_replacement:
                     # CRITICAL: Check if the next operation is a Prep on this same qubit
                     # If so, skip measurement replacement - let Prep handle it
                     next_op_is_prep_on_same_qubit = False
@@ -3530,11 +3268,7 @@ class IRBuilder:
                     qubit_ref = self._convert_qubit_ref(qarg)
 
                     # Track resource consumption for each qubit
-                    if (
-                        hasattr(qarg, "reg")
-                        and hasattr(qarg.reg, "sym")
-                        and hasattr(qarg, "index")
-                    ):
+                    if hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index"):
                         array_name = qarg.reg.sym
                         qubit_index = qarg.index
                         self.scope_manager.track_resource_usage(
@@ -3570,11 +3304,7 @@ class IRBuilder:
                 target_ref = self._convert_bit_ref(cout, is_assignment_target=False)
 
                 # Track resource consumption for each qubit
-                if (
-                    hasattr(qarg, "reg")
-                    and hasattr(qarg.reg, "sym")
-                    and hasattr(qarg, "index")
-                ):
+                if hasattr(qarg, "reg") and hasattr(qarg.reg, "sym") and hasattr(qarg, "index"):
                     array_name = qarg.reg.sym
                     qubit_index = qarg.index
                     self.scope_manager.track_resource_usage(
@@ -3613,19 +3343,12 @@ class IRBuilder:
 
                 # Check if the original array was unpacked after remapping
                 # If it was, use the unpacked variables instead of array indexing
-                if (
-                    hasattr(self, "unpacked_vars")
-                    and array_name in self.unpacked_vars
-                    and hasattr(qarg, "index")
-                ):
+                if hasattr(self, "unpacked_vars") and array_name in self.unpacked_vars and hasattr(qarg, "index"):
                     element_names = self.unpacked_vars[array_name]
 
                     # CRITICAL: Check if we have index mapping for partial consumption
                     # If so, map original index to unpacked variable index
-                    if (
-                        hasattr(self, "index_mapping")
-                        and array_name in self.index_mapping
-                    ):
+                    if hasattr(self, "index_mapping") and array_name in self.index_mapping:
                         mapped_index = self.index_mapping[array_name].get(qarg.index)
                         if mapped_index is not None and mapped_index < len(
                             element_names,
@@ -3634,10 +3357,7 @@ class IRBuilder:
                             # Apply variable remapping if exists
                             var_name = self.variable_remapping.get(var_name, var_name)
                             return VariableRef(var_name)
-                    elif (
-                        qarg.index < len(element_names)
-                        and element_names[qarg.index] is not None
-                    ):
+                    elif qarg.index < len(element_names) and element_names[qarg.index] is not None:
                         # No index mapping - use direct indexing (full array return)
                         var_name = element_names[qarg.index]
                         # Apply variable remapping if exists
@@ -3654,11 +3374,7 @@ class IRBuilder:
 
             # Check if this array has been refreshed by function call
             # If it was refreshed AND then unpacked, use the unpacked variables
-            if (
-                hasattr(self, "refreshed_arrays")
-                and array_name in self.refreshed_arrays
-                and hasattr(qarg, "index")
-            ):
+            if hasattr(self, "refreshed_arrays") and array_name in self.refreshed_arrays and hasattr(qarg, "index"):
                 # Array was refreshed by function call
                 fresh_array_name = self.refreshed_arrays[array_name]
 
@@ -3670,10 +3386,7 @@ class IRBuilder:
 
                     # CRITICAL: Check if we have index mapping for partial consumption
                     # If so, map original index to unpacked variable index
-                    if (
-                        hasattr(self, "index_mapping")
-                        and array_name in self.index_mapping
-                    ):
+                    if hasattr(self, "index_mapping") and array_name in self.index_mapping:
                         # Map original index to position in returned array
                         mapped_index = self.index_mapping[array_name].get(qarg.index)
                         if mapped_index is not None and mapped_index < len(
@@ -3683,10 +3396,7 @@ class IRBuilder:
                             # Apply variable remapping if exists
                             var_name = self.variable_remapping.get(var_name, var_name)
                             return VariableRef(var_name)
-                    elif (
-                        qarg.index < len(element_names)
-                        and element_names[qarg.index] is not None
-                    ):
+                    elif qarg.index < len(element_names) and element_names[qarg.index] is not None:
                         # No index mapping - use direct indexing (full array return)
                         var_name = element_names[qarg.index]
                         # Apply variable remapping if exists
@@ -3694,15 +3404,9 @@ class IRBuilder:
                         return VariableRef(var_name)
 
                 # Also check if the fresh array itself was unpacked
-                if (
-                    hasattr(self, "unpacked_vars")
-                    and fresh_array_name in self.unpacked_vars
-                ):
+                if hasattr(self, "unpacked_vars") and fresh_array_name in self.unpacked_vars:
                     element_names = self.unpacked_vars[fresh_array_name]
-                    if (
-                        qarg.index < len(element_names)
-                        and element_names[qarg.index] is not None
-                    ):
+                    if qarg.index < len(element_names) and element_names[qarg.index] is not None:
                         var_name = element_names[qarg.index]
                         # Apply variable remapping if exists
                         var_name = self.variable_remapping.get(var_name, var_name)
@@ -3716,33 +3420,20 @@ class IRBuilder:
                 )
 
             # Check if this array has been unpacked (for ancilla arrays with @owned)
-            if (
-                hasattr(self, "unpacked_vars")
-                and array_name in self.unpacked_vars
-                and hasattr(qarg, "index")
-            ):
+            if hasattr(self, "unpacked_vars") and array_name in self.unpacked_vars and hasattr(qarg, "index"):
                 # This array was unpacked - use the unpacked variable directly
                 element_names = self.unpacked_vars[array_name]
-                if (
-                    qarg.index < len(element_names)
-                    and element_names[qarg.index] is not None
-                ):
+                if qarg.index < len(element_names) and element_names[qarg.index] is not None:
                     var_name = element_names[qarg.index]
                     # Apply variable remapping if exists
                     var_name = self.variable_remapping.get(var_name, var_name)
                     return VariableRef(var_name)
-                if (
-                    qarg.index < len(element_names)
-                    and element_names[qarg.index] is None
-                ):
+                if qarg.index < len(element_names) and element_names[qarg.index] is None:
                     # This element was consumed - this is an error case but let's fallback
                     pass
 
             # Check if this variable is mapped to a struct field (for @owned structs)
-            if (
-                hasattr(self, "struct_field_mapping")
-                and original_array in self.struct_field_mapping
-            ):
+            if hasattr(self, "struct_field_mapping") and original_array in self.struct_field_mapping:
                 struct_field_path = self.struct_field_mapping[original_array]
                 if "." in struct_field_path:
                     struct_name, field_name = struct_field_path.split(".", 1)
@@ -3813,9 +3504,7 @@ class IRBuilder:
             for prefix, info in self.struct_info.items():
                 if array_name in info["var_names"].values():
                     # This is a struct field
-                    suffix = next(
-                        k for k, v in info["var_names"].items() if v == array_name
-                    )
+                    suffix = next(k for k, v in info["var_names"].items() if v == array_name)
 
                     # Check if we're in a function that takes this struct as parameter
                     struct_param_name = prefix  # Default to the struct name
@@ -3823,10 +3512,7 @@ class IRBuilder:
                         struct_param_name = self.param_mapping[prefix]
 
                     # Check if the struct has a fresh version (after function calls)
-                    if (
-                        hasattr(self, "refreshed_arrays")
-                        and prefix in self.refreshed_arrays
-                    ):
+                    if hasattr(self, "refreshed_arrays") and prefix in self.refreshed_arrays:
                         struct_param_name = self.refreshed_arrays[prefix]
 
                     if hasattr(qarg, "index"):
@@ -3851,10 +3537,7 @@ class IRBuilder:
                 # Array Unpacking Pattern: use unpacked variable names instead of array indexing
                 # Check both the original name and any remapped name
                 check_names = [original_array]
-                if (
-                    hasattr(self, "var_remapping")
-                    and original_array in self.var_remapping
-                ):
+                if hasattr(self, "var_remapping") and original_array in self.var_remapping:
                     check_names.append(self.var_remapping[original_array])
                 if array_name != original_array:
                     check_names.append(array_name)
@@ -3878,10 +3561,7 @@ class IRBuilder:
                 resource_plan = None
                 if self.unified_analysis:
                     resource_plan = self.unified_analysis.get_plan(original_array)
-                if (
-                    resource_plan
-                    and qarg.index in resource_plan.elements_to_allocate_locally
-                ):
+                if resource_plan and qarg.index in resource_plan.elements_to_allocate_locally:
                     # This element should be allocated locally
                     local_var_name = f"{original_array}_{qarg.index}_local"
 
@@ -3921,9 +3601,7 @@ class IRBuilder:
                             if array_name in self.unpacked_vars and qarg.index < len(
                                 self.unpacked_vars[array_name],
                             ):
-                                unpacked_name = self.unpacked_vars[array_name][
-                                    qarg.index
-                                ]
+                                unpacked_name = self.unpacked_vars[array_name][qarg.index]
                             else:
                                 # Fallback to generating the name (should not normally happen)
                                 unpacked_name = self._get_unique_var_name(
@@ -3941,10 +3619,7 @@ class IRBuilder:
                 return ArrayAccess(array_name=array_name, index=qarg.index)
 
             # Full array reference - check if array was refreshed by function call
-            if (
-                hasattr(self, "refreshed_arrays")
-                and original_array in self.refreshed_arrays
-            ):
+            if hasattr(self, "refreshed_arrays") and original_array in self.refreshed_arrays:
                 # Use the fresh returned array name instead of the original
                 fresh_array_name = self.refreshed_arrays[original_array]
                 return VariableRef(fresh_array_name)
@@ -3956,10 +3631,7 @@ class IRBuilder:
             original_var = var_name
 
             # Check if this variable was refreshed by function call
-            if (
-                hasattr(self, "refreshed_arrays")
-                and original_var in self.refreshed_arrays
-            ):
+            if hasattr(self, "refreshed_arrays") and original_var in self.refreshed_arrays:
                 # Use the fresh returned variable name instead of the original
                 fresh_var_name = self.refreshed_arrays[original_var]
                 return VariableRef(fresh_var_name)
@@ -3989,11 +3661,7 @@ class IRBuilder:
 
             # Check if this array has been refreshed by function call
             # If so, prefer array indexing over stale unpacked variables
-            if (
-                hasattr(self, "refreshed_arrays")
-                and array_name in self.refreshed_arrays
-                and hasattr(carg, "index")
-            ):
+            if hasattr(self, "refreshed_arrays") and array_name in self.refreshed_arrays and hasattr(carg, "index"):
                 # Array was refreshed by function call - use the fresh returned name
                 fresh_array_name = self.refreshed_arrays[array_name]
                 return ArrayAccess(
@@ -4003,10 +3671,7 @@ class IRBuilder:
                 )
 
             # Check if this variable is mapped to a struct field (for @owned structs)
-            if (
-                hasattr(self, "struct_field_mapping")
-                and original_array in self.struct_field_mapping
-            ):
+            if hasattr(self, "struct_field_mapping") and original_array in self.struct_field_mapping:
                 struct_field_path = self.struct_field_mapping[original_array]
                 if "." in struct_field_path:
                     struct_name, field_name = struct_field_path.split(".", 1)
@@ -4040,10 +3705,7 @@ class IRBuilder:
                     for suffix, var_name in info["var_names"].items():
                         if var_name == original_array:
                             # Check if the struct has been decomposed and we should use decomposed variables
-                            if (
-                                hasattr(self, "var_remapping")
-                                and original_array in self.var_remapping
-                            ):
+                            if hasattr(self, "var_remapping") and original_array in self.var_remapping:
                                 # Struct was decomposed - use the decomposed variable directly
                                 decomposed_var = self.var_remapping[original_array]
                                 if hasattr(carg, "index"):
@@ -4055,23 +3717,14 @@ class IRBuilder:
 
                             # Check if we're in a function that receives the struct
                             struct_param_name = prefix
-                            if (
-                                hasattr(self, "param_mapping")
-                                and prefix in self.param_mapping
-                            ):
+                            if hasattr(self, "param_mapping") and prefix in self.param_mapping:
                                 struct_param_name = self.param_mapping[prefix]
 
                             # Check if we have decomposed variables for fresh structs
-                            if (
-                                hasattr(self, "refreshed_arrays")
-                                and prefix in self.refreshed_arrays
-                            ):
+                            if hasattr(self, "refreshed_arrays") and prefix in self.refreshed_arrays:
                                 fresh_struct_name = self.refreshed_arrays[prefix]
                                 # Check if this fresh struct was decomposed
-                                if (
-                                    hasattr(self, "decomposed_vars")
-                                    and fresh_struct_name in self.decomposed_vars
-                                ):
+                                if hasattr(self, "decomposed_vars") and fresh_struct_name in self.decomposed_vars:
                                     # Use the decomposed variable
                                     field_vars = self.decomposed_vars[fresh_struct_name]
                                     if suffix in field_vars:
@@ -4164,17 +3817,11 @@ class IRBuilder:
         args = []
         if hasattr(gate, "qargs") and gate.qargs:
             # Check if this is a single-qubit gate with multiple arguments
-            if (
-                gate_name in ["H", "X", "Y", "Z", "S", "SZ", "SZdg", "T", "Tdg", "Prep"]
-                and len(gate.qargs) > 1
-            ):
+            if gate_name in ["H", "X", "Y", "Z", "S", "SZ", "SZdg", "T", "Tdg", "Prep"] and len(gate.qargs) > 1:
                 # Single-qubit gate applied to multiple qubits
                 # Check if all qargs are consecutive array elements from the same array
                 if (
-                    all(
-                        hasattr(qarg, "reg") and hasattr(qarg, "index")
-                        for qarg in gate.qargs
-                    )
+                    all(hasattr(qarg, "reg") and hasattr(qarg, "index") for qarg in gate.qargs)
                     and len({qarg.reg.sym for qarg in gate.qargs}) == 1
                 ):
                     # All from same array - check if consecutive
@@ -4192,10 +3839,7 @@ class IRBuilder:
 
                         # Check if the array name needs remapping (for unpacked struct fields)
                         actual_array_name = array_name
-                        if (
-                            hasattr(self, "var_remapping")
-                            and array_name in self.var_remapping
-                        ):
+                        if hasattr(self, "var_remapping") and array_name in self.var_remapping:
                             actual_array_name = self.var_remapping[array_name]
 
                         array_ref = VariableRef(actual_array_name)
@@ -4248,9 +3892,7 @@ class IRBuilder:
                 # Return a block with all statements
                 return Block(statements=stmts)
             # Handle multi-qubit gates with tuple arguments
-            if gate_name in ["CX", "CY", "CZ"] and all(
-                isinstance(arg, tuple) and len(arg) == 2 for arg in gate.qargs
-            ):
+            if gate_name in ["CX", "CY", "CZ"] and all(isinstance(arg, tuple) and len(arg) == 2 for arg in gate.qargs):
                 # Multiple (control, target) pairs - generate multiple statements
                 stmts = []
                 for ctrl, tgt in gate.qargs:
@@ -4285,10 +3927,7 @@ class IRBuilder:
                         array_name = self.plan.renamed_variables[array_name]
 
                     # Check if this array name needs remapping (for unpacked struct fields)
-                    if (
-                        hasattr(self, "var_remapping")
-                        and array_name in self.var_remapping
-                    ):
+                    if hasattr(self, "var_remapping") and array_name in self.var_remapping:
                         array_name = self.var_remapping[array_name]
 
                     # Apply gate to each element
@@ -4306,10 +3945,7 @@ class IRBuilder:
                         # functional operations
                         stmts.append(Comment(f"Reset all qubits in {array_name}"))
 
-                        if (
-                            hasattr(self, "unpacked_vars")
-                            and array_name in self.unpacked_vars
-                        ):
+                        if hasattr(self, "unpacked_vars") and array_name in self.unpacked_vars:
                             # Use unpacked variables with functional assignments
                             # Note: Explicit reset tracking is done during consumption analysis
                             # in _track_consumed_qubits(), not here
@@ -4319,8 +3955,7 @@ class IRBuilder:
                                 # CRITICAL: Check if this qubit was just replaced by a measurement
                                 # If so, skip the entire Prep (qubit already fresh)
                                 if hasattr(self, "replaced_qubits") and (
-                                    array_name in self.replaced_qubits
-                                    and i in self.replaced_qubits[array_name]
+                                    array_name in self.replaced_qubits and i in self.replaced_qubits[array_name]
                                 ):
                                     # This qubit was just replaced by measurement - skip Prep
                                     self.replaced_qubits[array_name].discard(i)
@@ -4399,10 +4034,7 @@ class IRBuilder:
                         # and this array is a struct field that has been unpacked, we should use
                         # the unpacked variable name directly, not struct.field notation
                         use_unpacked = False
-                        if (
-                            hasattr(self, "var_remapping")
-                            and array_name in self.var_remapping
-                        ):
+                        if hasattr(self, "var_remapping") and array_name in self.var_remapping:
                             # Check if this is a struct field that has been unpacked
                             for prefix, info in self.struct_info.items():
                                 if array_name in info["var_names"].values() and hasattr(
@@ -4472,22 +4104,12 @@ class IRBuilder:
                                         if var_name == qarg.sym:
                                             # Check if we're in a function that receives the struct
                                             struct_param_name = prefix
-                                            if (
-                                                hasattr(self, "param_mapping")
-                                                and prefix in self.param_mapping
-                                            ):
-                                                struct_param_name = self.param_mapping[
-                                                    prefix
-                                                ]
+                                            if hasattr(self, "param_mapping") and prefix in self.param_mapping:
+                                                struct_param_name = self.param_mapping[prefix]
 
                                             # Check if the struct has a fresh version (after function calls)
-                                            if (
-                                                hasattr(self, "refreshed_arrays")
-                                                and prefix in self.refreshed_arrays
-                                            ):
-                                                struct_param_name = (
-                                                    self.refreshed_arrays[prefix]
-                                                )
+                                            if hasattr(self, "refreshed_arrays") and prefix in self.refreshed_arrays:
+                                                struct_param_name = self.refreshed_arrays[prefix]
 
                                             # Generate a loop for struct field access
                                             loop_var = "i"
@@ -4538,10 +4160,7 @@ class IRBuilder:
 
                         if not is_struct_field:
                             # Not in a struct - check if array was unpacked
-                            if (
-                                hasattr(self, "unpacked_vars")
-                                and array_name in self.unpacked_vars
-                            ):
+                            if hasattr(self, "unpacked_vars") and array_name in self.unpacked_vars:
                                 # Array was unpacked - UNROLL the loop to use unpacked elements directly
                                 # This avoids: unpack → reconstruct → loop → unpack (AlreadyUsedError)
                                 # Instead: unpack → apply to each element (no reconstruction needed)
@@ -4577,10 +4196,7 @@ class IRBuilder:
 
                                 # Check if the array name needs remapping (for unpacked struct fields)
                                 actual_array_name = array_name
-                                if (
-                                    hasattr(self, "var_remapping")
-                                    and array_name in self.var_remapping
-                                ):
+                                if hasattr(self, "var_remapping") and array_name in self.var_remapping:
                                     actual_array_name = self.var_remapping[array_name]
 
                                 elem_ref = ArrayAccess(
@@ -4766,10 +4382,7 @@ class IRBuilder:
     def _should_restructure_conditional_consumption(self, if_block) -> bool:
         """Check if this If block needs restructuring to avoid conditional consumption."""
         # Check if we're in a conditional consumption loop
-        if not (
-            hasattr(self, "_in_conditional_consumption_loop")
-            and self._in_conditional_consumption_loop
-        ):
+        if not (hasattr(self, "_in_conditional_consumption_loop") and self._in_conditional_consumption_loop):
             return False
 
         # Check if the If block contains function calls that consume variables
@@ -4807,10 +4420,7 @@ class IRBuilder:
             return None
 
         # Check if we have a pre-extracted condition for this If block
-        if (
-            hasattr(self, "pre_extracted_conditions")
-            and id(if_block) in self.pre_extracted_conditions
-        ):
+        if hasattr(self, "pre_extracted_conditions") and id(if_block) in self.pre_extracted_conditions:
             # Use the pre-extracted condition variable
             condition_var_name = self.pre_extracted_conditions[id(if_block)]
             condition = VariableRef(condition_var_name)
@@ -4910,8 +4520,7 @@ class IRBuilder:
             # Fallback to the conservative approach if we can't extract the condition
             self.current_block.statements.append(
                 Comment(
-                    "Fallback: If condition with struct field access "
-                    "simplified for @owned compatibility",
+                    "Fallback: If condition with struct field access simplified for @owned compatibility",
                 ),
             )
 
@@ -4933,9 +4542,7 @@ class IRBuilder:
         if not hasattr(self, "consumed_resources"):
             self.consumed_resources = {}
         for res_name, indices in self.consumed_resources.items():
-            consumed_before_if[res_name] = (
-                indices.copy() if isinstance(indices, set) else set(indices)
-            )
+            consumed_before_if[res_name] = indices.copy() if isinstance(indices, set) else set(indices)
 
         # Convert then block with scope tracking
         then_block = Block()
@@ -5004,10 +4611,7 @@ class IRBuilder:
                                         value=meas_expr,
                                     ),
                                 )
-                        elif (
-                            hasattr(self, "dynamic_allocations")
-                            and res_name in self.dynamic_allocations
-                        ):
+                        elif hasattr(self, "dynamic_allocations") and res_name in self.dynamic_allocations:
                             # For dynamic allocations, allocate a fresh qubit and measure it
                             # Always allocate a fresh qubit for consumption (for linearity balancing)
                             var_name = self._get_unique_var_name(res_name, idx)
@@ -5151,11 +4755,7 @@ class IRBuilder:
         if self._should_pre_extract_conditions(for_block) and hasattr(for_block, "ops"):
             # Find all If statements in the loop body and extract their conditions
             for op in for_block.ops:
-                if (
-                    type(op).__name__ == "If"
-                    and hasattr(op, "cond")
-                    and self._is_struct_field_access(op.cond)
-                ):
+                if type(op).__name__ == "If" and hasattr(op, "cond") and self._is_struct_field_access(op.cond):
                     condition_var = self._generate_condition_var_name(op.cond)
                     if condition_var:
                         # Generate the extraction statement before the loop
@@ -5248,11 +4848,7 @@ class IRBuilder:
             right = self._convert_condition(cond.right)
 
             # Optimize boolean comparisons to 1
-            if (
-                isinstance(right, Literal)
-                and right.value == 1
-                and type(cond.left).__name__ == "Bit"
-            ):
+            if isinstance(right, Literal) and right.value == 1 and type(cond.left).__name__ == "Bit":
                 # Just return the boolean value itself
                 return left
 
@@ -5311,9 +4907,7 @@ class IRBuilder:
         # Check if conditions have already been pre-extracted at the function level
         # If not, extract them here (for non-function contexts)
         extracted_conditions = []
-        already_extracted = (
-            hasattr(self, "pre_extracted_conditions") and self.pre_extracted_conditions
-        )
+        already_extracted = hasattr(self, "pre_extracted_conditions") and self.pre_extracted_conditions
 
         should_extract = (
             not already_extracted
@@ -5325,10 +4919,7 @@ class IRBuilder:
             for op in repeat_block.ops:
                 if type(op).__name__ == "If" and hasattr(op, "cond"):
                     # Check if this condition was already pre-extracted
-                    if (
-                        hasattr(self, "pre_extracted_conditions")
-                        and id(op) in self.pre_extracted_conditions
-                    ):
+                    if hasattr(self, "pre_extracted_conditions") and id(op) in self.pre_extracted_conditions:
                         continue  # Skip - already handled
 
                     if self._is_struct_field_access(op.cond):
@@ -5508,11 +5099,7 @@ class IRBuilder:
             right = cond.right
 
             # Check if left side is a struct field access
-            if (
-                hasattr(left, "reg")
-                and hasattr(left.reg, "sym")
-                and hasattr(left, "index")
-            ):
+            if hasattr(left, "reg") and hasattr(left.reg, "sym") and hasattr(left, "index"):
                 array_name = left.reg.sym
                 index = left.index
 
@@ -5528,11 +5115,7 @@ class IRBuilder:
 
                         if field_name:
                             # Extract the comparison value
-                            compare_value = (
-                                getattr(right, "val", right)
-                                if hasattr(right, "val")
-                                else right
-                            )
+                            compare_value = getattr(right, "val", right) if hasattr(right, "val") else right
 
                             return {
                                 "var_name": f"{field_name}_{index}_extracted",
@@ -5551,11 +5134,7 @@ class IRBuilder:
             # For EQUIV(c_verify_prep[0], 1), convert the left side (c_verify_prep[0])
             left = cond.left
 
-            if (
-                hasattr(left, "reg")
-                and hasattr(left.reg, "sym")
-                and hasattr(left, "index")
-            ):
+            if hasattr(left, "reg") and hasattr(left.reg, "sym") and hasattr(left, "index"):
                 array_name = left.reg.sym
                 index = left.index
 
@@ -5571,10 +5150,7 @@ class IRBuilder:
 
                         if field_name:
                             # Check if the struct has been decomposed and we should use decomposed variables
-                            if (
-                                hasattr(self, "var_remapping")
-                                and array_name in self.var_remapping
-                            ):
+                            if hasattr(self, "var_remapping") and array_name in self.var_remapping:
                                 # Struct was decomposed - use the decomposed variable directly
                                 decomposed_var = self.var_remapping[array_name]
                                 return ArrayAccess(
@@ -5584,27 +5160,18 @@ class IRBuilder:
 
                             # Get the struct parameter name (e.g., 'c')
                             struct_param_name = prefix
-                            if (
-                                hasattr(self, "param_mapping")
-                                and prefix in self.param_mapping
-                            ):
+                            if hasattr(self, "param_mapping") and prefix in self.param_mapping:
                                 struct_param_name = self.param_mapping[prefix]
 
                             # Check if we have fresh structs - use them directly
-                            if (
-                                hasattr(self, "refreshed_arrays")
-                                and prefix in self.refreshed_arrays
-                            ):
+                            if hasattr(self, "refreshed_arrays") and prefix in self.refreshed_arrays:
                                 fresh_struct_name = self.refreshed_arrays[prefix]
                                 struct_param_name = fresh_struct_name
                                 # Don't replace field access for fresh structs
 
                             # Create: c.verify_prep[0] - but check for decomposed variables first
                             # Check if we have decomposed variables for this struct
-                            if (
-                                hasattr(self, "decomposed_vars")
-                                and struct_param_name in self.decomposed_vars
-                            ):
+                            if hasattr(self, "decomposed_vars") and struct_param_name in self.decomposed_vars:
                                 field_vars = self.decomposed_vars[struct_param_name]
                                 if field_name in field_vars:
                                     # Use the decomposed variable instead
@@ -5626,10 +5193,7 @@ class IRBuilder:
 
     def _function_has_owned_struct_params(self, params) -> bool:
         """Check if function has @owned struct parameters."""
-        return any(
-            "@owned" in param_type and param_name in self.struct_info
-            for param_name, param_type in params
-        )
+        return any("@owned" in param_type and param_name in self.struct_info for param_name, param_type in params)
 
     def _has_function_calls_before_loops(self, block) -> bool:
         """Check if the function has function calls before loops.
@@ -5728,11 +5292,7 @@ class IRBuilder:
         # Check if the loop contains If statements with struct field access
         if hasattr(repeat_block, "ops"):
             for op in repeat_block.ops:
-                if (
-                    type(op).__name__ == "If"
-                    and hasattr(op, "cond")
-                    and self._is_struct_field_access(op.cond)
-                ):
+                if type(op).__name__ == "If" and hasattr(op, "cond") and self._is_struct_field_access(op.cond):
                     return True
 
         return False
@@ -5761,11 +5321,7 @@ class IRBuilder:
         # Check if the loop contains If statements with struct field access
         if hasattr(for_block, "ops"):
             for op in for_block.ops:
-                if (
-                    type(op).__name__ == "If"
-                    and hasattr(op, "cond")
-                    and self._is_struct_field_access(op.cond)
-                ):
+                if type(op).__name__ == "If" and hasattr(op, "cond") and self._is_struct_field_access(op.cond):
                     return True
 
         return False
@@ -5794,9 +5350,7 @@ class IRBuilder:
                                 # Check if array_name matches fresh struct field pattern
                                 for field_name in info["var_names"].values():
                                     # The condition might be accessing fresh_struct.field
-                                    if (
-                                        array_name == field_name
-                                    ):  # Original field being accessed
+                                    if array_name == field_name:  # Original field being accessed
                                         return True
         elif cond_type in ["AND", "OR", "XOR", "NOT"]:
             # Check both sides for binary ops
@@ -5813,11 +5367,7 @@ class IRBuilder:
 
         if cond_type == "EQUIV" and hasattr(cond, "left"):
             left = cond.left
-            if (
-                hasattr(left, "reg")
-                and hasattr(left.reg, "sym")
-                and hasattr(left, "index")
-            ):
+            if hasattr(left, "reg") and hasattr(left.reg, "sym") and hasattr(left, "index"):
                 array_name = left.reg.sym
                 index = left.index
 
@@ -5829,11 +5379,7 @@ class IRBuilder:
                             if var_name == array_name:
                                 return f"{suffix}_{index}_condition"
         elif cond_type == "Bit":
-            if (
-                hasattr(cond, "reg")
-                and hasattr(cond.reg, "sym")
-                and hasattr(cond, "index")
-            ):
+            if hasattr(cond, "reg") and hasattr(cond.reg, "sym") and hasattr(cond, "index"):
                 array_name = cond.reg.sym
                 index = cond.index
 
@@ -6022,12 +5568,7 @@ class IRBuilder:
     def _elements_equal(self, elem1, elem2):
         """Check if two elements refer to the same qubit."""
         # Both are register[index] references
-        if (
-            hasattr(elem1, "reg")
-            and hasattr(elem1, "index")
-            and hasattr(elem2, "reg")
-            and hasattr(elem2, "index")
-        ):
+        if hasattr(elem1, "reg") and hasattr(elem1, "index") and hasattr(elem2, "reg") and hasattr(elem2, "index"):
             return elem1.reg.sym == elem2.reg.sym and elem1.index == elem2.index
         # Both are full register references
         if hasattr(elem1, "sym") and hasattr(elem2, "sym"):
@@ -6078,9 +5619,7 @@ class IRBuilder:
                 cycle.append(current)
                 current = permutation_map.get(current, current)
 
-            if len(cycle) > 0 and (
-                len(cycle) > 1 or cycle[0] != permutation_map.get(cycle[0], cycle[0])
-            ):
+            if len(cycle) > 0 and (len(cycle) > 1 or cycle[0] != permutation_map.get(cycle[0], cycle[0])):
                 cycles.append(cycle)
 
         return cycles
@@ -6337,22 +5876,15 @@ class IRBuilder:
                     if prefix not in struct_args:
                         # Check if this struct has been refreshed (e.g., from a previous function call)
                         struct_to_use = prefix
-                        if (
-                            hasattr(self, "refreshed_arrays")
-                            and prefix in self.refreshed_arrays
-                        ):
+                        if hasattr(self, "refreshed_arrays") and prefix in self.refreshed_arrays:
                             # Use the refreshed name (e.g., c_fresh instead of c)
                             struct_to_use = self.refreshed_arrays[prefix]
 
                         # Check if this is a struct that was decomposed and needs reconstruction
                         # This includes @owned structs and fresh structs that were decomposed for field access
                         needs_reconstruction = False
-                        struct_was_decomposed = (
-                            struct_to_use in self.decomposed_vars
-                            or (
-                                prefix in self.decomposed_vars
-                                and struct_to_use == prefix
-                            )
+                        struct_was_decomposed = struct_to_use in self.decomposed_vars or (
+                            prefix in self.decomposed_vars and struct_to_use == prefix
                         )
                         if hasattr(self, "decomposed_vars") and struct_was_decomposed:
                             # Check if the struct we want to use was decomposed
@@ -6391,15 +5923,9 @@ class IRBuilder:
                                     field_var = f"{prefix}_{suffix}"
 
                                     # Check if we have a fresh version of this field variable
-                                    if (
-                                        hasattr(self, "refreshed_arrays")
-                                        and field_var in self.refreshed_arrays
-                                    ):
+                                    if hasattr(self, "refreshed_arrays") and field_var in self.refreshed_arrays:
                                         field_var = self.refreshed_arrays[field_var]
-                                    elif (
-                                        hasattr(self, "var_remapping")
-                                        and field_var in self.var_remapping
-                                    ):
+                                    elif hasattr(self, "var_remapping") and field_var in self.var_remapping:
                                         field_var = self.var_remapping[field_var]
 
                                     constructor_args.append(VariableRef(field_var))
@@ -6432,9 +5958,7 @@ class IRBuilder:
         # Black Box Pattern: Pass complete global arrays to maintain SLR semantics
         for var in sorted(deps["quantum"] & deps["reads"]):
             # Check if this is an ancilla that was excluded from structs
-            is_excluded_ancilla = (
-                hasattr(self, "ancilla_qubits") and var in self.ancilla_qubits
-            )
+            is_excluded_ancilla = hasattr(self, "ancilla_qubits") and var in self.ancilla_qubits
 
             # Skip if this variable is part of a struct UNLESS it's an excluded ancilla
             if var in vars_in_structs and not is_excluded_ancilla:
@@ -6448,26 +5972,14 @@ class IRBuilder:
             # For procedural functions (borrow), we can't use unpacked arrays - they need the original array
             # For consuming functions (@owned), reconstruct the array from unpacked elements
             # Also handle dynamically allocated arrays and decomposed ancilla arrays
-            if (
-                hasattr(self, "decomposed_ancilla_arrays")
-                and var in self.decomposed_ancilla_arrays
-            ):
+            if hasattr(self, "decomposed_ancilla_arrays") and var in self.decomposed_ancilla_arrays:
                 # Check if the array has already been reconstructed into a variable
-                if (
-                    hasattr(self, "reconstructed_arrays")
-                    and var in self.reconstructed_arrays
-                ):
+                if hasattr(self, "reconstructed_arrays") and var in self.reconstructed_arrays:
                     # Check if it was unpacked AFTER reconstruction
-                    if (
-                        hasattr(self, "unpacked_vars")
-                        and actual_var in self.unpacked_vars
-                    ):
+                    if hasattr(self, "unpacked_vars") and actual_var in self.unpacked_vars:
                         # Array was unpacked after reconstruction - need to reconstruct again
                         # First check if there's a refreshed version from a previous function call
-                        if (
-                            hasattr(self, "refreshed_arrays")
-                            and var in self.refreshed_arrays
-                        ):
+                        if hasattr(self, "refreshed_arrays") and var in self.refreshed_arrays:
                             refreshed_name = self.refreshed_arrays[var]
                             args.append(VariableRef(refreshed_name))
                             quantum_args.append(var)
@@ -6486,10 +5998,7 @@ class IRBuilder:
                 else:
                     # This array was decomposed into individual qubits
                     # Check if there's a refreshed version from a previous function call
-                    if (
-                        hasattr(self, "refreshed_arrays")
-                        and var in self.refreshed_arrays
-                    ):
+                    if hasattr(self, "refreshed_arrays") and var in self.refreshed_arrays:
                         # Use the refreshed array from previous function call
                         refreshed_name = self.refreshed_arrays[var]
                         args.append(VariableRef(refreshed_name))
@@ -6502,9 +6011,7 @@ class IRBuilder:
                         )
                         args.append(array_construction)
                         quantum_args.append(var)
-            elif (
-                hasattr(self, "dynamic_allocations") and var in self.dynamic_allocations
-            ):
+            elif hasattr(self, "dynamic_allocations") and var in self.dynamic_allocations:
                 # Dynamically allocated - check if there's a refreshed version first
                 if hasattr(self, "refreshed_arrays") and var in self.refreshed_arrays:
                     # Use the refreshed array from previous function call
@@ -6536,14 +6043,11 @@ class IRBuilder:
                 element_names = self.unpacked_vars[actual_var]
 
                 # Check if we have partial consumption (via index_mapping)
-                has_partial_consumption = (
-                    hasattr(self, "index_mapping") and actual_var in self.index_mapping
-                )
+                has_partial_consumption = hasattr(self, "index_mapping") and actual_var in self.index_mapping
 
                 # Check if this was unpacked from a parameter
                 is_parameter_unpacked = (
-                    hasattr(self, "parameter_unpacked_arrays")
-                    and actual_var in self.parameter_unpacked_arrays
+                    hasattr(self, "parameter_unpacked_arrays") and actual_var in self.parameter_unpacked_arrays
                 )
 
                 # Use the variable directly if:
@@ -6569,10 +6073,7 @@ class IRBuilder:
                     if hasattr(self, "parameter_unpacked_arrays"):
                         self.parameter_unpacked_arrays.discard(actual_var)
                     del self.unpacked_vars[actual_var]
-                    if (
-                        hasattr(self, "index_mapping")
-                        and actual_var in self.index_mapping
-                    ):
+                    if hasattr(self, "index_mapping") and actual_var in self.index_mapping:
                         del self.index_mapping[actual_var]
             else:
                 # Array is already in the correct global form
@@ -6633,10 +6134,7 @@ class IRBuilder:
         is_procedural_function = not has_live_qubits
 
         # HYBRID APPROACH: Use smart detection for consistent function calls
-        if (
-            hasattr(self, "function_return_types")
-            and func_name in self.function_return_types
-        ):
+        if hasattr(self, "function_return_types") and func_name in self.function_return_types:
             func_return_type = self.function_return_types[func_name]
             if func_return_type == "None":
                 is_procedural_function = True
@@ -6668,16 +6166,10 @@ class IRBuilder:
             try:
                 sig = inspect.signature(block.__class__.__init__)
                 return_annotation = sig.return_annotation
-                if (
-                    return_annotation is None
-                    or return_annotation is type(None)
-                    or str(return_annotation) == "None"
-                ):
+                if return_annotation is None or return_annotation is type(None) or str(return_annotation) == "None":
                     is_procedural_function = True
                 else:
-                    is_procedural_function = (
-                        False  # Has return annotation, not procedural
-                    )
+                    is_procedural_function = False  # Has return annotation, not procedural
             except (ValueError, TypeError, AttributeError):
                 # Default to procedural if can't inspect signature
                 # ValueError: signature cannot be determined
@@ -6692,9 +6184,7 @@ class IRBuilder:
         is_main_context = self.current_function_name == "main"
         # Functions consume quantum arrays if they have quantum params AND the called function is not procedural
         # This supports the nested blocks pattern where non-procedural functions return live qubits
-        function_consumes = has_quantum_params and (
-            is_main_context or not is_procedural_function
-        )
+        function_consumes = has_quantum_params and (is_main_context or not is_procedural_function)
 
         # Force function consumption if multiple quantum args (likely tuple return)
         if has_quantum_params and len(quantum_args) > 1:
@@ -6726,15 +6216,9 @@ class IRBuilder:
         # Use natural SLR semantics: arrays are global resources modified in-place
         # Functions that use unpacking still return arrays at boundaries to maintain this illusion
         # Keep track of struct arguments before filtering
-        struct_args = [
-            arg
-            for arg in quantum_args
-            if isinstance(arg, str) and arg in self.struct_info
-        ]
+        struct_args = [arg for arg in quantum_args if isinstance(arg, str) and arg in self.struct_info]
 
-        quantum_args = [
-            arg for arg in quantum_args if isinstance(arg, str)
-        ]  # Filter for array names
+        quantum_args = [arg for arg in quantum_args if isinstance(arg, str)]  # Filter for array names
 
         # Check if we're returning structs (already collected above)
 
@@ -6757,10 +6241,7 @@ class IRBuilder:
                     actual_returns_tuple = (
                         "tuple[" in return_str.lower()
                         or "Tuple[" in return_str
-                        or (
-                            hasattr(return_annotation, "__origin__")
-                            and return_annotation.__origin__ is tuple
-                        )
+                        or (hasattr(return_annotation, "__origin__") and return_annotation.__origin__ is tuple)
                     )
             except (ValueError, TypeError, AttributeError):
                 # Can't inspect signature, will use APPROACH 2
@@ -6801,10 +6282,7 @@ class IRBuilder:
 
         # Also include structs that have live quantum fields
         for struct_arg in struct_args:
-            if (
-                struct_arg not in returned_quantum_args
-                and struct_arg in self.struct_info
-            ):
+            if struct_arg not in returned_quantum_args and struct_arg in self.struct_info:
                 # Check if struct has any live quantum fields
                 struct_info = self.struct_info[struct_arg]
                 has_live_fields = False
@@ -6864,27 +6342,17 @@ class IRBuilder:
 
                     # Procedural function - mark all args as consumed
                     # Functional function - only mark if not returned
-                    should_mark_consumed = (
-                        True
-                        if is_procedural_function
-                        else arg not in returned_quantum_args
-                    )
+                    should_mark_consumed = True if is_procedural_function else arg not in returned_quantum_args
 
                     if should_mark_consumed:
                         # This array was consumed (not returned)
                         # Track the actual array name that was passed (might be reconstructed or fresh)
                         # Check if there's a fresh/refreshed version of this array
                         actual_name_to_mark = arg
-                        if (
-                            hasattr(self, "refreshed_arrays")
-                            and arg in self.refreshed_arrays
-                        ):
+                        if hasattr(self, "refreshed_arrays") and arg in self.refreshed_arrays:
                             # Use the refreshed/fresh name (e.g., c_d_fresh instead of c_d)
                             actual_name_to_mark = self.refreshed_arrays[arg]
-                        elif (
-                            hasattr(self, "array_remapping")
-                            and arg in self.array_remapping
-                        ):
+                        elif hasattr(self, "array_remapping") and arg in self.array_remapping:
                             # Use the remapped name
                             actual_name_to_mark = self.array_remapping[arg]
 
@@ -6944,11 +6412,7 @@ class IRBuilder:
                 name = returned_quantum_args[0]
 
                 # Handle both reconstructed array names (_q_array) and original names (q)
-                base_name = (
-                    name[1:].replace("_array", "")
-                    if name.startswith("_") and name.endswith("_array")
-                    else name
-                )
+                base_name = name[1:].replace("_array", "") if name.startswith("_") and name.endswith("_array") else name
 
                 # CRITICAL: If the variable was already unpacked (parameter unpacked at function start),
                 # we cannot assign to the same name - need a fresh variable name
@@ -6962,10 +6426,7 @@ class IRBuilder:
                     # Variable was unpacked - use fresh name for assignment
                     fresh_name = self._get_unique_var_name(f"{name}_fresh")
                     # Clear the unpacked tracking if still present
-                    if (
-                        hasattr(self, "unpacked_vars")
-                        and base_name in self.unpacked_vars
-                    ):
+                    if hasattr(self, "unpacked_vars") and base_name in self.unpacked_vars:
                         del self.unpacked_vars[base_name]
                 else:
                     # Variable wasn't unpacked - can assign to same name (shadows old binding)
@@ -7020,8 +6481,7 @@ class IRBuilder:
                         # Comment explaining why we can't re-unpack
                         statements.append(
                             Comment(
-                                "Note: Cannot use unpacked variables after calling "
-                                "function with @owned struct",
+                                "Note: Cannot use unpacked variables after calling function with @owned struct",
                             ),
                         )
 
@@ -7192,14 +6652,9 @@ class IRBuilder:
                         else:
                             self._unpack_counter[name] += 1
                         unpack_suffix = (
-                            f"_ret{self._unpack_counter[name]}"
-                            if self._unpack_counter[name] > 0
-                            else "_ret"
+                            f"_ret{self._unpack_counter[name]}" if self._unpack_counter[name] > 0 else "_ret"
                         )
-                        element_names = [
-                            f"{name}_{i}{unpack_suffix}"
-                            for i in range(return_array_size)
-                        ]
+                        element_names = [f"{name}_{i}{unpack_suffix}" for i in range(return_array_size)]
 
                         # Add unpacking statement using ArrayUnpack IR class
                         from pecos.slr.gen_codes.guppy.ir import ArrayUnpack
@@ -7224,8 +6679,7 @@ class IRBuilder:
                                 self.index_mapping = {}
                             # Map original index to position in returned/unpacked array
                             self.index_mapping[name] = {
-                                orig_idx: new_idx
-                                for new_idx, orig_idx in enumerate(original_indices)
+                                orig_idx: new_idx for new_idx, orig_idx in enumerate(original_indices)
                             }
 
                         # Update context
@@ -7256,10 +6710,7 @@ class IRBuilder:
                             "after function call - array size may have changed",
                         ),
                     )
-                elif (
-                    name in self.plan.arrays_to_unpack
-                    and name not in self.unpacked_vars
-                ):
+                elif name in self.plan.arrays_to_unpack and name not in self.unpacked_vars:
                     # After function calls, don't automatically re-unpack arrays
                     # The array may have changed size and old unpacked variables are stale
                     # Instead, use array indexing for future references
@@ -7305,9 +6756,7 @@ class IRBuilder:
                             # For loops and repeated calls, use unique suffixes
                             if base_name in self._fresh_var_counter:
                                 self._fresh_var_counter[base_name] += 1
-                                unique_name = (
-                                    f"{base_name}_{self._fresh_var_counter[base_name]}"
-                                )
+                                unique_name = f"{base_name}_{self._fresh_var_counter[base_name]}"
                             else:
                                 self._fresh_var_counter[base_name] = 0
                                 unique_name = base_name
@@ -7325,10 +6774,7 @@ class IRBuilder:
                         # Check if this variable is a borrowed parameter (not @owned)
                         # If so, we need to use a different name to avoid BorrowShadowedError
                         is_borrowed = False
-                        if (
-                            hasattr(self, "current_function_name")
-                            and self.current_function_name
-                        ):
+                        if hasattr(self, "current_function_name") and self.current_function_name:
                             # Check if this is a function parameter
                             func_info = self.function_info.get(
                                 self.current_function_name,
@@ -7355,22 +6801,12 @@ class IRBuilder:
                             # - AlreadyUsedError (if unpacked before call)
                             # - BorrowShadowedError (if borrowed parameter)
                             # Check if we're in a loop - if so, reuse the existing variable name
-                            in_loop = (
-                                hasattr(self, "scope_manager")
-                                and self.scope_manager.is_in_loop()
-                            )
+                            in_loop = hasattr(self, "scope_manager") and self.scope_manager.is_in_loop()
 
-                            if (
-                                in_loop
-                                and hasattr(self, "refreshed_arrays")
-                                and arg in self.refreshed_arrays
-                            ):
+                            if in_loop and hasattr(self, "refreshed_arrays") and arg in self.refreshed_arrays:
                                 # In a loop, reuse the existing refreshed name to avoid undefined variable errors
                                 fresh_name = self.refreshed_arrays[arg]
-                            elif (
-                                hasattr(self, "refreshed_arrays")
-                                and arg in self.refreshed_arrays
-                            ):
+                            elif hasattr(self, "refreshed_arrays") and arg in self.refreshed_arrays:
                                 # Not in a loop but already have a returned version, need a new unique name
                                 if not hasattr(self, "_returned_var_counter"):
                                     self._returned_var_counter = {}
@@ -7476,10 +6912,7 @@ class IRBuilder:
                         # Be precise: only match if the variable is actually a renamed version of the struct
                         for key, info in self.struct_info.items():
                             # Check for exact pattern: key_suffix (e.g., c_fresh)
-                            if (
-                                var_name == f"{key}_fresh"
-                                or var_name == f"{key}_returned"
-                            ):
+                            if var_name == f"{key}_fresh" or var_name == f"{key}_returned":
                                 struct_info = info
                                 break
 
@@ -7532,10 +6965,7 @@ class IRBuilder:
 
                     # Check if we're in a conditional within a loop
                     # This requires special handling to avoid linearity violations
-                    (
-                        hasattr(self, "scope_manager")
-                        and self.scope_manager.is_in_conditional_within_loop()
-                    )
+                    (hasattr(self, "scope_manager") and self.scope_manager.is_in_conditional_within_loop())
 
                     # Update variable mapping so future references use the fresh names
                     # BUT only for functions that truly "refresh" the same arrays
@@ -7547,17 +6977,13 @@ class IRBuilder:
                     ]
 
                     # Check if this function actually refreshes arrays (returns processed versions of inputs)
-                    should_refresh_arrays = any(
-                        pattern in func_name.lower() for pattern in refresh_functions
-                    )
+                    should_refresh_arrays = any(pattern in func_name.lower() for pattern in refresh_functions)
 
                     # Additional check: if function has @owned parameters and returns fresh variables,
                     # it's likely refreshing the arrays
                     if not should_refresh_arrays and use_fresh_variables:
                         # Check if any fresh target names contain "fresh" - indicates array refreshing
-                        has_fresh_returns = any(
-                            "fresh" in target for target in fresh_targets
-                        )
+                        has_fresh_returns = any("fresh" in target for target in fresh_targets)
                         if has_fresh_returns:
                             # Most quantum functions that return "fresh" variables are refreshing arrays
                             # This includes verification functions that return processed versions of inputs
@@ -7567,25 +6993,17 @@ class IRBuilder:
                         for i, original_name in enumerate(quantum_args):
                             if i < len(fresh_targets):
                                 fresh_name = fresh_targets[i]
-                                if (
-                                    fresh_name != original_name
-                                ):  # Only map if actually fresh
+                                if fresh_name != original_name:  # Only map if actually fresh
                                     # Check if this is a conditional fresh variable (ending in _1)
                                     if fresh_name.endswith("_1"):
                                         # Don't update mapping for conditional variables to avoid errors
                                         # Conditional consumption in loops is fundamentally incompatible
                                         # with guppylang's linearity requirements
-                                        base_fresh_name = fresh_name[
-                                            :-2
-                                        ]  # Remove _1 suffix
-                                        self.conditional_fresh_vars[base_fresh_name] = (
-                                            fresh_name
-                                        )
+                                        base_fresh_name = fresh_name[:-2]  # Remove _1 suffix
+                                        self.conditional_fresh_vars[base_fresh_name] = fresh_name
                                     elif original_name not in self.refreshed_arrays:
                                         # Safe to update - first assignment
-                                        self.refreshed_arrays[original_name] = (
-                                            fresh_name
-                                        )
+                                        self.refreshed_arrays[original_name] = fresh_name
                                         # Track which function refreshed this array and its position in return tuple
                                         if not hasattr(self, "refreshed_by_function"):
                                             self.refreshed_by_function = {}
@@ -7661,17 +7079,13 @@ class IRBuilder:
                     ):
                         struct_info = self.struct_info[array_name]
                         # Check if any of the struct's fields are in var_remapping
-                        needs_update = any(
-                            var in self.var_remapping
-                            for var in struct_info["var_names"].values()
-                        )
+                        needs_update = any(var in self.var_remapping for var in struct_info["var_names"].values())
 
                         if needs_update:
                             # Cannot re-unpack - invalidate the unpacked variables
                             statements.append(
                                 Comment(
-                                    "Note: Cannot use unpacked variables after calling "
-                                    "function with @owned struct",
+                                    "Note: Cannot use unpacked variables after calling function with @owned struct",
                                 ),
                             )
 
@@ -7859,10 +7273,7 @@ class IRBuilder:
                     if attr and hasattr(attr, "size") and hasattr(attr, "sym"):
                         array_sizes[attr.sym] = attr.size
                         # Add to all_quantum_vars if it's a quantum register
-                        if (
-                            hasattr(attr, "__class__")
-                            and "QReg" in attr.__class__.__name__
-                        ):
+                        if hasattr(attr, "__class__") and "QReg" in attr.__class__.__name__:
                             all_quantum_vars.add(attr.sym)
                 except (AttributeError, TypeError):
                     # Ignore attributes without expected structure
@@ -7893,15 +7304,10 @@ class IRBuilder:
                 # Any indices not consumed OR explicitly reset are live
                 # Explicitly reset qubits are consumed by measurement but then recreated by Prep
                 explicitly_reset_indices = set()
-                if (
-                    hasattr(self, "explicitly_reset_qubits")
-                    and var_name in self.explicitly_reset_qubits
-                ):
+                if hasattr(self, "explicitly_reset_qubits") and var_name in self.explicitly_reset_qubits:
                     explicitly_reset_indices = self.explicitly_reset_qubits[var_name]
 
-                live_indices = (
-                    set(range(size)) - consumed_indices
-                ) | explicitly_reset_indices
+                live_indices = (set(range(size)) - consumed_indices) | explicitly_reset_indices
                 if live_indices:
                     live_qubits[var_name] = live_indices
 
@@ -7950,9 +7356,7 @@ class IRBuilder:
                     return True
 
         # Functions with quantum parameters but no live qubits are good candidates for procedural
-        has_quantum_params = any(
-            "array[quantum.qubit," in param[1] for param in params if len(param) == 2
-        )
+        has_quantum_params = any("array[quantum.qubit," in param[1] for param in params if len(param) == 2)
 
         if has_quantum_params and not has_live_qubits:
             # This is a terminal function - good candidate for procedural
@@ -7968,9 +7372,7 @@ class IRBuilder:
                     op_name = op.__class__.__name__
                     if "Measure" in op_name:
                         measurement_count += 1
-                    elif hasattr(op, "name") or any(
-                        gate in str(op) for gate in ["H", "X", "Y", "Z", "CX", "CZ"]
-                    ):
+                    elif hasattr(op, "name") or any(gate in str(op) for gate in ["H", "X", "Y", "Z", "CX", "CZ"]):
                         gate_count += 1
 
             # If mostly measurements with no quantum gates, good candidate for procedural
@@ -8008,9 +7410,7 @@ class IRBuilder:
         # If the function will return these arrays, don't use fresh variables
         # to avoid PlaceNotUsedError for unused fresh variables
         special_funcs = ["prep_zero_verify", "prep_encoding_non_ft_zero"]
-        in_function = (
-            hasattr(self, "current_function_name") and self.current_function_name
-        )
+        in_function = hasattr(self, "current_function_name") and self.current_function_name
         if in_function and func_name in special_funcs:
             # Check if this is the last statement in the function that will be returned
             # For now, assume functions that manipulate and return the same arrays
@@ -8020,11 +7420,7 @@ class IRBuilder:
 
         # If function has multiple quantum arguments, it might have mixed ownership
         # Use fresh variables to be safe
-        if (
-            len(quantum_args) > 1
-            and hasattr(self, "current_block")
-            and hasattr(self.current_block, "statements")
-        ):
+        if len(quantum_args) > 1 and hasattr(self, "current_block") and hasattr(self.current_block, "statements"):
             # But check if we're at the end of a function where the result will be returned
             # In that case, don't use fresh variables
             # This is a heuristic - if there are not many statements after this,
@@ -8055,10 +7451,7 @@ class IRBuilder:
             if hasattr(stmt, "expr") and hasattr(stmt.expr, "func_name"):
                 # Handle function calls that consume qubits
                 func_call = stmt.expr
-                if (
-                    hasattr(func_call, "func_name")
-                    and func_call.func_name == "quantum.reset"
-                ):
+                if hasattr(func_call, "func_name") and func_call.func_name == "quantum.reset":
                     # quantum.reset now uses assignment, so no need for fresh allocation
                     # The reset operation returns the reset qubit
                     pass
@@ -8120,9 +7513,7 @@ class IRBuilder:
 
         def find_procedural_functions_with_unused_fresh():
             """Find procedural functions (return None) that might have unused fresh variables."""
-            if not (
-                hasattr(self, "current_function_name") and self.current_function_name
-            ):
+            if not (hasattr(self, "current_function_name") and self.current_function_name):
                 return False
 
             # Check if this is a procedural function that might have the pattern
@@ -8136,9 +7527,7 @@ class IRBuilder:
             # Method 2: Check if the function body has no return statements (procedural)
             # This is a heuristic for functions that don't explicitly return values
             has_return_stmt = any(
-                hasattr(stmt, "value")
-                and hasattr(stmt, "__class__")
-                and "return" in str(type(stmt)).lower()
+                hasattr(stmt, "value") and hasattr(stmt, "__class__") and "return" in str(type(stmt)).lower()
                 for stmt in body.statements
             )
 
@@ -8160,9 +7549,7 @@ class IRBuilder:
         if fresh_variables_created and has_conditional_usage and is_procedural:
 
             # Find fresh variables that are likely unused in some execution paths
-            potentially_unused = (
-                fresh_variables_created - fresh_variables_used_conditionally
-            )
+            potentially_unused = fresh_variables_created - fresh_variables_used_conditionally
 
             # Also check which fresh variables are used after conditionals (shouldn't be discarded)
             fresh_variables_used_after_conditionals = set()
@@ -8172,9 +7559,7 @@ class IRBuilder:
             )
 
             # Only discard variables that are not used after conditionals
-            safe_to_discard = (
-                potentially_unused - fresh_variables_used_after_conditionals
-            )
+            safe_to_discard = potentially_unused - fresh_variables_used_after_conditionals
 
             # Add discard statements before the last statement for potentially unused variables
             last_stmt_idx = len(body.statements) - 1
@@ -8232,11 +7617,7 @@ class IRBuilder:
                 is_array=original_var.is_array,
                 state=ResourceState.AVAILABLE,
                 is_unpacked=original_var.is_unpacked,
-                unpacked_names=(
-                    original_var.unpacked_names.copy()
-                    if original_var.unpacked_names
-                    else []
-                ),
+                unpacked_names=(original_var.unpacked_names.copy() if original_var.unpacked_names else []),
             )
 
             # Add the fresh variable to context
@@ -8385,11 +7766,7 @@ class IRBuilder:
             if has_unconsumed_quantum:
                 # Decompose the struct
                 qec_code_name = info.get("qec_code_name", prefix)
-                func_name = (
-                    f"{qec_code_name}_decompose"
-                    if qec_code_name
-                    else f"{prefix}_decompose"
-                )
+                func_name = f"{qec_code_name}_decompose" if qec_code_name else f"{prefix}_decompose"
 
                 # Generate variable names for decomposed fields
                 decomposed_vars = []
@@ -8485,10 +7862,7 @@ class IRBuilder:
                         # Check both var_name (original) and actual_name (renamed)
                         is_unpacked = var_name in self.plan.arrays_to_unpack or (
                             hasattr(self, "unpacked_vars")
-                            and (
-                                var_name in self.unpacked_vars
-                                or actual_name in self.unpacked_vars
-                            )
+                            and (var_name in self.unpacked_vars or actual_name in self.unpacked_vars)
                         )
 
                         if is_unpacked:
@@ -8636,12 +8010,8 @@ class IRBuilder:
                     # This fresh variable was not used, add cleanup
                     # Check if it was already cleaned up (e.g., by being measured)
                     original_name = info["original"]
-                    was_consumed = (
-                        hasattr(self, "consumed_arrays")
-                        and original_name in self.consumed_arrays
-                    ) or (
-                        hasattr(self, "consumed_resources")
-                        and original_name in self.consumed_resources
+                    was_consumed = (hasattr(self, "consumed_arrays") and original_name in self.consumed_arrays) or (
+                        hasattr(self, "consumed_resources") and original_name in self.consumed_resources
                     )
 
                     if not was_consumed and fresh_name not in cleaned_up_arrays:
@@ -8692,27 +8062,18 @@ class IRBuilder:
                     consumed_indices = consumed.get(var.sym, set())
 
                     # Check if this array was consumed by an @owned function or measurement
-                    was_consumed_by_function = (
-                        hasattr(self, "consumed_arrays")
-                        and var.sym in self.consumed_arrays
-                    )
+                    was_consumed_by_function = hasattr(self, "consumed_arrays") and var.sym in self.consumed_arrays
 
                     was_consumed_by_measurement = (
-                        hasattr(self, "consumed_resources")
-                        and var.sym in self.consumed_resources
+                        hasattr(self, "consumed_resources") and var.sym in self.consumed_resources
                     )
                     was_dynamically_allocated = (
-                        hasattr(self, "dynamic_allocations")
-                        and var.sym in self.dynamic_allocations
+                        hasattr(self, "dynamic_allocations") and var.sym in self.dynamic_allocations
                     )
 
                     # Handle partially consumed arrays
                     # BUT: Skip if the whole array was consumed by an @owned function
-                    if (
-                        len(consumed_indices) > 0
-                        and len(consumed_indices) < var.size
-                        and not was_consumed_by_function
-                    ):
+                    if len(consumed_indices) > 0 and len(consumed_indices) < var.size and not was_consumed_by_function:
                         # Array was partially consumed - need to discard entire array
                         if var_name not in cleaned_up_arrays:
                             self.current_block.statements.append(
@@ -8749,9 +8110,7 @@ class IRBuilder:
                             and len(self.explicitly_reset_qubits[var.sym]) > 0
                         )
 
-                        if not was_consumed_by_function and (
-                            not was_consumed_by_measurement or has_explicitly_reset
-                        ):
+                        if not was_consumed_by_function and (not was_consumed_by_measurement or has_explicitly_reset):
                             if was_dynamically_allocated:
                                 # For dynamically allocated arrays, discard individual
                                 # qubits that weren't measured
@@ -8773,11 +8132,9 @@ class IRBuilder:
                                             (f"{var.sym}_", f"_{var.sym}_"),
                                         ):
                                             # Apply variable remapping if exists (for Prep operations)
-                                            var_to_discard = (
-                                                self.variable_remapping.get(
-                                                    ancilla_var,
-                                                    ancilla_var,
-                                                )
+                                            var_to_discard = self.variable_remapping.get(
+                                                ancilla_var,
+                                                ancilla_var,
                                             )
 
                                             # Skip if we've already discarded this variable
@@ -8810,15 +8167,9 @@ class IRBuilder:
                                 # Skip if already consumed by a function call
                                 # Also check if the remapped name was consumed
                                 remapped_consumed = False
-                                if (
-                                    hasattr(self, "array_remapping")
-                                    and var_name in self.array_remapping
-                                ):
+                                if hasattr(self, "array_remapping") and var_name in self.array_remapping:
                                     remapped_name = self.array_remapping[var_name]
-                                    if (
-                                        hasattr(self, "consumed_arrays")
-                                        and remapped_name in self.consumed_arrays
-                                    ):
+                                    if hasattr(self, "consumed_arrays") and remapped_name in self.consumed_arrays:
                                         remapped_consumed = True
 
                                 # Check if array has explicitly reset qubits (from Prep operations)
@@ -8832,22 +8183,15 @@ class IRBuilder:
                                 # Check if array was consumed by an @owned function call or by measurements
                                 array_consumed = (
                                     hasattr(self, "consumed_arrays")
-                                    and (
-                                        var.sym in self.consumed_arrays
-                                        or var_name in self.consumed_arrays
-                                    )
+                                    and (var.sym in self.consumed_arrays or var_name in self.consumed_arrays)
                                 ) or (
                                     hasattr(self, "consumed_resources")
-                                    and (
-                                        var.sym in self.consumed_resources
-                                        or var_name in self.consumed_resources
-                                    )
+                                    and (var.sym in self.consumed_resources or var_name in self.consumed_resources)
                                 )
 
                                 # Also check if this is a reconstructed array that was passed to a function
                                 is_reconstructed = (
-                                    hasattr(self, "reconstructed_arrays")
-                                    and var_name in self.reconstructed_arrays
+                                    hasattr(self, "reconstructed_arrays") and var_name in self.reconstructed_arrays
                                 )
 
                                 # Allow cleanup if:
@@ -8863,19 +8207,14 @@ class IRBuilder:
                                 ):
                                     # Check if this array has been unpacked or remapped
                                     # If so, we can't discard the original name
-                                    if (
-                                        hasattr(self, "unpacked_vars")
-                                        and var_name in self.unpacked_vars
-                                    ):
+                                    if hasattr(self, "unpacked_vars") and var_name in self.unpacked_vars:
                                         # Array was unpacked - check if it has explicitly reset qubits
                                         explicitly_reset_indices = set()
                                         if (
                                             hasattr(self, "explicitly_reset_qubits")
                                             and var_name in self.explicitly_reset_qubits
                                         ):
-                                            explicitly_reset_indices = (
-                                                self.explicitly_reset_qubits[var_name]
-                                            )
+                                            explicitly_reset_indices = self.explicitly_reset_qubits[var_name]
 
                                         if explicitly_reset_indices:
                                             # Check if we already did inline reconstruction
@@ -8885,8 +8224,7 @@ class IRBuilder:
                                                     self,
                                                     "inline_reconstructed_arrays",
                                                 )
-                                                and var_name
-                                                in self.inline_reconstructed_arrays
+                                                and var_name in self.inline_reconstructed_arrays
                                             )
 
                                             if not skip_cleanup_reconstruction:
@@ -8900,9 +8238,7 @@ class IRBuilder:
                                                 )
 
                                                 # Get unpacked element names (it's a list, not a dict)
-                                                element_names = self.unpacked_vars[
-                                                    var_name
-                                                ]
+                                                element_names = self.unpacked_vars[var_name]
 
                                                 # Apply variable remapping to get the latest names
                                                 remapped_element_names = [
@@ -8914,10 +8250,7 @@ class IRBuilder:
                                                 ]
 
                                                 # Reconstruct array: var = array(elem1, elem2, ...)
-                                                array_elements = [
-                                                    VariableRef(elem)
-                                                    for elem in remapped_element_names
-                                                ]
+                                                array_elements = [VariableRef(elem) for elem in remapped_element_names]
                                                 array_constructor = FunctionCall(
                                                     func_name="array",
                                                     args=array_elements,
@@ -8966,10 +8299,7 @@ class IRBuilder:
                                             ),
                                         )
                                         continue
-                                    if (
-                                        hasattr(self, "array_remapping")
-                                        and var_name in self.array_remapping
-                                    ):
+                                    if hasattr(self, "array_remapping") and var_name in self.array_remapping:
                                         # Array was remapped - use the new name
                                         remapped_name = self.array_remapping[var_name]
                                         self.current_block.statements.append(
@@ -9119,12 +8449,7 @@ class IRBuilder:
                 self._track_consumed_qubits(nested_op, consumed)
 
         # Check else blocks
-        if (
-            op_type == "If"
-            and hasattr(op, "else_block")
-            and op.else_block
-            and hasattr(op.else_block, "ops")
-        ):
+        if op_type == "If" and hasattr(op, "else_block") and op.else_block and hasattr(op.else_block, "ops"):
             for nested_op in op.else_block.ops:
                 self._track_consumed_qubits(nested_op, consumed)
 
@@ -9144,11 +8469,7 @@ class IRBuilder:
                         return True
 
             # Check else blocks
-            if (
-                hasattr(op, "else_block")
-                and op.else_block
-                and hasattr(op.else_block, "ops")
-            ):
+            if hasattr(op, "else_block") and op.else_block and hasattr(op.else_block, "ops"):
                 for nested_op in op.else_block.ops:
                     if self._operation_uses_full_array(nested_op, array_name):
                         return True
@@ -9203,10 +8524,7 @@ class IRBuilder:
                         # Check both var_name (original) and actual_name (renamed)
                         is_unpacked = var_name in self.plan.arrays_to_unpack or (
                             hasattr(self, "unpacked_vars")
-                            and (
-                                var_name in self.unpacked_vars
-                                or actual_name in self.unpacked_vars
-                            )
+                            and (var_name in self.unpacked_vars or actual_name in self.unpacked_vars)
                         )
 
                         if is_unpacked:
@@ -9398,9 +8716,7 @@ class IRBuilder:
                     self.struct_info[prefix] = {
                         "fields": [(v[0], v[1], v[2]) for v in vars_list],
                         "struct_name": f"{struct_base_name}_struct",
-                        "var_names": {
-                            v[0]: v[3] for v in vars_list
-                        },  # suffix -> full var name
+                        "var_names": {v[0]: v[3] for v in vars_list},  # suffix -> full var name
                         "qec_code_name": qec_code_name,  # Store for function naming
                         "ancilla_vars": getattr(
                             self,
@@ -9438,9 +8754,7 @@ class IRBuilder:
         """Generate a decompose function for a struct."""
         struct_name = info["struct_name"]
         qec_code_name = info.get("qec_code_name", prefix)
-        func_name = (
-            f"{qec_code_name}_decompose" if qec_code_name else f"{prefix}_decompose"
-        )
+        func_name = f"{qec_code_name}_decompose" if qec_code_name else f"{prefix}_decompose"
 
         # Build return type - tuple of all fields
         return_types = []
@@ -9458,9 +8772,7 @@ class IRBuilder:
 
         # The key to avoiding AlreadyUsedError: return all fields in a single expression
         # This works because guppylang handles the struct consumption atomically
-        field_refs = [
-            FieldAccess(obj=VariableRef(prefix), field=suffix) for suffix in field_names
-        ]
+        field_refs = [FieldAccess(obj=VariableRef(prefix), field=suffix) for suffix in field_names]
 
         # Return all fields directly in one statement
         return_stmt = ReturnStatement(value=TupleExpression(elements=field_refs))
@@ -9499,18 +8811,14 @@ class IRBuilder:
         field_names = [suffix for suffix, _, _ in sorted(info["fields"])]
 
         # Call decompose to get all fields
-        decompose_func_name = (
-            f"{qec_code_name}_decompose" if qec_code_name else f"{prefix}_decompose"
-        )
+        decompose_func_name = f"{qec_code_name}_decompose" if qec_code_name else f"{prefix}_decompose"
         decompose_call = FunctionCall(
             func_name=decompose_func_name,
             args=[VariableRef(prefix)],
         )
 
         # Create variables to hold decomposed fields
-        field_vars = [
-            f"_{suffix}" if suffix == prefix else suffix for suffix in field_names
-        ]
+        field_vars = [f"_{suffix}" if suffix == prefix else suffix for suffix in field_names]
 
         # Define TupleAssignment locally
         class TupleAssignment(Statement):
@@ -9655,9 +8963,7 @@ class IRBuilder:
         # Check quantum arrays that this block uses
         for var in deps["quantum"] & deps["reads"]:
             # Skip struct variables
-            if any(
-                var in info["var_names"].values() for info in self.struct_info.values()
-            ):
+            if any(var in info["var_names"].values() for info in self.struct_info.values()):
                 continue
 
             # Check if we have a refreshed version from a previous function call
@@ -9723,10 +9029,7 @@ class IRBuilder:
         import re
 
         # Check if we've tracked which function call produced this refreshed variable
-        if (
-            not hasattr(self, "refreshed_by_function")
-            or var not in self.refreshed_by_function
-        ):
+        if not hasattr(self, "refreshed_by_function") or var not in self.refreshed_by_function:
             # No information about which function produced this variable
             # This happens on the first iteration of a loop before any calls
             return expected_size
@@ -9744,10 +9047,7 @@ class IRBuilder:
         # Try multiple sources: function_return_types, function_info
         return_type = None
 
-        if (
-            hasattr(self, "function_return_types")
-            and called_func_name in self.function_return_types
-        ):
+        if hasattr(self, "function_return_types") and called_func_name in self.function_return_types:
             return_type = self.function_return_types[called_func_name]
         elif hasattr(self, "function_info") and called_func_name in self.function_info:
             func_info_entry = self.function_info[called_func_name]
@@ -9835,9 +9135,7 @@ class IRBuilder:
             return None
 
         # Get the return variables from block.vars
-        return_vars = (
-            block.vars if isinstance(block.vars, list | tuple) else [block.vars]
-        )
+        return_vars = block.vars if isinstance(block.vars, list | tuple) else [block.vars]
         return self._infer_types_from_return_vars(return_vars)
 
     def _infer_types_from_return_vars(self, return_vars) -> str | None:
@@ -9891,10 +9189,7 @@ class IRBuilder:
         import re
 
         # Check if we've tracked which function call produced this refreshed variable
-        if (
-            not hasattr(self, "refreshed_by_function")
-            or var not in self.refreshed_by_function
-        ):
+        if not hasattr(self, "refreshed_by_function") or var not in self.refreshed_by_function:
             # No information about which function produced this variable
             return expected_size
 
@@ -9906,10 +9201,7 @@ class IRBuilder:
         )  # Which element in the return tuple
 
         # Get the return type for this function
-        if (
-            not hasattr(self, "function_return_types")
-            or func_name not in self.function_return_types
-        ):
+        if not hasattr(self, "function_return_types") or func_name not in self.function_return_types:
             return expected_size
 
         return_type = self.function_return_types[func_name]

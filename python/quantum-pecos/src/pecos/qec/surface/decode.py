@@ -89,12 +89,7 @@ class NoiseModel:
     @property
     def is_noiseless(self) -> bool:
         """True if all error rates are zero."""
-        return (
-            self.p1 == 0.0
-            and self.p2 == 0.0
-            and self.p_meas == 0.0
-            and self.p_init == 0.0
-        )
+        return self.p1 == 0.0 and self.p2 == 0.0 and self.p_meas == 0.0 and self.p_init == 0.0
 
     @property
     def physical_error_rate(self) -> float:
@@ -181,10 +176,7 @@ def generate_repetition_code_dem(
         lines.append(f"error({p_data:.6f}) D{det_id(r, 0)} L0")
 
         # Internal edges
-        lines.extend(
-            f"error({p_data:.6f}) D{det_id(r, c)} D{det_id(r, c + 1)}"
-            for c in range(num_checks - 1)
-        )
+        lines.extend(f"error({p_data:.6f}) D{det_id(r, c)} D{det_id(r, c + 1)}" for c in range(num_checks - 1))
 
         # Last boundary
         lines.append(f"error({p_data:.6f}) D{det_id(r, num_checks - 1)} L0")
@@ -198,11 +190,7 @@ def generate_repetition_code_dem(
         )
 
     # Detector coordinates
-    lines.extend(
-        f"detector({c}, 0, {r}) D{det_id(r, c)}"
-        for r in range(num_rounds)
-        for c in range(num_checks)
-    )
+    lines.extend(f"detector({c}, 0, {r}) D{det_id(r, c)}" for r in range(num_rounds) for c in range(num_checks))
 
     lines.append("logical_observable L0")
 
@@ -252,14 +240,10 @@ def generate_surface_code_dem(
     # So Z errors on logical_X qubits flip both the stabilizers AND the logical observable
     if stab_type == "X":
         stabilizers = geom.x_stabilizers
-        logical_op = (
-            geom.logical_x
-        )  # X checks detect Z errors; Z errors on logical_X flip logical
+        logical_op = geom.logical_x  # X checks detect Z errors; Z errors on logical_X flip logical
     else:
         stabilizers = geom.z_stabilizers
-        logical_op = (
-            geom.logical_z
-        )  # Z checks detect X errors; X errors on logical_Z flip logical
+        logical_op = geom.logical_z  # Z checks detect X errors; X errors on logical_Z flip logical
 
     num_stab = len(stabilizers)
 
@@ -325,16 +309,12 @@ def generate_surface_code_dem(
         )
     else:
         # Single round: measurement errors are boundary edges
-        lines.extend(
-            f"error({p_meas:.6f}) D{det_id(0, stab.index)}" for stab in stabilizers
-        )
+        lines.extend(f"error({p_meas:.6f}) D{det_id(0, stab.index)}" for stab in stabilizers)
 
     # Detector coordinates (x, y, t)
     # Use stabilizer index as spatial coordinate
     lines.extend(
-        f"detector({stab.index}, 0, {r}) D{det_id(r, stab.index)}"
-        for r in range(num_rounds)
-        for stab in stabilizers
+        f"detector({stab.index}, 0, {r}) D{det_id(r, stab.index)}" for r in range(num_rounds) for stab in stabilizers
     )
 
     lines.append("logical_observable L0")
@@ -373,9 +353,7 @@ def generate_circuit_level_dem_from_builder(
         >>> from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
         >>> patch = SurfacePatch.create(distance=3)
         >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
-        >>> dem = generate_circuit_level_dem_from_builder(
-        ...     patch, num_rounds=3, noise=noise
-        ... )
+        >>> dem = generate_circuit_level_dem_from_builder(patch, num_rounds=3, noise=noise)
     """
     from pecos.qec import DagFaultAnalyzer, DemBuilder
     from pecos.qec.surface.circuit_builder import (
@@ -439,18 +417,12 @@ def generate_circuit_level_dem(
     Example:
         >>> from pecos.qec.surface import generate_circuit_level_dem, NoiseModel
         >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
-        >>> dem = generate_circuit_level_dem(
-        ...     distance=3, num_rounds=3, noise=noise, basis="Z"
-        ... )
+        >>> dem = generate_circuit_level_dem(distance=3, num_rounds=3, noise=noise, basis="Z")
     """
     import stim
 
     # Map basis to Stim's circuit type
-    circuit_type = (
-        "surface_code:rotated_memory_x"
-        if basis.upper() == "X"
-        else "surface_code:rotated_memory_z"
-    )
+    circuit_type = "surface_code:rotated_memory_x" if basis.upper() == "X" else "surface_code:rotated_memory_z"
 
     # Generate circuit with noise
     # Stim uses:
@@ -761,9 +733,7 @@ class SurfaceDecoder:
         >>> from pecos.qec.surface import SurfacePatch, SurfaceDecoder
         >>> patch = SurfacePatch.create(distance=3)
         >>> # Default: PyMatching MWPM
-        >>> decoder = SurfaceDecoder(
-        ...     patch, num_rounds=3, noise=NoiseModel(p2=0.01, p_meas=0.01)
-        ... )
+        >>> decoder = SurfaceDecoder(patch, num_rounds=3, noise=NoiseModel(p2=0.01, p_meas=0.01))
         >>> # Alternative: FusionBlossom MWPM
         >>> decoder = SurfaceDecoder(patch, num_rounds=3, decoder_type="fusion_blossom")
         >>> # Alternative: BP+OSD (LDPC)
@@ -980,11 +950,7 @@ class SurfaceDecoder:
             # Tesseract's remove_zero_probability_errors() doesn't handle
             # DEM_LOGICAL_OBSERVABLE instructions. Filter them out - the
             # observable info is encoded in error edges via L0 references.
-            dem_filtered = "\n".join(
-                line
-                for line in dem.split("\n")
-                if not line.startswith("logical_observable")
-            )
+            dem_filtered = "\n".join(line for line in dem.split("\n") if not line.startswith("logical_observable"))
             return TesseractDecoder.from_dem(dem_filtered, preset="fast")
 
         msg = f"Decoder type {self.decoder_type} does not support DEM initialization"
@@ -1103,9 +1069,7 @@ class SurfaceDecoder:
 
         # Determine stabilizer type based on check matrix shape
         z_check = self._get_z_check_matrix()
-        stab_type = (
-            "Z" if H.shape == z_check.shape and np.array_equal(H, z_check) else "X"
-        )
+        stab_type = "Z" if H.shape == z_check.shape and np.array_equal(H, z_check) else "X"
 
         # Generate DEM using the full surface code DEM generator
         dem = generate_surface_code_dem(
@@ -1120,11 +1084,7 @@ class SurfaceDecoder:
         # and DEM_SHIFT_DETECTORS. See tesseract/src/common.cc line 104-106.
         # The logical observable info is encoded in the error edges via L0 references,
         # so the standalone 'logical_observable L0' declaration is redundant for Tesseract.
-        dem_lines = [
-            line
-            for line in dem.split("\n")
-            if not line.startswith("logical_observable")
-        ]
+        dem_lines = [line for line in dem.split("\n") if not line.startswith("logical_observable")]
         dem = "\n".join(dem_lines)
 
         return TesseractDecoder.from_dem(dem, preset="fast")
@@ -1143,9 +1103,7 @@ class SurfaceDecoder:
         Returns:
             DEM string in Stim format
         """
-        use_circuit = (
-            circuit_level if circuit_level is not None else self.use_circuit_level_dem
-        )
+        use_circuit = circuit_level if circuit_level is not None else self.use_circuit_level_dem
 
         if use_circuit:
             # Return cached DEM if available

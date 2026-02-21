@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use pecos::core::BitSet;
 use pecos::prelude::*;
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -29,8 +30,9 @@ impl SparseSim {
         }
     }
 
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     fn __repr__(&self) -> String {
@@ -460,6 +462,24 @@ impl SparseSim {
     ) -> PyResult<()> {
         self.run_circuit(circuit, removed_locations, py)?;
         Ok(())
+    }
+
+    /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.
+    fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
+        let gens = if is_stab {
+            self.inner.stabs()
+        } else {
+            self.inner.destabs()
+        };
+        let to_vecs = |sets: &[BitSet]| -> Vec<Vec<usize>> {
+            sets.iter().map(|s| s.iter().collect()).collect()
+        };
+        (
+            to_vecs(&gens.col_x),
+            to_vecs(&gens.col_z),
+            to_vecs(&gens.row_x),
+            to_vecs(&gens.row_z),
+        )
     }
 
     #[getter]

@@ -15,7 +15,7 @@ def test_ir_generates_valid_guppy() -> None:
         Measure(q[1]) > c[1],
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -51,7 +51,7 @@ def test_ir_handles_quantum_gates() -> None:
         Measure(q) > CReg("c", 2),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -74,7 +74,7 @@ def test_ir_handles_conditionals() -> None:
         ),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

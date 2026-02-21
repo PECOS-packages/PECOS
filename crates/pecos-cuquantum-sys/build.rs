@@ -8,20 +8,38 @@ use std::path::PathBuf;
 fn main() {
     println!("cargo:rerun-if-env-changed=CUQUANTUM_ROOT");
     println!("cargo:rerun-if-env-changed=CUDA_PATH");
+    println!("cargo::rustc-check-cfg=cfg(cuquantum_stub)");
 
     // Find cuQuantum installation
     let cuquantum_path = match pecos_build::cuquantum::find_cuquantum() {
         Some(path) => path,
         None => {
-            // If cuQuantum is not found, generate stub bindings
-            eprintln!("Warning: cuQuantum not found. Generating stub bindings.");
-            eprintln!("To use cuQuantum, either:");
-            eprintln!("  1. Set CUQUANTUM_ROOT environment variable");
-            eprintln!("  2. Install cuQuantum to ~/.pecos/cuquantum/");
-            eprintln!("  3. Install cuQuantum system-wide");
+            // If CUDA is available, try auto-installing cuQuantum
+            if pecos_build::cuda::find_cuda().is_some() {
+                match pecos_build::cuquantum::ensure_cuquantum() {
+                    Ok(path) => {
+                        println!(
+                            "cargo:warning=Auto-installed cuQuantum to: {}",
+                            path.display()
+                        );
+                        path
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to auto-install cuQuantum: {e}");
+                        generate_stub_bindings();
+                        return;
+                    }
+                }
+            } else {
+                eprintln!("Warning: cuQuantum not found. Generating stub bindings.");
+                eprintln!("To use cuQuantum, either:");
+                eprintln!("  1. Set CUQUANTUM_ROOT environment variable");
+                eprintln!("  2. Install cuQuantum to ~/.pecos/cuquantum/");
+                eprintln!("  3. Install cuQuantum system-wide");
 
-            generate_stub_bindings();
-            return;
+                generate_stub_bindings();
+                return;
+            }
         }
     };
 
@@ -178,24 +196,79 @@ fn get_cuda_lib_dir(cuda_path: &std::path::Path) -> Option<PathBuf> {
 
 /// Generate stub bindings when cuQuantum is not available
 fn generate_stub_bindings() {
+    println!("cargo::rustc-cfg=cuquantum_stub");
+
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Note: No inner doc comments or inner attributes since this is included via include!()
-    // Also use `unsafe extern "C"` for Rust 2024 edition
+    // Stub bindings provide actual function implementations (not just declarations)
+    // so the crate compiles AND links without the cuQuantum SDK. Constructor guards
+    // in pecos-cuquantum prevent these stubs from being called at runtime.
     let stub_content = r#"
 // Stub bindings - cuQuantum not available at build time
-// These stubs allow the crate to compile without cuQuantum installed,
-// but any attempt to use the functions will fail at link time.
+// These stubs provide function implementations that return error codes,
+// allowing compilation and linking without the cuQuantum SDK installed.
+// Constructor guards in pecos-cuquantum prevent these from being called at runtime.
 
 use core::ffi::c_void;
+use core::ffi::c_char;
 
-/// Opaque handle type for cuStateVec
-pub type custatevecHandle_t = *mut c_void;
+// =============================================================================
+// CUDA types
+// =============================================================================
 
-/// CUDA stream type
 pub type cudaStream_t = *mut c_void;
 
-/// cuStateVec status codes
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum cudaDataType_t {
+    CUDA_R_32F = 0,
+    CUDA_R_64F = 1,
+    CUDA_C_32F = 4,
+    CUDA_C_64F = 5,
+}
+
+pub type cudaMemcpyKind = u32;
+pub const cudaMemcpyKind_cudaMemcpyHostToHost: cudaMemcpyKind = 0;
+pub const cudaMemcpyKind_cudaMemcpyHostToDevice: cudaMemcpyKind = 1;
+pub const cudaMemcpyKind_cudaMemcpyDeviceToHost: cudaMemcpyKind = 2;
+pub const cudaMemcpyKind_cudaMemcpyDeviceToDevice: cudaMemcpyKind = 3;
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Default)]
+pub struct cuComplex {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Default)]
+pub struct cuDoubleComplex {
+    pub x: f64,
+    pub y: f64,
+}
+
+// =============================================================================
+// CUDA runtime function stubs
+// =============================================================================
+
+pub unsafe extern "C" fn cudaMalloc(_dev_ptr: *mut *mut c_void, _size: usize) -> i32 { 1 }
+pub unsafe extern "C" fn cudaFree(_dev_ptr: *mut c_void) -> i32 { 0 }
+pub unsafe extern "C" fn cudaMemcpy(
+    _dst: *mut c_void,
+    _src: *const c_void,
+    _count: usize,
+    _kind: cudaMemcpyKind,
+) -> i32 { 1 }
+pub unsafe extern "C" fn cudaMemset(_dev_ptr: *mut c_void, _value: i32, _count: usize) -> i32 { 1 }
+pub unsafe extern "C" fn cudaDeviceSynchronize() -> i32 { 1 }
+
+// =============================================================================
+// cuStateVec types
+// =============================================================================
+
+pub type custatevecHandle_t = *mut c_void;
+pub type custatevecSamplerDescriptor_t = *mut c_void;
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum custatevecStatus_t {
@@ -216,43 +289,174 @@ pub enum custatevecStatus_t {
     CUSTATEVEC_STATUS_MAX_VALUE = 14,
 }
 
-/// CUDA data types
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum cudaDataType_t {
-    CUDA_R_32F = 0,
-    CUDA_R_64F = 1,
-    CUDA_C_32F = 4,
-    CUDA_C_64F = 5,
+pub enum custatevecMatrixLayout_t {
+    CUSTATEVEC_MATRIX_LAYOUT_COL = 0,
+    CUSTATEVEC_MATRIX_LAYOUT_ROW = 1,
 }
 
-/// Complex float (stub)
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Default)]
-pub struct cuComplex {
-    pub x: f32,
-    pub y: f32,
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum custatevecComputeType_t {
+    CUSTATEVEC_COMPUTE_32F = 4,
+    CUSTATEVEC_COMPUTE_64F = 5,
+    CUSTATEVEC_COMPUTE_TF32 = 12,
 }
 
-/// Complex double (stub)
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Default)]
-pub struct cuDoubleComplex {
-    pub x: f64,
-    pub y: f64,
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum custatevecCollapseOp_t {
+    CUSTATEVEC_COLLAPSE_NONE = 0,
+    CUSTATEVEC_COLLAPSE_NORMALIZE_AND_ZERO = 1,
+}
+
+// =============================================================================
+// cuStateVec function stubs
+// =============================================================================
+
+pub unsafe extern "C" fn custatevecCreate(
+    _handle: *mut custatevecHandle_t,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecDestroy(
+    _handle: custatevecHandle_t,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_SUCCESS
+}
+
+pub unsafe extern "C" fn custatevecGetProperty(
+    _type_: i32,
+    _value: *mut i32,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecInitializeStateVector(
+    _handle: custatevecHandle_t,
+    _sv: *mut c_void,
+    _sv_data_type: cudaDataType_t,
+    _n_index_bits: u32,
+    _sv_type: i32,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecApplyMatrixGetWorkspaceSize(
+    _handle: custatevecHandle_t,
+    _sv_data_type: cudaDataType_t,
+    _n_index_bits: u32,
+    _matrix: *const c_void,
+    _matrix_data_type: cudaDataType_t,
+    _layout: custatevecMatrixLayout_t,
+    _adjoint: i32,
+    _n_targets: u32,
+    _n_controls: u32,
+    _compute_type: custatevecComputeType_t,
+    _extra_workspace_size_in_bytes: *mut usize,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecApplyMatrix(
+    _handle: custatevecHandle_t,
+    _sv: *mut c_void,
+    _sv_data_type: cudaDataType_t,
+    _n_index_bits: u32,
+    _matrix: *const c_void,
+    _matrix_data_type: cudaDataType_t,
+    _layout: custatevecMatrixLayout_t,
+    _adjoint: i32,
+    _targets: *const i32,
+    _n_targets: u32,
+    _controls: *const i32,
+    _control_bit_values: *const i32,
+    _n_controls: u32,
+    _compute_type: custatevecComputeType_t,
+    _extra_workspace: *mut c_void,
+    _extra_workspace_size_in_bytes: usize,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecMeasureOnZBasis(
+    _handle: custatevecHandle_t,
+    _sv: *mut c_void,
+    _sv_data_type: cudaDataType_t,
+    _n_index_bits: u32,
+    _parity: *mut i32,
+    _basis_bits: *const i32,
+    _n_basis_bits: u32,
+    _rand_num: f64,
+    _collapse: custatevecCollapseOp_t,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecBatchMeasure(
+    _handle: custatevecHandle_t,
+    _sv: *mut c_void,
+    _sv_data_type: cudaDataType_t,
+    _n_index_bits: u32,
+    _bit_string: *mut i32,
+    _bit_ordering: *const i32,
+    _bit_string_len: u32,
+    _rand_num: f64,
+    _collapse: custatevecCollapseOp_t,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecSamplerCreate(
+    _handle: custatevecHandle_t,
+    _sv: *const c_void,
+    _sv_data_type: cudaDataType_t,
+    _n_index_bits: u32,
+    _sampler: *mut custatevecSamplerDescriptor_t,
+    _n_max_shots: u32,
+    _extra_workspace_size_in_bytes: *mut usize,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecSamplerDestroy(
+    _sampler: custatevecSamplerDescriptor_t,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_SUCCESS
+}
+
+pub unsafe extern "C" fn custatevecSamplerPreprocess(
+    _handle: custatevecHandle_t,
+    _sampler: custatevecSamplerDescriptor_t,
+    _extra_workspace: *mut c_void,
+    _extra_workspace_size_in_bytes: usize,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn custatevecSamplerSample(
+    _handle: custatevecHandle_t,
+    _sampler: custatevecSamplerDescriptor_t,
+    _bit_strings: *mut i64,
+    _bit_ordering: *const i32,
+    _bit_string_len: u32,
+    _rand_nums: *const f64,
+    _n_shots: u32,
+    _output: i32,
+) -> custatevecStatus_t {
+    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
 }
 
 // =============================================================================
 // cuStabilizer types
 // =============================================================================
 
-/// Opaque handle type for cuStabilizer
 pub type custabilizerHandle_t = *mut c_void;
+pub type custabilizerCircuit_t = *mut c_void;
+pub type custabilizerFrameSimulator_t = *mut c_void;
 
-/// Opaque state type for cuStabilizer
-pub type custabilizerState_t = *mut c_void;
-
-/// cuStabilizer status codes
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum custabilizerStatus_t {
@@ -268,256 +472,88 @@ pub enum custabilizerStatus_t {
     CUSTABILIZER_STATUS_MAX_VALUE = 9,
 }
 
-/// Pauli operator types for cuStabilizer
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum custabilizerPauli_t {
-    CUSTABILIZER_PAULI_I = 0,
-    CUSTABILIZER_PAULI_X = 1,
-    CUSTABILIZER_PAULI_Y = 2,
-    CUSTABILIZER_PAULI_Z = 3,
-}
-
 // =============================================================================
-// Stub function declarations - these will fail at link time if called
+// cuStabilizer function stubs
 // =============================================================================
 
-/// Matrix layout for cuStateVec
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum custatevecMatrixLayout_t {
-    CUSTATEVEC_MATRIX_LAYOUT_COL = 0,
-    CUSTATEVEC_MATRIX_LAYOUT_ROW = 1,
+pub unsafe extern "C" fn custabilizerCreate(
+    _handle: *mut custabilizerHandle_t,
+) -> custabilizerStatus_t {
+    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
 }
 
-/// Compute type for cuStateVec operations
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum custatevecComputeType_t {
-    CUSTATEVEC_COMPUTE_32F = 4,
-    CUSTATEVEC_COMPUTE_64F = 5,
-    CUSTATEVEC_COMPUTE_TF32 = 12,
+pub unsafe extern "C" fn custabilizerDestroy(
+    _handle: custabilizerHandle_t,
+) -> custabilizerStatus_t {
+    custabilizerStatus_t::CUSTABILIZER_STATUS_SUCCESS
 }
 
-/// Collapse operation for measurement
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum custatevecCollapseOp_t {
-    CUSTATEVEC_COLLAPSE_NONE = 0,
-    CUSTATEVEC_COLLAPSE_NORMALIZE_AND_ZERO = 1,
+pub unsafe extern "C" fn custabilizerCircuitSizeFromString(
+    _handle: custabilizerHandle_t,
+    _str: *const c_char,
+    _size: *mut i64,
+) -> custabilizerStatus_t {
+    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
 }
 
-/// Sampler descriptor type (opaque)
-pub type custatevecSamplerDescriptor_t = *mut c_void;
-
-// cuStateVec functions
-unsafe extern "C" {
-    pub fn custatevecCreate(handle: *mut custatevecHandle_t) -> custatevecStatus_t;
-    pub fn custatevecDestroy(handle: custatevecHandle_t) -> custatevecStatus_t;
-    pub fn custatevecGetProperty(
-        type_: i32,
-        value: *mut i32,
-    ) -> custatevecStatus_t;
-
-    // State initialization
-    pub fn custatevecInitializeStateVector(
-        handle: custatevecHandle_t,
-        sv: *mut c_void,
-        sv_data_type: cudaDataType_t,
-        n_index_bits: u32,
-        sv_type: i32,  // custatevecStateVectorType_t
-    ) -> custatevecStatus_t;
-
-    // Matrix application
-    pub fn custatevecApplyMatrixGetWorkspaceSize(
-        handle: custatevecHandle_t,
-        sv_data_type: cudaDataType_t,
-        n_index_bits: u32,
-        matrix: *const c_void,
-        matrix_data_type: cudaDataType_t,
-        layout: custatevecMatrixLayout_t,
-        adjoint: i32,
-        n_targets: u32,
-        n_controls: u32,
-        compute_type: custatevecComputeType_t,
-        extra_workspace_size_in_bytes: *mut usize,
-    ) -> custatevecStatus_t;
-
-    pub fn custatevecApplyMatrix(
-        handle: custatevecHandle_t,
-        sv: *mut c_void,
-        sv_data_type: cudaDataType_t,
-        n_index_bits: u32,
-        matrix: *const c_void,
-        matrix_data_type: cudaDataType_t,
-        layout: custatevecMatrixLayout_t,
-        adjoint: i32,
-        targets: *const i32,
-        n_targets: u32,
-        controls: *const i32,
-        control_bit_values: *const i32,
-        n_controls: u32,
-        compute_type: custatevecComputeType_t,
-        extra_workspace: *mut c_void,
-        extra_workspace_size_in_bytes: usize,
-    ) -> custatevecStatus_t;
-
-    // Measurement on Z basis
-    pub fn custatevecMeasureOnZBasis(
-        handle: custatevecHandle_t,
-        sv: *mut c_void,
-        sv_data_type: cudaDataType_t,
-        n_index_bits: u32,
-        parity: *mut i32,
-        basis_bits: *const i32,
-        n_basis_bits: u32,
-        rand_num: f64,
-        collapse: custatevecCollapseOp_t,
-    ) -> custatevecStatus_t;
-
-    // Batch measurement
-    pub fn custatevecBatchMeasure(
-        handle: custatevecHandle_t,
-        sv: *mut c_void,
-        sv_data_type: cudaDataType_t,
-        n_index_bits: u32,
-        bit_string: *mut i32,
-        bit_ordering: *const i32,
-        bit_string_len: u32,
-        rand_num: f64,
-        collapse: custatevecCollapseOp_t,
-    ) -> custatevecStatus_t;
-
-    // Sampling
-    pub fn custatevecSamplerCreate(
-        handle: custatevecHandle_t,
-        sv: *const c_void,
-        sv_data_type: cudaDataType_t,
-        n_index_bits: u32,
-        sampler: *mut custatevecSamplerDescriptor_t,
-        n_max_shots: u32,
-        extra_workspace_size_in_bytes: *mut usize,
-    ) -> custatevecStatus_t;
-
-    pub fn custatevecSamplerDestroy(
-        sampler: custatevecSamplerDescriptor_t,
-    ) -> custatevecStatus_t;
-
-    pub fn custatevecSamplerPreprocess(
-        handle: custatevecHandle_t,
-        sampler: custatevecSamplerDescriptor_t,
-        extra_workspace: *mut c_void,
-        extra_workspace_size_in_bytes: usize,
-    ) -> custatevecStatus_t;
-
-    pub fn custatevecSamplerSample(
-        handle: custatevecHandle_t,
-        sampler: custatevecSamplerDescriptor_t,
-        bit_strings: *mut i64,
-        bit_ordering: *const i32,
-        bit_string_len: u32,
-        rand_nums: *const f64,
-        n_shots: u32,
-        output: i32,  // custatevecSamplerOutput_t
-    ) -> custatevecStatus_t;
+pub unsafe extern "C" fn custabilizerCreateCircuitFromString(
+    _handle: custabilizerHandle_t,
+    _str: *const c_char,
+    _buffer: *mut c_void,
+    _buffer_size: i64,
+    _circuit: *mut custabilizerCircuit_t,
+) -> custabilizerStatus_t {
+    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
 }
 
-// CUDA runtime functions for memory management
-unsafe extern "C" {
-    pub fn cudaMalloc(dev_ptr: *mut *mut c_void, size: usize) -> i32;
-    pub fn cudaFree(dev_ptr: *mut c_void) -> i32;
-    pub fn cudaMemcpy(dst: *mut c_void, src: *const c_void, count: usize, kind: i32) -> i32;
-    pub fn cudaMemset(dev_ptr: *mut c_void, value: i32, count: usize) -> i32;
-    pub fn cudaDeviceSynchronize() -> i32;
+pub unsafe extern "C" fn custabilizerDestroyCircuit(
+    _circuit: custabilizerCircuit_t,
+) -> custabilizerStatus_t {
+    custabilizerStatus_t::CUSTABILIZER_STATUS_SUCCESS
 }
 
-/// CUDA memory copy kinds
-pub const CUDA_MEMCPY_HOST_TO_HOST: i32 = 0;
-pub const CUDA_MEMCPY_HOST_TO_DEVICE: i32 = 1;
-pub const CUDA_MEMCPY_DEVICE_TO_HOST: i32 = 2;
-pub const CUDA_MEMCPY_DEVICE_TO_DEVICE: i32 = 3;
+pub unsafe extern "C" fn custabilizerCreateFrameSimulator(
+    _handle: custabilizerHandle_t,
+    _num_qubits: i64,
+    _num_shots: i64,
+    _max_measurements: i64,
+    _table_stride: i64,
+    _frame_sim: *mut custabilizerFrameSimulator_t,
+) -> custabilizerStatus_t {
+    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
+}
 
-// cuStabilizer functions
-unsafe extern "C" {
-    pub fn custabilizerCreate(handle: *mut custabilizerHandle_t) -> custabilizerStatus_t;
-    pub fn custabilizerDestroy(handle: custabilizerHandle_t) -> custabilizerStatus_t;
-    pub fn custabilizerStateCreate(
-        handle: custabilizerHandle_t,
-        state: *mut custabilizerState_t,
-        num_qubits: u32,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerStateDestroy(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerApplyPauli(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-        pauli: custabilizerPauli_t,
-        qubit: u32,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerApplyH(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-        qubit: u32,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerApplyS(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-        qubit: u32,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerApplySdg(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-        qubit: u32,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerApplyCNOT(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-        control: u32,
-        target: u32,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerApplyCZ(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-        qubit_a: u32,
-        qubit_b: u32,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerMeasure(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-        qubit: u32,
-        outcome: *mut i32,
-    ) -> custabilizerStatus_t;
-    pub fn custabilizerReset(
-        handle: custabilizerHandle_t,
-        state: custabilizerState_t,
-    ) -> custabilizerStatus_t;
+pub unsafe extern "C" fn custabilizerDestroyFrameSimulator(
+    _frame_sim: custabilizerFrameSimulator_t,
+) -> custabilizerStatus_t {
+    custabilizerStatus_t::CUSTABILIZER_STATUS_SUCCESS
+}
+
+pub unsafe extern "C" fn custabilizerFrameSimulatorApplyCircuit(
+    _handle: custabilizerHandle_t,
+    _frame_sim: custabilizerFrameSimulator_t,
+    _circuit: custabilizerCircuit_t,
+    _randomize: i32,
+    _seed: u64,
+    _x_table: *mut u32,
+    _z_table: *mut u32,
+    _m_table: *mut u32,
+    _stream: cudaStream_t,
+) -> custabilizerStatus_t {
+    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
 }
 
 // =============================================================================
 // cuTensorNet types
 // =============================================================================
 
-/// Opaque handle type for cuTensorNet
 pub type cutensornetHandle_t = *mut c_void;
-
-/// Opaque network descriptor type
 pub type cutensornetNetworkDescriptor_t = *mut c_void;
-
-/// Opaque contraction optimizer config type
 pub type cutensornetContractionOptimizerConfig_t = *mut c_void;
-
-/// Opaque contraction optimizer info type
 pub type cutensornetContractionOptimizerInfo_t = *mut c_void;
-
-/// Opaque contraction plan type
 pub type cutensornetContractionPlan_t = *mut c_void;
-
-/// Opaque workspace descriptor type
 pub type cutensornetWorkspaceDescriptor_t = *mut c_void;
 
-/// cuTensorNet status codes
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum cutensornetStatus_t {
@@ -540,7 +576,6 @@ pub enum cutensornetStatus_t {
     CUTENSORNET_STATUS_MAX_VALUE = 16,
 }
 
-/// Compute type for cuTensorNet operations
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum cutensornetComputeType_t {
@@ -550,53 +585,70 @@ pub enum cutensornetComputeType_t {
     CUTENSORNET_COMPUTE_16BF = 14,
 }
 
-// cuTensorNet functions
-unsafe extern "C" {
-    pub fn cutensornetCreate(handle: *mut cutensornetHandle_t) -> cutensornetStatus_t;
-    pub fn cutensornetDestroy(handle: cutensornetHandle_t) -> cutensornetStatus_t;
-    pub fn cutensornetGetVersion() -> usize;
-    pub fn cutensornetCreateNetworkDescriptor(
-        handle: cutensornetHandle_t,
-        num_inputs: i32,
-        num_modes_in: *const i32,
-        extents_in: *const *const i64,
-        strides_in: *const *const i64,
-        modes_in: *const *const i32,
-        qualifiers_in: *const u32,
-        num_modes_out: i32,
-        extents_out: *const i64,
-        strides_out: *const i64,
-        modes_out: *const i32,
-        data_type: cudaDataType_t,
-        compute_type: cutensornetComputeType_t,
-        desc_net: *mut cutensornetNetworkDescriptor_t,
-    ) -> cutensornetStatus_t;
-    pub fn cutensornetDestroyNetworkDescriptor(
-        desc_net: cutensornetNetworkDescriptor_t,
-    ) -> cutensornetStatus_t;
-    pub fn cutensornetCreateWorkspaceDescriptor(
-        handle: cutensornetHandle_t,
-        workspace_desc: *mut cutensornetWorkspaceDescriptor_t,
-    ) -> cutensornetStatus_t;
-    pub fn cutensornetDestroyWorkspaceDescriptor(
-        workspace_desc: cutensornetWorkspaceDescriptor_t,
-    ) -> cutensornetStatus_t;
+// =============================================================================
+// cuTensorNet function stubs
+// =============================================================================
+
+pub unsafe extern "C" fn cutensornetCreate(
+    _handle: *mut cutensornetHandle_t,
+) -> cutensornetStatus_t {
+    cutensornetStatus_t::CUTENSORNET_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn cutensornetDestroy(
+    _handle: cutensornetHandle_t,
+) -> cutensornetStatus_t {
+    cutensornetStatus_t::CUTENSORNET_STATUS_SUCCESS
+}
+
+pub unsafe extern "C" fn cutensornetGetVersion() -> usize { 0 }
+
+pub unsafe extern "C" fn cutensornetCreateNetworkDescriptor(
+    _handle: cutensornetHandle_t,
+    _num_inputs: i32,
+    _num_modes_in: *const i32,
+    _extents_in: *const *const i64,
+    _strides_in: *const *const i64,
+    _modes_in: *const *const i32,
+    _qualifiers_in: *const u32,
+    _num_modes_out: i32,
+    _extents_out: *const i64,
+    _strides_out: *const i64,
+    _modes_out: *const i32,
+    _data_type: cudaDataType_t,
+    _compute_type: cutensornetComputeType_t,
+    _desc_net: *mut cutensornetNetworkDescriptor_t,
+) -> cutensornetStatus_t {
+    cutensornetStatus_t::CUTENSORNET_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn cutensornetDestroyNetworkDescriptor(
+    _desc_net: cutensornetNetworkDescriptor_t,
+) -> cutensornetStatus_t {
+    cutensornetStatus_t::CUTENSORNET_STATUS_SUCCESS
+}
+
+pub unsafe extern "C" fn cutensornetCreateWorkspaceDescriptor(
+    _handle: cutensornetHandle_t,
+    _workspace_desc: *mut cutensornetWorkspaceDescriptor_t,
+) -> cutensornetStatus_t {
+    cutensornetStatus_t::CUTENSORNET_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn cutensornetDestroyWorkspaceDescriptor(
+    _workspace_desc: cutensornetWorkspaceDescriptor_t,
+) -> cutensornetStatus_t {
+    cutensornetStatus_t::CUTENSORNET_STATUS_SUCCESS
 }
 
 // =============================================================================
 // cuDensityMat types
 // =============================================================================
 
-/// Opaque handle type for cuDensityMat
 pub type cudensitymatHandle_t = *mut c_void;
-
-/// Opaque state type for cuDensityMat
 pub type cudensitymatState_t = *mut c_void;
-
-/// Opaque operator type for cuDensityMat
 pub type cudensitymatOperator_t = *mut c_void;
 
-/// cuDensityMat status codes
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum cudensitymatStatus_t {
@@ -614,7 +666,6 @@ pub enum cudensitymatStatus_t {
     CUDENSITYMAT_STATUS_MAX_VALUE = 11,
 }
 
-/// State purity type
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum cudensitymatStatePurity_t {
@@ -622,30 +673,55 @@ pub enum cudensitymatStatePurity_t {
     CUDENSITYMAT_STATE_PURITY_MIXED = 1,
 }
 
-// cuDensityMat functions
-unsafe extern "C" {
-    pub fn cudensitymatCreate(handle: *mut cudensitymatHandle_t) -> cudensitymatStatus_t;
-    pub fn cudensitymatDestroy(handle: cudensitymatHandle_t) -> cudensitymatStatus_t;
-    pub fn cudensitymatGetVersion() -> usize;
-    pub fn cudensitymatCreateState(
-        handle: cudensitymatHandle_t,
-        purity: cudensitymatStatePurity_t,
-        num_qubits: i32,
-        data_type: cudaDataType_t,
-        state: *mut cudensitymatState_t,
-    ) -> cudensitymatStatus_t;
-    pub fn cudensitymatDestroyState(
-        state: cudensitymatState_t,
-    ) -> cudensitymatStatus_t;
-    pub fn cudensitymatCreateOperator(
-        handle: cudensitymatHandle_t,
-        num_qubits: i32,
-        data_type: cudaDataType_t,
-        op: *mut cudensitymatOperator_t,
-    ) -> cudensitymatStatus_t;
-    pub fn cudensitymatDestroyOperator(
-        op: cudensitymatOperator_t,
-    ) -> cudensitymatStatus_t;
+// =============================================================================
+// cuDensityMat function stubs
+// =============================================================================
+
+pub unsafe extern "C" fn cudensitymatCreate(
+    _handle: *mut cudensitymatHandle_t,
+) -> cudensitymatStatus_t {
+    cudensitymatStatus_t::CUDENSITYMAT_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn cudensitymatDestroy(
+    _handle: cudensitymatHandle_t,
+) -> cudensitymatStatus_t {
+    cudensitymatStatus_t::CUDENSITYMAT_STATUS_SUCCESS
+}
+
+pub unsafe extern "C" fn cudensitymatGetVersion() -> usize { 0 }
+
+pub unsafe extern "C" fn cudensitymatCreateState(
+    _handle: cudensitymatHandle_t,
+    _purity: cudensitymatStatePurity_t,
+    _num_space_modes: i32,
+    _space_mode_extents: *const i64,
+    _batch_size: i64,
+    _data_type: cudaDataType_t,
+    _state: *mut cudensitymatState_t,
+) -> cudensitymatStatus_t {
+    cudensitymatStatus_t::CUDENSITYMAT_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn cudensitymatDestroyState(
+    _state: cudensitymatState_t,
+) -> cudensitymatStatus_t {
+    cudensitymatStatus_t::CUDENSITYMAT_STATUS_SUCCESS
+}
+
+pub unsafe extern "C" fn cudensitymatCreateOperator(
+    _handle: cudensitymatHandle_t,
+    _num_qubits: i32,
+    _data_type: cudaDataType_t,
+    _op: *mut cudensitymatOperator_t,
+) -> cudensitymatStatus_t {
+    cudensitymatStatus_t::CUDENSITYMAT_STATUS_NOT_INITIALIZED
+}
+
+pub unsafe extern "C" fn cudensitymatDestroyOperator(
+    _op: cudensitymatOperator_t,
+) -> cudensitymatStatus_t {
+    cudensitymatStatus_t::CUDENSITYMAT_STATUS_SUCCESS
 }
 "#;
 

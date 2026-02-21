@@ -180,6 +180,7 @@ impl BiasedDepolarizingNoiseModel {
                 GateType::CX
                 | GateType::CY
                 | GateType::CZ
+                | GateType::CH
                 | GateType::SZZ
                 | GateType::SZZdg
                 | GateType::SWAP

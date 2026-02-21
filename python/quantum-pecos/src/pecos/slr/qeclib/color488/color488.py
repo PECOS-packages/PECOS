@@ -29,9 +29,7 @@ class Color488:
             distance: The code distance.
         """
         self.distance = distance
-        self._layout_cache: (
-            tuple[dict[int, tuple[int, int]], list[list[Any]]] | None
-        ) = None
+        self._layout_cache: tuple[dict[int, tuple[int, int]], list[list[Any]]] | None = None
 
     def get_layout(self) -> tuple[dict[int, tuple[int, int]], list[list[Any]]]:
         """Get the layout of the color 488 code.

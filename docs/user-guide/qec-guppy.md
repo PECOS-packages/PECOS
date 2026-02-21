@@ -73,9 +73,12 @@ The generated program produces these result keys:
 | `synz` | Z syndrome per round |
 | `final` | Final data qubit measurements |
 
-<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
-results = sim(prog).qubits(11).quantum(state_vector()).run(10)
+from pecos import sim, state_vector
+from pecos.guppy import make_surface_code
+
+prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
+results = sim(prog).qubits(17).quantum(state_vector()).run(10)
 data = results.to_dict()
 
 # Access syndrome history
@@ -91,7 +94,6 @@ The 4.8.8 triangular color code supports transversal Clifford gates.
 
 ### Quick Start
 
-<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_color_code, get_num_qubits_color
@@ -136,7 +138,7 @@ Transversal CNOT applies `CX(ctrl[i], tgt[i])` for all data qubits between two c
 
 ### Generic CSS Transversal CNOT
 
-<!--skip: named result keys not yet captured (uses measurement_N instead)-->
+<!--mark.slow-->
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_css_transversal_cnot, get_transversal_num_qubits
@@ -159,9 +161,10 @@ results = sim(prog).qubits(num_qubits).quantum(state_vector()).seed(42).run(100)
 
 Test the logical CNOT by preparing `|1_L>|0_L>` and verifying it becomes `|1_L>|1_L>`:
 
-<!--skip: named result keys not yet captured (uses measurement_N instead)-->
+<!--mark.slow-->
 ```python
-from pecos.guppy import make_css_transversal_cnot_with_x
+from pecos import sim, state_vector
+from pecos.guppy import make_css_transversal_cnot_with_x, get_transversal_num_qubits
 
 # |1_L>|0_L> -> |1_L>|1_L>
 prog = make_css_transversal_cnot_with_x(
@@ -170,6 +173,7 @@ prog = make_css_transversal_cnot_with_x(
     num_rounds=1,
 )
 
+num_qubits = get_transversal_num_qubits("color", 3)
 results = sim(prog).qubits(num_qubits).quantum(state_vector()).run(100)
 
 # Check that both patches measure to logical 1
@@ -182,6 +186,7 @@ final_tgt = data.get("final_tgt", [])
 
 For common cases, use the convenience functions:
 
+<!--mark.slow-->
 ```python
 from pecos.guppy import (
     # Color code transversal CNOT
@@ -318,7 +323,6 @@ print(f"Stabilizers: {module['num_stab']}")
 
 Add noise to QEC simulations:
 
-<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 from pecos import sim, state_vector, depolarizing_noise
 from pecos.guppy import make_surface_code, get_num_qubits
@@ -331,7 +335,7 @@ results = (
     sim(prog)
     .qubits(num_qubits)
     .quantum(state_vector())
-    .noise(depolarizing_noise(p=0.001))
+    .noise(depolarizing_noise().with_uniform_probability(0.001))
     .seed(42)
     .run(1000)
 )
@@ -341,14 +345,13 @@ results = (
 
 Here's a complete example estimating the logical error rate:
 
-<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 from pecos import sim, state_vector, depolarizing_noise
 from pecos.guppy import make_surface_code, get_num_qubits
 from pecos.qec import logical_z_from_data
 
 
-def estimate_logical_error_rate(distance: int, p: float, shots: int = 1000) -> float:
+def estimate_logical_error_rate(distance: int, p: float, shots: int = 100) -> float:
     """Estimate logical error rate for a surface code."""
     prog = make_surface_code(distance=distance, num_rounds=distance, basis="Z")
     num_qubits = get_num_qubits(distance)
@@ -357,7 +360,7 @@ def estimate_logical_error_rate(distance: int, p: float, shots: int = 1000) -> f
         sim(prog)
         .qubits(num_qubits)
         .quantum(state_vector())
-        .noise(depolarizing_noise(p=p))
+        .noise(depolarizing_noise().with_uniform_probability(p))
         .seed(42)
         .run(shots)
     )
@@ -375,10 +378,9 @@ def estimate_logical_error_rate(distance: int, p: float, shots: int = 1000) -> f
     return errors / shots
 
 
-# Compare different distances
-for d in [3, 5, 7]:
-    error_rate = estimate_logical_error_rate(d, p=0.001)
-    print(f"d={d}: logical error rate = {error_rate:.4f}")
+# Compare different distances (use more shots/distances for production)
+error_rate = estimate_logical_error_rate(3, p=0.001)
+print(f"d=3: logical error rate = {error_rate:.4f}")
 ```
 
 ## API Reference

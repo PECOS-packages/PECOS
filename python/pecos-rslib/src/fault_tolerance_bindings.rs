@@ -77,7 +77,11 @@ type BatchSampleResult = (Vec<Vec<bool>>, Vec<Vec<bool>>);
 /// * `qubits` - List of qubit indices involved
 /// * `before` - Whether fault occurs before (True) or after (False) the gate
 /// * `gate_type` - Name of the gate type
-#[pyclass(name = "FaultLocation", module = "pecos_rslib.qec")]
+#[pyclass(
+    name = "FaultLocation",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyFaultLocation {
     node: usize,
@@ -1003,7 +1007,7 @@ impl PyMeasurementNoiseModel {
     #[pyo3(signature = (seed=None))]
     fn sample(&self, seed: Option<u64>) -> Vec<bool> {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let mut rng = match seed {
             Some(s) => PecosRng::seed_from_u64(s),
@@ -1024,7 +1028,7 @@ impl PyMeasurementNoiseModel {
     #[pyo3(signature = (num_shots, seed=None))]
     fn sample_batch(&self, num_shots: usize, seed: Option<u64>) -> Vec<Vec<bool>> {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let mut rng = match seed {
             Some(s) => PecosRng::seed_from_u64(s),
@@ -1097,7 +1101,7 @@ impl PyMeasurementNoiseModel {
         seed: Option<u64>,
     ) -> PyResult<(Vec<bool>, Vec<bool>)> {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let detector_records = parse_detector_records(detectors_json)?;
 
@@ -1129,7 +1133,7 @@ impl PyMeasurementNoiseModel {
         seed: Option<u64>,
     ) -> PyResult<Vec<(Vec<bool>, Vec<bool>)>> {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let detector_records = parse_detector_records(detectors_json)?;
 
@@ -1168,7 +1172,7 @@ impl PyMeasurementNoiseModel {
         seed: Option<u64>,
     ) -> PyResult<(Vec<bool>, Vec<bool>)> {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let detector_records = parse_detector_records(detectors_json)?;
         let observable_records = parse_observable_records(observables_json)?;
@@ -1206,7 +1210,7 @@ impl PyMeasurementNoiseModel {
         seed: Option<u64>,
     ) -> PyResult<BatchSampleResult> {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let detector_records = parse_detector_records(detectors_json)?;
         let observable_records = parse_observable_records(observables_json)?;
@@ -1291,7 +1295,7 @@ impl PyNoisySampler {
     #[new]
     #[pyo3(signature = (influence_map, p_error, seed=None))]
     fn new(influence_map: &PyDagFaultInfluenceMap, p_error: f64, seed: Option<u64>) -> Self {
-        use rand::Rng;
+        use rand::RngExt;
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
         let num_locations = influence_map.inner.locations.len();
         Self {
@@ -1324,7 +1328,7 @@ impl PyNoisySampler {
         seed: Option<u64>,
     ) -> Self {
         use pecos::quantum::GateType;
-        use rand::Rng;
+        use rand::RngExt;
 
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
 
@@ -1858,7 +1862,7 @@ impl PyDemSampler {
     #[pyo3(signature = (seed=None))]
     fn sample(&self, seed: Option<u64>) -> (Vec<bool>, Vec<bool>) {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let mut rng = match seed {
             Some(s) => PecosRng::seed_from_u64(s),
@@ -1883,7 +1887,7 @@ impl PyDemSampler {
         seed: Option<u64>,
     ) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let mut rng = match seed {
             Some(s) => PecosRng::seed_from_u64(s),
@@ -1918,7 +1922,7 @@ impl PyDemSampler {
         seed: Option<u64>,
         py: Python<'_>,
     ) -> PyResult<Py<pyo3::types::PyDict>> {
-        use rand::Rng;
+        use rand::RngExt;
 
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
         let stats = self.inner.sample_statistics(num_shots, actual_seed);
@@ -2271,7 +2275,7 @@ impl PyParsedDem {
     #[pyo3(signature = (seed=None))]
     fn sample(&self, seed: Option<u64>) -> (Vec<bool>, Vec<bool>) {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let mut rng = match seed {
             Some(s) => PecosRng::seed_from_u64(s),
@@ -2296,7 +2300,7 @@ impl PyParsedDem {
         seed: Option<u64>,
     ) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
         use pecos_rng::PecosRng;
-        use rand::Rng;
+        use rand::RngExt;
 
         let mut rng = match seed {
             Some(s) => PecosRng::seed_from_u64(s),

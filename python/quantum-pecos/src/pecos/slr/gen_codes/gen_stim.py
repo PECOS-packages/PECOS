@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 from pecos.slr.gen_codes.generator import Generator
@@ -22,14 +23,25 @@ if TYPE_CHECKING:
 
 
 class StimGenerator(Generator):
-    """Generate Stim circuits from SLR programs."""
+    """Generate Stim circuits from SLR programs.
 
-    def __init__(self, *, add_comments: bool = True):
+    .. deprecated::
+        Use :func:`pecos.slr.generate` with ``target="stim"`` instead.
+    """
+
+    def __init__(self, *, add_comments: bool = True, _internal: bool = False):
         """Initialize the Stim generator.
 
         Args:
             add_comments: Whether to add comments for unsupported operations
+            _internal: Internal flag to suppress deprecation warnings
         """
+        if not _internal:
+            warnings.warn(
+                "StimGenerator is deprecated. Use pecos.slr.generate(prog, 'stim') instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.circuit = None  # Will be initialized when needed
         self.qubit_map = {}  # Maps (reg_name, index) to qubit_id
         self.next_qubit_id = 0
@@ -360,23 +372,15 @@ class StimGenerator(Generator):
         elif hasattr(target, "parent") and hasattr(target, "index"):
             # QReg element (legacy support)
             parent_sym = target.parent.sym if hasattr(target.parent, "sym") else None
-            if (
-                parent_sym
-                and hasattr(target, "index")
-                and isinstance(target.index, int)
-            ):
+            if parent_sym and hasattr(target, "index") and isinstance(target.index, int):
                 key = (parent_sym, target.index)
                 if key in self.qubit_map:
                     indices.append(self.qubit_map[key])
         elif hasattr(target, "sym"):
             # Full register or single qubit
-            indices.extend(
-                self.qubit_map[key] for key in self.qubit_map if key[0] == target.sym
-            )
+            indices.extend(self.qubit_map[key] for key in self.qubit_map if key[0] == target.sym)
         elif hasattr(target, "name"):
             # Legacy support for name attribute
-            indices.extend(
-                self.qubit_map[key] for key in self.qubit_map if key[0] == target.name
-            )
+            indices.extend(self.qubit_map[key] for key in self.qubit_map if key[0] == target.name)
 
         return indices

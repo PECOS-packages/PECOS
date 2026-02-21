@@ -97,9 +97,7 @@ def plot_colored_polygons(
 
     # Calculate font size based on scale factor
     radius = c.point_size + 0.05 / scale_factor
-    font_size = (
-        pc.power(scale_factor, 0.5) * 18
-    )  # Scale font size proportionally to the circle radius
+    font_size = pc.power(scale_factor, 0.5) * 18  # Scale font size proportionally to the circle radius
 
     # Process the polygons
     for i, polygon in enumerate(polygons):

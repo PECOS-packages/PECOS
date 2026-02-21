@@ -116,11 +116,7 @@ def compare_dems(pecos_dem: str, stim_dem: str, rtol: float = 0.05) -> dict:
         pecos_prob = pecos_errors.get(key)
         stim_prob = stim_errors.get(key)
 
-        target_str = (
-            " ".join(f"D{d}" for d in dets)
-            + " "
-            + " ".join(f"L{log_idx}" for log_idx in logs)
-        )
+        target_str = " ".join(f"D{d}" for d in dets) + " " + " ".join(f"L{log_idx}" for log_idx in logs)
         target_str = target_str.strip()
 
         if pecos_prob is None:
@@ -226,9 +222,7 @@ class TestDemSamplerVsStim:
 
         # Most mechanisms should exist in both (may differ in probability)
         match_ratio = comparison["matched_count"] / max(comparison["stim_count"], 1)
-        assert (
-            match_ratio > 0.5
-        ), f"Only {match_ratio:.0%} of mechanisms matched by target"
+        assert match_ratio > 0.5, f"Only {match_ratio:.0%} of mechanisms matched by target"
 
         # Log mismatches for debugging but don't fail on probability differences
         # The sampling tests are the ground truth for equivalence
@@ -371,9 +365,7 @@ class TestDemSamplerVsStim:
 
         # Check correlation is positive (rates should trend together)
         correlation = np.corrcoef(pecos_det_rates, stim_det_rates)[0, 1]
-        assert (
-            correlation > 0.5
-        ), f"Detector rate correlation too low: {correlation:.2f}"
+        assert correlation > 0.5, f"Detector rate correlation too low: {correlation:.2f}"
 
         # Print differences for debugging
         print(f"\nDetector rate comparison (correlation={correlation:.2f}):")

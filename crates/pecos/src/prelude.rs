@@ -96,9 +96,9 @@ pub use pecos_num::prelude::*;
 #[cfg(feature = "hugr")]
 pub use pecos_hugr_qis::prelude::*;
 
-// Re-export HUGR direct interpreter (HugrEngine)
+// Re-export Guppy HUGR direct interpreter (GuppyHugrEngine)
 #[cfg(feature = "hugr")]
-pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};
+pub use pecos_guppy_hugr::{GuppyHugrEngine, GuppyHugrEngineBuilder, hugr_engine, hugr_sim};
 
 // Re-export LLVM IR generation prelude
 #[cfg(feature = "llvm")]

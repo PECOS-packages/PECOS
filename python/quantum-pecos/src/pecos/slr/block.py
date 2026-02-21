@@ -56,10 +56,7 @@ class Block(Node):
 
         # Process return type annotation if present
         # Check against ReturnNotSet sentinel, not None (None means "returns nothing")
-        if (
-            hasattr(self.__class__, "block_returns")
-            and self.__class__.block_returns is not ReturnNotSet
-        ):
+        if hasattr(self.__class__, "block_returns") and self.__class__.block_returns is not ReturnNotSet:
             self.__slr_return_type__ = self._process_return_annotation(
                 self.__class__.block_returns,
             )

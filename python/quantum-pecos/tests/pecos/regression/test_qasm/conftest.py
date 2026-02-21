@@ -52,11 +52,7 @@ def compare_qasm() -> Callable[..., None]:
 
         qasm1 = qasm1.strip()
         # TODO: Fix this... this is kinda hacky
-        if (
-            hasattr(block, "qargs")
-            and hasattr(block, "params")
-            and hasattr(block, "sym")
-        ):
+        if hasattr(block, "qargs") and hasattr(block, "params") and hasattr(block, "sym"):
             qasm2 = block.gen("qasm").strip()
         elif hasattr(block, "gen"):
             qasm2 = block.gen("qasm", add_versions=False).strip()

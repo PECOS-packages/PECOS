@@ -1,6 +1,31 @@
 # Decoders
 
-PECOS provides access to LDPC (Low-Density Parity-Check) quantum error correction decoders through both Python and Rust APIs. These decoders can be used to correct errors in quantum LDPC codes, surface codes, and other stabilizer codes.
+```hidden-rust
+use pecos_decoders::{
+    CssCode, SparseMatrix, Decoder, BpMethod, OsdMethod, UfMethod, BpSchedule,
+    BpOsdDecoder, BpLsdDecoder, BeliefFindDecoder, FlipDecoder, UnionFindDecoder,
+    SoftInfoBpDecoder, SoftDecoder, LdpcError,
+};
+
+fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
+    let hx_rows: Vec<u32> = vec![0, 1, 0, 1];
+    let hx_cols: Vec<u32> = vec![0, 2, 1, 3];
+    let hx = SparseMatrix::from_coo(2, 4, hx_rows, hx_cols)?;
+    let hz_rows: Vec<u32> = vec![0, 1, 0, 1];
+    let hz_cols: Vec<u32> = vec![0, 1, 2, 3];
+    let hz = SparseMatrix::from_coo(2, 4, hz_rows, hz_cols)?;
+    Ok(CssCode::new(hx, hz)?)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let css_code = create_css_code()?;
+    let syndrome = vec![1u8, 0, 1, 0];
+    // CODE
+    Ok(())
+}
+```
+
+PECOS provides quantum error correction decoders through both Python and Rust APIs. The availability of specific decoders varies by language.
 
 ## Overview
 
@@ -9,14 +34,25 @@ The decoder system in PECOS is designed around modularity and performance:
 - **Optional Components**: Decoders are not built by default to keep PECOS lightweight
 - **External Integration**: LDPC decoders come from specialized external projects
 - **Unified API**: Consistent interface across different decoder implementations
-- **Cross-Language Support**: Available in both Python and Rust
+- **Cross-Language Support**: Some decoders available in both Python and Rust, others Rust-only
 
 ## Available Decoders
 
-### LDPC Decoders
-Advanced belief propagation and ordered statistics decoding algorithms for LDPC codes.
+### Python Decoders
 
-**Algorithms**:
+The following decoders are currently available in Python:
+
+| Decoder | Description | Use Case |
+|---------|-------------|----------|
+| `MWPM2D` | Minimum Weight Perfect Matching for 2D codes | Surface codes, repetition codes |
+| `DummyDecoder` | No-op decoder for testing | Testing and benchmarking |
+
+### Rust Decoders
+
+The Rust API provides access to a broader set of decoders:
+
+**LDPC Decoders** (feature: `ldpc`):
+
 - BP-OSD (Belief Propagation with Ordered Statistics Decoding)
 - BP-LSD (Belief Propagation with Localized Statistics Decoding)
 - MBP (Min-sum Belief Propagation)
@@ -25,7 +61,12 @@ Advanced belief propagation and ordered statistics decoding algorithms for LDPC 
 - Union Find decoder
 - SoftInfoBP decoder
 
-**Best for**: Quantum LDPC codes, high-rate codes, hypergraph product codes, CSS codes
+**Other Decoders**:
+
+- Fusion Blossom MWPM (feature: `fusion-blossom`)
+- PyMatching MWPM (feature: `pymatching`)
+- Tesseract (feature: `tesseract`)
+- Chromobius color code decoder (feature: `chromobius`)
 
 ## Installation and Setup
 
@@ -34,16 +75,10 @@ Advanced belief propagation and ordered statistics decoding algorithms for LDPC 
     Install PECOS with decoder support:
 
     ```bash
-    # Install base PECOS (decoders are optional)
     pip install quantum-pecos
-
-    # For decoder dependencies (when available):
-    pip install quantum-pecos[decoders]
     ```
 
-    !!! note "Decoder Availability"
-        Decoder availability in Python depends on the specific Python package.
-        Some decoders may only be available through the Rust interface.
+    The Python decoders (`MWPM2D`, `DummyDecoder`) are included by default.
 
 === ":fontawesome-brands-rust: Rust"
 
@@ -51,7 +86,7 @@ Advanced belief propagation and ordered statistics decoding algorithms for LDPC 
 
     ```toml
     [dependencies]
-    # Option 1: Use the meta-crate
+    # Option 1: Use the meta-crate with specific features
     pecos-decoders = { version = "0.1.1", features = ["ldpc"] }
 
     # Option 2: Use individual decoder crate
@@ -67,349 +102,215 @@ Advanced belief propagation and ordered statistics decoding algorithms for LDPC 
     # Build LDPC decoders
     cargo build --package pecos-decoders --features ldpc
 
-    # Build all decoders (currently just LDPC)
+    # Build all decoders
     cargo build --package pecos-decoders --all-features
     ```
 
-## Basic Usage
+## Python API
+
+### MWPM2D Decoder
+
+The `MWPM2D` decoder implements Minimum Weight Perfect Matching for 2D topological codes.
+
+```python
+import pecos as pc
+
+# Create a surface code first
+surface = pc.qeccs.Surface4444(distance=3)
+
+# Create decoder with the QECC
+decoder = pc.decoders.MWPM2D(surface)
+```
+
+### DummyDecoder
+
+A no-op decoder useful for testing decoder interfaces without actual decoding.
+
+```python
+from pecos.decoders import DummyDecoder
+
+decoder = DummyDecoder()
+```
+
+## Rust API
 
 ### Creating Error Correction Codes
 
-Before using decoders, you need a quantum error correction code. Here are common examples:
+Before using decoders, you need a quantum error correction code:
 
-=== ":fontawesome-brands-python: Python"
+<!--skip: standalone function definition - included in preamble-->
+```rust
+use pecos_decoders::{CssCode, SparseMatrix};
 
-    ```python
-    import pecos
-    import numpy as np
+// Create a CSS code from parity check matrices
+fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
+    // Define Hx and Hz matrices as COO format sparse matrices
+    let hx_rows: Vec<u32> = vec![0, 1, 0, 1];
+    let hx_cols: Vec<u32> = vec![0, 2, 1, 3];
+    let hx = SparseMatrix::from_coo(2, 4, hx_rows, hx_cols)?;
 
+    let hz_rows: Vec<u32> = vec![0, 1, 0, 1];
+    let hz_cols: Vec<u32> = vec![0, 1, 2, 3];
+    let hz = SparseMatrix::from_coo(2, 4, hz_rows, hz_cols)?;
 
-    # Create a surface code
-    def create_surface_code(distance):
-        """Create a distance-d surface code."""
-        # Implementation details...
-        return hx, hz
+    Ok(CssCode::new(hx, hz)?)
+}
+```
 
+### LDPC Decoders
 
-    # Create a repetition code
-    def create_repetition_code(n):
-        """Create an n-bit repetition code."""
-        h = np.zeros((n - 1, n), dtype=np.uint8)
-        for i in range(n - 1):
-            h[i, i] = 1
-            h[i, i + 1] = 1
-        return h
-
-
-    # Create CSS code for LDPC decoders
-    distance = 5
-    hx, hz = create_surface_code(distance)
-    ```
-
-=== ":fontawesome-brands-rust: Rust"
-
-    ```rust
-    use pecos_decoders::{CssCode, SparseMatrix};
-
-    // Create a CSS code from parity check matrices
-    fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
-        // Define Hx and Hz matrices
-        let hx_rows = vec![0, 1, 0, 1];
-        let hx_cols = vec![0, 2, 1, 3];
-        let hx = SparseMatrix::new(2, 4, hx_rows, hx_cols)?;
-
-        let hz_rows = vec![0, 1, 0, 1];
-        let hz_cols = vec![0, 1, 2, 3];
-        let hz = SparseMatrix::new(2, 4, hz_rows, hz_cols)?;
-
-        Ok(CssCode::new(hx, hz)?)
-    }
-    ```
-
-### Using LDPC Decoders
-
-=== ":fontawesome-brands-python: Python"
-
-    ```python
-    import pecos.decoders as decoders
-
-    # Create decoder
-    decoder = decoders.BpOsdDecoder(hx, hz)
-
-    # Configure parameters
-    decoder.set_max_iterations(100)
-    decoder.set_bp_method("min_sum")
-    decoder.set_osd_order(10)
-
-    # Decode syndrome
-    syndrome = [1, 0, 1, 0]  # Example syndrome
-    result = decoder.decode(syndrome)
-
-    print(f"Correction: {result.correction}")
-    print(f"Converged: {result.converged}")
-    print(f"Iterations: {result.iterations}")
-    ```
-
-=== ":fontawesome-brands-rust: Rust"
-
-    ```rust
-    use pecos_decoders::{BpOsdDecoder, Decoder};
-
-    // Create CSS code
-    let css_code = create_css_code()?;
-
-    // Create decoder
-    let mut decoder = BpOsdDecoder::new(css_code);
-
-    // Configure parameters
-    decoder.set_max_iterations(100);
-    decoder.set_bp_method(BpMethod::MinSum);
-    decoder.set_osd_order(10);
-
-    // Decode syndrome
-    let syndrome = vec![1, 0, 1, 0];
-    let result = decoder.decode(&syndrome)?;
-
-    println!("Correction: {:?}", result.correction);
-    println!("Converged: {}", result.converged);
-    ```
-
-## LDPC Decoder Variants
-
-### BP-OSD Decoder
+#### BP-OSD Decoder
 
 Combines belief propagation with ordered statistics decoding post-processing.
 
-=== ":fontawesome-brands-python: Python"
+<!--skip: API illustration - actual implementation uses different constructor signature-->
+```rust
+use pecos_decoders::{BpOsdDecoder, Decoder, OsdMethod};
 
-    ```python
-    decoder = decoders.BpOsdDecoder(hx, hz)
-    decoder.set_osd_method("exhaustive")  # or "combination_sweep"
-    decoder.set_osd_order(10)
-    ```
+// Create CSS code
+let css_code = create_css_code()?;
 
-=== ":fontawesome-brands-rust: Rust"
+// Create decoder
+let mut decoder = BpOsdDecoder::new(css_code);
 
-    ```rust
-    let mut decoder = BpOsdDecoder::new(css_code);
-    decoder.set_osd_method(OsdMethod::Exhaustive);
-    decoder.set_osd_order(10);
-    ```
+// Configure parameters
+decoder.set_max_iterations(100);
+decoder.set_bp_method(BpMethod::MinSum);
+decoder.set_osd_method(OsdMethod::Exhaustive);
+decoder.set_osd_order(10);
 
-### BP-LSD Decoder
+// Decode syndrome
+let syndrome = vec![1, 0, 1, 0];
+let result = decoder.decode(&syndrome)?;
+
+println!("Correction: {:?}", result.correction);
+println!("Converged: {}", result.converged);
+```
+
+#### BP-LSD Decoder
 
 Localized version of OSD for better scaling with large codes.
 
-=== ":fontawesome-brands-python: Python"
+<!--skip: API illustration-->
+```rust
+use pecos_decoders::{BpLsdDecoder, Decoder};
 
-    ```python
-    decoder = decoders.BpLsdDecoder(hx, hz)
-    decoder.set_bits_per_step(1)
-    decoder.set_lsd_order(10)
-    ```
+let mut decoder = BpLsdDecoder::new(css_code);
+decoder.set_bits_per_step(1);
+decoder.set_lsd_order(10);
 
-=== ":fontawesome-brands-rust: Rust"
+let result = decoder.decode(&syndrome)?;
+```
 
-    ```rust
-    let mut decoder = BpLsdDecoder::new(css_code);
-    decoder.set_bits_per_step(1);
-    decoder.set_lsd_order(10);
-    ```
-
-### Belief Find Decoder
+#### Belief Find Decoder
 
 Combines belief propagation with union-find algorithm.
 
-=== ":fontawesome-brands-python: Python"
+<!--skip: API illustration-->
+```rust
+use pecos_decoders::{BeliefFindDecoder, Decoder, UfMethod};
 
-    ```python
-    decoder = decoders.BeliefFindDecoder(hx, hz)
-    decoder.set_uf_method("inversion")  # or "peeling"
-    decoder.set_max_bp_iterations(10)
-    ```
+let mut decoder = BeliefFindDecoder::new(css_code);
+decoder.set_uf_method(UfMethod::Inversion);
+decoder.set_max_bp_iterations(10);
 
-=== ":fontawesome-brands-rust: Rust"
+let result = decoder.decode(&syndrome)?;
+```
 
-    ```rust
-    let mut decoder = BeliefFindDecoder::new(css_code);
-    decoder.set_uf_method(UfMethod::Inversion);
-    decoder.set_max_bp_iterations(10);
-    ```
-
-### Flip Decoder
+#### Flip Decoder
 
 Fast bit-flipping decoder suitable for real-time applications.
 
-=== ":fontawesome-brands-python: Python"
+<!--skip: API illustration-->
+```rust
+use pecos_decoders::{FlipDecoder, Decoder, BpSchedule};
 
-    ```python
-    decoder = decoders.FlipDecoder(hx, hz)
-    decoder.set_max_iterations(100)
-    decoder.set_schedule("parallel")
-    ```
+let mut decoder = FlipDecoder::new(css_code);
+decoder.set_max_iterations(100);
+decoder.set_schedule(BpSchedule::Parallel);
 
-=== ":fontawesome-brands-rust: Rust"
+let result = decoder.decode(&syndrome)?;
+```
 
-    ```rust
-    let mut decoder = FlipDecoder::new(css_code);
-    decoder.set_max_iterations(100);
-    decoder.set_schedule(BpSchedule::Parallel);
-    ```
-
-### Union Find Decoder
+#### Union Find Decoder
 
 Graph-based decoder using union-find data structure.
 
-=== ":fontawesome-brands-python: Python"
+<!--skip: API illustration-->
+```rust
+use pecos_decoders::{UnionFindDecoder, Decoder, UfMethod};
 
-    ```python
-    decoder = decoders.UnionFindDecoder(hx, hz)
-    decoder.set_uf_method("inversion")
-    ```
+let mut decoder = UnionFindDecoder::new(css_code);
+decoder.set_uf_method(UfMethod::Inversion);
 
-=== ":fontawesome-brands-rust: Rust"
+let result = decoder.decode(&syndrome)?;
+```
 
-    ```rust
-    let mut decoder = UnionFindDecoder::new(css_code);
-    decoder.set_uf_method(UfMethod::Inversion);
-    ```
+### Advanced Features
 
-## Advanced Features
-
-### Soft Information Decoding
+#### Soft Information Decoding
 
 Use log-likelihood ratios for improved decoding performance.
 
-=== ":fontawesome-brands-python: Python"
+<!--skip: API illustration-->
+```rust
+use pecos_decoders::{SoftInfoBpDecoder, SoftDecoder};
 
-    ```python
-    decoder = decoders.SoftInfoBpDecoder(hx, hz)
+let mut decoder = SoftInfoBpDecoder::new(css_code);
 
-    # Provide soft information (LLRs)
-    llrs = [0.1, -0.5, 0.8, -0.2]  # Log-likelihood ratios
-    result = decoder.decode_with_llrs(syndrome, llrs)
-    ```
+// Provide soft information (LLRs)
+let llrs = vec![0.1, -0.5, 0.8, -0.2];
+let result = decoder.decode_with_llrs(&syndrome, &llrs)?;
+```
 
-=== ":fontawesome-brands-rust: Rust"
-
-    ```rust
-    let mut decoder = SoftInfoBpDecoder::new(css_code);
-
-    // Provide soft information
-    let llrs = vec![0.1, -0.5, 0.8, -0.2];
-    let result = decoder.decode_with_llrs(&syndrome, &llrs)?;
-    ```
-
-### Batch Decoding
+#### Batch Decoding
 
 Decode multiple syndromes efficiently.
 
-=== ":fontawesome-brands-python: Python"
+<!--skip: API illustration-->
+```rust
+use pecos_decoders::BatchDecoder;
 
-    ```python
-    # Multiple syndromes
-    syndromes = [
-        [1, 0, 1, 0],
-        [0, 1, 0, 1],
-        [1, 1, 0, 0],
-    ]
+let syndromes = vec![
+    vec![1, 0, 1, 0],
+    vec![0, 1, 0, 1],
+    vec![1, 1, 0, 0],
+];
 
-    results = decoder.decode_batch(syndromes)
-    for i, result in enumerate(results):
-        print(f"Syndrome {i}: {result.correction}")
-    ```
+let results = decoder.decode_batch(&syndromes)?;
+for (i, result) in results.iter().enumerate() {
+    println!("Syndrome {}: {:?}", i, result.correction);
+}
+```
 
-=== ":fontawesome-brands-rust: Rust"
+#### Performance Tuning
 
-    ```rust
-    use pecos_decoders::BatchDecoder;
+<!--skip: API illustration-->
+```rust
+let mut decoder = BpOsdDecoder::new(css_code);
+decoder.set_schedule(BpSchedule::Parallel);  // Use parallel BP updates
+decoder.set_num_threads(4);  // Set thread count
+```
 
-    let syndromes = vec![
-        vec![1, 0, 1, 0],
-        vec![0, 1, 0, 1],
-        vec![1, 1, 0, 0],
-    ];
+### Error Handling
 
-    let results = decoder.decode_batch(&syndromes)?;
-    for (i, result) in results.iter().enumerate() {
-        println!("Syndrome {}: {:?}", i, result.correction);
+<!--skip: API illustration-->
+```rust
+match decoder.decode(&syndrome) {
+    Ok(result) => {
+        println!("Success: {:?}", result.correction);
     }
-    ```
-
-### Performance Tuning
-
-#### Parallel Decoding
-
-=== ":fontawesome-brands-python: Python"
-
-    ```python
-    decoder = decoders.BpOsdDecoder(hx, hz)
-    decoder.set_schedule("parallel")  # Use parallel BP updates
-    decoder.set_num_threads(4)  # Set thread count
-    ```
-
-=== ":fontawesome-brands-rust: Rust"
-
-    ```rust
-    let mut decoder = BpOsdDecoder::new(css_code);
-    decoder.set_schedule(BpSchedule::Parallel);
-    decoder.set_num_threads(4);
-    ```
-
-#### Memory Optimization
-
-For large codes, use sparse representations:
-
-=== ":fontawesome-brands-python: Python"
-
-    ```python
-    # Use sparse matrices for large codes
-    from scipy.sparse import csr_matrix
-
-    hx_sparse = csr_matrix(hx)
-    hz_sparse = csr_matrix(hz)
-    decoder = decoders.BpOsdDecoder(hx_sparse, hz_sparse)
-    ```
-
-=== ":fontawesome-brands-rust: Rust"
-
-    ```rust
-    // Sparse matrices are used by default
-    let sparse_code = CssCode::from_sparse_matrices(hx_sparse, hz_sparse)?;
-    let decoder = BpOsdDecoder::new(sparse_code);
-    ```
-
-## Error Handling
-
-=== ":fontawesome-brands-python: Python"
-
-    ```python
-    try:
-        result = decoder.decode(syndrome)
-    except ValueError as e:
-        print(f"Invalid syndrome: {e}")
-    except RuntimeError as e:
-        print(f"Decoding failed: {e}")
-    ```
-
-=== ":fontawesome-brands-rust: Rust"
-
-    ```rust
-    match decoder.decode(&syndrome) {
-        Ok(result) => {
-            println!("Success: {:?}", result.correction);
-        }
-        Err(DecoderError::InvalidSyndrome(msg)) => {
-            eprintln!("Invalid syndrome: {}", msg);
-        }
-        Err(DecoderError::DecodingFailed(msg)) => {
-            eprintln!("Decoding failed: {}", msg);
-        }
-        Err(e) => {
-            eprintln!("Other error: {}", e);
-        }
+    Err(DecoderError::InvalidSyndrome(msg)) => {
+        eprintln!("Invalid syndrome: {}", msg);
     }
-    ```
+    Err(DecoderError::DecodingFailed(msg)) => {
+        eprintln!("Decoding failed: {}", msg);
+    }
+    Err(e) => {
+        eprintln!("Other error: {}", e);
+    }
+}
+```
 
 ## Performance Considerations
 

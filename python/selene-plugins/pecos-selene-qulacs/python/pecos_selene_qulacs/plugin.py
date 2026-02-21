@@ -67,9 +67,7 @@ class QulacsPlugin(Simulator):
     def __post_init__(self) -> None:
         """Validate plugin configuration."""
         if self.mode != SimulatorMode.STATE_VECTOR:
-            msg = (
-                f"Qulacs plugin only supports state_vector mode, got {self.mode.value}"
-            )
+            msg = f"Qulacs plugin only supports state_vector mode, got {self.mode.value}"
             raise ValueError(msg)
 
     def get_init_args(self) -> list[str]:

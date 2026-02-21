@@ -49,7 +49,7 @@ use pecos_qsim::measurement_sampler::SampleResult;
 use pecos_qsim::pauli_prop::PauliProp;
 use pecos_qsim::symbolic_sparse_stab::MeasurementHistory;
 use pecos_quantum::Circuit;
-use pecos_rng::{PecosRng, Rng, RngBulkExt, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngBulkExt, RngExt};
 use std::collections::BTreeSet;
 use wide::u64x4;
 
@@ -1057,7 +1057,7 @@ impl<'a> NoisyMeasurementSampler<'a> {
     #[inline]
     #[must_use]
     pub fn sample(&self, shots: usize) -> SampleResult {
-        let mut rng = PecosRng::from_os_rng();
+        let mut rng: PecosRng = rand::make_rng();
         self.sample_with_rng(shots, &mut rng)
     }
 

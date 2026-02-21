@@ -481,18 +481,10 @@ def compare_dems(
     # Parse and compare
     def parse_dem(dem_str: str) -> dict:
         """Parse DEM to extract statistics."""
-        lines = [
-            line.strip()
-            for line in dem_str.split("\n")
-            if line.strip() and not line.startswith("#")
-        ]
+        lines = [line.strip() for line in dem_str.split("\n") if line.strip() and not line.startswith("#")]
         errors = [line for line in lines if line.startswith("error")]
         detectors = [line for line in lines if line.startswith("detector")]
-        observables = [
-            line
-            for line in lines
-            if "logical" in line.lower() or "observable" in line.lower()
-        ]
+        observables = [line for line in lines if "logical" in line.lower() or "observable" in line.lower()]
         return {
             "error_count": len(errors),
             "detector_count": len(detectors),

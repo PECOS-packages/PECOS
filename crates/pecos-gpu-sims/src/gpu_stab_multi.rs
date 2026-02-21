@@ -6,7 +6,7 @@
 
 use pecos_core::QubitId;
 use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use rand_core::{Rng, SeedableRng};
 use std::fmt::Debug;
 
 /// Maximum gates in the queue before auto-flush
@@ -19,7 +19,7 @@ const GATE_QUEUE_BUFFER_SIZE: usize = 64 * 1024;
 ///
 /// The simulator automatically queries GPU limits and processes shots in
 /// batches if the requested count exceeds hardware capabilities.
-pub struct GpuStabMulti<R: RngCore + SeedableRng = StdRng> {
+pub struct GpuStabMulti<R: Rng + SeedableRng = StdRng> {
     // GPU resources
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -89,7 +89,7 @@ pub struct GpuStabMulti<R: RngCore + SeedableRng = StdRng> {
     total_measurements_in_batch: usize,       // Count of measurements since last fetch
 }
 
-impl<R: RngCore + SeedableRng + Debug> GpuStabMulti<R> {
+impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Create a new multi-shot GPU stabilizer simulator
     pub fn new(num_qubits: usize, num_shots: usize) -> Result<Self, String> {
         Self::with_seed(num_qubits, num_shots, 42)

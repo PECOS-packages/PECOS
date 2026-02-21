@@ -107,9 +107,7 @@ class TestGuppyResultMechanisms:
 
             # Verify basic HUGR structure
             assert isinstance(hugr_json, dict), "HUGR should be a JSON object"
-            assert (
-                "nodes" in hugr_json or "modules" in hugr_json
-            ), "HUGR should contain nodes or modules"
+            assert "nodes" in hugr_json or "modules" in hugr_json, "HUGR should contain nodes or modules"
 
     def test_hugr_contains_operations(self, guppy_functions: dict) -> None:
         """Test that HUGR contains expected quantum and result operations."""
@@ -140,10 +138,7 @@ class TestGuppyResultMechanisms:
             if total_ops == 0:
                 # Try to check if the HUGR has nodes which indicates it has content
                 has_nodes = "nodes" in hugr_json and len(hugr_json.get("nodes", [])) > 0
-                has_modules = (
-                    "modules" in hugr_json
-                    and len(str(hugr_json.get("modules", ""))) > 100
-                )
+                has_modules = "modules" in hugr_json and len(str(hugr_json.get("modules", ""))) > 100
 
                 if not (has_nodes or has_modules):
                     pytest.fail(
@@ -181,9 +176,7 @@ class TestGuppyResultMechanisms:
             assert len(llvm_ir) > 0, f"{name} LLVM IR should not be empty"
 
             # Check for expected LLVM patterns
-            assert (
-                "define" in llvm_ir or "@" in llvm_ir
-            ), f"{name} LLVM IR should contain function definitions"
+            assert "define" in llvm_ir or "@" in llvm_ir, f"{name} LLVM IR should contain function definitions"
 
             # Check for quantum operations - Selene uses different naming
             has_quantum = (
@@ -272,24 +265,16 @@ class TestGuppyResultMechanisms:
         # Verify the documentation structure
         for func_name, format_info in expected_formats.items():
             assert "description" in format_info, f"{func_name} should have description"
-            assert (
-                "expected_keys" in format_info
-            ), f"{func_name} should have expected_keys"
-            assert (
-                "expected_types" in format_info
-            ), f"{func_name} should have expected_types"
+            assert "expected_keys" in format_info, f"{func_name} should have expected_keys"
+            assert "expected_types" in format_info, f"{func_name} should have expected_types"
 
             # Keys and types should have same length
-            assert (
-                len(format_info["expected_keys"]) > 0
-            ), f"{func_name} should have at least one expected key"
+            assert len(format_info["expected_keys"]) > 0, f"{func_name} should have at least one expected key"
 
             # All types should be valid
             valid_types = {"bool", "int", "float", "tuple", "list", "str"}
             for type_name in format_info["expected_types"]:
-                assert (
-                    type_name in valid_types
-                ), f"{func_name} has invalid type: {type_name}"
+                assert type_name in valid_types, f"{func_name} has invalid type: {type_name}"
 
     def _count_operations(self, hugr_json: dict) -> dict[str, int]:
         """Count different types of operations in HUGR JSON."""
@@ -369,14 +354,10 @@ class TestLLVMResultPatterns:
             "void @",  # Function definitions
         ]
 
-        found_patterns = [
-            pattern for pattern in patterns_to_check if pattern in llvm_ir
-        ]
+        found_patterns = [pattern for pattern in patterns_to_check if pattern in llvm_ir]
 
         # Should have at least some expected patterns
-        assert (
-            len(found_patterns) > 0
-        ), f"LLVM IR should contain at least one expected pattern, found: {found_patterns}"
+        assert len(found_patterns) > 0, f"LLVM IR should contain at least one expected pattern, found: {found_patterns}"
 
         # Save LLVM IR for inspection if needed
         with tempfile.TemporaryDirectory() as tmpdir:

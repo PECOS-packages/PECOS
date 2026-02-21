@@ -41,7 +41,7 @@
 use ndarray::Array1;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use std::cell::RefCell;
 
 // Thread-local seeded RNG for reproducibility

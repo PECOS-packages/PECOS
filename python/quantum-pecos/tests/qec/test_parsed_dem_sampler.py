@@ -256,10 +256,9 @@ class TestParsedDemVsStimComprehensive:
         # Should be within statistical tolerance
         tolerance = 3.0 / np.sqrt(num_shots) + 0.01
         diff = abs(stim_rate - pecos_rate)
-        assert diff < tolerance, (
-            f"d={distance}, r={rounds}, p={p}: "
-            f"Stim={stim_rate:.4f}, PECOS={pecos_rate:.4f}, diff={diff:.4f}"
-        )
+        assert (
+            diff < tolerance
+        ), f"d={distance}, r={rounds}, p={p}: Stim={stim_rate:.4f}, PECOS={pecos_rate:.4f}, diff={diff:.4f}"
 
     def test_high_error_rate_matching(self) -> None:
         """PECOS should match Stim even at high error rates."""
@@ -292,9 +291,7 @@ class TestParsedDemVsStimComprehensive:
         pecos_rate = pecos_stats["syndrome_rate"]
 
         # At high error rates, syndrome rate should be ~1.0 for both
-        assert (
-            abs(stim_rate - pecos_rate) < 0.02
-        ), f"High error rate: Stim={stim_rate:.4f}, PECOS={pecos_rate:.4f}"
+        assert abs(stim_rate - pecos_rate) < 0.02, f"High error rate: Stim={stim_rate:.4f}, PECOS={pecos_rate:.4f}"
 
 
 class TestParsedDemPerformance:
@@ -331,9 +328,7 @@ class TestParsedDemPerformance:
         opt_time = time.perf_counter() - start
 
         # Optimized should be significantly faster
-        assert (
-            opt_time < naive_time
-        ), f"Optimized ({opt_time:.3f}s) should be faster than naive ({naive_time:.3f}s)"
+        assert opt_time < naive_time, f"Optimized ({opt_time:.3f}s) should be faster than naive ({naive_time:.3f}s)"
 
 
 if __name__ == "__main__":

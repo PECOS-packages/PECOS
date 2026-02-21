@@ -9,33 +9,33 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+"""SLR Converter - converts SLR programs to various output formats.
+
+This module uses AST-based code generation for all targets.
+"""
+
 from __future__ import annotations
 
-from pecos.slr.gen_codes.gen_qasm import QASMGenerator
+from typing import TYPE_CHECKING
+
 from pecos.slr.gen_codes.language import Language
 from pecos.slr.transforms.parallel_optimizer import ParallelOptimizer
 
-try:
-    from pecos.slr.gen_codes.gen_qir import QIRGenerator
-except ImportError:
-    QIRGenerator = None
+if TYPE_CHECKING:
+    import stim
 
-from pecos.slr.gen_codes.guppy import IRGuppyGenerator
-
-try:
-    from pecos.slr.gen_codes.gen_stim import StimGenerator
-except ImportError:
-    StimGenerator = None
-
-try:
-    from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
-except ImportError:
-    QuantumCircuitGenerator = None
+    from pecos.circuits import QuantumCircuit
+    from pecos.slr import Main
 
 
 class SlrConverter:
+    """Convert SLR programs to various output formats.
 
-    def __init__(self, block=None, *, optimize_parallel: bool = True):
+    Uses AST-based code generation which provides validation,
+    analysis, and optimization capabilities.
+    """
+
+    def __init__(self, block: Main | None = None, *, optimize_parallel: bool = True):
         """Initialize the SLR converter.
 
         Args:
@@ -51,6 +51,16 @@ class SlrConverter:
             optimizer = ParallelOptimizer()
             self._block = optimizer.transform(self._block)
 
+    def _to_ast(self):
+        """Convert the SLR block to AST."""
+        if self._block is None:
+            msg = "No SLR block to convert. Use from_* methods first or provide block to constructor."
+            raise ValueError(msg)
+
+        from pecos.slr.ast import slr_to_ast
+
+        return slr_to_ast(self._block)
+
     def generate(
         self,
         target: Language,
@@ -58,74 +68,107 @@ class SlrConverter:
         skip_headers: bool = False,
         add_versions: bool = False,
     ) -> str:
+        """Generate code for the specified target language.
+
+        Args:
+            target: The target language (Language enum value)
+            skip_headers: For QASM, whether to skip the OPENQASM header
+            add_versions: Deprecated, ignored (kept for backwards compatibility)
+
+        Returns:
+            Generated code as a string
+        """
+        del add_versions  # Deprecated parameter, kept for backwards compatibility
         if target == Language.QASM:
-            generator = QASMGenerator(
-                skip_headers=skip_headers,
-                add_versions=add_versions,
-            )
-        elif target in [Language.QIR, Language.QIRBC]:
-            self._check_qir_imported()
-            generator = QIRGenerator()
-        elif target == Language.GUPPY:
-            self._check_guppy_imported()
-            generator = IRGuppyGenerator()
-        elif target == Language.HUGR:
-            # HUGR is handled specially in the hugr() method
+            return self._generate_qasm(include_header=not skip_headers)
+        if target in [Language.QIR, Language.QIRBC]:
+            return self._generate_qir(bytecode=(target == Language.QIRBC))
+        if target == Language.GUPPY:
+            return self._generate_guppy()
+        if target == Language.HUGR:
             msg = "Use the hugr() method directly to compile to HUGR"
             raise ValueError(msg)
-        elif target == Language.STIM:
-            self._check_stim_imported()
-            generator = StimGenerator()
-        elif target == Language.QUANTUM_CIRCUIT:
-            generator = QuantumCircuitGenerator()
-        else:
-            msg = f"Code gen target '{target}' is not supported."
-            raise NotImplementedError(msg)
+        if target == Language.STIM:
+            # For backwards compatibility, generate() returns string
+            return str(self.stim())
+        if target == Language.QUANTUM_CIRCUIT:
+            # For backwards compatibility, generate() returns string representation
+            return str(self.quantum_circuit())
+        msg = f"Code gen target '{target}' is not supported."
+        raise NotImplementedError(msg)
 
-        generator.generate_block(self._block)
-        if target == Language.QIRBC:
+    def _generate_qasm(self, *, include_header: bool = True) -> str:
+        """Generate QASM code using AST-based codegen."""
+        from pecos.slr.ast.codegen.qasm import ast_to_qasm
 
+        ast = self._to_ast()
+        return ast_to_qasm(ast, include_header=include_header)
+
+    def _generate_guppy(self) -> str:
+        """Generate Guppy code using AST-based codegen."""
+        from pecos.slr.ast.codegen.guppy import ast_to_guppy
+
+        ast = self._to_ast()
+        return ast_to_guppy(ast)
+
+    def _generate_qir(self, *, bytecode: bool = False) -> str | bytes:
+        """Generate QIR code using AST-based codegen."""
+        if bytecode:
+            # QIR bytecode requires the old generator
+            from pecos.slr.gen_codes.gen_qir import QIRGenerator
+
+            if QIRGenerator is None:
+                msg = (
+                    "Trying to compile QIR without the appropriate optional dependencies install. "
+                    "Use optional dependency group `qir` or `all`"
+                )
+                raise ImportError(msg)
+
+            generator = QIRGenerator(_internal=True)
+            generator.generate_block(self._block)
             return generator.get_bc()
-        return generator.get_output()
 
-    @staticmethod
-    def _check_qir_imported():
-        if QIRGenerator is None:
-            msg = (
-                "Trying to compile QIR without the appropriate optional dependencies install. "
-                "Use optional dependency group `qir` or `all`"
-            )
-            raise Exception(
-                msg,
-            )
+        from pecos.slr.ast.codegen.qir import ast_to_qir
 
-    def qasm(self, *, skip_headers: bool = False, add_versions: bool = False):
-        return self.generate(
-            Language.QASM,
-            skip_headers=skip_headers,
-            add_versions=add_versions,
-        )
+        ast = self._to_ast()
+        return ast_to_qir(ast)
 
-    def qir(self):
-        self._check_qir_imported()
-        return self.generate(Language.QIR)
+    def qasm(self, *, skip_headers: bool = False, add_versions: bool = False) -> str:
+        """Generate QASM code.
 
-    def qir_bc(self):
-        self._check_qir_imported()
-        return self.generate(Language.QIRBC)
+        Args:
+            skip_headers: Whether to skip the OPENQASM header
+            add_versions: Deprecated, ignored (kept for backwards compatibility)
 
-    @staticmethod
-    def _check_guppy_imported():
-        if IRGuppyGenerator is None:
-            msg = (
-                "Trying to compile to Guppy without the IRGuppyGenerator. "
-                "Make sure ir_generator.py is available."
-            )
-            raise Exception(msg)
+        Returns:
+            Generated QASM code as a string
+        """
+        del add_versions  # Deprecated parameter, kept for backwards compatibility
+        return self._generate_qasm(include_header=not skip_headers)
 
-    def guppy(self):
-        self._check_guppy_imported()
-        return self.generate(Language.GUPPY)
+    def qir(self) -> str:
+        """Generate QIR code.
+
+        Returns:
+            Generated QIR code as a string
+        """
+        return self._generate_qir()
+
+    def qir_bc(self) -> bytes:
+        """Generate QIR bytecode.
+
+        Returns:
+            Generated QIR bytecode
+        """
+        return self._generate_qir(bytecode=True)
+
+    def guppy(self) -> str:
+        """Generate Guppy code.
+
+        Returns:
+            Generated Guppy code as a string
+        """
+        return self._generate_guppy()
 
     def hugr(self):
         """Compile the SLR block to HUGR via Guppy.
@@ -137,68 +180,47 @@ class SlrConverter:
             ImportError: If guppylang is not available
             RuntimeError: If compilation fails
         """
-        self._check_guppy_imported()
+        # Generate Guppy code
+        self._generate_guppy()
 
-        # First generate Guppy code
-        generator = IRGuppyGenerator()
-        generator.generate_block(self._block)
-
-        # Then compile to HUGR
+        # Compile to HUGR
         try:
             from pecos.slr.gen_codes.guppy.hugr_compiler import HugrCompiler
         except ImportError as e:
             msg = "Failed to import HugrCompiler. Make sure guppylang is installed."
             raise ImportError(msg) from e
 
+        # HugrCompiler needs the generator object for its internal state
+        # For now, fall back to the old path
+        from pecos.slr.gen_codes.guppy import IRGuppyGenerator
+
+        generator = IRGuppyGenerator(_internal=True)
+        generator.generate_block(self._block)
+
         compiler = HugrCompiler(generator)
         return compiler.compile_to_hugr()
 
-    @staticmethod
-    def _check_stim_imported():
-        if StimGenerator is None:
-            msg = (
-                "Trying to compile to Stim without the StimGenerator. "
-                "Make sure gen_stim.py is available."
-            )
-            raise Exception(msg)
-        # Also check if stim itself is available
-        import importlib.util
-
-        if importlib.util.find_spec("stim") is None:
-            msg = (
-                "Stim is not installed. To use Stim conversion features, install with:\n"
-                "  pip install quantum-pecos[stim]\n"
-                "or:\n"
-                "  pip install stim"
-            )
-            raise ImportError(msg)
-
-    def stim(self):
+    def stim(self) -> stim.Circuit:
         """Generate a Stim circuit from the SLR block.
 
         Returns:
             stim.Circuit: The generated Stim circuit
         """
-        if self._block is None:
-            msg = "No SLR block to convert. Use from_* methods first or provide block to constructor."
-            raise ValueError(msg)
-        self._check_stim_imported()
-        generator = StimGenerator()
-        generator.generate_block(self._block)
-        return generator.get_circuit()
+        from pecos.slr.ast.codegen.stim import ast_to_stim
 
-    def quantum_circuit(self):
+        ast = self._to_ast()
+        return ast_to_stim(ast)
+
+    def quantum_circuit(self) -> QuantumCircuit:
         """Generate a PECOS QuantumCircuit from the SLR block.
 
         Returns:
             QuantumCircuit: The generated QuantumCircuit object
         """
-        if self._block is None:
-            msg = "No SLR block to convert. Use from_* methods first or provide block to constructor."
-            raise ValueError(msg)
-        generator = QuantumCircuitGenerator()
-        generator.generate_block(self._block)
-        return generator.get_circuit()
+        from pecos.slr.ast.codegen.quantum_circuit import ast_to_quantum_circuit
+
+        ast = self._to_ast()
+        return ast_to_quantum_circuit(ast)
 
     # ===== Conversion TO SLR from other formats =====
 
@@ -226,8 +248,6 @@ class SlrConverter:
 
         slr_block = stim_to_slr(circuit)
         if optimize_parallel:
-            from pecos.slr.transforms.parallel_optimizer import ParallelOptimizer
-
             optimizer = ParallelOptimizer()
             slr_block = optimizer.transform(slr_block)
         return slr_block
@@ -255,8 +275,6 @@ class SlrConverter:
 
         slr_block = quantum_circuit_to_slr(qc)
         if optimize_parallel:
-            from pecos.slr.transforms.parallel_optimizer import ParallelOptimizer
-
             optimizer = ParallelOptimizer()
             slr_block = optimizer.transform(slr_block)
         return slr_block

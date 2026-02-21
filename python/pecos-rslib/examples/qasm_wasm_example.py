@@ -144,12 +144,8 @@ def example_quantum_with_wasm() -> None:
             weighted = results["weighted_sum"][shot]
 
             # Verify the calculation
-            expected = (
-                ((c_val >> 0) & 1) * 4 + ((c_val >> 1) & 1) * 2 + ((c_val >> 2) & 1) * 1
-            )
-            assert (
-                weighted == expected
-            ), f"Mismatch: got {weighted}, expected {expected}"
+            expected = ((c_val >> 0) & 1) * 4 + ((c_val >> 1) & 1) * 2 + ((c_val >> 2) & 1) * 1
+            assert weighted == expected, f"Mismatch: got {weighted}, expected {expected}"
 
             weighted_counts[weighted] = weighted_counts.get(weighted, 0) + 1
 

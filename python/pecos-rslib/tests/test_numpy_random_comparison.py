@@ -95,9 +95,7 @@ class TestRandomComparison:
         chi2_statistic, p_value = stats.chisquare(observed, expected)
 
         # p-value > 0.01 means distribution is consistent with uniform
-        assert (
-            p_value > 0.01
-        ), f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
+        assert p_value > 0.01, f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
 
 
 class TestRandintComparison:
@@ -150,13 +148,9 @@ class TestRandintComparison:
         expected_count = len(vals) / (high - low)
 
         # Chi-square test for uniformity
-        chi2_statistic, p_value = stats.chisquare(
-            counts, np.full(len(unique), expected_count)
-        )
+        chi2_statistic, p_value = stats.chisquare(counts, np.full(len(unique), expected_count))
 
-        assert (
-            p_value > 0.01
-        ), f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
+        assert p_value > 0.01, f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
 
     def test_randint_default_low(self):
         """Test [0, n) behavior when only one argument provided."""
@@ -233,13 +227,9 @@ class TestChoiceComparison:
         expected_count = len(samples) / len(items)
 
         # Chi-square test for uniformity
-        chi2_statistic, p_value = stats.chisquare(
-            counts, np.full(len(unique), expected_count)
-        )
+        chi2_statistic, p_value = stats.chisquare(counts, np.full(len(unique), expected_count))
 
-        assert (
-            p_value > 0.01
-        ), f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
+        assert p_value > 0.01, f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
 
     def test_choice_with_numpy_array(self):
         """Test that choice works with numpy arrays like numpy.random.choice."""

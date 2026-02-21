@@ -177,8 +177,7 @@ def compute_rotated_z_stabilizers(d: int) -> list[StabilizerSupport]:
         ),
     )
     return [
-        StabilizerSupport(index=i, data_qubits=s.data_qubits, is_boundary=s.is_boundary)
-        for i, s in enumerate(supports)
+        StabilizerSupport(index=i, data_qubits=s.data_qubits, is_boundary=s.is_boundary) for i, s in enumerate(supports)
     ]
 
 

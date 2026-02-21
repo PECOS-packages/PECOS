@@ -29,13 +29,7 @@ class TestSeleneHUGRCompilation:
 
         # The sim API handles HUGR compilation internally
         try:
-            results = (
-                sim(Guppy(bell_state))
-                .qubits(2)
-                .quantum(state_vector())
-                .seed(42)
-                .run(100)
-            )
+            results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
             # Verify results structure
             assert hasattr(results, "__getitem__"), "Results should be dict-like"
@@ -51,14 +45,10 @@ class TestSeleneHUGRCompilation:
                 # Bell state measurements should be correlated
                 correlated = sum(1 for i in range(100) if m1[i] == m2[i])
                 correlation_rate = correlated / 100
-                assert (
-                    correlation_rate > 0.95
-                ), f"Bell state should be highly correlated, got {correlation_rate:.2%}"
+                assert correlation_rate > 0.95, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
             else:
                 # Alternative result format
-                assert (
-                    "measurements" in results or len(results) > 0
-                ), "Results should contain measurements"
+                assert "measurements" in results or len(results) > 0, "Results should contain measurements"
 
         except (ImportError, RuntimeError, ValueError) as e:
             if "not supported" in str(e).lower() or "not available" in str(e).lower():
@@ -245,18 +235,12 @@ class TestLLVMGeneration:
         ]
 
         for intrinsic in intrinsics:
-            assert (
-                intrinsic in expected_llvm_pattern
-            ), f"Pattern should include {intrinsic}"
+            assert intrinsic in expected_llvm_pattern, f"Pattern should include {intrinsic}"
 
         # Check parameter types
         assert "(i64)" in expected_llvm_pattern, "Single qubit ops should take i64"
-        assert (
-            "(i64, i64)" in expected_llvm_pattern
-        ), "Two qubit ops should take two i64"
-        assert (
-            "i1 @__quantum__qis__mz" in expected_llvm_pattern
-        ), "Measurement should return i1"
+        assert "(i64, i64)" in expected_llvm_pattern, "Two qubit ops should take two i64"
+        assert "i1 @__quantum__qis__mz" in expected_llvm_pattern, "Measurement should return i1"
 
 
 @pytest.mark.optional_dependency
@@ -353,6 +337,4 @@ class TestHUGRVersionCompatibility:
 
         # Check if any metadata is preserved
         # Function name should at least be preserved
-        assert (
-            "metadata_test" in hugr_str or len(hugr_bytes) > 50
-        ), "HUGR should preserve some function information"
+        assert "metadata_test" in hugr_str or len(hugr_bytes) > 50, "HUGR should preserve some function information"

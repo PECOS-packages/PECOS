@@ -52,14 +52,7 @@ class SynExtractFlagged(Block):
         Raises:
             ValueError: If register lengths don't match expected sizes.
         """
-        if not (
-            len(syn_x)
-            == len(syn_z)
-            == len(flag_bits_x)
-            == len(flag_bits_z)
-            == len(checks)
-            == 3
-        ):
+        if not (len(syn_x) == len(syn_z) == len(flag_bits_x) == len(flag_bits_z) == len(checks) == 3):
             msg = (
                 f"Expected syndrome and flag registers of length 3 ({len(checks)} checks), "
                 f"got syn_x={len(syn_x)}, syn_z={len(syn_z)}, "

@@ -46,7 +46,8 @@
 //! Xoshiro256++ generators. This may change in future versions if a faster
 //! implementation becomes available.
 
-use rand_core::{RngCore, SeedableRng};
+use core::convert::Infallible;
+use rand_core::{SeedableRng, TryRng};
 use wide::u64x4;
 
 /// `SplitMix64` - used to derive independent seeds from a single seed.
@@ -445,19 +446,21 @@ impl SimdXoshiro256PlusPlus {
 // rand_core trait implementations
 // ============================================================================
 
-impl RngCore for SimdXoshiro256PlusPlus {
+impl TryRng for SimdXoshiro256PlusPlus {
+    type Error = Infallible;
+
     #[inline]
-    fn next_u32(&mut self) -> u32 {
-        self.next_u32()
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.next_u32())
     }
 
     #[inline]
-    fn next_u64(&mut self) -> u64 {
-        self.next_u64()
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.next_u64())
     }
 
     #[inline]
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         // Process 8 bytes at a time using next_u64
         let mut chunks = dest.chunks_exact_mut(8);
         for chunk in chunks.by_ref() {
@@ -473,6 +476,7 @@ impl RngCore for SimdXoshiro256PlusPlus {
                 *byte = bytes[i];
             }
         }
+        Ok(())
     }
 }
 

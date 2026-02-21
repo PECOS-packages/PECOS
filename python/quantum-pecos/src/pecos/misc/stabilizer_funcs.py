@@ -198,15 +198,11 @@ def remove_stab(
     for q in logical_xs:
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         # Use |= or ^= ??????????????????
-        build_stabs ^= destabs.col_z[
-            q
-        ]  # These should point to all the stabilizers that will combine to give X on
+        build_stabs ^= destabs.col_z[q]  # These should point to all the stabilizers that will combine to give X on
         # qubit q
 
     for q in logical_zs:
-        build_stabs ^= destabs.col_x[
-            q
-        ]  # These should point to all the stabilizers that will combine to give Z on
+        build_stabs ^= destabs.col_x[q]  # These should point to all the stabilizers that will combine to give Z on
         # qubit q
 
     # Stabilizer to remove
@@ -353,15 +349,11 @@ def is_not_stabilizer(state: SparseSim, qubits_x: set[int], qubits_z: set[int]) 
     build_stabs = set()
 
     for q in qubits_x:
-        build_stabs ^= destabs.col_z[
-            q
-        ]  # These should point to all the stabilizers that will combine to give X on
+        build_stabs ^= destabs.col_z[q]  # These should point to all the stabilizers that will combine to give X on
         # qubit q
 
     for q in qubits_z:
-        build_stabs ^= destabs.col_x[
-            q
-        ]  # These should point to all the stabilizers that will combine to give Z on
+        build_stabs ^= destabs.col_x[q]  # These should point to all the stabilizers that will combine to give Z on
         # qubit q
 
     # Build up the X and Z Paulis

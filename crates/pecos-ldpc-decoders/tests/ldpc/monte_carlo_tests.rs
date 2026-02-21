@@ -2,7 +2,7 @@
 
 use ndarray::{Array1, Array2};
 use pecos_ldpc_decoders::*;
-use rand::Rng;
+use rand::RngExt;
 
 /// Run a Monte Carlo simulation for a decoder
 #[allow(clippy::cast_precision_loss)] // Acceptable for Monte Carlo statistics

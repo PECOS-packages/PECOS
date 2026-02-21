@@ -17,7 +17,7 @@ rotations, measurements, and state preparations.
 
 from pecos.slr.qeclib.qubit.measures import Measure
 from pecos.slr.qeclib.qubit.preps import Prep
-from pecos.slr.qeclib.qubit.rots import RX, RY, RZ, RZZ
+from pecos.slr.qeclib.qubit.rots import CRZ, RX, RY, RZ, RZZ
 from pecos.slr.qeclib.qubit.sq_face_rots import F4, F, F4dg, Fdg
 from pecos.slr.qeclib.qubit.sq_hadamards import H
 from pecos.slr.qeclib.qubit.sq_noncliffords import T, Tdg
@@ -38,6 +38,7 @@ from pecos.slr.qeclib.qubit.tq_noncliffords import CH
 
 __all__ = [
     "CH",
+    "CRZ",
     "CX",
     "CY",
     "CZ",

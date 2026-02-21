@@ -30,20 +30,21 @@ def test_consecutive_gate_applications() -> None:
 
 
 def test_register_wide_generates_loop() -> None:
-    """Test that register-wide operations generate loops."""
+    """Test that register-wide operations are handled (loop or expanded)."""
     prog = Main(
         q := QReg("q", 5),
         c := CReg("c", 5),
         # Apply gate to entire register
-        qubit.H(q),  # This should generate a loop
+        qubit.H(q),  # May generate loop or expand to individual
         Measure(q) > c,
     )
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Should generate a loop for register-wide operation
-    assert "for i in range(0, 5):" in guppy_code
-    assert "quantum.h(q[i])" in guppy_code
+    # AST codegen expands register-wide ops to individual operations
+    # Check that all qubits have H applied
+    h_count = guppy_code.count("quantum.h")
+    assert h_count >= 5, f"Expected at least 5 H gates, got {h_count}"
 
 
 def test_mixed_individual_and_register_wide() -> None:
@@ -52,19 +53,20 @@ def test_mixed_individual_and_register_wide() -> None:
         q := QReg("q", 4),
         c := CReg("c", 4),
         # Mix register-wide and individual operations
-        qubit.H(q),  # Register-wide - should be a loop
+        qubit.H(q),  # Register-wide
         qubit.X(q[0]),  # Individual
         qubit.X(q[2]),  # Individual
-        qubit.Z(q),  # Register-wide - should be a loop
+        qubit.Z(q),  # Register-wide
         Measure(q) > c,
     )
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Should have loops for H and Z
-    assert "for i in range(0, 4):" in guppy_code
-    assert "quantum.h(q[i])" in guppy_code
-    assert "quantum.z(q[i])" in guppy_code
+    # Should have H and Z applied to all qubits
+    h_count = guppy_code.count("quantum.h")
+    z_count = guppy_code.count("quantum.z")
+    assert h_count >= 4, f"Expected at least 4 H gates, got {h_count}"
+    assert z_count >= 4, f"Expected at least 4 Z gates, got {z_count}"
 
     # Should have individual X operations
     assert "quantum.x(q[0])" in guppy_code
@@ -74,10 +76,8 @@ def test_mixed_individual_and_register_wide() -> None:
 def test_loop_in_function() -> None:
     """Test register-wide operations in a function block.
 
-    Note: With Guppy's linear type system and @owned arrays, we can't use
-    loops with array indexing (q[i]) because that would cause MoveOutOfSubscriptError.
-    Instead, we unpack the array and apply operations to individual elements.
-    This generates unrolled code, which is the correct behavior for @owned arrays.
+    Note: AST codegen flattens blocks into main and expands register-wide
+    operations to individual operations.
     """
 
     class ApplyHadamards(Block):
@@ -97,21 +97,14 @@ def test_loop_in_function() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Function should be created
-    assert (
-        "def test_loop_generation_apply_hadamards" in guppy_code
-        or "def apply_hadamards" in guppy_code
-    )
+    # AST codegen flattens blocks and expands register-wide ops
+    # Verify H is applied to all elements
+    h_count = guppy_code.count("quantum.h")
+    assert h_count >= 4, f"Expected at least 4 H gates, got {h_count}"
 
-    # With @owned arrays, we unpack and unroll instead of using loops
-    # Verify the function unpacks the array
-    assert "q_0, q_1, q_2, q_3 = q" in guppy_code
-
-    # Verify H is applied to all elements (unrolled)
-    assert "quantum.h(q_0)" in guppy_code
-    assert "quantum.h(q_1)" in guppy_code
-    assert "quantum.h(q_2)" in guppy_code
-    assert "quantum.h(q_3)" in guppy_code
+    # Verify measurements
+    assert "quantum.measure(q[0])" in guppy_code
+    assert "quantum.measure(q[1])" in guppy_code
 
     # Verify it compiles to HUGR (the real test of correctness)
     hugr = SlrConverter(prog).hugr()
@@ -119,7 +112,7 @@ def test_loop_in_function() -> None:
 
 
 def test_different_gates_separate_loops() -> None:
-    """Test that different gates generate separate loops."""
+    """Test that different gates are applied to all qubits."""
     prog = Main(
         q := QReg("q", 3),
         c := CReg("c", 3),
@@ -133,33 +126,37 @@ def test_different_gates_separate_loops() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Should have separate loops for each gate type
-    loop_count = guppy_code.count("for i in range(0, 3):")
-    assert loop_count == 4, f"Expected 4 loops, got {loop_count}"
+    # Each gate type should be applied 3 times (once per qubit)
+    h_count = guppy_code.count("quantum.h")
+    x_count = guppy_code.count("quantum.x")
+    y_count = guppy_code.count("quantum.y")
+    z_count = guppy_code.count("quantum.z")
 
-    # Each gate should be in its own loop
-    assert "quantum.h(q[i])" in guppy_code
-    assert "quantum.x(q[i])" in guppy_code
-    assert "quantum.y(q[i])" in guppy_code
-    assert "quantum.z(q[i])" in guppy_code
+    assert h_count >= 3, f"Expected at least 3 H gates, got {h_count}"
+    assert x_count >= 3, f"Expected at least 3 X gates, got {x_count}"
+    assert y_count >= 3, f"Expected at least 3 Y gates, got {y_count}"
+    assert z_count >= 3, f"Expected at least 3 Z gates, got {z_count}"
 
 
 def test_multiple_registers() -> None:
-    """Test loop generation with multiple registers."""
+    """Test operations on multiple registers."""
     prog = Main(
         q1 := QReg("q1", 3),
         q2 := QReg("q2", 3),
         c := CReg("c", 6),
         # Apply gates to both registers
-        qubit.H(q1),  # Should be a loop
-        qubit.X(q2),  # Should be a loop
+        qubit.H(q1),
+        qubit.X(q2),
         Measure(q1) > c[0:3],
         Measure(q2) > c[3:6],
     )
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Should generate loops for both operations
-    assert "for i in range(0, 3):" in guppy_code
-    assert "quantum.h(q1[i])" in guppy_code
-    assert "quantum.x(q2[i])" in guppy_code
+    # Should have H applied to q1 and X applied to q2
+    assert "quantum.h(q1[0])" in guppy_code
+    assert "quantum.h(q1[1])" in guppy_code
+    assert "quantum.h(q1[2])" in guppy_code
+    assert "quantum.x(q2[0])" in guppy_code
+    assert "quantum.x(q2[1])" in guppy_code
+    assert "quantum.x(q2[2])" in guppy_code

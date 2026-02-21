@@ -86,6 +86,7 @@ pub fn hugr_op_to_gate_type(op_name: &str) -> Option<GateType> {
         "CX" => Some(GateType::CX),
         "CY" => Some(GateType::CY),
         "CZ" => Some(GateType::CZ),
+        "CH" => Some(GateType::CH),
         "ZZMax" => Some(GateType::SZZ),
         "SWAP" => Some(GateType::SWAP),
         "CRz" => Some(GateType::CRZ),
@@ -123,6 +124,7 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
         GateType::CX => Some("CX"),
         GateType::CY => Some("CY"),
         GateType::CZ => Some("CZ"),
+        GateType::CH => Some("CH"),
         GateType::SZZ => Some("ZZMax"),
         GateType::SWAP => Some("SWAP"),
         GateType::CRZ => Some("CRz"),
@@ -191,7 +193,10 @@ struct QuantumOp {
 /// Check if a gate type is a rotation gate that takes angle parameters.
 #[must_use]
 pub fn is_rotation_gate(gate_type: GateType) -> bool {
-    matches!(gate_type, GateType::RX | GateType::RY | GateType::RZ)
+    matches!(
+        gate_type,
+        GateType::RX | GateType::RY | GateType::RZ | GateType::CRZ
+    )
 }
 
 /// Try to extract a constant numeric value from a HUGR Const node.
@@ -374,7 +379,7 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
     let op_short = if op_name.len() > 80 {
         format!("{}...", &op_name[..80])
     } else {
-        op_name
+        op_name.clone()
     };
     log::trace!(
         "{}trace_back_for_const: node={:?}, op={}",
@@ -437,6 +442,16 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
                 return trace_back_for_const(hugr, src_node, depth + 1);
             }
         }
+
+        // Handle float negation (fneg) - used for negative rotation angles
+        if op_name == "fneg" {
+            let input_port = IncomingPort::from(0);
+            if let Some((src_node, _)) = hugr.single_linked_output(node, input_port)
+                && let Some((val, is_half_turns)) = trace_back_for_const(hugr, src_node, depth + 1)
+            {
+                return Some((-val, is_half_turns));
+            }
+        }
     }
 
     // For UnpackTuple, trace through
@@ -456,7 +471,8 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
         // 2. Numeric argument values
         let mut is_division = false;
         let mut is_multiplication = false;
-        let mut numeric_values: Vec<(usize, f64)> = Vec::new();
+        let mut is_negation = false;
+        let mut numeric_values: Vec<(usize, f64, bool)> = Vec::new();
 
         // Get the number of input ports for this node
         let num_inputs = hugr.num_inputs(node);
@@ -476,19 +492,29 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
                     if func_name.contains("__mul__") || func_name.contains("__rmul__") {
                         is_multiplication = true;
                     }
+                    if func_name.contains("__neg__") {
+                        is_negation = true;
+                    }
                 }
 
                 // Try to get a numeric value from this input
-                if let Some((val, _)) = trace_back_for_const(hugr, src_node, depth + 1) {
-                    numeric_values.push((port_idx, val));
+                if let Some((val, is_half_turns)) = trace_back_for_const(hugr, src_node, depth + 1)
+                {
+                    numeric_values.push((port_idx, val, is_half_turns));
                 }
             }
+        }
+
+        // If this is a negation call and we have a numeric value, negate it
+        if is_negation && !numeric_values.is_empty() {
+            let (_, val, is_half_turns) = numeric_values[0];
+            return Some((-val, is_half_turns));
         }
 
         // If this is a division call and we have two numeric values, compute the result
         if is_division && numeric_values.len() >= 2 {
             // Sort by port index to get correct order (numerator first, denominator second)
-            numeric_values.sort_by_key(|(idx, _)| *idx);
+            numeric_values.sort_by_key(|(idx, _, _)| *idx);
             let numerator = numeric_values[0].1;
             let denominator = numeric_values[1].1;
             if denominator != 0.0 {
@@ -498,14 +524,14 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
 
         // If this is a multiplication call and we have two numeric values, compute the result
         if is_multiplication && numeric_values.len() >= 2 {
-            numeric_values.sort_by_key(|(idx, _)| *idx);
+            numeric_values.sort_by_key(|(idx, _, _)| *idx);
             let factor1 = numeric_values[0].1;
             let factor2 = numeric_values[1].1;
             return Some((factor1 * factor2, false));
         }
 
         // For other calls, try to return the first numeric value found
-        if let Some((_, val)) = numeric_values.first() {
+        if let Some((_, val, _)) = numeric_values.first() {
             return Some((*val, false));
         }
     }
@@ -580,15 +606,17 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
         };
 
         // Determine number of qubit inputs/outputs based on gate type
+        // Use quantum_arity() for most gates, with special cases for alloc/free
         let (num_qubit_inputs, num_qubit_outputs) = match gate_type {
             // QAlloc: 0 inputs, 1 output (creates a qubit)
             GateType::QAlloc => (0, 1),
             // QFree/MeasureFree: 1 input, 0 qubit outputs (destroys/consumes qubit)
             GateType::QFree | GateType::MeasureFree => (1, 0),
-            // Two-qubit gates
-            GateType::CX | GateType::CY | GateType::CZ | GateType::SZZ => (2, 2),
-            // Single-qubit gates including Measure (default: 1 input, 1 output)
-            _ => (1, 1),
+            // All other gates: use quantum_arity for input/output counts
+            _ => {
+                let arity = gate_type.quantum_arity();
+                (arity, arity)
+            }
         };
 
         // Extract rotation parameters if this is a rotation gate

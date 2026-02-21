@@ -1,6 +1,120 @@
 # Graph API
 
+```hidden-python
+from pecos.graph import Graph
+
+graph = Graph()
+n0 = graph.add_node()
+n1 = graph.add_node()
+n2 = graph.add_node()
+n3 = graph.add_node()
+n4 = graph.add_node()
+n5 = graph.add_node()
+graph.add_edge(n0, n1)
+graph.add_edge(n1, n2)
+graph.add_edge(n0, n2)
+graph.add_edge(n2, n3)
+graph.set_weight(n0, n1, 1.0)
+graph.set_weight(n1, n2, 2.0)
+graph.set_weight(n0, n2, 5.0)
+source_node = n0
+edge_id = graph.find_edge(n0, n1)
+
+# Set up graph-level attributes
+attrs = graph.attrs()
+attrs["name"] = "surface_code"
+attrs["distance"] = 5
+attrs["rounds"] = 100
+attrs["version"] = "1.0"
+attrs["author"] = "Alice"
+
+# Set up node attributes
+graph.node_attrs(n0)["label"] = "qubit_0"
+graph.node_attrs(n0)["position"] = [0.0, 1.0, 2.0]
+graph.node_attrs(n0)["active"] = True
+graph.node_attrs(n0)["x"] = 1.0
+graph.node_attrs(n0)["y"] = 2.0
+graph.node_attrs(n1)["label"] = "qubit_1"
+
+# Set up edge attributes
+graph.edge_attrs(n0, n1)["label"] = "boundary"
+graph.edge_attrs(n0, n1)["syn_path"] = [1, 2, 3]
+graph.edge_attrs(n0, n1)["path"] = [0, 1]
+graph.edge_attrs(n0, n1)["active"] = True
+```
+
+```hidden-rust
+use pecos::graph::{Graph, Attribute};
+use serde_json::json;
+
+fn main() {
+    let mut graph = Graph::new();
+    let n0 = graph.add_node();
+    let n1 = graph.add_node();
+    let n2 = graph.add_node();
+    let n3 = graph.add_node();
+    graph.add_edge(n0, n1);
+    graph.add_edge(n1, n2);
+    graph.add_edge(n0, n2);
+    graph.add_edge(n2, n3);
+    graph.set_weight(n0, n1, 1.0);
+    graph.set_weight(n1, n2, 2.0);
+    graph.set_weight(n0, n2, 5.0);
+    let source_node = n0;
+    // CODE
+}
+```
+
 The PECOS Graph API provides a high-performance graph data structure with idiomatic APIs for both Rust and Python.
+
+## Setup
+
+The examples below use this pre-built graph with nodes, edges, and attributes:
+
+=== ":fontawesome-brands-python: Python"
+    ```python
+    from pecos.graph import Graph
+
+    # Create graph with nodes and edges
+    graph = Graph()
+    n0 = graph.add_node()
+    n1 = graph.add_node()
+    n2 = graph.add_node()
+    n3 = graph.add_node()
+    graph.add_edge(n0, n1)
+    graph.add_edge(n1, n2)
+    graph.add_edge(n0, n2)
+    graph.add_edge(n2, n3)
+
+    # Set edge weights
+    graph.set_weight(n0, n1, 1.0)
+    graph.set_weight(n1, n2, 2.0)
+    graph.set_weight(n0, n2, 5.0)
+
+    source_node = n0
+    edge_id = graph.find_edge(n0, n1)
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+    ```rust
+    use pecos::graph::{Graph, Attribute};
+
+    let mut graph = Graph::new();
+    let n0 = graph.add_node();
+    let n1 = graph.add_node();
+    let n2 = graph.add_node();
+    let n3 = graph.add_node();
+    graph.add_edge(n0, n1);
+    graph.add_edge(n1, n2);
+    graph.add_edge(n0, n2);
+    graph.add_edge(n2, n3);
+
+    graph.set_weight(n0, n1, 1.0);
+    graph.set_weight(n1, n2, 2.0);
+    graph.set_weight(n0, n2, 5.0);
+
+    let source_node = n0;
+    ```
 
 ## Design Principles
 
@@ -92,9 +206,7 @@ The graph itself can store metadata as attributes.
     graph.attrs().insert("version", "1.0").insert("author", "Alice")
 
     # Style 3: Batch update
-    graph.attrs().update(
-        {"date": "2025-01-26", "tags": ["qec", "surface_code"], "validated": True}
-    )
+    graph.attrs().update({"date": "2025-01-26", "tags": ["qec", "surface_code"], "validated": True})
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -228,7 +340,7 @@ Nodes can have arbitrary attributes attached to them, similar to edges.
         attrs.insert("label".to_string(),
                     Attribute::String("qubit_0".into()));
         attrs.insert("position".to_string(),
-                    Attribute::FloatList(vec![0.0, 1.0, 2.0]));
+                    Attribute::Json(json!([0.0, 1.0, 2.0])));
 
         // Batch extend
         attrs.extend([
@@ -282,9 +394,6 @@ Nodes can have arbitrary attributes attached to them, similar to edges.
     # Add edge with weight
     graph.add_edge(n0, n1)
     graph.set_weight(n0, n1, 5.0)
-
-    # Or pass weight as keyword arg
-    graph.add_edge(n0, n1, weight=5.0)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -404,10 +513,12 @@ Python provides three ways to set edge attributes:
 === ":fontawesome-brands-rust: Rust"
     ```rust
     // Find edge ID from node pair
-    let edge_id = graph.find_edge(n0, n1);  // Returns Option<usize>
-
-    // Get endpoints from edge ID
-    let endpoints = graph.edge_endpoints(edge_id);  // Returns Option<(usize, usize)>
+    if let Some(edge_id) = graph.find_edge(n0, n1) {
+        // Get endpoints from edge ID
+        if let Some((a, b)) = graph.edge_endpoints(edge_id) {
+            println!("Edge {}: {} -> {}", edge_id, a, b);
+        }
+    }
     ```
 
 ### Edge Information
@@ -418,11 +529,10 @@ Python provides three ways to set edge attributes:
     count = graph.edge_count()
 
     # List all edges
-    edges = graph.edges()  # Returns list of (node_a, node_b) tuples
+    edges = graph.edges()  # Returns list of (node_a, node_b, weight) tuples
 
     # Iterate over edges
-    for a, b in graph.edges():
-        weight = graph.get_weight(a, b)
+    for a, b, weight in graph.edges():
         print(f"Edge {a}-{b}: weight={weight}")
     ```
 
@@ -431,10 +541,9 @@ Python provides three ways to set edge attributes:
     // Count edges
     let count = graph.edge_count();
 
-    // Iterate over edges
-    for (a, b) in graph.edges() {
-        let weight = graph.get_weight(a, b);
-        println!("Edge {}-{}: weight={:?}", a, b, weight);
+    // Iterate over edges (returns (node_a, node_b, weight) tuples)
+    for (a, b, weight) in graph.edges() {
+        println!("Edge {}-{}: weight={}", a, b, weight);
     }
     ```
 
@@ -630,9 +739,12 @@ The graph provides two methods for shortest path computation:
     n2 = graph.add_node()
 
     # Add edges with weights
-    graph.add_edge(n0, n1, weight=1.0)
-    graph.add_edge(n1, n2, weight=2.0)
-    graph.add_edge(n0, n2, weight=5.0)
+    graph.add_edge(n0, n1)
+    graph.set_weight(n0, n1, 1.0)
+    graph.add_edge(n1, n2)
+    graph.set_weight(n1, n2, 2.0)
+    graph.add_edge(n0, n2)
+    graph.set_weight(n0, n2, 5.0)
 
     # Add edge attributes
     attrs = graph.edge_attrs(n0, n1)

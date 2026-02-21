@@ -110,9 +110,7 @@ else:
     Inexact = INEXACT_TYPES
 
 # JSON-like types for gate parameters and metadata
-JSONValue: TypeAlias = (
-    str | int | float | bool | dict[str, "JSONValue"] | list["JSONValue"] | None
-)
+JSONValue: TypeAlias = str | int | float | bool | dict[str, "JSONValue"] | list["JSONValue"] | None
 JSONDict: TypeAlias = dict[str, JSONValue]
 
 #: Gate parameter type - used for **params in various gate operations
@@ -299,12 +297,7 @@ if TYPE_CHECKING:
 
     #: Union type for any compiled program that can be passed to the simulator
     CompiledProgram: TypeAlias = (
-        CompiledHugr
-        | CompiledQasm
-        | CompiledQis
-        | CompiledPhirJson
-        | CompiledWasm
-        | CompiledWat
+        CompiledHugr | CompiledQasm | CompiledQis | CompiledPhirJson | CompiledWasm | CompiledWat
     )
 
 
@@ -329,9 +322,7 @@ class Array(Generic[DType]):
         >>> def get_state_vector() -> Array[dtypes.complex128]:
         ...     return array([1 + 0j, 0 + 0j], dtype=dtypes.complex128)
         ...
-        >>> def multiply_floats(
-        ...     a: Array[dtypes.f64], b: Array[dtypes.f64]
-        ... ) -> Array[dtypes.f64]:
+        >>> def multiply_floats(a: Array[dtypes.f64], b: Array[dtypes.f64]) -> Array[dtypes.f64]:
         ...     return a * b
 
     Note:

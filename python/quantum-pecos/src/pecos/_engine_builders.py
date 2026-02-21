@@ -36,12 +36,7 @@ class QasmEngineBuilder:
 
     Example:
         >>> from pecos import qasm_engine, Qasm
-        >>> results = (
-        ...     qasm_engine()
-        ...     .program(Qasm("OPENQASM 2.0; qreg q[2]; ..."))
-        ...     .to_sim()
-        ...     .run(1000)
-        ... )
+        >>> results = qasm_engine().program(Qasm("OPENQASM 2.0; qreg q[2]; ...")).to_sim().run(1000)
     """
 
     def __init__(self) -> None:
@@ -89,12 +84,7 @@ class PhirJsonEngineBuilder:
 
     Example:
         >>> from pecos import phir_json_engine, PhirJson
-        >>> results = (
-        ...     phir_json_engine()
-        ...     .program(PhirJson('{"format": "PHIR/JSON", ...}'))
-        ...     .to_sim()
-        ...     .run(1000)
-        ... )
+        >>> results = phir_json_engine().program(PhirJson('{"format": "PHIR/JSON", ...}')).to_sim().run(1000)
     """
 
     def __init__(self) -> None:
@@ -200,12 +190,7 @@ def qasm_engine() -> QasmEngineBuilder:
 
     Example:
         >>> from pecos import qasm_engine, Qasm
-        >>> results = (
-        ...     qasm_engine()
-        ...     .program(Qasm("OPENQASM 2.0; qreg q[2]; ..."))
-        ...     .to_sim()
-        ...     .run(1000)
-        ... )
+        >>> results = qasm_engine().program(Qasm("OPENQASM 2.0; qreg q[2]; ...")).to_sim().run(1000)
     """
     return QasmEngineBuilder()
 
@@ -218,12 +203,7 @@ def phir_json_engine() -> PhirJsonEngineBuilder:
 
     Example:
         >>> from pecos import phir_json_engine, PhirJson
-        >>> results = (
-        ...     phir_json_engine()
-        ...     .program(PhirJson('{"format": "PHIR/JSON", ...}'))
-        ...     .to_sim()
-        ...     .run(1000)
-        ... )
+        >>> results = phir_json_engine().program(PhirJson('{"format": "PHIR/JSON", ...}')).to_sim().run(1000)
     """
     return PhirJsonEngineBuilder()
 

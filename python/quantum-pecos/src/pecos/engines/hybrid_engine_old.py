@@ -235,11 +235,7 @@ class HybridEngine:
             if params.get("skip"):
                 continue
 
-            eval_cond2 = (
-                eval_condition(params.get("cond2"), output)
-                if params.get("cond2")
-                else True
-            )
+            eval_cond2 = eval_condition(params.get("cond2"), output) if params.get("cond2") else True
 
             if eval_condition(params.get("cond"), output) and eval_cond2:
                 # Run quantum simulator
@@ -276,16 +272,10 @@ class HybridEngine:
                         elif isinstance(val, BitInt):
                             output_export[sym] = BitInt(str(val))
                         else:
-                            msg = (
-                                f"This output type `{type(val)}` not handled at export!"
-                            )
+                            msg = f"This output type `{type(val)}` not handled at export!"
                             raise Exception(msg)
 
-                    elif (
-                        not params.get("comment")
-                        and not params.get("linebreak")
-                        and not params.get("barrier")
-                    ):
+                    elif not params.get("comment") and not params.get("linebreak") and not params.get("barrier"):
                         msg = "A cop must have an `expr`, `comment`, `linebreak`, or `barrier` entry!"
                         raise Exception(msg)
 

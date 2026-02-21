@@ -25,7 +25,7 @@ keywords = ["scientific", "quantum", "QEC"]
 categories = ["science", "simulation"]
 
 [workspace.dependencies]
-pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3 = { version = "0.28", features = ["extension-module"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4.5"
@@ -43,7 +43,7 @@ pest = "2"
 pest_derive = "2"
 tempfile = "3"
 assert_cmd = "2"
-wasmtime = { version = "40", default-features = false, features = [
+wasmtime = { version = "41", default-features = false, features = [
   "cranelift",
   "runtime",
   "wat",
@@ -51,22 +51,22 @@ wasmtime = { version = "40", default-features = false, features = [
 ] }
 wat = "1"
 ron = "0.12"
-tket = { version = "0.16", default-features = false }
-tket-qsystem = { version = "0.22", default-features = false }
+tket = { version = "0.17", default-features = false }
+tket-qsystem = { version = "0.23", default-features = false }
 cc = "1"
-cxx = "1.0.187"
-cxx-build = "1.0.187"
-reqwest = { version = "0.12", default-features = false, features = [
+cxx = "1"
+cxx-build = "1"
+reqwest = { version = "0.13", default-features = false, features = [
   "blocking",
-  "rustls-tls",
+  "rustls",
 ] }
 flate2 = "1"
 sha2 = "0.10"
 dirs = "6"
-inkwell = "0.7"
+inkwell = "0.8"
 cargo_metadata = "0.23"
 random_tester = "0.1"
-toml = "0.9"
+toml = "1"
 wide = "1"
 
 # Archive handling
@@ -100,9 +100,9 @@ bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.17"
 
 # RNG
-rand = "0.9"
-rand_core = "0.9"
-rand_xoshiro = "0.7"
+rand = "0.10"
+rand_core = "0.10"
+rand_xoshiro = "0.8"
 rapidhash = { version = "4", features = ["rng"] }
 
 # Concurrency
@@ -139,6 +139,7 @@ pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }
 pecos-qis = { version = "0.1.1", path = "crates/pecos-qis" }
 pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
 pecos-hugr = { version = "0.1.1", path = "crates/pecos-hugr" }
+pecos-guppy-hugr = { version = "0.1.1", path = "crates/pecos-guppy-hugr" }
 pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }

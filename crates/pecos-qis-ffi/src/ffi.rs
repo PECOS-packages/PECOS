@@ -6,6 +6,19 @@
 
 use crate::{Operation, QuantumOp, with_interface};
 use log::debug;
+use std::cell::Cell;
+
+// Thread-local counter to prevent infinite loops in collection mode.
+// After MAX_COLLECTION_READS, `___read_future_bool` returns true to break out of
+// loops like "repeat_until_one" (while not result: ... result = measure(q)).
+thread_local! {
+    static COLLECTION_MODE_READ_COUNT: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Maximum number of measurement reads in collection mode before returning true.
+/// This prevents infinite loops when collecting operations for programs with
+/// "repeat until success" patterns.
+const MAX_COLLECTION_READS: u32 = 100;
 
 /// Helper to convert i64 to usize
 #[inline]
@@ -682,8 +695,36 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
         log::debug!("___read_future_bool: timeout waiting for result");
     }
 
-    // Default: return false (for first pass or if no dynamic mode)
-    false
+    // Collection mode (non-dynamic): track read count to prevent infinite loops.
+    // For programs with "repeat until success" loops like:
+    //   while not result:
+    //       q = qubit()
+    //       result = measure(q)
+    // Each iteration creates a new result_id, so we track total reads.
+    // After MAX_COLLECTION_READS, we return true to break the loop.
+    let read_count = COLLECTION_MODE_READ_COUNT.with(|c| {
+        let count = c.get() + 1;
+        c.set(count);
+        count
+    });
+
+    if read_count >= MAX_COLLECTION_READS {
+        log::debug!(
+            "___read_future_bool: collection mode read count ({read_count}) >= threshold, returning true to break loop"
+        );
+        true
+    } else {
+        // Default: return false (allows first iterations of loops to proceed)
+        false
+    }
+}
+
+/// Reset the collection mode read counter.
+///
+/// This should be called at the start of each new execution to reset the loop
+/// termination counter used in `___read_future_bool`.
+pub fn reset_collection_read_count() {
+    COLLECTION_MODE_READ_COUNT.with(|c| c.set(0));
 }
 
 /// Increment the reference count of a future (Guppy/HUGR-LLVM style)

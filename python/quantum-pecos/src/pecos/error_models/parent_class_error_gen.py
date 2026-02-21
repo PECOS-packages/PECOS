@@ -163,10 +163,7 @@ class Generator:
             error_func = list(error_func)
 
             first = error_func[0]
-            if (
-                isinstance(first, str)
-                and first not in {"CNOT", "II", "CZ", "SWAP", "G2"}
-            ) or not hasattr(
+            if (isinstance(first, str) and first not in {"CNOT", "II", "CZ", "SWAP", "G2"}) or not hasattr(
                 first,
                 "__iter__",
             ):
@@ -362,9 +359,7 @@ class Generator:
             """Apply random error after gate execution."""
             error_symbol = pc.random.choice(self.data, 1)[0]
             # Convert Pauli objects to strings for compatibility with gate symbols
-            symbol = (
-                str(error_symbol) if hasattr(error_symbol, "__str__") else error_symbol
-            )
+            symbol = str(error_symbol) if hasattr(error_symbol, "__str__") else error_symbol
             after.update(symbol, {location}, emptyappend=True)
 
         def error_func_before(
@@ -378,9 +373,7 @@ class Generator:
             """Apply random error before gate execution."""
             error_symbol = pc.random.choice(self.data, 1)[0]
             # Convert Pauli objects to strings for compatibility with gate symbols
-            symbol = (
-                str(error_symbol) if hasattr(error_symbol, "__str__") else error_symbol
-            )
+            symbol = str(error_symbol) if hasattr(error_symbol, "__str__") else error_symbol
             before.update(symbol, {location}, emptyappend=True)
 
     class ErrorSetMultiQuditGate:

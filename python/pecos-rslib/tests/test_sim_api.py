@@ -77,19 +77,11 @@ class TestSimAPI:
         engine = qasm_engine().program(program)
 
         # Test with StateVector engine
-        results_sv = (
-            sim(program).classical(engine).quantum(state_vector()).run(10).to_dict()
-        )
+        results_sv = sim(program).classical(engine).quantum(state_vector()).run(10).to_dict()
         assert all(val == 3 for val in results_sv["c"])  # Both qubits should be 1
 
         # Test with SparseStabilizer engine
-        results_stab = (
-            sim(program)
-            .classical(engine)
-            .quantum(sparse_stabilizer())
-            .run(10)
-            .to_dict()
-        )
+        results_stab = sim(program).classical(engine).quantum(sparse_stabilizer()).run(10).to_dict()
         assert all(val == 3 for val in results_stab["c"])  # Both qubits should be 1
 
     def test_noise_models(self) -> None:
@@ -112,9 +104,7 @@ class TestSimAPI:
 
         # Test with depolarizing noise
         noise = depolarizing_noise().with_uniform_probability(0.1)
-        results_with_noise = (
-            sim(program).classical(engine).noise(noise).seed(42).run(1000).to_dict()
-        )
+        results_with_noise = sim(program).classical(engine).noise(noise).seed(42).run(1000).to_dict()
 
         # With noise, we should sometimes get 0
         ones = sum(results_with_noise["c"])
@@ -138,9 +128,7 @@ class TestSimAPI:
 
         # Test with biased depolarizing noise
         noise = biased_depolarizing_noise().with_uniform_probability(0.05)
-        results = (
-            sim(program).classical(engine).noise(noise).seed(42).run(1000).to_dict()
-        )
+        results = sim(program).classical(engine).noise(noise).seed(42).run(1000).to_dict()
 
         # Should have some errors but mostly correct
         ones = sum(results["c"])

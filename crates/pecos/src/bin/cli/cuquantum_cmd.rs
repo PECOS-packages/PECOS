@@ -2,7 +2,6 @@
 
 use pecos_build::Result;
 use pecos_build::cuquantum::config::auto_configure_cuquantum;
-use pecos_build::cuquantum::installer::{install_cuquantum, uninstall_cuquantum};
 use pecos_build::cuquantum::{
     find_cuquantum, get_cuquantum_version, get_lib_dir, get_pecos_cuquantum_dir,
     is_valid_cuquantum_installation,
@@ -12,20 +11,12 @@ use pecos_build::errors::Error;
 /// Run the cuquantum subcommand
 pub fn run(command: super::CuQuantumCommands) -> Result<()> {
     match command {
-        super::CuQuantumCommands::Install { force } => run_install(force),
         super::CuQuantumCommands::Check { quiet } => run_check(quiet),
         super::CuQuantumCommands::Find { export } => run_find(export),
         super::CuQuantumCommands::Version => run_version(),
-        super::CuQuantumCommands::Uninstall => run_uninstall(),
         super::CuQuantumCommands::Validate { path } => run_validate(path),
         super::CuQuantumCommands::Configure => run_configure(),
     }
-}
-
-/// Install cuQuantum SDK
-fn run_install(force: bool) -> Result<()> {
-    install_cuquantum(force)?;
-    Ok(())
 }
 
 /// Check if cuQuantum is available
@@ -53,7 +44,7 @@ fn run_check(quiet: bool) -> Result<()> {
         if !quiet {
             eprintln!("cuquantum: not found");
             eprintln!();
-            eprintln!("Install with: pecos cuquantum install");
+            eprintln!("Install with: pecos install cuquantum");
             eprintln!("Or set CUQUANTUM_ROOT to your system cuQuantum installation");
         }
         Err(Error::CuQuantum("cuQuantum not available".to_string()))
@@ -72,7 +63,7 @@ fn run_find(export: bool) -> Result<()> {
     } else {
         eprintln!("cuQuantum not found");
         eprintln!();
-        eprintln!("Install with: pecos cuquantum install");
+        eprintln!("Install with: pecos install cuquantum");
         Err(Error::CuQuantum("cuQuantum not found".to_string()))
     }
 }
@@ -100,11 +91,6 @@ fn run_version() -> Result<()> {
         eprintln!("cuQuantum not found");
         Err(Error::CuQuantum("cuQuantum not found".to_string()))
     }
-}
-
-/// Uninstall local cuQuantum
-fn run_uninstall() -> Result<()> {
-    uninstall_cuquantum()
 }
 
 /// Configure .cargo/config.toml with cuQuantum path

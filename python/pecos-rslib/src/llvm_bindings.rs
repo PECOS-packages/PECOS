@@ -324,7 +324,7 @@ impl PyLLVMModule {
 /// Python wrapper for module.context
 ///
 /// Provides access to type creation like `module.context.get_identified_type()`
-#[pyclass(name = "ModuleContext")]
+#[pyclass(name = "ModuleContext", from_py_object)]
 #[derive(Clone)]
 pub struct PyModuleContext {
     context_ptr: *mut Context,
@@ -426,7 +426,7 @@ impl PyAnyType {
 }
 
 /// Python wrapper for struct types
-#[pyclass(name = "StructType")]
+#[pyclass(name = "StructType", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyStructType {
     struct_type: inkwell::types::StructType<'static>,
@@ -451,7 +451,7 @@ impl PyStructType {
 }
 
 /// Python wrapper for pointer types
-#[pyclass(name = "PointerType")]
+#[pyclass(name = "PointerType", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyPointerType {
     ll_type: LLType<'static>,
@@ -474,7 +474,7 @@ impl PyPointerType {
 }
 
 /// Python wrapper for integer types
-#[pyclass(name = "IntType")]
+#[pyclass(name = "IntType", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyIntType {
     ll_type: LLType<'static>,
@@ -506,7 +506,7 @@ impl PyIntType {
 }
 
 /// Python wrapper for float types
-#[pyclass(name = "DoubleType")]
+#[pyclass(name = "DoubleType", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyDoubleType {
     ll_type: LLType<'static>,
@@ -538,7 +538,7 @@ impl PyDoubleType {
 }
 
 /// Python wrapper for array types
-#[pyclass(name = "ArrayType")]
+#[pyclass(name = "ArrayType", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyArrayType {
     ll_type: LLType<'static>,
@@ -583,7 +583,7 @@ impl PyArrayType {
 }
 
 /// Python wrapper for void type
-#[pyclass(name = "VoidType")]
+#[pyclass(name = "VoidType", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyVoidType {
     context_ptr: *mut Context,
@@ -1109,7 +1109,7 @@ impl PyIfElse {
 // ============================================================================
 
 /// Python wrapper for LLVM function
-#[pyclass(name = "Function")]
+#[pyclass(name = "Function", from_py_object)]
 #[derive(Clone)]
 pub struct PyFunction {
     function: inkwell::values::FunctionValue<'static>, // Use inkwell type directly since it's Copy
@@ -1159,7 +1159,7 @@ impl PyFunction {
 }
 
 /// Python wrapper for basic block
-#[pyclass(name = "BasicBlock")]
+#[pyclass(name = "BasicBlock", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyBasicBlock {
     block: inkwell::basic_block::BasicBlock<'static>,
@@ -1172,7 +1172,7 @@ unsafe impl Send for PyBasicBlock {}
 unsafe impl Sync for PyBasicBlock {}
 
 /// Python wrapper for function type
-#[pyclass(name = "FunctionType")]
+#[pyclass(name = "FunctionType", from_py_object)]
 #[derive(Clone)]
 pub struct PyFunctionType {
     ret_type: LLType<'static>,
@@ -1220,7 +1220,7 @@ impl PyFunctionType {
 }
 
 /// Python wrapper for LLVM value
-#[pyclass(name = "Value")]
+#[pyclass(name = "Value", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyLLValue {
     value: LLValue<'static>,

@@ -45,28 +45,20 @@ class TestRepeatToGuppyPipeline:
 
         repeat_block = repeat_blocks[0]
         assert hasattr(repeat_block, "cond"), "Repeat block should have cond attribute"
-        assert (
-            repeat_block.cond == 3
-        ), f"Repeat count should be 3, got {repeat_block.cond}"
-        assert (
-            len(repeat_block.ops) == 2
-        ), f"Should have 2 operations, got {len(repeat_block.ops)}"
+        assert repeat_block.cond == 3, f"Repeat count should be 3, got {repeat_block.cond}"
+        assert len(repeat_block.ops) == 2, f"Should have 2 operations, got {len(repeat_block.ops)}"
 
         # Convert SLR -> Guppy
         converter = SlrConverter(slr_prog)
         guppy_code = converter.guppy()
 
         # Verify Guppy contains for loop with correct range
-        assert (
-            "for _ in range(3):" in guppy_code
-        ), "Guppy code should contain 'for _ in range(3):'"
+        assert "for _ in range(3):" in guppy_code, "Guppy code should contain 'for _ in range(3):'"
         assert "quantum.cx(" in guppy_code, "Guppy code should contain CX operations"
 
         # Count for loops and range calls
         for_count = guppy_code.count("for _ in range(3):")
-        assert (
-            for_count == 1
-        ), f"Should have exactly 1 'for _ in range(3):' loop, got {for_count}"
+        assert for_count == 1, f"Should have exactly 1 'for _ in range(3):' loop, got {for_count}"
 
     def test_nested_operations_in_repeat(self) -> None:
         """Test REPEAT block with various gate types."""
@@ -121,9 +113,7 @@ class TestRepeatToGuppyPipeline:
 
         # Should have 2 Repeat blocks in SLR
         repeat_blocks = [op for op in slr_prog.ops if type(op).__name__ == "Repeat"]
-        assert (
-            len(repeat_blocks) == 2
-        ), f"Should have 2 Repeat blocks, got {len(repeat_blocks)}"
+        assert len(repeat_blocks) == 2, f"Should have 2 Repeat blocks, got {len(repeat_blocks)}"
 
         # Check repeat counts
         counts = [block.cond for block in repeat_blocks]
@@ -148,9 +138,7 @@ class TestRepeatToGuppyPipeline:
                         if "quantum." in lines[j] and "array" not in lines[j]:
                             quantum_for_loops += 1
                         break
-        assert (
-            quantum_for_loops == 2
-        ), f"Should have 2 quantum operation for loops, got {quantum_for_loops}"
+        assert quantum_for_loops == 2, f"Should have 2 quantum operation for loops, got {quantum_for_loops}"
 
     def test_qasm_unrolling_vs_guppy_loops(self) -> None:
         """Test that QASM unrolls loops while Guppy keeps them as loops."""
@@ -199,12 +187,8 @@ class TestRepeatToGuppyPipeline:
         h_count_guppy = guppy_code.count("quantum.h(")
         cx_count_guppy = guppy_code.count("quantum.cx(")
 
-        assert (
-            h_count_guppy == 1
-        ), f"Guppy should have 1 H call (in loop), got {h_count_guppy}"
-        assert (
-            cx_count_guppy == 1
-        ), f"Guppy should have 1 CX call (in loop), got {cx_count_guppy}"
+        assert h_count_guppy == 1, f"Guppy should have 1 H call (in loop), got {h_count_guppy}"
+        assert cx_count_guppy == 1, f"Guppy should have 1 CX call (in loop), got {cx_count_guppy}"
 
 
 if __name__ == "__main__":

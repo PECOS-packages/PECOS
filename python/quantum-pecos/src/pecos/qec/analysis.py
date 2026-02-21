@@ -105,9 +105,7 @@ def logical_fidelity(
     successes = 0
 
     for data in outcomes:
-        logical = (
-            logical_x_from_data(d, data) if basis == 0 else logical_z_from_data(d, data)
-        )
+        logical = logical_x_from_data(d, data) if basis == 0 else logical_z_from_data(d, data)
 
         if logical == expected:
             successes += 1
@@ -115,11 +113,7 @@ def logical_fidelity(
     fidelity = successes / num_shots
 
     # Binomial error bar
-    error = (
-        0.0
-        if fidelity == 0.0 or fidelity == 1.0
-        else math.sqrt(fidelity * (1 - fidelity) / num_shots)
-    )
+    error = 0.0 if fidelity == 0.0 or fidelity == 1.0 else math.sqrt(fidelity * (1 - fidelity) / num_shots)
 
     return fidelity, error
 

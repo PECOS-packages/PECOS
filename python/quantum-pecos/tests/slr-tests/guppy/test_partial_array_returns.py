@@ -1,12 +1,17 @@
-"""Tests for functions returning partial arrays."""
+"""Tests for partial array patterns in Guppy code generation.
+
+Note: The AST codegen flattens Block subclasses into the main function
+rather than generating nested functions. These tests verify that blocks
+are correctly flattened and all operations are included.
+"""
 
 from pecos.slr import Block, CReg, Main, QReg, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
 
-def test_function_returns_unconsumed_qubits() -> None:
-    """Test that functions properly return unconsumed qubits."""
+def test_block_with_partial_measurements() -> None:
+    """Test that blocks with partial measurements are flattened correctly."""
 
     class MeasureAncillas(Block):
         """Measure ancilla qubits, return data qubits."""
@@ -38,20 +43,23 @@ def test_function_returns_unconsumed_qubits() -> None:
 
     guppy = SlrConverter(prog).guppy()
 
-    # Check function signature
-    assert "-> array[quantum.qubit, 2]:" in guppy
-    # Array may be unpacked for element access, then reconstructed for return
-    assert "return data" in guppy or "return array(data_" in guppy
+    # AST codegen flattens blocks into main
+    # Check that all operations from the block are present
+    assert "quantum.cx(data[0], ancilla[0])" in guppy
+    assert "quantum.cx(data[1], ancilla[1])" in guppy
+    assert "syndrome_0 = quantum.measure(ancilla[0])" in guppy
+    assert "syndrome_1 = quantum.measure(ancilla[1])" in guppy
 
-    # Check function call captures return
-    assert "data = test_partial_array_returns_measure_ancillas" in guppy
+    # Final measurements should also be present
+    assert "final_0 = quantum.measure(data[0])" in guppy
+    assert "final_1 = quantum.measure(data[1])" in guppy
 
 
-def test_partial_array_return() -> None:
-    """Test function that returns subset of input array."""
+def test_partial_array_operations() -> None:
+    """Test operations on subsets of arrays."""
 
     class SelectEvenQubits(Block):
-        """Process array, return only even-indexed qubits."""
+        """Process array, measure odd indices."""
 
         def __init__(self, q: QReg) -> None:
             super().__init__()
@@ -72,29 +80,28 @@ def test_partial_array_return() -> None:
         q := QReg("q", 4),
         result := CReg("result", 2),
         SelectEvenQubits(q),
-        # This is the current behavior - still references original array
-        # TODO: Should use returned partial array
         Measure(q[0]) > result[0],
         Measure(q[2]) > result[1],
     )
 
     guppy = SlrConverter(prog).guppy()
 
-    # Check function returns partial array
-    assert "-> array[quantum.qubit, 2]:" in guppy
-    assert "return array(" in guppy
+    # AST codegen flattens blocks
+    # Check that H gates are applied to all qubits
+    assert "quantum.h(q[0])" in guppy
+    assert "quantum.h(q[1])" in guppy
+    assert "quantum.h(q[2])" in guppy
+    assert "quantum.h(q[3])" in guppy
 
-    # The function should return array with q[0] and q[2]
-    # After unpacking, returns array(q_0, q_2)
-    assert (
-        "array(q[0], q[2])" in guppy
-        or "array(_q_0, _q_2)" in guppy
-        or "array(q_0, q_2)" in guppy
-    )
+    # Check measurements
+    assert "quantum.measure(q[1])" in guppy
+    assert "quantum.measure(q[3])" in guppy
+    assert "result_0 = quantum.measure(q[0])" in guppy
+    assert "result_1 = quantum.measure(q[2])" in guppy
 
 
-def test_multiple_partial_returns() -> None:
-    """Test function returning multiple partial arrays."""
+def test_multiple_blocks_with_measurements() -> None:
+    """Test multiple blocks with different measurement patterns."""
 
     class SplitAndMeasure(Block):
         """Split two arrays, measure half of each."""
@@ -123,16 +130,18 @@ def test_multiple_partial_returns() -> None:
 
     guppy = SlrConverter(prog).guppy()
 
-    # Function should return both partial arrays
-    assert "-> tuple[array[quantum.qubit, 1], array[quantum.qubit, 1]]:" in guppy
+    # AST codegen flattens blocks
+    # Check measurements from block
+    assert "results_0 = quantum.measure(a[0])" in guppy
+    assert "results_1 = quantum.measure(b[0])" in guppy
 
-    # Should construct and return both arrays
-    assert "return " in guppy
-    # Should see array construction for remaining qubits
+    # Check remaining measurements
+    assert "results_2 = quantum.measure(a[1])" in guppy
+    assert "results_3 = quantum.measure(b[1])" in guppy
 
 
-def test_no_return_when_all_consumed() -> None:
-    """Test that functions consuming all qubits return None."""
+def test_all_qubits_consumed() -> None:
+    """Test that blocks consuming all qubits work correctly."""
 
     class MeasureAll(Block):
         """Measure all input qubits."""
@@ -154,13 +163,13 @@ def test_no_return_when_all_consumed() -> None:
 
     guppy = SlrConverter(prog).guppy()
 
-    # Function should return None
-    assert "-> None:" in guppy
-    # When all qubits are consumed, no explicit return statement needed
+    # AST codegen flattens blocks
+    assert "c_0 = quantum.measure(q[0])" in guppy
+    assert "c_1 = quantum.measure(q[1])" in guppy
 
 
-def test_qec_pattern_with_partial_returns() -> None:
-    """Test realistic QEC pattern using partial returns."""
+def test_qec_pattern_flattened() -> None:
+    """Test realistic QEC pattern is correctly flattened."""
 
     class StabilizerRound(Block):
         """Perform one round of stabilizer measurements."""
@@ -171,8 +180,6 @@ def test_qec_pattern_with_partial_returns() -> None:
             self.ancilla = ancilla
             self.syndrome = syndrome
             self.ops = [
-                # Reset ancillas
-                # Note: Reset operation might not be available, using fresh qubits instead
                 # Syndrome extraction
                 qubit.H(ancilla[0]),
                 qubit.CX(data[0], ancilla[0]),
@@ -195,7 +202,7 @@ def test_qec_pattern_with_partial_returns() -> None:
         final := CReg("final", 3),
         # First round
         StabilizerRound(data, ancilla, syndrome1),
-        # Second round
+        # Second round (same block used twice)
         StabilizerRound(data, ancilla, syndrome2),
         # Final measurement
         Measure(data) > final,
@@ -203,15 +210,18 @@ def test_qec_pattern_with_partial_returns() -> None:
 
     guppy = SlrConverter(prog).guppy()
 
-    # Function should be generated
-    assert "stabilizer_round" in guppy
-    # Function parameters should include data array
-    assert "data: array[quantum.qubit, 3]" in guppy
+    # AST codegen flattens blocks (operations appear twice for two rounds)
+    assert "quantum.h(ancilla[0])" in guppy
+    assert "quantum.cx(data[0], ancilla[0])" in guppy
+    assert "quantum.cx(data[1], ancilla[0])" in guppy
 
-    # Should return data array since ancilla is consumed
-    assert "-> array[quantum.qubit, 3]:" in guppy
-    # Array may be unpacked for element access, then reconstructed for return
-    assert "return data" in guppy or "return array(data_" in guppy
+    # Syndrome measurements for both rounds
+    assert "syndrome1_0 = quantum.measure(ancilla[0])" in guppy
+    assert "syndrome1_1 = quantum.measure(ancilla[1])" in guppy
+    assert "syndrome2_0 = quantum.measure(ancilla[0])" in guppy
+    assert "syndrome2_1 = quantum.measure(ancilla[1])" in guppy
 
-    # Main should capture returned data
-    assert "data = test_partial_array_returns_stabilizer_round(ancilla, data" in guppy
+    # Final measurements
+    assert "final_0 = quantum.measure(data[0])" in guppy
+    assert "final_1 = quantum.measure(data[1])" in guppy
+    assert "final_2 = quantum.measure(data[2])" in guppy

@@ -1,7 +1,5 @@
 """Test the complete working Guppy→HUGR→LLVM→PECOS pipeline."""
 
-import warnings
-
 import pytest
 from guppylang import guppy
 from guppylang.std.quantum import cx, h, measure, qubit, x
@@ -81,13 +79,7 @@ class TestHUGRToLLVMCompilation:
         # Compile to HUGR - the compile() method returns the Package directly
         package = simple_circuit.compile()
 
-        # Get HUGR JSON format - compile_hugr_to_qis currently requires JSON, not envelope format
-        # We suppress the deprecation warning since we need to use to_json() until
-        # compile_hugr_to_qis is updated to handle the new envelope format from to_str()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            hugr_json = package.to_json()
-        hugr_bytes = hugr_json.encode("utf-8")
+        hugr_bytes = package.to_bytes()
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
         # Try to compile to LLVM
@@ -100,9 +92,7 @@ class TestHUGRToLLVMCompilation:
             # Check for quantum operations
             quantum_indicators = ["__quantum__", "@main", "EntryPoint", "define"]
             found_indicators = [ind for ind in quantum_indicators if ind in llvm_ir]
-            assert (
-                len(found_indicators) > 0
-            ), f"LLVM should contain quantum operations: {found_indicators}"
+            assert len(found_indicators) > 0, f"LLVM should contain quantum operations: {found_indicators}"
 
         except (RuntimeError, ValueError) as e:
             if "not supported" in str(e).lower() or "not available" in str(e).lower():
@@ -122,14 +112,7 @@ class TestHUGRToLLVMCompilation:
 
         # Compile to HUGR - the compile() method returns the Package directly
         package = bell_state.compile()
-
-        # Get HUGR JSON format - compile_hugr_to_qis currently requires JSON, not envelope format
-        # We suppress the deprecation warning since we need to use to_json() until
-        # compile_hugr_to_qis is updated to handle the new envelope format from to_str()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            hugr_json = package.to_json()
-        hugr_bytes = hugr_json.encode("utf-8")
+        hugr_bytes = package.to_bytes()
 
         try:
             llvm_ir = compile_hugr_to_qis(hugr_bytes)
@@ -145,9 +128,7 @@ class TestHUGRToLLVMCompilation:
             found_ops = [op for op in bell_ops if op.lower() in llvm_ir.lower()]
 
             # Should have at least H and measurement
-            assert (
-                len(found_ops) >= 1
-            ), f"Bell state should have quantum ops, found: {found_ops}"
+            assert len(found_ops) >= 1, f"Bell state should have quantum ops, found: {found_ops}"
 
         except (RuntimeError, ValueError) as e:
             if "not supported" in str(e).lower():
@@ -168,13 +149,7 @@ class TestSimAPI:
             return measure(q)
 
         try:
-            results = (
-                sim(Guppy(simple_circuit))
-                .qubits(1)
-                .quantum(state_vector())
-                .seed(42)
-                .run(10)
-            )
+            results = sim(Guppy(simple_circuit)).qubits(1).quantum(state_vector()).seed(42).run(10)
 
             # Verify results structure - check for dict-like interface
             assert hasattr(results, "__getitem__"), "Results should be dict-like"
@@ -187,9 +162,7 @@ class TestSimAPI:
             if "measurement_0" in results:
                 measurements = results["measurement_0"]
                 assert len(measurements) == 10, "Should have 10 measurements"
-                assert all(
-                    m in [0, 1, True, False] for m in measurements
-                ), "Measurements should be binary"
+                assert all(m in [0, 1, True, False] for m in measurements), "Measurements should be binary"
             elif "measurements" in results:
                 measurements = results["measurements"]
                 assert len(measurements) == 10, "Should have 10 measurements"
@@ -213,13 +186,7 @@ class TestSimAPI:
             return measure(q0), measure(q1)
 
         try:
-            results = (
-                sim(Guppy(bell_state))
-                .qubits(2)
-                .quantum(state_vector())
-                .seed(42)
-                .run(100)
-            )
+            results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
             # Verify results structure - check for dict-like interface
             assert hasattr(results, "__getitem__"), "Results should be dict-like"
@@ -235,9 +202,7 @@ class TestSimAPI:
                 # Bell state should be correlated
                 correlated = sum(1 for i in range(100) if m1[i] == m2[i])
                 correlation_rate = correlated / 100
-                assert (
-                    correlation_rate > 0.95
-                ), f"Bell state should be correlated, got {correlation_rate:.2%}"
+                assert correlation_rate > 0.95, f"Bell state should be correlated, got {correlation_rate:.2%}"
 
         except (RuntimeError, ValueError) as e:
             if "not supported" in str(e).lower():
@@ -281,9 +246,7 @@ class TestSimAPI:
                 ones = sum(measurements)
 
                 # Should be mostly 1s but not all due to noise
-                assert (
-                    70 < ones < 100
-                ), f"With noise, should have some errors, got {ones}/100"
+                assert 70 < ones < 100, f"With noise, should have some errors, got {ones}/100"
 
         except ImportError:
             pytest.skip("Noise models not available")
@@ -323,23 +286,13 @@ class TestCompletePipeline:
 
         # Test execution through sim API
         try:
-            results = (
-                sim(quantum_algorithm)
-                .qubits(3)
-                .quantum(state_vector())
-                .seed(42)
-                .run(50)
-            )
+            results = sim(quantum_algorithm).qubits(3).quantum(state_vector()).seed(42).run(50)
 
             # Verify results structure - check for dict-like interface
             assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
             # Verify we got measurements
-            has_measurements = (
-                "measurement_0" in results
-                or "measurements" in results
-                or len(results) > 0
-            )
+            has_measurements = "measurement_0" in results or "measurements" in results or len(results) > 0
             assert has_measurements, "Should have measurement results"
 
             # If we have individual measurements, check structure
@@ -347,9 +300,7 @@ class TestCompletePipeline:
                 for i in range(3):
                     key = f"measurement_{i}"
                     if key in results:
-                        assert (
-                            len(results[key]) == 50
-                        ), f"Should have 50 measurements for {key}"
+                        assert len(results[key]) == 50, f"Should have 50 measurements for {key}"
 
         except (RuntimeError, ValueError) as e:
             if "PECOS" in str(e) or "not supported" in str(e).lower():
@@ -374,9 +325,7 @@ class TestCompletePipeline:
 
         # Should handle execution gracefully
         try:
-            results = (
-                sim(Guppy(invalid_circuit)).qubits(1).quantum(state_vector()).run(10)
-            )
+            results = sim(Guppy(invalid_circuit)).qubits(1).quantum(state_vector()).run(10)
             # If it works, verify results are dict-like
             assert hasattr(results, "__getitem__"), "Results should be dict-like"
         except (RuntimeError, ValueError):

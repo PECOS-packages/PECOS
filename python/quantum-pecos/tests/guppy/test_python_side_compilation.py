@@ -54,13 +54,7 @@ class TestPythonSideCompilation:
 
         try:
             # The sim API handles Guppy → HUGR → Selene compilation
-            results = (
-                sim(bell_pair_circuit)
-                .qubits(2)
-                .quantum(state_vector())
-                .seed(42)
-                .run(100)
-            )
+            results = sim(Guppy(bell_pair_circuit)).qubits(2).quantum(state_vector()).seed(42).run(100).to_dict()
         except (RuntimeError, ValueError) as e:
             if "compilation" in str(e).lower() or "not supported" in str(e):
                 pytest.skip(f"HUGR compilation issue: {e}")
@@ -70,9 +64,7 @@ class TestPythonSideCompilation:
         assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
         # Check for measurement results
-        assert (
-            "measurement_1" in results or "measurements" in results
-        ), "Results should contain measurements"
+        assert "measurement_1" in results or "measurements" in results, "Results should contain measurements"
 
         if "measurement_1" in results and "measurement_2" in results:
             # New format with separate measurement keys
@@ -86,17 +78,21 @@ class TestPythonSideCompilation:
             correlated = sum(1 for i in range(100) if m1[i] == m2[i])
             correlation_rate = correlated / 100
 
-            assert (
-                correlation_rate > 0.9
-            ), f"Bell pair should be highly correlated, got {correlation_rate:.2%}"
+            assert correlation_rate > 0.9, f"Bell pair should be highly correlated, got {correlation_rate:.2%}"
 
         elif "measurements" in results:
             # Old format or combined measurements
             measurements = results["measurements"]
             assert len(measurements) == 100, "Should have 100 measurements"
             assert all(
-                isinstance(m, tuple | int) for m in measurements
-            ), "Measurements should be tuples or integers"
+                isinstance(m, (tuple, list, int)) for m in measurements
+            ), "Measurements should be tuples, lists, or integers"
+
+            # Check correlation if measurements are pairs
+            if measurements and isinstance(measurements[0], (tuple, list)) and len(measurements[0]) == 2:
+                correlated = sum(1 for m in measurements if m[0] == m[1])
+                correlation_rate = correlated / len(measurements)
+                assert correlation_rate > 0.9, f"Bell pair should be highly correlated, got {correlation_rate:.2%}"
 
     def test_compilation_output_structure(self, simple_circuit: object) -> None:
         """Test the structure of compilation outputs."""

@@ -129,13 +129,7 @@ class TestGuppyLLVMPipeline:
 
         # Execute the Bell state circuit
         try:
-            result = (
-                sim(Guppy(bell_state))
-                .qubits(10)
-                .quantum(state_vector())
-                .seed(42)
-                .run(100)
-            )
+            result = sim(Guppy(bell_state)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
         except (RuntimeError, ImportError) as e:
             if "PECOS" in str(e) or "compilation" in str(e):
                 pytest.skip(f"Execution environment issue: {e}")
@@ -144,41 +138,16 @@ class TestGuppyLLVMPipeline:
         # Verify we got results
         assert result is not None, "Should get execution results"
 
-        # Check for measurement results in various formats
-        if "measurement_0" in result and "measurement_1" in result:
-            # Tuple return format - individual measurement keys
-            measurements1 = result["measurement_0"]
-            measurements2 = result["measurement_1"]
-            assert len(measurements1) == 100, "Should have 100 measurements for qubit 1"
-            assert len(measurements2) == 100, "Should have 100 measurements for qubit 2"
+        # Measurements format is [[m0, m1], [m0, m1], ...]
+        measurements = result.get("measurements", [])
+        assert len(measurements) == 100, "Should have 100 measurements"
 
-            # Check correlation (Bell state should be perfectly correlated)
-            correlated = sum(
-                1 for i in range(100) if measurements1[i] == measurements2[i]
-            )
-            correlation_rate = correlated / 100
-            assert (
-                correlation_rate > 0.95
-            ), f"Bell state measurements should be highly correlated, got {correlation_rate:.2%}"
-        elif "measurements" in result:
-            # Check if measurements are tuples
-            measurements = result["measurements"]
-            assert len(measurements) == 100, "Should have 100 measurements"
-
-            if measurements and isinstance(measurements[0], tuple):
-                # Direct tuple format
-                correlated = sum(1 for (a, b) in measurements if a == b)
-            else:
-                # Integer-encoded format
-                decoded = decode_integer_results(measurements, 2)
-                correlated = sum(1 for (a, b) in decoded if a == b)
-
-            correlation_rate = correlated / 100
-            assert (
-                correlation_rate > 0.95
-            ), f"Bell state measurements should be highly correlated, got {correlation_rate:.2%}"
-        else:
-            pytest.fail(f"Unexpected result format: {result.keys()}")
+        # Check correlation (Bell state should be perfectly correlated)
+        correlated = sum(1 for m in measurements if m[0] == m[1])
+        correlation_rate = correlated / 100
+        assert (
+            correlation_rate > 0.95
+        ), f"Bell state measurements should be highly correlated, got {correlation_rate:.2%}"
 
     def test_rust_compilation_check(self) -> None:
         """Test that Rust components compile properly."""
@@ -211,9 +180,7 @@ class TestGuppyLLVMPipeline:
             check=False,
         )
 
-        assert (
-            result.returncode == 0
-        ), f"Cargo metadata should succeed, got error: {result.stderr[:500]}"
+        assert result.returncode == 0, f"Cargo metadata should succeed, got error: {result.stderr[:500]}"
 
         # Verify output is valid JSON (basic check)
         assert result.stdout.startswith("{"), "Cargo metadata should return JSON"
@@ -268,42 +235,21 @@ def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
 
     # Run the test
     try:
-        result = (
-            sim(superposition_test)
-            .qubits(10)
-            .quantum(state_vector())
-            .seed(42)
-            .run(1000)
-        )
+        result = sim(superposition_test).qubits(10).quantum(state_vector()).seed(42).run(1000).to_dict()
     except (RuntimeError, ImportError) as e:
         pytest.skip(f"Execution issue: {e}")
 
     # Calculate average number of 1s
+    # Measurements format is [[m0], [m0], ...] for single qubit
+    # or [[m0, m1], [m0, m1], ...] for multiple qubits
+    measurements = result.get("measurements", [])
+
     if n_qubits == 1:
-        ones_count = (
-            sum(result["measurement_0"])
-            if "measurement_0" in result
-            else sum(result.get("measurements", []))
-        )
+        ones_count = sum(m[-1] for m in measurements)
         avg_ones = ones_count / 1000
     else:
-        # For multiple qubits, sum up all the 1s
-        total_ones = 0
-        if "measurement_0" in result:
-            # Separate measurement keys
-            for i in range(n_qubits):
-                total_ones += sum(result[f"measurement_{i}"])
-        elif "measurements" in result:
-            measurements = result["measurements"]
-            if measurements and isinstance(measurements[0], tuple):
-                # Direct tuple format
-                for meas in measurements:
-                    total_ones += sum(meas)
-            else:
-                # Integer-encoded format
-                decoded = decode_integer_results(measurements, n_qubits)
-                for meas in decoded:
-                    total_ones += sum(meas)
+        # For multiple qubits, sum up all the 1s from each shot
+        total_ones = sum(sum(m) for m in measurements)
         avg_ones = total_ones / 1000
 
     # Check that average is close to expected (allowing for statistical variation)

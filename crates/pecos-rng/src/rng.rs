@@ -42,7 +42,8 @@
 //! Backed by 4 parallel [`RapidRng`] instances, providing similar bulk generation
 //! capabilities to [`PecosRng`](crate::quality_rng::PecosQualityRng).
 
-use rand_core::{RngCore, SeedableRng};
+use core::convert::Infallible;
+use rand_core::{SeedableRng, TryRng};
 use rapidhash::rng::RapidRng;
 use wide::u64x4;
 
@@ -118,10 +119,10 @@ impl ParallelRapidRng {
     #[inline]
     pub fn next_u64x4(&mut self) -> u64x4 {
         u64x4::new([
-            self.rngs[0].next_u64(),
-            self.rngs[1].next_u64(),
-            self.rngs[2].next_u64(),
-            self.rngs[3].next_u64(),
+            self.rngs[0].next(),
+            self.rngs[1].next(),
+            self.rngs[2].next(),
+            self.rngs[3].next(),
         ])
     }
 
@@ -443,19 +444,21 @@ impl ParallelRapidRng {
 // rand_core trait implementations
 // ============================================================================
 
-impl RngCore for ParallelRapidRng {
+impl TryRng for ParallelRapidRng {
+    type Error = Infallible;
+
     #[inline]
-    fn next_u32(&mut self) -> u32 {
-        self.next_u32()
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.next_u32())
     }
 
     #[inline]
-    fn next_u64(&mut self) -> u64 {
-        self.next_u64()
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.next_u64())
     }
 
     #[inline]
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         // Process 8 bytes at a time using next_u64
         let mut chunks = dest.chunks_exact_mut(8);
         for chunk in chunks.by_ref() {
@@ -471,6 +474,7 @@ impl RngCore for ParallelRapidRng {
                 *byte = bytes[i];
             }
         }
+        Ok(())
     }
 }
 

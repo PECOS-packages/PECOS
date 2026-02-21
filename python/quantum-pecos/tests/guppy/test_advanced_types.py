@@ -43,9 +43,7 @@ class TestAdvancedTypes:
 
         # Should handle multiple futures correctly
         measure_calls = output.count("___lazy_measure")
-        assert (
-            measure_calls >= 2
-        ), f"Expected at least 2 measurements, got {measure_calls}"
+        assert measure_calls >= 2, f"Expected at least 2 measurements, got {measure_calls}"
 
     def test_advanced_types_compilation(self) -> None:
         """Test that advanced types don't break compilation."""

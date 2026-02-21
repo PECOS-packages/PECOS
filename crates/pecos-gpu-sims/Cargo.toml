@@ -20,6 +20,7 @@ wgpu.workspace = true
 pollster.workspace = true
 bytemuck.workspace = true
 rand.workspace = true
+rand_core.workspace = true
 
 # PECOS integration
 pecos-core.workspace = true

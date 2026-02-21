@@ -44,11 +44,7 @@ class RNGModel:
 
     def rng_random(self) -> int:
         """Generating a random number and keeping track of how many we have generated."""
-        rng_num = (
-            self.pcg.random()
-            if self.current_bound == 0
-            else self.pcg.boundedrand(self.current_bound)
-        )
+        rng_num = self.pcg.random() if self.current_bound == 0 else self.pcg.boundedrand(self.current_bound)
         self.count += 1
         return rng_num
 

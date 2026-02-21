@@ -182,9 +182,7 @@ class TestQasmSimRslib:
         """
 
         # This should use all available CPU cores
-        results = (
-            qasm_engine().program(Qasm(qasm_code)).to_sim().auto_workers().run(1000)
-        )
+        results = qasm_engine().program(Qasm(qasm_code)).to_sim().auto_workers().run(1000)
         results_dict = results.to_dict()
 
         assert isinstance(results_dict, dict)

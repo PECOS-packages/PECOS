@@ -130,7 +130,10 @@ class Guppy:
         """Convert to the underlying Rust program type."""
         if self._program is None:
             hugr_package = self._func.compile()
-            hugr_bytes = hugr_package.to_bytes()
+            # Use JSON format (via to_str) instead of binary format (to_bytes)
+            # The JSON format is more reliably parsed and supports all HUGR features
+            # including CFG loops (while statements)
+            hugr_bytes = hugr_package.to_str().encode("utf-8")
             self._program = pecos_rslib.Hugr.from_bytes(hugr_bytes)
         return self._program
 

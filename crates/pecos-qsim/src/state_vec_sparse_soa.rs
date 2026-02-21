@@ -109,7 +109,7 @@ impl SparseStateVecSoA<PecosRng> {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        Self::with_rng(num_qubits, PecosRng::from_os_rng())
+        Self::with_rng(num_qubits, rand::make_rng())
     }
 
     /// Create with a specific seed for reproducibility

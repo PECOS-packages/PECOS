@@ -448,9 +448,7 @@ class UnifiedResourcePlanner:
         conditional_elements = ev.get("conditionally_accessed_elements", set())
         if conditional_elements:
             # Only unpack elements that are actually accessed (not just in conditionals)
-            elements_needing_unpack = (
-                conditional_elements & access_info.element_accesses
-            )
+            elements_needing_unpack = conditional_elements & access_info.element_accesses
 
             if elements_needing_unpack:
                 # Check allocation strategy
@@ -527,12 +525,8 @@ class UnifiedResourcePlanner:
         if total == 0:
             return
 
-        unpacked_count = sum(
-            1 for p in self.analysis.plans.values() if p.needs_unpacking
-        )
-        dynamic_count = sum(
-            1 for p in self.analysis.plans.values() if p.uses_dynamic_allocation
-        )
+        unpacked_count = sum(1 for p in self.analysis.plans.values() if p.needs_unpacking)
+        dynamic_count = sum(1 for p in self.analysis.plans.values() if p.uses_dynamic_allocation)
 
         if unpacked_count > total * 0.7:
             self.analysis.global_recommendations.append(
@@ -542,16 +536,11 @@ class UnifiedResourcePlanner:
 
         if dynamic_count > 0:
             self.analysis.global_recommendations.append(
-                f"Dynamic allocation used for {dynamic_count}/{total} registers - "
-                "ensure proper lifetime management",
+                f"Dynamic allocation used for {dynamic_count}/{total} registers - ensure proper lifetime management",
             )
 
         # Check for potential conflicts
-        required_plans = [
-            p
-            for p in self.analysis.plans.values()
-            if p.priority == DecisionPriority.REQUIRED
-        ]
+        required_plans = [p for p in self.analysis.plans.values() if p.priority == DecisionPriority.REQUIRED]
         if len(required_plans) == total and total > 1:
             self.analysis.global_recommendations.append(
                 "All registers require unpacking - this may indicate complex control flow",

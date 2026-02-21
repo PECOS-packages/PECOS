@@ -220,9 +220,7 @@ def test_seed_parameter_in_run(backend: str) -> None:
     results2 = engine2.run(PHIR_BELL_STATE, shots=shots, seed=seed)
 
     # Should produce identical results
-    assert (
-        results1["c"] == results2["c"]
-    ), f"{backend}: Passing same seed to run() should produce identical results"
+    assert results1["c"] == results2["c"], f"{backend}: Passing same seed to run() should produce identical results"
 
 
 @pytest.mark.parametrize("backend", CORE_BACKENDS)
@@ -247,9 +245,7 @@ def test_error_pattern_reproducibility(backend: str) -> None:
     results2 = engine2.run(PHIR_BELL_STATE, shots=shots)
 
     # Full sequences should be identical (not just distributions)
-    assert (
-        results1["c"] == results2["c"]
-    ), f"{backend}: Error patterns should be exactly reproducible with same seed"
+    assert results1["c"] == results2["c"], f"{backend}: Error patterns should be exactly reproducible with same seed"
 
     # Verify that we're actually getting some errors (not perfect Bell state)
     count_00 = sum(1 for x in results1["c"] if x == "00")
@@ -282,9 +278,7 @@ def test_custatevec_determinism() -> None:
     engine2.use_seed(seed)
     results2 = engine2.run(PHIR_BELL_STATE, shots=shots)
 
-    assert (
-        results1["c"] == results2["c"]
-    ), "CuStateVec: Same seed should produce identical results"
+    assert results1["c"] == results2["c"], "CuStateVec: Same seed should produce identical results"
 
 
 def test_mps_determinism() -> None:
@@ -308,9 +302,7 @@ def test_mps_determinism() -> None:
     engine2.use_seed(seed)
     results2 = engine2.run(PHIR_BELL_STATE, shots=shots)
 
-    assert (
-        results1["c"] == results2["c"]
-    ), "MPS: Same seed should produce identical results"
+    assert results1["c"] == results2["c"], "MPS: Same seed should produce identical results"
 
 
 @pytest.mark.parametrize("backend", CORE_BACKENDS)

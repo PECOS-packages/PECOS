@@ -48,7 +48,7 @@
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::prelude::GateType;
 use pecos_rng::{PecosRng, RngProbabilityExt};
-use rand::RngCore;
+use rand_core::Rng;
 use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
@@ -297,7 +297,7 @@ impl DemSampler {
     ///
     /// Returns (detection_events, observable_flips) as boolean vectors.
     #[must_use]
-    pub fn sample<R: RngCore>(&self, rng: &mut R) -> (Vec<bool>, Vec<bool>) {
+    pub fn sample<R: Rng>(&self, rng: &mut R) -> (Vec<bool>, Vec<bool>) {
         let mut det_bits = PackedBits::new(self.num_detectors);
         let mut obs_bits = PackedBits::new(self.num_observables);
 
@@ -310,7 +310,7 @@ impl DemSampler {
     ///
     /// Uses precomputed u64 thresholds for fast integer comparison.
     #[inline]
-    fn sample_into_packed<R: RngCore>(
+    fn sample_into_packed<R: Rng>(
         &self,
         det_bits: &mut PackedBits,
         obs_bits: &mut PackedBits,
@@ -344,7 +344,7 @@ impl DemSampler {
     ///
     /// Returns (all_detection_events, all_observable_flips).
     #[must_use]
-    pub fn sample_batch<R: RngCore>(
+    pub fn sample_batch<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -401,7 +401,7 @@ impl DemSampler {
     /// For most use cases, prefer `sample_statistics` which auto-selects
     /// the best algorithm.
     #[must_use]
-    pub fn sample_statistics_with_rng<R: RngCore>(
+    pub fn sample_statistics_with_rng<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -416,7 +416,7 @@ impl DemSampler {
     ///
     /// Uses chunked processing for large working sets (>6 MB) to improve cache
     /// locality, otherwise uses direct processing.
-    fn sample_statistics_auto_internal<R: RngCore>(
+    fn sample_statistics_auto_internal<R: Rng>(
         &self,
         rng: &mut R,
         num_shots: usize,
@@ -432,7 +432,7 @@ impl DemSampler {
     /// - Better cache locality due to predictable memory access patterns
     ///
     /// This method is semantically equivalent to the columnar methods.
-    fn sample_statistics_direct<R: RngCore>(
+    fn sample_statistics_direct<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -590,7 +590,7 @@ impl DemSampler {
     /// When the working set exceeds L3 cache, this method processes shots in
     /// chunks to improve cache locality, providing ~1.5x speedup for large
     /// problem sizes.
-    fn sample_statistics_chunked<R: RngCore>(
+    fn sample_statistics_chunked<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -619,7 +619,7 @@ impl DemSampler {
     /// Original row-major statistics (for benchmarking comparison).
     #[must_use]
     #[doc(hidden)]
-    pub fn sample_statistics_row_major<R: RngCore>(
+    pub fn sample_statistics_row_major<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -664,7 +664,7 @@ impl DemSampler {
     /// where each column is a Vec<u64> with bit i of word w = shot w*64 + i.
     #[must_use]
     #[doc(hidden)]
-    pub fn sample_batch_columnar<R: RngCore>(
+    pub fn sample_batch_columnar<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -738,7 +738,7 @@ impl DemSampler {
     /// random draws for each mechanism (matching the row-major sampling semantics).
     #[must_use]
     #[doc(hidden)]
-    pub fn sample_batch_columnar_accurate<R: RngCore>(
+    pub fn sample_batch_columnar_accurate<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -823,7 +823,7 @@ impl DemSampler {
     /// because it uses bulk random number generation and vectorized operations.
     #[must_use]
     #[doc(hidden)]
-    pub fn sample_statistics_columnar<R: RngCore>(
+    pub fn sample_statistics_columnar<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -886,7 +886,7 @@ impl DemSampler {
     /// Processes 4 u64 words (256 shots) at a time for better throughput.
     #[must_use]
     #[doc(hidden)]
-    pub fn sample_batch_columnar_simd<R: RngCore>(
+    pub fn sample_batch_columnar_simd<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -1035,7 +1035,7 @@ impl DemSampler {
     /// which is much faster for low error rates (p << 1).
     #[must_use]
     #[doc(hidden)]
-    pub fn sample_batch_columnar_geometric<R: RngCore>(
+    pub fn sample_batch_columnar_geometric<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -1112,7 +1112,7 @@ impl DemSampler {
     /// Statistics using SIMD columnar sampling.
     #[must_use]
     #[doc(hidden)]
-    pub fn sample_statistics_simd<R: RngCore>(
+    pub fn sample_statistics_simd<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -1124,7 +1124,7 @@ impl DemSampler {
     /// Statistics using geometric skip sampling.
     #[must_use]
     #[doc(hidden)]
-    pub fn sample_statistics_geometric<R: RngCore>(
+    pub fn sample_statistics_geometric<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,
@@ -1218,7 +1218,7 @@ impl DemSampler {
     ///
     /// Uses direct accumulation for optimal performance (same approach as
     /// `sample_statistics_direct`).
-    fn sample_statistics_geometric_range<R: RngCore>(
+    fn sample_statistics_geometric_range<R: Rng>(
         &self,
         num_shots: usize,
         rng: &mut R,

@@ -18,6 +18,12 @@ flamegraph.svg
 # pytest results
 junit/
 
+# Generated doc tests (from scripts/docs/generate_doc_tests.py)
+python/quantum-pecos/tests/docs/generated/
+
+# Generated WASM binaries (compile from .wat source)
+*.wasm
+
 # Cython
 *.pyc
 *.pyd
@@ -198,3 +204,4 @@ cython_debug/
 # Prevent subdirectory virtual environments
 clib/*/.venv/
 clib/*/uv.lock
+python/selene-plugins/*/uv.lock

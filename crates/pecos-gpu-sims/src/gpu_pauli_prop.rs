@@ -39,7 +39,7 @@
 //! ```
 
 use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use rand_core::{Rng, SeedableRng};
 use std::time::{SystemTime, UNIX_EPOCH};
 use wgpu::util::DeviceExt;
 

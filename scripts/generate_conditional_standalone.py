@@ -53,14 +53,7 @@ def main() -> None:
         c = array(c_0, c_1)
         result("c", c)
 
-    output_dir = (
-        Path(__file__).parent.parent
-        / "crates"
-        / "pecos"
-        / "tests"
-        / "test_data"
-        / "hugr"
-    )
+    output_dir = Path(__file__).parent.parent / "crates" / "pecos" / "tests" / "test_data" / "hugr"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Compiling to HUGR...")

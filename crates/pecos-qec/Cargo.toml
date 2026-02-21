@@ -19,6 +19,7 @@ pecos-quantum = { path = "../pecos-quantum" }
 pecos-qsim = { path = "../pecos-qsim" }
 pecos-rng = { path = "../pecos-rng" }
 rand.workspace = true
+rand_core.workspace = true
 rayon.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true

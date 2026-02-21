@@ -38,7 +38,7 @@
 
 use crate::{CliffordGateable, DensityMatrix, MeasurementResult, QuantumSimulator};
 use pecos_core::QubitId;
-use pecos_rng::Rng;
+use pecos_rng::{Rng, RngExt};
 
 /// Trait for stabilizer simulators that support forced measurement outcomes.
 ///

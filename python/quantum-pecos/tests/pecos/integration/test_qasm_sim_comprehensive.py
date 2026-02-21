@@ -44,14 +44,7 @@ class TestQasmSimComprehensive:
         """
 
         # GeneralNoise uses default configuration
-        results = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .seed(42)
-            .noise(general_noise())
-            .run(1000)
-        )
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(general_noise()).run(1000)
 
         results_dict = results.to_dict()
         assert isinstance(results_dict, dict)
@@ -74,14 +67,7 @@ class TestQasmSimComprehensive:
         measure q -> c;
         """
 
-        results = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .quantum(state_vector())
-            .seed(42)
-            .run(1000)
-        )
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(state_vector()).seed(42).run(1000)
 
         results_dict = results.to_dict()
         assert len(results_dict["c"]) == 1000
@@ -105,14 +91,7 @@ class TestQasmSimComprehensive:
         measure q -> c;
         """
 
-        results = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .quantum(sparse_stabilizer())
-            .seed(42)
-            .run(1000)
-        )
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(sparse_stabilizer()).seed(42).run(1000)
 
         results_dict = results.to_dict()
         assert len(results_dict["c"]) == 1000
@@ -287,9 +266,7 @@ class TestQasmSimComprehensive:
         ]
 
         for noise_builder in noise_builders:
-            sim_builder = (
-                qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42)
-            )
+            sim_builder = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42)
             if noise_builder is not None:
                 sim_builder = sim_builder.noise(noise_builder)
             sim = sim_builder.build()
@@ -330,22 +307,8 @@ class TestQasmSimComprehensive:
         noise1 = depolarizing_noise().with_uniform_probability(0.01)
         noise2 = depolarizing_noise().with_uniform_probability(0.01)
 
-        sim1 = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .seed(123)
-            .noise(noise1)
-            .build()
-        )
-        sim2 = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .seed(123)
-            .noise(noise2)
-            .build()
-        )
+        sim1 = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(123).noise(noise1).build()
+        sim2 = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(123).noise(noise2).build()
 
         results1 = sim1.run(1000)
         results2 = sim2.run(1000)

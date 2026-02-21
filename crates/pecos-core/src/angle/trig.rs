@@ -381,6 +381,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::super::{Angle8, Angle16, Angle32, Angle64, Angle128};
+    use rand::RngExt;
     use std::f64::consts::{FRAC_PI_3, FRAC_PI_4, FRAC_PI_6};
 
     const TOL: f64 = 1e-15;
@@ -463,7 +464,7 @@ mod tests {
     fn standalone_sin_matches_sin_cos() {
         let mut rng = rand::rng();
         for _ in 0..10_000 {
-            let frac: u64 = rand::Rng::random(&mut rng);
+            let frac: u64 = rng.random();
             let angle = Angle64::new(frac);
             let (sc_sin, _) = angle.sin_cos();
             let standalone = angle.sin();
@@ -478,7 +479,7 @@ mod tests {
     fn standalone_cos_matches_sin_cos() {
         let mut rng = rand::rng();
         for _ in 0..10_000 {
-            let frac: u64 = rand::Rng::random(&mut rng);
+            let frac: u64 = rng.random();
             let angle = Angle64::new(frac);
             let (_, sc_cos) = angle.sin_cos();
             let standalone = angle.cos();
@@ -495,7 +496,7 @@ mod tests {
     fn pythagorean_identity() {
         let mut rng = rand::rng();
         for _ in 0..10_000 {
-            let frac: u64 = rand::Rng::random(&mut rng);
+            let frac: u64 = rng.random();
             let angle = Angle64::new(frac);
             let (s, c) = angle.sin_cos();
             let sum = s.mul_add(s, c * c);
@@ -510,7 +511,7 @@ mod tests {
     fn pythagorean_identity_standalone() {
         let mut rng = rand::rng();
         for _ in 0..10_000 {
-            let frac: u64 = rand::Rng::random(&mut rng);
+            let frac: u64 = rng.random();
             let angle = Angle64::new(frac);
             let s = angle.sin();
             let c = angle.cos();
@@ -719,7 +720,7 @@ mod tests {
     fn half_angle_random_matches() {
         let mut rng = rand::rng();
         for _ in 0..10_000 {
-            let frac: u64 = rand::Rng::random(&mut rng);
+            let frac: u64 = rng.random();
             let angle = Angle64::new(frac);
             let (s, c) = angle.half_angle_sin_cos();
             let halved = Angle64::new(frac / 2);
@@ -758,7 +759,7 @@ mod tests {
     fn cis_unit_magnitude() {
         let mut rng = rand::rng();
         for _ in 0..10_000 {
-            let frac: u64 = rand::Rng::random(&mut rng);
+            let frac: u64 = rng.random();
             let z = Angle64::new(frac).cis();
             let mag_sq = z.re * z.re + z.im * z.im;
             assert!(
@@ -774,7 +775,7 @@ mod tests {
     fn matches_stdlib() {
         let mut rng = rand::rng();
         for _ in 0..10_000 {
-            let frac: u64 = rand::Rng::random(&mut rng);
+            let frac: u64 = rng.random();
             let angle = Angle64::new(frac);
             let theta = angle.to_radians();
             let (s, c) = angle.sin_cos();

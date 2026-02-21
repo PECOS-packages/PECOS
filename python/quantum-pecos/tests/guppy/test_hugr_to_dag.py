@@ -88,9 +88,7 @@ class TestBasicConversion:
         assert len(dag.nodes()) == 6
 
         # Check that edges exist (dependencies)
-        assert (
-            dag.edge_count() >= 4
-        )  # At least QAlloc->H, H->CX, QAlloc->CX, CX->Measure
+        assert dag.edge_count() >= 4  # At least QAlloc->H, H->CX, QAlloc->CX, CX->Measure
 
     def test_multi_gate_circuit(self) -> None:
         """Test conversion of a circuit with multiple gate types."""

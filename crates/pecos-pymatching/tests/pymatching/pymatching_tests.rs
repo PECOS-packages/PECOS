@@ -600,7 +600,7 @@ fn test_noise_simulation() {
 fn test_monte_carlo_simulation() {
     // Alternative: Implement our own noise simulation
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     let config = PyMatchingConfig {
         num_nodes: Some(4),

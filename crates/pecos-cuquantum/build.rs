@@ -4,11 +4,31 @@
 //! cuTensor, and CUDA shared libraries at runtime.
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(cuquantum_stub)");
+
     // cuQuantum
-    if let Some(cuquantum_path) = pecos_build::cuquantum::find_cuquantum()
+    let cuquantum_found = if let Some(cuquantum_path) = pecos_build::cuquantum::find_cuquantum()
         && let Some(lib_dir) = pecos_build::cuquantum::get_lib_dir(&cuquantum_path)
     {
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+        true
+    } else if pecos_build::cuda::find_cuda().is_some() {
+        // CUDA available but cuQuantum not found -- try auto-install
+        if let Ok(cuquantum_path) = pecos_build::cuquantum::ensure_cuquantum()
+            && let Some(lib_dir) = pecos_build::cuquantum::get_lib_dir(&cuquantum_path)
+        {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // Emit cuquantum_stub cfg when SDK is not available
+    if !cuquantum_found {
+        println!("cargo::rustc-cfg=cuquantum_stub");
     }
 
     // cuTensor (transitive dependency of cuTensorNet)

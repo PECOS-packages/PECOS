@@ -80,6 +80,15 @@ impl CuStateVec {
             ));
         }
 
+        #[cfg(cuquantum_stub)]
+        return Err(CuQuantumError::NotAvailable(
+            "cuQuantum SDK is not installed. To use GPU-accelerated simulators, install the cuQuantum SDK:\n\
+             1. Set CUQUANTUM_ROOT environment variable, or\n\
+             2. Install to ~/.pecos/cuquantum/, or\n\
+             3. Install system-wide to /usr/local/cuquantum/"
+                .into(),
+        ));
+
         // Create cuStateVec handle
         let mut handle: custatevecHandle_t = ptr::null_mut();
         let status = unsafe { pecos_cuquantum_sys::custatevecCreate(&mut handle) };

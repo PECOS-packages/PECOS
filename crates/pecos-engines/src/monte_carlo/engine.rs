@@ -211,6 +211,24 @@ impl MonteCarloEngine {
         self.hybrid_engine_template.set_seed(seed);
     }
 
+    /// Reset the Monte Carlo engine to its initial state.
+    ///
+    /// This resets the hybrid engine template (including the quantum state back to |0⟩)
+    /// and re-seeds the RNG with the original seed for reproducibility.
+    ///
+    /// # Returns
+    /// The engine itself for method chaining.
+    ///
+    /// # Errors
+    /// Returns a `PecosError` if resetting the hybrid engine fails.
+    pub fn reset(&mut self) -> Result<&mut Self, PecosError> {
+        // Reset the hybrid engine template (resets quantum state to |0⟩)
+        self.hybrid_engine_template.reset()?;
+        // Re-seed the RNG with the original seed for reproducibility
+        self.rng = PecosRng::seed_from_u64(self.seed);
+        Ok(self)
+    }
+
     /// Run a Monte Carlo simulation with the specified number of shots and worker threads.
     ///
     /// This method executes multiple shots of the quantum program in parallel using

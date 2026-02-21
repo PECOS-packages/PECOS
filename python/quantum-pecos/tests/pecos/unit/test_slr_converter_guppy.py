@@ -30,9 +30,11 @@ def test_slr_converter_guppy_simple() -> None:
     guppy_code = SlrConverter(prog).guppy()
 
     # Check that the generated code is valid Python
-    assert "from guppylang.decorator import guppy" in guppy_code
+    # AST codegen uses simplified imports
+    assert "from guppylang import guppy" in guppy_code
     assert "@guppy" in guppy_code
-    assert "def main()" in guppy_code
+    # AST codegen uses array parameters
+    assert "def main(q:" in guppy_code
     assert "quantum.h(" in guppy_code
     assert "quantum.cx(" in guppy_code
 
@@ -57,18 +59,10 @@ def test_slr_converter_guppy_does_not_have_undefined_variables() -> None:
     defined_vars = set()
     for line in lines:
         stripped_line = line.strip()
-        if (
-            "=" in stripped_line
-            and not stripped_line.startswith("#")
-            and not stripped_line.startswith("@")
-        ):
+        if "=" in stripped_line and not stripped_line.startswith("#") and not stripped_line.startswith("@"):
             # Extract variable definitions (left side of =)
             left_side = stripped_line.split("=")[0].strip()
-            vars_defined = (
-                [v.strip() for v in left_side.split(",")]
-                if "," in left_side
-                else [left_side]
-            )
+            vars_defined = [v.strip() for v in left_side.split(",")] if "," in left_side else [left_side]
             defined_vars.update(vars_defined)
 
     # Now check that we don't have obvious undefined variable usage
@@ -78,18 +72,13 @@ def test_slr_converter_guppy_does_not_have_undefined_variables() -> None:
         if line.strip().startswith("#") or line.strip().startswith("@"):
             continue
         # Skip import and function definition lines
-        if any(
-            keyword in line
-            for keyword in ["import", "from", "def ", "class ", "return"]
-        ):
+        if any(keyword in line for keyword in ["import", "from", "def ", "class ", "return"]):
             continue
 
     # At minimum, check that we don't reference common undefined variables
     undefined_vars = ["c_a", "c_a_0"]  # Common issues we've seen
     for var in undefined_vars:
-        assert (
-            var not in guppy_code
-        ), f"Generated code contains undefined variable: {var}"
+        assert var not in guppy_code, f"Generated code contains undefined variable: {var}"
 
 
 def test_slr_converter_hugr_simple() -> None:
@@ -121,28 +110,17 @@ def test_slr_converter_steane_guppy_generation() -> None:
     # This should generate valid Guppy code without undefined variables
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check that c_a is properly declared (not undefined)
-    lines = guppy_code.split("\n")
+    # AST codegen uses array parameters instead of local declarations
+    # Check that c_a is declared as parameter or that c_a[i] is properly accessed
+    # Either c_a: array[...] @owned in params, or c_a = array(...) in body
+    c_a_in_params = "c_a: array[qubit" in guppy_code
+    c_a_declared = "c_a =" in guppy_code or "c_a=" in guppy_code
 
-    # Check that c_a has a proper declaration
-    c_a_declared = False
-    for line in lines:
-        if ("c_a =" in line or "c_a=" in line) and not line.strip().startswith("#"):
-            c_a_declared = True
-            break
+    # If c_a appears in the code, it should be in params or declared
+    assert ("c_a" not in guppy_code) or c_a_in_params or c_a_declared
 
-    # If c_a appears in the code, it should be properly declared
-    assert ("c_a" not in guppy_code) or c_a_declared
-
-    # Check that if c_a_0 appears (from unpacking), it's properly defined
-    if "c_a_0" in guppy_code:
-        # Should have unpacking statement: c_a_0, c_a_1, c_a_2 = c_a
-        unpacking_found = False
-        for line in lines:
-            if "c_a_0, c_a_1, c_a_2 = c_a" in line:
-                unpacking_found = True
-                break
-        assert unpacking_found, "c_a_0 is used but c_a array is not properly unpacked"
+    # Code should have quantum operations
+    assert "quantum." in guppy_code
 
 
 def test_slr_converter_steane_hugr_compilation() -> None:
@@ -201,9 +179,7 @@ def test_slr_converter_parallel_blocks_guppy() -> None:
     # Should not have undefined variables
     undefined_vars = ["c_a", "c_a_0"]
     for var in undefined_vars:
-        assert (
-            var not in guppy_code
-        ), f"Generated code contains undefined variable: {var}"
+        assert var not in guppy_code, f"Generated code contains undefined variable: {var}"
 
 
 def test_slr_converter_guppy_has_main_function() -> None:
@@ -217,10 +193,9 @@ def test_slr_converter_guppy_has_main_function() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Should have main function
-    assert "def main()" in guppy_code
+    # Should have main function with array parameters
+    assert "def main(" in guppy_code
     assert "@guppy" in guppy_code
-    assert "@no_type_check" in guppy_code
 
 
 def test_slr_converter_guppy_imports() -> None:
@@ -234,12 +209,11 @@ def test_slr_converter_guppy_imports() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Should have required imports
+    # AST codegen uses simplified imports
     required_imports = [
-        "from guppylang.decorator import guppy",
+        "from guppylang import guppy",
         "from guppylang.std import quantum",
         "from guppylang.std.quantum import qubit",
-        "from guppylang.std.builtins import array",
     ]
 
     for imp in required_imports:

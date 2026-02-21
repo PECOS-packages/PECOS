@@ -38,7 +38,7 @@ use pyo3::prelude::*;
 ///     >>> x = Pauli.X
 ///     >>> z = Pauli.Z
 ///     >>> print(x)  # "X"
-#[pyclass(name = "Pauli", module = "pecos_rslib", frozen)]
+#[pyclass(name = "Pauli", module = "pecos_rslib", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Pauli(RustPauli);
 
@@ -155,7 +155,7 @@ impl Pauli {
 /// >>> ps2 = PauliString.from_str("XYZ")
 /// >>> print(ps2)  # "XYZ"
 /// ```
-#[pyclass(name = "PauliString", module = "pecos_rslib")]
+#[pyclass(name = "PauliString", module = "pecos_rslib", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PauliString {
     inner: RustPauliString,

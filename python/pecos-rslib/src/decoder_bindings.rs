@@ -56,7 +56,11 @@ use pyo3::prelude::*;
 /// if result.weight < threshold:
 ///     apply_correction(result.correction)
 /// ```
-#[pyclass(name = "MwpmResult", module = "pecos_rslib.decoders")]
+#[pyclass(
+    name = "MwpmResult",
+    module = "pecos_rslib.decoders",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyMwpmResult {
     /// The decoded correction (observable flips)
@@ -115,7 +119,11 @@ impl PyMwpmResult {
 /// if result.converged:
 ///     error_estimate = result.decoding
 /// ```
-#[pyclass(name = "BpResult", module = "pecos_rslib.decoders")]
+#[pyclass(
+    name = "BpResult",
+    module = "pecos_rslib.decoders",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyBpResult {
     /// The decoded error vector
@@ -194,7 +202,11 @@ use pecos::decoders::{
 /// # With weights (like PyMatching's weights parameter)
 /// matrix = CheckMatrix.from_dense(H).with_weights([1.0, 2.0, 1.0])
 /// ```
-#[pyclass(name = "CheckMatrix", module = "pecos_rslib.decoders")]
+#[pyclass(
+    name = "CheckMatrix",
+    module = "pecos_rslib.decoders",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyCheckMatrix {
     inner: RustCheckMatrix,
@@ -863,7 +875,11 @@ use pecos::decoders::{
 ///     col_indices=[0, 1, 1, 2, 2, 3]
 /// )
 /// ```
-#[pyclass(name = "SparseMatrix", module = "pecos_rslib.decoders")]
+#[pyclass(
+    name = "SparseMatrix",
+    module = "pecos_rslib.decoders",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PySparseMatrix {
     inner: RustSparseMatrix,
@@ -1266,7 +1282,11 @@ use pecos::decoders::{
 /// * `observables_mask` - Bitwise XOR of observables affected by predicted errors
 /// * `cost` - Total cost of the solution
 /// * `low_confidence` - Whether this is a low-confidence prediction
-#[pyclass(name = "TesseractResult", module = "pecos_rslib.decoders")]
+#[pyclass(
+    name = "TesseractResult",
+    module = "pecos_rslib.decoders",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyTesseractResult {
     #[pyo3(get)]

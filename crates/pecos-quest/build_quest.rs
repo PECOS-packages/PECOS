@@ -18,7 +18,7 @@ use std::process::Command;
 /// Returns the CUDA installation path if found
 ///
 /// Search order:
-/// 1. `~/.pecos/cuda/` (local installation via pecos cuda install)
+/// 1. `~/.pecos/cuda/` (local installation via pecos install cuda)
 /// 2. `CUDA_PATH` environment variable
 /// 3. `nvcc` in PATH
 /// 4. Standard system paths

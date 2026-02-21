@@ -225,10 +225,7 @@ class TestHugrCompilationFailures:
         with pytest.raises(RuntimeError) as exc_info:
             SlrConverter(prog).hugr()
 
-        assert (
-            "linearity" in str(exc_info.value).lower()
-            or "not defined" in str(exc_info.value).lower()
-        )
+        assert "linearity" in str(exc_info.value).lower() or "not defined" in str(exc_info.value).lower()
 
 
 @pytest.mark.optional_dependency

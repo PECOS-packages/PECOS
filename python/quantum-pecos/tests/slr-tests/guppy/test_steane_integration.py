@@ -1,8 +1,10 @@
-"""Test SLR-to-HUGR compilation with Steane code integration.
+"""Test SLR-to-Guppy compilation with Steane code integration.
 
 This test demonstrates the complete pipeline from natural SLR code
-through Guppy generation to HUGR compilation with real quantum
-error correction code.
+through Guppy generation with real quantum error correction code.
+
+Note: AST codegen flattens Block subclasses into the main function
+and uses array parameters with indexing.
 """
 
 from pecos.slr import Main, SlrConverter
@@ -25,37 +27,17 @@ def test_steane_guppy_generation() -> None:
     assert len(guppy_code) > 0
 
     # Verify basic structure
-    assert "from guppylang.decorator import guppy" in guppy_code
+    assert "from guppylang" in guppy_code
     assert "@guppy" in guppy_code
-    assert "def main() -> None:" in guppy_code
+    assert "def main(" in guppy_code
 
-    # Verify array/struct interfaces are maintained
-    # Generated code uses 'quantum.qubit' not just 'qubit'
-    assert (
-        "array[quantum.qubit," in guppy_code
-        or "array[qubit," in guppy_code
-        or "struct" in guppy_code
-    )
-    assert (
-        "-> tuple[array[quantum.qubit," in guppy_code
-        or "-> tuple[array[qubit," in guppy_code
-        or "-> array[quantum.qubit," in guppy_code
-        or "-> array[qubit," in guppy_code
-        or "-> c_struct" in guppy_code
-        or "_struct" in guppy_code
-    )
-
-    # print("PASS: Guppy code generation successful")
-    # print(f"PASS: Generated {len(guppy_code.splitlines())} lines of code")
+    # Verify array parameters (AST codegen uses array inputs)
+    assert "c_d: array[qubit, 7]" in guppy_code
+    assert "c_a: array[qubit, 3]" in guppy_code
 
 
-def test_steane_array_boundary_pattern() -> None:
-    """Test that the array-based boundary pattern is correctly implemented.
-
-    Note: Steane code has 14 fields which exceeds the struct limit (5).
-    The implementation correctly uses individual arrays instead of structs
-    for complex QEC codes.
-    """
+def test_steane_array_operations() -> None:
+    """Test that Steane array operations are correctly generated."""
     prog = Main(
         c := Steane("c"),
         c.px(),
@@ -63,33 +45,18 @@ def test_steane_array_boundary_pattern() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    lines = guppy_code.splitlines()
+    # Check that qubit operations use array indexing
+    assert "c_d[0]" in guppy_code
+    assert "c_a[0]" in guppy_code
 
-    # For complex codes (>5 fields), verify array-based pattern
-    # Check that Steane's quantum arrays are created
-    assert (
-        "c_d = array(quantum.qubit() for _ in range(7))" in guppy_code
-    ), "Should create data qubit array"
-    assert (
-        "c_a_0 = quantum.qubit()" in guppy_code
-        or "c_a = array(quantum.qubit() for _ in range(3))" in guppy_code
-    ), "Should create ancilla qubits"
+    # Check for H gates (used in encoding)
+    assert "quantum.h(" in guppy_code
 
-    # Check for proper function interfaces with arrays
-    function_lines = [
-        line for line in lines if "def " in line and "array[quantum.qubit," in line
-    ]
-    assert len(function_lines) > 0, "Should have functions with array interfaces"
+    # Check for CX gates (used in syndrome extraction and encoding)
+    assert "quantum.cx(" in guppy_code
 
-    # Check for natural SLR assignment pattern
-    assignment_lines = [line for line in lines if " = " in line and "prep_" in line]
-    assert len(assignment_lines) > 0, "Should have function assignments"
-
-    # Verify tuple unpacking for function returns (may use _returned for clarity)
-    [line for line in lines if "c_a_returned" in line or "c_d_returned" in line]
-    # This is acceptable and actually makes the code clearer
-
-    # print("PASS: Array-based boundary pattern correctly implemented")
+    # Check for measurements
+    assert "quantum.measure(" in guppy_code
 
 
 def test_steane_hugr_compilation() -> None:
@@ -112,43 +79,31 @@ def test_steane_hugr_compilation() -> None:
         # Even if HUGR compilation fails, verify the Guppy code is generated
         guppy_code = SlrConverter(prog).guppy()
 
-        # Check that we're using array-based patterns (not struct for >5 fields)
-        assert (
-            "array[quantum.qubit," in guppy_code
-        ), "Should use array-based pattern for complex QEC codes"
+        # Check that we're using array parameters
+        assert "array[qubit," in guppy_code, "Should use array parameters"
 
         # The test passes if code generation succeeds
         # HUGR compilation issues are acceptable for complex codes
 
 
-def test_natural_slr_usage() -> None:
-    """Test that SLR can be written completely naturally.
-
-    Note: For complex QEC codes like Steane (14 fields), the implementation
-    uses individual arrays instead of structs, which is the correct approach
-    for managing linearity constraints in Guppy.
-    """
-    # This should work without any special considerations for Guppy
+def test_steane_quantum_operations() -> None:
+    """Test that Steane operations produce valid quantum gates."""
     prog = Main(
         c := Steane("c"),
-        c.px(),  # Natural Steane operation
+        c.px(),
     )
 
-    # Should generate code without errors
     guppy_code = SlrConverter(prog).guppy()
 
-    # Verify array-based patterns are used (not struct for >5 fields)
-    assert (
-        "c_d = array(quantum.qubit() for _ in range(7))" in guppy_code
-    ), "Should create data qubit array"
-    # c_a might use different allocation strategies
-    assert (
-        "c_a = array(quantum.qubit() for _ in range(3))" in guppy_code
-        or "c_a_0 = quantum.qubit()" in guppy_code
-    ), "Should create ancilla qubits"
+    # Verify quantum operations are present
+    # H gates for encoding
+    h_count = guppy_code.count("quantum.h(")
+    assert h_count > 0, "Should have H gates"
 
-    # Verify functions are generated with proper array interfaces
-    assert (
-        "def prep_rus(" in guppy_code or "def prep_encoding" in guppy_code
-    ), "Should have preparation functions"
-    assert "array[quantum.qubit," in guppy_code, "Should use array type annotations"
+    # CX gates for entanglement
+    cx_count = guppy_code.count("quantum.cx(")
+    assert cx_count > 0, "Should have CX gates"
+
+    # Measurements for verification
+    measure_count = guppy_code.count("quantum.measure(")
+    assert measure_count > 0, "Should have measurements"

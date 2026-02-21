@@ -21,30 +21,14 @@ def test_hugr_to_llvm_compilation() -> None:
 
     # Compile to HUGR
     hugr = bell_state.compile()
-    # Get string format (uses to_str if available, falls back to to_json)
-    if hasattr(hugr, "to_str"):
-        hugr_str = hugr.to_str()
-        # Check if it's the envelope format with header
-        if hugr_str.startswith("HUGRiHJv"):
-            # Skip header and find JSON start
-            json_start = hugr_str.find("{", 9)
-            if json_start != -1:
-                hugr_str = hugr_str[json_start:]
-            else:
-                msg = "Could not find JSON start in HUGR envelope"
-                raise ValueError(msg)
-    else:
-        hugr_str = hugr.to_json()
-    hugr_bytes = hugr_str.encode("utf-8")
+    hugr_bytes = hugr.to_bytes()
 
     # Compile HUGR to LLVM using pecos-selene-engine
     llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
     # Verify basic structure - check for Selene QIS patterns
     assert "@___qalloc()" in llvm_ir, "Should have Selene qubit allocation"
-    assert (
-        "@___rxy" in llvm_ir or "@___rz" in llvm_ir
-    ), "Should have Selene rotation gates"
+    assert "@___rxy" in llvm_ir or "@___rz" in llvm_ir, "Should have Selene rotation gates"
     assert "@___lazy_measure" in llvm_ir, "Should have Selene measurement"
 
     # Check if we found the main function (entry point) - Selene uses @qmain
@@ -68,28 +52,12 @@ def test_simple_hadamard_circuit() -> None:
 
     # Compile to HUGR
     hugr = hadamard_test.compile()
-    # Get string format (uses to_str if available, falls back to to_json)
-    if hasattr(hugr, "to_str"):
-        hugr_str = hugr.to_str()
-        # Check if it's the envelope format with header
-        if hugr_str.startswith("HUGRiHJv"):
-            # Skip header and find JSON start
-            json_start = hugr_str.find("{", 9)
-            if json_start != -1:
-                hugr_str = hugr_str[json_start:]
-            else:
-                msg = "Could not find JSON start in HUGR envelope"
-                raise ValueError(msg)
-    else:
-        hugr_str = hugr.to_json()
-    hugr_bytes = hugr_str.encode("utf-8")
+    hugr_bytes = hugr.to_bytes()
 
     # Compile HUGR to LLVM
     llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
     # Verify operations - check for Selene QIS patterns
     assert "@___qalloc()" in llvm_ir, "Should have Selene qubit allocation"
-    assert (
-        "@___rxy" in llvm_ir or "@___rz" in llvm_ir
-    ), "Should have Selene rotation gates for H"
+    assert "@___rxy" in llvm_ir or "@___rz" in llvm_ir, "Should have Selene rotation gates for H"
     assert "@___lazy_measure" in llvm_ir, "Should have Selene measurement"

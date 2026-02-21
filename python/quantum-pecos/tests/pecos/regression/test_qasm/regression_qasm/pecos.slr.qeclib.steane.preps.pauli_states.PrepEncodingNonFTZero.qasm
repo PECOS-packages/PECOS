@@ -1,7 +1,8 @@
+OPENQASM 2.0;
+include "hqslib1.inc";
 h q_test[0];
 h q_test[4];
 h q_test[6];
-
 cx q_test[4], q_test[5];
 cx q_test[0], q_test[1];
 cx q_test[6], q_test[3];

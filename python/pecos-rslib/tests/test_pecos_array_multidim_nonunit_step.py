@@ -15,9 +15,7 @@ class TestNonUnitStep2D:
 
     def test_step_on_first_dimension(self):
         """Test arr[::2, :] - step on first dimension."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test assignment
@@ -29,9 +27,7 @@ class TestNonUnitStep2D:
 
     def test_step_on_second_dimension(self):
         """Test arr[:, ::2] - step on second dimension."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test assignment
@@ -102,9 +98,7 @@ class TestNonUnitStep2DArrayAssignment:
 
     def test_array_assignment_with_step(self):
         """Test assigning an array to a 2D non-unit step slice."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         assignment_arr = np.array([[100.0, 200.0], [300.0, 400.0], [500.0, 600.0]])
@@ -277,9 +271,7 @@ class TestNonUnitStepEdgeCases:
 
     def test_negative_indices_with_step(self):
         """Test negative indices combined with non-unit step."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test assignment with negative start
@@ -330,9 +322,7 @@ class TestNonUnitStepReproducibility:
 
     def test_conversion_to_numpy_preserves_values(self):
         """Test that conversion to NumPy preserves values after non-unit step operations."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Perform operation

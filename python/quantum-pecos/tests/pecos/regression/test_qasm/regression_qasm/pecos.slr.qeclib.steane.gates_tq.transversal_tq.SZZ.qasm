@@ -1,3 +1,5 @@
+OPENQASM 2.0;
+include "hqslib1.inc";
 // Transversal Logical SZZ
 barrier q1_test, q2_test;
 ZZ q1_test[0], q2_test[0];

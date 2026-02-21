@@ -32,7 +32,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::{PCG64Fast, PecosQualityRng, PecosRng};
-use pecos_rng::{PecosScalarRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosScalarRng, Rng, RngExt, SeedableRng};
 use rand::rngs::SmallRng;
 use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256PlusPlus, Xoshiro512PlusPlus};
 use rapidhash::rng::RapidRng;
@@ -161,7 +161,7 @@ fn bench_scalar_u64<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             let mut sum = 0u64;
             for _ in 0..NUM_SCALAR_CALLS {
-                sum = sum.wrapping_add(rng.next_u64());
+                sum = sum.wrapping_add(rng.next());
             }
             black_box(sum)
         });
@@ -267,7 +267,7 @@ fn bench_scalar_f64<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             let mut sum = 0.0f64;
             for _ in 0..NUM_SCALAR_CALLS {
-                sum += u64_to_f64(rng.next_u64());
+                sum += u64_to_f64(rng.next());
             }
             black_box(sum)
         });
@@ -402,7 +402,7 @@ fn bench_scalar_bool<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             let mut count = 0u32;
             for _ in 0..NUM_SCALAR_CALLS {
-                if (rng.next_u64() >> 63) != 0 {
+                if (rng.next() >> 63) != 0 {
                     count += 1;
                 }
             }
@@ -501,7 +501,7 @@ fn bench_scalar_range<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             let mut sum = 0usize;
             for _ in 0..NUM_SCALAR_CALLS {
-                sum = sum.wrapping_add((rng.next_u64() % 100) as usize);
+                sum = sum.wrapping_add((rng.next() % 100) as usize);
             }
             black_box(sum)
         });
@@ -636,7 +636,7 @@ fn bench_bulk_operations<M: Measurement>(c: &mut Criterion<M>) {
                 let mut data = vec![0u64; n];
                 b.iter(|| {
                     for val in &mut data {
-                        *val = rng.next_u64();
+                        *val = rng.next();
                     }
                     black_box(&data);
                 });
@@ -763,12 +763,7 @@ fn bench_bulk_operations<M: Measurement>(c: &mut Criterion<M>) {
                 b.iter(|| {
                     let mut column = Vec::with_capacity(n);
                     for _ in 0..n {
-                        column.push(u64x4::new([
-                            rng.next_u64(),
-                            rng.next_u64(),
-                            rng.next_u64(),
-                            rng.next_u64(),
-                        ]));
+                        column.push(u64x4::new([rng.next(), rng.next(), rng.next(), rng.next()]));
                     }
                     black_box(column)
                 });
@@ -890,7 +885,7 @@ fn bench_measurement_pattern<M: Measurement>(c: &mut Criterion<M>) {
         |r: &mut Xoshiro512PlusPlus| r.random::<bool>()
     );
     bench_measurement!("RapidRng", RapidRng::new(42), |r: &mut RapidRng| {
-        u64_to_bool(r.next_u64())
+        u64_to_bool(r.next())
     });
     bench_measurement!(
         "PCG64Fast",
@@ -1004,8 +999,8 @@ fn bench_noise_model_pattern<M: Measurement>(c: &mut Criterion<M>) {
     bench_noise!(
         "RapidRng",
         RapidRng::new(42),
-        |r: &mut RapidRng| u64_to_f64(r.next_u64()),
-        |r: &mut RapidRng| (r.next_u64() % 3) as u32
+        |r: &mut RapidRng| u64_to_f64(r.next()),
+        |r: &mut RapidRng| (r.next() % 3) as u32
     );
     bench_noise!(
         "PCG64Fast",
@@ -1080,7 +1075,7 @@ fn bench_state_vec_pattern<M: Measurement>(c: &mut Criterion<M>) {
     bench_statevec!(
         "RapidRng",
         RapidRng::new(42),
-        |r: &mut RapidRng| u64_to_f64(r.next_u64())
+        |r: &mut RapidRng| u64_to_f64(r.next())
     );
     bench_statevec!(
         "PCG64Fast",
@@ -1149,7 +1144,7 @@ fn bench_stabilizer_pattern<M: Measurement>(c: &mut Criterion<M>) {
     bench_stabilizer!(
         "RapidRng",
         RapidRng::new(42),
-        |r: &mut RapidRng| u64_to_f64(r.next_u64()) < 0.5
+        |r: &mut RapidRng| u64_to_f64(r.next()) < 0.5
     );
     bench_stabilizer!(
         "PCG64Fast",
@@ -1433,7 +1428,7 @@ pub fn bench_probability_optimizations<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             let mut count = 0u32;
             for _ in 0..num_checks {
-                if rng.next_u64() < threshold {
+                if rng.next() < threshold {
                     count += 1;
                 }
             }

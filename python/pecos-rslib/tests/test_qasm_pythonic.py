@@ -56,9 +56,7 @@ class TestPythonicInterface:
         assert len(results_sv["c"]) == 100
 
         # Test with SparseStabilizer engine
-        results_stab = (
-            sim(prog).quantum(sparse_stabilizer()).seed(42).run(100).to_dict()
-        )
+        results_stab = sim(prog).quantum(sparse_stabilizer()).seed(42).run(100).to_dict()
         assert "c" in results_stab
         assert len(results_stab["c"]) == 100
 

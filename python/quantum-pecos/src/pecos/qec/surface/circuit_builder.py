@@ -69,11 +69,7 @@ class QubitAllocation:
     @property
     def total(self) -> int:
         """Total number of qubits."""
-        return (
-            len(self.data_qubits)
-            + len(self.x_ancilla_qubits)
-            + len(self.z_ancilla_qubits)
-        )
+        return len(self.data_qubits) + len(self.x_ancilla_qubits) + len(self.z_ancilla_qubits)
 
 
 def build_surface_code_circuit(
@@ -132,9 +128,7 @@ def build_surface_code_circuit(
     ops.append(CircuitOp(OpType.COMMENT, label=f"prep_{basis.lower()}_basis"))
 
     # Allocate and reset data qubits
-    ops.extend(
-        CircuitOp(OpType.ALLOC, [data_q(i)], f"data[{i}]") for i in range(num_data)
-    )
+    ops.extend(CircuitOp(OpType.ALLOC, [data_q(i)], f"data[{i}]") for i in range(num_data))
 
     # For X-basis: H on each data qubit
     if basis.upper() == "X":
@@ -151,16 +145,10 @@ def build_surface_code_circuit(
         )
 
         # Allocate X ancillas: ax{i} = qubit()
-        ops.extend(
-            CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}")
-            for s in geom.x_stabilizers
-        )
+        ops.extend(CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
 
         # Allocate Z ancillas: az{i} = qubit()
-        ops.extend(
-            CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}")
-            for s in geom.z_stabilizers
-        )
+        ops.extend(CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
 
         # H on X ancillas
         ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
@@ -190,16 +178,10 @@ def build_surface_code_circuit(
 
         # Measure X ancillas: sx{i} = measure(ax{i})
         ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
-        ops.extend(
-            CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}")
-            for s in geom.x_stabilizers
-        )
+        ops.extend(CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers)
 
         # Measure Z ancillas: sz{i} = measure(az{i})
-        ops.extend(
-            CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}")
-            for s in geom.z_stabilizers
-        )
+        ops.extend(CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers)
 
         ops.append(CircuitOp(OpType.TICK))
 
@@ -213,9 +195,7 @@ def build_surface_code_circuit(
         ops.extend(CircuitOp(OpType.H, [data_q(i)]) for i in range(num_data))
 
     # Measure all data qubits
-    ops.extend(
-        CircuitOp(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data)
-    )
+    ops.extend(CircuitOp(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data))
 
     return ops, allocation
 
@@ -392,20 +372,14 @@ class StimRenderer(CircuitRenderer):
             if basis.upper() == "Z":
                 stabilizers = geom.z_stabilizers
                 stab_type = "Z"
-                logical_qubits = (
-                    list(geom.logical_z.data_qubits) if geom.logical_z else []
-                )
+                logical_qubits = list(geom.logical_z.data_qubits) if geom.logical_z else []
             else:
                 stabilizers = geom.x_stabilizers
                 stab_type = "X"
-                logical_qubits = (
-                    list(geom.logical_x.data_qubits) if geom.logical_x else []
-                )
+                logical_qubits = list(geom.logical_x.data_qubits) if geom.logical_x else []
 
             for s in stabilizers:
-                data_rec_offsets = [
-                    meas_count - (final_meas_start + dq) for dq in s.data_qubits
-                ]
+                data_rec_offsets = [meas_count - (final_meas_start + dq) for dq in s.data_qubits]
                 last_syn_idx = stab_meas_record[(stab_type, s.index, num_rounds - 1)]
                 syn_offset = meas_count - last_syn_idx
                 rec_str = " ".join(f"rec[{-off}]" for off in data_rec_offsets)
@@ -416,9 +390,7 @@ class StimRenderer(CircuitRenderer):
                 )
 
             # Logical observable
-            logical_rec_offsets = [
-                meas_count - (final_meas_start + q) for q in logical_qubits
-            ]
+            logical_rec_offsets = [meas_count - (final_meas_start + q) for q in logical_qubits]
             logical_rec_str = " ".join(f"rec[{-off}]" for off in logical_rec_offsets)
             lines.append(f"OBSERVABLE_INCLUDE(0) {logical_rec_str}")
 
@@ -649,11 +621,7 @@ class TickCircuitRenderer(CircuitRenderer):
                     current_phase = "syndrome_prep"
                     current_cx_round = 0
                 elif "Hadamard on X ancillas" in op.label:
-                    current_phase = (
-                        "syndrome_h_pre"
-                        if current_phase == "syndrome_prep"
-                        else "syndrome_h_post"
-                    )
+                    current_phase = "syndrome_h_pre" if current_phase == "syndrome_prep" else "syndrome_h_post"
                 elif "CX round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"cx_round_{current_cx_round}"
@@ -822,20 +790,14 @@ class TickCircuitRenderer(CircuitRenderer):
             if basis.upper() == "Z":
                 stabilizers = geom.z_stabilizers
                 stab_type = "Z"
-                logical_qubits = (
-                    list(geom.logical_z.data_qubits) if geom.logical_z else []
-                )
+                logical_qubits = list(geom.logical_z.data_qubits) if geom.logical_z else []
             else:
                 stabilizers = geom.x_stabilizers
                 stab_type = "X"
-                logical_qubits = (
-                    list(geom.logical_x.data_qubits) if geom.logical_x else []
-                )
+                logical_qubits = list(geom.logical_x.data_qubits) if geom.logical_x else []
 
             for s in stabilizers:
-                data_rec_offsets = [
-                    -(meas_count - (final_meas_start + dq)) for dq in s.data_qubits
-                ]
+                data_rec_offsets = [-(meas_count - (final_meas_start + dq)) for dq in s.data_qubits]
                 last_syn_idx = stab_meas_record[(stab_type, s.index, num_rounds - 1)]
                 syn_offset = -(meas_count - last_syn_idx)
                 det_x = s.index if stab_type == "X" else num_x_anc + s.index
@@ -850,9 +812,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 detector_id += 1
 
             # Logical observable
-            logical_rec_offsets = [
-                -(meas_count - (final_meas_start + q)) for q in logical_qubits
-            ]
+            logical_rec_offsets = [-(meas_count - (final_meas_start + q)) for q in logical_qubits]
             observables = [
                 {
                     "id": 0,
@@ -1338,10 +1298,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     single_paulis = ["X", "Y", "Z"]
     # Two-qubit Paulis (non-identity on at least one qubit)
     two_paulis = [
-        (p1, p2)
-        for p1 in ["I", "X", "Y", "Z"]
-        for p2 in ["I", "X", "Y", "Z"]
-        if not (p1 == "I" and p2 == "I")
+        (p1, p2) for p1 in ["I", "X", "Y", "Z"] for p2 in ["I", "X", "Y", "Z"] if not (p1 == "I" and p2 == "I")
     ]
 
     # Process each gate as a potential error location

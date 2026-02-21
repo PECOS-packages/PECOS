@@ -78,11 +78,7 @@ def _compare_vectors(
     sim_vector_normalized = sim_vector / (pc.linalg.norm(sim_vector) or 1)
     ref_vector_normalized = ref_vector / (pc.linalg.norm(ref_vector) or 1)
 
-    phase = (
-        ref_vector_normalized[0] / sim_vector_normalized[0]
-        if pc.abs(sim_vector_normalized[0]) > 1e-10
-        else 1
-    )
+    phase = ref_vector_normalized[0] / sim_vector_normalized[0] if pc.abs(sim_vector_normalized[0]) > 1e-10 else 1
 
     sim_vector_adjusted = sim_vector_normalized * phase
 

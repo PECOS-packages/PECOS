@@ -70,3 +70,12 @@ class Qulacs(StateVector):
             [complex(real, imag) for real, imag in complex_tuples],
             dtype="complex",
         )
+
+    @property
+    def probabilities(self) -> list[float]:
+        """Get the probability distribution over all basis states.
+
+        Returns:
+            List of probabilities for each computational basis state.
+        """
+        return self.qulacs_state.probabilities

@@ -41,7 +41,7 @@ use super::propagator::dag::DagFaultInfluenceMap;
 use pecos_rng::PecosRng;
 use pecos_rng::rng_ext::RngProbabilityExt;
 use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use rand_core::{Rng, SeedableRng};
 use std::collections::BTreeSet;
 
 /// Result from a single shot of noisy sampling.
@@ -99,7 +99,7 @@ pub trait NoiseModel {
     /// Sample a Pauli fault at the given location.
     ///
     /// Returns `Pauli::I` for no fault, or `X/Y/Z` for a fault.
-    fn sample_fault(&mut self, loc_idx: usize, rng: &mut impl RngCore) -> Pauli;
+    fn sample_fault(&mut self, loc_idx: usize, rng: &mut impl Rng) -> Pauli;
 
     /// Get the total error probability at a location (for statistics).
     fn error_probability(&self, loc_idx: usize) -> f64;
@@ -135,7 +135,7 @@ impl UniformNoiseModel {
 }
 
 impl NoiseModel for UniformNoiseModel {
-    fn sample_fault(&mut self, _loc_idx: usize, rng: &mut impl RngCore) -> Pauli {
+    fn sample_fault(&mut self, _loc_idx: usize, rng: &mut impl Rng) -> Pauli {
         let rand = rng.next_u64();
         if rand < self.threshold {
             // Error occurred, sample which Pauli
@@ -181,7 +181,7 @@ impl PerLocationNoiseModel {
 }
 
 impl NoiseModel for PerLocationNoiseModel {
-    fn sample_fault(&mut self, loc_idx: usize, rng: &mut impl RngCore) -> Pauli {
+    fn sample_fault(&mut self, loc_idx: usize, rng: &mut impl Rng) -> Pauli {
         let threshold = self.thresholds.get(loc_idx).copied().unwrap_or(0);
         let rand = rng.next_u64();
         if rand < threshold {

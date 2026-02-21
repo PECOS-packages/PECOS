@@ -1,7 +1,7 @@
-
-barrier a_test[0], q_test[1], q_test[3], q_test[5];
+OPENQASM 2.0;
+include "hqslib1.inc";
+barrier ;
 // verification step
-
 reset a_test[0];
 cx q_test[5], a_test[0];
 cx q_test[1], a_test[0];

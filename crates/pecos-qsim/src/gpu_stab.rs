@@ -64,8 +64,8 @@
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
+use pecos_rng::PecosRng;
 use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, SeedableRng};
 
 /// GPU-optimized stabilizer simulator using column-only representation.
 ///
@@ -106,7 +106,7 @@ impl GpuStab {
     /// All qubits are initialized in the |0⟩ state.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        Self::with_rng(num_qubits, PecosRng::from_os_rng())
+        Self::with_rng(num_qubits, rand::make_rng())
     }
 
     /// Creates a new simulator with a specific RNG seed for reproducibility.

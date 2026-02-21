@@ -185,9 +185,7 @@ class TestDataFlowIntegration:
         # Should unpack because of measurement
         assert q_plan.needs_unpacking
         # But q[1] doesn't require replacement (only q[0] was measured)
-        assert 0 not in q_plan.elements_requiring_replacement or (
-            1 not in q_plan.elements_requiring_replacement
-        )
+        assert 0 not in q_plan.elements_requiring_replacement or (1 not in q_plan.elements_requiring_replacement)
 
 
 class TestAllocationIntegration:

@@ -108,9 +108,7 @@ def assert_allclose(
             if mismatches:
                 # Count total mismatches
                 num_total_mismatches = sum(
-                    1
-                    for d, ad in zip(diff_list, abs_desired_list, strict=False)
-                    if d > atol + rtol * ad
+                    1 for d, ad in zip(diff_list, abs_desired_list, strict=False) if d > atol + rtol * ad
                 )
                 msg_parts.append(
                     f"Mismatched elements: {num_total_mismatches} / {len(actual)}",
@@ -188,11 +186,7 @@ def assert_array_less(
     x_list = [float(val) for val in x]
     y_list = [float(val) for val in y]
 
-    violations = [
-        (i, xv, yv)
-        for i, (xv, yv) in enumerate(zip(x_list, y_list, strict=False))
-        if xv >= yv
-    ]
+    violations = [(i, xv, yv) for i, (xv, yv) in enumerate(zip(x_list, y_list, strict=False)) if xv >= yv]
 
     if violations:
         # Build error message

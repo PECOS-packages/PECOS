@@ -204,31 +204,19 @@ def get_bindings(state: QuestStateVec) -> dict:
         "Sdg": lambda _s, q, **_p: backend.szdg_gate(q),  # Sdg = SZdg (alternate name)
         # Face gates (F gates) - decompositions from traits
         "F": lambda _s, q, **_p: (backend.sx_gate(q), backend.sz_gate(q))[-1] or None,
-        "Fdg": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sxdg_gate(q))[-1]
-        or None,
-        "F1": lambda _s, q, **_p: (backend.sx_gate(q), backend.sz_gate(q))[-1]
-        or None,  # F1 = F
-        "F1d": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sxdg_gate(q))[-1]
-        or None,  # F1d = Fdg
-        "F1dg": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sxdg_gate(q))[-1]
-        or None,  # F1dg = Fdg
-        "F2": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.sy_gate(q))[-1]
-        or None,
-        "F2d": lambda _s, q, **_p: (backend.sydg_gate(q), backend.sx_gate(q))[-1]
-        or None,  # F2d = F2dg
-        "F2dg": lambda _s, q, **_p: (backend.sydg_gate(q), backend.sx_gate(q))[-1]
-        or None,
-        "F3": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.sz_gate(q))[-1]
-        or None,
-        "F3d": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sx_gate(q))[-1]
-        or None,  # F3d = F3dg
-        "F3dg": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sx_gate(q))[-1]
-        or None,
+        "Fdg": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sxdg_gate(q))[-1] or None,
+        "F1": lambda _s, q, **_p: (backend.sx_gate(q), backend.sz_gate(q))[-1] or None,  # F1 = F
+        "F1d": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sxdg_gate(q))[-1] or None,  # F1d = Fdg
+        "F1dg": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sxdg_gate(q))[-1] or None,  # F1dg = Fdg
+        "F2": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.sy_gate(q))[-1] or None,
+        "F2d": lambda _s, q, **_p: (backend.sydg_gate(q), backend.sx_gate(q))[-1] or None,  # F2d = F2dg
+        "F2dg": lambda _s, q, **_p: (backend.sydg_gate(q), backend.sx_gate(q))[-1] or None,
+        "F3": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.sz_gate(q))[-1] or None,
+        "F3d": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sx_gate(q))[-1] or None,  # F3d = F3dg
+        "F3dg": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sx_gate(q))[-1] or None,
         "F4": lambda _s, q, **_p: (backend.sz_gate(q), backend.sx_gate(q))[-1] or None,
-        "F4d": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.szdg_gate(q))[-1]
-        or None,  # F4d = F4dg
-        "F4dg": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.szdg_gate(q))[-1]
-        or None,
+        "F4d": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.szdg_gate(q))[-1] or None,  # F4d = F4dg
+        "F4dg": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.szdg_gate(q))[-1] or None,
         # Two-qubit gates
         "II": lambda _s, _qs, **_p: None,
         "CX": lambda _s, qs, **_p: backend.run_2q_gate(
@@ -304,37 +292,21 @@ def get_bindings(state: QuestStateVec) -> dict:
         "RX": lambda _s, q, **p: backend.run_1q_gate(
             "RX",
             q,
-            (
-                {"angle": p["angles"][0]}
-                if "angles" in p
-                else {"angle": p.get("angle", 0)}
-            ),
+            ({"angle": p["angles"][0]} if "angles" in p else {"angle": p.get("angle", 0)}),
         ),
         "RY": lambda _s, q, **p: backend.run_1q_gate(
             "RY",
             q,
-            (
-                {"angle": p["angles"][0]}
-                if "angles" in p
-                else {"angle": p.get("angle", 0)}
-            ),
+            ({"angle": p["angles"][0]} if "angles" in p else {"angle": p.get("angle", 0)}),
         ),
         "RZ": lambda _s, q, **p: backend.run_1q_gate(
             "RZ",
             q,
-            (
-                {"angle": p["angles"][0]}
-                if "angles" in p
-                else {"angle": p.get("angle", 0)}
-            ),
+            ({"angle": p["angles"][0]} if "angles" in p else {"angle": p.get("angle", 0)}),
         ),
         "R1XY": lambda _s, q, **p: backend.r1xy_gate(
             p["angles"][0] if "angles" in p else p.get("theta", 0),
-            (
-                p["angles"][1]
-                if "angles" in p and len(p["angles"]) > 1
-                else p.get("phi", 0)
-            ),
+            (p["angles"][1] if "angles" in p and len(p["angles"]) > 1 else p.get("phi", 0)),
             q,
         ),
         "RXX": lambda _s, qs, **p: _rxx_decomposition(backend, qs, p),

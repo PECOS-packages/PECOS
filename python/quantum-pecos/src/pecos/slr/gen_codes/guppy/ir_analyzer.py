@@ -116,10 +116,7 @@ class IRAnalyzer:
         # Determine which arrays need unpacking
         # Special case: if we have nested blocks but @owned parameters, we must unpack
         # because @owned parameters require unpacking to access elements
-        must_unpack_for_owned = (
-            hasattr(self, "has_nested_blocks_with_owned")
-            and self.has_nested_blocks_with_owned
-        )
+        must_unpack_for_owned = hasattr(self, "has_nested_blocks_with_owned") and self.has_nested_blocks_with_owned
 
         # Store all analyzed arrays in the plan
         plan.all_analyzed_arrays = self.array_info.copy()
@@ -155,11 +152,7 @@ class IRAnalyzer:
         if hasattr(block, "vars"):
             for var in block.vars:
                 var_type = type(var).__name__
-                if (
-                    var_type in ["QReg", "CReg"]
-                    and hasattr(var, "sym")
-                    and hasattr(var, "size")
-                ):
+                if var_type in ["QReg", "CReg"] and hasattr(var, "sym") and hasattr(var, "size"):
                     self.array_info[var.sym] = ArrayAccessInfo(
                         array_name=var.sym,
                         size=var.size,
@@ -170,11 +163,7 @@ class IRAnalyzer:
         if variable_context:
             for var_name, var in variable_context.items():
                 var_type = type(var).__name__
-                if (
-                    var_type in ["QReg", "CReg"]
-                    and hasattr(var, "size")
-                    and var_name not in self.array_info
-                ):
+                if var_type in ["QReg", "CReg"] and hasattr(var, "size") and var_name not in self.array_info:
                     self.array_info[var_name] = ArrayAccessInfo(
                         array_name=var_name,
                         size=var.size,
@@ -294,11 +283,7 @@ class IRAnalyzer:
                 self._analyze_operation(op)
 
         # Analyze else block
-        if (
-            hasattr(if_block, "else_block")
-            and if_block.else_block
-            and hasattr(if_block.else_block, "ops")
-        ):
+        if hasattr(if_block, "else_block") and if_block.else_block and hasattr(if_block.else_block, "ops"):
             for op in if_block.else_block.ops:
                 self._analyze_operation(op)
 

@@ -162,9 +162,7 @@ def demo_advanced_features() -> None:
     hugr_bytes2 = frontend2.guppy_to_hugr(bell_state)
     hugr_program2 = HugrProgram.from_bytes(hugr_bytes2)
 
-    results = (
-        selene_engine().program(hugr_program2).to_sim().seed(42).workers(4).run(20)
-    )
+    results = selene_engine().program(hugr_program2).to_sim().seed(42).workers(4).run(20)
     results_dict = results.to_dict()
     result_values = next(iter(results_dict.values())) if results_dict else []
     print(f"   Results: {result_values[:10]}...")

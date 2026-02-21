@@ -21,7 +21,7 @@ use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngCore, RngProbabilityExt, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 use std::fmt::Debug;
 use wide::f64x4;
 
@@ -453,7 +453,7 @@ impl StateVecSoA {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> StateVecSoA<PecosRng> {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         StateVecSoA::with_rng(num_qubits, rng)
     }
 
@@ -3985,7 +3985,7 @@ where
 
 impl<R> RngManageable for StateVecSoA<R>
 where
-    R: Rng + RngCore + SeedableRng + Debug,
+    R: Rng + SeedableRng + Debug,
 {
     type Rng = R;
 
@@ -5139,8 +5139,7 @@ mod tests {
             Complex64::new(0.5, 0.0),
         ];
 
-        let mut opt: StateVecSoA =
-            StateVecSoA::from_complex_state(state.clone(), PecosRng::from_os_rng());
+        let mut opt: StateVecSoA = StateVecSoA::from_complex_state(state.clone(), rand::make_rng());
 
         for (i, expected) in state.iter().enumerate() {
             let actual = opt.get_amplitude(i);
@@ -5302,7 +5301,7 @@ mod tests {
         // Convert to complex vec and back
         let complex_state = opt.to_complex_vec();
         let mut opt2: StateVecSoA =
-            StateVecSoA::from_complex_state(complex_state, PecosRng::from_os_rng());
+            StateVecSoA::from_complex_state(complex_state, rand::make_rng());
 
         assert_opts_match(&mut opt, &mut opt2, "roundtrip complex state");
     }

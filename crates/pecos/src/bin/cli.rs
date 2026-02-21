@@ -14,6 +14,7 @@ pub mod features_cmd;
 pub mod go_cmd;
 pub mod gpu_cmd;
 pub mod info;
+pub mod install_cmd;
 pub mod julia_cmd;
 pub mod list;
 pub mod llvm_cmd;
@@ -21,6 +22,8 @@ pub mod manifest_cmd;
 pub mod python_cmd;
 pub mod rust_cmd;
 pub mod selene_cmd;
+pub mod uninstall_cmd;
+pub mod upgrade_cmd;
 
 use clap::Subcommand;
 
@@ -94,8 +97,8 @@ pub enum PythonCommands {
     /// Uses maturin to build the Rust library and installs quantum-pecos
     /// in editable mode.
     Build {
-        /// Build profile (debug, release, native)
-        #[arg(long, default_value = "debug")]
+        /// Build profile (dev/debug, release, native)
+        #[arg(long, default_value = "dev")]
         profile: String,
 
         /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
@@ -133,13 +136,6 @@ pub enum PythonCommands {
 
 #[derive(Subcommand, Clone)]
 pub enum CudaCommands {
-    /// Download and install CUDA Toolkit to ~/.pecos/cuda/
-    Install {
-        /// Force reinstall even if already present
-        #[arg(long)]
-        force: bool,
-    },
-
     /// Check if CUDA is available (local or system)
     Check {
         /// Suppress output (exit code only)
@@ -157,14 +153,17 @@ pub enum CudaCommands {
     /// Show CUDA version information
     Version,
 
-    /// Remove local CUDA installation (~/.pecos/cuda/)
-    Uninstall,
-
     /// Validate CUDA installation integrity
     Validate {
         /// Path to CUDA installation (uses detected path if not specified)
         path: Option<String>,
     },
+
+    /// Install CUDA Python packages (cupy, cuquantum, pytket-cutensornet)
+    ///
+    /// Requires CUDA toolkit to be installed first (pecos install cuda or system CUDA).
+    /// Installs quantum-pecos[cuda] which includes cupy, cuquantum, and pytket-cutensornet.
+    SetupPython,
 }
 
 // ============================================================================
@@ -173,16 +172,6 @@ pub enum CudaCommands {
 
 #[derive(Subcommand, Clone)]
 pub enum CuQuantumCommands {
-    /// Download and install cuQuantum SDK to ~/.pecos/cuquantum/
-    ///
-    /// Requires accepting NVIDIA's license terms.
-    /// See: <https://docs.nvidia.com/cuda/cuquantum/latest/license.html>
-    Install {
-        /// Force reinstall even if already present
-        #[arg(long)]
-        force: bool,
-    },
-
     /// Check if cuQuantum is available (local or system)
     Check {
         /// Suppress output (exit code only)
@@ -199,9 +188,6 @@ pub enum CuQuantumCommands {
 
     /// Show cuQuantum version information
     Version,
-
-    /// Remove local cuQuantum installation (~/.pecos/cuquantum/)
-    Uninstall,
 
     /// Validate cuQuantum installation integrity
     Validate {
@@ -245,8 +231,8 @@ pub enum JuliaCommands {
 
     /// Build Julia FFI library
     Build {
-        /// Build profile (debug, release, native)
-        #[arg(long, default_value = "release")]
+        /// Build profile (dev/debug, release, native)
+        #[arg(long, default_value = "dev")]
         profile: String,
 
         /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
@@ -283,8 +269,8 @@ pub enum GoCommands {
 
     /// Build Go FFI library
     Build {
-        /// Build profile (debug, release, native)
-        #[arg(long, default_value = "release")]
+        /// Build profile (dev/debug, release, native)
+        #[arg(long, default_value = "dev")]
         profile: String,
 
         /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
@@ -318,8 +304,8 @@ pub enum SeleneCommands {
         #[arg(short, long)]
         plugin: Option<String>,
 
-        /// Build profile to use (debug, release, native)
-        #[arg(long, default_value = "release")]
+        /// Build profile to use (dev/debug, release, native)
+        #[arg(long, default_value = "dev")]
         profile: String,
 
         /// Show what would be copied without copying
@@ -378,17 +364,6 @@ pub enum FeaturesCommands {
 
 #[derive(Subcommand, Clone)]
 pub enum LlvmCommands {
-    /// Download and install LLVM 14
-    Install {
-        /// Force reinstall even if already present
-        #[arg(long)]
-        force: bool,
-
-        /// Skip automatic configuration after installation
-        #[arg(long)]
-        no_configure: bool,
-    },
-
     /// Check if LLVM 14 is available
     Check {
         /// Suppress output messages
@@ -513,6 +488,26 @@ pub fn run_llvm(command: LlvmCommands) -> pecos_build::Result<()> {
 /// Run a Deps subcommand
 pub fn run_deps(command: DepsCommands) -> pecos_build::Result<()> {
     manifest_cmd::run(command)
+}
+
+/// Run the install command
+pub fn run_install(
+    targets: &[String],
+    force: bool,
+    all: bool,
+    no_configure: bool,
+) -> pecos_build::Result<()> {
+    install_cmd::run(targets, force, all, no_configure)
+}
+
+/// Run the uninstall command
+pub fn run_uninstall(targets: &[String], all: bool) -> pecos_build::Result<()> {
+    uninstall_cmd::run(targets, all)
+}
+
+/// Run the upgrade command
+pub fn run_upgrade(targets: &[String], all: bool, no_configure: bool) -> pecos_build::Result<()> {
+    upgrade_cmd::run(targets, all, no_configure)
 }
 
 /// Run the sys-info command

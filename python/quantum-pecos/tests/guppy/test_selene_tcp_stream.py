@@ -133,18 +133,12 @@ class TestSeleneTCPStream:
                 shot_increment=5,
             ) as stream:
                 uri = stream.get_uri()
-                assert (
-                    f":{specific_port}" in uri
-                ), f"URI should contain port {specific_port}"
+                assert f":{specific_port}" in uri, f"URI should contain port {specific_port}"
 
                 # Check shot configuration
                 # These might affect how results are indexed
-                assert (
-                    hasattr(stream, "shot_offset") or True
-                ), "Stream tracks shot offset"
-                assert (
-                    hasattr(stream, "shot_increment") or True
-                ), "Stream tracks shot increment"
+                assert hasattr(stream, "shot_offset") or True, "Stream tracks shot offset"
+                assert hasattr(stream, "shot_increment") or True, "Stream tracks shot increment"
 
         except OSError as e:
             # Port might be in use
@@ -284,9 +278,7 @@ class TestSeleneResultInterception:
 
         # Verify format patterns
         for msg_type, example in message_formats.items():
-            assert (
-                b"USER:" in example or b"SHOT:" in example
-            ), f"{msg_type} should have type prefix"
+            assert b"USER:" in example or b"SHOT:" in example, f"{msg_type} should have type prefix"
             assert b"\x00" in example, f"{msg_type} should have null terminators"
 
             # Parse example message
@@ -425,13 +417,9 @@ class TestSeleneStreamIntegrationStrategies:
             assert "pros" in details, f"{approach_name} should have pros"
             assert "cons" in details, f"{approach_name} should have cons"
 
-            assert (
-                len(details["steps"]) > 0
-            ), f"{approach_name} should have implementation steps"
+            assert len(details["steps"]) > 0, f"{approach_name} should have implementation steps"
             assert len(details["pros"]) > 0, f"{approach_name} should have advantages"
-            assert (
-                len(details["cons"]) > 0
-            ), f"{approach_name} should have disadvantages"
+            assert len(details["cons"]) > 0, f"{approach_name} should have disadvantages"
 
     def test_recommended_integration_pattern(self) -> None:
         """Test the recommended pattern for SeleneExecutableEngine integration."""
@@ -454,9 +442,7 @@ class TestSeleneStreamIntegrationStrategies:
         steps_text = " ".join(integration_steps).lower()
 
         for component in key_components:
-            assert (
-                component.lower() in steps_text
-            ), f"Integration should mention {component}"
+            assert component.lower() in steps_text, f"Integration should mention {component}"
 
     def test_message_protocol_specification(self) -> None:
         """Test and document the message protocol specification."""

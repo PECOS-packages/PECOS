@@ -177,7 +177,7 @@ def main() -> None:
 
         # Test Python code blocks
         python_blocks = extract_code_blocks(file_path, "python")
-        for i, (block, should_skip) in enumerate(python_blocks, 1):
+        for i, (block, should_skip, _expected_error) in enumerate(python_blocks, 1):
             if should_skip:
                 print(f"SKIP: Python block #{i} from {file_path}")
                 continue
@@ -186,7 +186,7 @@ def main() -> None:
 
         # Test Rust code blocks (skip by default, snippets need crate context)
         rust_blocks = extract_code_blocks(file_path, "rust")
-        for i, (block, should_skip) in enumerate(rust_blocks, 1):
+        for i, (block, should_skip, _expected_error) in enumerate(rust_blocks, 1):
             if should_skip:
                 print(f"SKIP: Rust block #{i} from {file_path}")
                 continue
@@ -200,15 +200,11 @@ def main() -> None:
     rust_total = len(rust_results)
 
     print("\n===== SUMMARY =====")
-    python_success_rate = (
-        f"{python_passed / python_total * 100:.1f}%" if python_total > 0 else "N/A"
-    )
+    python_success_rate = f"{python_passed / python_total * 100:.1f}%" if python_total > 0 else "N/A"
     print(
         f"Python: {python_passed}/{python_total} blocks passed ({python_success_rate} success rate)",
     )
-    rust_success_rate = (
-        f"{rust_passed / rust_total * 100:.1f}%" if rust_total > 0 else "N/A"
-    )
+    rust_success_rate = f"{rust_passed / rust_total * 100:.1f}%" if rust_total > 0 else "N/A"
     print(
         f"Rust: {rust_passed}/{rust_total} blocks passed ({rust_success_rate} success rate)",
     )

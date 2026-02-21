@@ -22,7 +22,7 @@ def test_for_loop_range_basic() -> None:
         Measure(q) > CReg("results", 5),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -43,7 +43,7 @@ def test_for_loop_range_with_step() -> None:
         Measure(q) > CReg("results", 10),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -64,7 +64,7 @@ def test_for_loop_iterable() -> None:
         Measure(q) > CReg("results", 3),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -88,7 +88,7 @@ def test_nested_for_loops() -> None:
         Measure(q) > CReg("results", 9),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -118,7 +118,7 @@ def test_for_loop_with_quantum_operations() -> None:
         Measure(ancilla) > CReg("ancilla_result", 1),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -142,7 +142,7 @@ def test_for_loop_limitations() -> None:
         Measure(q) > CReg("c", 5),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -163,7 +163,7 @@ def test_for_error_in_qasm() -> None:
         Measure(q) > CReg("c", 3),
     )
 
-    gen = QASMGenerator()
+    gen = QASMGenerator(_internal=True)
 
     # Should raise NotImplementedError
     with pytest.raises(NotImplementedError) as exc_info:

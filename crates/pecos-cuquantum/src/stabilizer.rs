@@ -120,6 +120,15 @@ impl CuFrameSimulator {
             ));
         }
 
+        #[cfg(cuquantum_stub)]
+        return Err(CuQuantumError::NotAvailable(
+            "cuQuantum SDK is not installed. To use GPU-accelerated simulators, install the cuQuantum SDK:\n\
+             1. Set CUQUANTUM_ROOT environment variable, or\n\
+             2. Install to ~/.pecos/cuquantum/, or\n\
+             3. Install system-wide to /usr/local/cuquantum/"
+                .into(),
+        ));
+
         // Create cuStabilizer handle
         let mut handle: custabilizerHandle_t = ptr::null_mut();
         let status = unsafe { custabilizerCreate(&mut handle) };
@@ -489,6 +498,15 @@ impl CuStabilizer {
                 "num_qubits must be at least 1".into(),
             ));
         }
+
+        #[cfg(cuquantum_stub)]
+        return Err(CuQuantumError::NotAvailable(
+            "cuQuantum SDK is not installed. To use GPU-accelerated simulators, install the cuQuantum SDK:\n\
+             1. Set CUQUANTUM_ROOT environment variable, or\n\
+             2. Install to ~/.pecos/cuquantum/, or\n\
+             3. Install system-wide to /usr/local/cuquantum/"
+                .into(),
+        ));
 
         Ok(Self {
             num_qubits,

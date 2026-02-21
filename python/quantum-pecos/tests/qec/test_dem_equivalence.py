@@ -472,10 +472,9 @@ class TestPecosDecompositionEquivalence:
         max_diff = np.abs(raw_rates - decomp_rates).max()
         tolerance = 3.0 / np.sqrt(num_shots) + 0.01
 
-        assert max_diff < tolerance, (
-            f"Max per-detector rate difference {max_diff:.4f} exceeds "
-            f"tolerance {tolerance:.4f}"
-        )
+        assert (
+            max_diff < tolerance
+        ), f"Max per-detector rate difference {max_diff:.4f} exceeds tolerance {tolerance:.4f}"
 
     def test_raw_decomposed_logical_rates_match(
         self,
@@ -555,10 +554,9 @@ class TestPecosDecompositionEquivalence:
         tolerance = 3.0 / np.sqrt(num_shots) + 0.01
         diff = abs(raw_rate - decomp_rate)
 
-        assert diff < tolerance, (
-            f"d={distance}, r={num_rounds}: syndrome rate mismatch "
-            f"raw={raw_rate:.4f}, decomposed={decomp_rate:.4f}"
-        )
+        assert (
+            diff < tolerance
+        ), f"d={distance}, r={num_rounds}: syndrome rate mismatch raw={raw_rate:.4f}, decomposed={decomp_rate:.4f}"
 
 
 if __name__ == "__main__":

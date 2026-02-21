@@ -2,7 +2,7 @@
 // for deterministic record and replay of random operations
 
 use pecos_core::rng::{RecordingRng, ReplayingRng};
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 // Epsilon value for floating-point comparisons

@@ -97,7 +97,9 @@ jobs:
           #   gcc_cc: ""
           #   gcc_cxx: ""
           # macOS without CUDA (NVIDIA dropped macOS CUDA support in 2019)
-          - os: macos-14
+          # Use macos-15 (not macos-14) because Xcode 15.4's libc++ has a
+          # pointer_traits bug with CXX crate's contiguous iterators in C++20.
+          - os: macos-15
             architecture: aarch64
             cuda_feature: ""
             install_cuda: false
@@ -288,8 +290,8 @@ jobs:
           - runner: macos-15-intel
             os: macos-15-intel
             architecture: x86_64
-          - runner: macos-14
-            os: macos-14
+          - runner: macos-15
+            os: macos-15
             architecture: aarch64
     steps:
       - uses: actions/checkout@v6

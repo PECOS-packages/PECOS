@@ -3330,6 +3330,8 @@ name = "pecos-cuquantum-sys"
 version = "0.1.1"
 dependencies = [
  "bindgen",
+ "env_logger",
+ "log",
  "pecos-build",
 ]
 

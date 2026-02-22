@@ -23,7 +23,7 @@ Provides Rust types for generating LLVM IR, designed to be compatible with Pytho
 
 Requires LLVM 14. Install with:
 ```bash
-cargo run -p pecos -- llvm install
+cargo run -p pecos -- install llvm
 ```
 
 ## Acknowledgements

@@ -121,7 +121,7 @@ jobs:
       if: runner.os != 'Windows'
       run: |
         echo "Installing LLVM using pecos..."
-        cargo run -p pecos --features cli --release -- llvm install
+        cargo run -p pecos --features cli --release -- install llvm
 
         echo "Setting LLVM environment variables..."
         export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
@@ -138,7 +138,7 @@ jobs:
       shell: pwsh
       run: |
         Write-Host "Installing LLVM using pecos..."
-        cargo run -p pecos --features cli --release -- llvm install
+        cargo run -p pecos --features cli --release -- install llvm
 
         Write-Host "Setting LLVM environment variables..."
         $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)

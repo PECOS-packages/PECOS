@@ -2637,7 +2637,7 @@ test = [{ name = "pytest", specifier = ">=7.0" }]
 
 [[package]]
 name = "pecos-rslib-cuda"
-version = "0.8.0.dev0"
+version = "0.8.0.dev3"
 source = { editable = "python/pecos-rslib-cuda" }
 
 [package.dev-dependencies]

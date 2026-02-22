@@ -54,7 +54,7 @@ For developers who want to contribute or modify PECOS:
 
    **Quick setup:**
    ```sh
-   pecos llvm install
+   pecos install llvm
    cargo build
    ```
 

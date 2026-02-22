@@ -28,6 +28,7 @@ fn new_path<R: Rng + RngBulkExt>(rng: &mut R, dest: &mut [u64]) {
 }
 
 #[test]
+#[ignore = "Performance test - run explicitly with: cargo test -p pecos-rng -- --ignored"]
 fn compare_dispatch_paths() {
     const ITERATIONS: usize = 1000;
     const SIZE: usize = 10000;
@@ -58,7 +59,9 @@ fn compare_dispatch_paths() {
         old_elapsed.as_nanos() as f64 / new_elapsed.as_nanos() as f64
     );
 
-    // The new path should be significantly faster
+    // The new path should be faster
+    // Note: This is a performance test - results vary with system load
+    // Run explicitly with: cargo test -p pecos-rng -- --ignored
     assert!(
         new_elapsed < old_elapsed,
         "New path should be faster: new={new_elapsed:?}, old={old_elapsed:?}"

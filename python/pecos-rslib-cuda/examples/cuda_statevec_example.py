@@ -41,9 +41,7 @@ def check_cuda_available():
         return True
     except ImportError:
         print("pecos-rslib-cuda is not installed.")
-        print(
-            "Please build and install it: cd python/pecos-rslib-cuda && maturin develop"
-        )
+        print("Please build and install it: cd python/pecos-rslib-cuda && maturin develop")
         return False
 
 
@@ -193,9 +191,7 @@ def quantum_simulator_backend_example():
     # Create QuantumSimulator with CudaStateVec backend
     qsim = QuantumSimulator(backend="CudaStateVec", seed=42)
     qsim.init(4)
-    print(
-        f"Created QuantumSimulator with CudaStateVec backend, {qsim.num_qubits} qubits"
-    )
+    print(f"Created QuantumSimulator with CudaStateVec backend, {qsim.num_qubits} qubits")
 
     # Use the run method with QOp-style operations
     print("\nThis backend can be used with HybridEngine for PHIR execution.")

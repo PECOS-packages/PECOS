@@ -1,5 +1,7 @@
 # QIS Architecture: Interface, Runtime, and Engine
 
+<!--skip: Internal architecture documentation with illustrative code snippets-->
+
 This document describes the architecture of the Quantum Instruction Set (QIS) system in PECOS, focusing on how quantum programs are compiled, executed, and simulated.
 
 ## Overview

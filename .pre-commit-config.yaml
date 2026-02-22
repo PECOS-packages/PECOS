@@ -41,8 +41,9 @@ repos:
       - id: black
 
   - repo: https://github.com/keewis/blackdoc
-    rev: v0.4.1
+    rev: v0.4.6
     hooks:
     -   id: blackdoc
+        args: [--line-length=120]
         additional_dependencies:
-        - black==25.1.0
+        - black==25.9.0

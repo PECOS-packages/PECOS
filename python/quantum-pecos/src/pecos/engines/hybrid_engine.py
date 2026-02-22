@@ -91,9 +91,7 @@ class HybridEngine:
         if self.cinterp is None:
             self.cinterp: ClassicalInterpreterProtocol = PhirClassicalInterpreter()
 
-        self._internal_cinterp: ClassicalInterpreterProtocol = (
-            PhirClassicalInterpreter()
-        )
+        self._internal_cinterp: ClassicalInterpreterProtocol = PhirClassicalInterpreter()
         self._internal_cinterp.phir_validate = self.cinterp.phir_validate
 
         self.qsim: QuantumSimulator | None = qsim

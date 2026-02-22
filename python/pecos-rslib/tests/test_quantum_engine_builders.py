@@ -78,26 +78,14 @@ class TestQuantumEngineBuilders:
         """
 
         # Test with state vector engine
-        sim = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .quantum(state_vector())
-            .seed(42)
-        )
+        sim = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(state_vector()).seed(42)
         results = sim.run(100)
         results_dict = results.to_dict()
         assert "c" in results_dict
         assert len(results_dict["c"]) == 100
 
         # Test with sparse stabilizer engine
-        sim2 = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .quantum(sparse_stabilizer())
-            .seed(42)
-        )
+        sim2 = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(sparse_stabilizer()).seed(42)
         results2 = sim2.run(100)
         results2_dict = results2.to_dict()
         assert "c" in results2_dict
@@ -118,14 +106,7 @@ class TestQuantumEngineBuilders:
         noise = depolarizing_noise().with_uniform_probability(0.01)
 
         # Test with state vector engine and noise
-        sim = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .quantum(state_vector())
-            .noise(noise)
-            .seed(42)
-        )
+        sim = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(state_vector()).noise(noise).seed(42)
         results = sim.run(1000)
         results_dict = results.to_dict()
         assert "c" in results_dict
@@ -177,9 +158,7 @@ attributes #0 = { "EntryPoint" }
                     result_key = key
                     break
 
-            assert (
-                result_key is not None
-            ), f"No measurement result found. Keys: {list(results_dict.keys())}"
+            assert result_key is not None, f"No measurement result found. Keys: {list(results_dict.keys())}"
             assert len(results_dict[result_key]) == 100
 
             # Count occurrences

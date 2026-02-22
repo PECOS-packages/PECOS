@@ -53,7 +53,7 @@ use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, SeedableRng};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256};
@@ -273,7 +273,7 @@ fn col_is_empty(data: &[u64], words_per_col: usize, qubit: usize) -> bool {
 
 /// Dense bit-matrix stabilizer simulator.
 #[derive(Clone, Debug)]
-pub struct DenseStab<R: RngCore = PecosRng> {
+pub struct DenseStab<R: Rng = PecosRng> {
     num_qubits: usize,
     words_per_row: usize,
     words_per_col: usize,
@@ -311,7 +311,7 @@ impl DenseStab<PecosRng> {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         Self::with_rng(num_qubits, rng)
     }
 
@@ -323,7 +323,7 @@ impl DenseStab<PecosRng> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug> DenseStab<R> {
+impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
     #[inline]
     #[must_use]
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
@@ -932,14 +932,14 @@ impl<R: RngCore + SeedableRng + Rng + Debug> DenseStab<R> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStab<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStab<R> {
     fn reset(&mut self) -> &mut Self {
         self.init_state();
         self
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.apply_h(q.index());
@@ -1194,7 +1194,7 @@ impl<R: RngCore + SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseS
     }
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug> RngManageable for DenseStab<R> {
+impl<R: SeedableRng + Rng + Debug> RngManageable for DenseStab<R> {
     type Rng = R;
 
     fn set_rng(&mut self, rng: Self::Rng) {
@@ -1212,7 +1212,7 @@ impl<R: RngCore + SeedableRng + Rng + Debug> RngManageable for DenseStab<R> {
 
 use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 
-impl<R: RngCore + SeedableRng + Rng + Debug + Clone> ForcedMeasurement for DenseStab<R> {
+impl<R: SeedableRng + Rng + Debug + Clone> ForcedMeasurement for DenseStab<R> {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         DenseStab::mz_forced(self, qubit, forced_outcome)
     }

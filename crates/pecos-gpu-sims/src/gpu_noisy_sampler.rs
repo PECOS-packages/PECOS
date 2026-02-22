@@ -31,7 +31,7 @@
 use crate::GpuStab;
 use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, QuantumSimulator};
-use pecos_rng::{PecosRng, time_seed};
+use pecos_rng::{PecosRng, SeedableRng, time_seed};
 use std::fmt::Debug;
 
 /// Represents a Pauli operator for noise injection
@@ -82,12 +82,22 @@ pub trait NoiseSampler: Send {
 /// - `p1`: Single-qubit gate error probability (applies X, Y, or Z with equal probability)
 /// - `p2`: Two-qubit gate error probability (applies one of 15 non-identity Paulis)
 /// - `p_meas`: Measurement bit-flip probability
-#[derive(Clone)]
 pub struct DepolarizingNoiseSampler {
     p1: f64,
     p2: f64,
     p_meas: f64,
     rng: PecosRng,
+}
+
+impl Clone for DepolarizingNoiseSampler {
+    fn clone(&self) -> Self {
+        Self {
+            p1: self.p1,
+            p2: self.p2,
+            p_meas: self.p_meas,
+            rng: PecosRng::from_rng(&mut rand::rng()),
+        }
+    }
 }
 
 impl DepolarizingNoiseSampler {
@@ -174,7 +184,6 @@ impl NoiseSampler for DepolarizingNoiseSampler {
 }
 
 /// A biased depolarizing noise sampler with asymmetric measurement errors.
-#[derive(Clone)]
 pub struct BiasedDepolarizingNoiseSampler {
     p1: f64,
     p2: f64,
@@ -183,6 +192,19 @@ pub struct BiasedDepolarizingNoiseSampler {
     rng: PecosRng,
     /// Cached measurement outcomes for biased flip (set during measurement)
     pending_meas_outcomes: Vec<bool>,
+}
+
+impl Clone for BiasedDepolarizingNoiseSampler {
+    fn clone(&self) -> Self {
+        Self {
+            p1: self.p1,
+            p2: self.p2,
+            p_meas_0: self.p_meas_0,
+            p_meas_1: self.p_meas_1,
+            rng: PecosRng::from_rng(&mut rand::rng()),
+            pending_meas_outcomes: self.pending_meas_outcomes.clone(),
+        }
+    }
 }
 
 impl BiasedDepolarizingNoiseSampler {

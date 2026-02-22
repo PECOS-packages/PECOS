@@ -93,9 +93,7 @@ class TestQuantumCircuitToSLR:
                 return True
             # If it's a Block with multiple operations, it came from a Parallel optimization
             return bool(
-                op.__class__.__name__ == "Block"
-                and hasattr(op, "ops")
-                and len(op.ops) > 1,
+                op.__class__.__name__ == "Block" and hasattr(op, "ops") and len(op.ops) > 1,
             )
 
         has_parallel = any(has_parallel_structure(op) for op in slr_prog.ops)
@@ -128,7 +126,7 @@ class TestSLRToQuantumCircuit:
 
         # Use the already imported generator
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -136,33 +134,23 @@ class TestSLRToQuantumCircuit:
         assert len(qc) == 5  # 5 separate ticks (no parallel optimization)
 
         # Check specific gates
-        tick0_gates = {
-            symbol: locations for symbol, locations, _params in qc[0].items()
-        }
+        tick0_gates = {symbol: locations for symbol, locations, _params in qc[0].items()}
         assert "H" in tick0_gates
         assert 0 in tick0_gates["H"]
 
-        tick1_gates = {
-            symbol: locations for symbol, locations, _params in qc[1].items()
-        }
+        tick1_gates = {symbol: locations for symbol, locations, _params in qc[1].items()}
         assert "X" in tick1_gates
         assert 1 in tick1_gates["X"]
 
-        tick2_gates = {
-            symbol: locations for symbol, locations, _params in qc[2].items()
-        }
+        tick2_gates = {symbol: locations for symbol, locations, _params in qc[2].items()}
         assert "Y" in tick2_gates
         assert 2 in tick2_gates["Y"]
 
-        tick3_gates = {
-            symbol: locations for symbol, locations, _params in qc[3].items()
-        }
+        tick3_gates = {symbol: locations for symbol, locations, _params in qc[3].items()}
         assert "Z" in tick3_gates
         assert 0 in tick3_gates["Z"]
 
-        tick4_gates = {
-            symbol: locations for symbol, locations, _params in qc[4].items()
-        }
+        tick4_gates = {symbol: locations for symbol, locations, _params in qc[4].items()}
         assert "CX" in tick4_gates
         assert (0, 1) in tick4_gates["CX"]
 
@@ -179,7 +167,7 @@ class TestSLRToQuantumCircuit:
             qubit.Measure(q[1]) > c[1],
         )
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -200,7 +188,7 @@ class TestSLRToQuantumCircuit:
             qubit.CX(q[0], q[1]),
         )
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -208,9 +196,7 @@ class TestSLRToQuantumCircuit:
         assert len(qc) == 2, f"Expected 2 ticks but got {len(qc)}"
 
         # First tick should have all three gates
-        tick0_gates = {
-            symbol: locations for symbol, locations, _params in qc[0].items()
-        }
+        tick0_gates = {symbol: locations for symbol, locations, _params in qc[0].items()}
 
         assert "H" in tick0_gates
         assert 0 in tick0_gates["H"]
@@ -220,9 +206,7 @@ class TestSLRToQuantumCircuit:
         assert 2 in tick0_gates["Y"]
 
         # Second tick should have CX
-        tick1_gates = {
-            symbol: locations for symbol, locations, _params in qc[1].items()
-        }
+        tick1_gates = {symbol: locations for symbol, locations, _params in qc[1].items()}
 
         assert "CX" in tick1_gates
         assert (0, 1) in tick1_gates["CX"]
@@ -237,7 +221,7 @@ class TestSLRToQuantumCircuit:
             ),
         )
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -266,7 +250,7 @@ class TestSLRToQuantumCircuit:
             ),
         )
 
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -288,7 +272,7 @@ class TestQuantumCircuitRoundTrip:
         slr_prog = SlrConverter.from_quantum_circuit(original)
 
         # Convert back to QuantumCircuit
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(slr_prog)
         reconstructed = generator.get_circuit()
 
@@ -324,7 +308,7 @@ class TestQuantumCircuitRoundTrip:
         )
 
         # Convert to QuantumCircuit
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(original)
         qc = generator.get_circuit()
 
@@ -374,7 +358,7 @@ class TestQuantumCircuitRoundTrip:
         )
 
         # Convert to QuantumCircuit and back
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 

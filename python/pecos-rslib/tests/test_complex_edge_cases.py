@@ -226,9 +226,7 @@ class TestQuantumStatePatterns:
         """Test quantum gate matrix creation pattern."""
         # Hadamard gate from find_cliffs.py pattern
         sqrt2 = np.sqrt(2)
-        hadamard = np.array(
-            [[1 / sqrt2, 1 / sqrt2], [1 / sqrt2, -1 / sqrt2]], dtype=np.complex128
-        )
+        hadamard = np.array([[1 / sqrt2, 1 / sqrt2], [1 / sqrt2, -1 / sqrt2]], dtype=np.complex128)
 
         pa_hadamard = Array(hadamard)
 

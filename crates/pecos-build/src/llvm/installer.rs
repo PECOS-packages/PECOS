@@ -107,7 +107,7 @@ pub fn install_llvm(force: bool, no_configure: bool) -> Result<PathBuf> {
         println!("Skipping automatic configuration (--no-configure specified).");
         println!();
         println!("To configure PECOS, run:");
-        println!("  pecos-deps llvm configure");
+        println!("  pecos llvm configure");
     } else {
         println!();
         println!("Configuring PECOS to use this LLVM installation...");
@@ -120,7 +120,7 @@ pub fn install_llvm(force: bool, no_configure: bool) -> Result<PathBuf> {
                 eprintln!("Warning: Could not auto-configure LLVM: {e}");
                 println!();
                 println!("Please run configuration manually:");
-                println!("  pecos-deps llvm configure");
+                println!("  pecos llvm configure");
             }
         }
     }
@@ -377,6 +377,29 @@ fn extract_7z(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
             Ok(true)
         })
         .map_err(|e| Error::Archive(e.to_string()))?;
+
+    Ok(())
+}
+
+/// Remove local LLVM installation (`~/.pecos/llvm/`)
+///
+/// # Errors
+///
+/// Returns an error if removal fails
+pub fn uninstall_llvm() -> Result<()> {
+    let llvm_dir = dirs::home_dir()
+        .ok_or_else(|| Error::HomeDir("Could not determine home directory".into()))?
+        .join(".pecos")
+        .join("llvm");
+
+    if !llvm_dir.exists() {
+        println!("LLVM is not installed in ~/.pecos/llvm/");
+        return Ok(());
+    }
+
+    println!("Removing LLVM installation at: {}", llvm_dir.display());
+    fs::remove_dir_all(&llvm_dir)?;
+    println!("LLVM uninstalled successfully");
 
     Ok(())
 }

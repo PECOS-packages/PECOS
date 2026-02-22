@@ -13,7 +13,7 @@ use pecos::prelude::*;
 type RustQasmEngineBuilder = pecos::QasmEngineBuilder;
 type RustQisEngineBuilder = pecos::QisEngineBuilder;
 type RustPhirJsonEngineBuilder = pecos::PhirJsonEngineBuilder;
-type RustHugrEngineBuilder = pecos::HugrEngineBuilder;
+type RustGuppyHugrEngineBuilder = pecos::GuppyHugrEngineBuilder;
 type RustSparseStabilizerEngineBuilder = SparseStabilizerEngineBuilder;
 type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
@@ -28,7 +28,7 @@ use crate::shot_results_bindings::PyShotVec;
 use crate::sim::{PySimBuilder, SimBuilderInner};
 
 /// Python wrapper for QASM engine builder
-#[pyclass(name = "QasmEngineBuilder")]
+#[pyclass(name = "QasmEngineBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyQasmEngineBuilder {
     pub(crate) inner: RustQasmEngineBuilder,
@@ -77,13 +77,14 @@ impl PyQasmEngineBuilder {
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
+                foreign_object: None,
             }),
         })
     }
 }
 
 /// Python wrapper for QIS Engine builder (unified QIS/HUGR engine)
-#[pyclass(name = "QisEngineBuilder")]
+#[pyclass(name = "QisEngineBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyQisEngineBuilder {
     pub(crate) inner: RustQisEngineBuilder,
@@ -188,7 +189,7 @@ impl PyQisEngineBuilder {
 }
 
 /// Python wrapper for PHIR JSON engine builder
-#[pyclass(name = "PhirJsonEngineBuilder")]
+#[pyclass(name = "PhirJsonEngineBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyPhirJsonEngineBuilder {
     pub(crate) inner: RustPhirJsonEngineBuilder,
@@ -243,6 +244,7 @@ pub struct PyQasmSimBuilder {
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
+    pub(crate) foreign_object: Option<Py<PyAny>>,
 }
 
 /// Python wrapper for built QASM simulation
@@ -271,6 +273,19 @@ impl PyQasmSimulation {
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
         }
     }
+
+    /// Reset the simulation to its initial state (quantum state back to |0⟩).
+    ///
+    /// Returns the simulation object for method chaining.
+    fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        {
+            let mut engine = slf.inner.lock().unwrap();
+            engine
+                .reset()
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+        }
+        Ok(slf)
+    }
 }
 
 /// Python wrapper for built PHIR JSON simulation
@@ -298,6 +313,19 @@ impl PyPhirJsonSimulation {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
         }
+    }
+
+    /// Reset the simulation to its initial state (quantum state back to |0⟩).
+    ///
+    /// Returns the simulation object for method chaining.
+    fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        {
+            let mut engine = slf.inner.lock().unwrap();
+            engine
+                .reset()
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+        }
+        Ok(slf)
     }
 }
 
@@ -346,6 +374,19 @@ impl PyQisControlSimulation {
     fn temp_dir(&self) -> Option<String> {
         self.temp_dir.clone()
     }
+
+    /// Reset the simulation to its initial state (quantum state back to |0⟩).
+    ///
+    /// Returns the simulation object for method chaining.
+    fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        {
+            let mut engine = slf.inner.lock().unwrap();
+            engine
+                .reset()
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+        }
+        Ok(slf)
+    }
 }
 
 /// Internal PHIR JSON simulation builder state
@@ -362,14 +403,14 @@ pub struct PyPhirJsonSimBuilder {
 ///
 /// This engine directly interprets HUGR programs without LLVM compilation,
 /// making it faster for simple circuits and useful for testing.
-#[pyclass(name = "HugrEngineBuilder")]
+#[pyclass(name = "GuppyHugrEngineBuilder", from_py_object)]
 #[derive(Clone)]
-pub struct PyHugrEngineBuilder {
-    pub(crate) inner: RustHugrEngineBuilder,
+pub struct PyGuppyHugrEngineBuilder {
+    pub(crate) inner: RustGuppyHugrEngineBuilder,
 }
 
 #[pymethods]
-impl PyHugrEngineBuilder {
+impl PyGuppyHugrEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
@@ -409,36 +450,44 @@ impl PyHugrEngineBuilder {
     /// Convert to simulation builder
     fn to_sim(&self) -> PyResult<PySimBuilder> {
         Ok(PySimBuilder {
-            inner: SimBuilderInner::Hugr(PyHugrSimBuilder {
+            inner: SimBuilderInner::Hugr(PyGuppyHugrSimBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
                 seed: None,
                 workers: None,
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
+                foreign_object: None,
+                keep_intermediate_files: false,
+                hugr_bytes: None,
             }),
         })
     }
 }
 
 /// Internal HUGR simulation builder state
-pub struct PyHugrSimBuilder {
-    pub(crate) engine_builder: Arc<Mutex<Option<RustHugrEngineBuilder>>>,
+pub struct PyGuppyHugrSimBuilder {
+    pub(crate) engine_builder: Arc<Mutex<Option<RustGuppyHugrEngineBuilder>>>,
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
+    pub(crate) foreign_object: Option<Py<PyAny>>,
+    pub(crate) keep_intermediate_files: bool,
+    pub(crate) hugr_bytes: Option<Vec<u8>>,
 }
 
 /// Python wrapper for built HUGR simulation
 #[pyclass(name = "HugrSimulation")]
-pub struct PyHugrSimulation {
+pub struct PyGuppyHugrSimulation {
     pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
+    /// Path to temp directory containing intermediate files (if `keep_intermediate_files` was true)
+    pub(crate) temp_dir: Option<String>,
 }
 
 #[pymethods]
-impl PyHugrSimulation {
+impl PyGuppyHugrSimulation {
     /// Run the simulation
     pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
         let mut engine = self.inner.lock().unwrap();
@@ -456,10 +505,29 @@ impl PyHugrSimulation {
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
         }
     }
+
+    /// Get the temp directory path (if `keep_intermediate_files` was enabled)
+    #[getter]
+    fn temp_dir(&self) -> Option<String> {
+        self.temp_dir.clone()
+    }
+
+    /// Reset the simulation to its initial state (quantum state back to |0⟩).
+    ///
+    /// Returns the simulation object for method chaining.
+    fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        {
+            let mut engine = slf.inner.lock().unwrap();
+            engine
+                .reset()
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+        }
+        Ok(slf)
+    }
 }
 
 /// Python wrapper for program types
-#[pyclass(name = "Qasm")]
+#[pyclass(name = "Qasm", from_py_object)]
 #[derive(Clone)]
 pub struct PyQasm {
     pub(crate) inner: Qasm,
@@ -475,7 +543,7 @@ impl PyQasm {
     }
 }
 
-#[pyclass(name = "Qis")]
+#[pyclass(name = "Qis", from_py_object)]
 #[derive(Clone)]
 pub struct PyQis {
     pub(crate) inner: Qis,
@@ -507,7 +575,7 @@ impl PyQis {
     }
 }
 
-#[pyclass(name = "Hugr")]
+#[pyclass(name = "Hugr", from_py_object)]
 #[derive(Clone)]
 pub struct PyHugr {
     pub(crate) inner: Hugr,
@@ -528,7 +596,7 @@ impl PyHugr {
     }
 }
 
-#[pyclass(name = "PhirJson")]
+#[pyclass(name = "PhirJson", from_py_object)]
 #[derive(Clone)]
 pub struct PyPhirJson {
     pub(crate) inner: PhirJson,
@@ -594,8 +662,8 @@ pub fn phir_json_engine() -> PyPhirJsonEngineBuilder {
 /// which executes HUGR programs without LLVM compilation.
 /// This is useful for testing and for simple circuits.
 #[pyfunction]
-pub fn hugr_engine() -> PyHugrEngineBuilder {
-    PyHugrEngineBuilder::new()
+pub fn hugr_engine() -> PyGuppyHugrEngineBuilder {
+    PyGuppyHugrEngineBuilder::new()
 }
 
 /// Create a general noise model builder
@@ -617,7 +685,7 @@ pub fn biased_depolarizing_noise() -> PyBiasedDepolarizingNoiseModelBuilder {
 }
 
 /// Python wrapper for `GeneralNoiseModelBuilder`
-#[pyclass(name = "GeneralNoiseModelBuilder")]
+#[pyclass(name = "GeneralNoiseModelBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyGeneralNoiseModelBuilder {
     pub(crate) inner: GeneralNoiseModelBuilder,
@@ -1003,7 +1071,7 @@ impl PyGeneralNoiseModelBuilder {
 }
 
 /// Python wrapper for `DepolarizingNoiseModelBuilder`
-#[pyclass(name = "DepolarizingNoiseModelBuilder")]
+#[pyclass(name = "DepolarizingNoiseModelBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyDepolarizingNoiseModelBuilder {
     pub(crate) inner: DepolarizingNoiseModelBuilder,
@@ -1067,7 +1135,7 @@ impl PyDepolarizingNoiseModelBuilder {
 }
 
 /// Python wrapper for `BiasedDepolarizingNoiseModelBuilder`
-#[pyclass(name = "BiasedDepolarizingNoiseModelBuilder")]
+#[pyclass(name = "BiasedDepolarizingNoiseModelBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyBiasedDepolarizingNoiseModelBuilder {
     pub(crate) inner: BiasedDepolarizingNoiseModelBuilder,
@@ -1133,7 +1201,7 @@ impl PyBiasedDepolarizingNoiseModelBuilder {
 }
 
 /// Python wrapper for `StateVectorEngineBuilder`
-#[pyclass(name = "StateVectorEngineBuilder")]
+#[pyclass(name = "StateVectorEngineBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyStateVectorEngineBuilder {
     pub(crate) inner: Option<RustStateVectorEngineBuilder>,
@@ -1164,7 +1232,7 @@ impl PyStateVectorEngineBuilder {
 }
 
 /// Python wrapper for `SparseStabilizerEngineBuilder`
-#[pyclass(name = "SparseStabilizerEngineBuilder")]
+#[pyclass(name = "SparseStabilizerEngineBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PySparseStabilizerEngineBuilder {
     pub(crate) inner: Option<RustSparseStabilizerEngineBuilder>,
@@ -1258,7 +1326,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQasmEngineBuilder>()?;
     m.add_class::<PyQisEngineBuilder>()?;
     m.add_class::<PyPhirJsonEngineBuilder>()?;
-    m.add_class::<PyHugrEngineBuilder>()?;
+    m.add_class::<PyGuppyHugrEngineBuilder>()?;
 
     // Simulation builders are now handled by the unified PySimBuilder in sim.rs
 
@@ -1266,7 +1334,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQasmSimulation>()?;
     m.add_class::<PyPhirJsonSimulation>()?;
     m.add_class::<PyQisControlSimulation>()?;
-    m.add_class::<PyHugrSimulation>()?;
+    m.add_class::<PyGuppyHugrSimulation>()?;
 
     // Program types
     m.add_class::<PyQasm>()?;

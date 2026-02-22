@@ -65,11 +65,7 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
 
         # Get the appropriate platform tag
         tag = next(
-            iter(
-                t
-                for t in sys_tags()
-                if "manylinux" not in t.platform and "musllinux" not in t.platform
-            ),
+            iter(t for t in sys_tags() if "manylinux" not in t.platform and "musllinux" not in t.platform),
         )
         target_platform = tag.platform
         if sys.platform == "darwin":
@@ -141,7 +137,8 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
             )
 
         # Run cargo build from the PECOS workspace root
-        workspace_root = root.parent.parent  # Go up to PECOS root
+        # Plugin is at python/selene-plugins/<plugin>/, so 3 levels up to workspace
+        workspace_root = root.parent.parent.parent
         cargo_cmd = [
             "cargo",
             "build",
@@ -186,9 +183,7 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
         # This backend library is loaded at runtime via dlopen, allowing the wheel to work
         # on systems both with and without NVIDIA CUDA installed.
         cuda_backend_filename = f"{lib_prefix}pecos_quest_cuda{lib_suffix}"
-        source_cuda_backend = (
-            workspace_root / "target" / "release" / cuda_backend_filename
-        )
+        source_cuda_backend = workspace_root / "target" / "release" / cuda_backend_filename
         if source_cuda_backend.exists():
             dest_cuda_backend = dest_dir / cuda_backend_filename
             self.app.display_info(

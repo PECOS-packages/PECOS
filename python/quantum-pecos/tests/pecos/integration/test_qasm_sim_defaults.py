@@ -75,12 +75,7 @@ class TestQasmSimDefaults:
         GeneralNoiseModelBuilder()
         # Default values are set when building
 
-        (
-            biased_depolarizing_noise()
-            .with_p1_probability(0.001)
-            .with_p2_probability(0.001)
-            .with_prep_probability(0.001)
-        )
+        (biased_depolarizing_noise().with_p1_probability(0.001).with_p2_probability(0.001).with_prep_probability(0.001))
         # Builder pattern requires explicit values
 
     def test_builder_defaults_new_api(self) -> None:

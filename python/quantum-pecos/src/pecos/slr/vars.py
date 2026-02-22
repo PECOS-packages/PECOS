@@ -10,9 +10,40 @@
 # specific language governing permissions and limitations under the License.
 
 
+from __future__ import annotations
+
 from pecos.slr.cops import SET, PyCOp
 
 # TODO: Make it a VarDef
+
+
+class LoopVar:
+    """Represents a loop iteration variable for symbolic indexing.
+
+    Used with For loops to enable indexing registers with the loop variable:
+
+        i = LoopVar("i")
+        For(i, range(4)).Do(
+            qb.H(q[i]),  # q[i] returns a SymbolicQubit
+        )
+
+    The symbolic element is resolved to concrete indices during code generation
+    when the loop is unrolled.
+    """
+
+    def __init__(self, name: str) -> None:
+        """Create a loop variable.
+
+        Args:
+            name: The variable name (used for code generation and debugging)
+        """
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f"LoopVar({self.name!r})"
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class Vars:
@@ -23,7 +54,7 @@ class Vars:
         # Store the source class name for code generation
         self.source_class = None
 
-    def extend(self, vars_obj: "Vars") -> None:
+    def extend(self, vars_obj: Vars) -> None:
         if isinstance(vars_obj, Vars):
             self.vars.extend(vars_obj.vars)
             # Preserve source class information if available
@@ -64,7 +95,7 @@ class Var: ...
 
 
 class Reg(Var):
-    def __init__(self, sym: str, size: int, elem_type: type["Elem"]) -> None:
+    def __init__(self, sym: str, size: int, elem_type: type[Elem]) -> None:
         self.sym = sym
         self.size = size
         self.elems = []
@@ -83,7 +114,14 @@ class Reg(Var):
         return self.size
 
     def __getitem__(self, item):
+        if isinstance(item, LoopVar):
+            return self._symbolic_elem_type(self, item)
         return self.elems[item]
+
+    @property
+    def _symbolic_elem_type(self) -> type[SymbolicElem]:
+        """Return the symbolic element type for this register."""
+        return SymbolicElem
 
     def __repr__(self) -> str:
         repr_str = self.__class__.__name__
@@ -116,14 +154,64 @@ class Elem(Var):
         return f"{self.reg.sym}[{self.index}]"
 
 
+class SymbolicElem(Var):
+    """Represents a register element with a symbolic (loop variable) index.
+
+    Created when indexing a register with a LoopVar:
+        i = LoopVar("i")
+        q[i]  # Returns SymbolicQubit(q, i)
+
+    The symbolic element is resolved to a concrete element during code generation
+    when For loops are unrolled.
+    """
+
+    def __init__(self, reg: Reg, index_var: LoopVar) -> None:
+        super().__init__()
+        self.reg = reg
+        self.index_var = index_var
+
+    def resolve(self, value: int) -> Elem:
+        """Resolve the symbolic index to a concrete element.
+
+        Args:
+            value: The concrete index value
+
+        Returns:
+            The concrete element at the given index
+        """
+        return self.reg[value]
+
+    def set(self, other):
+        return SET(self, other)
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} {self.index_var.name} of {self.reg.sym}>"
+
+    def __str__(self) -> str:
+        return f"{self.reg.sym}[{self.index_var.name}]"
+
+
 class QReg(Reg):
     def __init__(self, sym: str, size: int) -> None:
         super().__init__(sym, size, elem_type=Qubit)
+
+    @property
+    def _symbolic_elem_type(self) -> type[SymbolicQubit]:
+        """Return the symbolic element type for quantum registers."""
+        return SymbolicQubit
 
 
 class Qubit(Elem):
     def __init__(self, reg: QReg, idx: int) -> None:
         super().__init__(reg, idx)
+
+
+class SymbolicQubit(SymbolicElem):
+    """Symbolic qubit with a loop variable index."""
+
+    def resolve(self, value: int) -> Qubit:
+        """Resolve to a concrete Qubit."""
+        return self.reg[value]
 
 
 class CReg(Reg, PyCOp):
@@ -139,7 +227,20 @@ class CReg(Reg, PyCOp):
         super().__init__(sym, size, elem_type=Bit)
         self.result = result
 
+    @property
+    def _symbolic_elem_type(self) -> type[SymbolicBit]:
+        """Return the symbolic element type for classical registers."""
+        return SymbolicBit
+
 
 class Bit(Elem, PyCOp):
     def __init__(self, reg: CReg, idx: int) -> None:
         super().__init__(reg, idx)
+
+
+class SymbolicBit(SymbolicElem, PyCOp):
+    """Symbolic bit with a loop variable index."""
+
+    def resolve(self, value: int) -> Bit:
+        """Resolve to a concrete Bit."""
+        return self.reg[value]

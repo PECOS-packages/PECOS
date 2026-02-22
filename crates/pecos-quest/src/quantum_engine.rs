@@ -4,10 +4,11 @@
 //! with the PECOS engine system, allowing them to be used with the `sim()` API.
 
 use crate::{QuestDensityMatrix, QuestStateVec};
+use pecos_core::Angle64;
+#[cfg(feature = "cuda")]
+use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
-#[cfg(feature = "cuda")]
-use pecos_core::{Angle64, QubitId};
 use pecos_engines::{
     Engine, IntoQuantumEngineBuilder, QuantumEngine, QuantumEngineBuilder,
     byte_message::{ByteMessage, GateType},
@@ -86,6 +87,21 @@ impl Engine for QuestStateVecEngine {
                 }
                 GateType::CZ => {
                     self.simulator.cz(&cmd.qubits);
+                }
+                // CH = Ry(π/4)_target, CX(control, target), Ry(-π/4)_target
+                GateType::CH => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let target_slice = &[qubits[1]];
+                        self.simulator.ry(
+                            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+                            target_slice,
+                        );
+                        self.simulator.cx(qubits);
+                        self.simulator.ry(
+                            Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
+                            target_slice,
+                        );
+                    }
                 }
                 GateType::RZZ => {
                     self.simulator.rzz(cmd.angles[0], &cmd.qubits);
@@ -291,6 +307,21 @@ impl Engine for QuestDensityMatrixEngine {
                 }
                 GateType::CZ => {
                     self.simulator.cz(&cmd.qubits);
+                }
+                // CH = Ry(π/4)_target, CX(control, target), Ry(-π/4)_target
+                GateType::CH => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let target_slice = &[qubits[1]];
+                        self.simulator.ry(
+                            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+                            target_slice,
+                        );
+                        self.simulator.cx(qubits);
+                        self.simulator.ry(
+                            Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
+                            target_slice,
+                        );
+                    }
                 }
                 GateType::RZZ => {
                     self.simulator.rzz(cmd.angles[0], &cmd.qubits);
@@ -874,6 +905,26 @@ impl Engine for QuestCudaStateVecEngine {
                             (self.backend.apply_hadamard)(self.qureg_handle, tgt);
                             (self.backend.apply_cnot)(self.qureg_handle, ctrl, tgt);
                             (self.backend.apply_hadamard)(self.qureg_handle, tgt);
+                        }
+                    }
+                }
+                // CH = Ry(π/4)_target · CX · Ry(-π/4)_target
+                GateType::CH => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (ctrl, tgt) =
+                            (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_rotation_y)(
+                                self.qureg_handle,
+                                tgt,
+                                std::f64::consts::FRAC_PI_4,
+                            );
+                            (self.backend.apply_cnot)(self.qureg_handle, ctrl, tgt);
+                            (self.backend.apply_rotation_y)(
+                                self.qureg_handle,
+                                tgt,
+                                -std::f64::consts::FRAC_PI_4,
+                            );
                         }
                     }
                 }

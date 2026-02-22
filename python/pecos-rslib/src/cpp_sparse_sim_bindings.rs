@@ -38,8 +38,9 @@ impl PySparseSimCpp {
         self.inner.set_seed(seed);
     }
 
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     fn __repr__(&self) -> String {

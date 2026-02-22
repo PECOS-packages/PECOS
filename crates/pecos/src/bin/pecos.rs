@@ -82,12 +82,12 @@ enum Commands {
         #[command(subcommand)]
         command: PythonCommands,
     },
-    /// CUDA availability and info
+    /// CUDA inspection and validation
     Cuda {
         #[command(subcommand)]
         command: CudaCommands,
     },
-    /// cuQuantum SDK management (install, check, configure)
+    /// cuQuantum SDK inspection, validation, and configuration
     #[command(name = "cuquantum", visible_alias = "cuq")]
     CuQuantum {
         #[command(subcommand)]
@@ -109,7 +109,7 @@ enum Commands {
         #[command(subcommand)]
         command: GoCommands,
     },
-    /// LLVM 14 management (install, check, configure)
+    /// LLVM 14 inspection, validation, and configuration
     Llvm {
         #[command(subcommand)]
         command: LlvmCommands,
@@ -128,6 +128,54 @@ enum Commands {
     Deps {
         #[command(subcommand)]
         command: DepsCommands,
+    },
+    /// Install optional dependencies (cuda, llvm, cuquantum)
+    ///
+    /// Example: pecos install cuda cuquantum
+    Install {
+        /// Dependencies to install
+        #[arg(required_unless_present = "all")]
+        targets: Vec<String>,
+
+        /// Force reinstall even if already present
+        #[arg(long)]
+        force: bool,
+
+        /// Install all optional dependencies
+        #[arg(long)]
+        all: bool,
+
+        /// Skip automatic configuration after installation (applies to llvm)
+        #[arg(long)]
+        no_configure: bool,
+    },
+    /// Uninstall optional dependencies (cuda, llvm, cuquantum)
+    ///
+    /// Example: pecos uninstall cuda cuquantum
+    Uninstall {
+        /// Dependencies to uninstall
+        #[arg(required_unless_present = "all")]
+        targets: Vec<String>,
+
+        /// Uninstall all optional dependencies
+        #[arg(long)]
+        all: bool,
+    },
+    /// Upgrade optional dependencies (force reinstall)
+    ///
+    /// Example: pecos upgrade cuda cuquantum
+    Upgrade {
+        /// Dependencies to upgrade
+        #[arg(required_unless_present = "all")]
+        targets: Vec<String>,
+
+        /// Upgrade all optional dependencies
+        #[arg(long)]
+        all: bool,
+
+        /// Skip automatic configuration after installation (applies to llvm)
+        #[arg(long)]
+        no_configure: bool,
     },
     /// Show system tools and project info
     #[command(name = "sys-info")]
@@ -617,6 +665,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Selene { command } => cli::run_selene(command.clone())?,
         Commands::Features { command } => cli::run_features(command.clone())?,
         Commands::Deps { command } => cli::run_deps(command.clone())?,
+        Commands::Install {
+            targets,
+            force,
+            all,
+            no_configure,
+        } => cli::run_install(targets, *force, *all, *no_configure)?,
+        Commands::Uninstall { targets, all } => cli::run_uninstall(targets, *all)?,
+        Commands::Upgrade {
+            targets,
+            all,
+            no_configure,
+        } => cli::run_upgrade(targets, *all, *no_configure)?,
         Commands::SysInfo => cli::run_sys_info()?,
         Commands::List { verbose } => cli::run_list(*verbose)?,
         Commands::Docs { port, no_browser } => cli::run_docs(*port, *no_browser)?,
@@ -863,8 +923,8 @@ fn run_doctor() {
             &format!("{version} at {}", llvm_path.display()),
         );
     } else {
-        print_check("LLVM 14", false, "not found (run 'pecos llvm install')");
-        warnings.push("LLVM 14 not found. To install: pecos llvm install");
+        print_check("LLVM 14", false, "not found (run 'pecos install llvm')");
+        warnings.push("LLVM 14 not found. To install: pecos install llvm");
     }
 
     // Check 7: CUDA installation
@@ -880,7 +940,7 @@ fn run_doctor() {
         print_check(
             "CUDA",
             false,
-            "not found (optional, run 'pecos cuda install')",
+            "not found (optional, run 'pecos install cuda')",
         );
         // CUDA is optional, so just a suggestion not a warning
     }
@@ -897,7 +957,7 @@ fn run_doctor() {
         print_check(
             "cuQuantum",
             false,
-            "not found (optional, run 'pecos cuquantum install')",
+            "not found (optional, run 'pecos install cuquantum')",
         );
         // cuQuantum is optional, so just a suggestion not a warning
     }

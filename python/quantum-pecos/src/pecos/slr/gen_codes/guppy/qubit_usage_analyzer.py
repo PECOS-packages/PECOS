@@ -69,10 +69,7 @@ class QubitUsageStats:
     def classify_role(self) -> QubitRole:
         """Classify the role of this register based on usage patterns."""
         # Explicit ancilla naming patterns
-        if any(
-            pattern in self.name.lower()
-            for pattern in ["ancilla", "anc", "syndrome", "flag"]
-        ):
+        if any(pattern in self.name.lower() for pattern in ["ancilla", "anc", "syndrome", "flag"]):
             return QubitRole.ANCILLA
 
         # Explicit data naming patterns

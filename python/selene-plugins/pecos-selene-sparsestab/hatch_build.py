@@ -38,11 +38,7 @@ class PecosSeleneSparsestabBuildHook(BuildHookInterface):
 
         # Get the appropriate platform tag
         tag = next(
-            iter(
-                t
-                for t in sys_tags()
-                if "manylinux" not in t.platform and "musllinux" not in t.platform
-            ),
+            iter(t for t in sys_tags() if "manylinux" not in t.platform and "musllinux" not in t.platform),
         )
         target_platform = tag.platform
         if sys.platform == "darwin":
@@ -103,7 +99,8 @@ class PecosSeleneSparsestabBuildHook(BuildHookInterface):
         self.app.display_info(f"Building {cargo_package}...")
 
         # Run cargo build from the PECOS workspace root
-        workspace_root = root.parent.parent  # Go up to PECOS root
+        # Plugin is at python/selene-plugins/<plugin>/, so 3 levels up to workspace
+        workspace_root = root.parent.parent.parent
         result = subprocess.run(
             [
                 "cargo",

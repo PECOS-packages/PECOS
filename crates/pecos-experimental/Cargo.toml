@@ -21,6 +21,7 @@ pecos-core.workspace = true
 pecos-rng.workspace = true
 pecos-qsim.workspace = true
 pecos-quantum.workspace = true
+rand.workspace = true
 wide.workspace = true
 
 [lints]

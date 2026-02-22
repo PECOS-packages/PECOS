@@ -20,7 +20,7 @@ use crate::command::{GateCommand, GateType};
 use crate::noise::NoiseContext;
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::smallvec;
 
 /// A terminal action that produces a noise response.

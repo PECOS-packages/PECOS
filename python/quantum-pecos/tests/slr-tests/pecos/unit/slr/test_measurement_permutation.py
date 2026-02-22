@@ -55,12 +55,8 @@ def test_register_measurement_permutation_qasm(
 
     # Register-wide measurements are now unrolled correctly with permutations
     # The expected behavior is:
-    assert (
-        "measure b[0] -> m[0];" in qasm
-    ), f"Expected 'measure b[0] -> m[0];' not found in QASM:\n{qasm}"
-    assert (
-        "measure a[1] -> m[1];" in qasm
-    ), f"Expected 'measure a[1] -> m[1];' not found in QASM:\n{qasm}"
+    assert "measure b[0] -> m[0];" in qasm, f"Expected 'measure b[0] -> m[0];' not found in QASM:\n{qasm}"
+    assert "measure a[1] -> m[1];" in qasm, f"Expected 'measure a[1] -> m[1];' not found in QASM:\n{qasm}"
 
     # Verify that running QASM generation twice produces consistent results
     qasm2 = SlrConverter(prog).qasm()
@@ -85,12 +81,8 @@ def test_individual_measurement_permutation_qir(
     print(qir)
 
     # Verify that the QIR contains comments about the permutations
-    assert (
-        "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir
-    ), f"Expected permutation comment not found in QIR:\n{qir}"
-    assert (
-        "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir
-    ), f"Expected permutation comment not found in QIR:\n{qir}"
+    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
+    assert "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
 
     # Verify that the QIR contains the correct classical bit permutation using a temporary bit
     assert (
@@ -115,16 +107,12 @@ def test_individual_measurement_permutation_qir(
     # Extract the measurement operations
     # In QIR, measurements are done with mz_to_creg_bit
     mz_to_creg_pattern = (
-        r"call void @mz_to_creg_bit\("
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
-        r"i1\* %(\w+), i64 (\d+)\)"
+        r"call void @mz_to_creg_bit\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), i1\* %(\w+), i64 (\d+)\)"
     )
     mz_to_creg_calls = re.findall(mz_to_creg_pattern, qir)
 
     # We should have at least two measurement calls (one for each qubit in register a)
-    assert (
-        len(mz_to_creg_calls) >= 2
-    ), f"Expected at least 2 measurement calls, found {len(mz_to_creg_calls)}"
+    assert len(mz_to_creg_calls) >= 2, f"Expected at least 2 measurement calls, found {len(mz_to_creg_calls)}"
 
     # Create a dictionary to store the measurements
     measurements = {}
@@ -133,12 +121,8 @@ def test_individual_measurement_permutation_qir(
             measurements[int(creg_idx)] = (creg_name, int(qubit_idx))
 
     # Verify that the correct qubits are measured into the correct classical bits
-    assert (
-        0 in measurements
-    ), f"Expected measurement to m[0], found measurements to {list(measurements.keys())}"
-    assert (
-        1 in measurements
-    ), f"Expected measurement to m[1], found measurements to {list(measurements.keys())}"
+    assert 0 in measurements, f"Expected measurement to m[0], found measurements to {list(measurements.keys())}"
+    assert 1 in measurements, f"Expected measurement to m[1], found measurements to {list(measurements.keys())}"
 
     # Verify that different qubits are measured into different classical bits
     measured_qubits = [idx for _, idx in measurements.values()]
@@ -166,12 +150,8 @@ def test_register_measurement_permutation_qir(
     print(qir)
 
     # Verify that the QIR contains comments about the permutations
-    assert (
-        "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir
-    ), f"Expected permutation comment not found in QIR:\n{qir}"
-    assert (
-        "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir
-    ), f"Expected permutation comment not found in QIR:\n{qir}"
+    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
+    assert "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
 
     # Verify that the QIR contains the correct classical bit permutation using a temporary bit
     assert (
@@ -180,12 +160,8 @@ def test_register_measurement_permutation_qir(
     assert (
         "call void @set_creg_bit(i1* %_bit_swap, i64 0, i1 %.4)" in qir
     ), f"Expected temporary bit assignment not found in QIR:\n{qir}"
-    assert (
-        "call void @set_creg_bit(i1* %m, i64 0, i1 %.6)" in qir
-    ), f"Expected bit assignment not found in QIR:\n{qir}"
-    assert (
-        "call void @set_creg_bit(i1* %n, i64 0, i1 %.8)" in qir
-    ), f"Expected bit assignment not found in QIR:\n{qir}"
+    assert "call void @set_creg_bit(i1* %m, i64 0, i1 %.6)" in qir, f"Expected bit assignment not found in QIR:\n{qir}"
+    assert "call void @set_creg_bit(i1* %n, i64 0, i1 %.8)" in qir, f"Expected bit assignment not found in QIR:\n{qir}"
 
     # Verify that the QIR contains the correct quantum operations after permutation
     # H gate should be applied to b[0] (qubit 2) after permutation
@@ -196,21 +172,18 @@ def test_register_measurement_permutation_qir(
     # CNOT gate should be applied to b[0] (qubit 2) and a[0] (qubit 0) after permutation
     assert (
         "call void @__quantum__qis__cnot__body("
-        "%Qubit* inttoptr (i64 2 to %Qubit*), %Qubit* inttoptr (i64 0 to %Qubit*))"
-        in qir
+        "%Qubit* inttoptr (i64 2 to %Qubit*), %Qubit* inttoptr (i64 0 to %Qubit*))" in qir
     ), f"Expected CNOT gate on permuted qubits not found in QIR:\n{qir}"
 
     # Verify that the QIR contains the correct measurements after permutation
     # a[0] should be measured as b[0] (qubit 2) after permutation
     assert (
-        "call void @mz_to_creg_bit(%Qubit* inttoptr (i64 2 to %Qubit*), i1* %m, i64 0)"
-        in qir
+        "call void @mz_to_creg_bit(%Qubit* inttoptr (i64 2 to %Qubit*), i1* %m, i64 0)" in qir
     ), f"Expected measurement of permuted qubit not found in QIR:\n{qir}"
 
     # a[1] should be measured as a[1] (qubit 1) since it's not permuted
     assert (
-        "call void @mz_to_creg_bit(%Qubit* inttoptr (i64 1 to %Qubit*), i1* %m, i64 1)"
-        in qir
+        "call void @mz_to_creg_bit(%Qubit* inttoptr (i64 1 to %Qubit*), i1* %m, i64 1)" in qir
     ), f"Expected measurement of non-permuted qubit not found in QIR:\n{qir}"
 
     # Verify that running QIR generation twice produces consistent results

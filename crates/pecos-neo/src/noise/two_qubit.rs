@@ -38,7 +38,7 @@ use super::{
 use crate::command::{GateCommand, GateType};
 use pecos_core::Angle64;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 
 /// Angle-dependent error scaling parameters.

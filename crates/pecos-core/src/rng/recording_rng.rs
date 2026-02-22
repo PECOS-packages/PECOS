@@ -10,7 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use rand::{RngCore, SeedableRng};
+use core::convert::Infallible;
+use rand_core::{Rng, SeedableRng, TryRng};
 use std::fmt::{self, Debug};
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -19,14 +20,14 @@ use std::path::Path;
 /// A wrapper RNG that records all calls to the underlying RNG methods
 ///
 /// This wrapper allows capturing raw random values from any RNG that implements
-/// the `RngCore` trait, making it possible to replay the exact same sequence later
+/// the `Rng` trait, making it possible to replay the exact same sequence later
 /// using a `ReplayingRng`.
 ///
 /// # Example
 ///
 /// ```
 /// use pecos_core::rng::{RecordingRng, ReplayingRng};
-/// use pecos_rng::{PecosRng, Rng, SeedableRng};
+/// use pecos_rng::{PecosRng, RngExt, SeedableRng};
 ///
 /// // Create a recording wrapper around PecosRng
 /// let rng = PecosRng::seed_from_u64(42);
@@ -47,7 +48,7 @@ use std::path::Path;
 /// assert_eq!(float, replay_float);
 /// assert_eq!(int, replay_int);
 /// ```
-pub struct RecordingRng<R: RngCore> {
+pub struct RecordingRng<R: Rng> {
     /// The underlying RNG being wrapped
     inner: R,
     /// The recorded raw values from all RNG method calls
@@ -56,7 +57,7 @@ pub struct RecordingRng<R: RngCore> {
     recorded_bytes: Vec<u8>,
 }
 
-impl<R: RngCore> RecordingRng<R> {
+impl<R: Rng> RecordingRng<R> {
     /// Create a new `RecordingRng` wrapping the provided RNG
     pub fn new(inner: R) -> Self {
         Self {
@@ -180,20 +181,22 @@ impl<R: RngCore> RecordingRng<R> {
     }
 }
 
-impl<R: RngCore> RngCore for RecordingRng<R> {
-    fn next_u32(&mut self) -> u32 {
+impl<R: Rng> TryRng for RecordingRng<R> {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         let value = self.inner.next_u32();
         self.recorded_values.push(u64::from(value));
-        value
+        Ok(value)
     }
 
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         let value = self.inner.next_u64();
         self.recorded_values.push(value);
-        value
+        Ok(value)
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         // Fill the bytes using the inner RNG
         self.inner.fill_bytes(dest);
 
@@ -208,10 +211,11 @@ impl<R: RngCore> RngCore for RecordingRng<R> {
         self.recorded_values.push(
             u64::try_from(dest.len()).expect("destination buffer length exceeds u64 capacity"),
         );
+        Ok(())
     }
 }
 
-impl<R: Debug + RngCore> Debug for RecordingRng<R> {
+impl<R: Debug + Rng> Debug for RecordingRng<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RecordingRng")
             .field("inner", &self.inner)
@@ -228,7 +232,7 @@ impl<R: Debug + RngCore> Debug for RecordingRng<R> {
 }
 
 // If the inner RNG is seedable, delegate to it
-impl<R: SeedableRng + RngCore> SeedableRng for RecordingRng<R> {
+impl<R: SeedableRng + Rng> SeedableRng for RecordingRng<R> {
     type Seed = R::Seed;
 
     fn from_seed(seed: Self::Seed) -> Self {
@@ -247,7 +251,7 @@ impl<R: SeedableRng + RngCore> SeedableRng for RecordingRng<R> {
         }
     }
 
-    fn from_rng(rng: &mut impl RngCore) -> Self {
+    fn from_rng<S: Rng + ?Sized>(rng: &mut S) -> Self {
         Self {
             inner: R::from_rng(rng),
             recorded_values: Vec::new(),

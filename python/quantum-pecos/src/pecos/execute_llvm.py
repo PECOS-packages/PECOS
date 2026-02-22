@@ -23,10 +23,7 @@ def compile_module_to_string(hugr_bytes: bytes) -> str:
 
         return compile_hugr_to_qis(hugr_bytes, None)
     except ImportError as e:
-        msg = (
-            "PECOS's Rust HUGR compiler is not available. "
-            "This should not happen - please report this as a bug."
-        )
+        msg = "PECOS's Rust HUGR compiler is not available. This should not happen - please report this as a bug."
         raise RuntimeError(
             msg,
         ) from e

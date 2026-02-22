@@ -1,8 +1,8 @@
 //! wgpu-based state vector simulator implementation
 
 use bytemuck::{Pod, Zeroable};
-use pecos_rng::{PecosRng, SeedableRng};
-use rand::Rng;
+use pecos_rng::PecosRng;
+use rand::RngExt;
 use std::borrow::Cow;
 
 use crate::gates;
@@ -463,7 +463,7 @@ impl GpuStateVec {
             probability_bind_group_layout,
             collapse_bind_group_layout,
             gate_bind_group,
-            rng: PecosRng::try_from_os_rng().expect("Failed to get entropy from OS"),
+            rng: rand::make_rng(),
         };
 
         // Initialize to |0...0> state

@@ -23,7 +23,7 @@
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use crate::command::{GateCommand, GateType};
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 
 /// Channel that handles the effects of leaked qubits.

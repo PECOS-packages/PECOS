@@ -31,7 +31,7 @@ fn main() {
     let mut rng = PecosRng::seed_from_u64(42);
     let start = std::time::Instant::now();
     for _ in 0..iterations {
-        let sample: f64 = rand::Rng::random(&mut rng);
+        let sample: f64 = rand::RngExt::random(&mut rng);
         black_box(sample);
     }
     let rng_time = start.elapsed();

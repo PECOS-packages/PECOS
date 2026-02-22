@@ -156,6 +156,7 @@ uv pip install -e "./python/quantum-pecos[all,cuda]"
 
 ### Test CUDA Installation
 
+<!--skip-if-no-cuda-->
 ```python
 # Test CuPy
 import cupy as cp
@@ -164,13 +165,14 @@ print(f"CuPy version: {cp.__version__}")
 print(f"CUDA available: {cp.cuda.is_available()}")
 
 # Test cuQuantum
-from cuquantum import custatevec
+from cuquantum.bindings import custatevec
 
 print(f"cuStateVec available: {custatevec is not None}")
 ```
 
 ### Test PECOS Simulators
 
+<!--skip-if-no-cuda-->
 ```python
 from pecos.simulators import CuStateVec, MPS
 
@@ -256,6 +258,7 @@ uv pip install cupy-cuda12x cuquantum-python-cu12
 
 **Solution**: GPU memory is limited. Use smaller circuits or the MPS simulator for larger systems.
 
+<!--skip: requires pytket-cutensornet-->
 ```python
 # MPS can handle larger systems with less memory
 from pecos.simulators import MPS
@@ -457,11 +460,19 @@ To use GPU simulators in PECOS:
    just build-cuda
    ```
 5. **Verify GPU simulators**:
+   <!--skip-if-no-cuda-->
    ```python
-   from pecos.simulators import CuStateVec, MPS
+   from pecos.simulators import CuStateVec
 
-   sim = CuStateVec(2)  # Should work!
-   sim = MPS(2)  # Should work!
+   sim = CuStateVec(2)  # Should work with cupy + cuquantum!
+   ```
+
+   If you also installed `pytket-cutensornet`:
+   <!--skip: requires pytket-cutensornet-->
+   ```python
+   from pecos.simulators import MPS
+
+   sim = MPS(2)  # Should work with pytket-cutensornet!
    ```
 
 ### Option B: Rust cuQuantum Bindings (More Features)

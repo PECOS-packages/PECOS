@@ -9,15 +9,21 @@ from pecos_rslib import qasm_engine, qis_engine
 
 def _verify_bell_correlation(results: dict, label: str) -> None:
     """Verify Bell state measurement correlation with detailed diagnostics."""
-    assert (
-        "measurement_0" in results
-    ), f"{label}: measurement_0 not found in {list(results.keys())}"
-    assert (
-        "measurement_1" in results
-    ), f"{label}: measurement_1 not found in {list(results.keys())}"
+    # Handle both key formats: measurement_0/measurement_1 or q0/q1
+    if "measurement_0" in results:
+        m0_key, m1_key = "measurement_0", "measurement_1"
+    elif "q0" in results:
+        m0_key, m1_key = "q0", "q1"
+    else:
+        msg = f"{label}: Expected measurement_0 or q0 in {list(results.keys())}"
+        raise AssertionError(
+            msg,
+        )
 
-    m0_list = results["measurement_0"]
-    m1_list = results["measurement_1"]
+    assert m1_key in results, f"{label}: {m1_key} not found in {list(results.keys())}"
+
+    m0_list = results[m0_key]
+    m1_list = results[m1_key]
 
     # Verify lists have same length (crucial for correct shot alignment)
     assert len(m0_list) == len(m1_list), (
@@ -66,14 +72,7 @@ def test_guppy_with_explicit_qis_override() -> None:
     # Use state vector to avoid stabilizer issues with decomposed gates
     from pecos_rslib import state_vector
 
-    results_auto = (
-        sim(Guppy(bell_state))
-        .quantum(state_vector())
-        .qubits(2)
-        .seed(42)
-        .run(100)
-        .to_binary_dict()
-    )
+    results_auto = sim(Guppy(bell_state)).quantum(state_vector()).qubits(2).seed(42).run(100).to_binary_dict()
 
     # Test 2: Use default auto-detection (since explicit override API changed)
     results_explicit = (
@@ -97,9 +96,7 @@ def test_qasm_with_explicit_override() -> None:
     from pecos import Qasm
 
     # Set include path for QASM parser
-    os.environ["PECOS_QASM_INCLUDES"] = (
-        "/home/ciaranra/Repos/cl_projects/gup/PECOS/crates/pecos-qasm/includes"
-    )
+    os.environ["PECOS_QASM_INCLUDES"] = "/home/ciaranra/Repos/cl_projects/gup/PECOS/crates/pecos-qasm/includes"
 
     # Use standard QASM 2.0 with include
     qasm_code = """OPENQASM 2.0;
@@ -181,10 +178,15 @@ def test_engine_override_with_noise() -> None:
     )
 
     # With noise, we should see both 0 and 1 outcomes
-    assert (
-        "measurement_0" in results
-    ), f"measurement_0 not found in {list(results.keys())}"
-    values = results["measurement_0"]
+    # Handle both key formats: measurement_0 or q0
+    if "measurement_0" in results:
+        m_key = "measurement_0"
+    elif "q0" in results:
+        m_key = "q0"
+    else:
+        msg = f"Expected measurement_0 or q0 in {list(results.keys())}"
+        raise AssertionError(msg)
+    values = results[m_key]
     # Values are integers (0 or 1), not strings
     zeros = sum(1 for v in values if v == 0)
     ones = sum(1 for v in values if v == 1)

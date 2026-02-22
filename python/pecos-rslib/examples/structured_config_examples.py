@@ -128,9 +128,7 @@ def example_direct_configuration() -> None:
     )
 
     results_100 = simulation
-    results_1000 = (
-        sim(qasm).seed(42).auto_workers().noise(noise).quantum(state_vector()).run(1000)
-    )
+    results_1000 = sim(qasm).seed(42).auto_workers().noise(noise).quantum(state_vector()).run(1000)
 
     print("First run (100 shots):")
     print(f"  Sample results: {results_100['c'][:5]}")
@@ -167,14 +165,7 @@ def example_builder_vs_direct() -> None:
         .with_p1_pauli_model({"X": 0.5, "Y": 0.3, "Z": 0.2})
     )
 
-    results_builder = (
-        sim(qasm)
-        .seed(42)
-        .workers(4)
-        .noise(noise_via_builder)
-        .quantum(state_vector())
-        .run(100)
-    )
+    results_builder = sim(qasm).seed(42).workers(4).noise(noise_via_builder).quantum(state_vector()).run(100)
     print(f"  Results type: {type(results_builder['c'][0])} (integers)")
 
     # APPROACH 2: Using another configuration with same parameters

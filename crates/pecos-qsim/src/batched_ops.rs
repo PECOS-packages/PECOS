@@ -37,7 +37,7 @@
 use crate::gens::GensGeneric;
 use crate::sparse_stab::SparseStabGeneric;
 use pecos_core::{BitSet, IndexSet};
-use pecos_rng::{Rng, RngCore, SeedableRng};
+use pecos_rng::{Rng, SeedableRng};
 use std::fmt::Debug;
 use std::mem;
 
@@ -73,7 +73,7 @@ pub trait BatchedOps {
     fn cz_batched(&mut self, qubits: &[usize]) -> &mut Self;
 }
 
-impl<R: RngCore + SeedableRng + Rng + Debug> BatchedOps for SparseStabGeneric<BitSet, R> {
+impl<R: SeedableRng + Rng + Debug> BatchedOps for SparseStabGeneric<BitSet, R> {
     #[inline]
     fn h_batched(&mut self, qubits: &[usize]) -> &mut Self {
         // Early exit for empty input
@@ -322,7 +322,7 @@ pub trait RawOps {
     fn mz_raw(&mut self, qubits: &[usize]) -> Vec<crate::MeasurementResult>;
 }
 
-impl<S: IndexSet, R: RngCore + SeedableRng + Rng + Debug> RawOps for SparseStabGeneric<S, R> {
+impl<S: IndexSet, R: SeedableRng + Rng + Debug> RawOps for SparseStabGeneric<S, R> {
     #[inline]
     fn h_raw(&mut self, qubits: &[usize]) -> &mut Self {
         use crate::CliffordGateable;
@@ -485,10 +485,7 @@ impl CommandBuffer {
     /// 1. Single-qubit Pauli gates (X, Z) - pure phase updates
     /// 2. Single-qubit Clifford gates (H, SZ) - column operations
     /// 3. Two-qubit gates (CX, CZ) - cross-column operations
-    pub fn flush<R: RngCore + SeedableRng + Rng + Debug>(
-        &mut self,
-        sim: &mut SparseStabGeneric<BitSet, R>,
-    ) {
+    pub fn flush<R: SeedableRng + Rng + Debug>(&mut self, sim: &mut SparseStabGeneric<BitSet, R>) {
         // Phase 1: Pauli gates (only affect signs)
         if !self.x_qubits.is_empty() {
             sim.x_batched(&self.x_qubits);

@@ -65,7 +65,7 @@ use pecos_core::QubitId;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_qsim::{CliffordGateable, ForcedMeasurement};
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use rand_core::SeedableRng;
 
 /// Configuration for biasing measurement outcomes.

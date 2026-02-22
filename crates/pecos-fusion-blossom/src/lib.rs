@@ -10,11 +10,13 @@
     clippy::cast_sign_loss
 )]
 
+pub mod builder;
 pub mod core_traits;
 pub mod decoder;
 pub mod errors;
 
 // Re-export main types
+pub use builder::FusionBlossomBuilder;
 pub use decoder::{
     DecodingOptions, DecodingResult, FusionBlossomConfig, FusionBlossomDecoder,
     PerfectMatchingInfo, SolverType, StandardCode, SyndromeData,

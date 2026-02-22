@@ -112,9 +112,7 @@ def test_permutation_with_conditional_qasm() -> None:
     print(qasm)
 
     # Verify that the QASM contains the correct permuted operations
-    assert (
-        "b[0] = 1;" in qasm
-    )  # The classical bit assignment happens before permutation
+    assert "b[0] = 1;" in qasm  # The classical bit assignment happens before permutation
     # The condition and operation should both be permuted
     assert "if(b[1] == 1) x a[1];" in qasm
 

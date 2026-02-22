@@ -39,11 +39,11 @@ from pecos_rslib import (
     PauliString,  # Multi-qubit Pauli operators
     TimeUnits,  # Abstract time duration in arbitrary units
     WasmForeignObject,  # WASM foreign object for classical coprocessor
-    abs,  # Absolute value  # noqa: A004
-    all,  # All elements true  # noqa: A004
+    abs,  # Absolute value
+    all,  # All elements true
     allclose,  # Approximate equality (arrays)
     angle64,  # Fixed-point angle type with exact constants (pi, frac_pi_2, etc.)
-    any,  # Any element true  # noqa: A004
+    any,  # Any element true
     array,  # Array creation
     array_equal,  # Array equality
     complex64,
@@ -62,16 +62,16 @@ from pecos_rslib import (
     isnan,  # Check for NaN
     ln,  # Natural logarithm
     log,  # Logarithm with base
-    max,  # Maximum value  # noqa: A004
+    max,  # Maximum value
     mean,  # Mean/average
-    min,  # Minimum value  # noqa: A004
+    min,  # Minimum value
     num,
     power,  # Power function
     sin,  # Sine
     sinh,  # Hyperbolic sine
     sqrt,  # Square root
     std,  # Standard deviation
-    sum,  # Sum  # noqa: A004
+    sum,  # Sum
     tan,  # Tangent
     tanh,  # Hyperbolic tangent
     u8,
@@ -98,7 +98,7 @@ from pecos_rslib.num import (
     newton,  # Newton-Raphson root finding
     ones,  # Arrays of ones
     polyfit,  # Polynomial fitting
-    round,  # Rounding  # noqa: A004
+    round,  # Rounding
     zeros,  # Arrays of zeros
 )
 

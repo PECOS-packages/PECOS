@@ -30,11 +30,11 @@ def test_slr_converter_without_optimization() -> None:
     # Explicitly disable optimization
     qasm = SlrConverter(prog, optimize_parallel=False).qasm()
 
-    # Operations should appear in original order
+    # Operations should appear in original order (with parallel comments)
     ops = [
         line.strip()
         for line in qasm.split("\n")
-        if line.strip() and not line.startswith(("OPENQASM", "include", "qreg", "creg"))
+        if line.strip() and not line.startswith(("OPENQASM", "include", "qreg", "creg", "//"))
     ]
     assert ops == ["h q[0];", "x q[1];", "h q[2];", "x q[3];"]
 
@@ -55,10 +55,11 @@ def test_slr_converter_with_optimization() -> None:
     qasm = SlrConverter(prog).qasm()
 
     # Operations should be reordered by type (H gates first, then X gates)
+    # AST codegen adds parallel comments
     ops = [
         line.strip()
         for line in qasm.split("\n")
-        if line.strip() and not line.startswith(("OPENQASM", "include", "qreg", "creg"))
+        if line.strip() and not line.startswith(("OPENQASM", "include", "qreg", "creg", "//"))
     ]
     assert ops == ["h q[0];", "h q[2];", "x q[1];", "x q[3];"]
 
@@ -86,12 +87,13 @@ def test_slr_converter_optimization_preserves_semantics() -> None:
     qasm_opt = SlrConverter(prog).qasm()
 
     # Both should have the same gates
+    # AST codegen uses individual measure statements
     for gate in [
         "h q[0]",
         "h q[2]",
         "cx q[0], q[1]",
         "cx q[2], q[3]",
-        "measure q -> m",
+        "measure q[0] -> m[0]",
     ]:
         assert gate in qasm_unopt
         assert gate in qasm_opt

@@ -10,7 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use rand::{RngCore, SeedableRng};
+use core::convert::Infallible;
+use rand_core::{Rng, SeedableRng, TryRng};
 use std::fmt::{self, Debug};
 
 /// A deterministic random number generator that cycles through a predefined sequence of values
@@ -25,7 +26,7 @@ use std::fmt::{self, Debug};
 ///
 /// ```
 /// use pecos_core::rng::ReplayingRng;
-/// use rand::{Rng, SeedableRng, RngCore};
+/// use rand_core::Rng;
 ///
 /// // Create an RNG with a predefined sequence
 /// let mut rng = ReplayingRng::from_values(vec![42, 123, 7, 99]);
@@ -139,17 +140,20 @@ impl Debug for ReplayingRng {
     }
 }
 
-impl RngCore for ReplayingRng {
-    fn next_u32(&mut self) -> u32 {
+impl TryRng for ReplayingRng {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         // Get the next u64 value and truncate it to u32
-        (self.next_value() & 0xFFFF_FFFF) as u32
+        #[allow(clippy::cast_possible_truncation)]
+        Ok((self.next_value() & 0xFFFF_FFFF) as u32)
     }
 
-    fn next_u64(&mut self) -> u64 {
-        self.next_value()
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.next_value())
     }
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         if let Some(bytes) = &self.bytes {
             // Special handling when we have recorded bytes
             // The next two values will be start index and length
@@ -163,7 +167,7 @@ impl RngCore for ReplayingRng {
                 // Check if we have enough bytes
                 if start + len <= bytes.len() && len <= dest.len() {
                     dest[..len].copy_from_slice(&bytes[start..start + len]);
-                    return;
+                    return Ok(());
                 }
             }
         }
@@ -172,12 +176,13 @@ impl RngCore for ReplayingRng {
         let mut i = 0;
         while i < dest.len() {
             let random_val = self.next_u32();
-            let bytes = random_val.to_le_bytes();
+            let random_bytes = random_val.to_le_bytes();
             let remaining = dest.len() - i;
-            let len = std::cmp::min(bytes.len(), remaining);
-            dest[i..i + len].copy_from_slice(&bytes[..len]);
+            let len = std::cmp::min(random_bytes.len(), remaining);
+            dest[i..i + len].copy_from_slice(&random_bytes[..len]);
             i += len;
         }
+        Ok(())
     }
 }
 
@@ -208,7 +213,7 @@ impl SeedableRng for ReplayingRng {
         Self::from_seed(seed.to_le_bytes())
     }
 
-    fn from_rng(rng: &mut impl RngCore) -> Self {
+    fn from_rng<R: Rng + ?Sized>(rng: &mut R) -> Self {
         // Generate a small set of random values for our sequence
         let mut values = Vec::with_capacity(5);
         for _ in 0..5 {

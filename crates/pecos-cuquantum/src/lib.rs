@@ -52,8 +52,10 @@
 //! # Stub Mode
 //!
 //! If cuQuantum is not installed, the underlying `pecos-cuquantum-sys` crate
-//! generates stub bindings. Code will compile but fail at link time if you
-//! try to create a `CuStateVec`.
+//! generates stub bindings. Code will compile and link, but constructors
+//! (e.g., `CuStateVec::new()`) will return `Err(CuQuantumError::NotAvailable(...))`
+//! with installation instructions. Use [`is_cuquantum_available()`] to check
+//! at runtime whether the SDK was present at build time.
 
 pub mod densitymat;
 pub mod error;
@@ -80,12 +82,12 @@ pub use pecos_qsim::{
 
 /// Check if cuQuantum was found at build time
 ///
-/// This uses `pecos-build` to check if cuQuantum is installed.
-/// Even if this returns false, the crate can still be compiled
-/// (using stub bindings), but creating a `CuStateVec` will fail at link time.
+/// Returns `true` if the cuQuantum SDK was available when this crate was compiled.
+/// When this returns `false`, constructors like `CuStateVec::new()` will return
+/// `Err(CuQuantumError::NotAvailable(...))` with installation instructions.
 #[must_use]
 pub fn is_cuquantum_available() -> bool {
-    pecos_build::cuquantum::is_cuquantum_available()
+    cfg!(not(cuquantum_stub))
 }
 
 #[cfg(test)]

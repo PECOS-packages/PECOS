@@ -52,13 +52,15 @@ try:
     from pecos.simulators.custatevec.state import (
         CuStateVec,
     )
+except ImportError:
+    CuStateVec = None
 
-    # wrapper for cuQuantum's cuStateVec
+# Attempt to import optional pytket-cutensornet for MPS simulator
+try:
     from pecos.simulators.mps_pytket import (
         MPS,
     )
 except ImportError:
-    CuStateVec = None
     MPS = None
 
 # Attempt to import Rust cuQuantum bindings (pecos-rslib-cuda)

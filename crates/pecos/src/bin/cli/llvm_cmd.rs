@@ -5,7 +5,6 @@
 use super::LlvmCommands;
 use pecos_build::Result;
 use pecos_build::llvm::config::{auto_configure_llvm, validate_llvm_config};
-use pecos_build::llvm::installer::install_llvm;
 use pecos_build::llvm::{
     find_llvm_14, find_tool, get_llvm_version, get_pecos_command, get_repo_root_from_manifest,
 };
@@ -13,10 +12,6 @@ use pecos_build::llvm::{
 /// Run an LLVM subcommand
 pub fn run(command: LlvmCommands) -> Result<()> {
     match command {
-        LlvmCommands::Install {
-            force,
-            no_configure,
-        } => run_install(force, no_configure),
         LlvmCommands::Check { quiet } => run_check(quiet),
         LlvmCommands::Configure => run_configure(),
         LlvmCommands::Find { export } => run_find(export),
@@ -24,11 +19,6 @@ pub fn run(command: LlvmCommands) -> Result<()> {
         LlvmCommands::Validate { path } => run_validate(path),
         LlvmCommands::Tool { name } => run_tool(&name),
     }
-}
-
-fn run_install(force: bool, no_configure: bool) -> Result<()> {
-    install_llvm(force, no_configure)?;
-    Ok(())
 }
 
 fn run_check(quiet: bool) -> Result<()> {
@@ -55,7 +45,7 @@ fn run_check(quiet: bool) -> Result<()> {
             let cmd = get_pecos_command();
             eprintln!("LLVM 14 not found");
             eprintln!();
-            eprintln!("Install with: `{cmd} llvm install`");
+            eprintln!("Install with: `{cmd} install llvm`");
         }
         std::process::exit(1);
     }

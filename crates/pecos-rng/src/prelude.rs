@@ -23,8 +23,8 @@ pub use crate::rng_pcg;
 pub use crate::scalar_rng;
 
 // Re-export rand traits for convenience
-pub use rand::Rng;
-pub use rand_core::{RngCore, SeedableRng};
+pub use rand::RngExt;
+pub use rand_core::{Rng, SeedableRng, TryRng};
 
 // Re-export types
 pub use crate::quality_rng::{PecosQualityRng, SimdXoshiro256PlusPlus};

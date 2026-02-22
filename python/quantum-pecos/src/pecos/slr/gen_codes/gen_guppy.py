@@ -4,6 +4,9 @@ This module provides the entry point for Guppy code generation.
 The actual implementation is in the guppy/ subdirectory.
 """
 
-from pecos.slr.gen_codes.guppy import GuppyGenerator
+from pecos.slr.gen_codes.guppy import IRGuppyGenerator
 
-__all__ = ["GuppyGenerator"]
+# Alias for convenience
+GuppyGenerator = IRGuppyGenerator
+
+__all__ = ["GuppyGenerator", "IRGuppyGenerator"]

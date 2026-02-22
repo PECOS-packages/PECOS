@@ -44,7 +44,7 @@ class TestConversionConsistency:
         slr_qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         # Convert SLR -> QuantumCircuit -> SLR -> QASM
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(slr_prog)
         qc = generator.get_circuit()
 
@@ -60,9 +60,7 @@ class TestConversionConsistency:
             assert op in qc_qasm.lower(), f"'{op}' missing from QuantumCircuit QASM"
 
         # Check CX with flexible formatting
-        assert any(
-            cx in slr_qasm.lower() for cx in cx_variants
-        ), f"CX variants {cx_variants} missing from SLR QASM"
+        assert any(cx in slr_qasm.lower() for cx in cx_variants), f"CX variants {cx_variants} missing from SLR QASM"
         assert any(
             cx in qc_qasm.lower() for cx in cx_variants
         ), f"CX variants {cx_variants} missing from QuantumCircuit QASM"
@@ -105,12 +103,8 @@ class TestConversionConsistency:
             assert op in roundtrip_qasm, f"'{op}' missing from round-trip QASM"
 
         # Check CX gate with flexible formatting
-        assert any(
-            cx in slr_qasm for cx in cx_ops
-        ), "Neither CX format found in SLR QASM"
-        assert any(
-            cx in roundtrip_qasm for cx in cx_ops
-        ), "Neither CX format found in round-trip QASM"
+        assert any(cx in slr_qasm for cx in cx_ops), "Neither CX format found in SLR QASM"
+        assert any(cx in roundtrip_qasm for cx in cx_ops), "Neither CX format found in round-trip QASM"
 
     def test_parallel_operations_qasm(self) -> None:
         """Test that parallel operations are correctly represented in QASM."""
@@ -142,7 +136,7 @@ class TestConversionConsistency:
         assert "cx q[2],q[3]" in qasm or "cx q[2], q[3]" in qasm
 
         # Test through QuantumCircuit conversion
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -150,9 +144,7 @@ class TestConversionConsistency:
         assert len(qc) == 3, f"Expected 3 ticks but got {len(qc)}"
 
         # First tick should have all parallel operations
-        tick0_gates = {
-            symbol: locations for symbol, locations, _params in qc[0].items()
-        }
+        tick0_gates = {symbol: locations for symbol, locations, _params in qc[0].items()}
         assert len(tick0_gates) == 4  # H, X, Y, Z
         assert "H" in tick0_gates
         assert 0 in tick0_gates["H"]
@@ -181,7 +173,7 @@ class TestConversionConsistency:
         assert cx_count == 3, f"Expected 3 CX gates, got {cx_count}"
 
         # Test through QuantumCircuit conversion
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -193,16 +185,10 @@ class TestConversionConsistency:
             return {symbol: locations for symbol, locations, _params in tick.items()}
 
         h_count = sum(
-            1
-            for i in range(len(qc))
-            for gates in [get_tick_gates(qc[i])]
-            if "H" in gates and 0 in gates["H"]
+            1 for i in range(len(qc)) for gates in [get_tick_gates(qc[i])] if "H" in gates and 0 in gates["H"]
         )
         cx_count = sum(
-            1
-            for i in range(len(qc))
-            for gates in [get_tick_gates(qc[i])]
-            if "CX" in gates and (0, 1) in gates["CX"]
+            1 for i in range(len(qc)) for gates in [get_tick_gates(qc[i])] if "CX" in gates and (0, 1) in gates["CX"]
         )
 
         assert h_count == 3
@@ -273,7 +259,7 @@ class TestConversionConsistency:
         assert qasm.count("measure") == 3
 
         # Test through QuantumCircuit
-        generator = QuantumCircuitGenerator()
+        generator = QuantumCircuitGenerator(_internal=True)
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
@@ -343,18 +329,13 @@ class TestQASMValidation:
             for line in lines
             if line.strip()
             and not line.startswith("//")
-            and not any(
-                keyword in line for keyword in ["OPENQASM", "include", "qreg", "creg"]
-            )
+            and not any(keyword in line for keyword in ["OPENQASM", "include", "qreg", "creg"])
         ]
 
         for line in gate_lines:
             if line:
                 # Basic syntax check - should have valid gate format
-                assert (
-                    any(gate in line for gate in ["h", "cx", "measure", "reset"])
-                    or "->" in line
-                )
+                assert any(gate in line for gate in ["h", "cx", "measure", "reset"]) or "->" in line
 
     def test_register_declaration_consistency(self) -> None:
         """Test that register declarations are consistent in QASM."""

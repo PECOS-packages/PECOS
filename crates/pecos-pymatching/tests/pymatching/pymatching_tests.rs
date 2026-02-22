@@ -599,8 +599,7 @@ fn test_noise_simulation() {
 #[test]
 fn test_monte_carlo_simulation() {
     // Alternative: Implement our own noise simulation
-    use pecos_rng::PecosRng;
-    use rand::Rng;
+    use pecos_rng::{PecosRng, RngExt};
 
     let config = PyMatchingConfig {
         num_nodes: Some(4),

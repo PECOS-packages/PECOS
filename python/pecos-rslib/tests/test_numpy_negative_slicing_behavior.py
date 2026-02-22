@@ -90,9 +90,7 @@ def test_numpy_slicing_behavior():
     print("=" * 60)
     print("Test 9: Finding the magic stop value")
     print("  When using negative step to go to beginning:")
-    print(
-        f"    slice(3, None, -1).indices(4) gives stop={slice(3, None, -1).indices(4)[1]}"
-    )
+    print(f"    slice(3, None, -1).indices(4) gives stop={slice(3, None, -1).indices(4)[1]}")
     print("  But we can't use -1 directly in arr[3:-1:-1]")
     print("  We need a value that means 'before index 0'")
     print(f"    arr[3:-5:-1] = {arr[3:-5:-1]}")

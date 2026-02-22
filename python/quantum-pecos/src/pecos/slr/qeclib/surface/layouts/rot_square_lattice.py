@@ -85,9 +85,7 @@ class SquareRotatedLayout:
         for i, (pauli, _) in enumerate(stab_gens):
             polygon_colors[i] = 0 if pauli == "X" else 1
 
-        polygons = [
-            [calc_id2pos(id_, dz, dx) for id_ in datas] for _, datas in stab_gens
-        ]
+        polygons = [[calc_id2pos(id_, dz, dx) for id_ in datas] for _, datas in stab_gens]
 
         polygons = [order_coords_counter_clockwise(coords) for coords in polygons]
 
@@ -234,9 +232,7 @@ def get_stab_gens(height: int, width: int) -> list[tuple[str, tuple[int, ...]]]:
                         ]
                         polygons_1.append(poly)
 
-    return [("X", tuple(poly)) for poly in polygons_0] + [
-        ("Z", tuple(poly)) for poly in polygons_1
-    ]
+    return [("X", tuple(poly)) for poly in polygons_0] + [("Z", tuple(poly)) for poly in polygons_1]
 
 
 def order_coords_counter_clockwise(

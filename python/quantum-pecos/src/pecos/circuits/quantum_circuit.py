@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import defaultdict
 from collections.abc import MutableSequence
 from typing import TYPE_CHECKING
 
@@ -270,11 +271,7 @@ class QuantumCircuit(MutableSequence):
                 return list(obj)
             return obj
 
-        params_json = (
-            json.dumps({k: make_serializable(v) for k, v in params.items()})
-            if params
-            else ""
-        )
+        params_json = json.dumps({k: make_serializable(v) for k, v in params.items()}) if params else ""
 
         # Helper to store original symbol and params in metadata (idempotent - skips if qubit already used)
         def add_with_symbol(
@@ -447,7 +444,7 @@ class QuantumCircuit(MutableSequence):
                             result.meta("_symbol", symbol)
                             if params_json:
                                 result.meta("_params", params_json)
-                        except QubitConflictError:  # noqa: PERF203
+                        except QubitConflictError:
                             pass  # Qubit already initialized in this tick
                 else:
                     try:
@@ -469,7 +466,7 @@ class QuantumCircuit(MutableSequence):
                             result.meta("_symbol", symbol)
                             if params_json:
                                 result.meta("_params", params_json)
-                        except QubitConflictError:  # noqa: PERF203
+                        except QubitConflictError:
                             pass  # Qubit already measured in this tick
                 else:
                     try:
@@ -595,11 +592,7 @@ class QuantumCircuit(MutableSequence):
             actual_tick = tick if tick >= 0 else logical_ticks + tick
 
             # If we're trying to access a tick that doesn't exist physically yet, create it
-            tick_handle = (
-                self._inner.tick()
-                if actual_tick >= physical_ticks
-                else self._inner.tick_at(actual_tick)
-            )
+            tick_handle = self._inner.tick() if actual_tick >= physical_ticks else self._inner.tick_at(actual_tick)
 
         for gate_symbol, gate_locations in gate_dict.items():
             if gate_locations:
@@ -684,7 +677,7 @@ class QuantumCircuit(MutableSequence):
                 gate_type_str = str(gate.gate_type)
                 # Extract gate type name from "GateType.H" format
                 if "." in gate_type_str:
-                    gate_type_str = gate_type_str.split(".")[-1]
+                    gate_type_str = gate_type_str.rsplit(".", maxsplit=1)[-1]
                 symbol = _GATETYPE_TO_SYMBOL.get(gate_type_str, gate_type_str)
 
             qubits = list(gate.qubits)
@@ -845,9 +838,7 @@ class QuantumCircuit(MutableSequence):
     def _fix_json_meta(meta: JSONDict) -> JSONDict:
         """Fix some of the type issues for converting json rep back to a QuantumCircuit."""
         if "var_output" in meta:
-            meta["var_output"] = {
-                int(k): tuple(v) for k, v in meta["var_output"].items()
-            }
+            meta["var_output"] = {int(k): tuple(v) for k, v in meta["var_output"].items()}
         return meta
 
     @classmethod
@@ -862,11 +853,7 @@ class QuantumCircuit(MutableSequence):
             sym = gate_dict["sym"]
 
             qubits = gate_dict["qubits"]
-            qubits = (
-                set(qubits)
-                if qubits and isinstance(qubits[0], int)
-                else {tuple(q) for q in qubits}
-            )
+            qubits = set(qubits) if qubits and isinstance(qubits[0], int) else {tuple(q) for q in qubits}
 
             meta = gate_dict["metadata"]
             meta = cls._fix_json_meta(meta)
@@ -982,6 +969,21 @@ class TickView:
     Provides the same interface as the old ParamGateCollection for backwards compatibility.
     """
 
+    class Gate:
+        """Gate representation with symbol, parameters, and locations."""
+
+        __slots__ = ("locations", "params", "symbol")
+
+        def __init__(self, symbol: str, params: JSONDict, locations: set[Location]) -> None:
+            """Initialize a Gate with its symbol, parameters, and locations."""
+            self.symbol = symbol
+            self.params = params
+            self.locations = locations
+
+        def __repr__(self) -> str:
+            """Return a string representation of the Gate."""
+            return f"Gate(symbol={self.symbol!r}, params={self.params!r}, locations={self.locations!r})"
+
     def __init__(self, circuit: QuantumCircuit, tick_idx: int) -> None:
         """Initialize a TickView.
 
@@ -1000,7 +1002,7 @@ class TickView:
     @property
     def active_qudits(self) -> set[Location]:
         """Returns the active qudits for this tick."""
-        tick = self._circuit._inner.get_tick(self._tick_idx)  # noqa: SLF001
+        tick = self._circuit._inner.get_tick(self._tick_idx)
         if tick is None:
             return set()
 
@@ -1018,6 +1020,23 @@ class TickView:
         """Returns the circuit metadata."""
         return self._circuit.metadata
 
+    @property
+    def symbols(self) -> dict[str, list[Gate]]:
+        """Returns a dictionary mapping gate symbols to lists of Gate objects.
+
+        Each Gate has .symbol, .params, and .locations attributes.
+
+        Example:
+            >>> tick = circuit[0]
+            >>> for gate in tick.symbols["CX"]:
+            ...     print(gate.locations)
+            ...
+        """
+        result: dict[str, list[TickView.Gate]] = defaultdict(list)
+        for symbol, locations, params in self.items():
+            result[symbol].append(self.Gate(symbol, params, locations))
+        return dict(result)
+
     def add(
         self,
         symbol: str | GateDict | None,
@@ -1034,10 +1053,10 @@ class TickView:
         gate_dict: GateDict = symbol if locations is None else {symbol: locations}  # type: ignore[assignment]
 
         if gate_dict:
-            tick_handle = self._circuit._inner.tick_at(self._tick_idx)  # noqa: SLF001
+            tick_handle = self._circuit._inner.tick_at(self._tick_idx)
             for gate_symbol, gate_locations in gate_dict.items():
                 if gate_locations:
-                    self._circuit._add_gate_to_tick(  # noqa: SLF001
+                    self._circuit._add_gate_to_tick(
                         tick_handle,
                         gate_symbol,
                         gate_locations,
@@ -1059,7 +1078,7 @@ class TickView:
             else:
                 qubits.append(loc)
 
-        self._circuit._inner.discard(qubits, self._tick_idx)  # noqa: SLF001
+        self._circuit._inner.discard(qubits, self._tick_idx)
         return self
 
     def items(
@@ -1067,7 +1086,7 @@ class TickView:
         _tick: None = None,
     ) -> Iterator[tuple[str, set[Location], JSONDict]]:
         """Generator to return a dictionary-like iter."""
-        yield from self._circuit._iter_tick(self._tick_idx)  # noqa: SLF001
+        yield from self._circuit._iter_tick(self._tick_idx)
 
     def __str__(self) -> str:
         """Return string representation of the tick."""

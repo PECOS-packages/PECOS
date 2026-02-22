@@ -34,7 +34,7 @@ use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights}
 use crate::command::GateCommand;
 use crate::extensible::GateCategory;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 
 /// Configuration for a category's noise.

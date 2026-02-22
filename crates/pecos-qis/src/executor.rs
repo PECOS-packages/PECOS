@@ -965,20 +965,83 @@ impl QisHeliosInterface {
         path: &std::path::Path,
         error_msg: &str,
     ) -> Result<(Library, Library), InterfaceError> {
-        // On Windows, there's no RTLD_GLOBAL flag. Symbols are automatically visible
-        // to subsequently loaded libraries through the normal DLL search mechanism.
-        // We load the library twice to maintain the same API as Unix.
-        let lib_global = unsafe {
-            Library::new(path)
-                .map_err(|e| InterfaceError::ExecutionError(format!("{error_msg}: {e}")))?
-        };
+        use std::os::windows::ffi::OsStrExt;
 
-        let lib = unsafe {
-            Library::new(path)
-                .map_err(|e| InterfaceError::ExecutionError(format!("{error_msg} (lookup): {e}")))?
-        };
+        // AddDllDirectory FFI - adds directories to the DLL search path
+        // This is better than SetDllDirectoryW because it allows multiple directories
+        type DllDirectoryCookie = *mut std::ffi::c_void;
 
-        Ok((lib_global, lib))
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn AddDllDirectory(path: *const u16) -> DllDirectoryCookie;
+            fn RemoveDllDirectory(cookie: DllDirectoryCookie) -> i32;
+            fn SetDefaultDllDirectories(flags: u32) -> i32;
+        }
+
+        // LOAD_LIBRARY_SEARCH flags
+        const LOAD_LIBRARY_SEARCH_DEFAULT_DIRS: u32 = 0x0000_1000;
+        const LOAD_LIBRARY_SEARCH_USER_DIRS: u32 = 0x0000_0400;
+
+        // On Windows, there's no RTLD_GLOBAL flag. DLL dependencies need to be
+        // findable via the standard DLL search order. For program.dll, we need
+        // pecos_qis_ffi.dll and the shim DLL to be findable.
+        //
+        // We use AddDllDirectory to temporarily add the directories containing
+        // our FFI DLLs to the search path.
+
+        // Find the directories containing our dependency DLLs
+        let qis_ffi_path = Self::find_pecos_qis_lib().ok();
+        let qis_ffi_dir = qis_ffi_path.as_ref().and_then(|p| p.parent());
+
+        let shim_path = crate::shim::get_shim_library_path();
+        let shim_dir = shim_path.as_ref().and_then(|p| p.parent());
+
+        // Combine both directories (they may be different)
+        let dll_dirs: Vec<&std::path::Path> =
+            [qis_ffi_dir, shim_dir].into_iter().flatten().collect();
+
+        // Set the default search order to include user-added directories
+        unsafe {
+            SetDefaultDllDirectories(
+                LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS,
+            );
+        }
+
+        // Add each DLL directory to the search path
+        let mut cookies: Vec<DllDirectoryCookie> = Vec::new();
+        for dir in &dll_dirs {
+            let dir_wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+            let cookie = unsafe { AddDllDirectory(dir_wide.as_ptr()) };
+            if cookie.is_null() {
+                warn!("Windows: Failed to add DLL directory: {}", dir.display());
+            } else {
+                debug!("Windows: Added DLL search directory: {}", dir.display());
+                cookies.push(cookie);
+            }
+        }
+
+        // Load the library
+        let load_result = (|| {
+            let lib_global = unsafe {
+                Library::new(path)
+                    .map_err(|e| InterfaceError::ExecutionError(format!("{error_msg}: {e}")))?
+            };
+
+            let lib = unsafe {
+                Library::new(path).map_err(|e| {
+                    InterfaceError::ExecutionError(format!("{error_msg} (lookup): {e}"))
+                })?
+            };
+
+            Ok((lib_global, lib))
+        })();
+
+        // Remove the added DLL directories
+        for cookie in cookies {
+            unsafe { RemoveDllDirectory(cookie) };
+        }
+
+        load_result
     }
 
     /// Get the qmain and setjmp wrapper function symbols from the libraries

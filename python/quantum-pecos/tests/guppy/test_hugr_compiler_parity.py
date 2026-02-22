@@ -192,10 +192,7 @@ def test_ghz_state_compilation_parity() -> None:
 def test_existing_hugr_files_parity() -> None:
     """Test parity using existing HUGR test data files."""
     # Path to test data
-    test_data_dir = (
-        Path(__file__).parent.parent.parent.parent.parent
-        / "crates/pecos/tests/test_data/hugr"
-    )
+    test_data_dir = Path(__file__).parent.parent.parent.parent.parent / "crates/pecos/tests/test_data/hugr"
 
     if not test_data_dir.exists():
         pytest.skip("Test data directory not found")

@@ -82,10 +82,7 @@ class ScopeManager:
     def _analyze_scope_exit(self, scope: ScopeInfo) -> None:
         """Analyze resource usage when exiting a scope."""
         # For conditional scopes, propagate resource usage to parent
-        if (
-            scope.scope_type in [ScopeType.IF_THEN, ScopeType.IF_ELSE]
-            and self.current_scope
-        ):
+        if scope.scope_type in [ScopeType.IF_THEN, ScopeType.IF_ELSE] and self.current_scope:
             for res_name, usage in scope.resource_usage.items():
                 if res_name not in self.current_scope.resource_usage:
                     self.current_scope.resource_usage[res_name] = ResourceUsage(
@@ -157,10 +154,7 @@ class ScopeManager:
         context = self.current_context
         for var_name, var_info in context.variables.items():
             if (
-                (
-                    var_info.var_type == "quantum"
-                    and var_info.state != ResourceState.CONSUMED
-                )
+                (var_info.var_type == "quantum" and var_info.state != ResourceState.CONSUMED)
                 and var_info.is_array
                 and var_info.size
             ):
@@ -168,11 +162,7 @@ class ScopeManager:
                 consumed_indices = set()
                 if self.current_scope and var_name in self.current_scope.resource_usage:
                     usage = self.current_scope.resource_usage[var_name]
-                    consumed_indices = (
-                        set(range(var_info.size))
-                        if usage.is_consumed
-                        else usage.indices
-                    )
+                    consumed_indices = set(range(var_info.size)) if usage.is_consumed else usage.indices
 
                 # Find unconsumed indices
                 all_indices = set(range(var_info.size))

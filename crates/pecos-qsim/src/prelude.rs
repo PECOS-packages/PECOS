@@ -16,6 +16,7 @@ pub use crate::{
     arbitrary_rotation_gateable::ArbitraryRotationGateable,
     clifford_gateable::{CliffordGateable, MeasurementResult},
     coin_toss::CoinToss,
+    gens::Gens,
     measurement_sampler::{MeasurementSampler, SampleResult, SequentialMeasurementSampler},
     pauli_prop::PauliProp,
     quantum_simulator::QuantumSimulator,

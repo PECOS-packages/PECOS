@@ -115,12 +115,7 @@ class ArrayAccess(IRNode):
         # Handle old API
         if self.array_name and not self.force_array_syntax:
             var = context.lookup_variable(self.array_name)
-            if (
-                var
-                and var.is_unpacked
-                and isinstance(self.index, int)
-                and self.index < len(var.unpacked_names)
-            ):
+            if var and var.is_unpacked and isinstance(self.index, int) and self.index < len(var.unpacked_names):
                 return [var.unpacked_names[self.index]]
 
         # Render array if it's an IRNode (e.g., FieldAccess)

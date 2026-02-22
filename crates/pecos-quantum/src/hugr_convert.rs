@@ -86,6 +86,7 @@ pub fn hugr_op_to_gate_type(op_name: &str) -> Option<GateType> {
         "CX" => Some(GateType::CX),
         "CY" => Some(GateType::CY),
         "CZ" => Some(GateType::CZ),
+        "CH" => Some(GateType::CH),
         "ZZMax" => Some(GateType::SZZ),
         "SWAP" => Some(GateType::SWAP),
         "CRz" => Some(GateType::CRZ),
@@ -123,6 +124,7 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
         GateType::CX => Some("CX"),
         GateType::CY => Some("CY"),
         GateType::CZ => Some("CZ"),
+        GateType::CH => Some("CH"),
         GateType::SZZ => Some("ZZMax"),
         GateType::SWAP => Some("SWAP"),
         GateType::CRZ => Some("CRz"),
@@ -191,7 +193,10 @@ struct QuantumOp {
 /// Check if a gate type is a rotation gate that takes angle parameters.
 #[must_use]
 pub fn is_rotation_gate(gate_type: GateType) -> bool {
-    matches!(gate_type, GateType::RX | GateType::RY | GateType::RZ)
+    matches!(
+        gate_type,
+        GateType::RX | GateType::RY | GateType::RZ | GateType::CRZ
+    )
 }
 
 /// Try to extract a constant numeric value from a HUGR Const node.
@@ -374,7 +379,7 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
     let op_short = if op_name.len() > 80 {
         format!("{}...", &op_name[..80])
     } else {
-        op_name
+        op_name.clone()
     };
     log::trace!(
         "{}trace_back_for_const: node={:?}, op={}",
@@ -437,6 +442,16 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
                 return trace_back_for_const(hugr, src_node, depth + 1);
             }
         }
+
+        // Handle float negation (fneg) - used for negative rotation angles
+        if op_name == "fneg" {
+            let input_port = IncomingPort::from(0);
+            if let Some((src_node, _)) = hugr.single_linked_output(node, input_port)
+                && let Some((val, is_half_turns)) = trace_back_for_const(hugr, src_node, depth + 1)
+            {
+                return Some((-val, is_half_turns));
+            }
+        }
     }
 
     // For UnpackTuple, trace through
@@ -456,7 +471,8 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
         // 2. Numeric argument values
         let mut is_division = false;
         let mut is_multiplication = false;
-        let mut numeric_values: Vec<(usize, f64)> = Vec::new();
+        let mut is_negation = false;
+        let mut numeric_values: Vec<(usize, f64, bool)> = Vec::new();
 
         // Get the number of input ports for this node
         let num_inputs = hugr.num_inputs(node);
@@ -476,19 +492,29 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
                     if func_name.contains("__mul__") || func_name.contains("__rmul__") {
                         is_multiplication = true;
                     }
+                    if func_name.contains("__neg__") {
+                        is_negation = true;
+                    }
                 }
 
                 // Try to get a numeric value from this input
-                if let Some((val, _)) = trace_back_for_const(hugr, src_node, depth + 1) {
-                    numeric_values.push((port_idx, val));
+                if let Some((val, is_half_turns)) = trace_back_for_const(hugr, src_node, depth + 1)
+                {
+                    numeric_values.push((port_idx, val, is_half_turns));
                 }
             }
+        }
+
+        // If this is a negation call and we have a numeric value, negate it
+        if is_negation && !numeric_values.is_empty() {
+            let (_, val, is_half_turns) = numeric_values[0];
+            return Some((-val, is_half_turns));
         }
 
         // If this is a division call and we have two numeric values, compute the result
         if is_division && numeric_values.len() >= 2 {
             // Sort by port index to get correct order (numerator first, denominator second)
-            numeric_values.sort_by_key(|(idx, _)| *idx);
+            numeric_values.sort_by_key(|(idx, _, _)| *idx);
             let numerator = numeric_values[0].1;
             let denominator = numeric_values[1].1;
             if denominator != 0.0 {
@@ -498,14 +524,14 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
 
         // If this is a multiplication call and we have two numeric values, compute the result
         if is_multiplication && numeric_values.len() >= 2 {
-            numeric_values.sort_by_key(|(idx, _)| *idx);
+            numeric_values.sort_by_key(|(idx, _, _)| *idx);
             let factor1 = numeric_values[0].1;
             let factor2 = numeric_values[1].1;
             return Some((factor1 * factor2, false));
         }
 
         // For other calls, try to return the first numeric value found
-        if let Some((_, val)) = numeric_values.first() {
+        if let Some((_, val, _)) = numeric_values.first() {
             return Some((*val, false));
         }
     }
@@ -580,15 +606,17 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
         };
 
         // Determine number of qubit inputs/outputs based on gate type
+        // Use quantum_arity() for most gates, with special cases for alloc/free
         let (num_qubit_inputs, num_qubit_outputs) = match gate_type {
             // QAlloc: 0 inputs, 1 output (creates a qubit)
             GateType::QAlloc => (0, 1),
             // QFree/MeasureFree: 1 input, 0 qubit outputs (destroys/consumes qubit)
             GateType::QFree | GateType::MeasureFree => (1, 0),
-            // Two-qubit gates
-            GateType::CX | GateType::CY | GateType::CZ | GateType::SZZ => (2, 2),
-            // Single-qubit gates including Measure (default: 1 input, 1 output)
-            _ => (1, 1),
+            // All other gates: use quantum_arity for input/output counts
+            _ => {
+                let arity = gate_type.quantum_arity();
+                (arity, arity)
+            }
         };
 
         // Extract rotation parameters if this is a rotation gate
@@ -641,6 +669,22 @@ type WireKey = (Node, usize);
 ///    - Other gates look up their input wires to find qubit IDs
 ///    - Output wires carry the same qubit IDs (maintaining linear flow)
 /// 4. Build the `DagCircuit` with properly identified qubits
+///
+/// # Limitations
+///
+/// For Guppy-compiled HUGRs that use CFG/DFG structure (control flow graphs,
+/// dataflow graphs), qubit identity tracking may not work perfectly. Guppy stores
+/// qubits in arrays and accesses them via `borrow_array` operations. When qubit
+/// wires cross DFG boundaries (Input/Output nodes), the tracing cannot continue,
+/// resulting in fallback qubit IDs being assigned.
+///
+/// The resulting `DagCircuit` will be structurally correct (same gates in the
+/// same order with correct dependencies), but may have more qubit IDs than the
+/// actual circuit uses. Each "virtual qubit" represents a wire segment that
+/// couldn't be traced back to its origin.
+///
+/// For execution of Guppy circuits, use Selene directly which handles the HUGR
+/// structure natively.
 #[allow(clippy::too_many_lines)]
 pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> {
     let operations = extract_quantum_ops(hugr);
@@ -726,23 +770,33 @@ pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> 
                     let src_port_idx = src_port.index();
                     let wire_key = (src_node, src_port_idx);
 
-                    if let Some(&qubit_id) = wire_to_qubit.get(&wire_key) {
-                        qubits.push(qubit_id);
-
-                        // If this gate has corresponding output (not a terminal op),
-                        // propagate the qubit to the output port
-                        if port_idx < op.num_qubit_outputs {
-                            wire_to_qubit.insert((current_node, port_idx), qubit_id);
-                        }
+                    // First, try direct lookup in wire_to_qubit
+                    let qubit_id = if let Some(&qid) = wire_to_qubit.get(&wire_key) {
+                        qid
                     } else {
-                        // Source qubit not yet known - this shouldn't happen in topological order
-                        // but handle gracefully with a fallback
-                        let fallback_qubit = QubitId::from(next_qubit_id);
-                        next_qubit_id += 1;
-                        qubits.push(fallback_qubit);
-                        if port_idx < op.num_qubit_outputs {
-                            wire_to_qubit.insert((current_node, port_idx), fallback_qubit);
+                        // Source not directly known - trace back through non-quantum nodes
+                        // This handles Guppy's array-based qubit management (borrow_array, etc.)
+                        // Note: For complex HUGRs with CFG/DFG structure (like Guppy-compiled code),
+                        // tracing may fail when hitting DFG boundaries. In such cases, a fallback
+                        // qubit ID is used, resulting in more qubit IDs than the actual circuit uses.
+                        if let Some(traced_qid) =
+                            trace_qubit_source(hugr, src_node, src_port_idx, &wire_to_qubit, 0)
+                        {
+                            traced_qid
+                        } else {
+                            // Tracing failed (likely hit DFG boundary) - use fallback
+                            let fallback_qubit = QubitId::from(next_qubit_id);
+                            next_qubit_id += 1;
+                            fallback_qubit
                         }
+                    };
+
+                    qubits.push(qubit_id);
+
+                    // If this gate has corresponding output (not a terminal op),
+                    // propagate the qubit to the output port
+                    if port_idx < op.num_qubit_outputs {
+                        wire_to_qubit.insert((current_node, port_idx), qubit_id);
                     }
                 } else {
                     // No linked output found - use fallback
@@ -834,6 +888,158 @@ fn check_predecessors_ready(
         }
     }
     true
+}
+
+/// Trace back through non-quantum nodes to find the quantum source of a qubit wire.
+///
+/// In Guppy-compiled HUGRs, qubits often flow through intermediate operations like
+/// `borrow_array::borrow` before reaching quantum gates. This function traces back
+/// through such operations to find the original quantum operation that created or
+/// last processed the qubit.
+///
+/// # Arguments
+///
+/// * `hugr` - The HUGR graph
+/// * `node` - The current node to trace from
+/// * `port` - The output port on `node` that carries the qubit
+/// * `wire_to_qubit` - Map of known qubit wires from quantum operations
+/// * `depth` - Recursion depth limit to prevent infinite loops
+///
+/// # Returns
+///
+/// The `QubitId` if found, or `None` if tracing fails.
+fn trace_qubit_source(
+    hugr: &Hugr,
+    node: Node,
+    port: usize,
+    wire_to_qubit: &BTreeMap<WireKey, QubitId>,
+    depth: usize,
+) -> Option<QubitId> {
+    // Prevent infinite recursion
+    if depth > 50 {
+        return None;
+    }
+
+    let wire_key = (node, port);
+
+    // Check if this wire is already known
+    if let Some(&qubit_id) = wire_to_qubit.get(&wire_key) {
+        return Some(qubit_id);
+    }
+
+    let op = hugr.get_optype(node);
+
+    // Check for DFG boundary nodes - these mark where tracing cannot continue
+    // because qubit flow goes through CFG/DFG structure
+    if matches!(op, OpType::Input(_) | OpType::Output(_)) {
+        // Input/Output nodes are DFG boundaries - cannot trace through them
+        return None;
+    }
+
+    if let Some(ext_op) = op.as_extension_op() {
+        let ext_id = ext_op.extension_id();
+        let ext_name = ext_id.as_ref() as &str;
+        let op_name = ext_op.unqualified_id().to_string();
+
+        if ext_name == "tket.quantum" {
+            // This is a quantum op but not in our map - return None to trigger fallback
+            return None;
+        }
+
+        // Handle specific non-quantum operations that pass through qubits
+
+        // collections.borrow_arr::return: Takes (array, qubit) and returns array with qubit restored
+        // The qubit identity at output port 0 includes the qubit from input port 1
+        if ext_name == "collections.borrow_arr" && op_name == "return" && port == 0 {
+            // Check input port 1 (the qubit being returned)
+            let qubit_port = IncomingPort::from(1);
+            if let Some((src_node, src_port)) = hugr.single_linked_output(node, qubit_port)
+                && let Some(qubit_id) =
+                    trace_qubit_source(hugr, src_node, src_port.index(), wire_to_qubit, depth + 1)
+            {
+                return Some(qubit_id);
+            }
+            // Fall back to tracing through the array input
+            let array_port = IncomingPort::from(0);
+            if let Some((src_node, src_port)) = hugr.single_linked_output(node, array_port) {
+                return trace_qubit_source(
+                    hugr,
+                    src_node,
+                    src_port.index(),
+                    wire_to_qubit,
+                    depth + 1,
+                );
+            }
+        }
+
+        // borrow_array::borrow: Output port 1 is the borrowed qubit, which comes from the array
+        // The array is on input port 0. We trace back through the array.
+        if ext_name == "collections.borrow_arr" && op_name == "borrow" && port == 1 {
+            // The borrowed qubit comes from the array on input port 0
+            // Trace back through the array input
+            let in_port = IncomingPort::from(0);
+            if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
+                return trace_qubit_source(
+                    hugr,
+                    src_node,
+                    src_port.index(),
+                    wire_to_qubit,
+                    depth + 1,
+                );
+            }
+        }
+
+        // borrow_array::unborrow: Takes a qubit and puts it back into an array
+        // Input port 1 is the qubit, output port 0 is the array with qubit restored
+        if ext_name == "collections.borrow_arr" && op_name == "unborrow" && port == 0 {
+            // The output array contains the qubit from input port 1
+            let in_port = IncomingPort::from(1);
+            if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
+                return trace_qubit_source(
+                    hugr,
+                    src_node,
+                    src_port.index(),
+                    wire_to_qubit,
+                    depth + 1,
+                );
+            }
+        }
+
+        // MakeTuple and UnpackTuple: pass through values
+        if ext_name == "prelude" && (op_name == "MakeTuple" || op_name == "UnpackTuple") {
+            // For tuples, trace through all inputs to find qubit sources
+            let num_inputs = hugr.num_inputs(node);
+            for input_idx in 0..num_inputs {
+                let in_port = IncomingPort::from(input_idx);
+                if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port)
+                    && let Some(qubit_id) = trace_qubit_source(
+                        hugr,
+                        src_node,
+                        src_port.index(),
+                        wire_to_qubit,
+                        depth + 1,
+                    )
+                {
+                    return Some(qubit_id);
+                }
+            }
+        }
+    }
+
+    // For other operations (like Tag, Call, etc.), try to trace through all input ports
+    // This is a fallback that works for simple pass-through operations
+    let num_inputs = hugr.num_inputs(node);
+    for input_idx in 0..num_inputs {
+        let in_port = IncomingPort::from(input_idx);
+        if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port)
+            && let Some(qubit_id) =
+                trace_qubit_source(hugr, src_node, src_port.index(), wire_to_qubit, depth + 1)
+        {
+            return Some(qubit_id);
+        }
+    }
+
+    None
 }
 
 /// Convert a `DagCircuit` back to HUGR.
@@ -1220,19 +1426,29 @@ impl SimpleHugr {
                     if let Some((src_node, src_port)) =
                         hugr.single_linked_output(current_node, in_port)
                     {
-                        let wire_key = (src_node, src_port.index());
-                        if let Some(&qubit_id) = wire_to_qubit.get(&wire_key) {
-                            gate_qubits.push(qubit_id);
-                            if port_idx < op.num_qubit_outputs {
-                                wire_to_qubit.insert((current_node, port_idx), qubit_id);
-                            }
+                        let src_port_idx = src_port.index();
+                        let wire_key = (src_node, src_port_idx);
+
+                        // First, try direct lookup in wire_to_qubit
+                        let qubit_id = if let Some(&qid) = wire_to_qubit.get(&wire_key) {
+                            qid
                         } else {
-                            let fallback = QubitId::from(next_qubit_id);
-                            next_qubit_id += 1;
-                            gate_qubits.push(fallback);
-                            if port_idx < op.num_qubit_outputs {
-                                wire_to_qubit.insert((current_node, port_idx), fallback);
+                            // Source not directly known - trace back through non-quantum nodes
+                            if let Some(traced_qid) =
+                                trace_qubit_source(&hugr, src_node, src_port_idx, &wire_to_qubit, 0)
+                            {
+                                traced_qid
+                            } else {
+                                // Tracing failed - use fallback
+                                let fallback = QubitId::from(next_qubit_id);
+                                next_qubit_id += 1;
+                                fallback
                             }
+                        };
+
+                        gate_qubits.push(qubit_id);
+                        if port_idx < op.num_qubit_outputs {
+                            wire_to_qubit.insert((current_node, port_idx), qubit_id);
                         }
                     } else {
                         let fallback = QubitId::from(next_qubit_id);

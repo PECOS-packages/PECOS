@@ -1,5 +1,7 @@
 # Circuit Representations (Internal)
 
+<!--skip: Internal architecture documentation with illustrative code snippets-->
+
 This document covers the internal circuit representations used in PECOS's Rust core. For user-facing documentation on building and manipulating circuits, see the [User Guide: Circuit Representation](../user-guide/circuit-representation.md).
 
 ## Overview

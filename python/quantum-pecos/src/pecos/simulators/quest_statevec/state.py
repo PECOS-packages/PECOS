@@ -25,6 +25,7 @@ import pecos as pc
 from pecos.simulators.quest_statevec.bindings import get_bindings
 
 if TYPE_CHECKING:
+    from pecos import Array
     from pecos.circuits import QuantumCircuit
     from pecos.circuits.quantum_circuit import ParamGateCollection
     from pecos.typing import SimulatorGateParams
@@ -49,7 +50,7 @@ class QuestStateVec:
         self.bindings = get_bindings(self)
 
     @property
-    def vector(self) -> Array:  # noqa: F821 - Array is a forward reference
+    def vector(self) -> Array:
         """Get the state vector as an Array of complex numbers.
 
         Returns:

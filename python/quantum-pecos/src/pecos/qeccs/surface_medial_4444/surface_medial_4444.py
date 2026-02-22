@@ -145,9 +145,7 @@ class SurfaceMedial4444(DefaultQECC):
 
         if width is not None and height is not None:
             if distance is not None:
-                msg = (
-                    "The distance should not be specified if the height and width are."
-                )
+                msg = "The distance should not be specified if the height and width are."
                 raise Exception(msg)
 
             distance = min(width, height)

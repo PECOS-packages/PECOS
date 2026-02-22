@@ -136,18 +136,20 @@ fn generate_pcgrandom_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using `RapidRng`
 fn generate_rapidrng_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use rand::RngCore;
     use rapidhash::rng::RapidRng;
     let mut rng = RapidRng::new(seed);
     let mut bytes = vec![0u8; count];
-    rng.fill_bytes(&mut bytes);
+    // RapidRng uses rand_core 0.9, so use the next() method directly
+    for chunk in bytes.chunks_exact_mut(8) {
+        chunk.copy_from_slice(&rng.next().to_le_bytes());
+    }
     bytes
 }
 
 /// Generate random bytes using Xoshiro256++
 fn generate_xoshiro_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use rand::RngCore;
-    use rand::SeedableRng;
+    use pecos_rng::Rng;
+    use pecos_rng::SeedableRng;
     use rand_xoshiro::Xoshiro256PlusPlus;
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
@@ -157,7 +159,8 @@ fn generate_xoshiro_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using `PecosRng` (SIMD Xoshiro256++)
 fn generate_pecosrng_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use pecos_rng::prelude::{PecosRng, RngCore};
+    use pecos_rng::Rng;
+    use pecos_rng::prelude::PecosRng;
     let mut rng = PecosRng::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
     rng.fill_bytes(&mut bytes);
@@ -166,7 +169,8 @@ fn generate_pecosrng_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using `PecosRng` (parallel `RapidRng`)
 fn generate_pecosfastrng_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use pecos_rng::prelude::{PecosRng, RngCore};
+    use pecos_rng::Rng;
+    use pecos_rng::prelude::PecosRng;
     let mut rng = PecosRng::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
     rng.fill_bytes(&mut bytes);

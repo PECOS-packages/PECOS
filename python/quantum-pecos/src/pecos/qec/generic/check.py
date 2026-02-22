@@ -95,18 +95,12 @@ class StabilizerCheck:
             pauli_string = pauli_string * len(qubits)
 
         if len(pauli_string) != len(qubits):
-            msg = (
-                f"Pauli string length ({len(pauli_string)}) must match "
-                f"number of qubits ({len(qubits)})"
-            )
+            msg = f"Pauli string length ({len(pauli_string)}) must match number of qubits ({len(qubits)})"
             raise ValueError(
                 msg,
             )
 
-        paulis = tuple(
-            PauliOperator(q, PauliType(p))
-            for p, q in zip(pauli_string, qubits, strict=False)
-        )
+        paulis = tuple(PauliOperator(q, PauliType(p)) for p, q in zip(pauli_string, qubits, strict=False))
 
         return cls(
             index=index,
@@ -203,11 +197,7 @@ class CheckSchedule:
 
         rounds = []
         for i in range(max_len):
-            round_checks = [
-                color_checks[i]
-                for color_checks in by_color.values()
-                if i < len(color_checks)
-            ]
+            round_checks = [color_checks[i] for color_checks in by_color.values() if i < len(color_checks)]
             if round_checks:
                 rounds.append(round_checks)
 

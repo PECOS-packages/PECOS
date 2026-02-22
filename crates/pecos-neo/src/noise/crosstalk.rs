@@ -44,7 +44,7 @@ use super::{
 use crate::command::{GateCommand, GateType};
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 
 /// Crosstalk noise channel.

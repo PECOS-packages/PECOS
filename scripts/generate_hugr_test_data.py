@@ -422,7 +422,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # Broad exception catch is intentional - we want to handle any compilation/serialization error
         print(f"  Error generating Bell state: {e}")
         return 1
@@ -440,7 +440,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # Broad exception catch is intentional - we want to handle any compilation/serialization error
         print(f"  Error generating single Hadamard: {e}")
         return 1
@@ -458,7 +458,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # Broad exception catch is intentional - we want to handle any compilation/serialization error
         print(f"  Error generating GHZ state: {e}")
         return 1
@@ -475,7 +475,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  Error generating simple conditional: {e}")
         return 1
 
@@ -491,7 +491,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  Error generating conditional H: {e}")
         return 1
 
@@ -507,7 +507,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  Error generating conditional branch: {e}")
         return 1
 
@@ -523,7 +523,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  Error generating simple while loop: {e}")
         return 1
 
@@ -539,7 +539,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  Error generating function call: {e}")
         return 1
 
@@ -555,7 +555,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  Error generating multiple function calls: {e}")
         return 1
 
@@ -571,7 +571,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  Error generating nested function calls: {e}")
         return 1
 
@@ -587,7 +587,7 @@ def main() -> int:
             print("  Valid HUGR format")
         else:
             print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  Error generating multi-qubit function: {e}")
         return 1
 

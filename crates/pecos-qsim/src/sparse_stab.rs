@@ -15,7 +15,7 @@ use core::fmt::Debug;
 use core::mem;
 use pecos_core::{BitSet, IndexSet, QubitId, RngManageable, SortedVecSet, VecSet};
 use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, SeedableRng};
 
 /// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
 ///
@@ -99,10 +99,7 @@ use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 ///
 /// Generic sparse stabilizer simulator over set type S.
 #[derive(Clone, Debug)]
-pub struct SparseStabGeneric<
-    S: IndexSet = BitSet,
-    R: RngCore + SeedableRng + Rng + Debug = PecosRng,
-> {
+pub struct SparseStabGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = PecosRng> {
     pub(crate) num_qubits: usize,
     pub(crate) stabs: GensGeneric<S>,
     pub(crate) destabs: GensGeneric<S>,
@@ -159,7 +156,7 @@ impl SparseStabGeneric<BitSet, PecosRng> {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         Self::with_rng(num_qubits, rng)
     }
 
@@ -193,7 +190,7 @@ impl SparseStabGeneric<SortedVecSet, PecosRng> {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         Self::with_rng(num_qubits, rng)
     }
 
@@ -212,7 +209,7 @@ impl SparseStabGeneric<VecSet<usize>, PecosRng> {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         Self::with_rng(num_qubits, rng)
     }
 
@@ -229,7 +226,7 @@ impl SparseStabGeneric<VecSet<usize>, PecosRng> {
 impl<S, R> SparseStabGeneric<S, R>
 where
     S: IndexSet,
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     /// Returns the number of qubits in the system
     ///
@@ -581,7 +578,7 @@ where
 impl<S, R> QuantumSimulator for SparseStabGeneric<S, R>
 where
     S: IndexSet,
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     #[inline]
     fn reset(&mut self) -> &mut Self {
@@ -592,7 +589,7 @@ where
 impl<S, R> CliffordGateable for SparseStabGeneric<S, R>
 where
     S: IndexSet,
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
     // TODO: pub fun m(&mut self, pauli: &pauli, q: U) -> bool { todo!() }
@@ -782,7 +779,7 @@ where
 impl<S, R> RngManageable for SparseStabGeneric<S, R>
 where
     S: IndexSet,
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     type Rng = R;
 
@@ -821,7 +818,7 @@ use crate::stabilizer_tableau::StabilizerTableauSimulator;
 impl<S, R> StabilizerTableauSimulator for SparseStabGeneric<S, R>
 where
     S: IndexSet,
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     fn stab_tableau(&self) -> String {
         Self::tableau_string(self.num_qubits, &self.stabs)
@@ -851,7 +848,7 @@ use crate::GensHybrid;
 /// The hybrid approach is particularly beneficial for multi-round simulations like
 /// surface code syndrome extraction, where sign sets grow over time.
 #[derive(Clone, Debug)]
-pub struct SparseStabHybrid<R: RngCore + SeedableRng + Rng + Debug = PecosRng> {
+pub struct SparseStabHybrid<R: SeedableRng + Rng + Debug = PecosRng> {
     pub(crate) num_qubits: usize,
     pub(crate) stabs: GensHybrid,
     pub(crate) destabs: GensHybrid,
@@ -866,7 +863,7 @@ impl SparseStabHybrid<PecosRng> {
     #[inline]
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         Self::with_rng(num_qubits, rng)
     }
 
@@ -881,7 +878,7 @@ impl SparseStabHybrid<PecosRng> {
 
 impl<R> SparseStabHybrid<R>
 where
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     /// Create a hybrid stabilizer simulator with a custom RNG.
     #[inline]
@@ -1204,7 +1201,7 @@ where
 
 impl<R> QuantumSimulator for SparseStabHybrid<R>
 where
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     #[inline]
     fn reset(&mut self) -> &mut Self {
@@ -1214,7 +1211,7 @@ where
 
 impl<R> CliffordGateable for SparseStabHybrid<R>
 where
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     /// Pauli X gate. X -> X, Z -> -Z
     #[inline]
@@ -1394,7 +1391,7 @@ where
 
 impl<R> RngManageable for SparseStabHybrid<R>
 where
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     type Rng = R;
 
@@ -1415,7 +1412,7 @@ where
 
 impl<R> StabilizerTableauSimulator for SparseStabHybrid<R>
 where
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     fn stab_tableau(&self) -> String {
         Self::tableau_string(self.num_qubits, &self.stabs)
@@ -1439,7 +1436,7 @@ use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 impl<S, R> ForcedMeasurement for SparseStabGeneric<S, R>
 where
     S: IndexSet,
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         SparseStabGeneric::mz_forced(self, qubit, forced_outcome)
@@ -1448,7 +1445,7 @@ where
 
 impl<R> ForcedMeasurement for SparseStabHybrid<R>
 where
-    R: RngCore + SeedableRng + Rng + Debug,
+    R: SeedableRng + Rng + Debug,
 {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         SparseStabHybrid::mz_forced(self, qubit, forced_outcome)

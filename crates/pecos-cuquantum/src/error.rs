@@ -39,6 +39,10 @@ pub enum CuQuantumError {
     /// CUDA error
     #[error("CUDA error: {0}")]
     Cuda(String),
+
+    /// cuQuantum SDK not available
+    #[error("cuQuantum SDK not available: {0}")]
+    NotAvailable(String),
 }
 
 // =============================================================================

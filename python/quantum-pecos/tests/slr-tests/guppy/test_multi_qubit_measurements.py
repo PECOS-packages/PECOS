@@ -102,10 +102,10 @@ class TestMultiQubitMeasurements:
         assert "q[1]" in guppy_code
         assert "q[2]" in guppy_code
 
-        # Should reference classical bits
-        assert "c[0]" in guppy_code
-        assert "c[1]" in guppy_code
-        assert "c[2]" in guppy_code
+        # Should reference classical bits (AST codegen uses underscore naming)
+        assert "c_0" in guppy_code
+        assert "c_1" in guppy_code
+        assert "c_2" in guppy_code
 
         # Should not have TODO or error comments
         assert "TODO" not in guppy_code
@@ -153,9 +153,9 @@ class TestMultiQubitMeasurements:
         for i in range(5):
             assert f"q[{i}]" in guppy_code
 
-        # Should reference all classical bits
+        # Should reference all classical bits (AST codegen uses underscore naming)
         for i in range(5):
-            assert f"c[{i}]" in guppy_code
+            assert f"c_{i}" in guppy_code
 
         # Should not have TODO or error comments
         assert "TODO" not in guppy_code

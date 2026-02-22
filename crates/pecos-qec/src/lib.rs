@@ -74,6 +74,10 @@ pub use distance::{
     DistanceResult, DistanceSearchConfig, LogicalOperatorInfo, WeightedPauliIterator,
     calculate_distance, find_min_weight_logicals, find_min_weight_logicals_with_info,
 };
+pub use fault_tolerance::dem_builder::{
+    DecomposedError, DemBuilder, DemBuilderError, DetectorDef, DetectorErrorModel, ErrorMechanism,
+    LogicalObservable, NoiseConfig, combine_probabilities,
+};
 pub use fault_tolerance::{
     CorrectionResult, DecoderAnalysis, ErrorClass, ErrorCorrectionChecker, ErrorCorrectionConfig,
     ErrorCorrectionResult, FaultCheckConfig, FaultCheckResult, FaultChecker, FaultClass,

@@ -109,12 +109,17 @@ pub fn install_cuquantum(force: bool) -> Result<PathBuf> {
         ));
     }
 
+    // Clean up invalid existing installation before re-downloading
+    if !force && cuquantum_dir.exists() && !is_valid_cuquantum_installation(&cuquantum_dir) {
+        fs::remove_dir_all(&cuquantum_dir)?;
+    }
+
     // Check CUDA availability
     let cuda_version = if crate::cuda::is_cuda_available() {
         detect_cuda_version()
     } else {
         println!("Warning: CUDA not found. cuQuantum requires CUDA to function.");
-        println!("Consider installing CUDA first with: pecos cuda install");
+        println!("Consider installing CUDA first with: pecos install cuda");
         println!();
         12 // Default to CUDA 12
     };
@@ -406,6 +411,17 @@ pub fn uninstall_cuquantum() -> Result<()> {
     println!("cuQuantum uninstalled successfully");
 
     Ok(())
+}
+
+/// Ensure cuQuantum is available, installing if needed
+///
+/// # Errors
+/// Returns an error if cuQuantum cannot be found or installed.
+pub fn ensure_cuquantum() -> Result<PathBuf> {
+    if let Some(path) = super::find_cuquantum() {
+        return Ok(path);
+    }
+    install_cuquantum(false)
 }
 
 /// Check if cuQuantum needs to be installed

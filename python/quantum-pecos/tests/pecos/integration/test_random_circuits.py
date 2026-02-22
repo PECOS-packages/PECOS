@@ -118,11 +118,7 @@ def generate_circuit(
     circuit = []
 
     for element in circuit_elements:
-        q = (
-            get_qubits(num_qubits, 2)
-            if element == "CNOT"
-            else int(get_qubits(num_qubits, 1)[0])
-        )
+        q = get_qubits(num_qubits, 2) if element == "CNOT" else int(get_qubits(num_qubits, 1)[0])
 
         circuit.append((element, q))
 
@@ -155,9 +151,7 @@ def run_a_circuit(
     for i, (element, q) in enumerate(circuit):
         m = -1
         if element == "measure Z":
-            if (
-                verbose and isinstance(state, SparseSimCpp) and i == 26
-            ):  # Debug the 27th operation
+            if verbose and isinstance(state, SparseSimCpp) and i == 26:  # Debug the 27th operation
                 pass
                 # print(f"\n[DEBUG] Op {i}: {element} on qubit {q}, forcing outcome to 0")
             m = state.run_gate(element, {q}, forced_outcome=0)

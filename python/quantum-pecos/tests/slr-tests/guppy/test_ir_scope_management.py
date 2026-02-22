@@ -27,7 +27,7 @@ def test_conditional_resource_balancing() -> None:
         ),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -45,11 +45,7 @@ def test_conditional_resource_balancing() -> None:
     # Find the if and else blocks
     # Support both array access and unpacked variable
     if_idx = next(
-        (
-            i
-            for i, line in enumerate(lines)
-            if ("if flag[0]:" in line or "if flag_0:" in line)
-        ),
+        (i for i, line in enumerate(lines) if ("if flag[0]:" in line or "if flag_0:" in line)),
         -1,
     )
     if if_idx == -1:
@@ -90,7 +86,7 @@ def test_nested_conditional_scopes() -> None:
         # q[2] and q[3] might not be measured
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -115,7 +111,7 @@ def test_function_scope_returns() -> None:
         # q[1] should be cleaned up
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

@@ -75,21 +75,11 @@ class TestJackknifeResamples:
         assert resamples.shape == (5, 4)
 
         # Check each resample
-        assert pc.array_equal(
-            resamples[0], pc.array([2.0, 3.0, 4.0, 5.0])
-        )  # removed 1.0
-        assert pc.array_equal(
-            resamples[1], pc.array([1.0, 3.0, 4.0, 5.0])
-        )  # removed 2.0
-        assert pc.array_equal(
-            resamples[2], pc.array([1.0, 2.0, 4.0, 5.0])
-        )  # removed 3.0
-        assert pc.array_equal(
-            resamples[3], pc.array([1.0, 2.0, 3.0, 5.0])
-        )  # removed 4.0
-        assert pc.array_equal(
-            resamples[4], pc.array([1.0, 2.0, 3.0, 4.0])
-        )  # removed 5.0
+        assert pc.array_equal(resamples[0], pc.array([2.0, 3.0, 4.0, 5.0]))  # removed 1.0
+        assert pc.array_equal(resamples[1], pc.array([1.0, 3.0, 4.0, 5.0]))  # removed 2.0
+        assert pc.array_equal(resamples[2], pc.array([1.0, 2.0, 4.0, 5.0]))  # removed 3.0
+        assert pc.array_equal(resamples[3], pc.array([1.0, 2.0, 3.0, 5.0]))  # removed 4.0
+        assert pc.array_equal(resamples[4], pc.array([1.0, 2.0, 3.0, 4.0]))  # removed 5.0
 
     def test_jackknife_resamples_two_elements(self):
         """Edge case with two elements."""

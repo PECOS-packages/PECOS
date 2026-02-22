@@ -2,6 +2,77 @@
 
 PECOS provides multiple quantum simulation backends optimized for different use cases. This guide helps you choose the right simulator for your needs.
 
+## Setup
+
+Examples in this guide use a Bell state circuit:
+
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos import sim, Qasm
+
+    circuit = """
+    OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    creg c[2];
+    h q[0];
+    cx q[0], q[1];
+    measure q -> c;
+    """
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    <!--skip-->
+    ```rust
+    use pecos::prelude::*;
+
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+    let program = Qasm::from_string(qasm_code);
+    ```
+
+```hidden-python
+from pecos import sim, Qasm
+
+circuit = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0], q[1];
+measure q -> c;
+"""
+```
+
+```hidden-rust
+use pecos::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+    let program = Qasm::from_string(qasm_code);
+    // CODE
+    Ok(())
+}
+```
+
 ## Quick Reference
 
 | Simulator | Type | Best For | Requirements |
@@ -39,6 +110,24 @@ PECOS provides multiple quantum simulation backends optimized for different use 
                  └── Need mixed states? ──→ QuestDensityMatrix
 ```
 
+## Setup
+
+The examples below use this Bell state circuit:
+
+```python
+from pecos import sim, Qasm
+
+circuit = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0], q[1];
+measure q -> c;
+"""
+```
+
 ## Stabilizer Simulators
 
 Stabilizer simulators efficiently simulate **Clifford circuits** (H, S, CNOT, CZ, and similar gates). They scale polynomially with qubit count, making them ideal for quantum error correction.
@@ -64,14 +153,12 @@ The default simulator, optimized for QEC workloads with sparse stabilizer tablea
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    use pecos::prelude::*;
-
-    // SparseSim (SparseStab) is used by default
+    // SparseSim is used by default
     let results = sim(program.clone()).run(1000)?;
 
     // Or explicitly select it
     let results = sim(program)
-        .quantum(SparseStab::new)
+        .quantum(sparse_stabilizer())
         .run(1000)?;
     ```
 
@@ -114,11 +201,8 @@ Pure Rust state vector implementation.
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    use pecos::prelude::*;
-    use pecos::qsim::StateVec;
-
     let results = sim(program)
-        .quantum(StateVec::new)
+        .quantum(state_vector())
         .run(100)?;
     ```
 
@@ -147,6 +231,7 @@ results = sim(Qasm(circuit)).quantum(Qulacs).run(100)
 
 State vector simulator powered by the QuEST library.
 
+<!--skip: requires QuEST library to be built-->
 ```python
 from pecos.simulators import QuestStateVec
 
@@ -188,6 +273,7 @@ See [CUDA Setup Guide](cuda-setup.md) for detailed installation instructions.
 
 Tensor network simulator for circuits with limited entanglement.
 
+<!--skip: requires pytket-cutensornet-->
 ```python
 from pecos.simulators import MPS
 
@@ -244,13 +330,18 @@ Tracks how Pauli errors propagate through Clifford circuits—essential for QEC 
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    use pecos::prelude::*;
-    use pecos::qsim::PauliProp;
+    use pecos::qsim::{StdPauliProp, CliffordGateable};
 
-    // Track how Pauli errors propagate
-    let mut prop = PauliProp::new(5);
-    // ... apply gates ...
+    // Track how an X error on qubit 0 propagates
+    let mut prop = StdPauliProp::new();
+    prop.add_x(0);  // Track an X error on qubit 0
+
+    // Apply Hadamard - transforms X to Z
+    prop.h(0);
+
     // Check resulting error pattern
+    assert!(prop.contains_z(0));  // X transformed to Z
+    assert!(!prop.contains_x(0)); // No longer has X
     ```
 
 **Use cases:**
@@ -275,13 +366,13 @@ Returns random measurement results, ignoring all gates. Useful for testing.
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    use pecos::prelude::*;
-    use pecos::qsim::CoinToss;
+    use pecos_engines::{QuantumEngineBuilder, coin_toss};
 
     // Test classical logic with random quantum outcomes
-    let results = sim(program)
-        .quantum(CoinToss::new)
-        .run(1000)?;
+    // CoinToss ignores all gates and returns random measurements
+    let mut builder = coin_toss().qubits(2);
+    let engine = builder.build()?;
+    // Engine is ready for processing quantum operations
     ```
 
 **Use cases:**
@@ -336,10 +427,7 @@ The `sim()` API lets you switch simulators easily:
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    use pecos::prelude::*;
-    use pecos::qsim::{StateVec, SparseStab};
-
-    let program = Qasm::from_string(r#"
+    let circuit = Qasm::from_string(r#"
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[2];
@@ -349,16 +437,16 @@ The `sim()` API lets you switch simulators easily:
         measure q -> c;
     "#);
 
-    // Default (SparseStab for Clifford circuits)
-    let results = sim(program.clone()).run(1000)?;
+    // Default (sparse stabilizer for Clifford circuits)
+    let results = sim(circuit.clone()).run(1000)?;
 
     // Explicit simulator selection
-    let results = sim(program.clone())
-        .quantum(StateVec::new)
+    let results = sim(circuit.clone())
+        .quantum(state_vector())
         .run(1000)?;
 
-    let results = sim(program)
-        .quantum(SparseStab::new)
+    let results = sim(circuit)
+        .quantum(sparse_stabilizer())
         .run(1000)?;
     ```
 
@@ -374,33 +462,28 @@ For fine-grained control, you can use simulators directly:
     # Create simulator with 5 qubits
     state = SparseSim(5)
 
-    # Apply gates
-    state.H(0)
-    state.CNOT(0, 1)
+    # Apply gates using run_gate (qubits specified as sets)
+    state.run_gate("H", {0})
+    state.run_gate("CNOT", {(0, 1)})
 
     # Measure
-    result = state.measure(0)
+    result = state.run_gate("Measure", {0})
     print(f"Qubit 0 measured: {result}")
-
-    # Inspect stabilizers
-    state.print_stabs()
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    use pecos::prelude::*;
-
     // Create simulator with 5 qubits
-    let mut state = SparseStab::new(5);
+    let mut state = StdSparseStab::new(5);
 
-    // Apply gates
-    state.h(0)?;
-    state.cx(0, 1)?;
+    // Apply gates (methods are chainable)
+    state.h(0);
+    state.cx(0, 1);
 
     // Measure
-    let result = state.mz(0)?;
-    println!("Qubit 0 measured: {}", result);
+    let result = state.mz(0);
+    println!("Qubit 0 measured: {}", result.outcome);
 
     // Inspect stabilizers
     println!("{:?}", state);

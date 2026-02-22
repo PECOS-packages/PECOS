@@ -1,12 +1,12 @@
 [package]
 name = "pecos-cuquantum"
-version = "0.1.1"
-edition = "2024"
-rust-version = "1.85"
-authors = ["PECOS Developers"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
 description = "Safe Rust wrapper for NVIDIA cuQuantum quantum simulation SDK"
-license = "Apache-2.0"
-repository = "https://github.com/PECOS-packages/PECOS"
 keywords = ["quantum", "simulation", "cuda", "nvidia", "gpu"]
 categories = ["science", "simulation"]
 readme = "README.md"

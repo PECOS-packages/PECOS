@@ -201,6 +201,22 @@ pub struct FusionBlossomDecoder {
 }
 
 impl FusionBlossomDecoder {
+    /// Create a builder for configuring a new Fusion Blossom decoder
+    ///
+    /// This is the recommended way to construct a decoder:
+    ///
+    /// ```rust,ignore
+    /// let decoder = FusionBlossomDecoder::builder()
+    ///     .num_nodes(4)
+    ///     .num_observables(2)
+    ///     .add_edge(0, 1, vec![0], Some(1.0))
+    ///     .add_edge(1, 2, vec![1], Some(1.0))
+    ///     .build()?;
+    /// ```
+    pub fn builder() -> crate::builder::FusionBlossomBuilder {
+        crate::builder::FusionBlossomBuilder::new()
+    }
+
     /// Create a new decoder with the given configuration
     ///
     /// # Errors

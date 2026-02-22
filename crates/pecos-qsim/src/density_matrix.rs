@@ -15,7 +15,7 @@ use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use super::state_vec::StateVec;
 use pecos_core::{Angle64, QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
 
 use core::fmt::{Debug, Display, Formatter, Write};
 use num_complex::Complex64;
@@ -27,7 +27,7 @@ use num_complex::Complex64;
 /// This enables the simulation of both pure and mixed quantum states, including the effects of noise.
 ///
 /// # Type Parameters
-/// * `R` - Random number generator type implementing `RngCore + SeedableRng` traits
+/// * `R` - Random number generator type implementing `Rng + SeedableRng` traits
 ///
 /// # Examples
 /// ```rust
@@ -42,7 +42,7 @@ use num_complex::Complex64;
 #[derive(Clone, Debug)]
 pub struct DensityMatrix<R = PecosRng>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     /// Number of qubits in the physical system
     num_physical_qubits: usize,
@@ -68,7 +68,7 @@ impl DensityMatrix {
     #[inline]
     #[must_use]
     pub fn new(num_physical_qubits: usize) -> DensityMatrix<PecosRng> {
-        let rng = PecosRng::from_os_rng();
+        let rng = rand::make_rng();
         DensityMatrix::with_rng(num_physical_qubits, rng)
     }
 
@@ -98,7 +98,7 @@ impl DensityMatrix {
 
 impl<R> DensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     /// Returns the number of qubits in the physical system
     ///
@@ -122,7 +122,7 @@ where
     ///
     /// # Arguments
     /// * `num_physical_qubits` - Number of qubits in the physical system
-    /// * `rng` - Random number generator implementing `RngCore + SeedableRng` traits
+    /// * `rng` - Random number generator implementing `Rng + SeedableRng` traits
     ///
     /// # Examples
     /// ```rust
@@ -874,7 +874,7 @@ where
 
 impl<R> Display for DensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     /// Formats the density matrix using default formatting parameters.
     ///
@@ -898,7 +898,7 @@ where
 
 impl<R> QuantumSimulator for DensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     /// Reset the quantum state to |0...0⟩⟨0...0|
     ///
@@ -912,7 +912,7 @@ where
 
 impl<R> RngManageable for DensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     type Rng = R;
 
@@ -946,7 +946,7 @@ where
 
 impl<R> CliffordGateable for DensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     /// Apply the Hadamard gate to the given qubits
     ///
@@ -1113,7 +1113,7 @@ where
 
 impl<R> ArbitraryRotationGateable for DensityMatrix<R>
 where
-    R: RngCore + SeedableRng + Debug + Clone,
+    R: Rng + SeedableRng + Debug + Clone,
 {
     /// Apply a rotation around the X-axis
     ///

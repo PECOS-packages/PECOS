@@ -54,7 +54,7 @@ use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights}
 use crate::command::{GateCommand, GateType};
 use pecos_core::{Angle64, TimeUnits};
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 
 /// Noise channel for idle time (memory errors).

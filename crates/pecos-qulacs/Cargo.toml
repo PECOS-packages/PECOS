@@ -17,6 +17,7 @@ pecos-qsim.workspace = true
 pecos-rng.workspace = true
 num-complex.workspace = true
 rand.workspace = true
+rand_core.workspace = true
 cxx.workspace = true
 
 [dev-dependencies]

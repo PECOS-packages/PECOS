@@ -23,6 +23,31 @@ Example:
     >>> print(f"Data qubits: {code.num_data}")
 """
 
+from pecos_rslib.qec import (
+    # Pauli constants
+    PAULI_I,
+    PAULI_X,
+    PAULI_Y,
+    PAULI_Z,
+    DagFaultAnalyzer,
+    DagFaultInfluenceMap,
+    DemBuilder,
+    DemSampler,
+    DemSamplerBuilder,
+    DetectorErrorModel,
+    EquivalenceResult,
+    FaultLocation,
+    InfluenceBuilder,
+    MeasurementNoiseModel,
+    MemBuilder,
+    NoisySampler,
+    ParsedDem,
+    assert_dems_equivalent,
+    compare_dems_exact,
+    compare_dems_statistical,
+    verify_dem_equivalence,
+)
+
 from pecos.qec import analysis, color, protocols, surface
 from pecos.qec.analysis import (
     logical_error_rate,
@@ -69,12 +94,35 @@ from pecos.qec.surface import (
     parity_matrix_z,
 )
 
-__all__ = [  # noqa: RUF022
+__all__ = [
     # Submodules
     "analysis",
     "color",
     "protocols",
     "surface",
+    # DEM generation and analysis
+    "DagFaultAnalyzer",
+    "DagFaultInfluenceMap",
+    "DemBuilder",
+    "DemSampler",
+    "DemSamplerBuilder",
+    "DetectorErrorModel",
+    "EquivalenceResult",
+    "FaultLocation",
+    "InfluenceBuilder",
+    "MeasurementNoiseModel",
+    "MemBuilder",
+    "NoisySampler",
+    "ParsedDem",
+    "assert_dems_equivalent",
+    "compare_dems_exact",
+    "compare_dems_statistical",
+    "verify_dem_equivalence",
+    # Pauli constants
+    "PAULI_I",
+    "PAULI_X",
+    "PAULI_Y",
+    "PAULI_Z",
     # Analysis utilities
     "logical_error_rate",
     "logical_fidelity",

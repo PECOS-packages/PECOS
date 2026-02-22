@@ -1,5 +1,9 @@
 # Noise Model Builders
 
+```hidden-python
+from pecos import sim, Qasm, GeneralNoiseModelBuilder
+```
+
 PECOS provides builder classes for constructing quantum noise models with a fluent, method-chaining API. The `GeneralNoiseModelBuilder` is the most comprehensive builder, offering fine-grained control over various noise parameters.
 
 ## Quick Start
@@ -7,8 +11,18 @@ PECOS provides builder classes for constructing quantum noise models with a flue
 The simplest way to add noise to your QASM simulations is using the `GeneralNoiseModelBuilder`:
 
 ```python
-from pecos import sim, Qasm
-from pecos_rslib import GeneralNoiseModelBuilder
+from pecos import sim, Qasm, GeneralNoiseModelBuilder
+
+# Define a circuit
+qasm = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0], q[1];
+measure q -> c;
+"""
 
 # Create noise model with builder
 noise = (
@@ -55,9 +69,7 @@ noise = (
 
 # Total probability (used internally by the engine)
 noise = (
-    GeneralNoiseModelBuilder()
-    .with_p1_probability(0.00133)  # Total for single-qubit
-    .with_p2_probability(0.0133)
+    GeneralNoiseModelBuilder().with_p1_probability(0.00133).with_p2_probability(0.0133)  # Total for single-qubit
 )  # Total for two-qubit
 ```
 
@@ -280,15 +292,15 @@ for state, count in counts.most_common(5):
 
 ## Comparison with Predefined Noise Models
 
-While builders offer maximum flexibility, PECOS also provides simpler predefined models:
+While builders offer maximum flexibility, PECOS also provides simpler convenience functions:
 
 ```python
-from pecos_rslib import DepolarizingNoise, GeneralNoiseModelBuilder
+from pecos import depolarizing_noise, GeneralNoiseModelBuilder
 
-# Simple depolarizing (all errors equal)
-simple = DepolarizingNoise(p=0.001)
+# Simple depolarizing (uniform probability)
+simple = depolarizing_noise().with_uniform_probability(0.001)
 
-# Equivalent with builder
+# Equivalent with GeneralNoiseModelBuilder
 builder = (
     GeneralNoiseModelBuilder()
     .with_p1_probability(0.001)

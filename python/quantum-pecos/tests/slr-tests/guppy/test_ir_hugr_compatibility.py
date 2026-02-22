@@ -18,7 +18,7 @@ def test_ir_handles_array_measurement_patterns() -> None:
         Measure(q) > c,
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -41,9 +41,7 @@ def test_ir_handles_array_measurement_patterns() -> None:
             line = lines[i]
             if "quantum.h" in line:
                 # Should use q_0 not q[0] after unpacking
-                assert (
-                    "q_0" in line or "q[0]" not in line
-                ), f"Line {i}: Should use unpacked name after unpacking"
+                assert "q_0" in line or "q[0]" not in line, f"Line {i}: Should use unpacked name after unpacking"
 
 
 def test_ir_handles_mixed_measurements() -> None:
@@ -61,7 +59,7 @@ def test_ir_handles_mixed_measurements() -> None:
         Measure(q[3]) > c[3],
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -89,7 +87,7 @@ def test_ir_with_conditional_measurements() -> None:
         ),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -113,7 +111,7 @@ def test_ir_avoids_subscript_after_consume() -> None:
         # This would fail in HUGR if we tried to access q[0] after measure_array
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

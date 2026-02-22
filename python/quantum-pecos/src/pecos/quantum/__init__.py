@@ -106,7 +106,7 @@ except ImportError as e:
 
 def pauli_string(
     operators: str | Sequence[tuple[Pauli, int]] | dict[int, Pauli],
-    phase: int | complex = 1,  # noqa: PYI041
+    phase: complex = 1,
 ) -> PauliString:
     """Create a PauliString from a convenient specification.
 

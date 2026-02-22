@@ -15,6 +15,7 @@ use thiserror::Error;
 
 // Internal modules
 mod bridge;
+pub mod builders;
 pub mod core_traits_simple;
 pub mod decoders;
 pub mod quantum;
@@ -27,6 +28,12 @@ pub use decoders::{
 };
 pub use quantum::{CssCode, MbpDecoder};
 pub use sparse::SparseMatrix;
+
+// Re-export builders
+pub use builders::{
+    BeliefFindBuilder, BpLsdBuilder, BpOsdBuilder, DecoderBuilder, FlipBuilder, SoftInfoBpBuilder,
+    UnionFindBuilder,
+};
 
 /// Error type for LDPC decoder operations
 #[derive(Error, Debug)]

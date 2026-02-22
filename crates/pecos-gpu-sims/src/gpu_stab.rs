@@ -12,7 +12,7 @@ use crate::circuit_compiler::{CircuitCompiler, Gate as CompiledGate};
 use crate::clifford_fusion::CliffordFuser;
 use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, MeasurementResult, QuantumSimulator};
-use pecos_rng::{PecosRng, RngCore, SeedableRng};
+use pecos_rng::{PecosRng, Rng, SeedableRng};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -160,7 +160,7 @@ const GATE_QUEUE_BUFFER_SIZE: usize = 256 * 1024; // 256K gates
 /// When subgroup operations are available (most modern GPUs), uses optimized
 /// subgroup-based measurement reduction for improved performance.
 #[allow(clippy::struct_excessive_bools)]
-pub struct GpuStab<R: RngCore + SeedableRng = PecosRng> {
+pub struct GpuStab<R: Rng + SeedableRng = PecosRng> {
     num_qubits: u32,
     gen_words: u32,
     rng: R,
@@ -259,7 +259,7 @@ impl GpuStab<PecosRng> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
+impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Create a new GPU stabilizer simulator with a specific RNG seed.
     ///
     /// # Errors
@@ -2337,7 +2337,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
+impl<R: Rng + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.queue_single_gate(GATE_H, q.index() as u32);
@@ -2424,7 +2424,7 @@ impl<R: RngCore + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
+impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Measure qubit in Z basis with forced outcome for non-deterministic cases.
     ///
     /// If the measurement is deterministic, returns the determined outcome.
@@ -2456,7 +2456,7 @@ impl<R: RngCore + SeedableRng + Debug> GpuStab<R> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Debug> QuantumSimulator for GpuStab<R> {
+impl<R: Rng + SeedableRng + Debug> QuantumSimulator for GpuStab<R> {
     fn reset(&mut self) -> &mut Self {
         // Wait for any pending GPU work before resetting
         self.wait();
@@ -2467,7 +2467,7 @@ impl<R: RngCore + SeedableRng + Debug> QuantumSimulator for GpuStab<R> {
     }
 }
 
-impl<R: RngCore + SeedableRng + Debug> Debug for GpuStab<R> {
+impl<R: Rng + SeedableRng + Debug> Debug for GpuStab<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GpuStab")
             .field("num_qubits", &self.num_qubits)
@@ -2485,7 +2485,7 @@ mod tests {
         run_basic_stabilizer_test_suite,
     };
 
-    impl<R: RngCore + SeedableRng + Debug> ForcedMeasurement for GpuStab<R> {
+    impl<R: Rng + SeedableRng + Debug> ForcedMeasurement for GpuStab<R> {
         fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
             GpuStab::mz_forced(self, qubit, forced_outcome)
         }
@@ -3242,7 +3242,7 @@ mod tests {
     #[test]
     fn test_gpu_vs_cpu_sequential_measurement_debug() {
         use pecos_qsim::stabilizer_test_utils::{apply_circuit, generate_random_clifford_circuit};
-        use pecos_rng::{PecosRng, Rng};
+        use pecos_rng::{PecosRng, RngExt};
 
         let Some(mut gpu) = gpu_sim(4, 42) else {
             return;

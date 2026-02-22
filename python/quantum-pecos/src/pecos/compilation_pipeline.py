@@ -46,11 +46,7 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
         import inspect
 
         sig = inspect.signature(
-            (
-                guppy_function.__wrapped__
-                if hasattr(guppy_function, "__wrapped__")
-                else guppy_function
-            ),
+            (guppy_function.__wrapped__ if hasattr(guppy_function, "__wrapped__") else guppy_function),
         )
         has_params = len(sig.parameters) > 0
 
@@ -137,15 +133,9 @@ def _update_tket_wasm_version(hugr_bytes: bytes) -> bytes:
                 module = hugr_data["modules"][0]
                 if "metadata" in module:
                     for meta_item in module["metadata"]:
-                        if (
-                            isinstance(meta_item, dict)
-                            and "core.used_extensions" in meta_item
-                        ):
+                        if isinstance(meta_item, dict) and "core.used_extensions" in meta_item:
                             for ext in meta_item["core.used_extensions"]:
-                                if (
-                                    ext.get("name") == "tket.wasm"
-                                    and ext.get("version") == "0.3.0"
-                                ):
+                                if ext.get("name") == "tket.wasm" and ext.get("version") == "0.3.0":
                                     ext["version"] = "0.4.1"
 
             # Reconstruct the HUGR envelope

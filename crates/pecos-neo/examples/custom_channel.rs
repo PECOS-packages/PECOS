@@ -24,7 +24,7 @@ use pecos_neo::command::GateCommand;
 use pecos_neo::prelude::*;
 use pecos_qsim::SparseStab;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use std::collections::HashMap;
 
 fn main() {

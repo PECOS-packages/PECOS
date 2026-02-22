@@ -153,7 +153,7 @@ pub mod engines {
     pub use pecos_phir_json::{PhirJsonEngine, PhirJsonEngineBuilder, phir_json_engine};
 
     #[cfg(feature = "hugr")]
-    pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};
+    pub use pecos_guppy_hugr::{GuppyHugrEngine, GuppyHugrEngineBuilder, hugr_engine, hugr_sim};
 }
 
 /// Quantum simulation backends and circuit representation
@@ -654,9 +654,51 @@ pub mod dag {
 /// use pecos::decoders::{Decoder, BpOsdDecoder};
 /// # }
 /// ```
-#[cfg(any(feature = "ldpc", feature = "all-decoders"))]
+#[cfg(any(
+    feature = "ldpc",
+    feature = "pymatching",
+    feature = "fusion-blossom",
+    feature = "tesseract",
+    feature = "chromobius",
+    feature = "all-decoders"
+))]
 pub mod decoders {
     pub use pecos_decoders::*;
+}
+
+/// Quantum error correction and fault tolerance analysis
+///
+/// This module provides fault tolerance analysis tools for quantum error correction,
+/// including Pauli propagation, fault location analysis, and influence map building.
+///
+/// # Main Types
+///
+/// - **`DagFaultAnalyzer`**: Builds fault influence maps from DAG circuits (5-50x faster than tick-based)
+/// - **`DagFaultInfluenceMap`**: Cache-optimized influence map using CSR layout
+/// - **`InfluenceBuilder`**: Combines symbolic simulation with backward propagation
+/// - **`NoisySampler`**: Samples detection events from influence maps
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use pecos::qec::fault_tolerance::propagator::{DagFaultAnalyzer, DagFaultInfluenceMap};
+/// use pecos::quantum::DagCircuit;
+///
+/// let mut dag = DagCircuit::new();
+/// dag.pz(2);
+/// dag.cx(0, 2);
+/// dag.cx(1, 2);
+/// dag.mz(2);
+///
+/// let analyzer = DagFaultAnalyzer::new(&dag);
+/// let influence_map = analyzer.build_influence_map();
+///
+/// // O(1) fault classification
+/// let (has_syndrome, has_logical) = influence_map.classify_fault(0, 1);
+/// ```
+#[cfg(feature = "qec")]
+pub mod qec {
+    pub use pecos_qec::*;
 }
 
 /// Quantum simulation implementations
@@ -707,9 +749,9 @@ pub use pecos_phir::PhirConfig;
 #[cfg(feature = "phir")]
 pub use pecos_phir_json::{PhirJsonEngineBuilder, phir_json_engine};
 
-// Direct HUGR interpreter (doesn't require LLVM)
+// Direct Guppy HUGR interpreter (doesn't require LLVM)
 #[cfg(feature = "hugr")]
-pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};
+pub use pecos_guppy_hugr::{GuppyHugrEngine, GuppyHugrEngineBuilder, hugr_engine, hugr_sim};
 
 // Quantum backends
 #[cfg(feature = "sim")]

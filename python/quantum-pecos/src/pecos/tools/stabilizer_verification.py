@@ -1113,9 +1113,5 @@ class VerifyStabilizers:
             True if the operators anticommute, False otherwise.
         """
         return bool(
-            (
-                len(op1.get("X", set()) & op2.get("Z", set()))
-                + len(op2.get("X", set()) & op1.get("Z", set()))
-            )
-            % 2,
+            (len(op1.get("X", set()) & op2.get("Z", set())) + len(op2.get("X", set()) & op1.get("Z", set()))) % 2,
         )

@@ -21,12 +21,15 @@ serde_json.workspace = true
 pecos-core = { workspace = true, features = ["anyhow"] }
 
 # tket dependencies - exactly as Selene's hugr-qis
+# LLVM features are required for this crate's core functionality
 tket = { workspace = true, features = ["llvm"] }
-tket-qsystem.workspace = true
+tket-qsystem = { workspace = true, features = ["llvm"] }
 
 [features]
 default = []
-llvm = ["tket-qsystem/llvm"]
+# LLVM feature is a no-op since LLVM is always required for this crate.
+# Kept for backwards compatibility with dependents that specify it.
+llvm = []
 
 [lints]
 workspace = true

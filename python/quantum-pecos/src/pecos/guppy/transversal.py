@@ -17,7 +17,7 @@ import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
 
 class CSSCodeType(Enum):
@@ -69,8 +69,8 @@ class TransversalConfig:
 class _ModuleState:
     """Container for module-level mutable state."""
 
-    temp_dir: Path | None = None
-    css_transversal_cache: dict[str, dict] = {}  # noqa: RUF012
+    temp_dir: ClassVar[Path | None] = None
+    css_transversal_cache: ClassVar[dict[str, dict]] = {}
 
 
 _state = _ModuleState()
@@ -85,7 +85,7 @@ def _get_temp_dir() -> Path:
 
 def _get_surface_code_info(d: int) -> dict:
     """Get surface code parameters."""
-    from pecos.qec.surface import SurfacePatch  # noqa: PLC0415
+    from pecos.qec.surface import SurfacePatch
 
     patch = SurfacePatch.create(distance=d)
     geom = patch.geometry
@@ -105,7 +105,7 @@ def _get_surface_code_info(d: int) -> dict:
 
 def _get_color_code_info(d: int) -> dict:
     """Get color code parameters."""
-    from pecos.qec.color import ColorCode488  # noqa: PLC0415
+    from pecos.qec.color import ColorCode488
 
     code = ColorCode488.create(distance=d)
 
@@ -226,18 +226,12 @@ def generate_surface_transversal_source(d: int) -> str:
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)"
-        for stab in info["z_stabilizers"]
-    )
+    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)" for stab in info["z_stabilizers"])
 
     lines.append("")
     lines.append("    # X stabilizers")
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
-        for stab in info["x_stabilizers"]
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)" for stab in info["x_stabilizers"])
 
     lines.extend(
         [
@@ -262,10 +256,7 @@ def generate_surface_transversal_source(d: int) -> str:
         ],
     )
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
-        for stab in info["x_stabilizers"]
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)" for stab in info["x_stabilizers"])
 
     lines.extend(
         [
@@ -431,18 +422,12 @@ def generate_color_transversal_source(d: int) -> str:
         ],
     )
 
-    lines.extend(
-        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)"
-        for stab in info["stabilizers"]
-    )
+    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)" for stab in info["stabilizers"])
 
     lines.append("")
     lines.append("    # X stabilizers")
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)"
-        for stab in info["stabilizers"]
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)" for stab in info["stabilizers"])
 
     lines.extend(
         [
@@ -467,10 +452,7 @@ def generate_color_transversal_source(d: int) -> str:
         ],
     )
 
-    lines.extend(
-        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)"
-        for stab in info["stabilizers"]
-    )
+    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)" for stab in info["stabilizers"])
 
     lines.extend(
         [
@@ -875,7 +857,7 @@ def get_transversal_num_qubits(code_type: CSSCodeType | str, distance: int) -> i
     if code_type == CSSCodeType.SURFACE:
         num_data = distance * distance
     elif code_type == CSSCodeType.COLOR:
-        from pecos.qec.color import ColorCode488  # noqa: PLC0415
+        from pecos.qec.color import ColorCode488
 
         code = ColorCode488.create(distance=distance)
         num_data = code.num_data

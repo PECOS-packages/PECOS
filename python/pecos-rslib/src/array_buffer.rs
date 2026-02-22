@@ -38,7 +38,7 @@ use pyo3::types::{PyDict, PyTuple};
 macro_rules! impl_numeric_array_view {
     ($name:ident, $dtype:ty, $typestr:expr) => {
         /// Wrapper that exposes ndarray to Python via `__array_interface__`
-        #[pyclass]
+        #[pyclass(from_py_object)]
         #[derive(Clone)]
         pub struct $name {
             data: ArrayD<$dtype>,
@@ -214,7 +214,7 @@ macro_rules! impl_numeric_array_view {
 macro_rules! impl_complex_array_view {
     ($name:ident, $dtype:ty, $typestr:expr) => {
         /// Wrapper that exposes ndarray to Python via `__array_interface__`
-        #[pyclass]
+        #[pyclass(from_py_object)]
         #[derive(Clone)]
         pub struct $name {
             data: ArrayD<$dtype>,
@@ -360,7 +360,7 @@ macro_rules! impl_complex_array_view {
 macro_rules! impl_bool_array_view {
     ($name:ident, $dtype:ty, $typestr:expr) => {
         /// Wrapper that exposes ndarray to Python via `__array_interface__`
-        #[pyclass]
+        #[pyclass(from_py_object)]
         #[derive(Clone)]
         pub struct $name {
             data: ArrayD<$dtype>,

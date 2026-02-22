@@ -135,10 +135,7 @@ class TestUnifiedSimApi:
 
         # Depolarizing
         shot_vec = (
-            sim(Qasm.from_string(qasm))
-            .seed(42)
-            .noise(depolarizing_noise().with_uniform_probability(0.1))
-            .run(1000)
+            sim(Qasm.from_string(qasm)).seed(42).noise(depolarizing_noise().with_uniform_probability(0.1)).run(1000)
         )
         results = shot_vec.to_dict()
         errors = sum(1 for val in results["c"] if val == 0)
@@ -215,9 +212,7 @@ class TestUnifiedSimApi:
 
         # Both engines should work for Clifford circuits
         for engine in [state_vector(), sparse_stabilizer()]:
-            shot_vec = (
-                sim(Qasm.from_string(qasm_clifford)).seed(42).quantum(engine).run(100)
-            )
+            shot_vec = sim(Qasm.from_string(qasm_clifford)).seed(42).quantum(engine).run(100)
             results = shot_vec.to_dict()
             assert len(results["c"]) == 100
 
@@ -233,9 +228,7 @@ class TestUnifiedSimApi:
         """
 
         # StateVector should work
-        shot_vec = (
-            sim(Qasm.from_string(qasm_non_clifford)).quantum(state_vector()).run(10)
-        )
+        shot_vec = sim(Qasm.from_string(qasm_non_clifford)).quantum(state_vector()).run(10)
         results = shot_vec.to_dict()
         assert len(results["c"]) == 10
 
@@ -391,11 +384,7 @@ class TestUnifiedSimApi:
         # Test binary string format
         # Note: The unified sim() API doesn't have with_binary_string_format() - use to_binary_dict() instead
         shot_vec = sim(Qasm.from_string(qasm)).seed(42).run(10)
-        results_binary = (
-            shot_vec.to_binary_dict()
-            if hasattr(shot_vec, "to_binary_dict")
-            else shot_vec
-        )
+        results_binary = shot_vec.to_binary_dict() if hasattr(shot_vec, "to_binary_dict") else shot_vec
         assert "c" in results_binary
         assert len(results_binary["c"]) == 10
 
@@ -433,11 +422,7 @@ class TestUnifiedSimApi:
         """
 
         shot_vec = sim(Qasm.from_string(qasm)).run(5)
-        results = (
-            shot_vec.to_binary_dict()
-            if hasattr(shot_vec, "to_binary_dict")
-            else shot_vec
-        )
+        results = shot_vec.to_binary_dict() if hasattr(shot_vec, "to_binary_dict") else shot_vec
         assert "c" in results
         assert len(results["c"]) == 5
 
@@ -448,9 +433,7 @@ class TestUnifiedSimApi:
             # Check specific bit positions are 1 (from the end)
             for qbit in [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]:
                 pos = 99 - qbit  # Convert qubit index to string position
-                assert (
-                    binary_str[pos] == "1"
-                ), f"Expected bit at position {pos} (q[{qbit}]) to be 1"
+                assert binary_str[pos] == "1", f"Expected bit at position {pos} (q[{qbit}]) to be 1"
             # Count total number of 1s
             assert binary_str.count("1") == 10
 
@@ -472,16 +455,8 @@ class TestUnifiedSimApi:
         # Run multiple times
         shot_vec1 = sim_builder.run(10)
         shot_vec2 = sim_builder.run(20)
-        results1 = (
-            shot_vec1.to_binary_dict()
-            if hasattr(shot_vec1, "to_binary_dict")
-            else shot_vec1
-        )
-        results2 = (
-            shot_vec2.to_binary_dict()
-            if hasattr(shot_vec2, "to_binary_dict")
-            else shot_vec2
-        )
+        results1 = shot_vec1.to_binary_dict() if hasattr(shot_vec1, "to_binary_dict") else shot_vec1
+        results2 = shot_vec2.to_binary_dict() if hasattr(shot_vec2, "to_binary_dict") else shot_vec2
 
         # Check both have binary strings
         assert all(isinstance(v, str) for v in results1["c"])

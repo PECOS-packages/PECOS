@@ -145,8 +145,11 @@ def test_phys_parallel() -> None:
     assert "h q[1]" in qasm
     assert "x q[2]" in qasm
     assert "y q[3]" in qasm
-    # QASM generator uses compact notation for register-wide measurements
-    assert "measure q -> m;" in qasm
+    # AST codegen uses individual measurements
+    assert "measure q[0] -> m[0]" in qasm
+    assert "measure q[1] -> m[1]" in qasm
+    assert "measure q[2] -> m[2]" in qasm
+    assert "measure q[3] -> m[3]" in qasm
 
 
 def test_phys_nested_parallel() -> None:

@@ -28,7 +28,7 @@ use pecos_neo::noise::{
 use pecos_neo::runner::ShotRunner;
 use pecos_qsim::{CliffordGateable, SparseStab};
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use std::hint::black_box;
 
 /// Helper to create a noise model (since it doesn't implement Clone)

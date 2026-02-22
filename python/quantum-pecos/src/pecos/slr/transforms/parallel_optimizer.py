@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
+from pecos.slr.loop_block import For
 from pecos.slr.main import Main
 from pecos.slr.misc import Parallel
 
@@ -77,6 +78,14 @@ class ParallelOptimizer:
             new_block = Repeat(block.cond)
             if new_ops:
                 new_block.block(*new_ops)
+        elif isinstance(block, For):
+            # Create new For block preserving loop variable and iteration
+            if block.iterable is not None:
+                new_block = For(block.var, block.iterable)
+            else:
+                new_block = For(block.var, block.start, block.stop, block.step)
+            if new_ops:
+                new_block.Do(*new_ops)
         # Only reconstruct certain block types
         elif isinstance(block, Parallel) and type(block) is Parallel:
             new_block = Parallel(*new_ops)
@@ -272,14 +281,10 @@ class ParallelOptimizer:
                 "Other",
             ]
             # Use list comprehension to build groups from ordered types
-            grouped.extend(
-                type_groups[op_type] for op_type in order if op_type in type_groups
-            )
+            grouped.extend(type_groups[op_type] for op_type in order if op_type in type_groups)
 
             # Add any remaining types
-            grouped.extend(
-                ops for op_type, ops in type_groups.items() if op_type not in order
-            )
+            grouped.extend(ops for op_type, ops in type_groups.items() if op_type not in order)
 
         return grouped
 

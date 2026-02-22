@@ -148,9 +148,7 @@ class TestSeleneBuildProcess:
                 file_types = {f.suffix for f in all_files if f.is_file()}
 
                 # The build process should create some artifacts
-                assert (
-                    len(all_files) > 1
-                ), f"Build created files with extensions: {file_types}"
+                assert len(all_files) > 1, f"Build created files with extensions: {file_types}"
 
                 # Note: The exact intermediate files depend on Selene's implementation
                 # The key point is that HUGR → QIS/LLVM happens internally
@@ -228,21 +226,15 @@ class TestSeleneBuildProcess:
             assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
             # QIS returns results with key 'measurement_0'
-            assert (
-                "measurement_0" in results
-            ), f"Results should contain 'measurement_0' key, got keys: {results.keys()}"
+            assert "measurement_0" in results, f"Results should contain 'measurement_0' key, got keys: {results.keys()}"
             measurements = results["measurement_0"]
             assert len(measurements) == 100, "Should have 100 shots"
 
             # H gate should give roughly 50/50 distribution
             ones = sum(measurements)
             zeros = 100 - ones
-            assert (
-                30 < ones < 70
-            ), f"Should be roughly 50/50 distribution, got {ones} ones"
-            assert (
-                30 < zeros < 70
-            ), f"Should be roughly 50/50 distribution, got {zeros} zeros"
+            assert 30 < ones < 70, f"Should be roughly 50/50 distribution, got {ones} ones"
+            assert 30 < zeros < 70, f"Should be roughly 50/50 distribution, got {zeros} zeros"
 
         except (RuntimeError, ValueError, NotImplementedError) as e:
             # Known LLVM runtime issues
@@ -322,9 +314,7 @@ class TestSeleneBuildProcess:
         assert len(measurements) == 100, "Should have 100 shots"
 
         # Since we're measuring |0⟩ directly, all results should be 0
-        assert all(
-            m == 0 for m in measurements
-        ), "Direct measurement of |0⟩ should always give 0"
+        assert all(m == 0 for m in measurements), "Direct measurement of |0⟩ should always give 0"
 
     def test_qis_edge_cases(self) -> None:
         """Test QIS programs with edge cases like empty lines, multiple spaces, etc."""
@@ -366,9 +356,7 @@ class TestSeleneBuildProcess:
         program = Qis(llvm_ir_edge_cases)
         results = sim(program).qubits(1).quantum(state_vector()).seed(42).run(50)
 
-        assert (
-            "measurement_0" in results
-        ), "Should have results even with edge case formatting"
+        assert "measurement_0" in results, "Should have results even with edge case formatting"
         assert len(results["measurement_0"]) == 50, "Should complete all shots"
         assert all(m == 0 for m in results["measurement_0"]), "Should measure |0⟩ as 0"
 
@@ -414,14 +402,10 @@ class TestSeleneBuildProcess:
 
         # Test with Qis - first run
         qis_prog = Qis(qis_ir)
-        qis_results_1 = (
-            sim(qis_prog).qubits(1).quantum(state_vector()).seed(42).run(100)
-        )
+        qis_results_1 = sim(qis_prog).qubits(1).quantum(state_vector()).seed(42).run(100)
 
         # Test with Qis - second run with same seed
-        qis_results_2 = (
-            sim(qis_prog).qubits(1).quantum(state_vector()).seed(42).run(100)
-        )
+        qis_results_2 = sim(qis_prog).qubits(1).quantum(state_vector()).seed(42).run(100)
 
         # Both runs should produce identical results
         assert "measurement_0" in qis_results_1, "Qis should produce results"
@@ -433,12 +417,8 @@ class TestSeleneBuildProcess:
         ), "Qis should produce identical results with same seed"
 
         # X gate should give |1⟩
-        assert all(
-            m == 1 for m in qis_results_1["measurement_0"]
-        ), "X gate should always measure 1"
-        assert all(
-            m == 1 for m in qis_results_2["measurement_0"]
-        ), "X gate should always measure 1"
+        assert all(m == 1 for m in qis_results_1["measurement_0"]), "X gate should always measure 1"
+        assert all(m == 1 for m in qis_results_2["measurement_0"]), "X gate should always measure 1"
 
     def test_selene_instance_api(self) -> None:
         """Test the SeleneInstance API and available methods."""
@@ -458,15 +438,11 @@ class TestSeleneBuildProcess:
                 method_obj = getattr(SeleneInstance, method)
                 assert callable(method_obj), f"{method} should be callable"
 
-        assert (
-            len(available_methods) > 0
-        ), "SeleneInstance should have at least one run method"
+        assert len(available_methods) > 0, "SeleneInstance should have at least one run method"
 
         # Check for documentation
         if SeleneInstance.__doc__:
-            assert (
-                len(SeleneInstance.__doc__) > 0
-            ), "SeleneInstance should have documentation"
+            assert len(SeleneInstance.__doc__) > 0, "SeleneInstance should have documentation"
 
     def test_build_function_parameters(self) -> None:
         """Test the build() function parameters and options."""
@@ -489,9 +465,7 @@ class TestSeleneBuildProcess:
         for param_name, param in params.items():
             if param.annotation != inspect.Parameter.empty:
                 # Parameter has type annotation
-                assert (
-                    param.annotation is not None
-                ), f"{param_name} should have type annotation"
+                assert param.annotation is not None, f"{param_name} should have type annotation"
 
     def test_hugr_to_selene_compilation_chain(self) -> None:
         """Test the full compilation chain from Guppy to Selene execution."""
@@ -536,10 +510,7 @@ class TestSeleneBuildProcess:
 
             except (ImportError, RuntimeError, ValueError, OSError) as e:
                 error_msg = str(e).lower()
-                if any(
-                    term in error_msg
-                    for term in ["hugr", "not supported", "not available"]
-                ):
+                if any(term in error_msg for term in ["hugr", "not supported", "not available"]):
                     pytest.skip(f"Selene HUGR compilation not available: {e}")
                 pytest.fail(f"Unexpected compilation error: {e}")
 

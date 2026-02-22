@@ -125,9 +125,7 @@ class PyPHIR:
                     elif o["block"] == "if":
                         true_branch = [cls.handle_op(so, p) for so in o["true_branch"]]
 
-                        false_branch = [
-                            cls.handle_op(so, p) for so in o.get("false_branch", [])
-                        ]
+                        false_branch = [cls.handle_op(so, p) for so in o.get("false_branch", [])]
 
                         instr = blk.IfBlock(
                             condition=cls.handle_op(o["condition"], p),
@@ -147,10 +145,7 @@ class PyPHIR:
                     metadata = {} if o.get("metadata") is None else o["metadata"]
 
                     if o.get("angles"):
-                        angles = tuple(
-                            angle * (pc.f64.pi if o["angles"][1] == "pi" else 1)
-                            for angle in o["angles"][0]
-                        )
+                        angles = tuple(angle * (pc.f64.pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0])
                     else:
                         angles = None
 

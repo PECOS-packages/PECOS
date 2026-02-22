@@ -17,7 +17,7 @@
 //! - [`derive_seed`]: A function for deriving related seeds from a base seed
 //! - [`time_seed`]: A function for generating a seed from system time
 
-use crate::{PecosRng, RngCore, SeedableRng};
+use crate::{PecosRng, Rng, SeedableRng};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -156,7 +156,7 @@ pub fn resolve_seed(seed: Option<u64>) -> u64 {
 /// ```
 pub trait RngManageable {
     /// The type of random number generator used by this component.
-    type Rng: RngCore + SeedableRng;
+    type Rng: Rng + SeedableRng;
 
     /// Replace the random number generator with a new one.
     ///

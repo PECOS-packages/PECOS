@@ -98,7 +98,7 @@ fn attribute_to_python(py: Python<'_>, attr: &RustAttribute) -> PyResult<Py<PyAn
 /// # Compute maximum weight matching
 /// matching = graph.max_weight_matching()
 /// ```
-#[pyclass(name = "Graph", module = "pecos_rslib.graph")]
+#[pyclass(name = "Graph", module = "pecos_rslib.graph", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraph {
     /// The underlying Rust graph
@@ -756,6 +756,17 @@ impl PyEdgeAttrsView {
         }
     }
 
+    /// Check if an attribute exists (dict-like interface).
+    fn __contains__(&self, py: Python<'_>, key: &str) -> bool {
+        let graph = self.graph.borrow(py);
+
+        if let Some(attrs) = graph.inner.edge_attrs(self.node_a, self.node_b) {
+            attrs.contains_key(key)
+        } else {
+            false
+        }
+    }
+
     /// Insert a key-value pair into edge attributes (chainable).
     ///
     /// This method allows for method chaining, similar to Rust's `BTreeMap` insert.
@@ -1191,7 +1202,7 @@ impl PyGraphAttrsView {
 /// # Topological sort
 /// order = g.topological_sort()  # Returns [n0, n1, n2] or None if cyclic
 /// ```
-#[pyclass(name = "DiGraph", module = "pecos_rslib.graph")]
+#[pyclass(name = "DiGraph", module = "pecos_rslib.graph", from_py_object)]
 #[derive(Clone)]
 pub struct PyDiGraph {
     inner: RustDiGraph,
@@ -1629,7 +1640,7 @@ impl PyDiGraphAttrsView {
 /// roots = g.roots()      # Nodes with no predecessors
 /// leaves = g.leaves()    # Nodes with no successors
 /// ```
-#[pyclass(name = "DAG", module = "pecos_rslib.graph")]
+#[pyclass(name = "DAG", module = "pecos_rslib.graph", from_py_object)]
 #[derive(Clone)]
 pub struct PyDAG {
     inner: RustDAG,
@@ -1836,6 +1847,39 @@ impl PyDAG {
     /// Returns the depth of the DAG (length of the longest path).
     fn depth(&self) -> usize {
         self.inner.depth()
+    }
+
+    /// Returns an iterator over the layers of the DAG.
+    ///
+    /// A layer is a set of nodes that can be processed in parallel (all their
+    /// dependencies are in previous layers).
+    ///
+    /// # Arguments
+    ///
+    /// * `first_layer` - The starting nodes (typically `dag.roots()`)
+    ///
+    /// # Returns
+    ///
+    /// A list of layers, where each layer is a list of node indices.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// dag = DAG()
+    /// n0 = dag.add_node()
+    /// n1 = dag.add_node()
+    /// n2 = dag.add_node()
+    /// dag.add_edge(n0, n1)
+    /// dag.add_edge(n0, n2)
+    ///
+    /// for layer in dag.layers(dag.roots()):
+    ///     print(f"Layer: {layer}")
+    /// # Output:
+    /// # Layer: [0]
+    /// # Layer: [1, 2]
+    /// ```
+    fn layers(&self, first_layer: Vec<usize>) -> Vec<Vec<usize>> {
+        self.inner.layers(first_layer).collect()
     }
 
     /// Returns the longest path in the DAG as (path, `total_weight`).

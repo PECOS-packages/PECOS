@@ -38,7 +38,7 @@ use crate::noise::{
 };
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::smallvec;
 use std::sync::Arc;
 

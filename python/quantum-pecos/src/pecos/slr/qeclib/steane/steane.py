@@ -218,9 +218,7 @@ class Steane(Vars):
                 d=qubit.d,
                 a=qubit.a,
                 out=qubit.scratch,
-                reject=qubit.scratch[
-                    2
-                ],  # the first two bits of self.scratch are used by "out"
+                reject=qubit.scratch[2],  # the first two bits of self.scratch are used by "out"
                 flag_x=qubit.flag_x,
                 flag_z=qubit.flag_z,
                 flags=qubit.flags,

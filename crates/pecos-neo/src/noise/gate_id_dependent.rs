@@ -37,7 +37,7 @@ use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights}
 use crate::command::{GateCommand, GateType};
 use crate::extensible::GateId;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 

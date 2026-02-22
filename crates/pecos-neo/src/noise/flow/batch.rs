@@ -70,7 +70,7 @@
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
 use pecos_rng::rng_ext::RngProbabilityExt;
-use rand::Rng;
+use rand::RngExt;
 
 // ============================================================================
 // Geometric Sampler - The Core Mechanism

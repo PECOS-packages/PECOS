@@ -296,7 +296,7 @@ fn test_redistribution_at_sync_points() {
 #[test]
 fn test_subset_simulation_workflow() {
     use pecos_neo::ecs::{WorkerState, redistribute_by_weight};
-    use rand::Rng;
+    use rand::RngExt;
 
     // Configuration
     let num_workers = 2;

@@ -39,7 +39,7 @@ use super::{
 };
 use crate::command::GateCommand;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 
 /// Noise channel for single-qubit gates.

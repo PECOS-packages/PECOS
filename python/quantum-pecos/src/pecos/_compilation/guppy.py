@@ -52,9 +52,7 @@ class GuppyFrontend:
         self._temp_dir = None
 
         # Determine backend to use (Rust backend is always available)
-        self.use_rust_backend = (
-            use_rust_backend if use_rust_backend is not None else True
-        )
+        self.use_rust_backend = use_rust_backend if use_rust_backend is not None else True
 
         # External tools configuration (used when Rust backend not requested)
         self.hugr_to_llvm_binary = hugr_to_llvm_binary
@@ -67,12 +65,8 @@ class GuppyFrontend:
             "rust_available": True,  # HUGR support is always available
             "guppy_available": True,  # guppylang is now a required dependency
             "external_tools": {
-                "hugr_to_llvm_binary": (
-                    str(self.hugr_to_llvm_binary) if self.hugr_to_llvm_binary else None
-                ),
-                "format_converter": (
-                    str(self.format_converter) if self.format_converter else None
-                ),
+                "hugr_to_llvm_binary": (str(self.hugr_to_llvm_binary) if self.hugr_to_llvm_binary else None),
+                "format_converter": (str(self.format_converter) if self.format_converter else None),
             },
         }
 
@@ -105,9 +99,7 @@ class GuppyFrontend:
         hugr_bytes = None
         try:
             # Try both new and old API
-            compiled = (
-                func.compile() if hasattr(func, "compile") else guppy.compile(func)
-            )
+            compiled = func.compile() if hasattr(func, "compile") else guppy.compile(func)
 
             # Handle the return value - it might be a FuncDefnPointer or similar
             # Both Rust backend and Selene now use binary envelope format
@@ -268,11 +260,7 @@ class GuppyFrontend:
 
     def cleanup(self) -> None:
         """Clean up temporary files."""
-        if (
-            hasattr(self, "_temp_dir")
-            and self._temp_dir
-            and Path(self._temp_dir).exists()
-        ):
+        if hasattr(self, "_temp_dir") and self._temp_dir and Path(self._temp_dir).exists():
 
             shutil.rmtree(self._temp_dir)
             self._temp_dir = None
@@ -359,11 +347,7 @@ def guppy_to_hugr(guppy_func: Callable) -> bytes:
 
     # Compile Guppy → HUGR
     try:
-        compiled = (
-            guppy_func.compile()
-            if hasattr(guppy_func, "compile")
-            else guppy.compile(guppy_func)
-        )
+        compiled = guppy_func.compile() if hasattr(guppy_func, "compile") else guppy.compile(guppy_func)
 
         if hasattr(compiled, "to_bytes"):
             return compiled.to_bytes()

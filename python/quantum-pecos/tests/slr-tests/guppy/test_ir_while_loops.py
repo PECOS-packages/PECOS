@@ -22,7 +22,7 @@ def test_ir_while_loop_basic() -> None:
         Measure(q[0]) > c[0],
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -50,7 +50,7 @@ def test_ir_while_loop_with_quantum() -> None:
         Measure(q) > result,
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -81,7 +81,7 @@ def test_ir_nested_while_loops() -> None:
         Measure(q[0]) > result[0],
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -102,7 +102,7 @@ def test_ir_while_error_in_qasm() -> None:
         ),
     )
 
-    gen = QASMGenerator()
+    gen = QASMGenerator(_internal=True)
 
     # Should raise NotImplementedError
     with pytest.raises(NotImplementedError) as exc_info:
@@ -125,7 +125,7 @@ def test_ir_for_loop_placeholder() -> None:
         Measure(q) > c,
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -155,7 +155,7 @@ def test_while_loop_quantum_resource_handling() -> None:
         Measure(q) > results[1:4],
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

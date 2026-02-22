@@ -36,10 +36,8 @@ class HugrLlvmCompiler:
 
         possible_paths = [
             # In quantum-compilation-examples
-            base_dir
-            / "quantum-compilation-examples/hugr_quantum_llvm/target/release/hugr_quantum_llvm",
-            base_dir
-            / "quantum-compilation-examples/hugr_quantum_llvm/target/debug/hugr_quantum_llvm",
+            base_dir / "quantum-compilation-examples/hugr_quantum_llvm/target/release/hugr_quantum_llvm",
+            base_dir / "quantum-compilation-examples/hugr_quantum_llvm/target/debug/hugr_quantum_llvm",
             # Built versions
             Path("./hugr_quantum_llvm"),
             Path("hugr_quantum_llvm"),
@@ -69,10 +67,7 @@ class HugrLlvmCompiler:
             RuntimeError: If compilation fails
         """
         if not self.hugr_llvm_binary:
-            msg = (
-                "HUGR→LLVM compiler not found. "
-                "Build it from quantum-compilation-examples/hugr_quantum_llvm/"
-            )
+            msg = "HUGR→LLVM compiler not found. Build it from quantum-compilation-examples/hugr_quantum_llvm/"
             raise RuntimeError(
                 msg,
             )
@@ -124,11 +119,7 @@ class HugrLlvmCompiler:
 
     def cleanup(self) -> None:
         """Clean up temporary files."""
-        if (
-            hasattr(self, "_temp_dir")
-            and self._temp_dir
-            and Path(self._temp_dir).exists()
-        ):
+        if hasattr(self, "_temp_dir") and self._temp_dir and Path(self._temp_dir).exists():
 
             shutil.rmtree(self._temp_dir)
             self._temp_dir = None

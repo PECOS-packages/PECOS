@@ -70,7 +70,7 @@ use crate::runner::ShotRunner;
 use crate::sampling::weight::SampleWeight;
 use pecos_qsim::{CliffordGateable, SparseStab};
 use pecos_rng::{PecosRng, resolve_seed};
-use rand::Rng;
+use rand::RngExt;
 
 /// Configuration for subset simulation.
 #[derive(Debug, Clone)]

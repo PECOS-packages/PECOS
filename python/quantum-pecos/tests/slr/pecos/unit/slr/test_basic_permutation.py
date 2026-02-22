@@ -195,16 +195,12 @@ def test_same_register_permutation_qir(
     )
 
     # We should have at least three set_creg_bit calls
-    assert (
-        len(set_creg_calls) >= 3
-    ), f"Expected at least 3 set_creg_bit calls, found {len(set_creg_calls)}"
+    assert len(set_creg_calls) >= 3, f"Expected at least 3 set_creg_bit calls, found {len(set_creg_calls)}"
 
     # Create a dictionary to store the values set for each index
     set_values = {}
     for reg_name, index, value in set_creg_calls:
-        assert (
-            reg_name == "a"
-        ), f"set_creg_bit applied to register {reg_name}, expected a"
+        assert reg_name == "a", f"set_creg_bit applied to register {reg_name}, expected a"
         set_values[int(index)] = int(value)
 
     # Verify that the set_creg_bit calls are setting the correct values

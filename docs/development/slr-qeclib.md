@@ -179,20 +179,21 @@ prog = Main(
 )
 ```
 
-For iteration with a loop variable, use `For`:
+For iteration with a loop variable, use `For` with `LoopVar`:
 
-<!--skip: loop variable indexing q[i] not yet supported at runtime-->
 ```python
-from pecos.slr import Main, For, QReg, CReg
+from pecos.slr import Main, For, LoopVar, QReg, CReg
 from pecos.slr.qeclib import qubit as qb
+
+# Create a loop variable for symbolic indexing
+i = LoopVar("i")
 
 prog = Main(
     q := QReg("q", 4),
     c := CReg("c", 4),
     # Apply H to each qubit using loop variable
-    # Note: Loop variable must be a string; runtime q[i] indexing is planned
-    For("i", range(4)).Do(
-        qb.H(q[0]),  # Would use q[i] when supported
+    For(i, range(4)).Do(
+        qb.H(q[i]),  # q[i] uses symbolic indexing
     ),
     qb.Measure(q) > c,
 )
@@ -283,10 +284,13 @@ from pecos.slr.qeclib import steane
 
 SlrConverter can output to multiple formats and also convert from other formats to SLR.
 
-```hidden-python
-# Setup for SlrConverter examples
+### Output Formats
+
+```python
 from pecos.slr import Main, QReg, CReg, SlrConverter
 from pecos.slr.qeclib import qubit as qb
+
+# Create a simple program
 prog = Main(
     q := QReg("q", 2),
     c := CReg("c", 2),
@@ -294,11 +298,7 @@ prog = Main(
     qb.CX(q[0], q[1]),
     qb.Measure(q) > c,
 )
-```
 
-### Output Formats
-
-```python
 converter = SlrConverter(prog)
 
 # Guppy source code
@@ -318,20 +318,40 @@ qir = converter.qir()
 quantum_circuit = converter.quantum_circuit()
 ```
 
-Additional output formats (require optional dependencies):
+Additional output formats:
 
-<!--skip: requires stim package-->
 ```python
+from pecos.slr import Main, QReg, CReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
+
+prog = Main(
+    q := QReg("q", 2),
+    c := CReg("c", 2),
+    qb.H(q[0]),
+    qb.Measure(q) > c,
+)
+converter = SlrConverter(prog)
+
+# Stim circuit
+stim_circuit = converter.stim()
+
 # QIR bytecode (requires llvmlite)
 qir_bc = converter.qir_bc()
-
-# Stim circuit (requires stim package)
-stim_circuit = converter.stim()
 ```
 
 ### Parallel Optimization
 
 ```python
+from pecos.slr import Main, QReg, CReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
+
+prog = Main(
+    q := QReg("q", 2),
+    c := CReg("c", 2),
+    qb.H(q[0]),
+    qb.Measure(q) > c,
+)
+
 # Optimization enabled by default
 converter = SlrConverter(prog)
 
@@ -341,14 +361,27 @@ converter = SlrConverter(prog, optimize_parallel=False)
 
 ### Converting FROM Other Formats
 
-<!--skip: references stim_circuit and qc from prior example-->
 ```python
-from pecos.slr import SlrConverter
+from pecos.slr import Main, QReg, CReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
 
-# From Stim circuit
+# Create a program and convert to various formats
+prog = Main(
+    q := QReg("q", 2),
+    c := CReg("c", 2),
+    qb.H(q[0]),
+    qb.Measure(q) > c,
+)
+converter = SlrConverter(prog)
+
+# Get Stim and QuantumCircuit representations
+stim_circuit = converter.stim()
+qc = converter.quantum_circuit()
+
+# Convert back from Stim circuit
 slr_block = SlrConverter.from_stim(stim_circuit)
 
-# From PECOS QuantumCircuit
+# Convert back from PECOS QuantumCircuit
 slr_block = SlrConverter.from_quantum_circuit(qc)
 ```
 
@@ -356,6 +389,17 @@ slr_block = SlrConverter.from_quantum_circuit(qc)
 
 ```python
 from pecos import sim, Qasm
+from pecos.slr import Main, QReg, CReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
+
+# Create a program
+prog = Main(
+    q := QReg("q", 2),
+    c := CReg("c", 2),
+    qb.H(q[0]),
+    qb.CX(q[0], q[1]),
+    qb.Measure(q) > c,
+)
 
 # Option 1: Convert to QASM and simulate
 qasm = SlrConverter(prog).qasm()
@@ -417,7 +461,7 @@ qasm = SlrConverter(prog).qasm()
 ### Example: Parameterized Circuits
 
 ```python
-from pecos.slr import Main, Block, QReg, CReg
+from pecos.slr import Main, Block, QReg, CReg, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 
 
@@ -510,6 +554,7 @@ prog = Main(
 | `Qubit` | Single qubit reference |
 | `If` | Conditional block (use `.Then()` method) |
 | `For` | For loop with variable (use `.Do()` method) |
+| `LoopVar` | Loop variable for symbolic indexing (e.g., `q[i]`) |
 | `While` | While loop (use `.Do()` method) |
 | `Repeat` | Simple repetition (use `.block()` method) |
 | `Return` | Return statement |

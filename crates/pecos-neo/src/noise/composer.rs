@@ -525,7 +525,7 @@ mod tests {
     use crate::command::{GateCommand, GateType};
     use crate::noise::plugins::CorePlugin;
     use pecos_core::QubitId;
-    use rand::Rng;
+    use rand::RngExt;
 
     // Simple test channel that always responds with an X gate
     #[derive(Clone)]

@@ -43,7 +43,7 @@ use pyo3::prelude::*;
 /// a[0]      # Get bit (returns bool)
 /// a[1] = 1  # Set bit
 /// ```
-#[pyclass(name = "BitInt")]
+#[pyclass(name = "BitInt", from_py_object)]
 #[derive(Clone)]
 pub struct PyBitInt {
     inner: BitInt,

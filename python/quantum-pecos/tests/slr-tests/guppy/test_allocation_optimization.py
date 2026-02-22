@@ -27,7 +27,7 @@ def test_short_lived_ancilla_optimization() -> None:
         Measure(data) > results,
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -56,7 +56,7 @@ def test_reused_ancilla_no_optimization() -> None:
         Measure(data) > results,
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -94,7 +94,7 @@ def test_mixed_allocation_strategy() -> None:
         Measure(mixed[0:3]) > results,
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -116,7 +116,7 @@ def test_conditional_scope_prevents_optimization() -> None:
         ),
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -137,7 +137,7 @@ def test_loop_scope_prevents_optimization() -> None:
         Measure(q) > results,
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
@@ -158,15 +158,12 @@ def test_optimization_report_generation() -> None:
         Measure(simple[1]) > result2[0],
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 
     # Should have detailed optimization or unified planning report
-    assert (
-        "UNIFIED RESOURCE PLANNING REPORT" in code
-        or "=== Qubit Allocation Optimization Report ===" in code
-    )
+    assert "UNIFIED RESOURCE PLANNING REPORT" in code or "=== Qubit Allocation Optimization Report ===" in code
     assert "simple" in code.lower()  # Array name mentioned
     assert "Strategy:" in code
 
@@ -183,7 +180,7 @@ def test_never_used_qubits() -> None:
         # unused register is never touched
     )
 
-    gen = IRGuppyGenerator()
+    gen = IRGuppyGenerator(_internal=True)
     gen.generate_block(prog)
     code = gen.get_output()
 

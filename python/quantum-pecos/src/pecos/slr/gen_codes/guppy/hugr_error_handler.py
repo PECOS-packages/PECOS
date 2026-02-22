@@ -42,8 +42,7 @@ class HugrErrorHandler:
             "type": "MoveOutOfSubscriptError",
             "message": "Cannot move out of array subscript",
             "suggestion": (
-                "Use array unpacking or measure_array() instead of "
-                "individual element access after consumption"
+                "Use array unpacking or measure_array() instead of individual element access after consumption"
             ),
         },
         r"NotCallableError.*'(\w+)'": {
@@ -112,10 +111,7 @@ class HugrErrorHandler:
         context = self._find_code_context(var_name)
         if context:
             lines.append("\nRelevant code:")
-            lines.extend(
-                f"  Line {ctx.line_number}: {ctx.line_content.strip()}"
-                for ctx in context
-            )
+            lines.extend(f"  Line {ctx.line_number}: {ctx.line_content.strip()}" for ctx in context)
 
         # Add specific examples for common fixes
         if info["type"] == "PlaceNotUsedError" and var_name:

@@ -60,12 +60,40 @@ class GuppyPipelineTest:
                 builder = sim(Guppy(func)).qubits(n_qubits).quantum(state_vector())
                 if seed is not None:
                     builder = builder.seed(seed)
-                result_dict = builder.run(shots)
+                result_obj = builder.run(shots)
+                result_dict = result_obj.to_dict()
 
                 # Format results to match expected structure
                 measurements = []
                 if "measurements" in result_dict:
-                    measurements = result_dict["measurements"]
+                    # measurements is a list of lists like [[1], [0, 1], ...]
+                    # For functions returning single bool, extract the last measurement per shot
+                    raw_measurements = result_dict["measurements"]
+                    if raw_measurements and isinstance(raw_measurements[0], list):
+                        # Check if function returns single bool or tuple
+                        import inspect
+
+                        actual_func = func
+                        if hasattr(func, "wrapped") and hasattr(
+                            func.wrapped,
+                            "python_func",
+                        ):
+                            actual_func = func.wrapped.python_func
+                        try:
+                            sig = inspect.signature(actual_func)
+                            return_type = sig.return_annotation
+                            is_tuple_return = hasattr(return_type, "__origin__") and return_type.__origin__ is tuple
+                        except (ValueError, TypeError):
+                            is_tuple_return = False
+
+                        if is_tuple_return:
+                            # Return full measurement tuples
+                            measurements = [tuple(m) for m in raw_measurements]
+                        else:
+                            # For single bool return, take the last measurement from each shot
+                            measurements = [m[-1] if m else 0 for m in raw_measurements]
+                    else:
+                        measurements = raw_measurements
                 elif "measurement_0" in result_dict:
                     # Handle multiple measurements
                     num_shots = len(result_dict["measurement_0"])
@@ -75,9 +103,7 @@ class GuppyPipelineTest:
                     num_measurements = len(measurement_keys)
 
                     for i in range(num_shots):
-                        result_tuple = [
-                            bool(result_dict[key][i]) for key in measurement_keys
-                        ]
+                        result_tuple = [bool(result_dict[key][i]) for key in measurement_keys]
 
                         # Check function signature to determine if it returns a tuple
                         # For now, if there's more than one measurement but function returns single bool,
@@ -96,18 +122,11 @@ class GuppyPipelineTest:
                         return_type = sig.return_annotation
 
                         # Check if return type is a tuple
-                        is_tuple_return = (
-                            hasattr(return_type, "__origin__")
-                            and return_type.__origin__ is tuple
-                        )
+                        is_tuple_return = hasattr(return_type, "__origin__") and return_type.__origin__ is tuple
                         if is_tuple_return or num_measurements == 1:
                             # For tuple returns or single measurement, use all measurements
                             measurements.append(
-                                (
-                                    tuple(result_tuple)
-                                    if len(result_tuple) > 1
-                                    else result_tuple[0]
-                                ),
+                                (tuple(result_tuple) if len(result_tuple) > 1 else result_tuple[0]),
                             )
                         else:
                             # For single bool return with multiple measurements, take the last one
@@ -217,9 +236,7 @@ class TestBasicQuantumOperations:
         if results_x.get("hugr_llvm", {}).get("success"):
             ones_count = sum(results_x["hugr_llvm"]["result"]["results"])
             # X gate should flip |0⟩ to |1⟩, expect 100% ones
-            assert (
-                ones_count == 100
-            ), f"X gate should produce all 1s, got {ones_count}/100"
+            assert ones_count == 100, f"X gate should produce all 1s, got {ones_count}/100"
 
         # Test Y gate - should measure |1⟩ deterministically
         results_y = pipeline_tester.test_function_on_both_pipelines(
@@ -230,9 +247,7 @@ class TestBasicQuantumOperations:
         if results_y.get("hugr_llvm", {}).get("success"):
             ones_count = sum(results_y["hugr_llvm"]["result"]["results"])
             # Y gate should flip |0⟩ to |1⟩ with phase, expect 100% ones
-            assert (
-                ones_count == 100
-            ), f"Y gate should produce all 1s, got {ones_count}/100"
+            assert ones_count == 100, f"Y gate should produce all 1s, got {ones_count}/100"
 
         # Test Z gate - should measure |0⟩ deterministically
         results_z = pipeline_tester.test_function_on_both_pipelines(
@@ -243,9 +258,7 @@ class TestBasicQuantumOperations:
         if results_z.get("hugr_llvm", {}).get("success"):
             ones_count = sum(results_z["hugr_llvm"]["result"]["results"])
             # Z gate should leave |0⟩ unchanged, expect 0% ones
-            assert (
-                ones_count == 0
-            ), f"Z gate should produce all 0s, got {ones_count}/100"
+            assert ones_count == 0, f"Z gate should produce all 0s, got {ones_count}/100"
 
     def test_bell_state_entanglement(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Test Bell state creation and entanglement."""
@@ -271,9 +284,7 @@ class TestBasicQuantumOperations:
                 decoded_measurements = decode_integer_results(measurements, 2)
             correlated = sum(1 for (a, b) in decoded_measurements if a == b)
             correlation_rate = correlated / len(decoded_measurements)
-            assert (
-                correlation_rate > 0.8
-            ), f"Bell state should be highly correlated, got {correlation_rate:.2%}"
+            assert correlation_rate > 0.8, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
 
         # Verify PHIR pipeline results if available
         if results.get("phir", {}).get("success"):
@@ -282,9 +293,7 @@ class TestBasicQuantumOperations:
             decoded_measurements = decode_integer_results(measurements, 2)
             correlated = sum(1 for (a, b) in decoded_measurements if a == b)
             correlation_rate = correlated / len(decoded_measurements)
-            assert (
-                correlation_rate > 0.8
-            ), f"PHIR Bell state should be highly correlated, got {correlation_rate:.2%}"
+            assert correlation_rate > 0.8, f"PHIR Bell state should be highly correlated, got {correlation_rate:.2%}"
 
 
 # ============================================================================

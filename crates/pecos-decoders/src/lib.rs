@@ -20,16 +20,21 @@ pub use pecos_decoder_core::{
 // Re-export LDPC decoders when feature is enabled
 #[cfg(feature = "ldpc")]
 pub use pecos_ldpc_decoders::{
+    // Builders
+    BeliefFindBuilder,
+    // Decoders
     BeliefFindDecoder,
+    BpLsdBuilder,
     BpLsdDecoder,
     // Types
     BpMethod,
-    // Decoders
+    BpOsdBuilder,
     BpOsdDecoder,
     BpSchedule,
     ClusterStatistics,
     CssCode,
     DecodingResult as LdpcDecodingResult,
+    FlipBuilder,
     FlipDecoder,
     InputVectorType,
     // Errors
@@ -37,9 +42,11 @@ pub use pecos_ldpc_decoders::{
     LsdStatistics,
     MbpDecoder,
     OsdMethod,
+    SoftInfoBpBuilder,
     SoftInfoBpDecoder,
     SparseMatrix,
     UfMethod,
+    UnionFindBuilder,
     UnionFindDecoder,
 };
 
@@ -47,8 +54,8 @@ pub use pecos_ldpc_decoders::{
 #[cfg(feature = "fusion-blossom")]
 pub use pecos_fusion_blossom::{
     DecodingOptions as FusionBlossomDecodingOptions, DecodingResult as FusionBlossomDecodingResult,
-    FusionBlossomConfig, FusionBlossomDecoder, FusionBlossomError, PerfectMatchingInfo, SolverType,
-    StandardCode, SyndromeData,
+    FusionBlossomBuilder, FusionBlossomConfig, FusionBlossomDecoder, FusionBlossomError,
+    PerfectMatchingInfo, SolverType, StandardCode, SyndromeData,
 };
 
 // Re-export PyMatching decoder when feature is enabled

@@ -63,9 +63,7 @@ class TestGuppyWithResults:
         assert callable(
             check_guppy_imports["result"],
         ), "result should be a callable function"
-        assert (
-            check_guppy_imports["result_location"] is not None
-        ), "result function should have a known import location"
+        assert check_guppy_imports["result_location"] is not None, "result function should have a known import location"
 
     def test_simple_measurement_with_result(self, check_guppy_imports: dict) -> None:
         """Test simple measurement with result tagging."""
@@ -349,9 +347,7 @@ class TestGuppyWithResults:
                 formatted_file.write_text(json.dumps(hugr_json, indent=2))
 
                 assert formatted_file.exists(), "Formatted JSON should be created"
-                assert (
-                    formatted_file.stat().st_size > 0
-                ), "Formatted JSON should not be empty"
+                assert formatted_file.stat().st_size > 0, "Formatted JSON should not be empty"
 
                 # Verify JSON structure
                 assert isinstance(hugr_json, dict), "HUGR should be a JSON object"
@@ -369,9 +365,7 @@ class TestGuppyWithResults:
             if isinstance(obj, dict):
                 if "op" in obj:
                     op_str = str(obj["op"]).lower()
-                    if any(
-                        term in op_str for term in ["output", "result", "return", "io"]
-                    ):
+                    if any(term in op_str for term in ["output", "result", "return", "io"]):
                         count += 1
 
                 for value in obj.values():
@@ -412,23 +406,13 @@ class TestResultFormats:
 
         # Validate documentation structure
         for pattern_name, format_info in expected_formats.items():
-            assert (
-                "description" in format_info
-            ), f"{pattern_name} should have description"
-            assert (
-                "example_keys" in format_info
-            ), f"{pattern_name} should have example_keys"
-            assert (
-                "format" in format_info
-            ), f"{pattern_name} should have format description"
-            assert (
-                "selene_output" in format_info
-            ), f"{pattern_name} should have selene_output"
+            assert "description" in format_info, f"{pattern_name} should have description"
+            assert "example_keys" in format_info, f"{pattern_name} should have example_keys"
+            assert "format" in format_info, f"{pattern_name} should have format description"
+            assert "selene_output" in format_info, f"{pattern_name} should have selene_output"
 
             # Example keys should be non-empty
-            assert (
-                len(format_info["example_keys"]) > 0
-            ), f"{pattern_name} should have at least one example key"
+            assert len(format_info["example_keys"]) > 0, f"{pattern_name} should have at least one example key"
 
             # All fields should be strings except example_keys
             assert isinstance(format_info["description"], str)

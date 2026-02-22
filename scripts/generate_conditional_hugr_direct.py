@@ -56,14 +56,7 @@ def main() -> None:
 
 def main_script() -> None:
     """Run the main script to generate the HUGR file."""
-    output_dir = (
-        Path(__file__).parent.parent
-        / "crates"
-        / "pecos"
-        / "tests"
-        / "test_data"
-        / "hugr"
-    )
+    output_dir = Path(__file__).parent.parent / "crates" / "pecos" / "tests" / "test_data" / "hugr"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Compiling to HUGR...")

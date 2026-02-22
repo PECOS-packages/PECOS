@@ -25,6 +25,7 @@ pecos-engines.workspace = true
 pecos-rng.workspace = true
 num-complex.workspace = true
 rand.workspace = true
+rand_core.workspace = true
 libloading.workspace = true
 log.workspace = true
 dirs.workspace = true

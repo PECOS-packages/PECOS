@@ -99,9 +99,7 @@ def test_quantum_permutation_qir(quantum_permutation_program: tuple) -> None:
     # The exact indices will depend on how qubits are allocated in the QIR generator
     # We can't assert the exact indices without knowing the allocation strategy
     # But we can verify that the CNOT control qubit is the same as the H qubit
-    assert (
-        h_qubit == cnot_control
-    ), f"H applied to qubit {h_qubit}, but CNOT control is qubit {cnot_control}"
+    assert h_qubit == cnot_control, f"H applied to qubit {h_qubit}, but CNOT control is qubit {cnot_control}"
 
     # Verify that running QIR generation twice produces consistent results
     qir2 = SlrConverter(prog).qir()
@@ -282,12 +280,7 @@ def test_comprehensive_qir_verification() -> None:
     # The first X call should be for "original a[1]"
     # The first Y call should be for "original b[0]"
     # The first Z call should be for "original b[1]"
-    if (
-        len(h_calls) >= 1
-        and len(x_calls) >= 1
-        and len(y_calls) >= 1
-        and len(z_calls) >= 1
-    ):
+    if len(h_calls) >= 1 and len(x_calls) >= 1 and len(y_calls) >= 1 and len(z_calls) >= 1:
         original_a0 = int(h_calls[0])
         original_a1 = int(x_calls[0])
         original_b0 = int(y_calls[0])
@@ -340,14 +333,10 @@ def test_comprehensive_qir_verification() -> None:
             mz2_qubit, mz2_reg, mz2_idx = mz_to_creg_calls[1]
 
             # Check if either measurement matches our expectations
-            b0_to_m0 = (
-                int(mz1_qubit) == original_b0 and mz1_reg == "m" and int(mz1_idx) == 0
-            ) or (
+            b0_to_m0 = (int(mz1_qubit) == original_b0 and mz1_reg == "m" and int(mz1_idx) == 0) or (
                 int(mz2_qubit) == original_b0 and mz2_reg == "m" and int(mz2_idx) == 0
             )
-            a1_to_n0 = (
-                int(mz1_qubit) == original_a1 and mz1_reg == "n" and int(mz1_idx) == 0
-            ) or (
+            a1_to_n0 = (int(mz1_qubit) == original_a1 and mz1_reg == "n" and int(mz1_idx) == 0) or (
                 int(mz2_qubit) == original_a1 and mz2_reg == "n" and int(mz2_idx) == 0
             )
 
@@ -429,12 +418,7 @@ def test_rotation_gates_with_permutation() -> None:
     print(f"Tdg calls: {tdg_calls}")
 
     # Based on the initial gates, we can infer the qubit allocation:
-    if (
-        len(rx_calls) >= 1
-        and len(ry_calls) >= 1
-        and len(rz_calls) >= 1
-        and len(s_calls) >= 1
-    ):
+    if len(rx_calls) >= 1 and len(ry_calls) >= 1 and len(rz_calls) >= 1 and len(s_calls) >= 1:
         # Extract the qubit indices from the first calls
         original_a0 = int(rx_calls[0][1])
         original_a1 = int(ry_calls[0][1])

@@ -49,7 +49,7 @@ use super::world::EntityTransfer;
 use crate::sampling::SampleWeight;
 use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 
 /// Statistics from a redistribution operation.
 #[derive(Debug, Clone, Default)]

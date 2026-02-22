@@ -136,8 +136,9 @@ impl PyQulacs {
     }
 
     /// Resets the quantum state to the all-zero state
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     /// Executes a single-qubit gate based on the provided symbol and location
@@ -580,6 +581,18 @@ impl PyQulacs {
     #[getter]
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
+    }
+
+    /// Returns the probability of each computational basis state as a real-valued array.
+    ///
+    /// Each entry is |amplitude|^2 for the corresponding basis state.
+    #[getter]
+    fn probabilities(&self) -> Vec<f64> {
+        self.inner
+            .state()
+            .iter()
+            .map(num_complex::Complex::norm_sqr)
+            .collect()
     }
 
     /// Get the probability of measuring a specific basis state

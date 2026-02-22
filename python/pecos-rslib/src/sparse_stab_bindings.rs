@@ -1,4 +1,5 @@
 // Copyright 2024 The PECOS Developers
+use pecos::core::BitSet;
 use pecos::prelude::*;
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -13,9 +14,9 @@ use pecos::prelude::*;
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 
-#[pyclass(name = "SparseSim")]
+#[pyclass(name = "SparseSim", module = "pecos_rslib")]
 pub struct PySparseSim {
     inner: SparseStab,
 }
@@ -29,8 +30,9 @@ impl PySparseSim {
         }
     }
 
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     #[getter]
@@ -511,6 +513,129 @@ impl PySparseSim {
         Ok(())
     }
 
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let num_qubits = self.inner.num_qubits();
+
+        // Helper closure to serialize a Gens into a Python dict
+        let serialize_gens = |gens: &Gens| -> PyResult<Py<PyDict>> {
+            let dict = PyDict::new(py);
+
+            let bitset_to_list = |sets: &[BitSet]| -> PyResult<Py<PyList>> {
+                let items: Vec<Py<PyList>> = sets
+                    .iter()
+                    .map(|s| {
+                        let elems: Vec<usize> = s.iter().collect();
+                        Ok(PyList::new(py, &elems)?.unbind())
+                    })
+                    .collect::<PyResult<_>>()?;
+                Ok(PyList::new(py, &items)?.unbind())
+            };
+
+            dict.set_item("col_x", bitset_to_list(&gens.col_x)?)?;
+            dict.set_item("col_z", bitset_to_list(&gens.col_z)?)?;
+            dict.set_item("row_x", bitset_to_list(&gens.row_x)?)?;
+            dict.set_item("row_z", bitset_to_list(&gens.row_z)?)?;
+
+            let set_to_list = |s: &BitSet| -> Py<PyList> {
+                let elems: Vec<usize> = s.iter().collect();
+                PyList::new(py, &elems).unwrap().unbind()
+            };
+
+            dict.set_item("signs_minus", set_to_list(&gens.signs_minus))?;
+            dict.set_item("signs_i", set_to_list(&gens.signs_i))?;
+
+            Ok(dict.unbind())
+        };
+
+        let stabs_dict = serialize_gens(self.inner.stabs())?;
+        let destabs_dict = serialize_gens(self.inner.destabs())?;
+
+        let cls = py.get_type::<PySparseSim>();
+        let from_pickle = cls.getattr("_from_pickle")?;
+        PyTuple::new(
+            py,
+            &[
+                from_pickle.into_any(),
+                PyTuple::new(
+                    py,
+                    &[
+                        num_qubits.into_pyobject(py)?.into_any(),
+                        stabs_dict.into_bound(py).into_any(),
+                        destabs_dict.into_bound(py).into_any(),
+                    ],
+                )?
+                .into_any(),
+            ],
+        )
+    }
+
+    #[staticmethod]
+    fn _from_pickle(
+        num_qubits: usize,
+        stabs_dict: &Bound<'_, PyDict>,
+        destabs_dict: &Bound<'_, PyDict>,
+    ) -> PyResult<Self> {
+        let deserialize_gens = |dict: &Bound<'_, PyDict>| -> PyResult<Gens> {
+            let list_to_bitsets = |key: &str| -> PyResult<Vec<BitSet>> {
+                let list: Bound<'_, PyList> = dict
+                    .get_item(key)?
+                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>(key.to_string()))?
+                    .cast_into()?;
+                let mut result = Vec::with_capacity(list.len());
+                for item in list.iter() {
+                    let inner_list: Vec<usize> = item.extract()?;
+                    let set: BitSet = inner_list.into_iter().collect();
+                    result.push(set);
+                }
+                Ok(result)
+            };
+
+            let list_to_bitset = |key: &str| -> PyResult<BitSet> {
+                let list = dict.get_item(key)?.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyKeyError, _>(key.to_string())
+                })?;
+                let elems: Vec<usize> = list.extract()?;
+                Ok(elems.into_iter().collect())
+            };
+
+            Ok(Gens::from_parts(
+                num_qubits,
+                list_to_bitsets("col_x")?,
+                list_to_bitsets("col_z")?,
+                list_to_bitsets("row_x")?,
+                list_to_bitsets("row_z")?,
+                list_to_bitset("signs_minus")?,
+                list_to_bitset("signs_i")?,
+            ))
+        };
+
+        let stabs = deserialize_gens(stabs_dict)?;
+        let destabs = deserialize_gens(destabs_dict)?;
+
+        let mut inner = SparseStab::new(num_qubits);
+        *inner.stabs_mut() = stabs;
+        *inner.destabs_mut() = destabs;
+        Ok(PySparseSim { inner })
+    }
+
+    /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.
+    fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
+        let gens = if is_stab {
+            self.inner.stabs()
+        } else {
+            self.inner.destabs()
+        };
+        let to_vecs = |sets: &[BitSet]| -> Vec<Vec<usize>> {
+            sets.iter().map(|s| s.iter().collect()).collect()
+        };
+        (
+            to_vecs(&gens.col_x),
+            to_vecs(&gens.col_z),
+            to_vecs(&gens.row_x),
+            to_vecs(&gens.row_z),
+        )
+    }
+
     #[getter]
     fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
         // Create a Rust GateBindingsDict directly
@@ -533,6 +658,22 @@ impl PySparseSim {
         let py = slf.py();
         let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
         Ok(crate::simulator_utils::TableauWrapper::new(sim_obj, false))
+    }
+
+    #[getter]
+    fn gens(
+        slf: PyRef<'_, Self>,
+    ) -> PyResult<(
+        crate::simulator_utils::TableauWrapper,
+        crate::simulator_utils::TableauWrapper,
+    )> {
+        let py = slf.py();
+        let sim_obj_stab: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        let sim_obj_destab = sim_obj_stab.clone_ref(py);
+        Ok((
+            crate::simulator_utils::TableauWrapper::new(sim_obj_stab, true),
+            crate::simulator_utils::TableauWrapper::new(sim_obj_destab, false),
+        ))
     }
 }
 

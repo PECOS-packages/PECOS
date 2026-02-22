@@ -43,7 +43,7 @@ use super::weight::SampleWeight;
 use crate::command::GateType;
 use crate::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use pecos_rng::PecosRng;
-use rand::Rng;
+use rand::RngExt;
 
 /// Configuration for importance sampling.
 #[derive(Debug, Clone)]

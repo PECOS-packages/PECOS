@@ -23,7 +23,7 @@ use pecos::qsim::measurement_sampler::{MeasurementSampler, SequentialMeasurement
 use pecos::qsim::{SparseStab, SparseStabVecSet, SymbolicSparseStab, SymbolicSparseStabVecSet};
 use pecos_engines::quantum::SparseStabEngine;
 use pecos_engines::{Engine, EngineSystem, QuantumSystem};
-use rand::Rng;
+use rand::RngExt;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
@@ -248,7 +248,7 @@ fn bench_surface_code_simulation<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Run surface code circuit on `SparseStab` (for Monte Carlo benchmarking).
-fn run_circuit_sparse_stab<R: rand::RngCore + rand::SeedableRng + std::fmt::Debug>(
+fn run_circuit_sparse_stab<R: Rng + SeedableRng + std::fmt::Debug>(
     sim: &mut SparseStab<R>,
     params: &SurfaceCodeParams,
     rounds: usize,
@@ -439,7 +439,7 @@ fn bench_bitset_vs_vecset_simulation<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Run surface code circuit on `SparseStabVecSet` (for `BitSet` vs `VecSet` comparison).
-fn run_circuit_sparse_stab_vecset<R: rand::RngCore + rand::SeedableRng + std::fmt::Debug>(
+fn run_circuit_sparse_stab_vecset<R: Rng + SeedableRng + std::fmt::Debug>(
     sim: &mut SparseStabVecSet<R>,
     params: &SurfaceCodeParams,
     rounds: usize,
@@ -503,8 +503,8 @@ fn bench_sparse_stab_bitset_vs_vecset<M: Measurement>(c: &mut Criterion<M>) {
                     b.iter_batched(
                         || {
                             use pecos_rng::PecosRng;
-                            use rand::SeedableRng;
-                            let rng = PecosRng::from_os_rng();
+
+                            let rng: PecosRng = rand::make_rng();
                             let mut sim = SparseStabVecSet::with_rng(params.num_qubits, rng);
                             sim.reset();
                             sim

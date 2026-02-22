@@ -1,11 +1,46 @@
 //! Utilities for HUGR processing and validation
 
 use anyhow::{Error, Result, anyhow};
-use tket::extension::{TKET1_EXTENSION_ID, TKET1_OP_NAME};
+use tket::extension::rotation::ROTATION_EXTENSION;
+use tket::extension::{TKET_EXTENSION, TKET1_EXTENSION, TKET1_EXTENSION_ID, TKET1_OP_NAME};
+use tket::hugr::envelope::read_envelope;
+use tket::hugr::extension::{ExtensionRegistry, prelude};
 use tket::hugr::ops::OpType;
-use tket::hugr::package::Package;
+use tket::hugr::std_extensions::arithmetic::{
+    conversions, float_ops, float_types, int_ops, int_types,
+};
+use tket::hugr::std_extensions::{collections, logic, ptr};
 use tket::hugr::types::Term;
 use tket::hugr::{Hugr, HugrView};
+use tket_qsystem::extension::{futures as qsystem_futures, qsystem, result as qsystem_result};
+
+/// Extension registry matching the one used by selene-hugr-qis-compiler.
+static REGISTRY: std::sync::LazyLock<ExtensionRegistry> = std::sync::LazyLock::new(|| {
+    ExtensionRegistry::new([
+        prelude::PRELUDE.to_owned(),
+        int_types::EXTENSION.to_owned(),
+        int_ops::EXTENSION.to_owned(),
+        float_types::EXTENSION.to_owned(),
+        float_ops::EXTENSION.to_owned(),
+        conversions::EXTENSION.to_owned(),
+        logic::EXTENSION.to_owned(),
+        ptr::EXTENSION.to_owned(),
+        collections::list::EXTENSION.to_owned(),
+        collections::array::EXTENSION.to_owned(),
+        collections::static_array::EXTENSION.to_owned(),
+        collections::borrow_array::EXTENSION.to_owned(),
+        qsystem_futures::EXTENSION.to_owned(),
+        qsystem_result::EXTENSION.to_owned(),
+        qsystem::EXTENSION.to_owned(),
+        ROTATION_EXTENSION.to_owned(),
+        TKET_EXTENSION.to_owned(),
+        TKET1_EXTENSION.to_owned(),
+        tket::extension::bool::BOOL_EXTENSION.to_owned(),
+        tket::extension::debug::DEBUG_EXTENSION.to_owned(),
+        tket_qsystem::extension::gpu::EXTENSION.to_owned(),
+        tket_qsystem::extension::wasm::EXTENSION.to_owned(),
+    ])
+});
 
 /// Loads a HUGR package from a binary [Envelope][tket::hugr::envelope::Envelope].
 ///
@@ -20,119 +55,35 @@ use tket::hugr::{Hugr, HugrView};
 /// - The package contains unsupported operations
 /// - Package validation fails
 pub fn read_hugr_envelope(bytes: &[u8]) -> Result<Hugr> {
-    // Check if input is JSON format (starts with '{') vs binary envelope format
     if bytes.is_empty() {
         return Err(anyhow!("Empty HUGR input"));
     }
 
-    // Handle JSON format by wrapping in envelope
-    let (bytes_to_load, is_json) = if bytes[0] == b'{' {
-        // JSON format - wrap it in a binary envelope so HUGR can load it
-        let json_str =
-            std::str::from_utf8(bytes).map_err(|e| anyhow!("Invalid UTF-8 in JSON HUGR: {e}"))?;
+    let (_desc, package) = read_envelope(bytes, &REGISTRY)
+        .map_err(|e| Error::new(e).context("Failed to read HUGR"))?;
 
-        // Create a binary envelope with JSON content
-        // The envelope format is: MAGIC_HEADER + JSON_CONTENT
-        // HUGR expects: "HUGRiHJv" (8 bytes) + format byte + compression byte + JSON
-        let mut envelope = Vec::new();
+    if package.modules.len() != 1 {
+        return Err(anyhow!(
+            "Expected exactly one module in the package, found {}",
+            package.modules.len()
+        ));
+    }
 
-        // Magic header for HUGR envelope
-        envelope.extend_from_slice(b"HUGRiHJv");
+    package
+        .validate()
+        .map_err(|e| Error::new(e).context("HUGR package validation failed"))?;
 
-        // Format byte: 0x3F (63) for JSON format (EnvelopeFormat::JSON)
-        envelope.push(0x3F);
-
-        // Compression byte: 0x40 (64) - this is what HUGR expects
-        envelope.push(0x40);
-
-        // Append the JSON content
-        envelope.extend_from_slice(json_str.as_bytes());
-
-        (envelope, true)
-    } else {
-        (bytes.to_vec(), false)
-    };
-
-    // Try to load as a Package first
-    // Use None for the registry to allow loading HUGRs with unknown/newer extensions
-    // This is more permissive and matches how Selene loads HUGRs
-    let mut cursor = std::io::Cursor::new(&bytes_to_load);
-    match Package::load(&mut cursor, None) {
-        Ok(package) => {
-            // Validate package module count
-            if package.modules.len() != 1 {
-                return Err(anyhow!(
-                    "Expected exactly one module in the package, found {}",
-                    package.modules.len()
-                ));
-            }
-
-            // Validate the package
-            package
-                .validate()
-                .map_err(|e| Error::new(e).context("HUGR package validation failed"))?;
-
-            // Check that no opaque tket1 operations are present
-            for node in package.modules[0].nodes() {
-                let op = package.modules[0].get_optype(node);
-                if let Some(name) = is_opaque_tket1_op(op) {
-                    return Err(anyhow!(
-                        "Pytket op '{name}' is not currently supported by the PECOS HUGR-QIS compiler"
-                    ));
-                }
-            }
-
-            // Return the single module
-            Ok(package.modules[0].clone())
-        }
-        Err(_) if is_json => {
-            // If Package loading failed for JSON, it might be a direct HUGR
-            // Try loading as a direct HUGR with None for more permissive loading
-            let mut cursor = std::io::Cursor::new(&bytes_to_load);
-            match Hugr::load(&mut cursor, None) {
-                Ok(hugr) => {
-                    // Still check for unsupported operations
-                    for node in hugr.nodes() {
-                        let op = hugr.get_optype(node);
-                        if let Some(name) = is_opaque_tket1_op(op) {
-                            return Err(anyhow!(
-                                "Pytket op '{name}' is not currently supported by the PECOS HUGR-QIS compiler"
-                            ));
-                        }
-                    }
-                    Ok(hugr)
-                }
-                Err(e) => Err(anyhow!("Failed to load HUGR: {e}")),
-            }
-        }
-        Err(e) => {
-            // For binary format, if Package loading failed, try direct HUGR loading
-            // Use None for the registry to be more permissive
-            log::debug!("Package::load failed with: {e:?}");
-            let mut cursor = std::io::Cursor::new(&bytes_to_load);
-            match Hugr::load(&mut cursor, None) {
-                Ok(hugr) => {
-                    log::debug!("Successfully loaded as direct HUGR (not package)");
-                    // Still check for unsupported operations
-                    for node in hugr.nodes() {
-                        let op = hugr.get_optype(node);
-                        if let Some(name) = is_opaque_tket1_op(op) {
-                            return Err(anyhow!(
-                                "Pytket op '{name}' is not currently supported by the PECOS HUGR-QIS compiler"
-                            ));
-                        }
-                    }
-                    Ok(hugr)
-                }
-                Err(hugr_err) => {
-                    log::error!("Both Package::load and Hugr::load failed");
-                    log::error!("Package error: {e:?}");
-                    log::error!("Hugr error: {hugr_err:?}");
-                    Err(Error::new(e).context(format!("Error loading HUGR package (also tried direct HUGR load which failed with: {hugr_err})")))
-                }
-            }
+    // Check that no opaque tket1 operations are present
+    for node in package.modules[0].nodes() {
+        let op = package.modules[0].get_optype(node);
+        if let Some(name) = is_opaque_tket1_op(op) {
+            return Err(anyhow!(
+                "Pytket op '{name}' is not currently supported by the PECOS HUGR-QIS compiler"
+            ));
         }
     }
+
+    Ok(package.modules[0].clone())
 }
 
 /// Check if the optype is an opaque tket1 operation,

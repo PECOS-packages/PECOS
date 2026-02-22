@@ -38,8 +38,8 @@
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
+use pecos_rng::PecosRng;
 use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, SeedableRng};
 
 /// Parallel stabilizer simulator using row-based threading.
 #[derive(Clone)]
@@ -76,7 +76,7 @@ impl GpuStabParallel {
     /// Creates a new parallel stabilizer simulator.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        Self::with_rng(num_qubits, PecosRng::from_os_rng())
+        Self::with_rng(num_qubits, rand::make_rng())
     }
 
     /// Creates a new simulator with a specific seed.

@@ -27,20 +27,9 @@ def simple_noise_example() -> None:
     """
 
     # Simple uniform noise
-    noise = (
-        GeneralNoiseModelBuilder()
-        .with_seed(42)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
-    )
+    noise = GeneralNoiseModelBuilder().with_seed(42).with_p1_probability(0.001).with_p2_probability(0.01)
 
-    results = (
-        qasm_engine()
-        .program(QasmProgram.from_string(qasm))
-        .to_sim()
-        .noise(noise)
-        .run(1000)
-    )
+    results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
     results_dict = results.to_dict()
     counts = Counter(results_dict["c"])
 
@@ -77,13 +66,7 @@ def hardware_realistic_noise() -> None:
         .with_meas_1_probability(0.005)
     )  # 0.5% false negative
 
-    results = (
-        qasm_engine()
-        .program(QasmProgram.from_string(qasm))
-        .to_sim()
-        .noise(noise)
-        .run(1000)
-    )
+    results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
     results_dict = results.to_dict()
     counts = Counter(results_dict["c"])
 
@@ -126,13 +109,7 @@ def biased_noise_example() -> None:
         )
     )
 
-    results = (
-        qasm_engine()
-        .program(QasmProgram.from_string(qasm))
-        .to_sim()
-        .noise(noise)
-        .run(1000)
-    )
+    results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
     results_dict = results.to_dict()
     errors = sum(1 for val in results_dict["c"] if val == 1)
 
@@ -167,13 +144,7 @@ def ion_trap_noise() -> None:
         .with_meas_1_probability(0.005)
     )  # Bright state error
 
-    results = (
-        qasm_engine()
-        .program(QasmProgram.from_string(qasm))
-        .to_sim()
-        .noise(noise)
-        .run(1000)
-    )
+    results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
     results_dict = results.to_dict()
     counts = Counter(results_dict["c"])
 
@@ -205,13 +176,7 @@ def noiseless_gates_example() -> None:
         .with_noiseless_gate("H")
     )  # H gates have no error
 
-    results = (
-        qasm_engine()
-        .program(QasmProgram.from_string(qasm))
-        .to_sim()
-        .noise(noise)
-        .run(1000)
-    )
+    results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
     results_dict = results.to_dict()
     counts = Counter(results_dict["c"])
 
@@ -255,20 +220,8 @@ def scaled_noise_example() -> None:
     )  # Triple all error rates!
 
     # Run both
-    results_base = (
-        qasm_engine()
-        .program(QasmProgram.from_string(qasm))
-        .to_sim()
-        .noise(base_noise)
-        .run(1000)
-    )
-    results_scaled = (
-        qasm_engine()
-        .program(QasmProgram.from_string(qasm))
-        .to_sim()
-        .noise(scaled_noise)
-        .run(1000)
-    )
+    results_base = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(base_noise).run(1000)
+    results_scaled = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(scaled_noise).run(1000)
 
     # Count errors (anything not 0 or 3)
     results_base_dict = results_base.to_dict()
@@ -326,13 +279,7 @@ def comprehensive_example() -> None:
         .with_meas_1_probability(0.005)
     )
 
-    results = (
-        qasm_engine()
-        .program(QasmProgram.from_string(qasm))
-        .to_sim()
-        .noise(noise)
-        .run(1000)
-    )
+    results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
     results_dict = results.to_dict()
     counts = Counter(results_dict["c"])
 

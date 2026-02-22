@@ -1,5 +1,16 @@
 # Circuit Representation
 
+```hidden-rust
+use pecos::quantum::{DagCircuit, TickCircuit, Attribute};
+use pecos::core::{Gate, QubitId};
+use pecos::dag::DAG;
+use pecos::digraph::DiGraph;
+
+fn main() {
+    // CODE
+}
+```
+
 PECOS provides several ways to represent and work with quantum circuits, from high-level program formats to low-level data structures.
 
 ## Quick Guide: What Should I Use?
@@ -30,7 +41,7 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
 
 === ":fontawesome-brands-python: Python"
     ```python
-    from pecos import sim, Guppy, Qasm, Hugr
+    from pecos import sim, Guppy, Qasm, state_vector
 
     # Guppy - recommended for new code
     from guppylang import guppy
@@ -38,29 +49,38 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
 
 
     @guppy
-    def bell_state():
+    def bell_state() -> tuple[bool, bool]:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
         return measure(q0), measure(q1)
 
 
-    results = sim(Guppy(bell_state)).run(100)
+    results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(100)
 
     # QASM - for existing circuits
     results = sim(
         Qasm(
             """
         OPENQASM 2.0;
+        include "qelib1.inc";
         qreg q[2];
+        creg c[2];
         h q[0];
         cx q[0], q[1];
         measure q -> c;
     """
         )
     ).run(100)
+    ```
 
-    # HUGR - from compiled output
+    For HUGR files compiled separately (requires actual file):
+
+    <!--expect-error: FileNotFoundError.*program\.hugr-->
+    ```python
+    from pecos import sim, Hugr
+
+    # HUGR - from compiled output (fails if file doesn't exist)
     results = sim(Hugr.from_file("program.hugr")).run(100)
     ```
 
@@ -215,18 +235,18 @@ Gates can have arbitrary metadata attached:
 
 === ":fontawesome-brands-python: Python"
     ```python
-    from pecos.quantum import DagCircuit, Attribute
+    from pecos.quantum import DagCircuit
 
     circuit = DagCircuit()
 
     # Attach metadata to the last gate
-    circuit.h(0).meta("error_rate", Attribute.float(0.001))
+    circuit.h(0).meta("error_rate", 0.001)
 
     # Multiple metadata entries
-    circuit.cx(0, 1).meta("duration_ns", Attribute.int(50))
+    circuit.cx(0, 1).meta("duration_ns", 50)
 
     # Measurements break the chain but still support metadata
-    circuit.mz(0).meta("basis", Attribute.string("Z"))
+    circuit.mz(0).meta("basis", "Z")
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -249,6 +269,8 @@ Gates can have arbitrary metadata attached:
 
 === ":fontawesome-brands-python: Python"
     ```python
+    from pecos.quantum import DagCircuit
+
     circuit = DagCircuit()
     circuit.h(0).cx(0, 1).h(1).cx(1, 2).mz(0).mz(1).mz(2)
 
@@ -275,7 +297,10 @@ Gates can have arbitrary metadata attached:
 === ":fontawesome-brands-rust: Rust"
     ```rust
     let mut circuit = DagCircuit::new();
-    circuit.h(0).cx(0, 1).h(1).cx(1, 2).mz(0).mz(1).mz(2);
+    circuit.h(0).cx(0, 1).h(1).cx(1, 2);
+    circuit.mz(0);
+    circuit.mz(1);
+    circuit.mz(2);
 
     // Basic metrics
     println!("Total gates: {}", circuit.gate_count());
@@ -306,7 +331,7 @@ For advanced use cases, you can manually add gates and wire them:
 
 === ":fontawesome-brands-python: Python"
     ```python
-    from pecos.quantum import DagCircuit, Gate, QubitId
+    from pecos.quantum import DagCircuit, Gate
 
     circuit = DagCircuit()
 
@@ -315,7 +340,7 @@ For advanced use cases, you can manually add gates and wire them:
     cx_node = circuit.add_gate(Gate.cx([(0, 1)]))
 
     # Connect gates on qubit 0
-    circuit.connect(h_node, cx_node, QubitId(0))
+    circuit.connect(h_node, cx_node, 0)
 
     # Query connections
     print(f"Predecessors of CX: {circuit.predecessors(cx_node)}")
@@ -359,8 +384,10 @@ A time-sliced circuit representation where gates are organized into discrete tim
     # Second tick: entangling layer
     circuit.tick().cx(0, 1).cx(2, 3)
 
-    # Third tick: measurements
-    circuit.tick().mz(0).mz(1)
+    # Third tick: measurements (call separately, mz doesn't chain)
+    tick = circuit.tick()
+    tick.mz(0)
+    tick.mz(1)
 
     print(f"Number of ticks: {circuit.num_ticks()}")
     print(f"Total gates: {circuit.gate_count()}")
@@ -373,13 +400,13 @@ A time-sliced circuit representation where gates are organized into discrete tim
     let mut circuit = TickCircuit::new();
 
     // First tick: parallel gates
-    circuit.tick().h(0).h(1).h(2);
+    circuit.tick().h(&[0, 1, 2]);
 
     // Second tick: entangling layer
-    circuit.tick().cx(0, 1).cx(2, 3);
+    circuit.tick().cx(&[(0, 1), (2, 3)]);
 
     // Third tick: measurements
-    circuit.tick().mz(0).mz(1);
+    circuit.tick().mz(&[0, 1]);
 
     println!("Number of ticks: {}", circuit.num_ticks());
     println!("Total gates: {}", circuit.gate_count());
@@ -390,6 +417,7 @@ A time-sliced circuit representation where gates are organized into discrete tim
 TickCircuit prevents scheduling conflicting gates in the same tick:
 
 === ":fontawesome-brands-python: Python"
+    <!--expect-error: QubitConflictError.*already in use-->
     ```python
     from pecos.quantum import TickCircuit
 
@@ -407,9 +435,9 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
     let mut circuit = TickCircuit::new();
     let mut tick = circuit.tick();
 
-    tick.h(0);
+    tick.h(&[0]);
     // This would error: qubit 0 already used
-    // tick.cx(0, 1);
+    // tick.cx(&[(0, 1)]);
 
     // Use try_add_gate for fallible operations
     if let Err(e) = tick.try_add_gate(Gate::cx(&[(0, 1)])) {
@@ -421,15 +449,17 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
 
 === ":fontawesome-brands-python: Python"
     ```python
+    from pecos.quantum import TickCircuit
+
     circuit = TickCircuit()
 
     # Add metadata to a tick
     tick = circuit.tick()
-    tick.meta("round", Attribute.int(1))
-    tick.h(0).meta("error_rate", Attribute.float(0.001))
+    tick.meta("round", 1)
+    tick.h(0).meta("error_rate", 0.001)
 
     # Circuit-level metadata
-    circuit.set_meta("name", Attribute.string("Bell state"))
+    circuit.set_meta("name", "Bell state")
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -439,7 +469,7 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
     // Add metadata to a tick
     let mut tick = circuit.tick();
     tick.meta("round", Attribute::Int(1));
-    tick.h(0).meta("error_rate", Attribute::Float(0.001));
+    tick.h(&[0]).meta("error_rate", Attribute::Float(0.001));
 
     // Circuit-level metadata
     circuit.set_meta("name", Attribute::String("Bell state".into()));
@@ -458,10 +488,10 @@ TickCircuit can be converted to and from DagCircuit:
     tick_circuit.tick().h(0).h(1)
     tick_circuit.tick().cx(0, 1)
 
-    dag_circuit = DagCircuit.from_tick_circuit(tick_circuit)
+    dag_circuit = tick_circuit.to_dag_circuit()
 
     # DagCircuit -> TickCircuit
-    tick_circuit2 = TickCircuit.from_dag_circuit(dag_circuit)
+    tick_circuit2 = dag_circuit.to_tick_circuit()
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -470,8 +500,8 @@ TickCircuit can be converted to and from DagCircuit:
 
     // TickCircuit -> DagCircuit
     let mut tick_circuit = TickCircuit::new();
-    tick_circuit.tick().h(0).h(1);
-    tick_circuit.tick().cx(0, 1);
+    tick_circuit.tick().h(&[0, 1]);
+    tick_circuit.tick().cx(&[(0, 1)]);
 
     let dag_circuit = DagCircuit::from(tick_circuit);
 
@@ -499,9 +529,12 @@ A general directed graph with weighted edges and attributes:
     n2 = graph.add_node()
 
     # Add edges with weights
-    graph.add_edge(n0, n1).weight(1.0)
-    graph.add_edge(n1, n2).weight(2.0)
-    graph.add_edge(n0, n2).weight(5.0)
+    graph.add_edge(n0, n1)
+    graph.set_weight(n0, n1, 1.0)
+    graph.add_edge(n1, n2)
+    graph.set_weight(n1, n2, 2.0)
+    graph.add_edge(n0, n2)
+    graph.set_weight(n0, n2, 5.0)
 
     # Query structure
     print(f"Predecessors of n2: {graph.predecessors(n2)}")
@@ -512,7 +545,7 @@ A general directed graph with weighted edges and attributes:
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    use pecos::graph::DiGraph;
+    use pecos::digraph::DiGraph;
 
     let mut graph = DiGraph::new();
 
@@ -570,7 +603,7 @@ A directed acyclic graph with topological ordering and cycle prevention:
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    use pecos::graph::DAG;
+    use pecos::dag::DAG;
 
     let mut dag = DAG::new();
 

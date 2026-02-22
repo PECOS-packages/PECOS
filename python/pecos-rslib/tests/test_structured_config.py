@@ -37,15 +37,11 @@ class TestDirectMethodChaining:
 
         # Test invalid probability values
         # Rust panics raise BaseException
-        with pytest.raises(
-            BaseException, match=r".*"
-        ):  # Rust panic - any error message
+        with pytest.raises(BaseException, match=r".*"):  # Rust panic - any error message
             builder.with_p1_probability(-0.1)  # Negative probability
 
         builder = general_noise()
-        with pytest.raises(
-            BaseException, match=r".*"
-        ):  # Rust panic - any error message
+        with pytest.raises(BaseException, match=r".*"):  # Rust panic - any error message
             builder.with_p2_probability(1.5)  # > 1 probability
 
     def test_direct_noise_builder_with_sim(self) -> None:
@@ -63,12 +59,7 @@ class TestDirectMethodChaining:
         prog = Qasm.from_string(qasm)
 
         # Create a configured noise builder
-        noise = (
-            general_noise()
-            .with_seed(42)
-            .with_p1_probability(0.001)
-            .with_p2_probability(0.01)
-        )
+        noise = general_noise().with_seed(42).with_p1_probability(0.001).with_p2_probability(0.01)
 
         # Use the builder directly with sim()
         results = sim(prog).noise(noise).run(1000).to_dict()

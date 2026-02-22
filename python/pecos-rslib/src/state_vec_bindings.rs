@@ -14,12 +14,12 @@ use pecos::prelude::*;
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
+use pyo3::types::{PyAny, PyBytes, PyDict, PySet, PyTuple};
 
 use crate::pecos_array::Array;
 
 /// The struct represents the state-vector simulator exposed to Python
-#[pyclass(name = "StateVec")]
+#[pyclass(name = "StateVec", module = "pecos_rslib")]
 pub struct PyStateVec {
     inner: StateVec,
 }
@@ -43,8 +43,9 @@ impl PyStateVec {
     }
 
     /// Resets the quantum state to the all-zero state
-    fn reset(&mut self) {
-        self.inner.reset();
+    fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.inner.reset();
+        slf
     }
 
     /// Executes a single-qubit gate based on the provided symbol and location
@@ -169,6 +170,42 @@ impl PyStateVec {
                         Ok(None) => {
                             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                                 "Angle parameters missing for R1XY gate",
+                            ));
+                        }
+                        Err(err) => {
+                            return Err(err);
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            "U" => {
+                if let Some(params) = params {
+                    match params.get_item("angles") {
+                        Ok(Some(py_any)) => {
+                            // Extract as a sequence of f64 values
+                            if let Ok(angles) = py_any.extract::<Vec<f64>>() {
+                                if angles.len() >= 3 {
+                                    self.inner.u(
+                                        Angle64::from_radians(angles[0]),
+                                        Angle64::from_radians(angles[1]),
+                                        Angle64::from_radians(angles[2]),
+                                        q,
+                                    );
+                                } else {
+                                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                        "U gate requires three angle parameters (theta, phi, lambda)",
+                                    ));
+                                }
+                            } else {
+                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    "Expected valid angle parameters for U gate",
+                                ));
+                            }
+                        }
+                        Ok(None) => {
+                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "Angle parameters missing for U gate",
                             ));
                         }
                         Err(err) => {
@@ -594,6 +631,36 @@ impl PyStateVec {
         Py::new(py, pecos_array)
     }
 
+    /// Returns the probability of each computational basis state as a real-valued array.
+    ///
+    /// Each entry is |amplitude|^2 for the corresponding basis state.
+    #[getter]
+    #[allow(clippy::items_after_statements)]
+    fn probabilities(&mut self, py: Python<'_>) -> PyResult<Py<Array>> {
+        use ndarray::Array1;
+
+        let state = self.inner.state();
+        let probs: Vec<f64> = state.iter().map(num_complex::Complex::norm_sqr).collect();
+        let nd_array = Array1::from(probs);
+
+        use crate::pecos_array::ArrayData;
+        let array_data = ArrayData::F64(nd_array.into_dyn());
+        let pecos_array = Array::new(array_data);
+        Py::new(py, pecos_array)
+    }
+
+    /// Get the probability of measuring a specific basis state.
+    fn probability(&mut self, basis_state: usize) -> PyResult<f64> {
+        let state = self.inner.state();
+        if basis_state >= state.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "basis_state {basis_state} out of range for {} qubits",
+                self.inner.num_qubits()
+            )));
+        }
+        Ok(state[basis_state].norm_sqr())
+    }
+
     /// Get state vector with big-endian qubit ordering (PECOS convention)
     ///
     /// Converts the state vector from little-endian (Rust/hardware convention) to
@@ -719,6 +786,60 @@ impl PyStateVec {
         }
 
         Ok(results.into())
+    }
+
+    fn __reduce__<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let state = self.inner.state();
+        // Serialize state vector as raw little-endian bytes (16 bytes per Complex64: 2 x f64)
+        let mut bytes = Vec::with_capacity(state.len() * 16);
+        for c in state {
+            bytes.extend_from_slice(&c.re.to_le_bytes());
+            bytes.extend_from_slice(&c.im.to_le_bytes());
+        }
+        let state_bytes = PyBytes::new(py, &bytes);
+        let num_qubits = self.inner.num_qubits();
+
+        // Return (StateVec._from_pickle, (num_qubits, state_bytes))
+        let cls = py.get_type::<PyStateVec>();
+        let from_pickle = cls.getattr("_from_pickle")?;
+        PyTuple::new(
+            py,
+            &[
+                from_pickle.into_any(),
+                PyTuple::new(
+                    py,
+                    &[
+                        num_qubits.into_pyobject(py)?.into_any(),
+                        state_bytes.into_any(),
+                    ],
+                )?
+                .into_any(),
+            ],
+        )
+    }
+
+    #[staticmethod]
+    fn _from_pickle(num_qubits: usize, state_bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
+        let bytes = state_bytes.as_bytes();
+        let expected_len = (1usize << num_qubits) * 16;
+        if bytes.len() != expected_len {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Invalid state bytes length: expected {expected_len}, got {}",
+                bytes.len()
+            )));
+        }
+
+        let mut state = Vec::with_capacity(1 << num_qubits);
+        for chunk in bytes.chunks_exact(16) {
+            let re = f64::from_le_bytes(chunk[..8].try_into().unwrap());
+            let im = f64::from_le_bytes(chunk[8..16].try_into().unwrap());
+            state.push(num_complex::Complex64::new(re, im));
+        }
+
+        let rng: PecosRng = rand::make_rng();
+        Ok(PyStateVec {
+            inner: StateVec::from_state(state, rng),
+        })
     }
 
     #[getter]

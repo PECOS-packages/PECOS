@@ -15,7 +15,7 @@ import importlib.util
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 class _ModuleState:
     """Container for module-level mutable state."""
 
-    temp_dir: Path | None = None
-    module_cache: dict[str, object] = {}  # noqa: RUF012
-    distance_module_cache: dict[int, dict] = {}  # noqa: RUF012
+    temp_dir: ClassVar[Path | None] = None
+    module_cache: ClassVar[dict[str, object]] = {}
+    distance_module_cache: ClassVar[dict[int, dict]] = {}
 
 
 _state = _ModuleState()
@@ -161,12 +161,8 @@ def generate_guppy_source(patch: "SurfacePatch") -> str:
     # Measure ancillas (destructive)
     lines.append("")
     lines.append("    # Measure ancillas")
-    lines.extend(
-        f"    sx{stab.index} = measure(ax{stab.index})" for stab in geom.x_stabilizers
-    )
-    lines.extend(
-        f"    sz{stab.index} = measure(az{stab.index})" for stab in geom.z_stabilizers
-    )
+    lines.extend(f"    sx{stab.index} = measure(ax{stab.index})" for stab in geom.x_stabilizers)
+    lines.extend(f"    sz{stab.index} = measure(az{stab.index})" for stab in geom.z_stabilizers)
 
     x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
     z_calls = ", ".join(f"sz{s.index}" for s in geom.z_stabilizers)
@@ -382,7 +378,7 @@ def generate_surface_code_module(d: int) -> str:
         msg = f"Distance must be odd >= 3, got {d}"
         raise ValueError(msg)
 
-    from pecos.qec.surface import SurfacePatch  # noqa: PLC0415
+    from pecos.qec.surface import SurfacePatch
 
     patch = SurfacePatch.create(distance=d)
     return generate_guppy_source(patch)
@@ -400,7 +396,7 @@ def get_surface_code_module(d: int) -> dict:
     if d in _state.distance_module_cache:
         return _state.distance_module_cache[d]
 
-    from pecos.qec.surface import SurfacePatch  # noqa: PLC0415
+    from pecos.qec.surface import SurfacePatch
 
     patch = SurfacePatch.create(distance=d)
     module = _load_guppy_module(patch)
@@ -431,8 +427,6 @@ def make_surface_code(distance: int, num_rounds: int, basis: str) -> object:
 
     module = get_surface_code_module(distance)
 
-    factory = (
-        module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
-    )
+    factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
 
     return factory(num_rounds)

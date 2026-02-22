@@ -64,6 +64,8 @@ pub enum GateType {
     // G = 61
     /// Controlled-RZ gate (2 qubits, 1 angle parameter)
     CRZ = 70,
+    /// Controlled-H gate (2 qubits)
+    CH = 71,
     /// RXX rotation gate
     RXX = 80,
     /// RYY rotation gate
@@ -129,6 +131,7 @@ impl From<u8> for GateType {
             58 => GateType::SZZdg,
             59 => GateType::SWAP,
             70 => GateType::CRZ,
+            71 => GateType::CH,
             80 => GateType::RXX,
             81 => GateType::RYY,
             82 => GateType::RZZ,
@@ -173,6 +176,7 @@ impl GateType {
             | GateType::CX
             | GateType::CY
             | GateType::CZ
+            | GateType::CH
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP
@@ -246,6 +250,7 @@ impl GateType {
             GateType::CX
             | GateType::CY
             | GateType::CZ
+            | GateType::CH
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP
@@ -333,6 +338,7 @@ impl fmt::Display for GateType {
             GateType::CX => write!(f, "CX"),
             GateType::CY => write!(f, "CY"),
             GateType::CZ => write!(f, "CZ"),
+            GateType::CH => write!(f, "CH"),
             GateType::SZZ => write!(f, "SZZ"),
             GateType::SZZdg => write!(f, "SZZdg"),
             GateType::RXX => write!(f, "RXX"),

@@ -8,35 +8,59 @@ quantum/classical compute execution models.
 
 ## Quick Start
 
-=== "Python"
+Simulate a distance-3 repetition code with syndrome extraction using [Guppy](https://github.com/CQCL/guppylang), a pythonic quantum programming language:
+
+=== ":fontawesome-brands-python: Python"
 
     ```bash
     pip install quantum-pecos
     ```
 
     ```python
-    from pecos import sim, Qasm
+    from pecos import Guppy, sim, state_vector, depolarizing_noise
+    from guppylang import guppy
+    from guppylang.std.quantum import qubit, cx, measure
 
-    # Define a Bell state circuit
-    circuit = Qasm(
-        """
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[2];
-        creg c[2];
-        h q[0];
-        cx q[0], q[1];
-        measure q -> c;
-    """
-    )
 
-    # Run 10 shots
-    results = sim(circuit).seed(42).run(10)
-    print(results.to_dict())  # {'c': [0, 0, 0, 3, 3, ...]}
-    # 0 = both |0⟩, 3 = both |1⟩ (always correlated!)
+    @guppy
+    def repetition_code() -> None:
+        # 3 data qubits encode logical |0⟩ = |000⟩
+        d0 = qubit()
+        d1 = qubit()
+        d2 = qubit()
+
+        # 2 ancillas for syndrome extraction
+        s0 = qubit()
+        s1 = qubit()
+
+        # Measure parity between adjacent data qubits
+        cx(d0, s0)
+        cx(d1, s0)
+        cx(d1, s1)
+        cx(d2, s1)
+
+        # Measure syndromes (first two measurements)
+        _ = measure(s0)
+        _ = measure(s1)
+
+        # Measure data qubits (required by Guppy)
+        _ = measure(d0), measure(d1), measure(d2)
+
+
+    # Run 10 shots with 10% depolarizing noise
+    noise = depolarizing_noise().with_uniform_probability(0.1)
+    results = sim(Guppy(repetition_code)).qubits(5).quantum(state_vector()).noise(noise).seed(42).run(10)
+
+    # Extract syndromes from first two measured qubits (s0, s1)
+    d = results.to_dict()
+    syndrome = [[d["q0"][i], d["q1"][i]] for i in range(10)]
+    print(syndrome)
+    # [[0, 0], [1, 0], [0, 0], [0, 0], [0, 0], [0, 1], [0, 1], [0, 0], [0, 0], [0, 0]]
     ```
 
-=== "Rust"
+    Non-trivial syndromes like `[1, 0]`, `[0, 1]`, `[1, 1]` indicate detected errors that a decoder would use to identify and correct faults.
+
+=== ":fontawesome-brands-rust: Rust"
 
     ```toml
     # Cargo.toml
@@ -67,7 +91,7 @@ quantum/classical compute execution models.
     }
     ```
 
-For more examples and detailed usage, see the [User Guide](user-guide/getting-started.md).
+For OpenQASM, PHIR, or other formats, see the [User Guide](user-guide/getting-started.md).
 
 ## Features
 

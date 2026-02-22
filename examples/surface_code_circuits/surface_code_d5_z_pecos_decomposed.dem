@@ -1,0 +1,1204 @@
+detector(0, 0, 1) D0
+detector(1, 0, 1) D1
+detector(2, 0, 1) D2
+detector(3, 0, 1) D3
+detector(4, 0, 1) D4
+detector(5, 0, 1) D5
+detector(6, 0, 1) D6
+detector(7, 0, 1) D7
+detector(8, 0, 1) D8
+detector(9, 0, 1) D9
+detector(10, 0, 1) D10
+detector(11, 0, 1) D11
+detector(0, 0, 2) D12
+detector(1, 0, 2) D13
+detector(2, 0, 2) D14
+detector(3, 0, 2) D15
+detector(4, 0, 2) D16
+detector(5, 0, 2) D17
+detector(6, 0, 2) D18
+detector(7, 0, 2) D19
+detector(8, 0, 2) D20
+detector(9, 0, 2) D21
+detector(10, 0, 2) D22
+detector(11, 0, 2) D23
+detector(12, 1, 0) D24
+detector(13, 1, 0) D25
+detector(14, 1, 0) D26
+detector(15, 1, 0) D27
+detector(16, 1, 0) D28
+detector(17, 1, 0) D29
+detector(18, 1, 0) D30
+detector(19, 1, 0) D31
+detector(20, 1, 0) D32
+detector(21, 1, 0) D33
+detector(22, 1, 0) D34
+detector(23, 1, 0) D35
+detector(12, 1, 1) D36
+detector(13, 1, 1) D37
+detector(14, 1, 1) D38
+detector(15, 1, 1) D39
+detector(16, 1, 1) D40
+detector(17, 1, 1) D41
+detector(18, 1, 1) D42
+detector(19, 1, 1) D43
+detector(20, 1, 1) D44
+detector(21, 1, 1) D45
+detector(22, 1, 1) D46
+detector(23, 1, 1) D47
+detector(12, 1, 2) D48
+detector(13, 1, 2) D49
+detector(14, 1, 2) D50
+detector(15, 1, 2) D51
+detector(16, 1, 2) D52
+detector(17, 1, 2) D53
+detector(18, 1, 2) D54
+detector(19, 1, 2) D55
+detector(20, 1, 2) D56
+detector(21, 1, 2) D57
+detector(22, 1, 2) D58
+detector(23, 1, 2) D59
+detector(12, 1, 3) D60
+detector(13, 1, 3) D61
+detector(14, 1, 3) D62
+detector(15, 1, 3) D63
+detector(16, 1, 3) D64
+detector(17, 1, 3) D65
+detector(18, 1, 3) D66
+detector(19, 1, 3) D67
+detector(20, 1, 3) D68
+detector(21, 1, 3) D69
+detector(22, 1, 3) D70
+detector(23, 1, 3) D71
+logical_observable L0
+error(0.001452) D0
+error(0.0004) D0 D2
+error(0.000267) D0 ^ D2 D39 L0
+error(3.33489e-5) D0 D2 ^ D39 D41
+error(3.33489e-5) D0 ^ D2 ^ D39 D41
+error(0.0001) D0 D51 L0 ^ D2 D39 L0
+error(0.0001) D0 D51 L0 ^ D2 ^ D39 L0
+error(3.33489e-5) D0 D2 ^ D41 D51
+error(3.33489e-5) D0 ^ D2 ^ D41 D51
+error(6.66978e-5) D0 D2 ^ D43 L0
+error(3.33489e-5) D0 D51 L0 ^ D2 D43 L0
+error(3.33489e-5) D0 ^ D2 D43 L0 ^ D51 L0
+error(0.0002) D0 D51 L0 ^ D2
+error(0.001119) D0 ^ D12
+error(0.000267) D0 D51 L0 ^ D12
+error(0.0002) D0 ^ D14
+error(6.66978e-5) D0 D14 ^ D43 L0
+error(3.33489e-5) D0 D14 ^ D43 D51
+error(3.33489e-5) D0 D14 ^ D43 L0 ^ D51 L0
+error(0.0002) D0 D14 ^ D51 L0
+error(0.000133) D0 ^ D16
+error(6.66978e-5) D0 D39 L0 ^ D16
+error(3.33489e-5) D0 D16 ^ D39 D41
+error(3.33489e-5) D0 ^ D16 ^ D39 D41
+error(6.669335e-5) D0 D16 ^ D39 D51
+error(6.669335e-5) D0 D51 L0 ^ D16 ^ D39 L0
+error(3.33489e-5) D0 D16 ^ D41 D51
+error(3.33489e-5) D0 ^ D16 ^ D41 D51
+error(6.66978e-5) D0 ^ D16 D51 L0
+error(0.000467) D0 ^ D39 L0
+error(6.66978e-5) D0 D39 L0 ^ D51 L0
+error(0.0002) D0 ^ D51 L0
+error(0.001119) D1
+error(0.000267) D1 ^ D2
+error(0.000267) D1 D2 ^ D43 L0
+error(0.0004) D1 D3
+error(0.000267) D1 ^ D3 D43 L0
+error(3.33489e-5) D1 D3 ^ D43 D45
+error(3.33489e-5) D1 ^ D3 ^ D43 D45
+error(0.0001) D1 D3 ^ D43 D55
+error(0.0001) D1 D43 L0 ^ D3 ^ D55 L0
+error(3.33489e-5) D1 D3 ^ D45 D55
+error(3.33489e-5) D1 ^ D3 ^ D45 D55
+error(6.66978e-5) D1 ^ D3 D47 L0
+error(3.33489e-5) D1 D3 ^ D47 D55
+error(3.33489e-5) D1 ^ D3 ^ D47 D55
+error(0.0002) D1 D3 ^ D55 L0
+error(0.001119) D1 ^ D13
+error(0.000267) D1 D13 ^ D55 L0
+error(0.000333) D1 D14
+error(0.0002) D1 D14 ^ D43 L0
+error(3.33489e-5) D1 D43 L0 ^ D14 D55 L0
+error(3.33489e-5) D1 ^ D14 ^ D43 D55
+error(0.0002) D1 ^ D14 D55 L0
+error(0.0002) D1 ^ D15
+error(6.66978e-5) D1 D15 ^ D47 L0
+error(3.33489e-5) D1 D15 ^ D47 D55
+error(3.33489e-5) D1 ^ D15 D47 L0 ^ D55 L0
+error(0.0002) D1 D15 ^ D55 L0
+error(0.000133) D1 ^ D17
+error(6.66978e-5) D1 D43 L0 ^ D17
+error(3.33489e-5) D1 D17 ^ D43 D45
+error(3.33489e-5) D1 ^ D17 ^ D43 D45
+error(6.669335e-5) D1 D17 ^ D43 D55
+error(6.669335e-5) D1 ^ D17 ^ D43 D55
+error(3.33489e-5) D1 D17 ^ D45 D55
+error(3.33489e-5) D1 ^ D17 ^ D45 D55
+error(6.66978e-5) D1 D17 ^ D55 L0
+error(0.000267) D1 ^ D43 L0
+error(0.001784) D2
+error(0.000267) D2 ^ D4
+error(0.000133) D2 D4 ^ D39 D41
+error(0.000133) D2 ^ D4 ^ D39 D41
+error(0.000533) D2 D5
+error(6.66978e-5) D2 ^ D5 D31 L0
+error(3.33489e-5) D2 D39 L0 ^ D5 D31 L0
+error(3.33489e-5) D2 ^ D5 D31 L0 ^ D39 L0
+error(0.0001) D2 D5 ^ D31 D41
+error(0.0001) D2 ^ D5 ^ D31 D41
+error(0.0001) D2 D31 L0 ^ D5 D43 L0
+error(0.0001) D2 ^ D5 ^ D31 D43
+error(3.33489e-5) D2 D5 ^ D39 D41
+error(3.33489e-5) D2 ^ D5 ^ D39 D41
+error(3.33489e-5) D2 D5 ^ D41 D42
+error(3.33489e-5) D2 ^ D5 ^ D41 D42
+error(0.000133) D2 D5 ^ D41 D43
+error(0.000133) D2 ^ D5 ^ D41 D43
+error(0.0001) D2 D5 ^ D41 D53
+error(0.0001) D2 ^ D5 ^ D41 D53
+error(3.33489e-5) D2 D5 ^ D42 D53
+error(3.33489e-5) D2 ^ D5 ^ D42 D53
+error(6.66978e-5) D2 D5 ^ D43 L0
+error(3.33489e-5) D2 D5 ^ D43 D45
+error(3.33489e-5) D2 ^ D5 ^ D43 D45
+error(0.0001) D2 D5 ^ D43 D53
+error(0.0001) D2 ^ D5 ^ D43 D53
+error(3.33489e-5) D2 D5 ^ D45 D53
+error(3.33489e-5) D2 ^ D5 ^ D45 D53
+error(0.001252) D2 ^ D14
+error(0.0002) D2 D14 ^ D43 L0
+error(6.669335e-5) D2 D14 ^ D43 D51
+error(6.669335e-5) D2 D43 L0 ^ D14 ^ D51 L0
+error(3.33489e-5) D2 D14 ^ D43 D53
+error(3.33489e-5) D2 ^ D14 ^ D43 D53
+error(6.66978e-5) D2 D14 ^ D51 L0
+error(0.0001) D2 D14 ^ D51 D53
+error(0.0001) D2 ^ D14 ^ D51 D53
+error(0.0004) D2 D16
+error(0.0001) D2 D16 ^ D39 D41
+error(0.0001) D2 ^ D16 ^ D39 D41
+error(3.33489e-5) D2 D16 ^ D39 D51
+error(3.33489e-5) D2 ^ D16 D39 L0 ^ D51 L0
+error(6.669335e-5) D2 D16 ^ D41 D51
+error(6.669335e-5) D2 ^ D16 ^ D41 D51
+error(3.33489e-5) D2 D16 ^ D41 D53
+error(3.33489e-5) D2 ^ D16 ^ D41 D53
+error(0.0001) D2 D16 ^ D51 D53
+error(0.0001) D2 ^ D16 ^ D51 D53
+error(0.000133) D2 ^ D17
+error(3.33489e-5) D2 D17 ^ D43 D45
+error(3.33489e-5) D2 ^ D17 ^ D43 D45
+error(3.33489e-5) D2 D17 ^ D43 D51
+error(3.33489e-5) D2 ^ D17 ^ D43 D51
+error(6.669335e-5) D2 D17 ^ D43 D53
+error(6.669335e-5) D2 ^ D17 ^ D43 D53
+error(3.33489e-5) D2 D17 ^ D45 D53
+error(3.33489e-5) D2 ^ D17 ^ D45 D53
+error(3.33489e-5) D2 D17 ^ D51 D53
+error(3.33489e-5) D2 ^ D17 ^ D51 D53
+error(0.000133) D2 ^ D18
+error(3.33489e-5) D2 D18 ^ D41 D42
+error(3.33489e-5) D2 ^ D18 ^ D41 D42
+error(3.33489e-5) D2 D18 ^ D41 D51
+error(3.33489e-5) D2 ^ D18 ^ D41 D51
+error(6.669335e-5) D2 D18 ^ D41 D53
+error(6.669335e-5) D2 ^ D18 ^ D41 D53
+error(3.33489e-5) D2 D18 ^ D42 D53
+error(3.33489e-5) D2 ^ D18 ^ D42 D53
+error(3.33489e-5) D2 D18 ^ D51 D53
+error(3.33489e-5) D2 ^ D18 ^ D51 D53
+error(0.000467) D2 ^ D31 L0
+error(0.0002) D2 D39 L0 ^ D31 L0
+error(6.66978e-5) D2 ^ D31 D41
+error(6.66978e-5) D2 D43 L0 ^ D31 L0
+error(0.000267) D2 ^ D39 L0
+error(0.0002) D2 ^ D39 D41
+error(0.0002) D2 ^ D43 L0
+error(0.002316) D3
+error(0.000267) D3 ^ D5
+error(0.000133) D3 D5 ^ D43 D45
+error(0.000133) D3 ^ D5 ^ D43 D45
+error(0.001252) D3 ^ D15
+error(0.0002) D3 ^ D15 D47 L0
+error(6.669335e-5) D3 D15 ^ D47 D55
+error(6.669335e-5) D3 ^ D15 D47 L0 ^ D55 L0
+error(3.33489e-5) D3 D15 ^ D47 D57
+error(3.33489e-5) D3 ^ D15 ^ D47 D57
+error(6.66978e-5) D3 D15 ^ D55 L0
+error(0.0001) D3 D15 ^ D55 D57
+error(0.0001) D3 ^ D15 ^ D55 D57
+error(0.0004) D3 D17
+error(0.0001) D3 D17 ^ D43 D45
+error(0.0001) D3 ^ D17 ^ D43 D45
+error(3.33489e-5) D3 D17 ^ D43 D55
+error(3.33489e-5) D3 D17 ^ D43 L0 ^ D55 L0
+error(6.669335e-5) D3 D17 ^ D45 D55
+error(6.669335e-5) D3 ^ D17 ^ D45 D55
+error(3.33489e-5) D3 D17 ^ D45 D57
+error(3.33489e-5) D3 ^ D17 ^ D45 D57
+error(0.0001) D3 D17 ^ D55 D57
+error(0.0001) D3 ^ D17 ^ D55 D57
+error(0.000133) D3 ^ D19
+error(3.33489e-5) D3 D19 ^ D45 D46
+error(3.33489e-5) D3 ^ D19 ^ D45 D46
+error(3.33489e-5) D3 D19 ^ D45 D55
+error(3.33489e-5) D3 ^ D19 ^ D45 D55
+error(6.669335e-5) D3 D19 ^ D45 D57
+error(6.669335e-5) D3 ^ D19 ^ D45 D57
+error(3.33489e-5) D3 D19 ^ D46 D57
+error(3.33489e-5) D3 ^ D19 ^ D46 D57
+error(3.33489e-5) D3 D19 ^ D55 D57
+error(3.33489e-5) D3 ^ D19 ^ D55 D57
+error(0.000533) D3 ^ D35 L0
+error(0.000267) D3 D35 L0 ^ D43 L0
+error(0.000267) D3 ^ D35 D45
+error(0.000267) D3 D35 L0 ^ D47 L0
+error(0.000267) D3 ^ D43 L0
+error(0.000267) D3 ^ D43 D45
+error(6.66978e-5) D3 ^ D45 D46
+error(0.000267) D3 ^ D45 D47
+error(0.0002) D3 ^ D45 D57
+error(6.66978e-5) D3 ^ D46 D57
+error(0.000267) D3 ^ D47 L0
+error(6.66978e-5) D3 D47 L0 ^ D55 L0
+error(0.0002) D3 ^ D47 D57
+error(6.66978e-5) D3 ^ D55 D57
+error(0.002714) D4
+error(0.000533) D4 D6
+error(3.33489e-5) D4 D6 ^ D29 D37
+error(3.33489e-5) D4 ^ D6 ^ D29 D37
+error(0.0001) D4 D6 ^ D29 D38
+error(0.0001) D4 ^ D6 ^ D29 D38
+error(3.33489e-5) D4 D6 ^ D29 D39
+error(3.33489e-5) D4 ^ D6 ^ D29 D39
+error(0.0001) D4 D6 ^ D29 D41
+error(0.0001) D4 ^ D6 ^ D29 D41
+error(3.33489e-5) D4 D6 ^ D37 D38
+error(3.33489e-5) D4 ^ D6 ^ D37 D38
+error(3.33489e-5) D4 D6 ^ D38 D40
+error(3.33489e-5) D4 ^ D6 ^ D38 D40
+error(0.000133) D4 D6 ^ D38 D41
+error(0.000133) D4 ^ D6 ^ D38 D41
+error(0.0001) D4 D6 ^ D38 D50
+error(0.0001) D4 ^ D6 ^ D38 D50
+error(3.33489e-5) D4 D6 ^ D39 D41
+error(3.33489e-5) D4 ^ D6 ^ D39 D41
+error(3.33489e-5) D4 D6 ^ D40 D50
+error(3.33489e-5) D4 ^ D6 ^ D40 D50
+error(3.33489e-5) D4 D6 ^ D41 D42
+error(3.33489e-5) D4 ^ D6 ^ D41 D42
+error(0.0001) D4 D6 ^ D41 D50
+error(0.0001) D4 ^ D6 ^ D41 D50
+error(3.33489e-5) D4 D6 ^ D42 D50
+error(3.33489e-5) D4 ^ D6 ^ D42 D50
+error(0.001252) D4 ^ D16
+error(0.0001) D4 D16 ^ D39 D41
+error(0.0001) D4 ^ D16 ^ D39 D41
+error(3.33489e-5) D4 D16 ^ D39 D49
+error(3.33489e-5) D4 ^ D16 ^ D39 D49
+error(6.669335e-5) D4 D16 ^ D41 D49
+error(6.669335e-5) D4 ^ D16 ^ D41 D49
+error(3.33489e-5) D4 D16 ^ D41 D50
+error(3.33489e-5) D4 ^ D16 ^ D41 D50
+error(0.0001) D4 D16 ^ D49 D50
+error(0.0001) D4 ^ D16 ^ D49 D50
+error(0.000133) D4 ^ D18
+error(3.33489e-5) D4 D18 ^ D41 D42
+error(3.33489e-5) D4 ^ D18 ^ D41 D42
+error(3.33489e-5) D4 D18 ^ D41 D49
+error(3.33489e-5) D4 ^ D18 ^ D41 D49
+error(6.669335e-5) D4 D18 ^ D41 D50
+error(6.669335e-5) D4 ^ D18 ^ D41 D50
+error(3.33489e-5) D4 D18 ^ D42 D50
+error(3.33489e-5) D4 ^ D18 ^ D42 D50
+error(3.33489e-5) D4 D18 ^ D49 D50
+error(3.33489e-5) D4 ^ D18 ^ D49 D50
+error(0.000133) D4 ^ D20
+error(3.33489e-5) D4 D20 ^ D38 D40
+error(3.33489e-5) D4 ^ D20 ^ D38 D40
+error(3.33489e-5) D4 D20 ^ D38 D49
+error(3.33489e-5) D4 ^ D20 ^ D38 D49
+error(6.669335e-5) D4 D20 ^ D38 D50
+error(6.669335e-5) D4 ^ D20 ^ D38 D50
+error(3.33489e-5) D4 D20 ^ D40 D50
+error(3.33489e-5) D4 ^ D20 ^ D40 D50
+error(3.33489e-5) D4 D20 ^ D49 D50
+error(3.33489e-5) D4 ^ D20 ^ D49 D50
+error(0.000133) D4 ^ D27 L0
+error(0.000533) D4 ^ D27 D29
+error(0.000267) D4 ^ D27 D37
+error(0.0004) D4 ^ D27 D39
+error(0.0002) D4 ^ D29 D37
+error(6.66978e-5) D4 ^ D29 D38
+error(0.0002) D4 ^ D29 D39
+error(6.66978e-5) D4 ^ D29 D41
+error(0.000467) D4 ^ D37 D38
+error(0.000267) D4 ^ D37 D39
+error(0.000267) D4 ^ D37 D49
+error(0.0002) D4 ^ D38 D49
+error(6.66978e-5) D4 ^ D38 D50
+error(0.000133) D4 ^ D39 L0
+error(0.000267) D4 ^ D39 D41
+error(0.0002) D4 ^ D39 D49
+error(6.66978e-5) D4 ^ D41 D49
+error(0.0002) D4 ^ D49 D50
+error(0.001917) D5
+error(0.000267) D5 ^ D6
+error(0.000133) D5 D6 ^ D41 D42
+error(0.000133) D5 ^ D6 ^ D41 D42
+error(0.000533) D5 D7
+error(3.33489e-5) D5 D7 ^ D33 D41
+error(3.33489e-5) D5 ^ D7 ^ D33 D41
+error(0.0001) D5 D7 ^ D33 D42
+error(0.0001) D5 ^ D7 ^ D33 D42
+error(3.33489e-5) D5 D7 ^ D33 D43
+error(3.33489e-5) D5 ^ D7 ^ D33 D43
+error(0.0001) D5 D7 ^ D33 D45
+error(0.0001) D5 ^ D7 ^ D33 D45
+error(3.33489e-5) D5 D7 ^ D41 D42
+error(3.33489e-5) D5 ^ D7 ^ D41 D42
+error(3.33489e-5) D5 D7 ^ D42 D44
+error(3.33489e-5) D5 ^ D7 ^ D42 D44
+error(0.000133) D5 D7 ^ D42 D45
+error(0.000133) D5 ^ D7 ^ D42 D45
+error(0.0001) D5 D7 ^ D42 D54
+error(0.0001) D5 ^ D7 ^ D42 D54
+error(3.33489e-5) D5 D7 ^ D43 D45
+error(3.33489e-5) D5 ^ D7 ^ D43 D45
+error(3.33489e-5) D5 D7 ^ D44 D54
+error(3.33489e-5) D5 ^ D7 ^ D44 D54
+error(3.33489e-5) D5 D7 ^ D45 D46
+error(3.33489e-5) D5 ^ D7 ^ D45 D46
+error(0.0001) D5 D7 ^ D45 D54
+error(0.0001) D5 ^ D7 ^ D45 D54
+error(3.33489e-5) D5 D7 ^ D46 D54
+error(3.33489e-5) D5 ^ D7 ^ D46 D54
+error(0.001252) D5 ^ D17
+error(0.0001) D5 D17 ^ D43 D45
+error(0.0001) D5 ^ D17 ^ D43 D45
+error(3.33489e-5) D5 D17 ^ D43 D53
+error(3.33489e-5) D5 ^ D17 ^ D43 D53
+error(6.669335e-5) D5 D17 ^ D45 D53
+error(6.669335e-5) D5 ^ D17 ^ D45 D53
+error(3.33489e-5) D5 D17 ^ D45 D54
+error(3.33489e-5) D5 ^ D17 ^ D45 D54
+error(0.0001) D5 D17 ^ D53 D54
+error(0.0001) D5 ^ D17 ^ D53 D54
+error(0.0004) D5 D18
+error(0.0001) D5 D18 ^ D41 D42
+error(0.0001) D5 ^ D18 ^ D41 D42
+error(3.33489e-5) D5 D18 ^ D41 D53
+error(3.33489e-5) D5 ^ D18 ^ D41 D53
+error(6.669335e-5) D5 D18 ^ D42 D53
+error(6.669335e-5) D5 ^ D18 ^ D42 D53
+error(3.33489e-5) D5 D18 ^ D42 D54
+error(3.33489e-5) D5 ^ D18 ^ D42 D54
+error(0.0001) D5 D18 ^ D53 D54
+error(0.0001) D5 ^ D18 ^ D53 D54
+error(0.000133) D5 ^ D19
+error(3.33489e-5) D5 D19 ^ D45 D46
+error(3.33489e-5) D5 ^ D19 ^ D45 D46
+error(3.33489e-5) D5 D19 ^ D45 D53
+error(3.33489e-5) D5 ^ D19 ^ D45 D53
+error(6.669335e-5) D5 D19 ^ D45 D54
+error(6.669335e-5) D5 ^ D19 ^ D45 D54
+error(3.33489e-5) D5 D19 ^ D46 D54
+error(3.33489e-5) D5 ^ D19 ^ D46 D54
+error(3.33489e-5) D5 D19 ^ D53 D54
+error(3.33489e-5) D5 ^ D19 ^ D53 D54
+error(0.000133) D5 ^ D21
+error(3.33489e-5) D5 D21 ^ D42 D44
+error(3.33489e-5) D5 ^ D21 ^ D42 D44
+error(3.33489e-5) D5 D21 ^ D42 D53
+error(3.33489e-5) D5 ^ D21 ^ D42 D53
+error(6.669335e-5) D5 D21 ^ D42 D54
+error(6.669335e-5) D5 ^ D21 ^ D42 D54
+error(3.33489e-5) D5 D21 ^ D44 D54
+error(3.33489e-5) D5 ^ D21 ^ D44 D54
+error(3.33489e-5) D5 D21 ^ D53 D54
+error(3.33489e-5) D5 ^ D21 ^ D53 D54
+error(6.66978e-5) D5 ^ D31 L0
+error(0.000533) D5 ^ D31 D33
+error(6.66978e-5) D5 ^ D31 D39
+error(0.0002) D5 ^ D31 D41
+error(0.0002) D5 D31 L0 ^ D43 L0
+error(0.0002) D5 ^ D33 D41
+error(6.66978e-5) D5 ^ D33 D42
+error(0.0002) D5 ^ D33 D43
+error(6.66978e-5) D5 ^ D33 D45
+error(6.66978e-5) D5 ^ D39 D41
+error(0.0002) D5 ^ D41 D42
+error(6.66978e-5) D5 ^ D43 L0
+error(0.0002) D5 ^ D43 D45
+error(0.001917) D6
+error(0.000267) D6 ^ D8
+error(0.000133) D6 D8 ^ D38 D40
+error(0.000133) D6 ^ D8 ^ D38 D40
+error(0.000533) D6 D9
+error(3.33489e-5) D6 D9 ^ D30 D38
+error(3.33489e-5) D6 ^ D9 ^ D30 D38
+error(0.0001) D6 D9 ^ D30 D40
+error(0.0001) D6 ^ D9 ^ D30 D40
+error(3.33489e-5) D6 D9 ^ D30 D41
+error(3.33489e-5) D6 ^ D9 ^ D30 D41
+error(0.0001) D6 D9 ^ D30 D42
+error(0.0001) D6 ^ D9 ^ D30 D42
+error(3.33489e-5) D6 D9 ^ D38 D40
+error(3.33489e-5) D6 ^ D9 ^ D38 D40
+error(6.66978e-5) D6 ^ D9 D40
+error(0.000133) D6 D9 ^ D40 D42
+error(0.000133) D6 ^ D9 ^ D40 D42
+error(0.0001) D6 D9 ^ D40 D52
+error(0.0001) D6 D9 ^ D40 ^ D52
+error(3.33489e-5) D6 D9 ^ D41 D42
+error(3.33489e-5) D6 ^ D9 ^ D41 D42
+error(3.33489e-5) D6 D9 ^ D42 D44
+error(3.33489e-5) D6 ^ D9 ^ D42 D44
+error(0.0001) D6 D9 ^ D42 D52
+error(0.0001) D6 ^ D9 ^ D42 D52
+error(3.33489e-5) D6 D9 ^ D44 D52
+error(3.33489e-5) D6 D9 ^ D44 ^ D52
+error(6.66978e-5) D6 D9 ^ D52
+error(0.001252) D6 ^ D18
+error(0.0001) D6 D18 ^ D41 D42
+error(0.0001) D6 ^ D18 ^ D41 D42
+error(3.33489e-5) D6 D18 ^ D41 D50
+error(3.33489e-5) D6 ^ D18 ^ D41 D50
+error(6.669335e-5) D6 D18 ^ D42 D50
+error(6.669335e-5) D6 ^ D18 ^ D42 D50
+error(3.33489e-5) D6 D18 ^ D42 D52
+error(3.33489e-5) D6 ^ D18 ^ D42 D52
+error(0.0001) D6 D18 ^ D50 D52
+error(0.0001) D6 ^ D18 ^ D50 D52
+error(0.0004) D6 D20
+error(0.0001) D6 D20 ^ D38 D40
+error(0.0001) D6 ^ D20 ^ D38 D40
+error(3.33489e-5) D6 D20 ^ D38 D50
+error(3.33489e-5) D6 ^ D20 ^ D38 D50
+error(6.669335e-5) D6 D20 ^ D40 D50
+error(6.669335e-5) D6 ^ D20 ^ D40 D50
+error(3.33489e-5) D6 D20 ^ D40 D52
+error(3.33489e-5) D6 ^ D20 D52 ^ D40
+error(0.0001) D6 D20 ^ D50 D52
+error(0.0001) D6 ^ D20 ^ D50 D52
+error(0.000133) D6 ^ D21
+error(3.33489e-5) D6 D21 ^ D42 D44
+error(3.33489e-5) D6 ^ D21 ^ D42 D44
+error(3.33489e-5) D6 D21 ^ D42 D50
+error(3.33489e-5) D6 ^ D21 ^ D42 D50
+error(6.669335e-5) D6 D21 ^ D42 D52
+error(6.669335e-5) D6 ^ D21 ^ D42 D52
+error(3.33489e-5) D6 D21 ^ D44 D52
+error(3.33489e-5) D6 D21 ^ D44 ^ D52
+error(3.33489e-5) D6 D21 ^ D50 D52
+error(3.33489e-5) D6 ^ D21 ^ D50 D52
+error(0.000133) D6 ^ D22
+error(6.66978e-5) D6 D22 ^ D40
+error(3.33489e-5) D6 D22 ^ D40 D50
+error(3.33489e-5) D6 ^ D22 ^ D40 D50
+error(6.669335e-5) D6 D22 ^ D40 D52
+error(6.669335e-5) D6 ^ D22 ^ D40 D52
+error(3.33489e-5) D6 D22 ^ D50 D52
+error(3.33489e-5) D6 ^ D22 ^ D50 D52
+error(6.66978e-5) D6 D22 ^ D52
+error(0.000533) D6 ^ D29 D30
+error(6.66978e-5) D6 ^ D29 D37
+error(0.0002) D6 ^ D29 D38
+error(6.66978e-5) D6 ^ D29 D39
+error(0.0002) D6 ^ D29 D41
+error(0.0002) D6 ^ D30 D38
+error(6.66978e-5) D6 ^ D30 D40
+error(0.0002) D6 ^ D30 D41
+error(6.66978e-5) D6 ^ D30 D42
+error(6.66978e-5) D6 ^ D37 D38
+error(0.0002) D6 ^ D38 D40
+error(6.66978e-5) D6 ^ D39 D41
+error(0.0002) D6 ^ D41 D42
+error(0.002448) D7
+error(0.000267) D7 ^ D9
+error(0.000133) D7 D9 ^ D42 D44
+error(0.000133) D7 ^ D9 ^ D42 D44
+error(0.001252) D7 ^ D19
+error(0.0001) D7 D19 ^ D45 D46
+error(0.0001) D7 ^ D19 ^ D45 D46
+error(3.33489e-5) D7 D19 ^ D45 D54
+error(3.33489e-5) D7 ^ D19 ^ D45 D54
+error(6.669335e-5) D7 D19 ^ D46 D54
+error(6.669335e-5) D7 ^ D19 ^ D46 D54
+error(3.33489e-5) D7 D19 ^ D46 D56
+error(3.33489e-5) D7 ^ D19 ^ D46 D56
+error(0.0001) D7 D19 ^ D54 D56
+error(0.0001) D7 ^ D19 ^ D54 D56
+error(0.0004) D7 D21
+error(0.0001) D7 D21 ^ D42 D44
+error(0.0001) D7 ^ D21 ^ D42 D44
+error(3.33489e-5) D7 D21 ^ D42 D54
+error(3.33489e-5) D7 ^ D21 ^ D42 D54
+error(6.669335e-5) D7 D21 ^ D44 D54
+error(6.669335e-5) D7 ^ D21 ^ D44 D54
+error(3.33489e-5) D7 D44 ^ D21 D56
+error(3.33489e-5) D7 ^ D21 D56 ^ D44
+error(0.0001) D7 D21 ^ D54 D56
+error(0.0001) D7 ^ D21 ^ D54 D56
+error(0.000133) D7 ^ D23
+error(6.66978e-5) D7 D44 ^ D23
+error(3.33489e-5) D7 D23 ^ D44 D54
+error(3.33489e-5) D7 ^ D23 ^ D44 D54
+error(6.669335e-5) D7 D56 ^ D23 D44
+error(6.669335e-5) D7 D23 ^ D44 ^ D56
+error(3.33489e-5) D7 D23 ^ D54 D56
+error(3.33489e-5) D7 ^ D23 ^ D54 D56
+error(6.66978e-5) D7 D56 ^ D23
+error(0.000533) D7 ^ D33 D34
+error(6.66978e-5) D7 ^ D33 D41
+error(0.0002) D7 ^ D33 D42
+error(6.66978e-5) D7 ^ D33 D43
+error(0.0002) D7 ^ D33 D45
+error(0.000267) D7 ^ D34 D42
+error(0.000267) D7 ^ D34 D44
+error(0.000267) D7 ^ D34 D45
+error(0.000267) D7 ^ D34 D46
+error(6.66978e-5) D7 ^ D41 D42
+error(0.000267) D7 ^ D42 D44
+error(6.66978e-5) D7 ^ D43 D45
+error(6.66978e-5) D7 ^ D44
+error(0.000267) D7 ^ D44 D46
+error(0.0002) D7 ^ D44 D56
+error(0.000267) D7 ^ D45 D46
+error(6.66978e-5) D7 ^ D46 D54
+error(0.0002) D7 ^ D46 D56
+error(6.66978e-5) D7 ^ D54 D56
+error(6.66978e-5) D7 ^ D56
+error(0.002648) D8
+error(0.0004) D8 D10
+error(0.0002) D8 D10 ^ D28
+error(3.33489e-5) D8 D10 ^ D28 D36
+error(3.33489e-5) D8 D28 ^ D10 ^ D36
+error(3.33489e-5) D8 D10 ^ D28 D38
+error(3.33489e-5) D8 ^ D10 ^ D28 D38
+error(0.0001) D8 D28 ^ D10 D40
+error(0.0001) D8 ^ D10 D28 ^ D40
+error(6.66978e-5) D8 ^ D10 D36
+error(3.33489e-5) D8 D10 ^ D38 D40
+error(3.33489e-5) D8 ^ D10 ^ D38 D40
+error(0.000267) D8 ^ D10 D40
+error(0.001252) D8 ^ D20
+error(0.0001) D8 D20 ^ D38 D40
+error(0.0001) D8 ^ D20 ^ D38 D40
+error(3.33489e-5) D8 D20 ^ D38 D48
+error(3.33489e-5) D8 ^ D20 ^ D38 D48
+error(6.66978e-5) D8 D20 ^ D40
+error(6.669335e-5) D8 D20 ^ D40 D48
+error(6.669335e-5) D8 D20 ^ D40 ^ D48
+error(0.0002) D8 D20 ^ D48
+error(0.0002) D8 ^ D22
+error(0.0002) D8 D22 ^ D40
+error(3.33489e-5) D8 D22 ^ D40 D48
+error(3.33489e-5) D8 ^ D22 ^ D40 D48
+error(6.66978e-5) D8 D48 ^ D22
+error(0.000533) D8 ^ D26 D28
+error(0.000267) D8 ^ D26 D36
+error(0.000133) D8 ^ D26 D37
+error(0.0004) D8 ^ D26 D38
+error(6.66978e-5) D8 ^ D28
+error(0.0002) D8 ^ D28 D36
+error(0.0002) D8 ^ D28 D38
+error(6.66978e-5) D8 ^ D28 D40
+error(0.000467) D8 D36
+error(0.000267) D8 ^ D36 D38
+error(0.000267) D8 D36 ^ D48
+error(0.000133) D8 ^ D37 D38
+error(0.000267) D8 ^ D38 D40
+error(0.0002) D8 ^ D38 D48
+error(6.66978e-5) D8 D48 ^ D40
+error(0.000267) D8 D48
+error(0.001917) D9
+error(0.000267) D9 ^ D10
+error(0.000267) D9 D40 ^ D10
+error(0.0004) D9 D11
+error(0.0002) D9 D11 ^ D32
+error(3.33489e-5) D9 D40 ^ D11 D32
+error(3.33489e-5) D9 ^ D11 ^ D32 D40
+error(3.33489e-5) D9 D11 ^ D32 D42
+error(3.33489e-5) D9 ^ D11 ^ D32 D42
+error(0.0001) D9 D32 ^ D11 D44
+error(0.0001) D9 ^ D11 ^ D32 D44
+error(6.66978e-5) D9 D40 ^ D11
+error(3.33489e-5) D9 D11 ^ D42 D44
+error(3.33489e-5) D9 ^ D11 ^ D42 D44
+error(0.000267) D9 D11 ^ D44
+error(0.001252) D9 ^ D21
+error(0.0001) D9 D21 ^ D42 D44
+error(0.0001) D9 ^ D21 ^ D42 D44
+error(3.33489e-5) D9 D21 ^ D42 D52
+error(3.33489e-5) D9 ^ D21 ^ D42 D52
+error(6.66978e-5) D9 D21 ^ D44
+error(6.669335e-5) D9 D21 ^ D44 D52
+error(6.669335e-5) D9 ^ D21 ^ D44 D52
+error(0.0002) D9 ^ D21 D52
+error(0.000333) D9 D22
+error(0.0002) D9 D40 ^ D22
+error(3.33489e-5) D9 D40 ^ D22 D52
+error(3.33489e-5) D9 D22 ^ D40 ^ D52
+error(0.0002) D9 D22 ^ D52
+error(0.0002) D9 ^ D23
+error(0.0002) D9 D23 ^ D44
+error(3.33489e-5) D9 D23 ^ D44 D52
+error(3.33489e-5) D9 ^ D23 ^ D44 D52
+error(6.66978e-5) D9 D23 ^ D52
+error(0.000533) D9 ^ D30 D32
+error(6.66978e-5) D9 ^ D30 D38
+error(0.0002) D9 ^ D30 D40
+error(6.66978e-5) D9 ^ D30 D41
+error(0.0002) D9 ^ D30 D42
+error(6.66978e-5) D9 ^ D32
+error(0.0002) D9 ^ D32 D40
+error(0.0002) D9 ^ D32 D42
+error(6.66978e-5) D9 D32 ^ D44
+error(6.66978e-5) D9 ^ D38 D40
+error(0.0002) D9 D40
+error(6.66978e-5) D9 ^ D41 D42
+error(0.0002) D9 ^ D42 D44
+error(0.001784) D10
+error(0.001119) D10 ^ D22
+error(0.000267) D10 D22 ^ D40
+error(0.000733) D10 D28
+error(6.66978e-5) D10 D28 ^ D36
+error(6.66978e-5) D10 ^ D28 D38
+error(0.0002) D10 D28 ^ D40
+error(6.66978e-5) D10 ^ D36
+error(6.66978e-5) D10 ^ D38 D40
+error(0.000267) D10 ^ D40
+error(0.001784) D11
+error(0.001119) D11 ^ D23
+error(0.000267) D11 D23 ^ D44
+error(0.000733) D11 D32
+error(6.66978e-5) D11 ^ D32 D40
+error(6.66978e-5) D11 ^ D32 D42
+error(0.0002) D11 D32 ^ D44
+error(6.66978e-5) D11 ^ D40
+error(6.66978e-5) D11 ^ D42 D44
+error(0.000267) D11 D44
+error(0.001784) D12
+error(0.0004) D12 D14
+error(0.000267) D12 D14 ^ D51 L0
+error(3.33489e-5) D12 D14 ^ D51 D53
+error(3.33489e-5) D12 ^ D14 ^ D51 D53
+error(0.0001) D12 D51 L0 ^ D14 D63 L0
+error(0.0001) D12 ^ D14 D63 L0 ^ D51 L0
+error(3.33489e-5) D12 D14 ^ D53 D63
+error(3.33489e-5) D12 ^ D14 ^ D53 D63
+error(6.66978e-5) D12 ^ D14 D55 L0
+error(3.33489e-5) D12 D63 L0 ^ D14 D55 L0
+error(3.33489e-5) D12 D63 L0 ^ D14 ^ D55 L0
+error(0.0002) D12 ^ D14 D63 L0
+error(0.000267) D12 ^ D51 L0
+error(6.66978e-5) D12 ^ D51 D53
+error(0.0002) D12 D63 L0 ^ D51 L0
+error(6.66978e-5) D12 ^ D53 D63
+error(6.66978e-5) D12 ^ D55 L0
+error(6.66978e-5) D12 D63 L0 ^ D55 L0
+error(0.000733) D12 ^ D63 L0
+error(0.001784) D13
+error(0.000267) D13 D14
+error(0.000267) D13 D55 L0 ^ D14
+error(0.0004) D13 D15
+error(0.000267) D13 D15 ^ D55 L0
+error(3.33489e-5) D13 D15 ^ D55 D57
+error(3.33489e-5) D13 ^ D15 ^ D55 D57
+error(0.0001) D13 D55 L0 ^ D15 D67 L0
+error(0.0001) D13 ^ D15 D67 L0 ^ D55 L0
+error(3.33489e-5) D13 D15 ^ D57 D67
+error(3.33489e-5) D13 ^ D15 ^ D57 D67
+error(6.66978e-5) D13 ^ D15 D59 L0
+error(3.33489e-5) D13 D15 ^ D59 D67
+error(3.33489e-5) D13 D15 ^ D59 L0 ^ D67 L0
+error(0.0002) D13 D15 ^ D67 L0
+error(0.000267) D13 ^ D55 L0
+error(6.66978e-5) D13 ^ D55 D57
+error(0.0002) D13 ^ D55 D67
+error(6.66978e-5) D13 ^ D57 D67
+error(6.66978e-5) D13 ^ D59 L0
+error(6.66978e-5) D13 D59 L0 ^ D67 L0
+error(0.000733) D13 ^ D67 L0
+error(0.001917) D14
+error(0.000267) D14 ^ D16
+error(0.000133) D14 D16 ^ D51 D53
+error(0.000133) D14 ^ D16 ^ D51 D53
+error(0.000533) D14 D17
+error(6.66978e-5) D14 D17 ^ D43 L0
+error(3.33489e-5) D14 D17 ^ D43 D51
+error(3.33489e-5) D14 D17 ^ D43 L0 ^ D51 L0
+error(0.0001) D14 D17 ^ D43 D53
+error(0.0001) D14 ^ D17 ^ D43 D53
+error(0.0001) D14 D17 ^ D43 D55
+error(0.0001) D14 ^ D17 ^ D43 D55
+error(3.33489e-5) D14 D17 ^ D51 D53
+error(3.33489e-5) D14 ^ D17 ^ D51 D53
+error(3.33489e-5) D14 D17 ^ D53 D54
+error(3.33489e-5) D14 ^ D17 ^ D53 D54
+error(0.000133) D14 D17 ^ D53 D55
+error(0.000133) D14 ^ D17 ^ D53 D55
+error(0.0001) D14 D17 ^ D53 D65
+error(0.0001) D14 ^ D17 ^ D53 D65
+error(3.33489e-5) D14 D17 ^ D54 D65
+error(3.33489e-5) D14 ^ D17 ^ D54 D65
+error(6.66978e-5) D14 D17 ^ D55 L0
+error(3.33489e-5) D14 D17 ^ D55 D57
+error(3.33489e-5) D14 ^ D17 ^ D55 D57
+error(0.0001) D14 D17 ^ D55 D65
+error(0.0001) D14 ^ D17 ^ D55 D65
+error(3.33489e-5) D14 D17 ^ D57 D65
+error(3.33489e-5) D14 ^ D17 ^ D57 D65
+error(0.0002) D14 ^ D51 D53
+error(6.66978e-5) D14 ^ D51 D63
+error(6.66978e-5) D14 ^ D53 D54
+error(0.0002) D14 ^ D53 D63
+error(0.0002) D14 ^ D53 D65
+error(6.66978e-5) D14 ^ D54 D65
+error(0.0002) D14 ^ D55 L0
+error(6.66978e-5) D14 ^ D55 D57
+error(0.0002) D14 D63 L0 ^ D55 L0
+error(0.0002) D14 ^ D55 D65
+error(6.66978e-5) D14 ^ D57 D65
+error(6.66978e-5) D14 ^ D63 L0
+error(0.000533) D14 ^ D63 D65
+error(0.002648) D15
+error(0.000267) D15 ^ D17
+error(0.000133) D15 D17 ^ D55 D57
+error(0.000133) D15 ^ D17 ^ D55 D57
+error(0.000267) D15 ^ D47 L0
+error(6.66978e-5) D15 ^ D47 D55
+error(0.0002) D15 ^ D47 D57
+error(0.000267) D15 D59 L0 ^ D47 L0
+error(0.000267) D15 ^ D55 D57
+error(6.66978e-5) D15 ^ D55 D67
+error(0.000133) D15 ^ D57 D58
+error(0.000267) D15 ^ D57 D59
+error(0.0002) D15 ^ D57 D67
+error(0.0004) D15 ^ D57 D69
+error(0.000133) D15 ^ D58 D69
+error(0.000467) D15 ^ D59 L0
+error(0.0002) D15 ^ D59 D67
+error(0.000267) D15 ^ D59 D69
+error(6.66978e-5) D15 ^ D67 L0
+error(0.000533) D15 ^ D67 D69
+error(0.002448) D16
+error(0.000533) D16 D18
+error(3.33489e-5) D16 D18 ^ D41 D49
+error(3.33489e-5) D16 ^ D18 ^ D41 D49
+error(0.0001) D16 D18 ^ D41 D50
+error(0.0001) D16 ^ D18 ^ D41 D50
+error(3.33489e-5) D16 D18 ^ D41 D51
+error(3.33489e-5) D16 ^ D18 ^ D41 D51
+error(0.0001) D16 D18 ^ D41 D53
+error(0.0001) D16 ^ D18 ^ D41 D53
+error(3.33489e-5) D16 D18 ^ D49 D50
+error(3.33489e-5) D16 ^ D18 ^ D49 D50
+error(3.33489e-5) D16 D18 ^ D50 D52
+error(3.33489e-5) D16 ^ D18 ^ D50 D52
+error(0.000133) D16 D18 ^ D50 D53
+error(0.000133) D16 ^ D18 ^ D50 D53
+error(0.0001) D16 D18 ^ D50 D62
+error(0.0001) D16 ^ D18 ^ D50 D62
+error(3.33489e-5) D16 D18 ^ D51 D53
+error(3.33489e-5) D16 ^ D18 ^ D51 D53
+error(3.33489e-5) D16 D18 ^ D52 D62
+error(3.33489e-5) D16 ^ D18 ^ D52 D62
+error(3.33489e-5) D16 D18 ^ D53 D54
+error(3.33489e-5) D16 ^ D18 ^ D53 D54
+error(0.0001) D16 D18 ^ D53 D62
+error(0.0001) D16 ^ D18 ^ D53 D62
+error(3.33489e-5) D16 D18 ^ D54 D62
+error(3.33489e-5) D16 ^ D18 ^ D54 D62
+error(6.66978e-5) D16 ^ D39 L0
+error(6.66978e-5) D16 ^ D39 D41
+error(0.0002) D16 ^ D39 D49
+error(0.0002) D16 D39 L0 ^ D51 L0
+error(6.66978e-5) D16 ^ D41 D49
+error(0.000267) D16 ^ D49 D50
+error(0.000267) D16 ^ D49 D51
+error(0.000267) D16 ^ D49 D61
+error(6.66978e-5) D16 ^ D50 D52
+error(0.000267) D16 ^ D50 D61
+error(0.0002) D16 ^ D50 D62
+error(6.66978e-5) D16 ^ D51 L0
+error(0.000267) D16 ^ D51 D53
+error(0.000267) D16 ^ D51 D61
+error(6.66978e-5) D16 ^ D52 D62
+error(6.66978e-5) D16 ^ D53 D54
+error(0.000267) D16 ^ D53 D61
+error(0.0002) D16 ^ D53 D62
+error(6.66978e-5) D16 ^ D54 D62
+error(0.000533) D16 ^ D61 D62
+error(0.001917) D17
+error(0.000267) D17 ^ D18
+error(0.000133) D17 D18 ^ D53 D54
+error(0.000133) D17 ^ D18 ^ D53 D54
+error(0.000533) D17 D19
+error(3.33489e-5) D17 D19 ^ D45 D53
+error(3.33489e-5) D17 ^ D19 ^ D45 D53
+error(0.0001) D17 D19 ^ D45 D54
+error(0.0001) D17 ^ D19 ^ D45 D54
+error(3.33489e-5) D17 D19 ^ D45 D55
+error(3.33489e-5) D17 ^ D19 ^ D45 D55
+error(0.0001) D17 D19 ^ D45 D57
+error(0.0001) D17 ^ D19 ^ D45 D57
+error(3.33489e-5) D17 D19 ^ D53 D54
+error(3.33489e-5) D17 ^ D19 ^ D53 D54
+error(3.33489e-5) D17 D19 ^ D54 D56
+error(3.33489e-5) D17 ^ D19 ^ D54 D56
+error(0.000133) D17 D19 ^ D54 D57
+error(0.000133) D17 ^ D19 ^ D54 D57
+error(0.0001) D17 D19 ^ D54 D66
+error(0.0001) D17 ^ D19 ^ D54 D66
+error(3.33489e-5) D17 D19 ^ D55 D57
+error(3.33489e-5) D17 ^ D19 ^ D55 D57
+error(3.33489e-5) D17 D19 ^ D56 D66
+error(3.33489e-5) D17 ^ D19 ^ D56 D66
+error(3.33489e-5) D17 D19 ^ D57 D58
+error(3.33489e-5) D17 ^ D19 ^ D57 D58
+error(0.0001) D17 D19 ^ D57 D66
+error(0.0001) D17 ^ D19 ^ D57 D66
+error(3.33489e-5) D17 D19 ^ D58 D66
+error(3.33489e-5) D17 ^ D19 ^ D58 D66
+error(0.0002) D17 ^ D53 D54
+error(6.66978e-5) D17 ^ D53 D65
+error(6.66978e-5) D17 ^ D54 D56
+error(0.0002) D17 ^ D54 D65
+error(0.0002) D17 ^ D54 D66
+error(0.0002) D17 ^ D55 D57
+error(6.66978e-5) D17 ^ D55 D65
+error(6.66978e-5) D17 ^ D56 D66
+error(6.66978e-5) D17 ^ D57 D58
+error(0.0002) D17 ^ D57 D65
+error(0.0002) D17 ^ D57 D66
+error(6.66978e-5) D17 ^ D58 D66
+error(0.000533) D17 ^ D65 D66
+error(0.001917) D18
+error(0.000267) D18 ^ D20
+error(0.000133) D18 D20 ^ D50 D52
+error(0.000133) D18 ^ D20 ^ D50 D52
+error(0.000533) D18 D21
+error(3.33489e-5) D18 D21 ^ D42 D50
+error(3.33489e-5) D18 ^ D21 ^ D42 D50
+error(0.0001) D18 D21 ^ D42 D52
+error(0.0001) D18 ^ D21 ^ D42 D52
+error(3.33489e-5) D18 D21 ^ D42 D53
+error(3.33489e-5) D18 ^ D21 ^ D42 D53
+error(0.0001) D18 D21 ^ D42 D54
+error(0.0001) D18 ^ D21 ^ D42 D54
+error(3.33489e-5) D18 D21 ^ D50 D52
+error(3.33489e-5) D18 ^ D21 ^ D50 D52
+error(6.66978e-5) D18 ^ D21 D52
+error(0.000133) D18 D21 ^ D52 D54
+error(0.000133) D18 ^ D21 ^ D52 D54
+error(0.0001) D18 D21 ^ D52 D64
+error(0.0001) D18 D21 ^ D52 ^ D64
+error(3.33489e-5) D18 D21 ^ D53 D54
+error(3.33489e-5) D18 ^ D21 ^ D53 D54
+error(3.33489e-5) D18 D21 ^ D54 D56
+error(3.33489e-5) D18 ^ D21 ^ D54 D56
+error(0.0001) D18 D21 ^ D54 D64
+error(0.0001) D18 ^ D21 ^ D54 D64
+error(3.33489e-5) D18 D64 ^ D21 D56
+error(3.33489e-5) D18 ^ D21 ^ D56 D64
+error(6.66978e-5) D18 D21 ^ D64
+error(0.0002) D18 ^ D50 D52
+error(6.66978e-5) D18 ^ D50 D62
+error(6.66978e-5) D18 ^ D52
+error(0.0002) D18 ^ D52 D62
+error(0.0002) D18 ^ D52 D64
+error(0.0002) D18 ^ D53 D54
+error(6.66978e-5) D18 ^ D53 D62
+error(6.66978e-5) D18 ^ D54 D56
+error(0.0002) D18 ^ D54 D62
+error(0.0002) D18 ^ D54 D64
+error(6.66978e-5) D18 ^ D56 D64
+error(0.000533) D18 ^ D62 D64
+error(6.66978e-5) D18 ^ D64
+error(0.002714) D19
+error(0.000267) D19 ^ D21
+error(0.000133) D19 D21 ^ D54 D56
+error(0.000133) D19 ^ D21 ^ D54 D56
+error(0.0002) D19 ^ D45 D46
+error(6.66978e-5) D19 ^ D45 D57
+error(6.66978e-5) D19 ^ D46 D54
+error(0.0002) D19 ^ D46 D56
+error(0.0002) D19 ^ D46 D57
+error(0.000267) D19 ^ D46 D58
+error(0.000267) D19 ^ D54 D56
+error(6.66978e-5) D19 ^ D54 D66
+error(0.000133) D19 ^ D56
+error(0.000267) D19 ^ D56 D58
+error(0.0002) D19 ^ D56 D66
+error(0.0004) D19 ^ D56 D68
+error(0.000467) D19 ^ D57 D58
+error(6.66978e-5) D19 ^ D57 D66
+error(0.0002) D19 ^ D58 D66
+error(0.000267) D19 ^ D58 D68
+error(0.000533) D19 ^ D66 D68
+error(0.000133) D19 D68
+error(0.002316) D20
+error(0.0004) D20 D22
+error(0.0002) D20 D22 ^ D40
+error(3.33489e-5) D20 D22 ^ D40 D48
+error(3.33489e-5) D20 D22 ^ D40 ^ D48
+error(3.33489e-5) D20 D22 ^ D40 D50
+error(3.33489e-5) D20 ^ D22 ^ D40 D50
+error(0.0001) D20 D22 ^ D40 D52
+error(0.0001) D20 D22 ^ D40 ^ D52
+error(6.66978e-5) D20 D48 ^ D22
+error(3.33489e-5) D20 D22 ^ D50 D52
+error(3.33489e-5) D20 ^ D22 ^ D50 D52
+error(0.000267) D20 D52 ^ D22
+error(6.66978e-5) D20 ^ D38 D40
+error(0.0002) D20 ^ D38 D48
+error(6.66978e-5) D20 ^ D38 D49
+error(0.0002) D20 ^ D38 D50
+error(6.66978e-5) D20 D48 ^ D40
+error(0.000267) D20 D48
+error(0.000267) D20 ^ D48 D50
+error(0.000267) D20 D48 ^ D60
+error(6.66978e-5) D20 ^ D49 D50
+error(0.000267) D20 ^ D50 D52
+error(0.000267) D20 ^ D50 D60
+error(0.000267) D20 D52
+error(0.000267) D20 D52 ^ D60
+error(0.000533) D20 D60
+error(0.001784) D21
+error(0.000267) D21 D22
+error(0.000267) D21 D22 ^ D52
+error(0.0004) D21 D23
+error(0.0002) D21 D23 ^ D44
+error(3.33489e-5) D21 D52 ^ D23 D44
+error(3.33489e-5) D21 ^ D23 D44 ^ D52
+error(3.33489e-5) D21 D23 ^ D44 D54
+error(3.33489e-5) D21 ^ D23 ^ D44 D54
+error(0.0001) D21 D56 ^ D23 D44
+error(0.0001) D21 D23 ^ D44 ^ D56
+error(6.66978e-5) D21 D52 ^ D23
+error(3.33489e-5) D21 D23 ^ D54 D56
+error(3.33489e-5) D21 ^ D23 ^ D54 D56
+error(0.000267) D21 D23 ^ D56
+error(0.0002) D21 D52
+error(6.66978e-5) D21 D52 ^ D64
+error(0.0002) D21 ^ D54 D56
+error(6.66978e-5) D21 ^ D54 D64
+error(0.000267) D21 D56
+error(0.0002) D21 ^ D56 D64
+error(0.000467) D21 D64
+error(0.001119) D22
+error(0.000267) D22 D52
+error(0.001452) D23
+error(0.0002) D23 D44
+error(6.66978e-5) D23 D44 ^ D56
+error(0.000467) D23 D56
+error(0.000667) D24
+error(0.000667) D24 D26
+error(0.001332) D24 ^ D36
+error(0.000667) D25 D26
+error(0.000667) D25 D27
+error(0.001332) D25 D37
+error(0.000933) D26 D28
+error(0.000667) D26 D29
+error(0.000533) D26 D36
+error(0.0004) D26 D37
+error(0.001465) D26 D38
+error(0.001199) D27 L0
+error(0.000933) D27 D29
+error(0.000533) D27 D37
+error(0.001099) D27 D39
+error(0.000366) D27 L0 ^ D39 L0
+error(0.001665) D28
+error(0.000667) D28 D30
+error(0.0002) D28 ^ D36
+error(0.0002) D28 D38
+error(0.001399) D28 ^ D40
+error(0.000933) D29 D30
+error(0.000667) D29 D31
+error(0.0002) D29 D37
+error(0.0006) D29 D38
+error(0.0002) D29 D39
+error(0.001399) D29 D41
+error(0.000933) D30 D32
+error(0.000667) D30 D33
+error(0.0002) D30 D38
+error(0.0006) D30 D40
+error(0.0002) D30 D41
+error(0.001399) D30 D42
+error(0.001532) D31 L0
+error(0.000933) D31 D33
+error(0.00015) D31 D39
+error(5.001668e-5) D31 L0 ^ D39 L0
+error(0.0006) D31 D41
+error(0.001049) D31 D43
+error(0.00035) D31 L0 ^ D43 L0
+error(0.001665) D32
+error(0.000667) D32 D34
+error(0.0002) D32 ^ D40
+error(0.0002) D32 D42
+error(0.001399) D32 ^ D44
+error(0.000933) D33 D34
+error(0.000667) D33 D35
+error(0.0002) D33 D41
+error(0.0006) D33 D42
+error(0.0002) D33 D43
+error(0.001399) D33 D45
+error(0.000267) D34 D42
+error(0.000533) D34 D44
+error(0.000267) D34 D45
+error(0.001066) D34 D46
+error(0.000933) D35 L0
+error(0.0002) D35 D43
+error(6.668445e-5) D35 L0 ^ D43 L0
+error(0.000533) D35 D45
+error(0.000799) D35 D47
+error(0.000266) D35 L0 ^ D47 L0
+error(0.000733) D36
+error(0.000267) D36 D38
+error(0.001066) D36 ^ D48
+error(0.0006) D37 D38
+error(0.000267) D37 D39
+error(0.001066) D37 D49
+error(0.000533) D38 D40
+error(0.000267) D38 D41
+error(0.000333) D38 D48
+error(0.0002) D38 D49
+error(0.001199) D38 D50
+error(0.001133) D39 L0
+error(0.000533) D39 D41
+error(0.000333) D39 D49
+error(0.000899) D39 D51
+error(0.0003) D39 L0 ^ D51 L0
+error(0.001) D40
+error(0.000267) D40 D42
+error(0.000133) D40 ^ D48
+error(0.000133) D40 D50
+error(0.001199) D40 ^ D52
+error(0.000533) D41 D42
+error(0.000267) D41 D43
+error(0.000133) D41 D49
+error(0.0004) D41 D50
+error(0.000133) D41 D51
+error(0.001199) D41 D53
+error(0.0006) D42 D44
+error(0.000267) D42 D45
+error(0.000133) D42 D50
+error(0.0004) D42 D52
+error(0.000133) D42 D53
+error(0.001199) D42 D54
+error(0.001133) D43 L0
+error(0.0006) D43 D45
+error(0.0001) D43 D51
+error(3.334667e-5) D43 L0 ^ D51 L0
+error(0.0004) D43 D53
+error(0.000899) D43 D55
+error(0.0003) D43 L0 ^ D55 L0
+error(0.0008) D44
+error(0.000267) D44 D46
+error(0.000133) D44 ^ D52
+error(0.000133) D44 D54
+error(0.001199) D44 ^ D56
+error(0.0004) D45 D46
+error(0.000267) D45 D47
+error(0.000133) D45 D53
+error(0.0004) D45 D54
+error(0.000133) D45 D55
+error(0.001199) D45 D57
+error(0.000133) D46 D54
+error(0.000333) D46 D56
+error(0.0002) D46 D57
+error(0.001066) D46 D58
+error(0.000467) D47 L0
+error(0.0001) D47 D55
+error(3.334667e-5) D47 L0 ^ D55 L0
+error(0.000333) D47 D57
+error(0.000799) D47 D59
+error(0.000266) D47 L0 ^ D59 L0
+error(0.000467) D48
+error(0.000267) D48 D50
+error(0.001066) D48 ^ D60
+error(0.0004) D49 D50
+error(0.000267) D49 D51
+error(0.001066) D49 D61
+error(0.0006) D50 D52
+error(0.000267) D50 D53
+error(0.000533) D50 D60
+error(0.000267) D50 D61
+error(0.001399) D50 D62
+error(0.0008) D51 L0
+error(0.0006) D51 D53
+error(0.000533) D51 D61
+error(0.001049) D51 D63
+error(0.00035) D51 L0 ^ D63 L0
+error(0.001133) D52
+error(0.000267) D52 D54
+error(0.000267) D52 D60
+error(0.0002) D52 D62
+error(0.001399) D52 ^ D64
+error(0.000533) D53 D54
+error(0.000267) D53 D55
+error(0.000267) D53 D61
+error(0.0006) D53 D62
+error(0.0002) D53 D63
+error(0.001399) D53 D65
+error(0.000533) D54 D56
+error(0.000267) D54 D57
+error(0.0002) D54 D62
+error(0.0006) D54 D64
+error(0.0002) D54 D65
+error(0.001399) D54 D66
+error(0.001) D55 L0
+error(0.000533) D55 D57
+error(0.00015) D55 D63
+error(5.001668e-5) D55 L0 ^ D63 L0
+error(0.0006) D55 D65
+error(0.001049) D55 D67
+error(0.00035) D55 L0 ^ D67 L0
+error(0.001133) D56
+error(0.000267) D56 D58
+error(0.0002) D56 D64
+error(0.0002) D56 D66
+error(0.001465) D56 ^ D68
+error(0.0006) D57 D58
+error(0.000267) D57 D59
+error(0.0002) D57 D65
+error(0.0006) D57 D66
+error(0.0002) D57 D67
+error(0.001465) D57 D69
+error(0.0002) D58 D66
+error(0.000533) D58 D68
+error(0.0004) D58 D69
+error(0.001332) D58 D70
+error(0.000733) D59 L0
+error(0.00015) D59 D67
+error(5.001668e-5) D59 L0 ^ D67 L0
+error(0.000533) D59 D69
+error(0.000999) D59 D71
+error(0.000333) D59 L0 ^ D71 L0
+error(0.000933) D60
+error(0.000667) D60 D62
+error(0.000933) D61 D62
+error(0.000667) D61 D63
+error(0.000933) D62 D64
+error(0.000667) D62 D65
+error(0.001665) D63 L0
+error(0.000933) D63 D65
+error(0.001532) D64
+error(0.000667) D64 D66
+error(0.000933) D65 D66
+error(0.000667) D65 D67
+error(0.000933) D66 D68
+error(0.000667) D66 D69
+error(0.001665) D67 L0
+error(0.000933) D67 D69
+error(0.001199) D68
+error(0.000667) D68 D70
+error(0.000667) D69 D70
+error(0.000667) D69 D71
+error(0.000667) D71 L0

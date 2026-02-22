@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quantum-pecos"
-version = "0.8.0.dev0"
+version = "0.8.0.dev3"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -28,10 +28,10 @@ requires-python = ">=3.10"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
-    "pecos-rslib==0.8.0.dev0",
+    "pecos-rslib==0.8.0.dev3",
     "phir>=0.3.3",
     "networkx>=2.1.0",
-    "guppylang>=0.21.0",
+    "guppylang>=0.21.6",
     "hugr>=0.13.0",
     "selene-sim~=0.2.0",
 ]
@@ -74,24 +74,15 @@ all = [
 # These packages work with uv/pip once CUDA toolkit is installed.
 # Note: CUDA packages require Python 3.11+ due to cuquantum-python-cu13 requirements
 cuda = [
-    "pecos-rslib-cuda==0.8.0.dev0",
+    "pecos-rslib-cuda==0.8.0.dev3",
     "cupy-cuda13x>=13.0.0; python_version >= '3.11'",  # Use cupy-cuda12x for CUDA 12
     "cuquantum-python-cu13>=25.3.0; python_version >= '3.11'",  # Use cuquantum-python-cu12 for CUDA 12
     "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
 ]
 # Install with: uv pip install -e .[cuda]
 
-[dependency-groups]
-test = [
-    # Core testing dependencies
-]
-numpy-compat = [
-    "numpy>=1.15.0",  # NumPy compatibility tests - core functionality uses pecos.num
-]
-
-[tool.uv]
-# default-groups = ["dev", "test"]  # Uncommented now that dependency-groups is defined
-default-groups = ["test"]
+# Dependency groups are defined at workspace root (pyproject.toml)
+# Package-specific groups can be added here if needed
 
 [tool.uv.sources]
 pecos-rslib = { workspace = true }

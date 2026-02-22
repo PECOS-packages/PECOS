@@ -102,9 +102,7 @@ def test_visual_transformation_output() -> None:
     assert isinstance(outer_block, Block)
 
     # Should have exactly 2 Parallel groups (one for H gates, one for CX gates)
-    assert (
-        len(outer_block.ops) == 2
-    ), f"Expected 2 parallel groups, got {len(outer_block.ops)}"
+    assert len(outer_block.ops) == 2, f"Expected 2 parallel groups, got {len(outer_block.ops)}"
 
     # First group should be Parallel with 3 H gates
     first_group = outer_block.ops[0]
@@ -113,9 +111,7 @@ def test_visual_transformation_output() -> None:
 
     # Check all operations in first group are H gates on even qubits
     for i, op in enumerate(first_group.ops):
-        assert (
-            type(op).__name__ == "H"
-        ), f"Operation {i} in first group should be H gate"
+        assert type(op).__name__ == "H", f"Operation {i} in first group should be H gate"
         assert op.qargs[0].index == i * 2, f"H gate {i} should be on qubit {i * 2}"
 
     # Second group should be Parallel with 3 CX gates
@@ -125,15 +121,9 @@ def test_visual_transformation_output() -> None:
 
     # Check all operations in second group are CX gates with correct qubit pairs
     for i, op in enumerate(second_group.ops):
-        assert (
-            type(op).__name__ == "CX"
-        ), f"Operation {i} in second group should be CX gate"
-        assert (
-            op.qargs[0].index == i * 2
-        ), f"CX gate {i} control should be on qubit {i * 2}"
-        assert (
-            op.qargs[1].index == i * 2 + 1
-        ), f"CX gate {i} target should be on qubit {i * 2 + 1}"
+        assert type(op).__name__ == "CX", f"Operation {i} in second group should be CX gate"
+        assert op.qargs[0].index == i * 2, f"CX gate {i} control should be on qubit {i * 2}"
+        assert op.qargs[1].index == i * 2 + 1, f"CX gate {i} target should be on qubit {i * 2 + 1}"
 
     # The transformation successfully converts:
     # Main(

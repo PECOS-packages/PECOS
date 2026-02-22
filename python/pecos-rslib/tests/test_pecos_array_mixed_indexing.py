@@ -16,9 +16,7 @@ class TestMixedIndexing2D:
 
     def test_integer_first_slice_second(self):
         """Test arr[0, 1:3] - integer first, slice second."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -27,16 +25,12 @@ class TestMixedIndexing2D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_slice_first_integer_second(self):
         """Test arr[1:3, 0] - slice first, integer second."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -45,16 +39,12 @@ class TestMixedIndexing2D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_full_slice_integer(self):
         """Test arr[:, 0] - full slice with integer."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -63,16 +53,12 @@ class TestMixedIndexing2D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_integer_full_slice(self):
         """Test arr[0, :] - integer with full slice."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -81,16 +67,12 @@ class TestMixedIndexing2D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_partial_slices_with_integer(self):
         """Test arr[1:3, 1] - partial slice with integer."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -99,9 +81,7 @@ class TestMixedIndexing2D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
 
@@ -119,9 +99,7 @@ class TestMixedIndexing3D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_slice_int_slice(self):
@@ -135,9 +113,7 @@ class TestMixedIndexing3D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_int_int_slice(self):
@@ -151,9 +127,7 @@ class TestMixedIndexing3D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_slice_slice_int(self):
@@ -167,9 +141,7 @@ class TestMixedIndexing3D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_int_slice_slice(self):
@@ -183,9 +155,7 @@ class TestMixedIndexing3D:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
 
@@ -194,9 +164,7 @@ class TestMixedIndexingNegativeIndices:
 
     def test_negative_integer_with_slice(self):
         """Test arr[-1, 1:3] - negative integer with slice."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -205,16 +173,12 @@ class TestMixedIndexingNegativeIndices:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_slice_with_negative_integer(self):
         """Test arr[0:2, -1] - slice with negative integer."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -223,16 +187,12 @@ class TestMixedIndexingNegativeIndices:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_negative_integer_full_slice(self):
         """Test arr[-2, :] - negative integer with full slice."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -241,9 +201,7 @@ class TestMixedIndexingNegativeIndices:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_multiple_negative_integers_with_slice(self):
@@ -257,9 +215,7 @@ class TestMixedIndexingNegativeIndices:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
 
@@ -268,9 +224,7 @@ class TestMixedIndexingNonUnitStep:
 
     def test_integer_with_step_slice(self):
         """Test arr[0, ::2] - integer with step slice."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [7.0, 8.0, 9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [7.0, 8.0, 9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -279,9 +233,7 @@ class TestMixedIndexingNonUnitStep:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_step_slice_with_integer(self):
@@ -302,16 +254,12 @@ class TestMixedIndexingNonUnitStep:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_integer_reverse_slice(self):
         """Test arr[1, ::-1] - integer with reverse slice."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -320,16 +268,12 @@ class TestMixedIndexingNonUnitStep:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_reverse_slice_with_integer(self):
         """Test arr[::-1, 2] - reverse slice with integer."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -338,9 +282,7 @@ class TestMixedIndexingNonUnitStep:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
 
@@ -363,9 +305,7 @@ class TestMixedIndexingDifferentDtypes:
 
     def test_int32_mixed_indexing(self):
         """Test mixed indexing with int32 array."""
-        np_arr = np.array(
-            [[10, 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120]], dtype=np.int32
-        )
+        np_arr = np.array([[10, 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120]], dtype=np.int32)
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -433,16 +373,12 @@ class TestMixedIndexingDifferentDtypes:
         result_np = np.asarray(result)
 
         # Verify results
-        assert (
-            result_np.dtype == np.complex128
-        ), f"Expected complex128, got {result_np.dtype}"
+        assert result_np.dtype == np.complex128, f"Expected complex128, got {result_np.dtype}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_complex64_mixed_indexing(self):
         """Test mixed indexing with complex64 array."""
-        np_arr = np.array(
-            [[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]], dtype=np.complex64
-        )
+        np_arr = np.array([[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]], dtype=np.complex64)
         pa_arr = Array(np_arr.copy())
 
         # Test mixed indexing
@@ -451,9 +387,7 @@ class TestMixedIndexingDifferentDtypes:
         result_np = np.asarray(result)
 
         # Verify results
-        assert (
-            result_np.dtype == np.complex64
-        ), f"Expected complex64, got {result_np.dtype}"
+        assert result_np.dtype == np.complex64, f"Expected complex64, got {result_np.dtype}"
         np.testing.assert_array_equal(result_np, expected)
 
 
@@ -471,9 +405,7 @@ class TestMixedIndexingEdgeCases:
         result_np = np.asarray(result)
 
         # Verify shape and values
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         assert result.shape == (1,), f"Expected shape (1,), got {result.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
@@ -488,9 +420,7 @@ class TestMixedIndexingEdgeCases:
         result_np = np.asarray(result)
 
         # Verify empty result
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         assert result.shape == (0,), f"Expected shape (0,), got {result.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
@@ -506,9 +436,7 @@ class TestMixedIndexingEdgeCases:
 
         # Verify dimensionality reduction
         assert result.ndim == 1, f"Expected ndim=1, got {result.ndim}"
-        assert (
-            result.shape == expected.shape
-        ), f"Shape mismatch: {result.shape} vs {expected.shape}"
+        assert result.shape == expected.shape, f"Shape mismatch: {result.shape} vs {expected.shape}"
         np.testing.assert_array_equal(result_np, expected)
 
     def test_out_of_bounds_integer_index(self):
@@ -586,9 +514,7 @@ class TestMixedIndexingConsistency:
 
     def test_conversion_to_numpy_preserves_values(self):
         """Test that conversion to NumPy preserves values after mixed indexing."""
-        np_arr = np.array(
-            [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]
-        )
+        np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
 
         # Perform mixed indexing

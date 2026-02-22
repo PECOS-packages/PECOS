@@ -60,11 +60,7 @@ def test_guppy_to_selene_pipeline() -> None:
         # This is expected until the full pipeline is implemented
         pytest.skip("Guppy to Selene pipeline not yet fully implemented")
     except TypeError as e:
-        if (
-            "program must be" in str(e)
-            or "cannot convert" in str(e)
-            or "not supported" in str(e)
-        ):
+        if "program must be" in str(e) or "cannot convert" in str(e) or "not supported" in str(e):
             pytest.skip(f"Guppy source not yet supported by sim(): {e}")
         raise
 

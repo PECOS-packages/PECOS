@@ -36,7 +36,6 @@ enum ExactlyOneError {
     Multiple,
 }
 use tket::hugr::envelope::EnvelopeConfig;
-#[allow(deprecated)]
 use tket::hugr::llvm::extension::int::IntCodegenExtension;
 use tket::hugr::llvm::inkwell::OptimizationLevel;
 use tket::hugr::llvm::inkwell::context::Context;
@@ -46,7 +45,6 @@ use tket::hugr::llvm::inkwell::targets::{
     CodeModel, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
 use tket::hugr::llvm::utils::fat::FatExt as _;
-use tket::hugr::llvm::utils::inline_constant_functions;
 use tket::hugr::llvm::{
     CodegenExtsBuilder,
     custom::CodegenExtsMap,
@@ -98,15 +96,16 @@ impl Default for CompileArgs {
     }
 }
 
-/// Process HUGR by applying required passes
+/// Process HUGR by applying required passes.
+///
+/// Note: `QSystemPass` internally calls `inline_constant_functions` when the
+/// `llvm` feature is enabled, so we don't need to call it separately.
 fn process_hugr(hugr: &mut Hugr) -> Result<()> {
     QSystemPass::default().run(hugr)?;
-    inline_constant_functions(hugr)?;
     Ok(())
 }
 
 /// Build codegen extensions for LLVM generation
-#[allow(deprecated)]
 fn codegen_extensions() -> CodegenExtsMap<'static, Hugr> {
     use crate::array::SeleneHeapArrayCodegen;
     let pcg = QISPreludeCodegen;
@@ -242,7 +241,7 @@ fn wrap_main<'c>(
     let tc = builder
         .build_call(teardown, &[], "")?
         .try_as_basic_value()
-        .left()
+        .basic()
         .ok_or_else(|| anyhow!("teardown has no return value"))?;
     builder.build_return(Some(&tc))?;
 

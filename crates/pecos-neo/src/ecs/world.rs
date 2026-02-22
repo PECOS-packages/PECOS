@@ -473,7 +473,7 @@ impl<S: CliffordGateable> World<S> {
     where
         S: Clone,
     {
-        use rand::Rng;
+        use rand::RngExt;
 
         let active: Vec<EntityId> = self.active_entities();
         if active.is_empty() || target_count == 0 {

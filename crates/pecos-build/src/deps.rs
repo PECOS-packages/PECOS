@@ -30,6 +30,7 @@ use crate::errors::Result;
 use crate::extract::extract_to_deps;
 use crate::home::get_deps_dir;
 use crate::manifest::Manifest;
+use std::fs;
 use std::path::PathBuf;
 
 /// Information about an available dependency
@@ -121,21 +122,29 @@ pub fn ensure_dep_ready(name: &str, manifest: &Manifest) -> Result<PathBuf> {
     log::info!("Downloading {name}...");
     let data = download_cached(&info)?;
 
-    // Extract to deps directory
+    // Extract to a process-specific staging directory to avoid races with
+    // concurrent build scripts (e.g. pecos-chromobius and pecos-pymatching
+    // both needing stim). Each process extracts to its own staging dir,
+    // then the first to finish renames to the final name.
+    let staging_name = format!("{dep_dir_name}.staging.{}", std::process::id());
+    let staging_path = deps_dir.join(&staging_name);
+
     log::info!("Extracting {name} to {}", dep_path.display());
-    match extract_to_deps(&data, &dep_dir_name) {
-        Ok(_) => Ok(dep_path),
+    extract_to_deps(&data, &staging_name)?;
+
+    // Rename staging -> final. On Windows, fs::rename fails if the target
+    // already exists, so the first process to finish wins.
+    match fs::rename(&staging_path, &dep_path) {
+        Ok(()) => Ok(dep_path),
+        Err(_) if dep_path.exists() => {
+            // Another process won the race - use their complete copy
+            log::info!("{name} was extracted by a concurrent build script");
+            let _ = fs::remove_dir_all(&staging_path);
+            Ok(dep_path)
+        }
         Err(e) => {
-            // On Windows, concurrent build scripts (e.g. pecos-chromobius and
-            // pecos-pymatching both needing stim) may race to extract the same
-            // dependency. If another process created the directory while we were
-            // extracting, just use it.
-            if dep_path.exists() {
-                log::info!("{name} was extracted by a concurrent build script");
-                Ok(dep_path)
-            } else {
-                Err(e)
-            }
+            let _ = fs::remove_dir_all(&staging_path);
+            Err(e.into())
         }
     }
 }

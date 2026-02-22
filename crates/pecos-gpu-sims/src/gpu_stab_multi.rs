@@ -2466,7 +2466,7 @@ mod tests {
 
     #[test]
     fn test_measurement_noise_rate() {
-        // Statistical test: with 50% measurement error, about half should be flipped
+        // With 50% measurement error on |0>, about half should be flipped
         let num_shots = 1000;
         let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
 
@@ -2474,24 +2474,13 @@ mod tests {
         sim.enable_noise(0.0, 0.0, 0.5); // 50% measurement error
 
         // Qubit is in |0>, should measure 0 without noise
-        // With 50% error, expect ~500 to be flipped to 1
         let results = sim.mz(&[QubitId(0)]);
-
         let ones_count: usize = results.iter().filter(|r| r[0]).count();
-        let error_rate = ones_count as f64 / num_shots as f64;
 
-        println!(
-            "Measurement noise test: {} ones out of {} shots (rate: {:.2}%)",
-            ones_count,
-            num_shots,
-            error_rate * 100.0
-        );
-
-        // Should be within reasonable range of 50% (say 40-60% with 1000 samples)
-        assert!(
-            error_rate > 0.4 && error_rate < 0.6,
-            "Error rate {:.2}% should be close to 50%",
-            error_rate * 100.0
+        // Noise is deterministic (seeded hash-based RNG), so assert exact count.
+        assert_eq!(
+            ones_count, 526,
+            "Measurement noise: expected 526 flips with seed=42, 1000 shots, 50% meas error"
         );
     }
 
@@ -2617,19 +2606,11 @@ mod tests {
         // With noise, some shots should show errors (non-zero Z expectation change)
         let results = sim.mz(&[QubitId(0)]);
         let ones_count: usize = results.iter().filter(|r| r[0]).count();
-        let error_rate = ones_count as f64 / num_shots as f64;
 
-        // With 10% gate noise over 100 H gates, we expect significant accumulated errors
-        // The exact rate depends on the noise model, but should be non-zero
-        assert!(
-            ones_count > 0,
-            "Should have some errors with 10% 1Q gate noise over 100 gates"
-        );
-        // Should see a reasonable error rate (roughly 25-75% given the noise model)
-        assert!(
-            error_rate > 0.1 && error_rate < 0.9,
-            "Error rate {:.2}% should be significant but not 100%",
-            error_rate * 100.0
+        // Noise is deterministic (seeded hash-based RNG), so assert exact count.
+        assert_eq!(
+            ones_count, 264,
+            "1Q noise: expected 264 errors with seed=42, 500 shots, 10% noise, 100 H gates"
         );
     }
 
@@ -2654,18 +2635,11 @@ mod tests {
 
         // Count shots where at least one qubit shows an error
         let error_shots: usize = results.iter().filter(|r| r[0] || r[1]).count();
-        let error_rate = error_shots as f64 / num_shots as f64;
 
-        // With 20% 2Q gate noise over 50 CX gates, we expect substantial errors.
-        // Use a conservative threshold to avoid flakiness across GPU backends.
-        assert!(
-            error_shots > 10,
-            "Should have errors with 20% 2Q gate noise over 50 CX gates, got {error_shots}/{num_shots}"
-        );
-        assert!(
-            error_rate > 0.05,
-            "Error rate {:.2}% should be significant with 2Q noise",
-            error_rate * 100.0
+        // Noise is deterministic (seeded hash-based RNG), so assert exact count.
+        assert_eq!(
+            error_shots, 747,
+            "2Q noise: expected 747 errors with seed=42, 1000 shots, 20% noise, 50 CX gates"
         );
     }
 
@@ -3065,24 +3039,14 @@ mod tests {
         sim.enable_noise(0.0, 0.0, 0.5); // 50% measurement error
 
         // Qubit is in |0>, should measure 0 without noise
-        // With 50% error, expect ~500 to be flipped to 1
         let results = sim.mz_gpu(&[QubitId(0)]);
-
         let ones_count: usize = results.iter().filter(|r| r[0]).count();
-        let error_rate = ones_count as f64 / num_shots as f64;
 
-        println!(
-            "mz_gpu noise test: {} ones out of {} shots (rate: {:.2}%)",
-            ones_count,
-            num_shots,
-            error_rate * 100.0
-        );
-
-        // Should be within reasonable range of 50% (say 40-60% with 1000 samples)
-        assert!(
-            error_rate > 0.4 && error_rate < 0.6,
-            "Error rate {:.2}% should be close to 50%",
-            error_rate * 100.0
+        // Noise is deterministic (seeded hash-based RNG), so assert exact count.
+        // Should match test_measurement_noise_rate (same params, different measurement path).
+        assert_eq!(
+            ones_count, 526,
+            "mz_gpu noise: expected 526 flips with seed=42, 1000 shots, 50% meas error"
         );
     }
 

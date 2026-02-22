@@ -72,6 +72,65 @@ pub use extract::{extract_archive, extract_to_deps};
 pub use home::{get_cache_dir, get_deps_dir, get_llvm_dir, get_pecos_home, get_tmp_dir};
 pub use manifest::Manifest;
 
+/// Check that the C++ toolchain supports C++20 with the CXX crate.
+///
+/// On macOS, Xcode 15.x ships a libc++ (based on LLVM 16) that has not implemented
+/// LWG 3545 (SFINAE-friendly `std::pointer_traits`). The CXX crate's
+/// `rust::Slice<T>::iterator` uses `contiguous_iterator_tag` in C++20 mode, which
+/// triggers `pointer_traits` instantiation that fails on these older libc++ versions.
+/// Xcode 16+ (LLVM 18) has the fix.
+///
+/// Call this from build scripts that use `cxx_build` with C++20 to give users a
+/// clear error instead of a cryptic template instantiation failure.
+///
+/// # Panics
+///
+/// Panics with a descriptive message if the toolchain is known to be incompatible.
+pub fn check_cxx20_toolchain() {
+    // Only relevant on macOS with Apple Clang
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+
+    // Determine which C++ compiler will be used
+    let compiler = std::env::var("CXX")
+        .or_else(|_| std::env::var("CC"))
+        .unwrap_or_else(|_| "clang".to_string());
+
+    let Ok(output) = std::process::Command::new(&compiler)
+        .args(["-dM", "-E", "-x", "c++", "/dev/null"])
+        .output()
+    else {
+        return; // Can't check, let compilation proceed
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some(version_str) = line
+            .strip_prefix("#define __apple_build_version__ ")
+            .map(str::trim)
+        {
+            if let Ok(version) = version_str.parse::<u64>() {
+                assert!(
+                    version >= 16_000_000,
+                    "\n\n\
+                    Xcode 16 or later is required for C++20 builds with the CXX crate.\n\
+                    \n\
+                    Detected Apple Clang build version: {version}\n\
+                    \n\
+                    Xcode 15.x ships a libc++ that has not implemented LWG 3545\n\
+                    (SFINAE-friendly std::pointer_traits), which causes compilation\n\
+                    failures with CXX crate iterators in C++20 mode.\n\
+                    \n\
+                    To fix: upgrade to Xcode 16+ or macOS 15+.\n\
+                    See: https://github.com/dtolnay/cxx/issues/1436\n\n"
+                );
+            }
+            break;
+        }
+    }
+}
+
 /// Report ccache/sccache configuration for C++ builds
 pub fn report_cache_config() {
     use log::{debug, info};

@@ -1,6 +1,6 @@
 //! Build script for Tesseract decoder integration
 
-use pecos_build::{Manifest, Result, ensure_dep_ready, report_cache_config};
+use pecos_build::{Manifest, Result, check_cxx20_toolchain, ensure_dep_ready, report_cache_config};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -38,6 +38,8 @@ fn get_build_profile() -> String {
 
 /// Main build function for Tesseract
 pub fn build() -> Result<()> {
+    check_cxx20_toolchain();
+
     println!("cargo:rerun-if-changed=build_tesseract.rs");
     println!("cargo:rerun-if-changed=src/bridge.rs");
     println!("cargo:rerun-if-changed=src/bridge.cpp");

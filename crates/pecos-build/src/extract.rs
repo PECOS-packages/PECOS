@@ -80,7 +80,9 @@ pub fn extract_archive(
     #[cfg(windows)]
     {
         copy_dir_all(&extracted_dir, &final_dir)?;
-        fs::remove_dir_all(&temp_dir)?;
+        // Temp dir cleanup can fail on Windows due to antivirus locks or
+        // concurrent access - this is non-fatal since the extraction succeeded.
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[cfg(not(windows))]

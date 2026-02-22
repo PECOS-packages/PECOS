@@ -59,7 +59,7 @@ public:
     }
 
     DecodingResultRepr decode_detections(const rust::Slice<const uint64_t> detections) {
-        std::vector<uint64_t> det_vec(detections.begin(), detections.end());
+        std::vector<uint64_t> det_vec(detections.data(), detections.data() + detections.size());
 
         decoder_->decode_to_errors(det_vec);
 
@@ -80,7 +80,7 @@ public:
         const rust::Slice<const uint64_t> detections,
         size_t det_order
     ) {
-        std::vector<uint64_t> det_vec(detections.begin(), detections.end());
+        std::vector<uint64_t> det_vec(detections.data(), detections.data() + detections.size());
 
         decoder_->decode_to_errors(det_vec, det_order);
 

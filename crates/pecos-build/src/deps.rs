@@ -123,7 +123,19 @@ pub fn ensure_dep_ready(name: &str, manifest: &Manifest) -> Result<PathBuf> {
 
     // Extract to deps directory
     log::info!("Extracting {name} to {}", dep_path.display());
-    extract_to_deps(&data, &dep_dir_name)?;
-
-    Ok(dep_path)
+    match extract_to_deps(&data, &dep_dir_name) {
+        Ok(_) => Ok(dep_path),
+        Err(e) => {
+            // On Windows, concurrent build scripts (e.g. pecos-chromobius and
+            // pecos-pymatching both needing stim) may race to extract the same
+            // dependency. If another process created the directory while we were
+            // extracting, just use it.
+            if dep_path.exists() {
+                log::info!("{name} was extracted by a concurrent build script");
+                Ok(dep_path)
+            } else {
+                Err(e)
+            }
+        }
+    }
 }

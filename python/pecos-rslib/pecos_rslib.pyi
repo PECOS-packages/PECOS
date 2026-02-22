@@ -1083,6 +1083,8 @@ def get_compilation_backends() -> dict[str, object]:
 # =============================================================================
 # WASM
 # =============================================================================
+class WasmError(Exception): ...
+
 class WasmForeignObject:
     """WebAssembly foreign object for hybrid quantum/classical computation.
 

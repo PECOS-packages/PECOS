@@ -4,7 +4,6 @@
 //! dev tool commands. The command enums are designed to be embedded in the
 //! main pecos CLI.
 
-#![allow(clippy::missing_errors_doc)]
 #![allow(clippy::fn_params_excessive_bools)]
 
 pub mod cuda_cmd;
@@ -436,61 +435,109 @@ pub enum DepsCommands {
 // ============================================================================
 
 /// Run a Rust subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_rust(command: &RustCommands) -> pecos_build::Result<()> {
     rust_cmd::run(command)
 }
 
 /// Run a Python subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_python(command: &PythonCommands) -> pecos_build::Result<()> {
     python_cmd::run(command)
 }
 
 /// Run a CUDA subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_cuda(command: CudaCommands) -> pecos_build::Result<()> {
     cuda_cmd::run(command)
 }
 
 /// Run a cuQuantum subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_cuquantum(command: CuQuantumCommands) -> pecos_build::Result<()> {
     cuquantum_cmd::run(command)
 }
 
 /// Run a GPU subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_gpu(command: &GpuCommands) -> pecos_build::Result<()> {
     gpu_cmd::run(command)
 }
 
 /// Run a Julia subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_julia(command: &JuliaCommands) -> pecos_build::Result<()> {
     julia_cmd::run(command)
 }
 
 /// Run a Go subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_go(command: &GoCommands) -> pecos_build::Result<()> {
     go_cmd::run(command)
 }
 
 /// Run a Selene subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_selene(command: SeleneCommands) -> pecos_build::Result<()> {
     selene_cmd::run(command)
 }
 
 /// Run a Features subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_features(command: FeaturesCommands) -> pecos_build::Result<()> {
     features_cmd::run(command)
 }
 
 /// Run an LLVM subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_llvm(command: LlvmCommands) -> pecos_build::Result<()> {
     llvm_cmd::run(command)
 }
 
 /// Run a Deps subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
 pub fn run_deps(command: DepsCommands) -> pecos_build::Result<()> {
     manifest_cmd::run(command)
 }
 
 /// Run the install command
+///
+/// # Errors
+///
+/// Returns an error if any target fails to install.
 pub fn run_install(
     targets: &[String],
     force: bool,
@@ -501,26 +548,46 @@ pub fn run_install(
 }
 
 /// Run the uninstall command
+///
+/// # Errors
+///
+/// Returns an error if any target fails to uninstall.
 pub fn run_uninstall(targets: &[String], all: bool) -> pecos_build::Result<()> {
     uninstall_cmd::run(targets, all)
 }
 
 /// Run the upgrade command
+///
+/// # Errors
+///
+/// Returns an error if any target fails to upgrade.
 pub fn run_upgrade(targets: &[String], all: bool, no_configure: bool) -> pecos_build::Result<()> {
     upgrade_cmd::run(targets, all, no_configure)
 }
 
 /// Run the sys-info command
+///
+/// # Errors
+///
+/// Returns an error if system information cannot be gathered.
 pub fn run_sys_info() -> pecos_build::Result<()> {
     info::run()
 }
 
 /// Run the list command
+///
+/// # Errors
+///
+/// Returns an error if component status cannot be determined.
 pub fn run_list(verbose: bool) -> pecos_build::Result<()> {
     list::run(verbose)
 }
 
 /// Run the docs command
+///
+/// # Errors
+///
+/// Returns an error if the documentation server cannot be started.
 pub fn run_docs(port: u16, no_browser: bool) -> pecos_build::Result<()> {
     docs_cmd::run(port, no_browser)
 }

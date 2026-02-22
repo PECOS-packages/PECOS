@@ -1,7 +1,5 @@
 //! cuQuantum configuration management for `.cargo/config.toml`
 
-#![allow(clippy::missing_errors_doc)]
-
 use crate::cuquantum::{
     find_cuquantum, get_lib_dir, get_pecos_cuquantum_dir, is_valid_cuquantum_installation,
 };
@@ -173,6 +171,11 @@ pub fn auto_configure_cuquantum(project_root: Option<PathBuf>) -> Result<PathBuf
 /// * `project_root` - Path to the Cargo project root
 /// * `cuquantum_path` - Path to the cuQuantum installation
 /// * `force` - If true, use `force=true` to override shell environment variables
+///
+/// # Errors
+///
+/// Returns an error if the `.cargo` directory cannot be created or the config file
+/// cannot be written.
 pub fn write_cargo_config(project_root: &Path, cuquantum_path: &Path, force: bool) -> Result<()> {
     let cargo_dir = project_root.join(".cargo");
     let config_path = cargo_dir.join("config.toml");

@@ -102,7 +102,7 @@ jobs:
         arch: x64
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
 

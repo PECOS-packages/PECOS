@@ -88,10 +88,10 @@ jobs:
         Write-Host "Disk space after cleanup:"
         Get-PSDrive C | Select-Object Used,Free
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -110,7 +110,7 @@ jobs:
       run: rustup show
 
     - name: Install just
-      uses: extractions/setup-just@v2
+      uses: extractions/setup-just@v3
 
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2

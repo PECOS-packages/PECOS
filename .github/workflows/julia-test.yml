@@ -41,7 +41,7 @@ jobs:
         julia-version: ["1"]  # Latest stable (experimental bindings)
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Julia ${{ matrix.julia-version }}
       uses: julia-actions/setup-julia@v2

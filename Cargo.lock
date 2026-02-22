@@ -3317,7 +3317,9 @@ name = "pecos-cuquantum"
 version = "0.1.1"
 dependencies = [
  "criterion 0.5.1",
+ "env_logger",
  "fastrand",
+ "log",
  "pecos-build",
  "pecos-core",
  "pecos-cuquantum-sys",
@@ -3495,7 +3497,9 @@ dependencies = [
 name = "pecos-llvm"
 version = "0.1.1"
 dependencies = [
+ "env_logger",
  "inkwell",
+ "log",
  "pecos-build",
  "pecos-core",
 ]
@@ -3760,6 +3764,7 @@ dependencies = [
 name = "pecos-rslib-cuda"
 version = "0.1.1"
 dependencies = [
+ "env_logger",
  "log",
  "pecos-build",
  "pecos-core",

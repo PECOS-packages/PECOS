@@ -1,4 +1,5 @@
 fn main() {
+    env_logger::init();
     // Always validate LLVM since this crate requires LLVM
     validate_llvm();
 }

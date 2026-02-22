@@ -24,6 +24,8 @@ default = []
 
 [build-dependencies]
 pecos-build.workspace = true
+log.workspace = true
+env_logger.workspace = true
 
 [lints]
 workspace = true

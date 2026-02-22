@@ -21,6 +21,8 @@ fastrand = "2.3"
 
 [build-dependencies]
 pecos-build = { path = "../pecos-build" }
+log.workspace = true
+env_logger.workspace = true
 
 [dev-dependencies]
 # For testing, we don't actually need CUDA - tests use stub mode

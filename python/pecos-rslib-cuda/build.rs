@@ -10,6 +10,7 @@
 //! from a different directory.
 
 fn main() {
+    env_logger::init();
     // RPATH configuration is Linux-only (ELF). macOS uses different mechanisms
     // (@rpath / install_name_tool) and doesn't support --disable-new-dtags.
     if cfg!(target_os = "linux") {

@@ -320,7 +320,7 @@ name = "benchmarks"
 version = "0.1.1"
 dependencies = [
  "criterion 0.8.2",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos",
  "pecos-core",
  "pecos-cuquantum",
@@ -3049,20 +3049,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ndarray-npy"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b313788c468c49141a9d9b6131fc15f403e6ef4e8446a0b2e18f664ddb278a9"
-dependencies = [
- "byteorder",
- "ndarray 0.16.1",
- "num-complex 0.4.6",
- "num-traits",
- "py_literal",
- "zip",
-]
-
-[[package]]
 name = "ndk-sys"
 version = "0.6.0+11769913"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3767,7 +3753,7 @@ dependencies = [
 name = "pecos-qsim"
 version = "0.1.1"
 dependencies = [
- "num-complex 0.4.6",
+ "num-complex",
  "paste",
  "pecos-core",
  "pecos-quantum",
@@ -3785,7 +3771,7 @@ version = "0.1.1"
 dependencies = [
  "log",
  "nalgebra",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-core",
  "pecos-num",
  "smallvec",
@@ -3897,7 +3883,7 @@ name = "pecos-selene-quest"
 version = "0.1.1"
 dependencies = [
  "anyhow",
- "num-complex 0.4.6",
+ "num-complex",
  "pecos-core",
  "pecos-quest",
  "pecos-rng",
@@ -5380,22 +5366,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eda41003dc44290527a59b13432d4a0379379fa074b70174882adfbdfd917844"
 dependencies = [
  "bitflags",
-]
-
-[[package]]
-name = "sprs"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bff8419009a08f6cb7519a602c5590241fbff1446bcc823c07af15386eb801b"
-dependencies = [
- "alga",
- "ndarray 0.16.1",
- "num-complex 0.4.6",
- "num-traits",
- "num_cpus",
- "rayon",
- "serde",
- "smallvec",
 ]
 
 [[package]]

@@ -58,6 +58,7 @@ impl CuDensityMat {
     /// - cuDensityMat initialization fails
     /// - CUDA device is not available
     /// - Memory allocation fails
+    #[allow(unreachable_code)]
     pub fn new(num_qubits: usize) -> Result<Self> {
         if num_qubits == 0 {
             return Err(CuQuantumError::InvalidArgument(

@@ -108,6 +108,7 @@ impl CuFrameSimulator {
     ///
     /// # Errors
     /// Returns an error if GPU resources cannot be allocated.
+    #[allow(unreachable_code, unused_variables)]
     pub fn new(num_qubits: usize, num_shots: usize, max_measurements: usize) -> Result<Self> {
         if num_qubits == 0 {
             return Err(CuQuantumError::InvalidArgument(
@@ -492,6 +493,7 @@ impl CuStabilizer {
     ///
     /// # Errors
     /// Returns an error if initialization fails.
+    #[allow(unreachable_code, unused_variables)]
     pub fn with_seed_result(num_qubits: usize, seed: u64) -> Result<Self> {
         if num_qubits == 0 {
             return Err(CuQuantumError::InvalidArgument(

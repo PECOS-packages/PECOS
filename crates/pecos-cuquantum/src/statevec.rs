@@ -67,6 +67,7 @@ impl CuStateVec {
     ///
     /// # Errors
     /// Returns an error if initialization fails
+    #[allow(unreachable_code, unused_variables)]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Result<Self> {
         if num_qubits == 0 {
             return Err(CuQuantumError::InvalidArgument(

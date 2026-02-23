@@ -167,8 +167,20 @@ pecos-chromobius = { version = "0.1.1", path = "crates/pecos-chromobius" }
 # Fusion Blossom decoder wrapper (pure Rust MWPM)
 pecos-fusion-blossom = { version = "0.1.1", path = "crates/pecos-fusion-blossom" }
 
+# Relay BP decoder wrapper (pure Rust BP for qLDPC codes)
+pecos-relay-bp = { version = "0.1.1", path = "crates/pecos-relay-bp" }
+
 # Fusion Blossom library (pure Rust MWPM decoder)
 fusion-blossom = "0.2"
+
+# Relay BP library (pure Rust belief propagation decoder)
+relay-bp = "0.2"
+
+# ndarray 0.16 for relay-bp compatibility (relay-bp uses ndarray 0.16, PECOS uses 0.17)
+ndarray-016 = { package = "ndarray", version = "0.16" }
+
+# sprs for sparse matrix construction (pinned to 0.11.3 for ndarray 0.16 compat with relay-bp)
+sprs = "=0.11.3"
 
 # petgraph for graph algorithms (used by pymatching)
 petgraph = "0.8"

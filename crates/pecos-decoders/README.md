@@ -15,6 +15,7 @@ Enable the appropriate features to include specific decoder families:
 - `pymatching` - PyMatching MWPM decoder
 - `tesseract` - Tesseract search-based decoder
 - `chromobius` - Chromobius color code decoder
+- `relay-bp` - Relay BP decoder for qLDPC codes
 - `all` - Enable all decoders
 
 ## Key Types

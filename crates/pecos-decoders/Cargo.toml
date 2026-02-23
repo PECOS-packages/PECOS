@@ -18,6 +18,7 @@ pecos-fusion-blossom = { workspace = true, optional = true }
 pecos-pymatching = { workspace = true, optional = true }
 pecos-tesseract = { workspace = true, optional = true }
 pecos-chromobius = { workspace = true, optional = true }
+pecos-relay-bp = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -26,7 +27,8 @@ fusion-blossom = ["dep:pecos-fusion-blossom"]
 pymatching = ["dep:pecos-pymatching"]
 tesseract = ["dep:pecos-tesseract"]
 chromobius = ["dep:pecos-chromobius"]
-all = ["ldpc", "fusion-blossom", "pymatching", "tesseract", "chromobius"]
+relay-bp = ["dep:pecos-relay-bp"]
+all = ["ldpc", "fusion-blossom", "pymatching", "tesseract", "chromobius", "relay-bp"]
 
 [lints]
 workspace = true

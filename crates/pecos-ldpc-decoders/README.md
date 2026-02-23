@@ -21,4 +21,4 @@ Provides LDPC (Low-Density Parity-Check) based decoders including belief propaga
 This crate wraps [ldpc](https://github.com/quantumgizmos/ldpc), a high-performance LDPC decoder library developed by Joschka Roffe and collaborators.
 
 **Paper:**
-- Roffe, J., White, D. R., Burton, S., & Campbell, E. (2020). "Decoding across the quantum low-density parity-check code landscape." Physical Review Research, 2(4), 043423. [arXiv:2005.07016](https://arxiv.org/abs/2005.07016)
+- Roffe, J., White, D. R., Burton, S., & Campbell, E. T. (2020). "Decoding Across the Quantum LDPC Code Landscape." Physical Review Research, 2(4), 043423. [arXiv:2005.07016](https://arxiv.org/abs/2005.07016)

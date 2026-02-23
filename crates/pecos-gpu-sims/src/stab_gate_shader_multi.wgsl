@@ -19,15 +19,19 @@
 @group(0) @binding(7) var<storage, read_write> sign_i: array<u32>;
 
 // Parameters
+// Persistent parameters including noise thresholds.
+// Noise params are packed here (instead of a separate binding) to avoid
+// Metal/naga issues with small uniform buffers where the third field
+// reads as 0 on Apple Paravirtual devices.
 struct PersistentParams {
     num_qubits: u32,
     gen_words: u32,
     num_gens: u32,
     num_shots: u32,
-    _padding1: u32,
-    _padding2: u32,
-    _padding3: u32,
-    _padding4: u32,
+    noise_enabled: u32,
+    noise_p1_threshold: u32,
+    noise_p2_threshold: u32,
+    noise_p_meas_threshold: u32,
 }
 
 @group(0) @binding(5) var<uniform> params: PersistentParams;
@@ -38,12 +42,6 @@ struct PersistentParams {
 // Noise support
 // Per-shot seeds for deterministic noise
 @group(0) @binding(8) var<storage, read> noise_seeds: array<u32>;
-
-// Noise parameters as vec4<u32> to guarantee layout across all GPU backends.
-// Using a primitive type avoids potential struct member offset issues in some
-// shader compilers (e.g., naga's Metal backend has had struct layout bugs).
-// Components: x=enabled, y=p1_threshold, z=p2_threshold, w=p_meas_threshold
-@group(0) @binding(9) var<uniform> noise_params: vec4<u32>;
 
 // PCG-style hash for deterministic per-gate noise
 // Combines shot seed, gate index, and qubit to produce independent random values
@@ -68,7 +66,7 @@ fn apply_noise_1q(
     threshold: u32,
     local_sign_minus: ptr<function, u32>
 ) {
-    if (noise_params.x == 0u) { return; }
+    if (params.noise_enabled == 0u) { return; }
 
     let seed = noise_seeds[shot_id];
     let rand = hash_noise(seed, gate_idx, qubit);
@@ -173,7 +171,7 @@ fn process_gate_queue_multi(
                 destab_z[row_offset] = destab_x_word;
                 local_sign_minus ^= (orig_stab_x & orig_stab_z);
                 // Apply 1Q noise after gate
-                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, noise_params.y, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, params.noise_p1_threshold, &local_sign_minus);
             }
             case GATE_S: {
                 let row_offset = shot_tableau_base + tgt_qubit * params.gen_words + word_idx;
@@ -188,7 +186,7 @@ fn process_gate_queue_multi(
                 local_sign_minus ^= toggle_minus_mask;
                 local_sign_i ^= orig_stab_x;
                 // Apply 1Q noise after gate
-                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, noise_params.y, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, params.noise_p1_threshold, &local_sign_minus);
             }
             case GATE_SDG: {
                 let row_offset = shot_tableau_base + tgt_qubit * params.gen_words + word_idx;
@@ -203,14 +201,14 @@ fn process_gate_queue_multi(
                 local_sign_minus ^= (orig_stab_x & ~had_i);
                 local_sign_i ^= orig_stab_x;
                 // Apply 1Q noise after gate
-                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, noise_params.y, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, params.noise_p1_threshold, &local_sign_minus);
             }
             case GATE_X: {
                 let row_offset = shot_tableau_base + tgt_qubit * params.gen_words + word_idx;
                 let stab_z_word = stab_z[row_offset];
                 local_sign_minus ^= stab_z_word;
                 // Apply 1Q noise after gate
-                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, noise_params.y, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, params.noise_p1_threshold, &local_sign_minus);
             }
             case GATE_Y: {
                 let row_offset = shot_tableau_base + tgt_qubit * params.gen_words + word_idx;
@@ -218,14 +216,14 @@ fn process_gate_queue_multi(
                 let stab_z_word = stab_z[row_offset];
                 local_sign_minus ^= (stab_x_word ^ stab_z_word);
                 // Apply 1Q noise after gate
-                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, noise_params.y, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, params.noise_p1_threshold, &local_sign_minus);
             }
             case GATE_Z: {
                 let row_offset = shot_tableau_base + tgt_qubit * params.gen_words + word_idx;
                 let stab_x_word = stab_x[row_offset];
                 local_sign_minus ^= stab_x_word;
                 // Apply 1Q noise after gate
-                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, noise_params.y, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, tgt_qubit, word_idx, shot_tableau_base, params.noise_p1_threshold, &local_sign_minus);
             }
             case GATE_CX: {
                 let ctrl_offset = shot_tableau_base + ctrl_qubit * params.gen_words + word_idx;
@@ -237,8 +235,8 @@ fn process_gate_queue_multi(
                 destab_z[ctrl_offset] = destab_z[ctrl_offset] ^ destab_z[tgt_offset];
                 // CX does NOT require sign updates
                 // Apply 2Q noise: independent noise on each qubit
-                apply_noise_1q(shot_id, gate_idx, ctrl_qubit, word_idx, shot_tableau_base, noise_params.z, &local_sign_minus);
-                apply_noise_1q(shot_id, gate_idx + 0x8000u, tgt_qubit, word_idx, shot_tableau_base, noise_params.z, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, ctrl_qubit, word_idx, shot_tableau_base, params.noise_p2_threshold, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx + 0x8000u, tgt_qubit, word_idx, shot_tableau_base, params.noise_p2_threshold, &local_sign_minus);
             }
             case GATE_CZ: {
                 let a_offset = shot_tableau_base + ctrl_qubit * params.gen_words + word_idx;
@@ -254,8 +252,8 @@ fn process_gate_queue_multi(
                 // CZ: flip sign when both qubits have X
                 local_sign_minus ^= (a_x & b_x);
                 // Apply 2Q noise: independent noise on each qubit
-                apply_noise_1q(shot_id, gate_idx, ctrl_qubit, word_idx, shot_tableau_base, noise_params.z, &local_sign_minus);
-                apply_noise_1q(shot_id, gate_idx + 0x8000u, tgt_qubit, word_idx, shot_tableau_base, noise_params.z, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, ctrl_qubit, word_idx, shot_tableau_base, params.noise_p2_threshold, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx + 0x8000u, tgt_qubit, word_idx, shot_tableau_base, params.noise_p2_threshold, &local_sign_minus);
             }
             case GATE_SWAP: {
                 let a_offset = shot_tableau_base + ctrl_qubit * params.gen_words + word_idx;
@@ -273,8 +271,8 @@ fn process_gate_queue_multi(
                 destab_z[a_offset] = destab_z[b_offset];
                 destab_z[b_offset] = tmp_destab_z;
                 // Apply 2Q noise: independent noise on each qubit
-                apply_noise_1q(shot_id, gate_idx, ctrl_qubit, word_idx, shot_tableau_base, noise_params.z, &local_sign_minus);
-                apply_noise_1q(shot_id, gate_idx + 0x8000u, tgt_qubit, word_idx, shot_tableau_base, noise_params.z, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx, ctrl_qubit, word_idx, shot_tableau_base, params.noise_p2_threshold, &local_sign_minus);
+                apply_noise_1q(shot_id, gate_idx + 0x8000u, tgt_qubit, word_idx, shot_tableau_base, params.noise_p2_threshold, &local_sign_minus);
             }
             default: {}
         }

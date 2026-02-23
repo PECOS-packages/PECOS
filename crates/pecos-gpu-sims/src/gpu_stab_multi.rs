@@ -38,7 +38,6 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = StdRng> {
 
     // Noise buffers
     noise_seeds_buffer: wgpu::Buffer,
-    noise_params_buffer: wgpu::Buffer,
 
     // Bind groups and pipelines
     main_bind_group: wgpu::BindGroup,
@@ -68,10 +67,11 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = StdRng> {
 
     // Noise configuration
     noise_enabled: bool,
-    noise_p1: f32,         // Single-qubit gate error probability
-    noise_p2: f32,         // Two-qubit gate error probability
-    noise_p_meas: f32,     // Measurement bit-flip probability
-    noise_seeds: Vec<u32>, // CPU copy of noise seeds for measurement errors
+    noise_p1: f32,              // Single-qubit gate error probability
+    noise_p2: f32,              // Two-qubit gate error probability
+    noise_p_meas: f32,          // Measurement bit-flip probability
+    noise_seeds: Vec<u32>,      // CPU copy of noise seeds for measurement errors
+    noise_params_gpu: [u32; 4], // Cached GPU noise params [enabled, p1, p2, p_meas]
 
     // RNG for measurement outcomes and noise seeds
     master_rng: R,
@@ -212,13 +212,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             label: Some("Multi Noise Seeds Buffer"),
             size: u64::from(shots_per_batch) * 4, // One u32 seed per shot
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let noise_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Multi Noise Params Buffer"),
-            size: 16, // NoiseParams struct: 4 u32s
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -364,17 +357,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
                         },
                         count: None,
                     },
-                    // noise_params
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 9,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
                 ],
             });
 
@@ -417,10 +399,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: noise_seeds_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: noise_params_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -606,7 +584,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             params_buffer,
             gate_queue_buffer,
             noise_seeds_buffer,
-            noise_params_buffer,
             main_bind_group,
             gate_pipeline,
             // GPU-side measurement
@@ -633,6 +610,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             noise_p2: 0.0,
             noise_p_meas: 0.0,
             noise_seeds,
+            noise_params_gpu: [0; 4],
             master_rng,
             measurement_count: 0,
             // Queued measurement system
@@ -699,17 +677,8 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             .write_buffer(&self.sign_minus_buffer, 0, &sign_zeros);
         self.queue.write_buffer(&self.sign_i_buffer, 0, &sign_zeros);
 
-        // Write params (use shots_per_batch for shader dispatch)
-        let params = [
-            self.num_qubits,
-            self.gen_words,
-            2 * self.num_qubits, // num_gens
-            self.shots_per_batch,
-            0,
-            0,
-            0,
-            0, // padding
-        ];
+        // Write params (includes noise thresholds in fields 4-7)
+        let params = self.build_gate_params();
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
 
@@ -898,19 +867,34 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             0
         };
 
-        // Written as vec4<u32>: x=enabled, y=p1, z=p2, w=p_meas
-        let noise_params = [
+        // Cache noise params for inclusion in params buffer writes
+        self.noise_params_gpu = [
             u32::from(self.noise_enabled),
             p1_threshold,
             p2_threshold,
             p_meas_threshold,
         ];
 
+        // Write noise params into the params buffer at offset 16 (fields 4-7)
         self.queue.write_buffer(
-            &self.noise_params_buffer,
-            0,
-            bytemuck::cast_slice(&noise_params),
+            &self.params_buffer,
+            16,
+            bytemuck::cast_slice(&self.noise_params_gpu),
         );
+    }
+
+    /// Build the 8-element params array for gate dispatch (includes noise fields)
+    fn build_gate_params(&self) -> [u32; 8] {
+        [
+            self.num_qubits,
+            self.gen_words,
+            2 * self.num_qubits, // num_gens
+            self.shots_per_batch,
+            self.noise_params_gpu[0],
+            self.noise_params_gpu[1],
+            self.noise_params_gpu[2],
+            self.noise_params_gpu[3],
+        ]
     }
 
     /// Check if noise is currently enabled
@@ -1616,17 +1600,8 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             self.meas_staging_buffer.unmap();
         }
 
-        // Restore params
-        let gate_params = [
-            self.num_qubits,
-            self.gen_words,
-            2 * self.num_qubits,
-            self.shots_per_batch,
-            0,
-            0,
-            0,
-            0,
-        ];
+        // Restore gate params (includes noise thresholds)
+        let gate_params = self.build_gate_params();
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&gate_params));
 

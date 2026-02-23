@@ -320,7 +320,7 @@ name = "benchmarks"
 version = "0.1.1"
 dependencies = [
  "criterion 0.8.2",
- "num-complex",
+ "num-complex 0.4.6",
  "pecos",
  "pecos-core",
  "pecos-cuquantum",
@@ -612,9 +612,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.43"
+version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fac4744fb15ae8337dc853fee7fb3f4e48c0fbaa23d0afe49c447b4fab126118"
+checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
  "js-sys",
@@ -3049,6 +3049,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ndarray-npy"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b313788c468c49141a9d9b6131fc15f403e6ef4e8446a0b2e18f664ddb278a9"
+dependencies = [
+ "byteorder",
+ "ndarray 0.16.1",
+ "num-complex 0.4.6",
+ "num-traits",
+ "py_literal",
+ "zip",
+]
+
+[[package]]
 name = "ndk-sys"
 version = "0.6.0+11769913"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3753,7 +3767,7 @@ dependencies = [
 name = "pecos-qsim"
 version = "0.1.1"
 dependencies = [
- "num-complex",
+ "num-complex 0.4.6",
  "paste",
  "pecos-core",
  "pecos-quantum",
@@ -3771,7 +3785,7 @@ version = "0.1.1"
 dependencies = [
  "log",
  "nalgebra",
- "num-complex",
+ "num-complex 0.4.6",
  "pecos-core",
  "pecos-num",
  "smallvec",
@@ -3883,7 +3897,7 @@ name = "pecos-selene-quest"
 version = "0.1.1"
 dependencies = [
  "anyhow",
- "num-complex",
+ "num-complex 0.4.6",
  "pecos-core",
  "pecos-quest",
  "pecos-rng",
@@ -5366,6 +5380,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eda41003dc44290527a59b13432d4a0379379fa074b70174882adfbdfd917844"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "sprs"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bff8419009a08f6cb7519a602c5590241fbff1446bcc823c07af15386eb801b"
+dependencies = [
+ "alga",
+ "ndarray 0.16.1",
+ "num-complex 0.4.6",
+ "num-traits",
+ "num_cpus",
+ "rayon",
+ "serde",
+ "smallvec",
 ]
 
 [[package]]

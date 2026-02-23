@@ -124,7 +124,8 @@ pymatching = ["sim", "dep:pecos-decoders", "pecos-decoders/pymatching"]
 fusion-blossom = ["sim", "dep:pecos-decoders", "pecos-decoders/fusion-blossom"]
 tesseract = ["sim", "dep:pecos-decoders", "pecos-decoders/tesseract"]
 chromobius = ["sim", "dep:pecos-decoders", "pecos-decoders/chromobius"]
-all-decoders = ["ldpc", "pymatching", "fusion-blossom", "tesseract", "chromobius"]
+relay-bp = ["sim", "dep:pecos-decoders", "pecos-decoders/relay-bp"]
+all-decoders = ["ldpc", "pymatching", "fusion-blossom", "tesseract", "chromobius", "relay-bp"]
 
 # Quantum error correction (fault tolerance analysis)
 qec = ["quantum", "dep:pecos-qec"]

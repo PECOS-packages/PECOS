@@ -1280,6 +1280,362 @@ class WasmForeignObject:
         ...
 
 # =============================================================================
+# Decoder Types
+# =============================================================================
+
+class decoders:
+    """Decoder submodule for quantum error correction."""
+
+    class BpResult:
+        """Result from belief propagation decoders.
+
+        Attributes:
+            decoding: The decoded error vector.
+            converged: Whether the decoder converged.
+            iterations: Number of iterations performed.
+        """
+
+        @property
+        def decoding(self) -> list[int]: ...
+        @property
+        def converged(self) -> bool: ...
+        @property
+        def iterations(self) -> int: ...
+        def to_list(self) -> list[int]: ...
+        def __repr__(self) -> str: ...
+        def __len__(self) -> int: ...
+        def __getitem__(self, idx: int) -> int: ...
+
+    class CheckMatrix:
+        """Dense check matrix for MWPM decoders."""
+
+        def __init__(self, data: list[list[int]]) -> None: ...
+        @property
+        def rows(self) -> int: ...
+        @property
+        def cols(self) -> int: ...
+        def __repr__(self) -> str: ...
+
+    class SparseMatrix:
+        """Sparse parity check matrix for LDPC decoders."""
+
+        def __init__(self, data: list[list[int]]) -> None: ...
+        @property
+        def rows(self) -> int: ...
+        @property
+        def cols(self) -> int: ...
+        def __repr__(self) -> str: ...
+
+    class MwpmResult:
+        """Result from MWPM decoders."""
+
+        @property
+        def correction(self) -> list[int]: ...
+        def __repr__(self) -> str: ...
+
+    class PyMatchingDecoder:
+        """PyMatching MWPM decoder."""
+
+        def __init__(
+            self,
+            check_matrix: decoders.CheckMatrix,
+            weights: list[float] | None = ...,
+        ) -> None: ...
+        def decode(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        def __repr__(self) -> str: ...
+
+    class FusionBlossomDecoder:
+        """Fusion Blossom MWPM decoder."""
+
+        def __init__(
+            self,
+            check_matrix: decoders.CheckMatrix,
+            weights: list[float] | None = ...,
+        ) -> None: ...
+        def decode(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        def __repr__(self) -> str: ...
+
+    class BpOsdBuilder:
+        """Builder for BP+OSD decoder.
+
+        Belief Propagation with Ordered Statistics Decoding post-processing.
+
+        Args:
+            pcm: Sparse parity check matrix.
+            error_rate: Channel error probability.
+
+        Example:
+            >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
+            >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+            >>> decoder = BpOsdBuilder(H, error_rate=0.01).osd_method("osd_cs").osd_order(7).build()
+            >>> result = decoder.decode([0, 0, 0])
+        """
+
+        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def max_iter(self, val: int) -> BpOsdBuilder:
+            """Set maximum BP iterations (default: 100)."""
+            ...
+        def bp_method(self, val: str) -> BpOsdBuilder:
+            """Set BP algorithm: "product_sum" or "minimum_sum" (default: "product_sum")."""
+            ...
+        def schedule(self, val: str) -> BpOsdBuilder:
+            """Set update schedule: "parallel" or "serial" (default: "parallel")."""
+            ...
+        def osd_method(self, val: str) -> BpOsdBuilder:
+            """Set OSD variant: "off", "osd0", "osd_e", "osd_cs" (default: "osd0")."""
+            ...
+        def osd_order(self, val: int) -> BpOsdBuilder:
+            """Set OSD order parameter (default: 0)."""
+            ...
+        def build(self) -> BpOsdDecoder:
+            """Build the BP+OSD decoder."""
+            ...
+        def __repr__(self) -> str: ...
+
+    class BpOsdDecoder:
+        """BP+OSD decoder for LDPC codes.
+
+        Created via ``BpOsdBuilder(...).build()``.
+        """
+
+        def decode(self, syndrome: list[int]) -> decoders.BpResult: ...
+        def __repr__(self) -> str: ...
+
+    class BpLsdBuilder:
+        """Builder for BP+LSD decoder.
+
+        Belief Propagation with Localized Statistics Decoding.
+
+        Args:
+            pcm: Sparse parity check matrix.
+            error_rate: Channel error probability.
+
+        Example:
+            >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
+            >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+            >>> decoder = BpLsdBuilder(H, error_rate=0.01).lsd_order(2).build()
+            >>> result = decoder.decode([0, 0, 0])
+        """
+
+        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def max_iter(self, val: int) -> BpLsdBuilder:
+            """Set maximum BP iterations (default: 100)."""
+            ...
+        def bp_method(self, val: str) -> BpLsdBuilder:
+            """Set BP algorithm: "product_sum" or "minimum_sum" (default: "product_sum")."""
+            ...
+        def schedule(self, val: str) -> BpLsdBuilder:
+            """Set update schedule: "parallel" or "serial" (default: "parallel")."""
+            ...
+        def lsd_order(self, val: int) -> BpLsdBuilder:
+            """Set LSD order parameter (default: 0)."""
+            ...
+        def build(self) -> BpLsdDecoder:
+            """Build the BP+LSD decoder."""
+            ...
+        def __repr__(self) -> str: ...
+
+    class BpLsdDecoder:
+        """BP+LSD decoder for LDPC codes.
+
+        Created via ``BpLsdBuilder(...).build()``.
+        """
+
+        def decode(self, syndrome: list[int]) -> decoders.BpResult: ...
+        def __repr__(self) -> str: ...
+
+    class UnionFindBuilder:
+        """Builder for Union-Find decoder.
+
+        Cluster-based decoder using the Union-Find data structure.
+
+        Args:
+            pcm: Sparse parity check matrix.
+
+        Example:
+            >>> from pecos_rslib.decoders import UnionFindBuilder, SparseMatrix
+            >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+            >>> decoder = UnionFindBuilder(H).method("peeling").build()
+            >>> result = decoder.decode([0, 0, 0])
+        """
+
+        def __init__(self, pcm: decoders.SparseMatrix) -> None: ...
+        def method(self, val: str) -> UnionFindBuilder:
+            """Set decoding method: "inversion" or "peeling" (default: "inversion")."""
+            ...
+        def build(self) -> UnionFindDecoder:
+            """Build the Union-Find decoder."""
+            ...
+        def __repr__(self) -> str: ...
+
+    class UnionFindDecoder:
+        """Union-Find decoder for LDPC codes.
+
+        Created via ``UnionFindBuilder(...).build()``.
+        """
+
+        def decode(
+            self,
+            syndrome: list[int],
+            llrs: list[float] | None = ...,
+            bits_per_step: int = ...,
+        ) -> decoders.BpResult: ...
+        def __repr__(self) -> str: ...
+
+    class TesseractResult:
+        """Result from Tesseract decoder."""
+
+        @property
+        def correction(self) -> list[int]: ...
+        @property
+        def weight(self) -> float: ...
+        def __repr__(self) -> str: ...
+
+    class TesseractDecoder:
+        """Tesseract decoder."""
+
+        def __init__(self, dem_string: str) -> None: ...
+        def decode(self, syndrome: list[int]) -> decoders.TesseractResult: ...
+        def __repr__(self) -> str: ...
+
+    class RelayBpBuilder:
+        """Builder for Relay BP ensemble decoder.
+
+        Configures and constructs a RelayBpDecoder for qLDPC codes. Uses an
+        ensemble of min-sum BP decoders with randomized damping parameters
+        (relay strategy) to improve convergence on codes where standard BP fails.
+
+        Args:
+            check_matrix: Parity check matrix as list of lists.
+            error_priors: Prior error probabilities for each bit.
+
+        Example:
+            >>> from pecos_rslib.decoders import RelayBpBuilder
+            >>> H = [[1, 1, 0], [0, 1, 1]]
+            >>> decoder = RelayBpBuilder(H, [0.003, 0.003, 0.003]).seed(42).build()
+            >>> result = decoder.decode([1, 0])
+            >>> result.converged
+            True
+        """
+
+        def __init__(self, check_matrix: list[list[int]], error_priors: list[float]) -> None: ...
+        def max_iter(self, val: int) -> RelayBpBuilder:
+            """Set maximum BP iterations (default: 200)."""
+            ...
+        def alpha(self, val: float | None) -> RelayBpBuilder:
+            """Set min-sum scaling factor (None = no scaling)."""
+            ...
+        def gamma0(self, val: float | None) -> RelayBpBuilder:
+            """Set initial damping factor (default: 0.9, None = disabled)."""
+            ...
+        def pre_iter(self, val: int) -> RelayBpBuilder:
+            """Set number of pre-relay BP iterations (default: 80)."""
+            ...
+        def num_sets(self, val: int) -> RelayBpBuilder:
+            """Set number of relay sets/legs (default: 300)."""
+            ...
+        def set_max_iter(self, val: int) -> RelayBpBuilder:
+            """Set max iterations per relay set (default: 60)."""
+            ...
+        def seed(self, val: int) -> RelayBpBuilder:
+            """Set random seed for relay parameter sampling (default: 0)."""
+            ...
+        def stopping(self, val: str) -> RelayBpBuilder:
+            """Set stopping criterion (default: "n_conv_1")."""
+            ...
+        def build(self) -> RelayBpDecoder:
+            """Build the Relay BP decoder."""
+            ...
+        def __repr__(self) -> str: ...
+
+    class RelayBpDecoder:
+        """Relay BP ensemble decoder for qLDPC codes.
+
+        Created via ``RelayBpBuilder(...).build()``.
+        """
+
+        def decode(self, syndrome: list[int]) -> decoders.BpResult:
+            """Decode a syndrome vector.
+
+            Args:
+                syndrome: Syndrome vector (length = number of checks).
+
+            Returns:
+                BpResult with decoding, convergence status, and iteration count.
+            """
+            ...
+        @property
+        def check_count(self) -> int:
+            """Number of checks (rows in check matrix)."""
+            ...
+        @property
+        def bit_count(self) -> int:
+            """Number of bits (columns in check matrix)."""
+            ...
+        def __repr__(self) -> str: ...
+
+    class MinSumBpBuilder:
+        """Builder for min-sum BP decoder.
+
+        Configures and constructs a MinSumBpDecoder for qLDPC codes. Standard
+        min-sum belief propagation -- simpler and faster than RelayBpDecoder
+        for codes where plain BP converges.
+
+        Args:
+            check_matrix: Parity check matrix as list of lists.
+            error_priors: Prior error probabilities for each bit.
+
+        Example:
+            >>> from pecos_rslib.decoders import MinSumBpBuilder
+            >>> H = [[1, 1, 0], [0, 1, 1]]
+            >>> decoder = MinSumBpBuilder(H, [0.003, 0.003, 0.003]).max_iter(100).build()
+            >>> result = decoder.decode([1, 0])
+            >>> result.converged
+            True
+        """
+
+        def __init__(self, check_matrix: list[list[int]], error_priors: list[float]) -> None: ...
+        def max_iter(self, val: int) -> MinSumBpBuilder:
+            """Set maximum BP iterations (default: 200)."""
+            ...
+        def alpha(self, val: float | None) -> MinSumBpBuilder:
+            """Set min-sum scaling factor (None = no scaling)."""
+            ...
+        def gamma0(self, val: float | None) -> MinSumBpBuilder:
+            """Set initial damping factor (None = disabled)."""
+            ...
+        def build(self) -> MinSumBpDecoder:
+            """Build the min-sum BP decoder."""
+            ...
+        def __repr__(self) -> str: ...
+
+    class MinSumBpDecoder:
+        """Min-sum BP decoder for qLDPC codes.
+
+        Created via ``MinSumBpBuilder(...).build()``.
+        """
+
+        def decode(self, syndrome: list[int]) -> decoders.BpResult:
+            """Decode a syndrome vector.
+
+            Args:
+                syndrome: Syndrome vector (length = number of checks).
+
+            Returns:
+                BpResult with decoding, convergence status, and iteration count.
+            """
+            ...
+        @property
+        def check_count(self) -> int:
+            """Number of checks (rows in check matrix)."""
+            ...
+        @property
+        def bit_count(self) -> int:
+            """Number of bits (columns in check matrix)."""
+            ...
+        def __repr__(self) -> str: ...
+
+# =============================================================================
 # Utilities
 # =============================================================================
 def adjust_tableau_string(tableau: str) -> str:

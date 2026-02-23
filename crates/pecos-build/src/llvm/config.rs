@@ -45,7 +45,7 @@ impl ConfigValidation {
                 eprintln!();
                 eprintln!("To fix this:");
                 eprintln!("  1. Install LLVM 14 for PECOS (recommended):");
-                eprintln!("       {cmd} llvm install");
+                eprintln!("       {cmd} install llvm");
                 if self.detected_path.is_some() {
                     eprintln!("  2. Or use the detected system LLVM:");
                     eprintln!("       {cmd} llvm configure");
@@ -59,7 +59,7 @@ impl ConfigValidation {
                 eprintln!();
                 eprintln!("To fix this:");
                 eprintln!("  1. Install LLVM 14 for PECOS (recommended):");
-                eprintln!("       {cmd} llvm install");
+                eprintln!("       {cmd} install llvm");
                 if self.detected_path.is_some() {
                     eprintln!("  2. Or use the detected system LLVM:");
                     eprintln!("       {cmd} llvm configure");
@@ -84,7 +84,7 @@ impl ConfigValidation {
             eprintln!();
             eprintln!("To fix this:");
             eprintln!("  1. Install LLVM 14 for PECOS (recommended):");
-            eprintln!("       {cmd} llvm install");
+            eprintln!("       {cmd} install llvm");
             eprintln!("  2. Or use the detected system LLVM:");
             eprintln!("       {cmd} llvm configure");
         }

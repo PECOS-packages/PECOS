@@ -21,6 +21,7 @@ pub mod manifest_cmd;
 pub mod python_cmd;
 pub mod rust_cmd;
 pub mod selene_cmd;
+pub mod self_update_cmd;
 pub mod uninstall_cmd;
 pub mod upgrade_cmd;
 
@@ -397,6 +398,18 @@ pub enum LlvmCommands {
 }
 
 // ============================================================================
+// Self Commands
+// ============================================================================
+
+#[derive(Subcommand, Clone)]
+pub enum SelfCommands {
+    /// Rebuild and reinstall the pecos CLI from the repo
+    Upgrade,
+    /// Uninstall the pecos CLI
+    Uninstall,
+}
+
+// ============================================================================
 // Deps Commands
 // ============================================================================
 
@@ -590,4 +603,16 @@ pub fn run_list(verbose: bool) -> pecos_build::Result<()> {
 /// Returns an error if the documentation server cannot be started.
 pub fn run_docs(port: u16, no_browser: bool) -> pecos_build::Result<()> {
     docs_cmd::run(port, no_browser)
+}
+
+/// Run a self subcommand
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails.
+pub fn run_self(command: SelfCommands) -> pecos_build::Result<()> {
+    match command {
+        SelfCommands::Upgrade => self_update_cmd::run(),
+        SelfCommands::Uninstall => self_update_cmd::run_uninstall(),
+    }
 }

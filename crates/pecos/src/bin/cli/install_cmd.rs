@@ -40,6 +40,10 @@ pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Re
                 i + 1,
                 total,
             );
+            // Auto-configure LLVM if installed but not configured
+            if *target == "llvm" {
+                ensure_llvm_configured(no_configure);
+            }
         } else {
             println!("[{}/{}] Installing {target}...", i + 1, total);
             println!();
@@ -77,4 +81,30 @@ fn install_target(target: &str, force: bool, no_configure: bool) -> Result<()> {
         _ => unreachable!("target was validated above"),
     }
     Ok(())
+}
+
+/// Ensure LLVM is configured in .cargo/config.toml when already installed.
+/// Auto-configures if not healthy, unless --no-configure was passed.
+fn ensure_llvm_configured(no_configure: bool) {
+    let config = pecos_build::llvm::config::validate_llvm_config();
+    if config.is_healthy() {
+        return;
+    }
+    if no_configure {
+        config.print_warnings();
+        return;
+    }
+    println!("LLVM found but not configured, configuring...");
+    match pecos_build::llvm::config::auto_configure_llvm(None) {
+        Ok(path) => {
+            println!(
+                "Updated .cargo/config.toml with LLVM path: {}",
+                path.display()
+            );
+        }
+        Err(e) => {
+            eprintln!("Warning: Could not auto-configure LLVM: {e}");
+            config.print_warnings();
+        }
+    }
 }

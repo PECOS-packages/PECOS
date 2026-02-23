@@ -138,7 +138,7 @@ reinstall-cli:
 # Install LLVM 14 to ~/.pecos/llvm/ (required for QIR features)
 install-llvm:
     @echo "Installing LLVM 14..."
-    {{pecos}} llvm install
+    {{pecos}} install llvm
 
 # Check LLVM 14 installation status
 check-llvm:
@@ -155,7 +155,7 @@ configure-llvm:
 # Install CUDA Toolkit to ~/.pecos/cuda/ (for GPU support, no GPU needed)
 install-cuda:
     @echo "Installing CUDA Toolkit..."
-    {{pecos}} cuda install
+    {{pecos}} install cuda
 
 # Check CUDA installation status (local or system)
 check-cuda:

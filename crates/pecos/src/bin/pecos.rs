@@ -186,6 +186,12 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Manage the pecos CLI itself
+    #[command(name = "self")]
+    Self_ {
+        #[command(subcommand)]
+        command: cli::SelfCommands,
+    },
     /// Serve documentation locally and open in browser
     Docs {
         /// Port to serve on
@@ -679,6 +685,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => cli::run_upgrade(targets, *all, *no_configure)?,
         Commands::SysInfo => cli::run_sys_info()?,
         Commands::List { verbose } => cli::run_list(*verbose)?,
+        Commands::Self_ { command } => cli::run_self(command.clone())?,
         Commands::Docs { port, no_browser } => cli::run_docs(*port, *no_browser)?,
     }
 

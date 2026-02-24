@@ -1787,7 +1787,11 @@ impl PyRelayBpBuilder {
 
     fn __repr__(&self) -> String {
         let rows = self.check_matrix.len();
-        let cols = if rows > 0 { self.check_matrix[0].len() } else { 0 };
+        let cols = if rows > 0 {
+            self.check_matrix[0].len()
+        } else {
+            0
+        };
         format!("RelayBpBuilder(checks={rows}, bits={cols})")
     }
 }
@@ -1946,7 +1950,11 @@ impl PyMinSumBpBuilder {
 
     fn __repr__(&self) -> String {
         let rows = self.check_matrix.len();
-        let cols = if rows > 0 { self.check_matrix[0].len() } else { 0 };
+        let cols = if rows > 0 {
+            self.check_matrix[0].len()
+        } else {
+            0
+        };
         format!("MinSumBpBuilder(checks={rows}, bits={cols})")
     }
 }

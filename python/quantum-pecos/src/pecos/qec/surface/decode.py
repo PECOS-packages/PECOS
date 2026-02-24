@@ -1030,7 +1030,14 @@ class SurfaceDecoder:
         if self.decoder_type == DecoderType.BP_OSD:
             from pecos_rslib.decoders import BpOsdBuilder
 
-            return BpOsdBuilder(sparse_H, error_rate=p_data).max_iter(100).bp_method("product_sum").osd_method("osd0").osd_order(0).build()
+            return (
+                BpOsdBuilder(sparse_H, error_rate=p_data)
+                .max_iter(100)
+                .bp_method("product_sum")
+                .osd_method("osd0")
+                .osd_order(0)
+                .build()
+            )
 
         if self.decoder_type == DecoderType.BP_LSD:
             from pecos_rslib.decoders import BpLsdBuilder

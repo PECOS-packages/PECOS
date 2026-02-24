@@ -1372,24 +1372,30 @@ class decoders:
         """
 
         def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
-        def max_iter(self, val: int) -> BpOsdBuilder:
+        def max_iter(self, val: int) -> decoders.BpOsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
-        def bp_method(self, val: str) -> BpOsdBuilder:
+
+        def bp_method(self, val: str) -> decoders.BpOsdBuilder:
             """Set BP algorithm: "product_sum" or "minimum_sum" (default: "product_sum")."""
             ...
-        def schedule(self, val: str) -> BpOsdBuilder:
+
+        def schedule(self, val: str) -> decoders.BpOsdBuilder:
             """Set update schedule: "parallel" or "serial" (default: "parallel")."""
             ...
-        def osd_method(self, val: str) -> BpOsdBuilder:
+
+        def osd_method(self, val: str) -> decoders.BpOsdBuilder:
             """Set OSD variant: "off", "osd0", "osd_e", "osd_cs" (default: "osd0")."""
             ...
-        def osd_order(self, val: int) -> BpOsdBuilder:
+
+        def osd_order(self, val: int) -> decoders.BpOsdBuilder:
             """Set OSD order parameter (default: 0)."""
             ...
-        def build(self) -> BpOsdDecoder:
+
+        def build(self) -> decoders.BpOsdDecoder:
             """Build the BP+OSD decoder."""
             ...
+
         def __repr__(self) -> str: ...
 
     class BpOsdDecoder:
@@ -1418,21 +1424,26 @@ class decoders:
         """
 
         def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
-        def max_iter(self, val: int) -> BpLsdBuilder:
+        def max_iter(self, val: int) -> decoders.BpLsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
-        def bp_method(self, val: str) -> BpLsdBuilder:
+
+        def bp_method(self, val: str) -> decoders.BpLsdBuilder:
             """Set BP algorithm: "product_sum" or "minimum_sum" (default: "product_sum")."""
             ...
-        def schedule(self, val: str) -> BpLsdBuilder:
+
+        def schedule(self, val: str) -> decoders.BpLsdBuilder:
             """Set update schedule: "parallel" or "serial" (default: "parallel")."""
             ...
-        def lsd_order(self, val: int) -> BpLsdBuilder:
+
+        def lsd_order(self, val: int) -> decoders.BpLsdBuilder:
             """Set LSD order parameter (default: 0)."""
             ...
-        def build(self) -> BpLsdDecoder:
+
+        def build(self) -> decoders.BpLsdDecoder:
             """Build the BP+LSD decoder."""
             ...
+
         def __repr__(self) -> str: ...
 
     class BpLsdDecoder:
@@ -1460,12 +1471,14 @@ class decoders:
         """
 
         def __init__(self, pcm: decoders.SparseMatrix) -> None: ...
-        def method(self, val: str) -> UnionFindBuilder:
+        def method(self, val: str) -> decoders.UnionFindBuilder:
             """Set decoding method: "inversion" or "peeling" (default: "inversion")."""
             ...
-        def build(self) -> UnionFindDecoder:
+
+        def build(self) -> decoders.UnionFindDecoder:
             """Build the Union-Find decoder."""
             ...
+
         def __repr__(self) -> str: ...
 
     class UnionFindDecoder:
@@ -1519,33 +1532,42 @@ class decoders:
         """
 
         def __init__(self, check_matrix: list[list[int]], error_priors: list[float]) -> None: ...
-        def max_iter(self, val: int) -> RelayBpBuilder:
+        def max_iter(self, val: int) -> decoders.RelayBpBuilder:
             """Set maximum BP iterations (default: 200)."""
             ...
-        def alpha(self, val: float | None) -> RelayBpBuilder:
+
+        def alpha(self, val: float | None) -> decoders.RelayBpBuilder:
             """Set min-sum scaling factor (None = no scaling)."""
             ...
-        def gamma0(self, val: float | None) -> RelayBpBuilder:
+
+        def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
             """Set initial damping factor (default: 0.9, None = disabled)."""
             ...
-        def pre_iter(self, val: int) -> RelayBpBuilder:
+
+        def pre_iter(self, val: int) -> decoders.RelayBpBuilder:
             """Set number of pre-relay BP iterations (default: 80)."""
             ...
-        def num_sets(self, val: int) -> RelayBpBuilder:
+
+        def num_sets(self, val: int) -> decoders.RelayBpBuilder:
             """Set number of relay sets/legs (default: 300)."""
             ...
-        def set_max_iter(self, val: int) -> RelayBpBuilder:
+
+        def set_max_iter(self, val: int) -> decoders.RelayBpBuilder:
             """Set max iterations per relay set (default: 60)."""
             ...
-        def seed(self, val: int) -> RelayBpBuilder:
+
+        def seed(self, val: int) -> decoders.RelayBpBuilder:
             """Set random seed for relay parameter sampling (default: 0)."""
             ...
-        def stopping(self, val: str) -> RelayBpBuilder:
+
+        def stopping(self, val: str) -> decoders.RelayBpBuilder:
             """Set stopping criterion (default: "n_conv_1")."""
             ...
-        def build(self) -> RelayBpDecoder:
+
+        def build(self) -> decoders.RelayBpDecoder:
             """Build the Relay BP decoder."""
             ...
+
         def __repr__(self) -> str: ...
 
     class RelayBpDecoder:
@@ -1564,14 +1586,17 @@ class decoders:
                 BpResult with decoding, convergence status, and iteration count.
             """
             ...
+
         @property
         def check_count(self) -> int:
             """Number of checks (rows in check matrix)."""
             ...
+
         @property
         def bit_count(self) -> int:
             """Number of bits (columns in check matrix)."""
             ...
+
         def __repr__(self) -> str: ...
 
     class MinSumBpBuilder:
@@ -1595,18 +1620,22 @@ class decoders:
         """
 
         def __init__(self, check_matrix: list[list[int]], error_priors: list[float]) -> None: ...
-        def max_iter(self, val: int) -> MinSumBpBuilder:
+        def max_iter(self, val: int) -> decoders.MinSumBpBuilder:
             """Set maximum BP iterations (default: 200)."""
             ...
-        def alpha(self, val: float | None) -> MinSumBpBuilder:
+
+        def alpha(self, val: float | None) -> decoders.MinSumBpBuilder:
             """Set min-sum scaling factor (None = no scaling)."""
             ...
-        def gamma0(self, val: float | None) -> MinSumBpBuilder:
+
+        def gamma0(self, val: float | None) -> decoders.MinSumBpBuilder:
             """Set initial damping factor (None = disabled)."""
             ...
-        def build(self) -> MinSumBpDecoder:
+
+        def build(self) -> decoders.MinSumBpDecoder:
             """Build the min-sum BP decoder."""
             ...
+
         def __repr__(self) -> str: ...
 
     class MinSumBpDecoder:
@@ -1625,14 +1654,17 @@ class decoders:
                 BpResult with decoding, convergence status, and iteration count.
             """
             ...
+
         @property
         def check_count(self) -> int:
             """Number of checks (rows in check matrix)."""
             ...
+
         @property
         def bit_count(self) -> int:
             """Number of bits (columns in check matrix)."""
             ...
+
         def __repr__(self) -> str: ...
 
 # =============================================================================

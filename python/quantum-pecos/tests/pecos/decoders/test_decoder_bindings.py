@@ -268,12 +268,7 @@ class TestBpOsdDecoder:
         from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = (
-            BpOsdBuilder(H, error_rate=0.01)
-            .bp_method("product_sum")
-            .osd_method("osd0")
-            .build()
-        )
+        decoder = BpOsdBuilder(H, error_rate=0.01).bp_method("product_sum").osd_method("osd0").build()
 
         assert decoder is not None
 

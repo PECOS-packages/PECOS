@@ -359,5 +359,141 @@ class TestUnionFindDecoder:
         assert result_peel is not None
 
 
+class TestMinSumBpDecoder:
+    """Tests for MinSumBpDecoder via MinSumBpBuilder."""
+
+    def test_create_decoder(self) -> None:
+        """Test construction via builder."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
+
+        assert decoder is not None
+
+    def test_decode_trivial(self) -> None:
+        """Test decoding zero syndrome."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
+
+        result = decoder.decode([0, 0])
+        assert result.converged
+        assert result.decoding == [0, 0, 0]
+
+    def test_decode_single_error(self) -> None:
+        """Test decoding a single-error syndrome."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
+
+        result = decoder.decode([1, 0])
+        assert result.converged
+        assert result.decoding == [1, 0, 0]
+
+    def test_builder_chaining(self) -> None:
+        """Test builder method chaining."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).max_iter(100).alpha(0.8).gamma0(0.5).build()
+
+        result = decoder.decode([0, 0])
+        assert result.converged
+
+    def test_properties(self) -> None:
+        """Test check_count and bit_count properties."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.01, 0.01, 0.01, 0.01]).build()
+
+        assert decoder.check_count == 3
+        assert decoder.bit_count == 4
+
+
+class TestRelayBpDecoder:
+    """Tests for RelayBpDecoder via RelayBpBuilder."""
+
+    def test_create_decoder(self) -> None:
+        """Test construction via builder."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
+
+        assert decoder is not None
+
+    def test_decode_trivial(self) -> None:
+        """Test decoding zero syndrome."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).seed(42).build()
+
+        result = decoder.decode([0, 0])
+        assert result.converged
+        assert result.decoding == [0, 0, 0]
+
+    def test_decode_single_error(self) -> None:
+        """Test decoding a single-error syndrome."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).seed(42).build()
+
+        result = decoder.decode([1, 0])
+        assert result.converged
+        assert result.decoding == [1, 0, 0]
+
+    def test_builder_chaining(self) -> None:
+        """Test builder method chaining with relay-specific options."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = (
+            RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003])
+            .max_iter(100)
+            .gamma0(0.9)
+            .pre_iter(40)
+            .num_sets(20)
+            .set_max_iter(30)
+            .seed(42)
+            .stopping("n_conv_1")
+            .build()
+        )
+
+        result = decoder.decode([0, 0])
+        assert result.converged
+
+    def test_properties(self) -> None:
+        """Test check_count and bit_count properties."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]
+        decoder = RelayBpBuilder(H, error_priors=[0.01, 0.01, 0.01, 0.01]).build()
+
+        assert decoder.check_count == 3
+        assert decoder.bit_count == 4
+
+    def test_seed_reproducibility(self) -> None:
+        """Test that same seed gives same results."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        priors = [0.003, 0.003, 0.003]
+
+        d1 = RelayBpBuilder(H, error_priors=priors).seed(123).build()
+        d2 = RelayBpBuilder(H, error_priors=priors).seed(123).build()
+
+        r1 = d1.decode([1, 0])
+        r2 = d2.decode([1, 0])
+
+        assert r1.decoding == r2.decoding
+        assert r1.converged == r2.converged
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

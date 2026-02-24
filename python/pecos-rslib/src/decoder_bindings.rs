@@ -1615,16 +1615,28 @@ fn parse_stopping_criterion(s: &str) -> PyResult<RustStoppingCriterion> {
 }
 
 /// Convert a dense check matrix from Python lists to an ndarray `Array2`.
-fn dense_check_matrix_to_array2(check_matrix: &[Vec<u8>]) -> Array2<u8> {
+///
+/// # Errors
+///
+/// Returns `PyValueError` if the rows have inconsistent lengths.
+fn dense_check_matrix_to_array2(check_matrix: &[Vec<u8>]) -> PyResult<Array2<u8>> {
     let rows = check_matrix.len();
     let cols = if rows > 0 { check_matrix[0].len() } else { 0 };
+    for (i, row) in check_matrix.iter().enumerate() {
+        if row.len() != cols {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "check_matrix row {i} has length {} but row 0 has length {cols}",
+                row.len()
+            )));
+        }
+    }
     let mut arr = Array2::<u8>::zeros((rows, cols));
     for (i, row) in check_matrix.iter().enumerate() {
         for (j, &val) in row.iter().enumerate() {
             arr[[i, j]] = val;
         }
     }
-    arr
+    Ok(arr)
 }
 
 /// Builder for Relay BP ensemble decoder.
@@ -1676,7 +1688,7 @@ impl PyRelayBpBuilder {
             error_priors,
             max_iter: 200,
             alpha: None,
-            gamma0: Some(0.9),
+            gamma0: None,
             pre_iter: 80,
             num_sets: 300,
             set_max_iter: 60,
@@ -1703,7 +1715,7 @@ impl PyRelayBpBuilder {
         slf
     }
 
-    /// Set initial damping factor (default: 0.9, None = disabled).
+    /// Set initial damping factor (None = disabled).
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -1768,7 +1780,7 @@ impl PyRelayBpBuilder {
     ///     `RuntimeError`: If the configuration is invalid.
     fn build(&self) -> PyResult<PyRelayBpDecoder> {
         let stopping_criterion = parse_stopping_criterion(&self.stopping)?;
-        let arr = dense_check_matrix_to_array2(&self.check_matrix);
+        let arr = dense_check_matrix_to_array2(&self.check_matrix)?;
 
         RustRelayBpBuilder::new(&arr.view())
             .error_priors(&self.error_priors)
@@ -1936,7 +1948,7 @@ impl PyMinSumBpBuilder {
     /// Raises:
     ///     `RuntimeError`: If the configuration is invalid.
     fn build(&self) -> PyResult<PyMinSumBpDecoder> {
-        let arr = dense_check_matrix_to_array2(&self.check_matrix);
+        let arr = dense_check_matrix_to_array2(&self.check_matrix)?;
 
         RustMinSumBpBuilder::new(&arr.view())
             .error_priors(&self.error_priors)

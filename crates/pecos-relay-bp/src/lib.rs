@@ -9,7 +9,7 @@
 
 pub mod builder;
 pub mod config;
-pub mod convert;
+pub(crate) mod convert;
 pub mod core_traits;
 pub mod decoder;
 pub mod errors;

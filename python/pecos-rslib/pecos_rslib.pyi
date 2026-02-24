@@ -1541,7 +1541,7 @@ class decoders:
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set initial damping factor (default: 0.9, None = disabled)."""
+            """Set initial damping factor (None = disabled)."""
             ...
 
         def pre_iter(self, val: int) -> decoders.RelayBpBuilder:

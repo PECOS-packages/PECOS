@@ -232,10 +232,8 @@ pub fn render_ascii(graph: &impl GraphLike, options: &AsciiOptions) -> String {
             };
             draw_edge(
                 &mut grid,
-                sx as i32,
-                sy as i32,
-                tx as i32,
-                ty as i32,
+                (sx as i32, sy as i32),
+                (tx as i32, ty as i32),
                 ety,
                 edge_color,
                 hidden.contains(&s),
@@ -331,16 +329,14 @@ fn draw_vertex(grid: &mut CharGrid, x: usize, y: usize, vtype: VType, color: Opt
 /// hidden identity spiders so the wire extends through without a gap.
 fn draw_edge(
     grid: &mut CharGrid,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
+    from: (i32, i32),
+    to: (i32, i32),
     ety: EType,
     color: Option<AnsiColor>,
     include_start: bool,
     include_end: bool,
 ) {
-    let points = bresenham_line(x0, y0, x1, y1);
+    let points = bresenham_line(from.0, from.1, to.0, to.1);
 
     if points.len() <= 2 {
         return; // Vertices adjacent or overlapping; no room for edge characters

@@ -150,10 +150,8 @@ pub fn render_svg(graph: &impl GraphLike, options: &SvgOptions) -> String {
         if let (Some(&(x1, y1)), Some(&(x2, y2))) = (positions.get(&s), positions.get(&t)) {
             draw_edge(
                 &mut svg,
-                x1,
-                y1,
-                x2,
-                y2,
+                (x1, y1),
+                (x2, y2),
                 ety,
                 palette,
                 options,
@@ -334,15 +332,15 @@ fn cubic_controls(
 /// Write the SVG path/line element for an edge and return the visual midpoint.
 fn write_edge_path(
     svg: &mut String,
-    x1: f64,
-    y1: f64,
-    x2: f64,
-    y2: f64,
+    from: (f64, f64),
+    to: (f64, f64),
     curve: &CurveKind,
     stroke: &str,
     width: f64,
     dashed: bool,
 ) -> (f64, f64) {
+    let (x1, y1) = from;
+    let (x2, y2) = to;
     let dash = if dashed {
         r#" stroke-dasharray="6,3""#
     } else {
@@ -380,25 +378,23 @@ fn write_edge_path(
 
 fn draw_edge(
     svg: &mut String,
-    x1: f64,
-    y1: f64,
-    x2: f64,
-    y2: f64,
+    from: (f64, f64),
+    to: (f64, f64),
     ety: EType,
     palette: &Palette,
     options: &SvgOptions,
     edge_key: Option<(usize, usize)>,
 ) {
+    let (x1, y1) = from;
+    let (x2, y2) = to;
     let curve = resolve_curve(options, x1, y1, x2, y2, edge_key);
 
     match ety {
         EType::H => {
             let (mx, my) = write_edge_path(
                 svg,
-                x1,
-                y1,
-                x2,
-                y2,
+                from,
+                to,
                 &curve,
                 palette.edge_hadamard,
                 options.edge_width,
@@ -421,10 +417,8 @@ fn draw_edge(
             // Normal and W-type edges
             write_edge_path(
                 svg,
-                x1,
-                y1,
-                x2,
-                y2,
+                from,
+                to,
                 &curve,
                 palette.edge_normal,
                 options.edge_width,

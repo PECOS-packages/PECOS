@@ -90,9 +90,7 @@ pub fn render_circuit_ascii(layout: &CircuitLayout, options: &CircuitAsciiOption
 
         let mut has_connections = false;
 
-        for step in 0..layout.num_steps {
-            let col_w = col_widths[step];
-
+        for (step, &col_w) in col_widths.iter().enumerate() {
             if let Some(slot) = layout.get(q, step) {
                 let cell = cell_label(slot.gate_type, &slot.label);
                 let padded = format!("{cell:^width$}", width = col_w);
@@ -179,8 +177,7 @@ pub fn render_circuit_ascii(layout: &CircuitLayout, options: &CircuitAsciiOption
                 ));
             }
 
-            for step in 0..layout.num_steps {
-                let col_w = col_widths[step];
+            for (step, &col_w) in col_widths.iter().enumerate() {
                 cbit_line.push_str(&"=".repeat(col_w));
                 if step < layout.num_steps - 1 {
                     cbit_line.push('=');

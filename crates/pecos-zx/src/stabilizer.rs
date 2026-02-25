@@ -106,13 +106,10 @@ pub fn extract_graph_state(stab: &SparseStab) -> (Vec<bool>, Vec<String>) {
 
     for col in 0..n {
         // Find pivot in this column
-        let mut found = None;
-        for row in pivot_row..n {
-            if x_matrix[row][col] {
-                found = Some(row);
-                break;
-            }
-        }
+        let found = x_matrix[pivot_row..n]
+            .iter()
+            .position(|row_vec| row_vec[col])
+            .map(|offset| offset + pivot_row);
 
         let Some(pivot) = found else { continue };
 

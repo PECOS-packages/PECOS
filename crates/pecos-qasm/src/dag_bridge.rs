@@ -505,8 +505,7 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
         GateType::RYY => "ryy",
         GateType::RZZ => "rzz",
         GateType::CCX => "ccx",
-        GateType::Measure => "measure",
-        GateType::MeasureFree => "measure",
+        GateType::Measure | GateType::MeasureFree => "measure",
         GateType::Prep => "reset",
         GateType::QAlloc => "qalloc",
         GateType::QFree => "qfree",
@@ -562,9 +561,11 @@ mod tests {
 
     #[test]
     fn test_qasm_to_dag_bell_state() {
-        let mut program = Program::default();
-        program.version = "2.0".to_string();
-        program.total_qubits = 2;
+        let mut program = Program {
+            version: "2.0".to_string(),
+            total_qubits: 2,
+            ..Default::default()
+        };
         program
             .quantum_registers
             .insert("q".to_string(), vec![0, 1]);
@@ -614,7 +615,7 @@ mod tests {
     #[test]
     fn test_resolve_gate_parameterized() {
         let qubits = vec![QubitId::from(0)];
-        let gate = resolve_gate("rz", &[1.5707963267948966], &qubits).unwrap();
+        let gate = resolve_gate("rz", &[std::f64::consts::FRAC_PI_2], &qubits).unwrap();
         assert_eq!(gate.gate_type, GateType::RZ);
     }
 
@@ -641,9 +642,11 @@ mod tests {
 
     #[test]
     fn test_barrier_skipped() {
-        let mut program = Program::default();
-        program.version = "2.0".to_string();
-        program.total_qubits = 1;
+        let mut program = Program {
+            version: "2.0".to_string(),
+            total_qubits: 1,
+            ..Default::default()
+        };
         program.quantum_registers.insert("q".to_string(), vec![0]);
 
         program

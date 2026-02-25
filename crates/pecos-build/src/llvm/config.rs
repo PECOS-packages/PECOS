@@ -1,7 +1,5 @@
 //! LLVM configuration management for `.cargo/config.toml`
 
-#![allow(clippy::missing_errors_doc)]
-
 use crate::errors::{Error, Result};
 use crate::llvm::{
     find_cargo_project_root, find_llvm_14, get_pecos_command, get_repo_root_from_manifest,
@@ -47,7 +45,7 @@ impl ConfigValidation {
                 eprintln!();
                 eprintln!("To fix this:");
                 eprintln!("  1. Install LLVM 14 for PECOS (recommended):");
-                eprintln!("       {cmd} llvm install");
+                eprintln!("       {cmd} install llvm");
                 if self.detected_path.is_some() {
                     eprintln!("  2. Or use the detected system LLVM:");
                     eprintln!("       {cmd} llvm configure");
@@ -61,7 +59,7 @@ impl ConfigValidation {
                 eprintln!();
                 eprintln!("To fix this:");
                 eprintln!("  1. Install LLVM 14 for PECOS (recommended):");
-                eprintln!("       {cmd} llvm install");
+                eprintln!("       {cmd} install llvm");
                 if self.detected_path.is_some() {
                     eprintln!("  2. Or use the detected system LLVM:");
                     eprintln!("       {cmd} llvm configure");
@@ -86,7 +84,7 @@ impl ConfigValidation {
             eprintln!();
             eprintln!("To fix this:");
             eprintln!("  1. Install LLVM 14 for PECOS (recommended):");
-            eprintln!("       {cmd} llvm install");
+            eprintln!("       {cmd} install llvm");
             eprintln!("  2. Or use the detected system LLVM:");
             eprintln!("       {cmd} llvm configure");
         }
@@ -243,6 +241,11 @@ pub fn auto_configure_llvm(project_root: Option<PathBuf>) -> Result<PathBuf> {
 /// * `project_root` - Path to the Cargo project root
 /// * `llvm_path` - Path to the LLVM installation
 /// * `force` - If true, use `force=true` to override shell environment variables
+///
+/// # Errors
+///
+/// Returns an error if the `.cargo` directory cannot be created or the config file
+/// cannot be written.
 pub fn write_cargo_config(project_root: &Path, llvm_path: &Path, force: bool) -> Result<()> {
     let cargo_dir = project_root.join(".cargo");
     let config_path = cargo_dir.join("config.toml");

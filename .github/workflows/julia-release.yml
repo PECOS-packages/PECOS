@@ -96,7 +96,7 @@ jobs:
             architecture: x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
@@ -107,7 +107,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           echo "Installing LLVM using pecos..."
-          cargo run -p pecos --features cli --release -- llvm install
+          cargo run -p pecos --features cli --release -- install llvm
 
           echo "Setting LLVM environment variables..."
           export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
@@ -124,7 +124,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Installing LLVM using pecos..."
-          cargo run -p pecos --features cli --release -- llvm install
+          cargo run -p pecos --features cli --release -- install llvm
 
           Write-Host "Setting LLVM environment variables..."
           $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)
@@ -259,7 +259,7 @@ jobs:
             os: macos-latest
             architecture: aarch64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
@@ -337,7 +337,7 @@ jobs:
       needs.test_binaries.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
@@ -465,7 +465,7 @@ jobs:
       needs.test_binaries.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
@@ -627,7 +627,7 @@ jobs:
 
       - name: Create GitHub Release and Upload Binaries
         if: startsWith(github.ref, 'refs/tags/jl-')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: release-bundle/binaries/*.tar.gz
           body: |

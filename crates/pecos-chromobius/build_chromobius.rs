@@ -1,7 +1,7 @@
 //! Build script for Chromobius decoder integration
 
 use log::info;
-use pecos_build::{Manifest, Result, ensure_dep_ready, report_cache_config};
+use pecos_build::{Manifest, Result, check_cxx20_toolchain, ensure_dep_ready, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,6 +41,8 @@ fn get_build_profile() -> String {
 
 /// Main build function for Chromobius
 pub fn build() -> Result<()> {
+    check_cxx20_toolchain();
+
     println!("cargo:rerun-if-changed=build_chromobius.rs");
     println!("cargo:rerun-if-changed=src/bridge.rs");
     println!("cargo:rerun-if-changed=src/bridge.cpp");

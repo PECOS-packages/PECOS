@@ -29,6 +29,13 @@ from __future__ import annotations
 
 import re
 
+# Import Rust-defined WasmError so Python WasmError can inherit from it.
+# This allows catching either pecos_rslib.WasmError or pecos.exceptions.WasmError.
+try:
+    from pecos_rslib import WasmError as _RsWasmError
+except ImportError:
+    _RsWasmError = None
+
 
 class PECOSError(Exception):
     """Base exception raised by PECOS."""
@@ -70,8 +77,20 @@ class QECCError(PECOSError):
     """Error in quantum error correcting code operations."""
 
 
-class WasmError(PECOSError):
-    """Base WASM-related exception type."""
+# WasmError inherits from both PECOSError and the Rust-defined WasmError (when available).
+# This means:
+#   - Errors raised by Rust (pecos_rslib.WasmError) are catchable as pecos_rslib.WasmError
+#   - Errors raised by Python (pecos.exceptions.WasmError) are catchable as both
+#     PECOSError and pecos_rslib.WasmError
+if _RsWasmError is not None:
+
+    class WasmError(PECOSError, _RsWasmError):  # type: ignore[misc]
+        """Base WASM-related exception type."""
+
+else:
+
+    class WasmError(PECOSError):  # type: ignore[no-redef]
+        """Base WASM-related exception type."""
 
 
 class MissingCCOPError(WasmError):

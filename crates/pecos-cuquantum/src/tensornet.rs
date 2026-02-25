@@ -40,6 +40,7 @@ impl CuTensorNet {
     /// Returns an error if:
     /// - cuTensorNet initialization fails
     /// - CUDA device is not available
+    #[allow(unreachable_code)]
     pub fn new() -> Result<Self> {
         #[cfg(cuquantum_stub)]
         return Err(crate::CuQuantumError::NotAvailable(

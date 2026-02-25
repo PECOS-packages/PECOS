@@ -50,7 +50,7 @@ public:
 
     uint64_t decode_detection_events(const rust::Slice<const uint8_t> bit_packed_detection_events) {
         // Create a mutable copy since Chromobius modifies the input
-        std::vector<uint8_t> mutable_data(bit_packed_detection_events.begin(), bit_packed_detection_events.end());
+        std::vector<uint8_t> mutable_data(bit_packed_detection_events.data(), bit_packed_detection_events.data() + bit_packed_detection_events.size());
 
         // Decode
         chromobius::obsmask_int result = decoder_.decode_detection_events(mutable_data);
@@ -63,7 +63,7 @@ public:
         float& weight_out
     ) {
         // Create a mutable copy since Chromobius modifies the input
-        std::vector<uint8_t> mutable_data(bit_packed_detection_events.begin(), bit_packed_detection_events.end());
+        std::vector<uint8_t> mutable_data(bit_packed_detection_events.data(), bit_packed_detection_events.data() + bit_packed_detection_events.size());
 
         // Decode with weight
         chromobius::obsmask_int result = decoder_.decode_detection_events(mutable_data, &weight_out);

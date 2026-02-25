@@ -105,7 +105,9 @@ void PyMatchingGraph::add_edge(
     double error_probability,
     MergeStrategy merge_strategy) {
 
-    std::vector<size_t> obs_vec(observables.begin(), observables.end());
+    // Use data()+size() instead of begin()/end() iterators to avoid
+    // Xcode 15.4 libc++ pointer_traits incompatibility with cxx iterators in C++20
+    std::vector<size_t> obs_vec(observables.data(), observables.data() + observables.size());
 
     // Convert merge strategy enum
     pm::MERGE_STRATEGY pm_strategy;
@@ -146,7 +148,7 @@ void PyMatchingGraph::add_boundary_edge(
     double error_probability,
     MergeStrategy merge_strategy) {
 
-    std::vector<size_t> obs_vec(observables.begin(), observables.end());
+    std::vector<size_t> obs_vec(observables.data(), observables.data() + observables.size());
 
     // Convert merge strategy
     pm::MERGE_STRATEGY pm_strategy;
@@ -289,7 +291,7 @@ rust::Vec<size_t> PyMatchingGraph::get_boundary() const {
 }
 
 void PyMatchingGraph::set_boundary(const rust::Slice<const size_t> boundary) {
-    std::set<size_t> boundary_set(boundary.begin(), boundary.end());
+    std::set<size_t> boundary_set(boundary.data(), boundary.data() + boundary.size());
     pimpl_->user_graph_->set_boundary(boundary_set);
     pimpl_->mwpm_.reset();  // Invalidate cached MWPM
 }

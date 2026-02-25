@@ -216,10 +216,10 @@ class TestBpResult:
 
     def test_result_attributes(self) -> None:
         """Test that BpResult has expected attributes."""
-        from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = BpOsdDecoder(H, error_rate=0.01)
+        decoder = BpOsdBuilder(H, error_rate=0.01).build()
         result = decoder.decode([0, 0, 0])
 
         assert hasattr(result, "decoding")
@@ -261,107 +261,238 @@ class TestSparseMatrix:
 
 
 class TestBpOsdDecoder:
-    """Tests for BpOsdDecoder (mirrors ldpc.bposd_decoder)."""
+    """Tests for BpOsdDecoder via BpOsdBuilder."""
 
     def test_create_decoder(self) -> None:
-        """Test construction (like ldpc's BpOsdDecoder)."""
-        from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
+        """Test construction via builder."""
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = BpOsdDecoder(
-            H,
-            error_rate=0.01,
-            bp_method="product_sum",
-            osd_method="osd0",
-        )
+        decoder = BpOsdBuilder(H, error_rate=0.01).bp_method("product_sum").osd_method("osd0").build()
 
         assert decoder is not None
 
     def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
-        from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = BpOsdDecoder(H, error_rate=0.01)
+        decoder = BpOsdBuilder(H, error_rate=0.01).build()
 
         result = decoder.decode([0, 0, 0])
         assert result.converged
 
     def test_bp_methods(self) -> None:
         """Test different BP methods."""
-        from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 
         # product_sum
-        decoder1 = BpOsdDecoder(H, error_rate=0.01, bp_method="product_sum")
+        decoder1 = BpOsdBuilder(H, error_rate=0.01).bp_method("product_sum").build()
         result1 = decoder1.decode([0, 0, 0])
         assert result1 is not None
 
         # minimum_sum
-        decoder2 = BpOsdDecoder(H, error_rate=0.01, bp_method="minimum_sum")
+        decoder2 = BpOsdBuilder(H, error_rate=0.01).bp_method("minimum_sum").build()
         result2 = decoder2.decode([0, 0, 0])
         assert result2 is not None
 
 
 class TestBpLsdDecoder:
-    """Tests for BpLsdDecoder (mirrors ldpc.bplsd_decoder)."""
+    """Tests for BpLsdDecoder via BpLsdBuilder."""
 
     def test_create_decoder(self) -> None:
-        """Test construction."""
-        from pecos_rslib.decoders import BpLsdDecoder, SparseMatrix
+        """Test construction via builder."""
+        from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = BpLsdDecoder(H, error_rate=0.01, lsd_order=0)
+        decoder = BpLsdBuilder(H, error_rate=0.01).lsd_order(0).build()
 
         assert decoder is not None
 
     def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
-        from pecos_rslib.decoders import BpLsdDecoder, SparseMatrix
+        from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = BpLsdDecoder(H, error_rate=0.01)
+        decoder = BpLsdBuilder(H, error_rate=0.01).build()
 
         result = decoder.decode([0, 0, 0])
         assert result is not None
 
 
 class TestUnionFindDecoder:
-    """Tests for UnionFindDecoder."""
+    """Tests for UnionFindDecoder via UnionFindBuilder."""
 
     def test_create_decoder(self) -> None:
-        """Test construction."""
-        from pecos_rslib.decoders import SparseMatrix, UnionFindDecoder
+        """Test construction via builder."""
+        from pecos_rslib.decoders import SparseMatrix, UnionFindBuilder
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = UnionFindDecoder(H, method="inversion")
+        decoder = UnionFindBuilder(H).method("inversion").build()
 
         assert decoder is not None
 
     def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
-        from pecos_rslib.decoders import SparseMatrix, UnionFindDecoder
+        from pecos_rslib.decoders import SparseMatrix, UnionFindBuilder
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        decoder = UnionFindDecoder(H)
+        decoder = UnionFindBuilder(H).build()
 
         result = decoder.decode([0, 0, 0])
         assert result is not None
 
     def test_methods(self) -> None:
         """Test different UF methods."""
-        from pecos_rslib.decoders import SparseMatrix, UnionFindDecoder
+        from pecos_rslib.decoders import SparseMatrix, UnionFindBuilder
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 
-        decoder_inv = UnionFindDecoder(H, method="inversion")
+        decoder_inv = UnionFindBuilder(H).method("inversion").build()
         result_inv = decoder_inv.decode([0, 0, 0])
         assert result_inv is not None
 
-        decoder_peel = UnionFindDecoder(H, method="peeling")
+        decoder_peel = UnionFindBuilder(H).method("peeling").build()
         result_peel = decoder_peel.decode([0, 0, 0])
         assert result_peel is not None
+
+
+class TestMinSumBpDecoder:
+    """Tests for MinSumBpDecoder via MinSumBpBuilder."""
+
+    def test_create_decoder(self) -> None:
+        """Test construction via builder."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
+
+        assert decoder is not None
+
+    def test_decode_trivial(self) -> None:
+        """Test decoding zero syndrome."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
+
+        result = decoder.decode([0, 0])
+        assert result.converged
+        assert result.decoding == [0, 0, 0]
+
+    def test_decode_single_error(self) -> None:
+        """Test decoding a single-error syndrome."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
+
+        result = decoder.decode([1, 0])
+        assert result.converged
+        assert result.decoding == [1, 0, 0]
+
+    def test_builder_chaining(self) -> None:
+        """Test builder method chaining."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).max_iter(100).alpha(0.8).gamma0(0.5).build()
+
+        result = decoder.decode([0, 0])
+        assert result.converged
+
+    def test_properties(self) -> None:
+        """Test check_count and bit_count properties."""
+        from pecos_rslib.decoders import MinSumBpBuilder
+
+        H = [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]
+        decoder = MinSumBpBuilder(H, error_priors=[0.01, 0.01, 0.01, 0.01]).build()
+
+        assert decoder.check_count == 3
+        assert decoder.bit_count == 4
+
+
+class TestRelayBpDecoder:
+    """Tests for RelayBpDecoder via RelayBpBuilder."""
+
+    def test_create_decoder(self) -> None:
+        """Test construction via builder."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
+
+        assert decoder is not None
+
+    def test_decode_trivial(self) -> None:
+        """Test decoding zero syndrome."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).seed(42).build()
+
+        result = decoder.decode([0, 0])
+        assert result.converged
+        assert result.decoding == [0, 0, 0]
+
+    def test_decode_single_error(self) -> None:
+        """Test decoding a single-error syndrome."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).seed(42).build()
+
+        result = decoder.decode([1, 0])
+        assert result.converged
+        assert result.decoding == [1, 0, 0]
+
+    def test_builder_chaining(self) -> None:
+        """Test builder method chaining with relay-specific options."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        decoder = (
+            RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003])
+            .max_iter(100)
+            .gamma0(0.9)
+            .pre_iter(40)
+            .num_sets(20)
+            .set_max_iter(30)
+            .seed(42)
+            .stopping("n_conv_1")
+            .build()
+        )
+
+        result = decoder.decode([0, 0])
+        assert result.converged
+
+    def test_properties(self) -> None:
+        """Test check_count and bit_count properties."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]
+        decoder = RelayBpBuilder(H, error_priors=[0.01, 0.01, 0.01, 0.01]).build()
+
+        assert decoder.check_count == 3
+        assert decoder.bit_count == 4
+
+    def test_seed_reproducibility(self) -> None:
+        """Test that same seed gives same results."""
+        from pecos_rslib.decoders import RelayBpBuilder
+
+        H = [[1, 1, 0], [0, 1, 1]]
+        priors = [0.003, 0.003, 0.003]
+
+        d1 = RelayBpBuilder(H, error_priors=priors).seed(123).build()
+        d2 = RelayBpBuilder(H, error_priors=priors).seed(123).build()
+
+        r1 = d1.decode([1, 0])
+        r2 = d2.decode([1, 0])
+
+        assert r1.decoding == r2.decoding
+        assert r1.converged == r2.converged
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ Use the `pecos-llvm` CLI tool to automatically download and install LLVM 14.0.6:
 
 ```bash
 # Install LLVM 14.0.6 to ~/.pecos/llvm/ (~400MB, ~5 minutes)
-cargo run -p pecos --features cli -- llvm install
+cargo run -p pecos --features cli -- install llvm
 
 # Build PECOS with LLVM support
 cargo build --features llvm
@@ -119,13 +119,13 @@ The `pecos llvm` CLI tool provides several useful commands:
 Download and install LLVM 14.0.6 to `~/.pecos/llvm/`:
 
 ```bash
-cargo run -p pecos --features cli -- llvm install
+cargo run -p pecos --features cli -- install llvm
 
 # Reinstall even if already present
-cargo run -p pecos --features cli -- llvm install --force
+cargo run -p pecos --features cli -- install llvm --force
 
 # Skip automatic configuration after install
-cargo run -p pecos --features cli -- llvm install --no-configure
+cargo run -p pecos --features cli -- install llvm --no-configure
 ```
 
 ### `configure`

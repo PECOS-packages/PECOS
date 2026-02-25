@@ -35,7 +35,7 @@ jobs:
   rust-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Free disk space
         run: |
@@ -59,7 +59,7 @@ jobs:
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.29
+        uses: Jimver/cuda-toolkit@v0.2.30
         id: cuda-toolkit
         with:
           cuda: '12.6.3'
@@ -70,7 +70,7 @@ jobs:
       - name: Install LLVM 14.0.6 using pecos-llvm
         run: |
           echo "Installing LLVM using pecos..."
-          cargo run -p pecos --features cli --release -- llvm install
+          cargo run -p pecos --features cli --release -- install llvm
 
           echo "Setting LLVM environment variables..."
           export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
@@ -100,7 +100,7 @@ jobs:
   rust-lint-no-llvm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust (for local testing)
         run: |
@@ -168,9 +168,9 @@ jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.x'
       - name: Install pre-commit
@@ -187,7 +187,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Free disk space (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -224,7 +224,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           echo "Installing LLVM using pecos..."
-          cargo run -p pecos --features cli --release -- llvm install
+          cargo run -p pecos --features cli --release -- install llvm
 
           echo "Setting LLVM environment variables..."
           export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
@@ -241,7 +241,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Installing LLVM using pecos..."
-          cargo run -p pecos --features cli --release -- llvm install
+          cargo run -p pecos --features cli --release -- install llvm
 
           Write-Host "Setting LLVM environment variables..."
           $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)
@@ -261,7 +261,7 @@ jobs:
 
       - name: Install CUDA Toolkit (Linux)
         if: matrix.os == 'ubuntu-latest'
-        uses: Jimver/cuda-toolkit@v0.2.29
+        uses: Jimver/cuda-toolkit@v0.2.30
         id: cuda-toolkit-test
         with:
           cuda: '12.6.3'

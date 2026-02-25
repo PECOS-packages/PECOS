@@ -660,6 +660,7 @@ pub mod dag {
     feature = "fusion-blossom",
     feature = "tesseract",
     feature = "chromobius",
+    feature = "relay-bp",
     feature = "all-decoders"
 ))]
 pub mod decoders {

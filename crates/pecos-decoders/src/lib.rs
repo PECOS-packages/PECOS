@@ -10,6 +10,7 @@
 //! - `pymatching` - `PyMatching` MWPM decoder (C++ FFI)
 //! - `tesseract` - Tesseract search-based decoder (C++ FFI)
 //! - `chromobius` - Chromobius color code decoder (C++ FFI)
+//! - `relay-bp` - Relay BP decoder for qLDPC codes (pure Rust)
 //! - `all` - Enable all decoders
 
 // Re-export core traits
@@ -79,4 +80,11 @@ pub use pecos_tesseract::{
 pub use pecos_chromobius::{
     ChromobiusConfig, ChromobiusDecoder, ChromobiusError,
     DecodingResult as ChromobiusDecodingResult,
+};
+
+// Re-export Relay BP decoder when feature is enabled
+#[cfg(feature = "relay-bp")]
+pub use pecos_relay_bp::{
+    DecodingResult as RelayBpDecodingResult, MinSumBpBuilder, MinSumBpDecoder, MinSumConfig,
+    RelayBpBuilder, RelayBpDecoder, RelayBpError, RelayConfig, StoppingCriterion,
 };

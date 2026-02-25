@@ -38,6 +38,7 @@ from pecos_rslib import (
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
     TimeUnits,  # Abstract time duration in arbitrary units
+    WasmError,  # WASM execution error (div-by-zero, timeout, etc.)
     WasmForeignObject,  # WASM foreign object for classical coprocessor
     abs,  # Absolute value
     all,  # All elements true
@@ -282,6 +283,7 @@ __all__ = [
     "TimeUnits",  # Time unit type
     "UnsignedInteger",
     "Wasm",
+    "WasmError",
     "WasmForeignObject",
     "Wat",
     # Version

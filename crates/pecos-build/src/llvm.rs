@@ -256,7 +256,7 @@ pub fn print_llvm_not_found_error() {
     eprintln!();
     eprintln!("Option 1 - Install LLVM 14 for PECOS (recommended):");
     eprintln!();
-    eprintln!("    {cmd} llvm install");
+    eprintln!("    {cmd} install llvm");
     eprintln!();
 
     #[cfg(target_os = "macos")]

@@ -45,8 +45,6 @@
 //! - Workspace: `PECOS/pecos.toml` - Master manifest for developers
 //! - Per-crate: `crates/<name>/pecos.toml` - Published with crate for crates.io users
 
-#![allow(clippy::missing_errors_doc)]
-
 use crate::errors::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -150,6 +148,10 @@ pub struct DependencyDef {
 
 impl Manifest {
     /// Load manifest from a file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or parsed as TOML.
     pub fn load(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("Failed to read manifest: {e}")))?;
@@ -158,6 +160,10 @@ impl Manifest {
     }
 
     /// Save manifest to a file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the manifest cannot be serialized or the file cannot be written.
     pub fn save(&self, path: &Path) -> Result<()> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| Error::Config(format!("Failed to serialize manifest: {e}")))?;
@@ -198,6 +204,10 @@ impl Manifest {
     /// Find and load manifest from the current directory or parents
     ///
     /// This is the primary entry point for build scripts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no `pecos.toml` is found, or if it cannot be parsed.
     pub fn find_and_load() -> Result<Self> {
         let path = Self::find().ok_or_else(|| {
             Error::Config("pecos.toml not found in current directory or parents".into())
@@ -220,6 +230,10 @@ impl Manifest {
     /// Get download info for a dependency by name
     ///
     /// Returns a `DownloadInfo` struct suitable for use with `download_cached`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dependency is not found or is missing a URL or SHA256.
     pub fn get_download_info(&self, name: &str) -> Result<crate::DownloadInfo> {
         let dep = self
             .dependencies
@@ -245,6 +259,10 @@ impl Manifest {
     }
 
     /// Get download info for multiple dependencies
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any dependency is not found or is missing a URL or SHA256.
     pub fn get_download_infos(&self, names: &[&str]) -> Result<Vec<crate::DownloadInfo>> {
         names
             .iter()
@@ -315,8 +333,12 @@ impl Manifest {
 
     /// Validate that a crate manifest matches the workspace manifest
     ///
-    /// Returns Ok(()) if they match or if there's no workspace manifest.
-    /// Returns Err with a detailed message if they differ.
+    /// Returns `Ok(())` if they match or if there's no workspace manifest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the crate manifest differs from the workspace manifest,
+    /// with a detailed message listing all mismatches.
     pub fn validate_against_workspace(
         crate_manifest: &Self,
         crate_manifest_path: &Path,
@@ -390,6 +412,11 @@ impl Manifest {
     /// 1. Finds the crate-level manifest (`CARGO_MANIFEST_DIR`) or workspace manifest
     /// 2. If a crate-level manifest exists and we're in a workspace, validates consistency
     /// 3. Returns the loaded manifest
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no manifest is found, if parsing fails, or if the crate
+    /// manifest does not match the workspace manifest.
     pub fn find_and_load_validated() -> Result<Self> {
         let crate_manifest_path = Self::find_crate_manifest();
 
@@ -454,6 +481,10 @@ impl Manifest {
 // =============================================================================
 
 /// Generate a default `pecos.toml` file
+///
+/// # Errors
+///
+/// Returns an error if the manifest cannot be serialized or written to `path`.
 pub fn generate_manifest(path: &Path) -> Result<()> {
     let manifest = Manifest::default_pecos();
     manifest.save(path)?;
@@ -489,6 +520,11 @@ pub enum SyncStatus {
 /// that crate needs.
 ///
 /// Returns a list of results for each crate.
+///
+/// # Errors
+///
+/// Returns an error if the workspace manifest cannot be loaded or if any
+/// crate manifest cannot be written.
 pub fn sync_crate_manifests(workspace_path: &Path) -> Result<Vec<SyncResult>> {
     let workspace = Manifest::load(workspace_path)?;
     let workspace_dir = workspace_path

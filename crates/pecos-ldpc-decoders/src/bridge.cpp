@@ -81,12 +81,14 @@ std::unique_ptr<BpOsdDecoder> create_bp_osd_decoder(
     decoder->pcm = create_pcm_from_sparse(pcm);
 
     // Copy channel probabilities
-    decoder->channel_probs.assign(channel_probs.begin(), channel_probs.end());
+    // Use data()+size() instead of begin()/end() iterators to avoid
+    // Xcode 15.4 libc++ pointer_traits incompatibility with cxx iterators in C++20
+    decoder->channel_probs.assign(channel_probs.data(), channel_probs.data() + channel_probs.size());
 
     // Convert serial schedule order
     std::vector<int> serial_schedule_vec;
     if (!serial_schedule_order.empty()) {
-        serial_schedule_vec.assign(serial_schedule_order.begin(), serial_schedule_order.end());
+        serial_schedule_vec.assign(serial_schedule_order.data(), serial_schedule_order.data() + serial_schedule_order.size());
     }
 
     // Create BP decoder
@@ -152,7 +154,7 @@ DecodingResult decode_bp_osd(
     }
 
     // Convert input to vector
-    std::vector<uint8_t> input_vec(input_vector.begin(), input_vector.end());
+    std::vector<uint8_t> input_vec(input_vector.data(), input_vector.data() + input_vector.size());
 
     // First try BP decoding
     auto bp_decoder = static_cast<bp::BpDecoder*>(decoder.bp_decoder);
@@ -233,12 +235,12 @@ std::unique_ptr<BpLsdDecoder> create_bp_lsd_decoder(
     decoder->pcm = create_pcm_from_sparse(pcm);
 
     // Copy channel probabilities
-    decoder->channel_probs.assign(channel_probs.begin(), channel_probs.end());
+    decoder->channel_probs.assign(channel_probs.data(), channel_probs.data() + channel_probs.size());
 
     // Convert serial schedule order
     std::vector<int> serial_schedule_vec;
     if (!serial_schedule_order.empty()) {
-        serial_schedule_vec.assign(serial_schedule_order.begin(), serial_schedule_order.end());
+        serial_schedule_vec.assign(serial_schedule_order.data(), serial_schedule_order.data() + serial_schedule_order.size());
     }
 
     // Create BP decoder
@@ -302,7 +304,7 @@ DecodingResult decode_bp_lsd(
     }
 
     // Convert input to vector
-    std::vector<uint8_t> input_vec(input_vector.begin(), input_vector.end());
+    std::vector<uint8_t> input_vec(input_vector.data(), input_vector.data() + input_vector.size());
 
     // First try BP decoding
     auto bp_decoder = static_cast<bp::BpDecoder*>(decoder.bp_decoder);
@@ -552,7 +554,7 @@ std::unique_ptr<SoftInfoBpDecoder> create_soft_info_bp_decoder(
     decoder->pcm = pcm;
 
     // Store channel probabilities
-    decoder->channel_probs = std::vector<double>(channel_probs.begin(), channel_probs.end());
+    decoder->channel_probs = std::vector<double>(channel_probs.data(), channel_probs.data() + channel_probs.size());
 
     // Store parameters
     decoder->max_iter = max_iter;
@@ -597,7 +599,7 @@ DecodingResult decode_soft_info_bp(
     auto bp_decoder = static_cast<bp::BpDecoder*>(decoder.bp_decoder);
 
     // Convert soft syndrome to std::vector
-    std::vector<double> soft_syn(soft_syndrome.begin(), soft_syndrome.end());
+    std::vector<double> soft_syn(soft_syndrome.data(), soft_syndrome.data() + soft_syndrome.size());
 
     // Perform soft information decoding
     auto& decoding = bp_decoder->soft_info_decode_serial(soft_syn, cutoff, sigma);
@@ -712,7 +714,7 @@ DecodingResult decode_flip(
     auto flip_decoder = static_cast<flip::FlipDecoder*>(decoder.flip_decoder);
 
     // Convert syndrome to std::vector
-    std::vector<uint8_t> synd(syndrome.begin(), syndrome.end());
+    std::vector<uint8_t> synd(syndrome.data(), syndrome.data() + syndrome.size());
 
     // Perform decoding
     auto& decoding = flip_decoder->decode(synd);
@@ -790,10 +792,10 @@ DecodingResult decode_union_find(
     auto uf_decoder = static_cast<uf::UfDecoder*>(decoder.uf_decoder);
 
     // Convert syndrome to std::vector
-    std::vector<uint8_t> synd(syndrome.begin(), syndrome.end());
+    std::vector<uint8_t> synd(syndrome.data(), syndrome.data() + syndrome.size());
 
     // Convert LLRs to std::vector (can be empty)
-    std::vector<double> llr_vec(llrs.begin(), llrs.end());
+    std::vector<double> llr_vec(llrs.data(), llrs.data() + llrs.size());
 
     // Perform decoding based on method
     std::vector<uint8_t>* decoding_ptr;
@@ -928,7 +930,7 @@ DecodingResult decode_mbp(
     }
 
     // Convert syndrome to vector
-    std::vector<uint8_t> synd(syndrome.begin(), syndrome.end());
+    std::vector<uint8_t> synd(syndrome.data(), syndrome.data() + syndrome.size());
 
     // Decode - returns GF(4) decoding
     auto& gf4_decoding = mbp->decode(synd);

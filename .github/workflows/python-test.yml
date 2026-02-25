@@ -88,10 +88,10 @@ jobs:
         Write-Host "Disk space after cleanup:"
         Get-PSDrive C | Select-Object Used,Free
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -102,7 +102,7 @@ jobs:
         arch: x64
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
 
@@ -110,7 +110,7 @@ jobs:
       run: rustup show
 
     - name: Install just
-      uses: extractions/setup-just@v2
+      uses: extractions/setup-just@v3
 
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2
@@ -121,7 +121,7 @@ jobs:
       if: runner.os != 'Windows'
       run: |
         echo "Installing LLVM using pecos..."
-        cargo run -p pecos --features cli --release -- llvm install
+        cargo run -p pecos --features cli --release -- install llvm
 
         echo "Setting LLVM environment variables..."
         export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
@@ -138,7 +138,7 @@ jobs:
       shell: pwsh
       run: |
         Write-Host "Installing LLVM using pecos..."
-        cargo run -p pecos --features cli --release -- llvm install
+        cargo run -p pecos --features cli --release -- install llvm
 
         Write-Host "Setting LLVM environment variables..."
         $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)

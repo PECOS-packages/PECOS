@@ -21,15 +21,15 @@ jobs:
     name: Test and build documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
       - name: Install the latest version of uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -44,7 +44,7 @@ jobs:
       - name: Install LLVM 14.0.6 using pecos-llvm
         run: |
           echo "Installing LLVM using pecos..."
-          cargo run -p pecos --features cli --release -- llvm install
+          cargo run -p pecos --features cli --release -- install llvm
 
           echo "Setting LLVM environment variables..."
           export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)

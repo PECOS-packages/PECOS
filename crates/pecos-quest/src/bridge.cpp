@@ -315,7 +315,7 @@ void quest_apply_controlled_phase_shift(uint8_t* qureg, int32_t control, int32_t
 
 void quest_apply_multi_controlled_pauli_z(uint8_t* qureg, rust::Slice<const int32_t> controls, int32_t target) {
     auto* handle = reinterpret_cast<QuregHandle*>(qureg);
-    std::vector<int> controlVec(controls.begin(), controls.end());
+    std::vector<int> controlVec(controls.data(), controls.data() + controls.size());
     applyMultiControlledPauliZ(handle->qureg, controlVec.data(), controlVec.size(), target);
 }
 

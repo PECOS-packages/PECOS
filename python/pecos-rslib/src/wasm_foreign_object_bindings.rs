@@ -21,6 +21,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::path::Path;
 
+pyo3::create_exception!(pecos_rslib, WasmError, pyo3::exceptions::PyException);
+
 /// Python wrapper for `WasmForeignObject`
 ///
 /// This class provides WebAssembly execution capabilities using the Rust
@@ -282,7 +284,7 @@ impl PyWasmForeignObject {
     fn init(&mut self) -> PyResult<()> {
         self.inner
             .init()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to initialize WASM: {e}")))
+            .map_err(|e| PyErr::new::<WasmError, _>(format!("Failed to initialize WASM: {e}")))
     }
 
     /// Reset variables before each shot
@@ -295,7 +297,7 @@ impl PyWasmForeignObject {
     fn shot_reinit(&mut self) -> PyResult<()> {
         self.inner
             .shot_reinit()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to call shot_reinit: {e}")))
+            .map_err(|e| PyErr::new::<WasmError, _>(format!("Failed to call shot_reinit: {e}")))
     }
 
     /// Create a new WASM instance
@@ -307,7 +309,7 @@ impl PyWasmForeignObject {
     fn new_instance(&mut self) -> PyResult<()> {
         self.inner
             .new_instance()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create new instance: {e}")))
+            .map_err(|e| PyErr::new::<WasmError, _>(format!("Failed to create new instance: {e}")))
     }
 
     /// Get list of exported function names
@@ -332,7 +334,7 @@ impl PyWasmForeignObject {
     #[allow(clippy::needless_pass_by_value)] // PyO3 extracts Python sequences as Vec
     fn exec(&mut self, py: Python<'_>, func_name: &str, args: Vec<i64>) -> PyResult<Py<PyAny>> {
         let results = self.inner.exec(func_name, &args).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to execute '{func_name}': {e}"))
+            PyErr::new::<WasmError, _>(format!("Failed to execute '{func_name}': {e}"))
         })?;
 
         // Convert Vec<i64> to Python - single value as int, multiple as tuple
@@ -435,6 +437,12 @@ impl PyWasmForeignObject {
 
         Ok((from_dict.into(), (state,)))
     }
+}
+
+pub fn register_wasm_types(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = parent_module.py();
+    parent_module.add("WasmError", py.get_type::<WasmError>())?;
+    Ok(())
 }
 
 impl Drop for PyWasmForeignObject {

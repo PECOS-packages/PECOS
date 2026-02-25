@@ -97,7 +97,9 @@ jobs:
           #   gcc_cc: ""
           #   gcc_cxx: ""
           # macOS without CUDA (NVIDIA dropped macOS CUDA support in 2019)
-          - os: macos-14
+          # Use macos-15 (not macos-14) because Xcode 15.4's libc++ has a
+          # pointer_traits bug with CXX crate's contiguous iterators in C++20.
+          - os: macos-15
             architecture: aarch64
             cuda_feature: ""
             install_cuda: false
@@ -113,7 +115,7 @@ jobs:
             install_cuda: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || github.sha }}
           submodules: recursive
@@ -130,14 +132,54 @@ jobs:
       # See: https://github.com/Jimver/cuda-toolkit/issues/382
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
-        uses: Jimver/cuda-toolkit@v0.2.29
+        uses: Jimver/cuda-toolkit@v0.2.30
         with:
           cuda: '12.5.1'
           method: 'local'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
+      # On Windows, Git Bash's /usr/bin/link.exe shadows MSVC's link.exe.
+      # Create .cargo/config.toml with the explicit MSVC linker path so cargo
+      # uses the correct linker inside cibuildwheel (which runs on the host).
+      - name: Configure MSVC linker for Cargo (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vsWhere -latest -property installationPath
+          $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
+                      Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
+                      Select-Object -First 1 -ExpandProperty FullName
+
+          if ($linkPath) {
+            $escapedPath = $linkPath.Replace('\', '/')
+            $configContent = "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`""
+
+            # Create in repo root (for CIBW_BEFORE_ALL cargo commands)
+            New-Item -ItemType Directory -Force -Path .cargo | Out-Null
+            $configContent | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
+
+            # Create in pecos-rslib directory (for maturin builds)
+            New-Item -ItemType Directory -Force -Path "python\pecos-rslib\.cargo" | Out-Null
+            $configContent | Out-File -FilePath "python\pecos-rslib\.cargo\config.toml" -Encoding UTF8
+
+            # Create in user cargo home (fallback)
+            $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
+            New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null
+            if (Test-Path "$cargoHome\config.toml") {
+              "`n$configContent" | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8 -Append
+            } else {
+              $configContent | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8
+            }
+
+            Write-Host "Configured MSVC linker: $linkPath"
+          } else {
+            Write-Error "Could not find MSVC link.exe"
+            exit 1
+          }
+
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.2.1
+        uses: pypa/cibuildwheel@v3.3.1
         with:
           package-dir: python/pecos-rslib
           output-dir: wheelhouse
@@ -175,7 +217,7 @@ jobs:
             else
               echo "Skipping CUDA installation (GPU support not enabled for this build)"
             fi
-            cargo run --release -p pecos --features cli -- llvm install --force
+            cargo run --release -p pecos --features cli -- install llvm --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
@@ -188,7 +230,7 @@ jobs:
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             rustup update
-            cargo run --release -p pecos --features cli -- llvm install --force
+            cargo run --release -p pecos --features cli -- install llvm --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
             # crashes on macOS 15 when bundled libc++ conflicts with system libc++
             mkdir -p $HOME/.pecos/bin
@@ -205,8 +247,8 @@ jobs:
           CIBW_BEFORE_ALL_WINDOWS: >
             echo "=== Installing LLVM using pecos ===" &&
             rustup update &&
-            echo "=== Running pecos llvm install ===" &&
-            cargo run --release -p pecos --features cli -- llvm install --force &&
+            echo "=== Running pecos install llvm ===" &&
+            cargo run --release -p pecos --features cli -- install llvm --force &&
             echo "=== Checking LLVM installation ===" &&
             (test -d "C:\\Users\\runneradmin\\.pecos\\llvm" && echo "LLVM directory exists" && ls -la "C:\\Users\\runneradmin\\.pecos\\llvm" && (ls -la "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" || echo "bin directory not found")) || (echo "ERROR: LLVM directory not found!" && exit 1) &&
             echo "=== Verifying LLVM_SYS_140_PREFIX ===" &&
@@ -248,16 +290,16 @@ jobs:
           - runner: macos-15-intel
             os: macos-15-intel
             architecture: x86_64
-          - runner: macos-14
-            os: macos-14
+          - runner: macos-15
+            os: macos-15
             architecture: aarch64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -314,12 +356,12 @@ jobs:
       needs.build_wheelspecos_rslib.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -359,12 +401,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 

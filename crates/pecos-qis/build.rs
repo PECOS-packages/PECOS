@@ -71,7 +71,7 @@ fn print_llvm_not_found_error_extended() {
     eprintln!("PECOS needs LLVM 14. Choose one of these installation methods:");
     eprintln!();
     eprintln!("Option 1: Use pecos-llvm installer (recommended)");
-    eprintln!("  cargo run -p pecos -- llvm install");
+    eprintln!("  cargo run -p pecos -- install llvm");
     eprintln!("  cargo build");
     eprintln!();
     eprintln!("  The installer automatically configures PECOS.");

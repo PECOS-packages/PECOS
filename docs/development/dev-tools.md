@@ -20,13 +20,19 @@ pecos rust fmt                # Run cargo fmt
 pecos python build            # Build pecos-rslib with maturin
 pecos python test             # Run pytest
 
-# LLVM management
-pecos llvm install            # Install LLVM 14 to ~/.pecos/llvm/
+# Dependency installation (apt-like)
+pecos install llvm            # Install LLVM 14 to ~/.pecos/llvm/
+pecos install cuda            # Install CUDA Toolkit to ~/.pecos/cuda/
+pecos install cuquantum       # Install cuQuantum SDK to ~/.pecos/cuquantum/
+pecos install --all           # Install all optional dependencies
+pecos uninstall llvm          # Uninstall LLVM
+pecos upgrade llvm            # Upgrade (force reinstall) LLVM
+
+# LLVM inspection
 pecos llvm check              # Check LLVM installation status
 pecos llvm configure          # Configure .cargo/config.toml
 
-# CUDA management
-pecos cuda install            # Install CUDA Toolkit to ~/.pecos/cuda/
+# CUDA inspection
 pecos cuda check              # Check CUDA availability
 
 # Julia commands
@@ -51,7 +57,7 @@ pecos sys-info                # Show toolchain and environment info
 
 When running from the repository:
 ```bash
-cargo run -p pecos --features cli -- llvm check
+cargo run -p pecos --features cli -- install llvm
 cargo run -p pecos --features cli -- rust clippy
 ```
 
@@ -123,13 +129,13 @@ Available recipes:
 
 ```bash
 # Automated installation (downloads pre-built binaries)
-pecos llvm install
+pecos install llvm
 
 # Force reinstall
-pecos llvm install --force
+pecos install llvm --force
 
 # Skip automatic configuration
-pecos llvm install --no-configure
+pecos install llvm --no-configure
 ```
 
 This downloads and installs LLVM 14 to `~/.pecos/llvm/`.
@@ -196,7 +202,7 @@ Syncs crate-level `pecos.toml` manifests from the workspace-level manifest.
 pecos llvm check
 
 # 2. If not, install it
-pecos llvm install
+pecos install llvm
 
 # 3. Now you can build with LLVM support
 cargo build -p pecos --features llvm

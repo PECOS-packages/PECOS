@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import pecos as pc
-from pecos.simulators import SparseSim, SparseSimPy
+from pecos.simulators import SparseSim, SparseSimPy, Stab
 
 
 def test_random_circuits() -> None:
@@ -61,6 +61,7 @@ def test_random_circuits() -> None:
 
     state_sims.append(SparseSimPy)
     state_sims.append(SparseSim)
+    state_sims.append(Stab)
 
     assert run_circuit_test(state_sims, num_qubits=10, circuit_depth=50)
 

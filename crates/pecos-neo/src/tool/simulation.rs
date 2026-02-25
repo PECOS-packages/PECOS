@@ -117,7 +117,6 @@ use crate::command::CommandQueue;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::{MeasurementOutcomes, RegisterMap};
 use crate::program::{CommandSource, DynProgramRunner, ProgramRunner, StaticProgram};
-use crate::runner::ShotRunner;
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
@@ -721,18 +720,19 @@ pub fn importance_sampling() -> ImportanceSamplingBuilder {
 /// trade-offs between simplicity, parallelism, and specialized sampling.
 ///
 /// Stored as data in the builder, the actual execution is set up at run time.
-#[derive(Debug, Clone, Default)]
+///
+/// The default is `MonteCarlo { workers: 1 }`, which runs shots sequentially
+/// using the Tool/Schedule/Plugin system. Use `.workers(n)` or `.auto_workers()`
+/// for parallel execution.
+#[derive(Debug, Clone)]
 pub enum Orchestrator {
-    /// Sequential execution via Tool (default for simplicity).
-    #[default]
-    Sequential,
-
-    /// Parallel Monte Carlo execution using rayon.
+    /// Monte Carlo execution (sequential with 1 worker, parallel with >1).
     ///
     /// Each worker runs a batch of shots independently with deterministic seeding.
     /// Supports both noiseless and noisy circuits (noise model is cloned per worker).
+    /// With 1 worker, runs via the Tool's schedule directly.
     MonteCarlo {
-        /// Number of parallel workers.
+        /// Number of parallel workers (default: 1).
         workers: usize,
     },
 
@@ -746,6 +746,12 @@ pub enum Orchestrator {
         /// Configuration for importance sampling.
         config: ImportanceSamplingBuilder,
     },
+}
+
+impl Default for Orchestrator {
+    fn default() -> Self {
+        Self::MonteCarlo { workers: 1 }
+    }
 }
 
 impl Orchestrator {
@@ -942,16 +948,6 @@ impl SimulationResults {
     }
 }
 
-/// Current shot state during execution.
-pub struct ShotState {
-    /// The shot runner (with noise already configured).
-    pub runner: ShotRunner<SparseStab>,
-    /// Current shot index.
-    pub shot_index: usize,
-    /// Cached circuit for execution.
-    pub circuit: CommandQueue,
-}
-
 /// Wrapper for noise model resource.
 pub struct NoiseResource(pub ComposableNoiseModel);
 
@@ -1082,108 +1078,6 @@ pub enum TypedProgram {
 
 /// Resource to hold the program source.
 pub struct ProgramSourceResource(pub ProgramSource);
-
-// ============================================================================
-// Simulation Plugin
-// ============================================================================
-
-/// Plugin that provides core simulation functionality.
-///
-/// This plugin sets up the systems for running quantum circuit simulations.
-pub struct SimulationPlugin;
-
-impl Plugin for SimulationPlugin {
-    fn build(&self, tool: &mut Tool) {
-        // Insert default resources if not present
-        if !tool.contains_resource::<SimConfig>() {
-            tool.insert_resource_mut(SimConfig::default());
-        }
-        if !tool.contains_resource::<SimulationResults>() {
-            tool.insert_resource_mut(SimulationResults::new());
-        }
-
-        // Add simulation systems
-        tool.add_system_mut(Stage::Startup, simulation_startup);
-        tool.add_system_mut(Stage::PreShot, simulation_pre_shot);
-        tool.add_system_mut(Stage::Execute, simulation_execute);
-        tool.add_system_mut(Stage::PostShot, simulation_post_shot);
-    }
-}
-
-/// Startup system: Initialize the simulator and runner.
-fn simulation_startup(resources: &mut Resources) {
-    // Get configuration (cloned to avoid borrow issues)
-    let config = resources.get::<SimConfig>().clone();
-    let circuit = resources.get::<Circuit>().0.clone();
-
-    // Determine number of qubits from circuit
-    let num_qubits = circuit
-        .iter()
-        .flat_map(|cmd| cmd.qubits.iter())
-        .map(|q| q.0)
-        .max()
-        .map_or(1, |max| max + 1);
-
-    // Create simulator and runner
-    let sim = SparseStab::new(num_qubits);
-    let mut runner = ShotRunner::new(sim);
-
-    // Apply noise if present - take ownership since we can't borrow
-    if let Some(noise) = resources.try_remove::<NoiseResource>() {
-        runner = runner.with_noise(noise.0);
-    }
-
-    // Apply seed if configured
-    if let Some(seed) = config.seed {
-        runner = runner.with_full_seed(seed);
-    }
-
-    // Store shot state with circuit
-    resources.insert(ShotState {
-        runner,
-        shot_index: 0,
-        circuit,
-    });
-
-    // Clear previous results
-    resources.get_mut::<SimulationResults>().clear();
-}
-
-/// Pre-shot system: Prepare for next shot.
-fn simulation_pre_shot(resources: &mut Resources) {
-    let config = resources.get::<SimConfig>().clone();
-    let state = resources.get_mut::<ShotState>();
-
-    // Derive per-shot seed if configured
-    if let Some(base_seed) = config.seed {
-        let shot_seed = derive_seed(base_seed, &format!("shot_{}", state.shot_index));
-        state.runner.set_full_seed(shot_seed);
-    }
-}
-
-/// Execute system: Run the circuit.
-fn simulation_execute(resources: &mut Resources) {
-    let state = resources.get_mut::<ShotState>();
-
-    // Run the shot (resets simulator internally)
-    let outcomes = state.runner.run_shot_fresh(&state.circuit);
-
-    // Store outcomes temporarily for post-shot processing
-    resources.insert(CurrentOutcomes(outcomes));
-}
-
-/// Post-shot system: Collect results.
-fn simulation_post_shot(resources: &mut Resources) {
-    // Move outcomes to results
-    let outcomes = resources.remove::<CurrentOutcomes>();
-    resources
-        .get_mut::<SimulationResults>()
-        .outcomes
-        .push(outcomes.0);
-
-    // Increment shot counter
-    resources.get_mut::<ShotState>().shot_index += 1;
-}
 
 /// Temporary storage for current shot outcomes.
 struct CurrentOutcomes(MeasurementOutcomes);
@@ -1809,10 +1703,21 @@ impl SimNeoBuilder {
         let mut tool = Tool::new()
             .insert_resource(ProgramSourceResource(source))
             .insert_resource(self.config)
-            .insert_resource(QuantumBackendResource(self.quantum_backend))
-            .add_plugin(UnifiedSimulationPlugin {
-                explicit_num_qubits: self.explicit_num_qubits,
-            });
+            .insert_resource(QuantumBackendResource(self.quantum_backend));
+
+        match &self.orchestrator {
+            Orchestrator::ImportanceSampling { config: is_config } => {
+                tool = tool.add_plugin(ImportanceSamplingSimPlugin {
+                    is_config: is_config.clone(),
+                    explicit_num_qubits: self.explicit_num_qubits,
+                });
+            }
+            Orchestrator::MonteCarlo { .. } => {
+                tool = tool.add_plugin(UnifiedSimulationPlugin {
+                    explicit_num_qubits: self.explicit_num_qubits,
+                });
+            }
+        }
 
         // Add noise if configured
         if let Some(noise) = self.noise {
@@ -2078,6 +1983,158 @@ fn unified_simulation_post_shot(resources: &mut Resources) {
 }
 
 // ============================================================================
+// Importance Sampling Simulation Plugin
+// ============================================================================
+
+/// Plugin for importance-sampling simulation.
+///
+/// Replaces [`UnifiedSimulationPlugin`] when the IS orchestrator is selected.
+/// Uses [`ImportanceSamplingRunner`] for biased noise with weight tracking.
+struct ImportanceSamplingSimPlugin {
+    is_config: ImportanceSamplingBuilder,
+    explicit_num_qubits: Option<usize>,
+}
+
+impl Plugin for ImportanceSamplingSimPlugin {
+    fn build(&self, tool: &mut Tool) {
+        if !tool.contains_resource::<SimConfig>() {
+            tool.insert_resource_mut(SimConfig::default());
+        }
+        if !tool.contains_resource::<SimulationResults>() {
+            tool.insert_resource_mut(SimulationResults::new());
+        }
+
+        tool.insert_resource_mut(ExplicitNumQubits(self.explicit_num_qubits));
+        tool.insert_resource_mut(ISConfigResource(self.is_config.clone()));
+
+        tool.add_system_mut(Stage::Startup, is_sim_startup);
+        tool.add_system_mut(Stage::PreShot, is_sim_pre_shot);
+        tool.add_system_mut(Stage::Execute, is_sim_execute);
+        tool.add_system_mut(Stage::PostShot, is_sim_post_shot);
+    }
+}
+
+/// Resource holding IS configuration, consumed at startup.
+struct ISConfigResource(ImportanceSamplingBuilder);
+
+/// State for importance sampling simulation shots.
+struct ISShotState {
+    /// The importance sampling runner.
+    runner: ImportanceSamplingRunner<SparseStab>,
+    /// The circuit to execute.
+    circuit: CommandQueue,
+    /// Current shot index.
+    shot_index: usize,
+}
+
+/// Temporary result from IS execution, passed from Execute to `PostShot`.
+struct ISCurrentResult {
+    outcomes: MeasurementOutcomes,
+    weight: crate::sampling::weight::SampleWeight,
+}
+
+/// Startup system for importance sampling simulation.
+fn is_sim_startup(resources: &mut Resources) {
+    let explicit_qubits = resources.get::<ExplicitNumQubits>().0;
+
+    // Re-run: reset state instead of rebuilding
+    if resources.contains::<ISShotState>() {
+        resources.get_mut::<ISShotState>().shot_index = 0;
+        let results = resources.get_mut::<SimulationResults>();
+        results.clear();
+        results.weights = Some(Vec::new());
+        return;
+    }
+
+    // First run - consume resources and build the runner
+    let source_resource = resources.remove::<ProgramSourceResource>();
+    let is_config = resources.remove::<ISConfigResource>().0;
+
+    #[cfg(not(feature = "engines-adapter"))]
+    let ProgramSource::Static(circuit) = source_resource.0;
+    #[cfg(feature = "engines-adapter")]
+    let circuit = match source_resource.0 {
+        ProgramSource::Static(circuit) => circuit,
+        ProgramSource::RawSource(_) | ProgramSource::Typed(_) | ProgramSource::Classical(_) => {
+            panic!(
+                "Importance sampling requires a static circuit. \
+                 Classical engines are not supported."
+            )
+        }
+    };
+
+    let num_qubits = explicit_qubits.unwrap_or_else(|| {
+        circuit
+            .iter()
+            .flat_map(|cmd| cmd.qubits.iter())
+            .map(|q| q.0)
+            .max()
+            .map_or(1, |max| max + 1)
+    });
+
+    // Consume QuantumBackendResource (IS always uses SparseStab internally)
+    let _ = resources.remove::<QuantumBackendResource>();
+
+    // Also consume NoiseResource if present (IS uses its own boosted noise)
+    let _ = resources.try_remove::<NoiseResource>();
+
+    let sim = SparseStab::new(num_qubits);
+    let runner = ImportanceSamplingRunner::new(sim)
+        .with_single_qubit_boost(is_config.p1(), is_config.boost())
+        .with_two_qubit_boost(is_config.p2(), is_config.boost())
+        .with_measurement_boost(is_config.p_meas(), is_config.boost());
+
+    resources.insert(ISShotState {
+        runner,
+        circuit,
+        shot_index: 0,
+    });
+
+    // Initialize results with weight tracking
+    let results = resources.get_mut::<SimulationResults>();
+    results.clear();
+    results.weights = Some(Vec::new());
+}
+
+/// Pre-shot system for importance sampling: derive and set per-shot seeds.
+fn is_sim_pre_shot(resources: &mut Resources) {
+    let config = resources.get::<SimConfig>().clone();
+    let state = resources.get_mut::<ISShotState>();
+
+    let base_seed = config.seed.unwrap_or(0);
+    let shot_seed = derive_seed(base_seed, &format!("shot_{}", state.shot_index));
+    let sim_seed = derive_seed(shot_seed, "simulator");
+    let noise_seed = derive_seed(shot_seed, "noise");
+
+    state.runner.rng = PecosRng::seed_from_u64(noise_seed);
+    state.runner.simulator.set_seed(sim_seed);
+}
+
+/// Execute system for importance sampling: run one shot with biased noise.
+fn is_sim_execute(resources: &mut Resources) {
+    let state = resources.get_mut::<ISShotState>();
+    let result = state.runner.run_shot_fresh(&state.circuit);
+
+    resources.insert(ISCurrentResult {
+        outcomes: result.outcomes,
+        weight: result.weight,
+    });
+}
+
+/// Post-shot system for importance sampling: collect outcomes and weights.
+fn is_sim_post_shot(resources: &mut Resources) {
+    let result = resources.remove::<ISCurrentResult>();
+    let results = resources.get_mut::<SimulationResults>();
+
+    results.outcomes.push(result.outcomes);
+    if let Some(ref mut weights) = results.weights {
+        weights.push(result.weight);
+    }
+
+    resources.get_mut::<ISShotState>().shot_index += 1;
+}
+
+// ============================================================================
 // Simulation Handle
 // ============================================================================
 
@@ -2151,49 +2208,44 @@ impl Simulation {
     /// after reconfiguring with [`shots()`](Self::shots) or [`seed()`](Self::seed).
     ///
     /// Execution strategy depends on the orchestrator:
-    /// - `Sequential`: Runs shots one at a time via the Tool
-    /// - `MonteCarlo`: Parallelizes shots across workers (for static circuits with built-in backends)
-    /// - `ImportanceSampling`: Biased sampling for rare events with importance weights
+    /// - `MonteCarlo { workers: 1 }`: Runs shots via the Tool (default)
+    /// - `MonteCarlo { workers: n }`: Parallelizes shots across n workers
+    /// - `ImportanceSampling`: Runs via the Tool with `ImportanceSamplingSimPlugin`
     pub fn run(&mut self) -> SimulationResults {
         let config = self.tool.resource::<SimConfig>().clone();
 
         // Dispatch based on orchestration strategy
         match &self.orchestrator {
             Orchestrator::MonteCarlo { workers } if *workers > 1 => {
-                if let Some(ref parallel_data) = self.parallel_data {
-                    return self.run_parallel(&config, parallel_data, *workers);
-                }
-                panic!(
-                    "Parallel Monte Carlo requires a static circuit \
-                     using a built-in backend (SparseStab or StateVec). \
-                     Remove .workers() / .auto_workers() to use sequential execution, \
-                     or switch to a built-in backend."
-                );
+                let data = self.parallel_data.as_ref().unwrap_or_else(|| {
+                    panic!(
+                        "Parallel Monte Carlo requires a static circuit \
+                         using a built-in backend (SparseStab or StateVec). \
+                         Remove .workers() / .auto_workers() for single-worker execution, \
+                         or switch to a built-in backend."
+                    )
+                });
+                self.run_parallel(&config, data, *workers)
             }
-            Orchestrator::ImportanceSampling { config: is_config } => {
-                if let Some(ref parallel_data) = self.parallel_data {
-                    return self.run_importance_sampling(&config, parallel_data, is_config);
-                }
-                panic!(
-                    "Importance sampling requires a static circuit \
-                     using a built-in backend (SparseStab or StateVec). \
-                     Classical engines and custom backends are not supported."
-                );
+            _ => {
+                // Both MonteCarlo{workers:1} and ImportanceSampling run via the Tool.
+                // IS uses ImportanceSamplingSimPlugin instead of UnifiedSimulationPlugin.
+                self.tool.reset();
+                self.tool.run_shots(config.shots);
+
+                // Take results and re-insert empty for next run
+                let results = self.tool.take_resource::<SimulationResults>();
+                self.tool.insert_resource_mut(SimulationResults::new());
+                results
             }
-            _ => {} // Sequential falls through
         }
-
-        // Sequential execution via Tool
-        self.tool.reset();
-        self.tool.run_shots(config.shots);
-
-        // Take results and re-insert empty for next run
-        let results = self.tool.take_resource::<SimulationResults>();
-        self.tool.insert_resource_mut(SimulationResults::new());
-        results
     }
 
     /// Run shots in parallel using rayon (static circuits with built-in backends).
+    ///
+    /// Each worker gets its own `Resources` and runs the shared schedule,
+    /// so user-registered plugins/hooks fire correctly per worker.
+    /// Per-shot seeding is preserved via global shot indices.
     fn run_parallel(
         &self,
         config: &SimConfig,
@@ -2201,7 +2253,6 @@ impl Simulation {
         num_workers: usize,
     ) -> SimulationResults {
         let shots = config.shots;
-        let base_seed = config.seed.unwrap_or(0);
 
         // Distribute shots among workers and compute starting indices
         let shots_per_worker = distribute_shots(shots, num_workers);
@@ -2210,120 +2261,63 @@ impl Simulation {
             start_indices[i] = start_indices[i - 1] + shots_per_worker[i - 1];
         }
 
-        // Run in parallel, each worker with its own state
-        let all_outcomes: Vec<Vec<MeasurementOutcomes>> = (0..num_workers)
+        let schedule = self.tool.schedule();
+
+        // Run in parallel, each worker with its own Resources
+        let all_results: Vec<SimulationResults> = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {
                 let worker_shots = shots_per_worker[worker_id];
                 if worker_shots == 0 {
-                    return Vec::new();
+                    return SimulationResults::new();
                 }
 
-                let start_index = start_indices[worker_id];
-
-                // Run shots for this worker, using per-shot seeding (same as sequential)
-                let mut outcomes = Vec::with_capacity(worker_shots);
-                for local_shot in 0..worker_shots {
-                    let global_shot = start_index + local_shot;
-
-                    // Derive per-shot seed (matches sequential mode's set_full_seed)
-                    let shot_seed = derive_seed(base_seed, &format!("shot_{global_shot}"));
-                    // Further derive separate seeds for simulator and noise (matches set_full_seed)
-                    let sim_seed = derive_seed(shot_seed, "simulator");
-                    let noise_seed = derive_seed(shot_seed, "noise");
-
-                    // Create fresh simulator and runner for each shot based on backend
-                    let mut program = StaticProgram::new(data.circuit.clone(), data.num_qubits);
-                    let result_outcomes = match data.backend {
-                        BuiltinBackend::SparseStab => {
-                            let sim = SparseStab::with_seed(data.num_qubits, sim_seed);
-                            let mut runner = ProgramRunner::new(sim).with_seed(noise_seed);
-                            if let Some(ref noise) = data.noise {
-                                runner = runner.with_noise(noise.clone());
-                            }
-                            runner.run_shot(&mut program).outcomes
-                        }
-                        BuiltinBackend::StateVec => {
-                            let sim = StateVec::with_seed(data.num_qubits, sim_seed);
-                            let mut runner = ProgramRunner::new(sim).with_seed(noise_seed);
-                            if let Some(ref noise) = data.noise {
-                                runner = runner.with_noise(noise.clone());
-                            }
-                            runner.run_shot(&mut program).outcomes
-                        }
-                    };
-                    outcomes.push(result_outcomes);
+                // Build per-worker Resources with the same configuration
+                let mut resources = Resources::new();
+                resources.insert(SimConfig {
+                    shots: worker_shots,
+                    seed: config.seed,
+                });
+                resources.insert(ProgramSourceResource(ProgramSource::Static(
+                    data.circuit.clone(),
+                )));
+                resources.insert(QuantumBackendResource(match data.backend {
+                    BuiltinBackend::SparseStab => QuantumBackend::SparseStab,
+                    BuiltinBackend::StateVec => QuantumBackend::StateVec,
+                }));
+                resources.insert(ExplicitNumQubits(Some(data.num_qubits)));
+                resources.insert(SimulationResults::new());
+                if let Some(ref noise) = data.noise {
+                    resources.insert(NoiseResource(noise.clone()));
                 }
-                outcomes
+
+                // Run Startup (creates runner/simulator via UnifiedSimulationPlugin systems)
+                schedule.run_stage(Stage::Startup, &mut resources);
+
+                // Set global starting shot index so per-shot seeding matches sequential
+                resources.get_mut::<UnifiedShotState>().shot_index = start_indices[worker_id];
+
+                // Run shot loop (PreShot/Execute/PostShot per shot)
+                for _ in 0..worker_shots {
+                    schedule.run_stage(Stage::PreShot, &mut resources);
+                    schedule.run_stage(Stage::Execute, &mut resources);
+                    schedule.run_stage(Stage::PostShot, &mut resources);
+                }
+
+                // Run Finish
+                schedule.run_stage(Stage::Finish, &mut resources);
+
+                // Extract results
+                resources.remove::<SimulationResults>()
             })
             .collect();
 
-        // Flatten results in deterministic order
-        let outcomes: Vec<MeasurementOutcomes> = all_outcomes.into_iter().flatten().collect();
+        // Flatten in deterministic order
+        let outcomes = all_results.into_iter().flat_map(|r| r.outcomes).collect();
 
         SimulationResults {
             outcomes,
             weights: None,
-        }
-    }
-
-    /// Run shots with importance sampling.
-    ///
-    /// Uses `ImportanceSamplingRunner` to sample from a biased proposal distribution
-    /// while tracking importance weights for proper reweighting.
-    fn run_importance_sampling(
-        &self,
-        config: &SimConfig,
-        data: &ParallelExecutionData,
-        is_config: &ImportanceSamplingBuilder,
-    ) -> SimulationResults {
-        let shots = config.shots;
-        let base_seed = config.seed.unwrap_or(0);
-
-        let mut outcomes = Vec::with_capacity(shots);
-        let mut weights = Vec::with_capacity(shots);
-
-        // Run shots sequentially with importance sampling
-        // (parallel importance sampling requires more careful weight aggregation)
-        for shot_idx in 0..shots {
-            // Derive per-shot seed for reproducibility (matches parallel execution)
-            let shot_seed = derive_seed(base_seed, &format!("shot_{shot_idx}"));
-            // Further derive separate seeds for simulator and noise
-            let sim_seed = derive_seed(shot_seed, "simulator");
-            let noise_seed = derive_seed(shot_seed, "noise");
-
-            // Create fresh simulator and runner for each shot
-            let result = match data.backend {
-                BuiltinBackend::SparseStab => {
-                    let sim = SparseStab::with_seed(data.num_qubits, sim_seed);
-                    let mut runner = ImportanceSamplingRunner::new(sim)
-                        .with_single_qubit_boost(is_config.p1(), is_config.boost())
-                        .with_two_qubit_boost(is_config.p2(), is_config.boost())
-                        .with_measurement_boost(is_config.p_meas(), is_config.boost())
-                        .with_seed(noise_seed);
-                    runner.run_shot(&data.circuit)
-                }
-                BuiltinBackend::StateVec => {
-                    // ImportanceSamplingRunner uses CliffordGateable which SparseStab
-                    // implements. StateVec would need ArbitraryRotationGateable support.
-                    // For now, use SparseStab for importance sampling.
-                    let sim = SparseStab::with_seed(data.num_qubits, sim_seed);
-                    let mut runner = ImportanceSamplingRunner::new(sim)
-                        .with_single_qubit_boost(is_config.p1(), is_config.boost())
-                        .with_two_qubit_boost(is_config.p2(), is_config.boost())
-                        .with_measurement_boost(is_config.p_meas(), is_config.boost())
-                        .with_seed(noise_seed);
-                    runner.run_shot(&data.circuit)
-                }
-            };
-
-            outcomes.push(result.outcomes);
-            weights.push(result.weight);
-        }
-
-        SimulationResults {
-            outcomes,
-            weights: Some(weights),
         }
     }
 
@@ -2932,79 +2926,44 @@ mod tests {
     }
 
     #[test]
-    fn test_sim_neo_sequential_orchestrator() {
-        // Test sequential orchestrator (default)
-        use super::Orchestrator;
-
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
-
-        let results = sim_neo(circuit)
-            .orchestrator(Orchestrator::Sequential)
-            .shots(10)
-            .seed(42)
-            .run();
-
-        assert_eq!(results.len(), 10);
-
-        for outcome in &results.outcomes {
-            assert!(
-                outcome.get_bit(QubitId(0)).unwrap(),
-                "X gate should produce |1>"
-            );
-        }
-    }
-
-    #[test]
-    fn test_sim_neo_parallel_matches_sequential() {
-        // Critical test: parallel and sequential should produce identical results
-        // with the same seed (they use the same per-shot seeding scheme)
-        use super::Orchestrator;
-
+    fn test_sim_neo_single_worker_matches_parallel() {
+        // Critical test: 1 worker and multiple workers should produce identical
+        // results with the same seed (they use the same per-shot seeding scheme)
         let circuit = CommandBuilder::new()
             .pz(0)
             .h(0) // Superposition - outcome depends on RNG
             .mz(0)
             .build();
 
-        // Run with sequential orchestrator
-        let sequential_results = sim_neo(circuit.clone())
-            .orchestrator(Orchestrator::Sequential)
-            .shots(50)
-            .seed(42)
-            .run();
+        // Run with default (1 worker)
+        let single_results = sim_neo(circuit.clone()).shots(50).seed(42).run();
 
-        // Run with parallel Monte Carlo orchestrator
-        let parallel_results = sim_neo(circuit)
-            .orchestrator(Orchestrator::monte_carlo(4))
-            .shots(50)
-            .seed(42)
-            .run();
+        // Run with parallel Monte Carlo orchestrator (4 workers)
+        let parallel_results = sim_neo(circuit).workers(4).shots(50).seed(42).run();
 
         // Results should be identical
         assert_eq!(
-            sequential_results.outcomes.len(),
+            single_results.outcomes.len(),
             parallel_results.outcomes.len()
         );
-        for (i, (seq, par)) in sequential_results
+        for (i, (single, par)) in single_results
             .outcomes
             .iter()
             .zip(parallel_results.outcomes.iter())
             .enumerate()
         {
             assert_eq!(
-                seq.get_bit(QubitId(0)),
+                single.get_bit(QubitId(0)),
                 par.get_bit(QubitId(0)),
-                "Sequential and parallel should produce identical results at shot {i}"
+                "Single-worker and parallel should produce identical results at shot {i}"
             );
         }
     }
 
     #[test]
-    fn test_sim_neo_noisy_parallel_matches_sequential() {
+    fn test_sim_neo_noisy_single_worker_matches_parallel() {
         // Critical test: parallel noisy execution should produce identical results
-        // to sequential noisy execution with the same seed.
-        use super::Orchestrator;
-
+        // to single-worker noisy execution with the same seed.
         let circuit = CommandBuilder::new()
             .pz(0)
             .h(0)
@@ -3012,15 +2971,14 @@ mod tests {
             .mz(0)
             .build();
 
-        let noise_seq =
+        let noise_single =
             ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
         let noise_par =
             ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
 
-        // Run with sequential orchestrator
-        let sequential_results = sim_neo(circuit.clone())
-            .noise(noise_seq)
-            .orchestrator(Orchestrator::Sequential)
+        // Run with single worker (default)
+        let single_results = sim_neo(circuit.clone())
+            .noise(noise_single)
             .shots(50)
             .seed(42)
             .run();
@@ -3028,26 +2986,26 @@ mod tests {
         // Run with parallel Monte Carlo orchestrator
         let parallel_results = sim_neo(circuit)
             .noise(noise_par)
-            .orchestrator(Orchestrator::monte_carlo(4))
+            .workers(4)
             .shots(50)
             .seed(42)
             .run();
 
         // Results should be identical shot-for-shot
         assert_eq!(
-            sequential_results.outcomes.len(),
+            single_results.outcomes.len(),
             parallel_results.outcomes.len()
         );
-        for (i, (seq, par)) in sequential_results
+        for (i, (single, par)) in single_results
             .outcomes
             .iter()
             .zip(parallel_results.outcomes.iter())
             .enumerate()
         {
             assert_eq!(
-                seq.get_bit(QubitId(0)),
+                single.get_bit(QubitId(0)),
                 par.get_bit(QubitId(0)),
-                "Noisy sequential and parallel should produce identical results at shot {i}"
+                "Noisy single-worker and parallel should produce identical results at shot {i}"
             );
         }
     }

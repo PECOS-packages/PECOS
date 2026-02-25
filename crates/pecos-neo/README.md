@@ -6,26 +6,26 @@ This crate provides a composable approach to quantum simulation with:
 
 - **Typed Commands**: `GateCommand` and `CommandQueue` replacing `ByteMessage`
 - **Composable Noise**: Event-driven noise channels that can be freely combined
-- **Plugin System**: Bevy-inspired architecture for bundling functionality
+- **Plugin System**: ECS-inspired architecture for bundling functionality
 - **Simple Runner**: Direct simulator execution via `ShotRunner`
 
 ## Architecture
 
-The key insight is **composition over configuration**. Instead of a monolithic noise model with dozens of parameters, you compose small, focused channels:
+The key insight is **configuration via composition**. Instead of a monolithic noise model with dozens of parameters, you compose small, focused channels:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                   ComposableNoiseModel                       │
+│                   ComposableNoiseModel                      │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐            │
 │  │ SingleQubit │ │  TwoQubit   │ │ Measurement │  ...       │
 │  │   Channel   │ │   Channel   │ │   Channel   │            │
 │  └─────────────┘ └─────────────┘ └─────────────┘            │
-│         │               │               │                    │
-│         └───────────────┴───────────────┘                    │
-│                         │                                    │
-│                    NoiseEvent                                │
-│              (BeforeGate, AfterGate,                         │
-│               AfterMeasurement, etc.)                        │
+│         │               │               │                   │
+│         └───────────────┴───────────────┘                   │
+│                         │                                   │
+│                    NoiseEvent                               │
+│              (BeforeGate, AfterGate,                        │
+│               AfterMeasurement, etc.)                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -161,8 +161,8 @@ use pecos_qsim::StateVec;
 
 let commands = CommandBuilder::new()
     .pz(0)
-    .rx(0, Angle64::HALF_TURN)  // RX(pi) = X gate
-    .rzz(0, 1, Angle64::QUARTER_TURN)  // RZZ(pi/2)
+    .rx(Angle64::HALF_TURN, 0)  // RX(pi) = X gate
+    .rzz(Angle64::QUARTER_TURN, 0, 1)  // RZZ(pi/2)
     .mz(0)
     .build();
 
@@ -177,8 +177,8 @@ CCX and CRZ are automatically decomposed into supported gates.
 ## Idle Time Modeling
 
 The `IdleChannel` models T1/T2 decay during idle periods.
-Time is specified in abstract time units - the interpretation (nanoseconds, clock cycles, etc.)
-is defined by the noise model configuration.
+Time is specified in abstract time units - the interpretation (nanoseconds,
+clock cycles, etc.) is defined by the noise model configuration.
 
 ```rust
 use pecos_neo::prelude::*;
@@ -213,6 +213,7 @@ Available time scales: `NANOSECONDS`, `MICROSECONDS`, `MILLISECONDS`, `SECONDS`,
 or custom via `TimeScale::from_cycle_time_ns(50.0)` for gate-cycle-based timing.
 
 You can also add precision to coarse units:
+
 ```rust
 // Think in seconds, but with nanosecond precision (9 decimal places)
 let scale = TimeScale::SECONDS.with_precision(9);
@@ -346,7 +347,7 @@ See the `large_scale` example for a benchmark.
 
 ## Design Philosophy
 
-1. **Composition over Configuration**: Build complex models from simple pieces
+1. **Configuration via Composition**: Build complex models from simple pieces
 2. **Explicit over Implicit**: See exactly what channels are active
 3. **Flexible Foundation**: The composable system supports any noise model
 4. **Convenience Wrappers**: Builders provide familiar APIs for common patterns

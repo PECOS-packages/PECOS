@@ -238,6 +238,15 @@ impl Tool {
         self.schedule.run_stage(Stage::Finish, &mut self.resources);
     }
 
+    /// Run the complete shot loop using the schedule directly on provided resources.
+    ///
+    /// Unlike `run_shots()`, this always runs Startup (no `has_run_startup` guard)
+    /// and operates on the provided resources rather than the Tool's own resources.
+    /// Used by parallel workers that each have their own Resources.
+    pub fn run_shots_on(&self, resources: &mut Resources, shots: usize) {
+        self.schedule.run_shots(resources, shots);
+    }
+
     /// Reset the tool for another run.
     ///
     /// This clears the startup flag, allowing `Startup` systems to run again.
@@ -255,6 +264,12 @@ impl Tool {
     #[must_use]
     pub fn resources_mut(&mut self) -> &mut Resources {
         &mut self.resources
+    }
+
+    /// Get a reference to the schedule (for advanced use).
+    #[must_use]
+    pub fn schedule(&self) -> &Schedule {
+        &self.schedule
     }
 }
 

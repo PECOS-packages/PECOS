@@ -131,6 +131,19 @@ impl Schedule {
             system.run(resources);
         }
     }
+
+    /// Run a complete shot loop: Startup, then per-shot PreShot/Execute/PostShot, then Finish.
+    pub fn run_shots(&self, resources: &mut Resources, shots: usize) {
+        self.run_stage(Stage::Startup, resources);
+
+        for _ in 0..shots {
+            self.run_stage(Stage::PreShot, resources);
+            self.run_stage(Stage::Execute, resources);
+            self.run_stage(Stage::PostShot, resources);
+        }
+
+        self.run_stage(Stage::Finish, resources);
+    }
 }
 
 /// Trait for types that can be converted into a System.

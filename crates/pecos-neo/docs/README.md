@@ -188,12 +188,17 @@ The `sim_neo` API supports different execution strategies via orchestrators:
 
 | Orchestrator | Use Case |
 |--------------|----------|
-| `Sequential` (default) | Simple sequential execution |
-| `MonteCarlo { workers }` | Parallel execution (noiseless or noisy) |
-| `ImportanceSampling` | Biased sampling for rare event estimation |
+| `MonteCarlo { workers: 1 }` (default) | Single-worker execution via Tool schedule |
+| `MonteCarlo { workers: n }` | Parallel execution across n workers |
+| `ImportanceSampling` | Biased sampling for rare event estimation (via Tool schedule) |
+
+All orchestrators run through the Tool/Schedule/Plugin system, so user-registered
+plugins fire correctly regardless of orchestrator. `ImportanceSampling` uses
+`ImportanceSamplingSimPlugin` (which replaces `UnifiedSimulationPlugin`) to run
+`ImportanceSamplingRunner` inside the standard Stage pipeline.
 
 ```rust
-// Sequential (default)
+// Default (single worker)
 sim_neo(circuit).shots(1000).run();
 
 // Parallel Monte Carlo (works with or without noise)

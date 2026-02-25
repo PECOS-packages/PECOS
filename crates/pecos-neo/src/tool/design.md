@@ -123,7 +123,6 @@ pub struct Circuit(pub CommandQueue);
 pub struct SimConfig {
     pub shots: usize,
     pub seed: Option<u64>,
-    pub workers: usize,
 }
 pub struct SimulationResults { ... }
 ```
@@ -179,16 +178,12 @@ impl SimNeoBuilder {
     /// Build the simulation handle
     pub fn build(self) -> Simulation {
         let tool = Tool::new()
-            .add_plugin(SimulationPlugin)
-            .add_plugin(NoisePlugin::new(self.noise))
-            .insert_resource(Circuit(self.circuit))
-            .insert_resource(SimConfig {
-                shots: self.shots,
-                seed: self.seed,
-                workers: self.workers,
-            });
+            .add_plugin(UnifiedSimulationPlugin { explicit_num_qubits: None })
+            .insert_resource(ProgramSourceResource(source))
+            .insert_resource(self.config)
+            .insert_resource(QuantumBackendResource(self.quantum_backend));
 
-        Simulation { tool }
+        Simulation { tool, orchestrator: self.orchestrator, parallel_data }
     }
 }
 ```
@@ -200,6 +195,8 @@ Reusable handle that wraps a configured Tool:
 ```rust
 pub struct Simulation {
     tool: Tool,
+    orchestrator: Orchestrator,
+    parallel_data: Option<ParallelExecutionData>,
 }
 
 impl Simulation {
@@ -251,21 +248,26 @@ let results3 = sim.shots(5000).seed(456).run();
 
 ## Plugins
 
-### SimulationPlugin
+### UnifiedSimulationPlugin
 
-Core simulation functionality:
+Core simulation functionality. Handles both static circuits and classical engines
+via a unified `QuantumRunner` + `CommandSource` abstraction. The same systems run
+in both single-worker and parallel execution (each parallel worker gets its own
+`Resources` and runs the shared schedule).
 
 ```rust
-pub struct SimulationPlugin;
+struct UnifiedSimulationPlugin {
+    explicit_num_qubits: Option<usize>,
+}
 
-impl Plugin for SimulationPlugin {
+impl Plugin for UnifiedSimulationPlugin {
     fn build(&self, tool: &mut Tool) {
         tool.insert_resource(SimulationResults::new())
-            .add_system(Stage::Startup, initialize_simulator)
-            .add_system(Stage::PreShot, reset_and_seed)
-            .add_system(Stage::Execute, run_circuit)
-            .add_system(Stage::PostShot, collect_outcomes)
-            .add_system(Stage::Finish, aggregate_results);
+            .insert_resource(ExplicitNumQubits(self.explicit_num_qubits))
+            .add_system(Stage::Startup, unified_simulation_startup)
+            .add_system(Stage::PreShot, unified_simulation_pre_shot)
+            .add_system(Stage::Execute, unified_simulation_execute)
+            .add_system(Stage::PostShot, unified_simulation_post_shot);
     }
 }
 ```
@@ -289,24 +291,36 @@ impl Plugin for NoisePlugin {
 }
 ```
 
-### ImportanceSamplingPlugin
+### `ImportanceSamplingSimPlugin`
 
-Importance sampling for rare events:
+When the importance sampling orchestrator is selected, this plugin replaces
+`UnifiedSimulationPlugin`. It uses `ImportanceSamplingRunner` internally for
+biased noise with weight tracking, running through the same Stage/Schedule
+system as Monte Carlo execution.
 
 ```rust
-pub struct ImportanceSamplingPlugin {
-    config: ImportanceConfig,
+struct ImportanceSamplingSimPlugin {
+    is_config: ImportanceSamplingBuilder,
+    explicit_num_qubits: Option<usize>,
 }
 
-impl Plugin for ImportanceSamplingPlugin {
+impl Plugin for ImportanceSamplingSimPlugin {
     fn build(&self, tool: &mut Tool) {
-        tool.insert_resource(self.config.clone())
-            .insert_resource(WeightedStatistics::new())
-            .add_system(Stage::PostShot, update_weights)
-            .add_system(Stage::Finish, compute_importance_statistics);
+        // Registers IS-specific systems at Startup/PreShot/Execute/PostShot
+        // Uses ImportanceSamplingRunner<SparseStab> for execution
     }
 }
 ```
+
+This means user-registered plugins and hooks fire correctly during IS execution,
+just as they do for Monte Carlo.
+
+### `ImportanceSamplingPlugin`
+
+A standalone plugin for manual weight tracking (pre-shot reset, post-shot
+recording, finish statistics). Available for users building custom Tool
+configurations. Not used by the IS orchestrator path, which handles its own
+weight storage via `SimulationResults.weights`.
 
 ## Results
 
@@ -393,15 +407,15 @@ let results = tool.resource::<MyResults>();
 - [ ] Basic `run()` execution loop
 
 ### Phase 2: Simulation Support
-- [ ] `SimulationPlugin` with core systems
+- [x] `UnifiedSimulationPlugin` with core systems
 - [ ] `NoisePlugin` integration
-- [ ] `SimNeoBuilder` and `sim_neo()`
-- [ ] `Simulation` handle with reconfiguration
-- [ ] `SimulationResults` type
+- [x] `SimNeoBuilder` and `sim_neo()`
+- [x] `Simulation` handle with reconfiguration
+- [x] `SimulationResults` type
 
 ### Phase 3: Advanced Features
-- [ ] `ImportanceSamplingPlugin`
-- [ ] Parallel execution (workers)
+- [x] `ImportanceSamplingPlugin`
+- [x] Parallel execution (MonteCarlo orchestrator with workers > 1)
 - [ ] `FTValidatorBuilder` and FT validation
 
 ### Phase 4: Integration

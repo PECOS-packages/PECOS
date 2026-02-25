@@ -142,8 +142,6 @@ fn run_check(include_ffi: bool) -> Result<()> {
             "--exclude=pecos",
             "--exclude=pecos-quest",
             "--exclude=pecos-cuquantum", // Requires cuQuantum SDK
-            // pecos-selene-quest has cuda feature that enables pecos-quest/cuda
-            "--exclude=pecos-selene-quest",
             // benchmarks depends on pecos, and --all-features enables pecos/cuda
             "--exclude=benchmarks",
         ];
@@ -179,20 +177,6 @@ fn run_check(include_ffi: bool) -> Result<()> {
             ));
         }
 
-        println!("Checking pecos-selene-quest without cuda...");
-        let selene_quest_features = get_features_excluding("pecos-selene-quest", "cuda")?;
-        let features_arg = format!("--features={selene_quest_features}");
-        if !run_cargo_command(&[
-            "check",
-            "-p",
-            "pecos-selene-quest",
-            "--all-targets",
-            &features_arg,
-        ]) {
-            return Err(Error::Config(
-                "cargo check (pecos-selene-quest) failed".to_string(),
-            ));
-        }
     }
 
     if include_ffi {
@@ -308,8 +292,6 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             "--exclude=pecos",
             "--exclude=pecos-quest",
             "--exclude=pecos-cuquantum", // Requires cuQuantum SDK
-            // pecos-selene-quest has cuda feature that enables pecos-quest/cuda
-            "--exclude=pecos-selene-quest",
             // benchmarks depends on pecos, and --all-features enables pecos/cuda
             "--exclude=benchmarks",
         ];
@@ -360,23 +342,6 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             ));
         }
 
-        println!("Running clippy on pecos-selene-quest without cuda...");
-        let selene_quest_features = get_features_excluding("pecos-selene-quest", "cuda")?;
-        let features_arg = format!("--features={selene_quest_features}");
-        let mut args: Vec<&str> = vec![
-            "clippy",
-            "-p",
-            "pecos-selene-quest",
-            "--all-targets",
-            &features_arg,
-        ];
-        args.extend(&fix_args);
-        args.extend(&["--", "-D", "warnings"]);
-        if !run_cargo_command(&args) {
-            return Err(Error::Config(
-                "cargo clippy (pecos-selene-quest) failed".to_string(),
-            ));
-        }
     }
 
     if include_ffi {

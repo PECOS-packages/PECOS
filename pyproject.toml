@@ -16,9 +16,7 @@ members = [
     "python/pecos-rslib",
     "python/pecos-rslib-cuda",
     "python/quantum-pecos",
-    "python/selene-plugins/pecos-selene-quest",
-    "python/selene-plugins/pecos-selene-qulacs",
-    "python/selene-plugins/pecos-selene-sparsestab",
+    "python/selene-plugins/pecos-selene-stab",
     "python/selene-plugins/pecos-selene-statevec",
 ]
 

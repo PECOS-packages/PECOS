@@ -323,6 +323,7 @@ dependencies = [
  "num-complex 0.4.6",
  "pecos",
  "pecos-core",
+ "pecos-cppsparsesim",
  "pecos-cuquantum",
  "pecos-engines",
  "pecos-gpu-sims",
@@ -3890,31 +3891,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pecos-selene-quest"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "num-complex 0.4.6",
- "pecos-core",
- "pecos-quest",
- "pecos-rng",
- "selene-core 0.2.1",
-]
-
-[[package]]
-name = "pecos-selene-qulacs"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "pecos-core",
- "pecos-qsim",
- "pecos-qulacs",
- "pecos-rng",
- "selene-core 0.2.1",
-]
-
-[[package]]
-name = "pecos-selene-sparsestab"
+name = "pecos-selene-stab"
 version = "0.1.1"
 dependencies = [
  "anyhow",
@@ -3931,7 +3908,6 @@ dependencies = [
  "anyhow",
  "pecos-core",
  "pecos-qsim",
- "pecos-rng",
  "selene-core 0.2.1",
 ]
 

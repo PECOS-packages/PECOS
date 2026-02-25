@@ -11,9 +11,7 @@ resolution-markers = [
 members = [
     "pecos-rslib",
     "pecos-rslib-cuda",
-    "pecos-selene-quest",
-    "pecos-selene-qulacs",
-    "pecos-selene-sparsestab",
+    "pecos-selene-stab",
     "pecos-selene-statevec",
     "pecos-workspace",
     "quantum-pecos",
@@ -2652,57 +2650,9 @@ dev = []
 test = [{ name = "pytest", specifier = ">=7.0" }]
 
 [[package]]
-name = "pecos-selene-quest"
+name = "pecos-selene-stab"
 version = "0.8.0.dev3"
-source = { editable = "python/selene-plugins/pecos-selene-quest" }
-dependencies = [
-    { name = "selene-core" },
-]
-
-[package.optional-dependencies]
-test = [
-    { name = "guppylang" },
-    { name = "pytest" },
-    { name = "selene-sim" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
-    { name = "selene-core", specifier = ">=0.2" },
-    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
-]
-provides-extras = ["test"]
-
-[[package]]
-name = "pecos-selene-qulacs"
-version = "0.8.0.dev3"
-source = { editable = "python/selene-plugins/pecos-selene-qulacs" }
-dependencies = [
-    { name = "selene-core" },
-]
-
-[package.optional-dependencies]
-test = [
-    { name = "guppylang" },
-    { name = "pytest" },
-    { name = "selene-sim" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
-    { name = "selene-core", specifier = ">=0.2" },
-    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
-]
-provides-extras = ["test"]
-
-[[package]]
-name = "pecos-selene-sparsestab"
-version = "0.8.0.dev3"
-source = { editable = "python/selene-plugins/pecos-selene-sparsestab" }
+source = { editable = "python/selene-plugins/pecos-selene-stab" }
 dependencies = [
     { name = "selene-core" },
 ]

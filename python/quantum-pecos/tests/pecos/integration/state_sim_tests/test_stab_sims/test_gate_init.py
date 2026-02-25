@@ -10,12 +10,11 @@
 # specific language governing permissions and limitations under the License.
 
 """Integration tests for stabilizer simulator gate initialization."""
-from pecos.simulators import SparseSim, SparseSimCpp, SparseSimPy
+from pecos.simulators import SparseSim, SparseSimPy
 
 states = [
     SparseSimPy,
     SparseSim,
-    SparseSimCpp,
 ]
 
 

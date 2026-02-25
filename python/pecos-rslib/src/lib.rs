@@ -20,7 +20,6 @@ mod array_buffer;
 mod bit_int_bindings;
 mod byte_message_bindings;
 mod coin_toss_bindings;
-mod cpp_sparse_sim_bindings;
 mod dag_circuit_bindings;
 mod decoder_bindings;
 mod dtypes;
@@ -52,6 +51,7 @@ mod simulators_module;
 mod sparse_sim;
 mod sparse_stab_bindings;
 mod sparse_stab_engine_bindings;
+mod stab_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
 mod types_module;
@@ -64,7 +64,6 @@ mod wasm_program_bindings;
 use bit_int_bindings::PyBitInt;
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
 use coin_toss_bindings::PyCoinToss;
-use cpp_sparse_sim_bindings::PySparseSimCpp;
 use engine_builders::{PyHugr, PyPhirJson, PyQasm, PyQis};
 use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
@@ -74,6 +73,7 @@ use quest_bindings::{QuestDensityMatrix, QuestStateVec};
 use qulacs_bindings::PyQulacs;
 use sparse_stab_bindings::PySparseSim;
 use sparse_stab_engine_bindings::PySparseStabEngine;
+use stab_bindings::PyStab;
 use state_vec_bindings::PyStateVec;
 use state_vec_engine_bindings::PyStateVecEngine;
 #[cfg(feature = "wasm")]
@@ -199,8 +199,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     }
 
     m.add_class::<PySparseSim>()?;
+    m.add_class::<PyStab>()?;
     m.add_class::<phir_json_bridge::PhirJsonEngine>()?;
-    m.add_class::<PySparseSimCpp>()?;
     m.add_class::<PyStateVec>()?;
     m.add_class::<PyQulacs>()?;
     m.add_class::<PyCoinToss>()?;

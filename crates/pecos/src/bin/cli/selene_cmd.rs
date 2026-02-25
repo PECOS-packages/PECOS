@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 /// Selene plugin definition
 struct SelenePlugin {
-    /// Rust crate name (e.g., "pecos-selene-quest")
+    /// Rust crate name (e.g., "pecos-selene-statevec")
     crate_name: &'static str,
-    /// Library base name without extension (e.g., `pecos_selene_quest`)
+    /// Library base name without extension (e.g., `pecos_selene_statevec`)
     lib_name: &'static str,
     /// Python package directory relative to repo root
     python_pkg_path: &'static str,
@@ -20,22 +20,9 @@ struct SelenePlugin {
 /// All known Selene plugins
 const PLUGINS: &[SelenePlugin] = &[
     SelenePlugin {
-        crate_name: "pecos-selene-quest",
-        lib_name: "pecos_selene_quest",
-        python_pkg_path: "python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest",
-        // CUDA backend library for GPU acceleration (built when --features cuda is used)
-        extra_libs: &["pecos_quest_cuda"],
-    },
-    SelenePlugin {
-        crate_name: "pecos-selene-qulacs",
-        lib_name: "pecos_selene_qulacs",
-        python_pkg_path: "python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs",
-        extra_libs: &[],
-    },
-    SelenePlugin {
-        crate_name: "pecos-selene-sparsestab",
-        lib_name: "pecos_selene_sparsestab",
-        python_pkg_path: "python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab",
+        crate_name: "pecos-selene-stab",
+        lib_name: "pecos_selene_stab",
+        python_pkg_path: "python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab",
         extra_libs: &[],
     },
     SelenePlugin {

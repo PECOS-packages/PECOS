@@ -230,18 +230,45 @@ pub fn get_repo_root_from_manifest() -> Option<PathBuf> {
     None
 }
 
-/// Find the Cargo project root by searching for Cargo.toml
+/// Find the Cargo project root by searching for Cargo.toml.
+///
+/// Prefers a workspace root: walks all the way up from cwd and returns the
+/// first ancestor whose `Cargo.toml` contains a `[workspace]` section.
+/// Falls back to the nearest `Cargo.toml` or `Cargo.lock` (same behavior as
+/// before for non-workspace projects).
 #[must_use]
 pub fn find_cargo_project_root() -> Option<PathBuf> {
     let current_dir = std::env::current_dir().ok()?;
-    let mut path = current_dir.as_path();
+    find_cargo_project_root_from(&current_dir)
+}
+
+/// Core logic for [`find_cargo_project_root`], starting from the given path.
+fn find_cargo_project_root_from(start: &Path) -> Option<PathBuf> {
+    let mut path = start;
+    let mut first_match: Option<PathBuf> = None;
 
     loop {
-        if path.join("Cargo.toml").exists() || path.join("Cargo.lock").exists() {
-            return Some(path.to_path_buf());
+        let cargo_toml = path.join("Cargo.toml");
+        if cargo_toml.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&cargo_toml)
+                && contents.contains("[workspace]")
+            {
+                return Some(path.to_path_buf());
+            }
+            if first_match.is_none() {
+                first_match = Some(path.to_path_buf());
+            }
         }
-        path = path.parent()?;
+        if first_match.is_none() && path.join("Cargo.lock").exists() {
+            first_match = Some(path.to_path_buf());
+        }
+        match path.parent() {
+            Some(parent) => path = parent,
+            None => break,
+        }
     }
+
+    first_match
 }
 
 /// Print a helpful error message when LLVM 14 is not found
@@ -284,4 +311,111 @@ pub fn print_llvm_not_found_error() {
     }
 
     eprintln!("═══════════════════════════════════════════════════════════════\n");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn workspace_root_preferred_over_subcrate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // workspace root
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/foo\"]\n",
+        )
+        .unwrap();
+
+        // subcrate
+        let subcrate = root.join("crates").join("foo");
+        fs::create_dir_all(&subcrate).unwrap();
+        fs::write(
+            subcrate.join("Cargo.toml"),
+            "[package]\nname = \"foo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        // Starting from the subcrate should return the workspace root.
+        let result = find_cargo_project_root_from(&subcrate);
+        assert_eq!(result.as_deref(), Some(root));
+    }
+
+    #[test]
+    fn returns_first_cargo_toml_when_no_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // standalone project (no [workspace] section)
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("Cargo.toml"),
+            "[package]\nname = \"standalone\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        let subdir = project.join("src");
+        fs::create_dir_all(&subdir).unwrap();
+
+        let result = find_cargo_project_root_from(&subdir);
+        assert_eq!(result.as_deref(), Some(project.as_path()));
+    }
+
+    #[test]
+    fn returns_cargo_lock_dir_when_no_cargo_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Directory with only Cargo.lock
+        fs::write(root.join("Cargo.lock"), "").unwrap();
+
+        let subdir = root.join("deep").join("nested");
+        fs::create_dir_all(&subdir).unwrap();
+
+        let result = find_cargo_project_root_from(&subdir);
+        assert_eq!(result.as_deref(), Some(root));
+    }
+
+    #[test]
+    fn returns_none_when_no_cargo_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty = tmp.path().join("empty");
+        fs::create_dir_all(&empty).unwrap();
+
+        let result = find_cargo_project_root_from(&empty);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn workspace_root_found_above_intermediate_crate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // workspace root
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )
+        .unwrap();
+
+        // intermediate crate (not a workspace)
+        let mid = root.join("crates").join("mid");
+        fs::create_dir_all(&mid).unwrap();
+        fs::write(
+            mid.join("Cargo.toml"),
+            "[package]\nname = \"mid\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        // deep src directory
+        let deep = mid.join("src").join("submod");
+        fs::create_dir_all(&deep).unwrap();
+
+        let result = find_cargo_project_root_from(&deep);
+        assert_eq!(result.as_deref(), Some(root));
+    }
 }

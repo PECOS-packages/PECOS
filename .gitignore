@@ -34,6 +34,12 @@ python/quantum-pecos/tests/docs/generated/
 # Do not track external files for C++
 **/cuquantum_wrapper/extern/**/*
 
+# Generated ZX diagram output (from pecos-zx examples)
+*.tex
+*.tikz
+/*.svg
+crates/**/*.svg
+
 ### Add custom ignores above this line ###
 ## Copied over from https://github.com/github/gitignore/blob/main/Python.gitignore
 # Byte-compiled / optimized / DLL files

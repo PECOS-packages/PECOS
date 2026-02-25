@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use pecos_core::{Gate, QubitId};
+use pecos_core::{ClassicalBitId, Gate, QubitId};
 use pecos_num::graph::Attribute;
 
 /// A read-only view of a gate in a quantum circuit.
@@ -122,6 +122,23 @@ pub trait Circuit {
     /// Returns a specific attribute for a gate.
     fn gate_attr(&self, gate: GateHandle, key: &str) -> Option<&Attribute> {
         self.gate_attrs(gate).and_then(|attrs| attrs.get(key))
+    }
+
+    // ==================== Classical bit access ====================
+
+    /// Returns the number of classical bits in the circuit.
+    fn num_cbits(&self) -> usize {
+        0
+    }
+
+    /// Returns the classical bit that receives a measurement outcome for a gate.
+    fn measurement_target(&self, _gate: GateHandle) -> Option<ClassicalBitId> {
+        None
+    }
+
+    /// Returns the condition (classical bit, expected value) for a conditional gate.
+    fn condition(&self, _gate: GateHandle) -> Option<(ClassicalBitId, bool)> {
+        None
     }
 }
 

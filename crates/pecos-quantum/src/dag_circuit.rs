@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, Nanoseconds, QubitId};
+use pecos_core::{Angle64, ClassicalBitId, Gate, Nanoseconds, QubitId};
 use pecos_num::dag::{DAG, DagWouldCycleError};
 
 use crate::circuit::{Circuit, CircuitMut, GateHandle, GateView};
@@ -381,6 +381,100 @@ impl PrepHandle<'_> {
     }
 }
 
+/// Builder for adding a gate conditioned on a classical bit value.
+///
+/// Created by [`DagCircuit::if_bit`]. Wraps `&mut DagCircuit` and sets the
+/// condition on the next gate added through this builder.
+///
+/// # Example
+/// ```
+/// use pecos_quantum::DagCircuit;
+/// use pecos_core::ClassicalBitId;
+///
+/// let mut circuit = DagCircuit::new();
+/// circuit.set_num_cbits(1);
+/// circuit.h(0);
+/// circuit.mz_to(0, ClassicalBitId::new(0));
+/// circuit.if_bit(ClassicalBitId::new(0), true).x(0);
+/// ```
+pub struct ConditionalBuilder<'a> {
+    circuit: &'a mut DagCircuit,
+    cbit: ClassicalBitId,
+    value: bool,
+}
+
+impl<'a> ConditionalBuilder<'a> {
+    /// Internal: add a gate and set the condition on it.
+    fn add_conditioned(&mut self, gate: Gate) -> usize {
+        let node = self.circuit.add_gate_auto_wire(gate);
+        self.circuit
+            .conditions
+            .insert(node, (self.cbit, self.value));
+        node
+    }
+
+    /// Apply a conditional X gate.
+    pub fn x(mut self, q: impl Into<QubitId>) -> &'a mut DagCircuit {
+        self.add_conditioned(Gate::x(&[q.into()]));
+        self.circuit
+    }
+
+    /// Apply a conditional Y gate.
+    pub fn y(mut self, q: impl Into<QubitId>) -> &'a mut DagCircuit {
+        self.add_conditioned(Gate::y(&[q.into()]));
+        self.circuit
+    }
+
+    /// Apply a conditional Z gate.
+    pub fn z(mut self, q: impl Into<QubitId>) -> &'a mut DagCircuit {
+        self.add_conditioned(Gate::z(&[q.into()]));
+        self.circuit
+    }
+
+    /// Apply a conditional Hadamard gate.
+    pub fn h(mut self, q: impl Into<QubitId>) -> &'a mut DagCircuit {
+        self.add_conditioned(Gate::h(&[q.into()]));
+        self.circuit
+    }
+
+    /// Apply a conditional CX (CNOT) gate.
+    pub fn cx(
+        mut self,
+        control: impl Into<QubitId>,
+        target: impl Into<QubitId>,
+    ) -> &'a mut DagCircuit {
+        let c = control.into();
+        let t = target.into();
+        self.add_conditioned(Gate::cx(&[(c, t)]));
+        self.circuit
+    }
+
+    /// Apply a conditional CZ gate.
+    pub fn cz(mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &'a mut DagCircuit {
+        self.add_conditioned(Gate::simple(GateType::CZ, vec![q1.into(), q2.into()]));
+        self.circuit
+    }
+
+    /// Apply a conditional SZ (S) gate.
+    pub fn sz(mut self, q: impl Into<QubitId>) -> &'a mut DagCircuit {
+        self.add_conditioned(Gate::simple(GateType::SZ, vec![q.into()]));
+        self.circuit
+    }
+
+    /// Apply a conditional RZ gate.
+    pub fn rz(mut self, theta: impl Into<Angle64>, q: impl Into<QubitId>) -> &'a mut DagCircuit {
+        self.add_conditioned(Gate::rz(theta.into(), &[q.into()]));
+        self.circuit
+    }
+
+    /// Apply a conditional gate of arbitrary type.
+    #[must_use]
+    pub fn gate(mut self, gate: Gate) -> &'a mut DagCircuit {
+        self.add_conditioned(gate);
+        self.circuit
+    }
+}
+
 /// A directed acyclic graph representation of a quantum circuit.
 ///
 /// Each node in the DAG represents a quantum gate. Edges represent qubit wires
@@ -430,6 +524,12 @@ pub struct DagCircuit {
     last_node: Option<usize>,
     /// Maximum qubit index seen so far (updated incrementally on gate addition).
     max_qubit: usize,
+    /// Classical bit that receives a measurement outcome (node -> cbit).
+    measurement_targets: BTreeMap<usize, ClassicalBitId>,
+    /// Condition for conditional gates: (`classical_bit`, `expected_value`).
+    conditions: BTreeMap<usize, (ClassicalBitId, bool)>,
+    /// Number of classical bits in this circuit.
+    num_cbits: usize,
 }
 
 impl DagCircuit {
@@ -443,6 +543,9 @@ impl DagCircuit {
             qubit_heads: BTreeMap::new(),
             last_node: None,
             max_qubit: 0,
+            measurement_targets: BTreeMap::new(),
+            conditions: BTreeMap::new(),
+            num_cbits: 0,
         }
     }
 
@@ -462,6 +565,9 @@ impl DagCircuit {
             qubit_heads: BTreeMap::new(),
             last_node: None,
             max_qubit: 0,
+            measurement_targets: BTreeMap::new(),
+            conditions: BTreeMap::new(),
+            num_cbits: 0,
         }
     }
 
@@ -504,6 +610,10 @@ impl DagCircuit {
         for edge_id in in_edges.iter().chain(out_edges.iter()) {
             self.edge_qubits.remove(edge_id);
         }
+
+        // Remove classical bit mappings
+        self.measurement_targets.remove(&node);
+        self.conditions.remove(&node);
 
         self.dag.remove_node(node);
         if node < self.gates.len() {
@@ -928,8 +1038,11 @@ impl DagCircuit {
     // - Two-qubit rotations: `rzz(theta, q1, q2)`
     // - All methods return `&mut Self` for chaining
 
-    /// Internal helper: adds a gate and auto-wires it to previous gates on the same qubits.
-    fn add_gate_auto_wire(&mut self, gate: Gate) -> usize {
+    /// Adds a gate and auto-wires it to previous gates on the same qubits.
+    ///
+    /// This is the core builder method: it adds a gate, then for each qubit the gate
+    /// touches, connects it to the most recently added gate on that qubit.
+    pub fn add_gate_auto_wire(&mut self, gate: Gate) -> usize {
         let qubits = gate.qubits.clone();
         let node = self.add_gate(gate);
 
@@ -1381,6 +1494,107 @@ impl DagCircuit {
         self
     }
 
+    // -------------------- Classical bit operations --------------------
+
+    /// Returns the number of classical bits in this circuit.
+    #[must_use]
+    #[inline]
+    pub fn num_cbits(&self) -> usize {
+        self.num_cbits
+    }
+
+    /// Sets the number of classical bits in this circuit.
+    pub fn set_num_cbits(&mut self, n: usize) {
+        self.num_cbits = n;
+    }
+
+    /// Measure a qubit in the Z basis and store the result in a classical bit.
+    ///
+    /// Returns a `MeasureHandle` that allows attaching metadata via `.meta()`.
+    ///
+    /// # Example
+    /// ```
+    /// use pecos_quantum::DagCircuit;
+    /// use pecos_core::ClassicalBitId;
+    ///
+    /// let mut circuit = DagCircuit::new();
+    /// circuit.set_num_cbits(1);
+    /// circuit.h(0);
+    /// circuit.mz_to(0, ClassicalBitId::new(0));
+    /// assert_eq!(circuit.measurement_target(circuit.last_added_node().unwrap()), Some(ClassicalBitId::new(0)));
+    /// ```
+    pub fn mz_to(
+        &mut self,
+        q: impl Into<QubitId>,
+        cbit: impl Into<ClassicalBitId>,
+    ) -> MeasureHandle<'_> {
+        let node = self.add_gate_auto_wire(Gate::measure(&[q.into()]));
+        self.measurement_targets.insert(node, cbit.into());
+        MeasureHandle {
+            circuit: self,
+            node,
+        }
+    }
+
+    /// Returns the classical bit that receives the measurement outcome for a node.
+    #[must_use]
+    pub fn measurement_target(&self, node: usize) -> Option<ClassicalBitId> {
+        self.measurement_targets.get(&node).copied()
+    }
+
+    /// Returns all measurement target mappings.
+    #[must_use]
+    pub fn measurement_targets(&self) -> &BTreeMap<usize, ClassicalBitId> {
+        &self.measurement_targets
+    }
+
+    /// Returns the condition for a conditional gate.
+    #[must_use]
+    pub fn condition(&self, node: usize) -> Option<(ClassicalBitId, bool)> {
+        self.conditions.get(&node).copied()
+    }
+
+    /// Returns all condition mappings.
+    #[must_use]
+    pub fn conditions(&self) -> &BTreeMap<usize, (ClassicalBitId, bool)> {
+        &self.conditions
+    }
+
+    /// Creates a conditional builder that sets a condition on the next gate added.
+    ///
+    /// # Example
+    /// ```
+    /// use pecos_quantum::DagCircuit;
+    /// use pecos_core::ClassicalBitId;
+    ///
+    /// let mut circuit = DagCircuit::new();
+    /// circuit.set_num_cbits(1);
+    /// circuit.h(0);
+    /// circuit.mz_to(0, ClassicalBitId::new(0));
+    /// circuit.if_bit(ClassicalBitId::new(0), true).x(0);
+    /// ```
+    pub fn if_bit(
+        &mut self,
+        cbit: impl Into<ClassicalBitId>,
+        value: bool,
+    ) -> ConditionalBuilder<'_> {
+        ConditionalBuilder {
+            circuit: self,
+            cbit: cbit.into(),
+            value,
+        }
+    }
+
+    /// Sets a measurement target on an existing node.
+    pub fn set_measurement_target(&mut self, node: usize, cbit: ClassicalBitId) {
+        self.measurement_targets.insert(node, cbit);
+    }
+
+    /// Sets a condition on an existing node.
+    pub fn set_condition(&mut self, node: usize, cbit: ClassicalBitId, value: bool) {
+        self.conditions.insert(node, (cbit, value));
+    }
+
     // -------------------- Aliases for compatibility --------------------
 
     /// Alias for `mz` - measure a qubit.
@@ -1633,6 +1847,18 @@ impl Circuit for DagCircuit {
 
     fn gate_attrs(&self, gate: GateHandle) -> Option<&BTreeMap<String, Attribute>> {
         self.gate_attrs(gate)
+    }
+
+    fn num_cbits(&self) -> usize {
+        self.num_cbits()
+    }
+
+    fn measurement_target(&self, gate: GateHandle) -> Option<ClassicalBitId> {
+        DagCircuit::measurement_target(self, gate)
+    }
+
+    fn condition(&self, gate: GateHandle) -> Option<(ClassicalBitId, bool)> {
+        DagCircuit::condition(self, gate)
     }
 }
 
@@ -2353,6 +2579,150 @@ mod tests {
             Some(&Attribute::String("bell".to_string()))
         );
         assert_eq!(circuit.get_attr("version"), Some(&Attribute::Int(1)));
+    }
+
+    // ==================== Classical bit tests ====================
+
+    #[test]
+    fn test_classical_bit_defaults() {
+        let circuit = DagCircuit::new();
+        assert_eq!(circuit.num_cbits(), 0);
+        assert_eq!(circuit.measurement_target(0), None);
+        assert_eq!(circuit.condition(0), None);
+    }
+
+    #[test]
+    fn test_mz_to_sets_measurement_target() {
+        let mut circuit = DagCircuit::new();
+        circuit.set_num_cbits(2);
+        circuit.h(0);
+        circuit.mz_to(0, ClassicalBitId::new(0));
+        let node = circuit.last_added_node().unwrap();
+        assert_eq!(
+            circuit.measurement_target(node),
+            Some(ClassicalBitId::new(0))
+        );
+    }
+
+    #[test]
+    fn test_if_bit_sets_condition() {
+        let mut circuit = DagCircuit::new();
+        circuit.set_num_cbits(1);
+        circuit.h(0);
+        circuit.mz_to(0, ClassicalBitId::new(0));
+        circuit.if_bit(ClassicalBitId::new(0), true).x(0);
+
+        // The last gate should be the conditional X
+        let topo = circuit.topological_order();
+        let last_node = *topo.last().unwrap();
+        assert_eq!(circuit.gate(last_node).unwrap().gate_type, GateType::X);
+        assert_eq!(
+            circuit.condition(last_node),
+            Some((ClassicalBitId::new(0), true))
+        );
+    }
+
+    #[test]
+    fn test_conditional_builder_gates() {
+        let mut circuit = DagCircuit::new();
+        circuit.set_num_cbits(2);
+        circuit.h(0);
+
+        // Test various conditional gates
+        circuit.if_bit(ClassicalBitId::new(0), true).z(0);
+        let z_node = circuit.last_added_node().unwrap();
+        assert_eq!(circuit.gate(z_node).unwrap().gate_type, GateType::Z);
+        assert_eq!(
+            circuit.condition(z_node),
+            Some((ClassicalBitId::new(0), true))
+        );
+
+        circuit.if_bit(ClassicalBitId::new(1), false).h(0);
+        let h_node = circuit.last_added_node().unwrap();
+        assert_eq!(circuit.gate(h_node).unwrap().gate_type, GateType::H);
+        assert_eq!(
+            circuit.condition(h_node),
+            Some((ClassicalBitId::new(1), false))
+        );
+    }
+
+    #[test]
+    fn test_conditional_cx() {
+        let mut circuit = DagCircuit::new();
+        circuit.set_num_cbits(1);
+        circuit.if_bit(ClassicalBitId::new(0), true).cx(0, 1);
+
+        let node = circuit.last_added_node().unwrap();
+        assert_eq!(circuit.gate(node).unwrap().gate_type, GateType::CX);
+        assert_eq!(
+            circuit.condition(node),
+            Some((ClassicalBitId::new(0), true))
+        );
+    }
+
+    #[test]
+    fn test_conditional_arbitrary_gate() {
+        let mut circuit = DagCircuit::new();
+        circuit.set_num_cbits(1);
+        let _ = circuit
+            .if_bit(ClassicalBitId::new(0), true)
+            .gate(Gate::simple(GateType::SZ, vec![QubitId::from(0)]));
+
+        let node = circuit.last_added_node().unwrap();
+        assert_eq!(circuit.gate(node).unwrap().gate_type, GateType::SZ);
+        assert_eq!(
+            circuit.condition(node),
+            Some((ClassicalBitId::new(0), true))
+        );
+    }
+
+    #[test]
+    fn test_num_cbits_tracking() {
+        let mut circuit = DagCircuit::new();
+        assert_eq!(circuit.num_cbits(), 0);
+        circuit.set_num_cbits(3);
+        assert_eq!(circuit.num_cbits(), 3);
+        circuit.set_num_cbits(5);
+        assert_eq!(circuit.num_cbits(), 5);
+    }
+
+    #[test]
+    fn test_remove_gate_cleans_classical_maps() {
+        let mut circuit = DagCircuit::new();
+        circuit.set_num_cbits(1);
+        circuit.h(0);
+        circuit.mz_to(0, ClassicalBitId::new(0));
+        let mz_node = circuit.last_added_node().unwrap();
+        assert!(circuit.measurement_target(mz_node).is_some());
+
+        circuit.remove_gate(mz_node);
+        assert!(circuit.measurement_target(mz_node).is_none());
+    }
+
+    #[test]
+    fn test_teleportation_pattern() {
+        // Build a standard teleportation circuit with classical control
+        let mut dag = DagCircuit::new();
+        dag.set_num_cbits(2);
+
+        // Bell pair
+        dag.h(1);
+        dag.cx(1, 2);
+
+        // Bell measurement
+        dag.cx(0, 1);
+        dag.h(0);
+        dag.mz_to(0, ClassicalBitId::new(0));
+        dag.mz_to(1, ClassicalBitId::new(1));
+
+        // Corrections
+        dag.if_bit(ClassicalBitId::new(1), true).x(2);
+        dag.if_bit(ClassicalBitId::new(0), true).z(2);
+
+        assert_eq!(dag.gate_count(), 8);
+        assert_eq!(dag.num_cbits(), 2);
+        assert_eq!(dag.measurement_targets().len(), 2);
+        assert_eq!(dag.conditions().len(), 2);
     }
 
     #[test]

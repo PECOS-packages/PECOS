@@ -61,7 +61,7 @@
 //! ```
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, GateQubits, Nanoseconds, QubitId};
+use pecos_core::{Angle64, ClassicalBitId, Gate, GateQubits, Nanoseconds, QubitId};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Attribute;
@@ -372,6 +372,12 @@ pub struct TickCircuit {
     next_tick: usize,
     /// Circuit-level metadata.
     circuit_attrs: BTreeMap<String, Attribute>,
+    /// Classical bit that receives a measurement outcome: (`tick_idx`, `gate_idx`) -> cbit.
+    measurement_targets: BTreeMap<(usize, usize), ClassicalBitId>,
+    /// Condition for conditional gates: (`tick_idx`, `gate_idx`) -> (cbit, `expected_value`).
+    conditions: BTreeMap<(usize, usize), (ClassicalBitId, bool)>,
+    /// Number of classical bits in this circuit.
+    num_cbits: usize,
 }
 
 /// Handle to a specific tick for adding gates.
@@ -452,6 +458,9 @@ impl TickCircuit {
             ticks: Vec::new(),
             next_tick: 0,
             circuit_attrs: BTreeMap::new(),
+            measurement_targets: BTreeMap::new(),
+            conditions: BTreeMap::new(),
+            num_cbits: 0,
         }
     }
 
@@ -535,6 +544,67 @@ impl TickCircuit {
     }
 
     // =========================================================================
+    // Classical bit operations
+    // =========================================================================
+
+    /// Returns the number of classical bits in this circuit.
+    #[must_use]
+    #[inline]
+    pub fn num_cbits(&self) -> usize {
+        self.num_cbits
+    }
+
+    /// Sets the number of classical bits in this circuit.
+    pub fn set_num_cbits(&mut self, n: usize) {
+        self.num_cbits = n;
+    }
+
+    /// Returns the classical bit target for a measurement at (`tick_idx`, `gate_idx`).
+    #[must_use]
+    pub fn measurement_target(&self, tick_idx: usize, gate_idx: usize) -> Option<ClassicalBitId> {
+        self.measurement_targets.get(&(tick_idx, gate_idx)).copied()
+    }
+
+    /// Returns all measurement target mappings.
+    #[must_use]
+    pub fn measurement_targets(&self) -> &BTreeMap<(usize, usize), ClassicalBitId> {
+        &self.measurement_targets
+    }
+
+    /// Sets a measurement target for a gate at (`tick_idx`, `gate_idx`).
+    pub fn set_measurement_target(
+        &mut self,
+        tick_idx: usize,
+        gate_idx: usize,
+        cbit: ClassicalBitId,
+    ) {
+        self.measurement_targets.insert((tick_idx, gate_idx), cbit);
+    }
+
+    /// Returns the condition for a gate at (`tick_idx`, `gate_idx`).
+    #[must_use]
+    pub fn condition(&self, tick_idx: usize, gate_idx: usize) -> Option<(ClassicalBitId, bool)> {
+        self.conditions.get(&(tick_idx, gate_idx)).copied()
+    }
+
+    /// Returns all condition mappings.
+    #[must_use]
+    pub fn conditions(&self) -> &BTreeMap<(usize, usize), (ClassicalBitId, bool)> {
+        &self.conditions
+    }
+
+    /// Sets a condition for a gate at (`tick_idx`, `gate_idx`).
+    pub fn set_condition(
+        &mut self,
+        tick_idx: usize,
+        gate_idx: usize,
+        cbit: ClassicalBitId,
+        value: bool,
+    ) {
+        self.conditions.insert((tick_idx, gate_idx), (cbit, value));
+    }
+
+    // =========================================================================
     // Circuit manipulation
     // =========================================================================
 
@@ -593,6 +663,9 @@ impl TickCircuit {
         self.ticks.clear();
         self.next_tick = 0;
         self.circuit_attrs.clear();
+        self.measurement_targets.clear();
+        self.conditions.clear();
+        self.num_cbits = 0;
     }
 
     /// Reserve empty ticks in advance.
@@ -1468,6 +1541,10 @@ impl From<&DagCircuit> for TickCircuit {
     /// ```
     fn from(dag: &DagCircuit) -> Self {
         let mut tc = TickCircuit::new();
+        tc.set_num_cbits(dag.num_cbits());
+
+        // Map from DAG node ID to (tick_idx, gate_idx) in the TickCircuit
+        let mut node_to_tick_gate: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
 
         for layer in dag.layers() {
             // Allocate a new tick for this layer
@@ -1481,6 +1558,7 @@ impl From<&DagCircuit> for TickCircuit {
                 for node_id in layer {
                     if let Some(gate) = dag.gate(node_id) {
                         let gate_idx = tick.add_gate(gate.clone());
+                        node_to_tick_gate.insert(node_id, (tick_idx, gate_idx));
 
                         // Copy gate attributes
                         if let Some(attrs) = dag.gate_attrs(node_id) {
@@ -1490,6 +1568,18 @@ impl From<&DagCircuit> for TickCircuit {
                         }
                     }
                 }
+            }
+        }
+
+        // Copy classical bit mappings
+        for (&node_id, &cbit) in dag.measurement_targets() {
+            if let Some(&(tick_idx, gate_idx)) = node_to_tick_gate.get(&node_id) {
+                tc.set_measurement_target(tick_idx, gate_idx, cbit);
+            }
+        }
+        for (&node_id, &(cbit, value)) in dag.conditions() {
+            if let Some(&(tick_idx, gate_idx)) = node_to_tick_gate.get(&node_id) {
+                tc.set_condition(tick_idx, gate_idx, cbit, value);
             }
         }
 
@@ -1545,6 +1635,7 @@ impl From<&TickCircuit> for DagCircuit {
     /// ```
     fn from(tc: &TickCircuit) -> Self {
         let mut dag = DagCircuit::new();
+        dag.set_num_cbits(tc.num_cbits());
 
         // Track the last node for each qubit to connect wires
         let mut last_node: BTreeMap<QubitId, usize> = BTreeMap::new();
@@ -1565,6 +1656,14 @@ impl From<&TickCircuit> for DagCircuit {
                 // Copy gate attributes
                 for (key, value) in tick.gate_attrs(gate_idx) {
                     dag.set_gate_attr(node, key, value.clone());
+                }
+
+                // Copy classical bit mappings
+                if let Some(cbit) = tc.measurement_target(tick_idx, gate_idx) {
+                    dag.set_measurement_target(node, cbit);
+                }
+                if let Some((cbit, value)) = tc.condition(tick_idx, gate_idx) {
+                    dag.set_condition(node, cbit, value);
                 }
             }
 
@@ -2351,6 +2450,72 @@ mod tests {
         let removed = tc.discard(&[0, 2], 0);
         assert_eq!(removed, Some(2));
         assert_eq!(tc.get_tick(0).unwrap().len(), 1);
+    }
+
+    // ==================== Classical bit tests ====================
+
+    #[test]
+    fn test_tick_circuit_classical_defaults() {
+        let tc = TickCircuit::new();
+        assert_eq!(tc.num_cbits(), 0);
+        assert_eq!(tc.measurement_target(0, 0), None);
+        assert_eq!(tc.condition(0, 0), None);
+    }
+
+    #[test]
+    fn test_tick_circuit_classical_bits() {
+        let mut tc = TickCircuit::new();
+        tc.set_num_cbits(2);
+        assert_eq!(tc.num_cbits(), 2);
+
+        tc.tick().h(&[0]);
+        tc.tick().mz(&[0]);
+        tc.set_measurement_target(1, 0, ClassicalBitId::new(0));
+        assert_eq!(tc.measurement_target(1, 0), Some(ClassicalBitId::new(0)));
+
+        tc.tick().x(&[1]);
+        tc.set_condition(2, 0, ClassicalBitId::new(0), true);
+        assert_eq!(tc.condition(2, 0), Some((ClassicalBitId::new(0), true)));
+    }
+
+    #[test]
+    fn test_tick_circuit_reset_clears_classical() {
+        let mut tc = TickCircuit::new();
+        tc.set_num_cbits(2);
+        tc.tick().h(&[0]);
+        tc.tick().mz(&[0]);
+        tc.set_measurement_target(1, 0, ClassicalBitId::new(0));
+
+        tc.reset();
+        assert_eq!(tc.num_cbits(), 0);
+        assert!(tc.measurement_targets().is_empty());
+        assert!(tc.conditions().is_empty());
+    }
+
+    #[test]
+    fn test_roundtrip_dag_tick_classical_bits() {
+        // Build a DagCircuit with classical bits
+        let mut dag1 = DagCircuit::new();
+        dag1.set_num_cbits(2);
+        dag1.h(0);
+        dag1.cx(0, 1);
+        dag1.mz_to(0, ClassicalBitId::new(0));
+        dag1.mz_to(1, ClassicalBitId::new(1));
+        dag1.if_bit(ClassicalBitId::new(0), true).x(1);
+        dag1.if_bit(ClassicalBitId::new(1), false).z(0);
+
+        // Convert to TickCircuit
+        let tc = TickCircuit::from(&dag1);
+        assert_eq!(tc.num_cbits(), 2);
+        assert_eq!(tc.measurement_targets().len(), 2);
+        assert_eq!(tc.conditions().len(), 2);
+
+        // Convert back to DagCircuit
+        let dag2 = DagCircuit::from(&tc);
+        assert_eq!(dag2.num_cbits(), 2);
+        assert_eq!(dag2.measurement_targets().len(), 2);
+        assert_eq!(dag2.conditions().len(), 2);
+        assert_eq!(dag2.gate_count(), dag1.gate_count());
     }
 
     #[test]

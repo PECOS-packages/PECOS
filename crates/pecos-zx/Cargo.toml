@@ -1,0 +1,31 @@
+[package]
+name = "pecos-zx"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "ZX calculus integration for PECOS quantum error correction"
+readme = "README.md"
+
+[dependencies]
+pecos-core = { workspace = true }
+pecos-quantum = { workspace = true }
+quizx = { workspace = true }
+thiserror = { workspace = true }
+num-traits = { workspace = true }
+
+[dev-dependencies]
+pecos-decoder-core = { workspace = true }
+pecos-qsim = { workspace = true }
+
+[features]
+default = []
+stabilizer = ["dep:pecos-qsim"]
+
+[dependencies.pecos-qsim]
+workspace = true
+optional = true

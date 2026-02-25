@@ -83,6 +83,9 @@ env_logger = "0.11"
 anyhow = "1"
 thiserror = "2"
 
+# ZX calculus
+quizx = "0.3"
+
 # Small vector optimization
 smallvec = "1"
 
@@ -145,6 +148,7 @@ pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
 pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
+pecos-zx = { version = "0.1.1", path = "crates/pecos-zx" }
 pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
 pecos-cuquantum = { version = "0.1.1", path = "crates/pecos-cuquantum" }
 

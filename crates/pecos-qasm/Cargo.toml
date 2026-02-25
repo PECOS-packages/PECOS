@@ -28,6 +28,7 @@ log.workspace = true
 
 # Workspace dependencies
 pecos-core.workspace = true
+pecos-quantum.workspace = true
 pecos-programs.workspace = true
 pecos-engines.workspace = true
 pecos-rng.workspace = true

@@ -66,6 +66,7 @@
 mod circuit;
 mod dag_circuit;
 pub mod operator_matrix;
+pub mod teleportation;
 mod tick_circuit;
 pub mod tick_circuit_soa;
 
@@ -74,7 +75,8 @@ pub mod hugr_convert;
 
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
 pub use dag_circuit::{
-    Attribute, DagCircuit, DagTraversalIndex, MeasureHandle, PrepHandle, TraversalWorkBuffers,
+    Attribute, ConditionalBuilder, DagCircuit, DagTraversalIndex, MeasureHandle, PrepHandle,
+    TraversalWorkBuffers,
 };
 pub use tick_circuit::{
     QubitConflictError, Tick, TickCircuit, TickHandle, TickMeasureHandle, TickPrepHandle,
@@ -86,7 +88,7 @@ pub use tick_circuit_soa::{
 
 // Re-export commonly used types from dependencies
 pub use pecos_core::gate_type::GateType;
-pub use pecos_core::{Gate, Nanoseconds, QubitId};
+pub use pecos_core::{ClassicalBitId, Gate, Nanoseconds, QubitId};
 pub use pecos_num::dag::DagWouldCycleError;
 
 // Re-export operator matrix trait for convenient method-style matrix conversion

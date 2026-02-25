@@ -93,8 +93,8 @@ __all__ = [
     "Qulacs",
     # Rust simulators
     "SparseSim",
-    "Stab",
     "SparseSimPy",
+    "Stab",
     "StateVec",
     # Submodules
     "sim_class_types",

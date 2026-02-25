@@ -1,6 +1,6 @@
 // Copyright 2026 The PECOS Developers
 use pecos::prelude::*;
-use pecos::qsim::{ForcedMeasurement, Stab};
+use pecos::qsim::{ForcedMeasurement, Stab, StabilizerTableauSimulator};
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -463,6 +463,48 @@ impl PyStab {
     ) -> PyResult<()> {
         self.run_circuit(circuit, removed_locations, py)?;
         Ok(())
+    }
+
+    fn stab_tableau(&self) -> String {
+        self.inner.stab_tableau()
+    }
+
+    fn destab_tableau(&self) -> String {
+        self.inner.destab_tableau()
+    }
+
+    fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
+        self.inner.gens_data(is_stab)
+    }
+
+    #[getter]
+    fn stabs(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::TableauWrapper> {
+        let py = slf.py();
+        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        Ok(crate::simulator_utils::TableauWrapper::new(sim_obj, true))
+    }
+
+    #[getter]
+    fn destabs(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::TableauWrapper> {
+        let py = slf.py();
+        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        Ok(crate::simulator_utils::TableauWrapper::new(sim_obj, false))
+    }
+
+    #[getter]
+    fn gens(
+        slf: PyRef<'_, Self>,
+    ) -> PyResult<(
+        crate::simulator_utils::TableauWrapper,
+        crate::simulator_utils::TableauWrapper,
+    )> {
+        let py = slf.py();
+        let sim_obj_stab: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        let sim_obj_destab = sim_obj_stab.clone_ref(py);
+        Ok((
+            crate::simulator_utils::TableauWrapper::new(sim_obj_stab, true),
+            crate::simulator_utils::TableauWrapper::new(sim_obj_destab, false),
+        ))
     }
 
     #[getter]

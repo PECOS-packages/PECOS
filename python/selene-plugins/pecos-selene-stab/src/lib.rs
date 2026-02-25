@@ -384,9 +384,7 @@ impl SimulatorInterfaceFactory for StabSimulatorFactory {
         let args: Vec<String> = args.iter().map(|s| s.as_ref().to_string()).collect();
 
         match Params::try_parse_from(args) {
-            Err(e) => Err(anyhow!(
-                "Error parsing arguments to PECOS Stab plugin: {e}"
-            )),
+            Err(e) => Err(anyhow!("Error parsing arguments to PECOS Stab plugin: {e}")),
             Ok(params) => Ok(Box::new(StabSimulator {
                 simulator: Stab::with_seed(StabSimulator::to_usize(n_qubits), 0),
                 n_qubits,

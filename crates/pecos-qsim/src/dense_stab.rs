@@ -49,7 +49,7 @@
 //! assert_eq!(results[0].outcome, results[1].outcome);
 //! ```
 
-use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
+use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::rng_ext::RngProbabilityExt;
@@ -1290,6 +1290,139 @@ impl<R: SeedableRng + Rng + Debug> RngManageable for DenseStab<R> {
     }
 }
 
+impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseStab<R> {
+    fn stab_tableau(&self) -> String {
+        Self::gen_tableau_string(
+            self.num_qubits,
+            self.words_per_row,
+            &self.stab_row_x,
+            &self.stab_row_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        )
+    }
+
+    fn destab_tableau(&self) -> String {
+        Self::gen_tableau_string(
+            self.num_qubits,
+            self.words_per_row,
+            &self.destab_row_x,
+            &self.destab_row_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        )
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+impl<R: Rng> DenseStab<R> {
+    /// Produces a tableau string from dense bit arrays.
+    fn gen_tableau_string(
+        num_qubits: usize,
+        words_per_row: usize,
+        row_x: &[u64],
+        row_z: &[u64],
+        signs_minus: &[u64],
+        signs_i: &[u64],
+    ) -> String {
+        let mut result = String::with_capacity(num_qubits * num_qubits + num_qubits + 2);
+        for g in 0..num_qubits {
+            if get_sign(signs_minus, g) {
+                result.push('-');
+            } else {
+                result.push('+');
+            }
+            if get_sign(signs_i, g) {
+                result.push('i');
+            }
+
+            let base = g * words_per_row;
+            for qubit in 0..num_qubits {
+                let word_idx = base + qubit / 64;
+                let bit_mask = 1u64 << (qubit % 64);
+                let in_x = row_x[word_idx] & bit_mask != 0;
+                let in_z = row_z[word_idx] & bit_mask != 0;
+                let ch = match (in_x, in_z) {
+                    (false, false) => 'I',
+                    (true, false) => 'X',
+                    (false, true) => 'Z',
+                    (true, true) => 'Y',
+                };
+                result.push(ch);
+            }
+            result.push('\n');
+        }
+        result
+    }
+
+    /// Returns generator data as sparse index vectors, matching the format used by `PySparseSim::_gens_data()`.
+    ///
+    /// Returns `(col_x, col_z, row_x, row_z)` where each is a `Vec<Vec<usize>>`.
+    pub fn gens_data(&self, is_stab: bool) -> crate::GensData {
+        let (row_x, row_z, col_x, col_z) = if is_stab {
+            (
+                &self.stab_row_x,
+                &self.stab_row_z,
+                &self.stab_col_x,
+                &self.stab_col_z,
+            )
+        } else {
+            (
+                &self.destab_row_x,
+                &self.destab_row_z,
+                &self.destab_col_x,
+                &self.destab_col_z,
+            )
+        };
+
+        let extract_rows = |data: &[u64]| -> Vec<Vec<usize>> {
+            (0..self.num_qubits)
+                .map(|row| {
+                    let base = row * self.words_per_row;
+                    let mut indices = Vec::new();
+                    for w in 0..self.words_per_row {
+                        let mut word = data[base + w];
+                        while word != 0 {
+                            let bit = word.trailing_zeros() as usize;
+                            indices.push(w * 64 + bit);
+                            word &= word - 1;
+                        }
+                    }
+                    indices
+                })
+                .collect()
+        };
+
+        let extract_cols = |data: &[u64]| -> Vec<Vec<usize>> {
+            (0..self.num_qubits)
+                .map(|col| {
+                    let base = col * self.words_per_col;
+                    let mut indices = Vec::new();
+                    for w in 0..self.words_per_col {
+                        let mut word = data[base + w];
+                        while word != 0 {
+                            let bit = word.trailing_zeros() as usize;
+                            indices.push(w * 64 + bit);
+                            word &= word - 1;
+                        }
+                    }
+                    indices
+                })
+                .collect()
+        };
+
+        (
+            extract_cols(col_x),
+            extract_cols(col_z),
+            extract_rows(row_x),
+            extract_rows(row_z),
+        )
+    }
+}
+
 use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 
 impl<R: SeedableRng + Rng + Debug + Clone> ForcedMeasurement for DenseStab<R> {
@@ -1460,12 +1593,15 @@ mod tests {
 
         // First forced measurement on qubit 1
         let r1 = dense.mz_forced(1, false);
-        assert_eq!(r1.outcome, false, "Forced to 0 should return 0");
+        assert!(!r1.outcome, "Forced to 0 should return 0");
 
         // Second measurement should be deterministic and return 0
         let r2 = dense.mz_forced(1, false);
-        assert!(r2.is_deterministic, "After measurement, qubit should be deterministic");
-        assert_eq!(r2.outcome, false, "After forced-0, re-measuring should give 0");
+        assert!(
+            r2.is_deterministic,
+            "After measurement, qubit should be deterministic"
+        );
+        assert!(!r2.outcome, "After forced-0, re-measuring should give 0");
     }
 
     #[test]
@@ -1523,10 +1659,22 @@ mod tests {
                         }
                         let pair = &[QubitId(q0), QubitId(q1)];
                         match gate_type {
-                            6 => { dense.cx(pair); sparse.cx(pair); }
-                            7 => { dense.cz(pair); sparse.cz(pair); }
-                            8 => { dense.cy(pair); sparse.cy(pair); }
-                            _ => { dense.swap(pair); sparse.swap(pair); }
+                            6 => {
+                                dense.cx(pair);
+                                sparse.cx(pair);
+                            }
+                            7 => {
+                                dense.cz(pair);
+                                sparse.cz(pair);
+                            }
+                            8 => {
+                                dense.cy(pair);
+                                sparse.cy(pair);
+                            }
+                            _ => {
+                                dense.swap(pair);
+                                sparse.swap(pair);
+                            }
                         }
                     }
                     10..=12 => {
@@ -1547,8 +1695,10 @@ mod tests {
                         // Init |0> = mz_forced + conditional X
                         let rd = dense.mz_forced(q0, false);
                         let rs = sparse.mz_forced(q0, false);
-                        assert_eq!(rd.outcome, rs.outcome,
-                            "circuit {seed} gate {gate_idx}: init|0> mz_forced({q0}) outcome mismatch");
+                        assert_eq!(
+                            rd.outcome, rs.outcome,
+                            "circuit {seed} gate {gate_idx}: init|0> mz_forced({q0}) outcome mismatch"
+                        );
                         if rd.outcome {
                             dense.x(&[QubitId(q0)]);
                             sparse.x(&[QubitId(q0)]);

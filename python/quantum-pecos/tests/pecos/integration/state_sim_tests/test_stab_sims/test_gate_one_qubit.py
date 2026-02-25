@@ -11,11 +11,12 @@
 
 """Test all one-qubit gates."""
 
-from pecos.simulators import SparseSim, SparseSimPy
+from pecos.simulators import SparseSim, SparseSimPy, Stab
 
 states = [
     SparseSimPy,
     SparseSim,
+    Stab,
 ]
 
 
@@ -35,7 +36,6 @@ def gate_test(gate_symbol: str, stab_dict: dict[str, list[str]]) -> None:
         state.run_gate(gate_symbol, {0})
         stab_rep = state.stabs.print_tableau(verbose=False)
         assert stab_rep == [stab_dict["X"]]
-        # destab_test(state, init_destab, stab_dict)
 
         # Z stabilizer
         state.run_gate("init |0>", {0})
@@ -51,11 +51,10 @@ def gate_test(gate_symbol: str, stab_dict: dict[str, list[str]]) -> None:
         state.run_gate(gate_symbol, {0})
         stab_rep = state.stabs.print_tableau(verbose=False)
         assert stab_rep == [stab_dict["iW"]]
-        # destab_test(state, init_destab, stab_dict)
 
 
 def destab_test(
-    state: SparseSimPy | SparseSim,
+    state: SparseSimPy | SparseSim | Stab,
     init_destab: str,
     stab_dict: dict[str, list[str]],
 ) -> None:

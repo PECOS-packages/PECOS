@@ -144,7 +144,7 @@ def run_a_circuit(
             state.bindings.get("init |0>"),
         )
 
-    for i, (element, q) in enumerate(circuit):
+    for _i, (element, q) in enumerate(circuit):
         m = -1
         if element == "measure Z":
             m = state.run_gate(element, {q}, forced_outcome=0)

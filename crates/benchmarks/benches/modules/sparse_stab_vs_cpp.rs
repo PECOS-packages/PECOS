@@ -10,14 +10,14 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Performance comparison: Pure Rust `SparseStab` vs C++ `CppSparseStab` vs `Stab` (DenseStab).
+//! Performance comparison: Pure Rust `SparseStab` vs C++ `CppSparseStab` vs `Stab` (`DenseStab`).
 //!
 //! Benchmarks surface code syndrome extraction at various distances and round counts
 //! to compare the three stabilizer simulator backends:
 //!
 //! - `SparseStab` (pure Rust, BitSet-based sparse representation)
 //! - `CppSparseStab` (C++ implementation via cxx FFI)
-//! - `Stab` (pure Rust, DenseStab with row+column bit-matrix layout)
+//! - `Stab` (pure Rust, `DenseStab` with row+column bit-matrix layout)
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
@@ -31,7 +31,7 @@ pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
 
 /// Surface code parameters for a given distance.
 ///
-/// Uses the same layout as the main surface_code benchmarks for consistency.
+/// Uses the same layout as the main `surface_code` benchmarks for consistency.
 struct SurfaceCodeParams {
     distance: usize,
     num_qubits: usize,
@@ -55,7 +55,7 @@ impl SurfaceCodeParams {
     }
 
     /// Get the neighbors of an ancilla (simplified model).
-    /// Matches the pattern in the main surface_code benchmarks.
+    /// Matches the pattern in the main `surface_code` benchmarks.
     fn ancilla_neighbors(&self, ancilla_idx: usize) -> Vec<usize> {
         let d = self.distance;
         let ancilla_local = ancilla_idx;
@@ -88,7 +88,7 @@ impl SurfaceCodeParams {
     }
 }
 
-/// Run surface code syndrome extraction on SparseStab (pure Rust, BitSet-based).
+/// Run surface code syndrome extraction on `SparseStab` (pure Rust, BitSet-based).
 fn run_circuit_sparse_stab(sim: &mut SparseStab, params: &SurfaceCodeParams, rounds: usize) {
     // Initialize data qubits in |+> state
     for i in 0..params.num_data {
@@ -118,12 +118,8 @@ fn run_circuit_sparse_stab(sim: &mut SparseStab, params: &SurfaceCodeParams, rou
     }
 }
 
-/// Run surface code syndrome extraction on CppSparseStab (C++ via FFI).
-fn run_circuit_cpp_sparse_stab(
-    sim: &mut CppSparseStab,
-    params: &SurfaceCodeParams,
-    rounds: usize,
-) {
+/// Run surface code syndrome extraction on `CppSparseStab` (C++ via FFI).
+fn run_circuit_cpp_sparse_stab(sim: &mut CppSparseStab, params: &SurfaceCodeParams, rounds: usize) {
     // Initialize data qubits in |+> state
     for i in 0..params.num_data {
         sim.h(&[QubitId::from(i)]);
@@ -152,7 +148,7 @@ fn run_circuit_cpp_sparse_stab(
     }
 }
 
-/// Run surface code syndrome extraction on Stab (DenseStab, pure Rust).
+/// Run surface code syndrome extraction on Stab (`DenseStab`, pure Rust).
 fn run_circuit_stab(sim: &mut Stab, params: &SurfaceCodeParams, rounds: usize) {
     // Initialize data qubits in |+> state
     for i in 0..params.num_data {
@@ -182,7 +178,7 @@ fn run_circuit_stab(sim: &mut Stab, params: &SurfaceCodeParams, rounds: usize) {
     }
 }
 
-/// Compare SparseStab (Rust) vs CppSparseStab (C++) vs Stab (DenseStab) on surface code
+/// Compare `SparseStab` (Rust) vs `CppSparseStab` (C++) vs Stab (`DenseStab`) on surface code
 /// syndrome extraction across distances and round counts.
 fn bench_rust_vs_cpp_surface_code<M: Measurement>(c: &mut Criterion<M>) {
     use criterion::BatchSize;
@@ -200,64 +196,52 @@ fn bench_rust_vs_cpp_surface_code<M: Measurement>(c: &mut Criterion<M>) {
             group.throughput(Throughput::Elements(ops_per_run as u64));
 
             // --- Pure Rust SparseStab (BitSet-based) ---
-            group.bench_with_input(
-                BenchmarkId::new("SparseStab_Rust", &label),
-                &(),
-                |b, ()| {
-                    b.iter_batched(
-                        || {
-                            let mut sim = SparseStab::new(params.num_qubits);
-                            sim.reset();
-                            sim
-                        },
-                        |mut sim| {
-                            run_circuit_sparse_stab(&mut sim, &params, rounds);
-                            black_box(sim)
-                        },
-                        BatchSize::SmallInput,
-                    );
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("SparseStab_Rust", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        let mut sim = SparseStab::new(params.num_qubits);
+                        sim.reset();
+                        sim
+                    },
+                    |mut sim| {
+                        run_circuit_sparse_stab(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
 
             // --- C++ SparseStab (via cxx FFI) ---
-            group.bench_with_input(
-                BenchmarkId::new("SparseStab_Cpp", &label),
-                &(),
-                |b, ()| {
-                    b.iter_batched(
-                        || {
-                            let mut sim = CppSparseStab::with_seed(params.num_qubits, 42);
-                            sim.reset();
-                            sim
-                        },
-                        |mut sim| {
-                            run_circuit_cpp_sparse_stab(&mut sim, &params, rounds);
-                            black_box(sim)
-                        },
-                        BatchSize::SmallInput,
-                    );
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("SparseStab_Cpp", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        let mut sim = CppSparseStab::with_seed(params.num_qubits, 42);
+                        sim.reset();
+                        sim
+                    },
+                    |mut sim| {
+                        run_circuit_cpp_sparse_stab(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
 
             // --- DenseStab (Stab, pure Rust) ---
-            group.bench_with_input(
-                BenchmarkId::new("Stab_DenseRust", &label),
-                &(),
-                |b, ()| {
-                    b.iter_batched(
-                        || {
-                            let mut sim = Stab::new(params.num_qubits);
-                            sim.reset();
-                            sim
-                        },
-                        |mut sim| {
-                            run_circuit_stab(&mut sim, &params, rounds);
-                            black_box(sim)
-                        },
-                        BatchSize::SmallInput,
-                    );
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("Stab_DenseRust", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        let mut sim = Stab::new(params.num_qubits);
+                        sim.reset();
+                        sim
+                    },
+                    |mut sim| {
+                        run_circuit_stab(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
         }
     }
 
@@ -266,11 +250,6 @@ fn bench_rust_vs_cpp_surface_code<M: Measurement>(c: &mut Criterion<M>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CppSparseStab, SparseStab, Stab, SurfaceCodeParams, run_circuit_cpp_sparse_stab,
-        run_circuit_sparse_stab, run_circuit_stab,
-    };
-    use pecos::prelude::QuantumSimulator;
 
     #[test]
     fn test_all_three_complete_without_panic() {

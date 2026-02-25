@@ -176,7 +176,6 @@ fn run_check(include_ffi: bool) -> Result<()> {
                 "cargo check (pecos-quest) failed".to_string(),
             ));
         }
-
     }
 
     if include_ffi {
@@ -341,7 +340,6 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
                 "cargo clippy (pecos-quest) failed".to_string(),
             ));
         }
-
     }
 
     if include_ffi {

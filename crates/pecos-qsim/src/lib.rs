@@ -52,8 +52,18 @@ pub use batched_ops::{BatchedOps, CommandBuffer, RawOps};
 pub use circuit_executor::{CircuitExecutor, GateSystem, GateSystemRegistry, execute_batched};
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
+/// Sparse index representation of stabilizer/destabilizer generators.
+///
+/// Returns `(col_x, col_z, row_x, row_z)` where each is a `Vec<Vec<usize>>`.
+pub type GensData = (
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+);
+
 pub use dense_stab::DenseStab;
-pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly};
+pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly, SparseRowOnly};
 pub use density_matrix::DensityMatrix;
 pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClassification};
 pub use gpu_stab::GpuStab;

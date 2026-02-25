@@ -38,7 +38,9 @@ use pecos_cuquantum_sys::{
     custabilizerFrameSimulatorApplyCircuit, custabilizerHandle_t,
 };
 use pecos_qsim::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
-use pecos_qsim::{CliffordGateable, MeasurementResult, QuantumSimulator};
+use pecos_qsim::{
+    CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator,
+};
 use std::ffi::CString;
 use std::ptr;
 
@@ -676,6 +678,20 @@ impl CliffordGateable for CuStabilizer {
                 })
                 .collect(),
         }
+    }
+}
+
+impl StabilizerTableauSimulator for CuStabilizer {
+    fn stab_tableau(&self) -> String {
+        unimplemented!("CuStabilizer does not support local tableau access")
+    }
+
+    fn destab_tableau(&self) -> String {
+        unimplemented!("CuStabilizer does not support local tableau access")
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
     }
 }
 

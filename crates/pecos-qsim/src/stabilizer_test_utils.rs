@@ -36,7 +36,10 @@
 // This is expected behavior, so we allow missing panics documentation.
 #![allow(clippy::missing_panics_doc)]
 
-use crate::{CliffordGateable, DensityMatrix, MeasurementResult, QuantumSimulator};
+use crate::{
+    CliffordGateable, DensityMatrix, MeasurementResult, QuantumSimulator,
+    StabilizerTableauSimulator,
+};
 use pecos_core::QubitId;
 use pecos_rng::{Rng, RngExt};
 
@@ -73,7 +76,7 @@ pub trait ForcedMeasurement {
 /// stabilizer_test_suite!(MyStabilizerSim, 8);
 /// ```
 pub trait StabilizerSimulator:
-    CliffordGateable + QuantumSimulator + ForcedMeasurement + Clone + Sized
+    CliffordGateable + QuantumSimulator + StabilizerTableauSimulator + ForcedMeasurement + Clone + Sized
 {
     /// Create a new simulator with the given number of qubits and RNG seed.
     fn with_seed(num_qubits: usize, seed: u64) -> Self;
@@ -1889,5 +1892,136 @@ mod tests {
         let mut bitset = SparseStab::new(2);
         let mut vecset = SparseStabVecSet::new(2);
         verify_all_gate_decompositions_direct(&mut bitset, &mut vecset, 2);
+    }
+
+    // ========================================================================
+    // All-Simulators Random Circuit Comparison
+    // ========================================================================
+
+    /// Compare all local stabilizer simulators on the same random circuits.
+    ///
+    /// This is the Rust equivalent of the Python `test_random_circuits.py`.
+    /// Each simulator is compared against `SparseStab` (`BitSet`) as the reference
+    /// on both stabilizer tableau strings and forced measurement outcomes.
+    ///
+    #[test]
+    fn test_all_stabilizer_sims_agree_on_random_circuits() {
+        use crate::{
+            DenseStab, DenseStabColOnly, DenseStabRowOnly, GpuStab, GpuStabOpt, GpuStabParallel,
+            SparseColOnly, SparseRowOnly, Stab, StabilizerTableauSimulator,
+        };
+        use pecos_rng::PecosRng;
+
+        let num_qubits = 6;
+        let num_gates = 40;
+        let num_circuits = 20;
+
+        for i in 0..num_circuits {
+            let seed = 900_000 + i;
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let circuit = generate_random_clifford_circuit(&mut rng, num_qubits, num_gates);
+
+            // Create all simulators
+            let mut reference = SparseStab::new(num_qubits);
+            let mut sparse_vecset = SparseStabVecSet::new(num_qubits);
+            let mut sparse_hybrid = SparseStabHybrid::new(num_qubits);
+            let mut dense = DenseStab::<PecosRng>::new(num_qubits);
+            let mut dense_col = DenseStabColOnly::<PecosRng>::new(num_qubits);
+            let mut dense_row = DenseStabRowOnly::<PecosRng>::new(num_qubits);
+            let mut sparse_col = SparseColOnly::new(num_qubits);
+            let mut sparse_row = SparseRowOnly::new(num_qubits);
+            let mut stab = Stab::new(num_qubits);
+            let mut gpu_stab = GpuStab::new(num_qubits);
+            let mut gpu_stab_opt = GpuStabOpt::new(num_qubits);
+            let mut gpu_stab_parallel = GpuStabParallel::new(num_qubits);
+
+            // Apply circuit to all
+            apply_circuit(&mut reference, &circuit);
+            apply_circuit(&mut sparse_vecset, &circuit);
+            apply_circuit(&mut sparse_hybrid, &circuit);
+            apply_circuit(&mut dense, &circuit);
+            apply_circuit(&mut dense_col, &circuit);
+            apply_circuit(&mut dense_row, &circuit);
+            apply_circuit(&mut sparse_col, &circuit);
+            apply_circuit(&mut sparse_row, &circuit);
+            apply_circuit(&mut stab, &circuit);
+            apply_circuit(&mut gpu_stab, &circuit);
+            apply_circuit(&mut gpu_stab_opt, &circuit);
+            apply_circuit(&mut gpu_stab_parallel, &circuit);
+
+            // Compare stabilizer tableau strings against reference.
+            // We compare stab_tableau only, not destab_tableau, because
+            // destabilizer phases are implementation-specific and can differ
+            // between algorithms while still being physically correct.
+            let ref_stab_tab = reference.stab_tableau();
+
+            macro_rules! check_tableau {
+                ($sim:expr, $name:expr) => {
+                    assert_eq!(
+                        $sim.stab_tableau(),
+                        ref_stab_tab,
+                        "stab_tableau mismatch for {} on circuit seed {seed}",
+                        $name
+                    );
+                };
+            }
+
+            check_tableau!(sparse_vecset, "SparseStabVecSet");
+            check_tableau!(sparse_hybrid, "SparseStabHybrid");
+            check_tableau!(dense, "DenseStab");
+            check_tableau!(dense_col, "DenseStabColOnly");
+            check_tableau!(dense_row, "DenseStabRowOnly");
+            check_tableau!(sparse_col, "SparseColOnly");
+            check_tableau!(sparse_row, "SparseRowOnly");
+            check_tableau!(stab, "Stab");
+            check_tableau!(gpu_stab, "GpuStab");
+            check_tableau!(gpu_stab_opt, "GpuStabOpt");
+            check_tableau!(gpu_stab_parallel, "GpuStabParallel");
+
+            // Compare forced measurement outcomes against reference
+            let mut meas_rng = PecosRng::seed_from_u64(seed.wrapping_add(1_000_000));
+
+            // Collect reference outcomes
+            let mut ref_outcomes = Vec::with_capacity(num_qubits);
+            let mut ref_determinism = Vec::with_capacity(num_qubits);
+            let mut forced_values = Vec::with_capacity(num_qubits);
+            for q in 0..num_qubits {
+                let forced: bool = meas_rng.random();
+                forced_values.push(forced);
+                let r = reference.mz_forced(q, forced);
+                ref_outcomes.push(r.outcome);
+                ref_determinism.push(r.is_deterministic);
+            }
+
+            macro_rules! check_measurements {
+                ($sim:expr, $name:expr) => {
+                    for q in 0..num_qubits {
+                        let r = $sim.mz_forced(q, forced_values[q]);
+                        assert_eq!(
+                            r.is_deterministic, ref_determinism[q],
+                            "{}: determinism mismatch for qubit {q} on circuit seed {seed}",
+                            $name
+                        );
+                        assert_eq!(
+                            r.outcome, ref_outcomes[q],
+                            "{}: outcome mismatch for qubit {q} on circuit seed {seed}",
+                            $name
+                        );
+                    }
+                };
+            }
+
+            check_measurements!(sparse_vecset, "SparseStabVecSet");
+            check_measurements!(sparse_hybrid, "SparseStabHybrid");
+            check_measurements!(dense, "DenseStab");
+            check_measurements!(dense_col, "DenseStabColOnly");
+            check_measurements!(dense_row, "DenseStabRowOnly");
+            check_measurements!(sparse_col, "SparseColOnly");
+            check_measurements!(sparse_row, "SparseRowOnly");
+            check_measurements!(stab, "Stab");
+            check_measurements!(gpu_stab, "GpuStab");
+            check_measurements!(gpu_stab_opt, "GpuStabOpt");
+            check_measurements!(gpu_stab_parallel, "GpuStabParallel");
+        }
     }
 }

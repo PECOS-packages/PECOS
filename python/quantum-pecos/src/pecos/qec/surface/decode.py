@@ -1042,13 +1042,7 @@ class SurfaceDecoder:
         if self.decoder_type == DecoderType.BP_LSD:
             from pecos_rslib.decoders import BpLsdBuilder
 
-            return (
-                BpLsdBuilder(sparse_H, error_rate=p_data)
-                .max_iter(100)
-                .bp_method("product_sum")
-                .lsd_order(0)
-                .build()
-            )
+            return BpLsdBuilder(sparse_H, error_rate=p_data).max_iter(100).bp_method("product_sum").lsd_order(0).build()
 
         if self.decoder_type == DecoderType.UNION_FIND:
             from pecos_rslib.decoders import UnionFindBuilder

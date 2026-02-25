@@ -28,6 +28,10 @@ This directory contains documentation for `pecos-neo`, a quantum circuit simulat
 
 - **[tags-and-dispatch-design.md](tags-and-dispatch-design.md)** - Design and implementation of the signal/dispatch system. Covers typed signals in the command stream, gate event handlers, `DispatchContext`, and integration with `NoiseEvent::Signal`.
 
+### Performance
+
+- **[performance.md](performance.md)** - Benchmarks and scaling characteristics for large-scale simulations (1M+ qubits).
+
 ### Sampling and Rare Event Estimation
 
 - **[subset-simulation.md](subset-simulation.md)** - Guide to subset simulation for estimating very rare event probabilities (e.g., logical error rates in QEC). Covers `SubsetSimulation`, `ProperSubsetSimulation`, and `QecSubsetSimulation`.

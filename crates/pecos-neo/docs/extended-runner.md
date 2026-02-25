@@ -235,6 +235,30 @@ runner.has_rotation_support()   // bool - was rotations() used?
 runner.has_override(gate_id)    // bool - is gate overridden?
 ```
 
+## Universal Simulation (Rotation Gates via ShotRunner)
+
+For simple circuits using `ShotRunner` with a state vector simulator that supports
+arbitrary rotation gates, use `execute_all()` instead of `execute()`:
+
+```rust
+use pecos_neo::prelude::*;
+use pecos_qsim::StateVec;
+
+let commands = CommandBuilder::new()
+    .pz(0)
+    .rx(Angle64::HALF_TURN, 0)  // RX(pi) = X gate
+    .rzz(Angle64::QUARTER_TURN, 0, 1)  // RZZ(pi/2)
+    .mz(0)
+    .build();
+
+let mut runner = ShotRunner::new(StateVec::new(2));
+let outcomes = runner.execute_all(&commands);
+```
+
+Supported rotation gates: RX, RY, RZ, T, Tdg, U, R1XY, RXX, RYY, RZZ, CRZ, CCX (Toffoli).
+
+CCX and CRZ are automatically decomposed into supported gates.
+
 ## Error Handling
 
 ```rust

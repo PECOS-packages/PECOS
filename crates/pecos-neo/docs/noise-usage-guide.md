@@ -383,3 +383,215 @@ let noise = FlowNoiseModelBuilder::new()
     .with_p2(p)
     .build();
 ```
+
+## ComposableNoiseModel (Direct Composition)
+
+For maximum flexibility, compose channels directly on a `ComposableNoiseModel`
+instead of using a builder:
+
+```rust
+use pecos_neo::prelude::*;
+use pecos_neo::noise::*;
+use pecos_neo::noise::plugins::CorePlugin;
+
+let noise = ComposableNoiseModel::new()
+    .add_plugin(CorePlugin)  // State tracking
+    .add_channel(SingleQubitChannel::depolarizing(0.001))
+    .add_channel(TwoQubitChannel::depolarizing(0.01)
+        .with_angle_scaling(AngleScaling::linear()))
+    .add_channel(MeasurementChannel::asymmetric(0.02, 0.03))
+    .add_channel(IdleChannel::linear(0.0001)
+        .with_linear_depolarizing());
+```
+
+### Mixed Approach (Builder + Custom Channels)
+
+Start with a builder, then customize with additional channels:
+
+```rust
+use pecos_neo::noise::*;
+
+// Start with standard configuration
+let noise = GeneralNoiseModelBuilder::new()
+    .with_p1(0.001)
+    .with_p2(0.01)
+    .build()
+    // Add custom channels
+    .add_channel(CrosstalkChannel::new()
+        .with_global_rate(0.001)
+        .with_transitions(CrosstalkTransitions::symmetric_with_leakage()));
+```
+
+### Custom Channels
+
+Implement your own noise channels by implementing the `NoiseChannel` trait:
+
+```rust
+use pecos_neo::noise::*;
+use pecos_rng::PecosRng;
+
+#[derive(Clone)]
+struct MyCustomChannel {
+    error_rate: f64,
+}
+
+impl NoiseChannel for MyCustomChannel {
+    fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+        matches!(event, NoiseEvent::AfterGate { .. })
+    }
+
+    fn apply(
+        &self,
+        event: &NoiseEvent<'_>,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> NoiseResponse {
+        // Your custom noise logic here
+        NoiseResponse::None
+    }
+
+    fn name(&self) -> &'static str {
+        "MyCustomChannel"
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
+}
+```
+
+## Idle Time and Physical Time Units
+
+The `IdleChannel` models T1/T2 decay during idle periods.
+Time is specified in abstract time units - the interpretation (nanoseconds,
+clock cycles, etc.) is defined by the noise model configuration.
+
+```rust
+use pecos_neo::prelude::*;
+
+let commands = CommandBuilder::new()
+    .pz(0)
+    .idle(0, 100u64)  // 100 time units
+    .mz(0)
+    .build();
+
+let noise = ComposableNoiseModel::new()
+    .add_channel(IdleChannel::linear(0.001)  // 0.1% error per time unit
+        .with_linear_depolarizing());        // X/Y/Z with equal probability
+```
+
+### Physical Time Units
+
+For physicists who prefer working with physical times (nanoseconds, microseconds),
+configure the time scale at the model level:
+
+```rust
+use pecos_neo::prelude::*;
+use pecos_core::TimeScale;
+
+// Define: 1 TimeUnit = 1 nanosecond, then use physical times
+let noise = ComposableNoiseModel::new()
+    .with_time_scale(TimeScale::NANOSECONDS)
+    .with_idle_t1_t2(50e-6, 30e-6);  // T1=50us, T2=30us in seconds
+```
+
+Available time scales: `NANOSECONDS`, `MICROSECONDS`, `MILLISECONDS`, `SECONDS`,
+or custom via `TimeScale::from_cycle_time_ns(50.0)` for gate-cycle-based timing.
+
+You can also add precision to coarse units:
+
+```rust
+// Think in seconds, but with nanosecond precision (9 decimal places)
+let scale = TimeScale::SECONDS.with_precision(9);
+// Now 0.00005 seconds = 50,000 TimeUnits
+```
+
+## Plugins
+
+Plugins bundle related functionality:
+
+```rust
+use pecos_neo::noise::plugins::*;
+
+let noise = ComposableNoiseModel::new()
+    .add_plugin(CorePlugin)                           // State tracking
+    .add_plugin(LeakagePlugin::new())                 // Leakage handling
+    .add_plugin(DepolarizingPlugin::new(0.01, 0.02)); // Simple depolarizing
+```
+
+## Key Types Reference
+
+### Pauli Weights
+
+Control error distributions:
+
+```rust
+// Uniform (default)
+PauliWeights::uniform()  // 1/3 X, 1/3 Y, 1/3 Z
+
+// Z-biased (dephasing)
+PauliWeights::z_biased(0.9)  // 90% Z, 5% X, 5% Y
+
+// Custom
+PauliWeights::custom(0.1, 0.2, 0.7)  // 10% X, 20% Y, 70% Z
+```
+
+### Emission Weights
+
+Control leakage vs Pauli errors:
+
+```rust
+// Pauli only (no leakage)
+SingleQubitEmissionWeights::uniform()
+
+// Include leakage
+SingleQubitEmissionWeights::uniform_with_leakage()  // 25% each X/Y/Z/leak
+
+// Leakage only
+SingleQubitEmissionWeights::leakage_only()
+```
+
+### Angle Scaling
+
+For parameterized gates (RZZ, etc.):
+
+```rust
+// No angle dependence
+AngleScaling::constant()
+
+// Linear: error ~ |theta/pi|
+AngleScaling::linear()
+
+// Quadratic: error ~ (theta/pi)^2
+AngleScaling::quadratic()
+
+// Full polynomial: a + b*|theta/pi| + c*|theta/pi|^d
+// (matches GeneralNoiseModel's p2_angle_* parameters)
+AngleScaling::polynomial(a, b, c, d)
+
+// Asymmetric: different scaling for +/- angles
+// offset + linear*|theta/pi| + scale*|theta/pi|^power
+AngleScaling::asymmetric(
+    neg_offset, neg_linear, neg_scale,
+    pos_offset, pos_linear, pos_scale,
+    power
+)
+```
+
+### Crosstalk Transitions
+
+State-dependent crosstalk effects:
+
+```rust
+// Simple flip model
+CrosstalkTransitions::flip_only()
+
+// Include leakage
+CrosstalkTransitions::symmetric_with_leakage()
+
+// Custom per-state transitions
+CrosstalkTransitions::custom(
+    from_0_stay, from_0_flip, from_0_leak,
+    from_1_stay, from_1_flip, from_1_leak,
+)
+```

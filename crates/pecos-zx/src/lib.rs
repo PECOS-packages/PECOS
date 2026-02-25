@@ -36,6 +36,7 @@ pub mod graph_state;
 pub mod noise;
 pub mod pauli_web;
 pub mod symplectic;
+pub mod tableau;
 pub mod viz;
 
 #[cfg(feature = "stabilizer")]

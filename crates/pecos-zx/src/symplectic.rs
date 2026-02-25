@@ -520,7 +520,7 @@ impl SymplecticMatrix {
 ///
 /// CliffordRep gate factories produce representations sized to the largest
 /// qubit index + 1. This pads to exactly n qubits.
-fn padded_clifford(rep: CliffordRep, n: usize) -> CliffordRep {
+pub(crate) fn padded_clifford(rep: CliffordRep, n: usize) -> CliffordRep {
     if rep.num_qubits() >= n {
         return rep;
     }

@@ -335,11 +335,11 @@ fn run_composable_noise_repetition(
         let noise_model = noise_config.build();
 
         // Run with fresh simulator and RNG state per shot for better independence
-        let mut runner = ShotRunner::new(SparseStab::new(code.num_qubits()))
+        let mut runner = Runner::new(SparseStab::new(code.num_qubits()))
             .with_noise(noise_model)
             .with_seed(42 + shot as u64);
 
-        let outcomes = runner.run_shot(&commands);
+        let outcomes = runner.run_shot(&commands).unwrap();
 
         // Extract syndromes and data from measurement outcomes in order
         // outcomes.as_slice() gives us all measurements in the order they were performed

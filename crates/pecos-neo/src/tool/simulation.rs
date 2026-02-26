@@ -1820,8 +1820,8 @@ impl QuantumRunner {
     /// Set the full seed for deterministic execution.
     pub fn set_full_seed(&mut self, seed: u64) {
         match self {
-            Self::SparseStab(runner) => runner.shot_runner_mut().set_full_seed(seed),
-            Self::StateVec(runner) => runner.shot_runner_mut().set_full_seed(seed),
+            Self::SparseStab(runner) => runner.runner_mut().set_full_seed(seed),
+            Self::StateVec(runner) => runner.runner_mut().set_full_seed(seed),
             Self::Custom(runner) => runner.set_full_seed(seed),
         }
     }

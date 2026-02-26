@@ -50,7 +50,7 @@ fn example_depolarizing_noise() {
             .add_plugin(CorePlugin)
             .add_channel(SingleQubitChannel::depolarizing(error_rate));
 
-        let mut runner = ShotRunner::new(SparseStab::new(1))
+        let mut runner = Runner::new(SparseStab::new(1))
             .with_noise(noise)
             .with_seed(42);
 
@@ -58,7 +58,7 @@ fn example_depolarizing_noise() {
         let shots = 1000;
 
         for _ in 0..shots {
-            let outcomes = runner.run_shot(&commands);
+            let outcomes = runner.run_shot(&commands).unwrap();
             // X gate should give |1⟩, so |0⟩ is an error
             if !outcomes.get_bit(QubitId(0)).unwrap_or(true) {
                 errors += 1;
@@ -96,13 +96,13 @@ fn example_asymmetric_measurement() {
         .add_plugin(CorePlugin)
         .add_channel(MeasurementChannel::asymmetric(p_0_to_1, p_1_to_0));
 
-    let mut runner = ShotRunner::new(SparseStab::new(1))
+    let mut runner = Runner::new(SparseStab::new(1))
         .with_noise(noise_0)
         .with_seed(42);
 
     let mut flips_0 = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands_0);
+        let outcomes = runner.run_shot(&commands_0).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             flips_0 += 1; // Got |1⟩ when should be |0⟩
         }
@@ -113,13 +113,13 @@ fn example_asymmetric_measurement() {
         .add_plugin(CorePlugin)
         .add_channel(MeasurementChannel::asymmetric(p_0_to_1, p_1_to_0));
 
-    let mut runner = ShotRunner::new(SparseStab::new(1))
+    let mut runner = Runner::new(SparseStab::new(1))
         .with_noise(noise_1)
         .with_seed(43);
 
     let mut flips_1 = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands_1);
+        let outcomes = runner.run_shot(&commands_1).unwrap();
         if !outcomes.get_bit(QubitId(0)).unwrap_or(true) {
             flips_1 += 1; // Got |0⟩ when should be |1⟩
         }
@@ -163,7 +163,7 @@ fn example_multi_channel() {
         .add_channel(TwoQubitChannel::depolarizing(0.05)) // 5% 2Q error
         .add_channel(MeasurementChannel::symmetric(0.02)); // 2% meas error
 
-    let mut runner = ShotRunner::new(SparseStab::new(2))
+    let mut runner = Runner::new(SparseStab::new(2))
         .with_noise(noise)
         .with_seed(42);
 
@@ -171,7 +171,7 @@ fn example_multi_channel() {
     let shots = 2000;
 
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands);
+        let outcomes = runner.run_shot(&commands).unwrap();
         let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
         let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
         let key = format!("{}{}", u8::from(q0), u8::from(q1));
@@ -214,7 +214,7 @@ fn example_builder_api() {
         .with_p_meas(0.01, 0.01) // 1% symmetric measurement error
         .build();
 
-    let mut runner = ShotRunner::new(SparseStab::new(2))
+    let mut runner = Runner::new(SparseStab::new(2))
         .with_noise(noise)
         .with_seed(42);
 
@@ -222,7 +222,7 @@ fn example_builder_api() {
     let shots = 2000;
 
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands);
+        let outcomes = runner.run_shot(&commands).unwrap();
         let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
         let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
         let key = format!("{}{}", u8::from(q0), u8::from(q1));
@@ -261,7 +261,7 @@ fn example_idle_noise() {
         .with_idle_t1_t2(10e-6, 5e-6) // T1=10us, T2=5us
         .build();
 
-    let mut runner = ShotRunner::new(SparseStab::new(1))
+    let mut runner = Runner::new(SparseStab::new(1))
         .with_noise(noise)
         .with_seed(42);
 
@@ -269,7 +269,7 @@ fn example_idle_noise() {
     let mut errors = 0;
 
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands);
+        let outcomes = runner.run_shot(&commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             errors += 1; // Z error during idle caused bit flip
         }
@@ -307,13 +307,13 @@ fn example_z_biased_noise() {
         .add_plugin(CorePlugin)
         .add_channel(SingleQubitChannel::depolarizing(0.10));
 
-    let mut runner = ShotRunner::new(SparseStab::new(1))
+    let mut runner = Runner::new(SparseStab::new(1))
         .with_noise(uniform_noise)
         .with_seed(42);
 
     let mut uniform_errors = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands);
+        let outcomes = runner.run_shot(&commands).unwrap();
         // S gate on |+⟩ gives |+i⟩, after H should give specific outcome
         // Errors will deviate from this
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
@@ -329,13 +329,13 @@ fn example_z_biased_noise() {
         .add_plugin(CorePlugin)
         .add_channel(z_biased_channel);
 
-    let mut runner = ShotRunner::new(SparseStab::new(1))
+    let mut runner = Runner::new(SparseStab::new(1))
         .with_noise(z_biased_noise)
         .with_seed(42);
 
     let mut z_biased_errors = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands);
+        let outcomes = runner.run_shot(&commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             z_biased_errors += 1;
         }

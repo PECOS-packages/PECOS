@@ -15,10 +15,10 @@ Need to run a quantum circuit simulation?
 │   └─► Use sim_neo() - highest level, batteries included
 │
 ├─► Need custom gates or gate overrides?
-│   └─► Use ExtendedRunner with GateDefinitions
+│   └─► Use Runner with GateDefinitions
 │
 ├─► Need fine-grained control over execution?
-│   └─► Use ShotRunner (GateType-based) or ProgramRunner
+│   └─► Use Runner (GateType-based) or ProgramRunner
 │
 ├─► Estimating rare event probabilities?
 │   │
@@ -37,8 +37,8 @@ Need to run a quantum circuit simulation?
 | API | Abstraction | Use Case |
 |-----|-------------|----------|
 | `sim_neo()` | Highest | Standard simulations, quick prototyping |
-| `ExtendedRunner` | High | Custom gates, decomposition, gate overrides |
-| `ShotRunner` | Medium | Direct control, GateType-based circuits |
+| `Runner` | High | Custom gates, decomposition, gate overrides |
+| `Runner` | Medium | Direct control, GateType-based circuits |
 | `ProgramRunner` | Medium | Programs with classical control flow |
 | `ImportanceSamplingRunner` | Medium | Direct importance sampling control |
 | `World<S>` | Low | Population simulation, trajectory management |
@@ -82,9 +82,9 @@ let results = sim_neo(circuit)
     .run();
 ```
 
-### When to Use ExtendedRunner
+### When to Use Runner
 
-Use `ExtendedRunner` when you need:
+Use `Runner` when you need:
 - Custom gate definitions
 - Gate decomposition (custom gates → native gates)
 - Gate overrides (swap implementations)
@@ -110,20 +110,20 @@ let circuit = OpBuilder::new()
     .build();
 
 // Run with decomposition
-let mut runner = ExtendedRunner::new(SparseStab::new(1), definitions);
+let mut runner = Runner::new(SparseStab::new(1), definitions);
 let outcomes = runner.run(&circuit)?;
 ```
 
 ### When to Use Lower-Level APIs
 
-Use `ShotRunner` or `ProgramRunner` when:
+Use `Runner` or `ProgramRunner` when:
 - You need direct simulator access
 - You're building custom execution logic
 - You're integrating with existing infrastructure
 
 ```rust
-// ShotRunner for direct control
-let mut runner = ShotRunner::new(SparseStab::new(n))
+// Runner for direct control
+let mut runner = Runner::new(SparseStab::new(n))
     .with_noise(noise)
     .with_seed(42);
 
@@ -354,17 +354,17 @@ pecos-neo uses trait bounds to express capabilities at compile time rather than 
 
 ```rust
 // GOOD: Trait bound expresses capability
-impl<S: CliffordGateable> ExtendedRunner<S> {
+impl<S: CliffordGateable> Runner<S> {
     pub fn new(sim: S, defs: GateDefinitions) -> Self { /* ... */ }
 }
 
 // The rotations() constructor adds ArbitraryRotationGateable bound
-impl<S: CliffordGateable + ArbitraryRotationGateable> ExtendedRunner<S> {
+impl<S: CliffordGateable + ArbitraryRotationGateable> Runner<S> {
     pub fn rotations(sim: S, defs: GateDefinitions) -> Self { /* ... */ }
 }
 
 // BAD: Runtime check for capability
-impl ExtendedRunner {
+impl Runner {
     pub fn run(&mut self) -> Result<_, Error> {
         if !self.supports_rotations() {  // Runtime check - avoid this
             return Err(Error::NoRotationSupport);
@@ -405,7 +405,7 @@ impl<S: CliffordGateable + MyCapability> Runner<S> {
 | Builders | `*Builder` | `SimNeoBuilder`, `ImportanceSamplingBuilder` |
 | Configurations | `*Config` | `SubsetConfig`, `SimConfig` |
 | Results | `*Result` or `*Results` | `SimulationResults` |
-| Runners | `*Runner` | `ShotRunner`, `ExtendedRunner` |
+| Runners | `*Runner` | `Runner`, `Runner` |
 | Channels | `*Channel` | `FlowChannel`, `SingleQubitChannel` |
 
 ### Methods

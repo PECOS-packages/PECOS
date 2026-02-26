@@ -7,7 +7,8 @@ This crate provides a composable approach to quantum simulation with:
 - **Typed Commands**: `GateCommand` and `CommandQueue` replacing `ByteMessage`
 - **Composable Noise**: Event-driven noise channels that can be freely combined
 - **Plugin System**: ECS-inspired architecture for bundling functionality
-- **Simple Runner**: Direct simulator execution via `ShotRunner`
+- **Program Support**: Classical control engines (QASM, HUGR) with mid-circuit measurement and feedback
+- **Simple Runner**: Direct simulator execution via [`Runner`]
 
 ## Architecture
 
@@ -82,8 +83,38 @@ sim_neo(circuit)
     .run();
 ```
 
-For lower-level control, `ShotRunner` and `ExtendedRunner` are available directly --
-see the [Noise Usage Guide](docs/noise-usage-guide.md) and [Extended Runner](docs/extended-runner.md) docs.
+For lower-level control, `Runner` is available directly --
+see the [Noise Usage Guide](docs/noise-usage-guide.md) and [Runner Guide](docs/runner.md) docs.
+
+## Classical Control Programs
+
+Programs with mid-circuit measurement, conditional branching, and classical feedback
+loops (e.g., multi-round QEC circuits) are supported via the `CommandSource` trait.
+Any `ClassicalControlEngine` from pecos-engines -- such as `QASMEngine` or
+`HugrEngine` -- can be used through the `ClassicalEngineAdapter`:
+
+```rust
+use pecos_neo::adapter::ClassicalEngineAdapter;
+use pecos_neo::program::ProgramRunner;
+use pecos_neo::prelude::*;
+use pecos_qsim::SparseStab;
+
+// Wrap an existing classical control engine
+let mut program = ClassicalEngineAdapter::new(engine);
+
+// ProgramRunner drives the command-measure-feedback loop
+let mut runner = ProgramRunner::new(
+    Runner::new(SparseStab::new(num_qubits))
+        .with_noise(noise)
+        .with_seed(42),
+);
+
+let result = runner.run_shot(&mut program);
+```
+
+The adapter translates between the engine's `ByteMessage` format and pecos-neo's
+`CommandQueue`/`MeasurementOutcomes`, so classical engines get full access to
+composable noise models, the plugin system, and importance sampling.
 
 ## Available Channels
 

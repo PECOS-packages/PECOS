@@ -10,7 +10,7 @@ This directory contains documentation for `pecos-neo`, a quantum circuit simulat
 
 ### Circuit Execution
 
-- **[extended-runner.md](extended-runner.md)** - Guide to `ExtendedRunner` for GateId-based circuit execution. Covers custom gates, gate overrides, decomposition, and the unified `run()` API.
+- **[runner.md](runner.md)** - Guide to `Runner` for GateId-based circuit execution. Covers custom gates, gate overrides, decomposition, and the unified `run()` API.
 
 ### Extensible Gate System
 
@@ -109,7 +109,7 @@ let results = sim_neo(circuit)
     .run();
 ```
 
-### Running with Custom Gates (ExtendedRunner)
+### Running with Custom Gates (Runner)
 
 For circuits with custom gates and decomposition:
 
@@ -124,7 +124,7 @@ let circuit = OpBuilder::new()
     .mz(QubitId(0), ResultId(0))
     .build();
 
-let mut runner = ExtendedRunner::new(SparseStab::new(1), definitions)
+let mut runner = Runner::with_definitions(SparseStab::new(1), definitions)
     .with_noise(noise);
 
 let outcomes = runner.run(&circuit)?;
@@ -179,8 +179,8 @@ pecos-neo/
 │   ├── subset.rs      # Subset simulation
 │   ├── importance*.rs # Importance sampling
 │   └── ...
-├── runner.rs          # ShotRunner for GateType-based execution
-├── extended_runner.rs # ExtendedRunner for GateId-based execution
+├── runner.rs          # Unified Runner (Clifford + rotation gates)
+├── engines.rs         # Native CommandSource engines (TickCircuit, DagCircuit)
 └── outcome.rs         # MeasurementOutcomes
 ```
 

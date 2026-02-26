@@ -13,7 +13,7 @@ pecos-neo provides the same back-and-forth control flow as pecos-engines, but us
 | `EngineStage::NeedsProcessing(commands)` | `Some(commands)` |
 | `EngineStage::Complete(result)` | `None` |
 | `EngineSystem::process_as_system()` loop | `ProgramRunner::run_shot()` loop |
-| `MonteCarloEngine` | `ShotRunner` + `World<S>` |
+| `MonteCarloEngine` | `Runner` + `World<S>` |
 | Existing classical engines | `ClassicalEngineAdapter` wraps them |
 
 ## pecos-engines (Classic OOP/Trait Pattern)

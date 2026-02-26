@@ -19,7 +19,7 @@
 //! - **Typed Commands**: [`GateCommand`] and [`CommandQueue`] replacing `ByteMessage`
 //! - **Composable Noise**: Event-driven channels that can be freely combined
 //! - **Plugin System**: Bevy-inspired architecture for bundling functionality
-//! - **Simple Runner**: Direct simulator execution via [`ShotRunner`]
+//! - **Simple Runner**: Direct simulator execution via [`Runner`]
 //!
 //! ## Architecture
 //!
@@ -84,8 +84,8 @@
 //!     .build();
 //!
 //! // Run without noise
-//! let mut runner = ShotRunner::new(SparseStab::new(2)).with_seed(42);
-//! let outcomes = runner.execute(&commands);
+//! let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
+//! let outcomes = runner.execute(&commands).unwrap();
 //!
 //! // Outcomes are correlated (Bell state)
 //! let o0 = outcomes.get_bit(QubitId(0)).unwrap();
@@ -110,17 +110,17 @@
 //!     .add_channel(SingleQubitChannel::depolarizing(0.01))
 //!     .add_channel(MeasurementChannel::symmetric(0.005));
 //!
-//! let mut runner = ShotRunner::new(SparseStab::new(1))
+//! let mut runner = Runner::new(SparseStab::new(1))
 //!     .with_noise(noise)
 //!     .with_seed(42);
 //!
-//! let outcomes = runner.execute(&commands);
+//! let outcomes = runner.execute(&commands).unwrap();
 //! ```
 //!
 //! ## With Rotation Gates (Universal Simulation)
 //!
 //! For simulators that support arbitrary rotation gates (like state vector simulators),
-//! use `execute_all()` instead of `execute()`:
+//! use `Runner::rotations()`:
 //!
 //! ```
 //! use pecos_neo::prelude::*;
@@ -132,8 +132,8 @@
 //!     .mz(0)
 //!     .build();
 //!
-//! let mut runner = ShotRunner::new(StateVec::new(1)).with_seed(42);
-//! let outcomes = runner.execute_all(&commands);
+//! let mut runner = Runner::rotations(StateVec::new(1)).with_seed(42);
+//! let outcomes = runner.execute(&commands).unwrap();
 //!
 //! assert!(outcomes.get_bit(QubitId(0)).unwrap());
 //! ```
@@ -144,7 +144,7 @@ pub mod adapter;
 pub mod circuit;
 pub mod command;
 pub mod ecs;
-pub mod extended_runner;
+pub mod engines;
 pub mod extensible;
 pub mod noise;
 pub mod outcome;
@@ -155,7 +155,7 @@ pub mod tool;
 
 // Re-export main types at crate root
 pub use command::{CommandBuilder, CommandQueue, GateCommand, GateType};
-pub use extended_runner::{ExecutionError, ExtendedRunner, GateExecutorFn, GateOverrides};
+pub use engines::{CommandQueueEngine, DagCircuitEngine, TickCircuitEngine};
 pub use extensible::{
     AdaptedGate,
     // Extended operations for stabilizer measurements/preparations
@@ -237,7 +237,8 @@ pub use program::{
     CommandSource, ConditionalProgram, DynProgramRunner, ProgramResult, ProgramRunner,
     RepeatedProgram, StaticProgram,
 };
-pub use runner::{DispatchContext, ShotRunner};
+pub use runner::DispatchContext;
+pub use runner::{ExecutionError, GateExecutorFn, GateOverrides, Runner};
 
 // Re-export adapter utilities (always available)
 pub use adapter::{command_queue_to_gates, gate_to_command, gates_to_command_queue};
@@ -257,7 +258,6 @@ pub use adapter::{
 /// ```
 pub mod prelude {
     pub use crate::command::{CommandBuilder, CommandQueue, GateCommand, GateType};
-    pub use crate::extended_runner::{ExecutionError, ExtendedRunner, GateOverrides};
     pub use crate::extensible::{
         // Extended operations
         AdaptedOp,
@@ -312,7 +312,8 @@ pub mod prelude {
         two_qubit::{AngleScaling, TwoQubitChannel},
     };
     pub use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
-    pub use crate::runner::{DispatchContext, ShotRunner};
+    pub use crate::runner::DispatchContext;
+    pub use crate::runner::{ExecutionError, GateOverrides, Runner};
 
     // Re-export commonly used types from dependencies
     pub use pecos_core::{Angle64, QubitId};
@@ -327,8 +328,8 @@ mod tests {
     fn test_prelude_usage() {
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = ShotRunner::new(SparseStab::new(1)).with_seed(42);
-        let outcomes = runner.execute(&commands);
+        let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
+        let outcomes = runner.execute(&commands).unwrap();
 
         assert_eq!(outcomes.len(), 1);
     }
@@ -344,18 +345,16 @@ mod tests {
             .mz(1)
             .build();
 
-        // Very low noise to not disrupt Bell state correlation (legacy API)
         let noise = ComposableNoiseModel::new()
             .add_channel(SingleQubitChannel::depolarizing(0.0))
             .add_channel(TwoQubitChannel::depolarizing(0.0));
 
-        let mut runner = ShotRunner::new(SparseStab::new(2))
+        let mut runner = Runner::new(SparseStab::new(2))
             .with_noise(noise)
             .with_seed(42);
 
-        let outcomes = runner.execute(&commands);
+        let outcomes = runner.execute(&commands).unwrap();
 
-        // Bell state should still be correlated with zero noise
         let o0 = outcomes.get_bit(QubitId(0)).unwrap();
         let o1 = outcomes.get_bit(QubitId(1)).unwrap();
         assert_eq!(o0, o1);
@@ -372,20 +371,18 @@ mod tests {
             .mz(1)
             .build();
 
-        // Plugin-based noise model (recommended approach)
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin) // State tracking
-            .add_plugin(LeakagePlugin::new()) // Leakage handling
-            .add_plugin(DepolarizingPlugin::new(0.0, 0.0)) // No noise
+            .add_plugin(CorePlugin)
+            .add_plugin(LeakagePlugin::new())
+            .add_plugin(DepolarizingPlugin::new(0.0, 0.0))
             .add_plugin(MeasurementNoisePlugin::symmetric(0.0));
 
-        let mut runner = ShotRunner::new(SparseStab::new(2))
+        let mut runner = Runner::new(SparseStab::new(2))
             .with_noise(noise)
             .with_seed(42);
 
-        let outcomes = runner.execute(&commands);
+        let outcomes = runner.execute(&commands).unwrap();
 
-        // Bell state should still be correlated
         let o0 = outcomes.get_bit(QubitId(0)).unwrap();
         let o1 = outcomes.get_bit(QubitId(1)).unwrap();
         assert_eq!(o0, o1);
@@ -395,13 +392,13 @@ mod tests {
     fn test_multiple_shots() {
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = ShotRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
 
         let mut count_0 = 0;
         let mut count_1 = 0;
 
         for _ in 0..100 {
-            let outcomes = runner.run_shot(&commands);
+            let outcomes = runner.run_shot(&commands).unwrap();
             if outcomes.get_bit(QubitId(0)).unwrap() {
                 count_1 += 1;
             } else {

@@ -21,7 +21,7 @@ use pecos_core::QubitId;
 use pecos_neo::command::CommandBuilder;
 use pecos_neo::ecs::{ParallelConfig, ParallelCoordinator};
 use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
-use pecos_neo::runner::ShotRunner;
+use pecos_neo::runner::Runner;
 use pecos_neo::sampling::{MonteCarloConfig, MonteCarloRunner};
 use pecos_qsim::SparseStab;
 use std::collections::BTreeMap;
@@ -82,7 +82,7 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
     let mc_results = MonteCarloRunner::run(
         &commands,
         mc_config,
-        || ShotRunner::new(SparseStab::new(2)),
+        || Runner::new(SparseStab::new(2)),
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
@@ -127,9 +127,9 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
                     let rng_comp = world.rngs.get(entity).unwrap();
 
                     let mut runner =
-                        ShotRunner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
+                        Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
 
-                    let outcomes = runner.run_shot(&commands);
+                    let outcomes = runner.run_shot(&commands).unwrap();
                     let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
                     let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
                     format!(
@@ -186,7 +186,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
         || {
             let noise =
                 ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p1));
-            ShotRunner::new(SparseStab::new(1)).with_noise(noise)
+            Runner::new(SparseStab::new(1)).with_noise(noise)
         },
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     );
@@ -215,11 +215,11 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
 
                     let noise = ComposableNoiseModel::new()
                         .add_channel(SingleQubitChannel::depolarizing(p1));
-                    let mut runner = ShotRunner::new(sim_comp.simulator.clone())
+                    let mut runner = Runner::new(sim_comp.simulator.clone())
                         .with_noise(noise)
                         .with_rng(rng_comp.rng.clone());
 
-                    let outcomes = runner.run_shot(&commands);
+                    let outcomes = runner.run_shot(&commands).unwrap();
                     outcomes.get_bit(QubitId(0)).unwrap_or(false)
                 })
                 .collect()
@@ -268,10 +268,10 @@ fn test_coordinator_determinism() {
                         let sim_comp = world.simulators.get(entity).unwrap();
                         let rng_comp = world.rngs.get(entity).unwrap();
 
-                        let mut runner = ShotRunner::new(sim_comp.simulator.clone())
-                            .with_rng(rng_comp.rng.clone());
+                        let mut runner =
+                            Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
 
-                        let outcomes = runner.run_shot(&commands);
+                        let outcomes = runner.run_shot(&commands).unwrap();
                         outcomes.get_bit(QubitId(0)).unwrap_or(false)
                     })
                     .collect()
@@ -292,10 +292,10 @@ fn test_coordinator_determinism() {
                         let sim_comp = world.simulators.get(entity).unwrap();
                         let rng_comp = world.rngs.get(entity).unwrap();
 
-                        let mut runner = ShotRunner::new(sim_comp.simulator.clone())
-                            .with_rng(rng_comp.rng.clone());
+                        let mut runner =
+                            Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
 
-                        let outcomes = runner.run_shot(&commands);
+                        let outcomes = runner.run_shot(&commands).unwrap();
                         outcomes.get_bit(QubitId(0)).unwrap_or(false)
                     })
                     .collect()
@@ -371,9 +371,9 @@ fn test_coordinator_hadamard_distribution() {
                     let rng_comp = world.rngs.get(entity).unwrap();
 
                     let mut runner =
-                        ShotRunner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
+                        Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
 
-                    let outcomes = runner.run_shot(&commands);
+                    let outcomes = runner.run_shot(&commands).unwrap();
                     outcomes.get_bit(QubitId(0)).unwrap_or(false)
                 })
                 .collect()

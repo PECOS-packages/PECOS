@@ -31,8 +31,8 @@
 //!
 //! // Convert to CommandQueue and execute
 //! let commands = CommandQueue::from(&circuit);
-//! let mut runner = ShotRunner::new(SparseStab::new(2)).with_seed(42);
-//! let outcomes = runner.run_shot(&commands);
+//! let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
+//! let outcomes = runner.run_shot(&commands).unwrap();
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType};

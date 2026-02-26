@@ -80,7 +80,7 @@
 use crate::command::CommandQueue;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
-use crate::runner::ShotRunner;
+use crate::runner::Runner;
 use pecos_core::rng::RngManageable;
 use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
@@ -125,14 +125,14 @@ pub struct ProgramResult {
 /// The `ProgramRunner` executes programs that implement `CommandSource`,
 /// handling the back-and-forth between classical control and quantum execution.
 pub struct ProgramRunner<S: CliffordGateable> {
-    runner: ShotRunner<S>,
+    runner: Runner<S>,
 }
 
 impl<S: CliffordGateable> ProgramRunner<S> {
     /// Create a new program runner with the given simulator.
     pub fn new(simulator: S) -> Self {
         Self {
-            runner: ShotRunner::new(simulator),
+            runner: Runner::new(simulator),
         }
     }
 
@@ -155,13 +155,12 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     /// Runs the program until `CommandSource::is_complete()` returns true
     /// or `next_commands()` returns `None`.
     ///
-    /// The simulator is reset to |0⟩^n at the start of each shot, ensuring
+    /// The simulator is reset to |0>^n at the start of each shot, ensuring
     /// clean state for programs that don't explicitly prepare qubits.
     pub fn run_shot<P: CommandSource + ?Sized>(&mut self, program: &mut P) -> ProgramResult {
         program.reset();
 
-        // Reset simulator to |0⟩^n state at the start of each shot
-        // This is important for programs (like QASM) that assume qubits start in |0>
+        // Reset simulator to |0>^n state at the start of each shot
         self.runner.simulator_mut().reset();
 
         let mut all_outcomes = MeasurementOutcomes::new();
@@ -169,16 +168,16 @@ impl<S: CliffordGateable> ProgramRunner<S> {
         let mut last_outcomes: Option<MeasurementOutcomes> = None;
 
         loop {
-            // Get next batch of commands
             let commands = program.next_commands(last_outcomes.as_ref());
 
             match commands {
                 Some(cmds) if !cmds.is_empty() => {
-                    // Execute this batch (without resetting - state carries over between batches)
-                    let outcomes = self.runner.run_shot(&cmds);
+                    let outcomes = self
+                        .runner
+                        .run_shot(&cmds)
+                        .expect("core gates should not fail");
                     num_batches += 1;
 
-                    // Merge outcomes into total
                     for outcome in outcomes.iter() {
                         all_outcomes.record(*outcome);
                     }
@@ -186,7 +185,6 @@ impl<S: CliffordGateable> ProgramRunner<S> {
                     last_outcomes = Some(outcomes);
                 }
                 _ => {
-                    // Program complete
                     break;
                 }
             }
@@ -202,14 +200,14 @@ impl<S: CliffordGateable> ProgramRunner<S> {
         }
     }
 
-    /// Get a reference to the underlying shot runner.
+    /// Get a reference to the underlying runner.
     #[must_use]
-    pub fn shot_runner(&self) -> &ShotRunner<S> {
+    pub fn runner(&self) -> &Runner<S> {
         &self.runner
     }
 
-    /// Get a mutable reference to the underlying shot runner.
-    pub fn shot_runner_mut(&mut self) -> &mut ShotRunner<S> {
+    /// Get a mutable reference to the underlying runner.
+    pub fn runner_mut(&mut self) -> &mut Runner<S> {
         &mut self.runner
     }
 }
@@ -240,7 +238,7 @@ where
     }
 
     fn set_full_seed(&mut self, seed: u64) {
-        self.shot_runner_mut().set_full_seed(seed);
+        self.runner_mut().set_full_seed(seed);
     }
 }
 

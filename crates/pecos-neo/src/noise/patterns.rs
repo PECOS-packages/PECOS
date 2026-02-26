@@ -572,7 +572,7 @@ pub fn surface_code_noise(physical_error_rate: f64, with_crosstalk: bool) -> Com
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;
-    use crate::runner::ShotRunner;
+    use crate::runner::Runner;
     use pecos_qsim::SparseStab;
 
     #[test]
@@ -580,12 +580,12 @@ mod tests {
         let model = depolarizing_only(0.5, 0.5);
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = ShotRunner::new(SparseStab::new(1))
+        let mut runner = Runner::new(SparseStab::new(1))
             .with_noise(model)
             .with_seed(42);
 
         // Just verify it runs
-        let _ = runner.execute(&commands);
+        let _ = runner.execute(&commands).unwrap();
     }
 
     #[test]
@@ -596,10 +596,10 @@ mod tests {
         for seed in 0..100 {
             // Recreate model for each iteration since ComposableNoiseModel doesn't Clone
             let model = depolarizing_with_measurement(0.0, 0.0, 0.5);
-            let mut runner = ShotRunner::new(SparseStab::new(1))
+            let mut runner = Runner::new(SparseStab::new(1))
                 .with_noise(model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands);
+            let outcomes = runner.execute(&commands).unwrap();
             if outcomes
                 .get(pecos_core::QubitId(0))
                 .is_some_and(|o| o.outcome)
@@ -620,11 +620,11 @@ mod tests {
         let model = dephasing_only(0.5, 0.5);
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = ShotRunner::new(SparseStab::new(1))
+        let mut runner = Runner::new(SparseStab::new(1))
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands);
+        let _ = runner.execute(&commands).unwrap();
     }
 
     #[test]
@@ -632,11 +632,11 @@ mod tests {
         let model = with_leakage(0.5, 0.5, 0.5, 0.5);
         let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
 
-        let mut runner = ShotRunner::new(SparseStab::new(1))
+        let mut runner = Runner::new(SparseStab::new(1))
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands);
+        let _ = runner.execute(&commands).unwrap();
     }
 
     #[test]
@@ -651,11 +651,11 @@ mod tests {
             .mz(1)
             .build();
 
-        let mut runner = ShotRunner::new(SparseStab::new(2))
+        let mut runner = Runner::new(SparseStab::new(2))
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands);
+        let _ = runner.execute(&commands).unwrap();
     }
 
     #[test]
@@ -668,11 +668,11 @@ mod tests {
         let model = realistic_device_noise(params);
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = ShotRunner::new(SparseStab::new(1))
+        let mut runner = Runner::new(SparseStab::new(1))
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands);
+        let _ = runner.execute(&commands).unwrap();
     }
 
     #[test]
@@ -686,11 +686,11 @@ mod tests {
             .mz(1)
             .build();
 
-        let mut runner = ShotRunner::new(SparseStab::new(2))
+        let mut runner = Runner::new(SparseStab::new(2))
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands);
+        let _ = runner.execute(&commands).unwrap();
     }
 
     #[test]

@@ -9,7 +9,7 @@ pecos-neo provides two approaches to noise modeling:
 1. **FlowNoiseModelBuilder** (recommended) - Parameter-based builder with sensible defaults
 2. **Custom primitives** - Build noise decision trees from composable primitives
 
-Both produce a `ComposableNoiseModel` that integrates with `ShotRunner`.
+Both produce a `ComposableNoiseModel` that integrates with `Runner`.
 
 ## FlowNoiseModelBuilder
 
@@ -137,10 +137,10 @@ FlowNoiseModelBuilder::new()
     })
 ```
 
-## Using Noise with ShotRunner
+## Using Noise with Runner
 
 ```rust
-use pecos_neo::runner::ShotRunner;
+use pecos_neo::runner::Runner;
 use pecos_neo::command::CommandBuilder;
 use pecos_qsim::SparseStab;
 
@@ -161,7 +161,7 @@ let noise = FlowNoiseModelBuilder::new()
     .build();
 
 // Run with noise
-let mut runner = ShotRunner::new(SparseStab::new(2))
+let mut runner = Runner::new(SparseStab::new(2))
     .with_noise(noise)
     .with_seed(42);
 

@@ -13,7 +13,7 @@
 The current simulation pipeline has a rigid flow:
 
 ```
-ClassicalEngine -> CommandQueue (gates) -> ShotRunner -> NoiseModel + Simulator
+ClassicalEngine -> CommandQueue (gates) -> Runner -> NoiseModel + Simulator
 ```
 
 This works well for standard quantum simulation, but real-world use cases need
@@ -27,7 +27,7 @@ richer communication between pipeline participants:
 
 These are not gates. They are **metadata that flows alongside gates** and must be
 interpreted by specific consumers. Today, the only way to add a new consumer to the
-pipeline is to modify `ShotRunner`'s inner loop, which is fragile and doesn't compose.
+pipeline is to modify `Runner`'s inner loop, which is fragile and doesn't compose.
 
 ### Design Goals
 
@@ -95,7 +95,7 @@ Two changes to the system:
 
 2. **Pluggable dispatch points**: The runner's inner loop becomes extensible so
    new consumers (signal handlers, telemetry, importance sampling hooks) can register
-   without modifying `ShotRunner`.
+   without modifying `Runner`.
 
 ```
                     ┌────────────────────────────────┐
@@ -109,7 +109,7 @@ Two changes to the system:
                     └───────────────┬─────────────────┘
                                     │
                     ┌───────────────▼─────────────────┐
-                    │         ShotRunner              │
+                    │         Runner              │
                     │                                 │
                     │  for each item (ordered):       │
                     │    Gate   → dispatch points:    │
@@ -366,7 +366,7 @@ respond to, matching the existing `BitVec`-based filtering for `GateId`. The
 
 ### Problem
 
-The current `ShotRunner` has a hardcoded inner loop:
+The current `Runner` has a hardcoded inner loop:
 
 ```rust
 // Current: tightly coupled
@@ -405,7 +405,7 @@ Gate execution timeline:
 > `NoiseResponse` directly (no separate `DispatchResponse` type).
 
 ```rust
-impl<S: CliffordGateable> ShotRunner<S> {
+impl<S: CliffordGateable> Runner<S> {
     /// Register a typed observe-only signal handler.
     pub fn on_signal<Sig: Signal>(
         &mut self,
@@ -465,7 +465,7 @@ The existing API continues to work unchanged:
 
 ```rust
 // This still works -- noise model runs alongside gate event handlers
-let runner = ShotRunner::new(simulator)
+let runner = Runner::new(simulator)
     .with_noise(noise_model);
 ```
 
@@ -702,7 +702,7 @@ wildcard `_` arms).
 
 ### Phase 4: Signal Dispatch in Runner (pecos-neo) -- DONE
 
-Added `SignalHandlerRegistry` and `.on_signal::<T>()` to `ShotRunner`.
+Added `SignalHandlerRegistry` and `.on_signal::<T>()` to `Runner`.
 Signals are dispatched during `execute()` using a cursor-based interleaving
 approach (signals at position N fire between commands N-1 and N). Observe-only
 handlers fire first, then signals are emitted to the noise model as
@@ -715,7 +715,7 @@ stays unchanged.
 ### Phase 5: Gate Event Handlers and DispatchContext (pecos-neo) -- DONE
 
 Added `DispatchContext` (gate info + optional read-only `NoiseContext`) and
-`GateEventHandlers` (per-event-type `Vec<PrioritizedHandler>`) to `ShotRunner`.
+`GateEventHandlers` (per-event-type `Vec<PrioritizedHandler>`) to `Runner`.
 Users register closures via `on_before_gate`, `on_after_gate`,
 `on_before_measurement`, `on_after_measurement`, `on_after_preparation`, and
 `on_idle`. Handlers return `NoiseResponse` which is combined with noise model

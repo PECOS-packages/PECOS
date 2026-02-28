@@ -71,3 +71,9 @@ void apply_swap(QulacsState& state, size_t qubit1, size_t qubit2);
 
 // Measurement
 uint8_t measure_z(QulacsState& state, size_t qubit);
+
+// Direct csim-level gate functions (bypass gate object allocation)
+void csim_x(QulacsState& state, size_t qubit);
+void csim_h(QulacsState& state, size_t qubit);
+void csim_rz(QulacsState& state, size_t qubit, double angle);
+void csim_cnot(QulacsState& state, size_t control, size_t target);

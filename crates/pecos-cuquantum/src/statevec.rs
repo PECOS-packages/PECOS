@@ -177,11 +177,14 @@ impl CuStateVec {
 
     /// Apply a single-qubit gate specified by a 2x2 matrix
     ///
+    /// This is the lowest-level gate application method, calling `custatevecApplyMatrix`
+    /// directly. Use this to bypass trait overhead in benchmarks.
+    ///
     /// # Arguments
     /// * `qubit` - Target qubit index
     /// * `matrix` - 2x2 unitary matrix in row-major order [a, b, c, d]
     ///   Each element is [real, imag]
-    fn apply_matrix_1q(&mut self, qubit: usize, matrix: &[[f64; 2]; 4]) {
+    pub fn apply_matrix_1q(&mut self, qubit: usize, matrix: &[[f64; 2]; 4]) {
         debug_assert!(qubit < self.num_qubits, "qubit index out of range");
 
         // Convert to cuDoubleComplex format
@@ -232,11 +235,14 @@ impl CuStateVec {
 
     /// Apply a two-qubit gate specified by a 4x4 matrix
     ///
+    /// This is the lowest-level two-qubit gate application method, calling
+    /// `custatevecApplyMatrix` directly. Use this to bypass trait overhead in benchmarks.
+    ///
     /// # Arguments
     /// * `qubit_a` - First qubit index (lower in ordering)
     /// * `qubit_b` - Second qubit index (higher in ordering)
     /// * `matrix` - 4x4 unitary matrix in row-major order (16 complex elements)
-    fn apply_matrix_2q(&mut self, qubit_a: usize, qubit_b: usize, matrix: &[[f64; 2]; 16]) {
+    pub fn apply_matrix_2q(&mut self, qubit_a: usize, qubit_b: usize, matrix: &[[f64; 2]; 16]) {
         debug_assert!(qubit_a < self.num_qubits, "qubit_a index out of range");
         debug_assert!(qubit_b < self.num_qubits, "qubit_b index out of range");
         debug_assert!(qubit_a != qubit_b, "qubits must be different");

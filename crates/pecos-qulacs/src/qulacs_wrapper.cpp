@@ -1,6 +1,7 @@
 #include "qulacs_wrapper.h"
 #include "cppsim/state.hpp"
 #include "cppsim/gate_factory.hpp"
+#include "csim/update_ops.hpp"
 #include <complex>
 #include <array>
 
@@ -239,4 +240,21 @@ uint8_t measure_z(QulacsState& state, size_t qubit) {
 
     // Fallback: just return 0
     return 0;
+}
+
+// Direct csim-level gate functions (bypass gate object allocation)
+void csim_x(QulacsState& state, size_t qubit) {
+    X_gate(static_cast<UINT>(qubit), state.get_state()->data_c(), state.get_state()->dim);
+}
+
+void csim_h(QulacsState& state, size_t qubit) {
+    H_gate(static_cast<UINT>(qubit), state.get_state()->data_c(), state.get_state()->dim);
+}
+
+void csim_rz(QulacsState& state, size_t qubit, double angle) {
+    RZ_gate(static_cast<UINT>(qubit), -angle, state.get_state()->data_c(), state.get_state()->dim);
+}
+
+void csim_cnot(QulacsState& state, size_t control, size_t target) {
+    CNOT_gate(static_cast<UINT>(control), static_cast<UINT>(target), state.get_state()->data_c(), state.get_state()->dim);
 }

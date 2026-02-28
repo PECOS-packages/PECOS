@@ -58,5 +58,11 @@ pub mod ffi {
 
         // Measurement
         fn measure_z(state: Pin<&mut QulacsState>, qubit: usize) -> u8;
+
+        // Direct csim-level gate functions (bypass gate object allocation)
+        fn csim_x(state: Pin<&mut QulacsState>, qubit: usize);
+        fn csim_h(state: Pin<&mut QulacsState>, qubit: usize);
+        fn csim_rz(state: Pin<&mut QulacsState>, qubit: usize, angle: f64);
+        fn csim_cnot(state: Pin<&mut QulacsState>, control: usize, target: usize);
     }
 }

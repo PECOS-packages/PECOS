@@ -72,8 +72,16 @@ pub enum RustCommands {
         check: bool,
     },
 
-    /// Run benchmarks with native CPU optimizations (AVX2, etc.)
+    /// Run benchmarks
     Bench {
+        /// Build profile: release (default) or native (adds -C target-cpu=native)
+        #[arg(long, default_value = "release")]
+        profile: String,
+
+        /// Additional cargo features (e.g., "qulacs", "quest")
+        #[arg(long)]
+        features: Option<String>,
+
         /// Benchmark filter pattern (e.g., "`SoA` Comparison", "DOD")
         pattern: Option<String>,
     },

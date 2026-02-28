@@ -19,7 +19,11 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
             include_ffi,
         } => run_test(*release, *include_ffi),
         super::RustCommands::Fmt { check } => run_fmt(*check),
-        super::RustCommands::Bench { pattern } => run_bench(pattern.as_deref()),
+        super::RustCommands::Bench {
+            profile,
+            features,
+            pattern,
+        } => run_bench(profile, features.as_deref(), pattern.as_deref()),
     }
 }
 
@@ -545,19 +549,40 @@ fn run_fmt(check: bool) -> Result<()> {
     Ok(())
 }
 
-/// Run cargo bench with native CPU optimizations (AVX2, etc.)
-fn run_bench(pattern: Option<&str>) -> Result<()> {
-    println!("Running benchmarks with native CPU optimizations...");
-
+/// Run cargo bench with configurable profile and features
+fn run_bench(profile: &str, features: Option<&str>, pattern: Option<&str>) -> Result<()> {
     let mut cmd = Command::new("cargo");
-    cmd.args(["bench", "-p", "benchmarks"]);
+    cmd.args(["bench", "-p", "benchmarks", "--bench", "benchmarks"]);
+
+    match profile {
+        "native" => {
+            println!("Running benchmarks with native CPU optimizations...");
+            cmd.arg("--profile=native");
+            // Preserve any existing RUSTFLAGS while adding target-cpu=native
+            let mut rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+            if !rustflags.is_empty() {
+                rustflags.push(' ');
+            }
+            rustflags.push_str("-C target-cpu=native");
+            cmd.env("RUSTFLAGS", rustflags);
+        }
+        "release" => {
+            println!("Running benchmarks in release mode...");
+        }
+        other => {
+            return Err(Error::Config(format!(
+                "Unknown bench profile '{other}'. Use 'release' or 'native'."
+            )));
+        }
+    }
+
+    if let Some(feat) = features {
+        cmd.arg(format!("--features={feat}"));
+    }
 
     if let Some(pat) = pattern {
         cmd.args(["--", pat]);
     }
-
-    // Set RUSTFLAGS for native CPU features
-    cmd.env("RUSTFLAGS", "-C target-cpu=native");
 
     let status = cmd.status();
     if !matches!(status, Ok(s) if s.success()) {

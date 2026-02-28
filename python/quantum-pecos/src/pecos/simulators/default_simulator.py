@@ -21,6 +21,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pecos_rslib import GateRegistry
+
     from pecos.circuits import QuantumCircuit
 
 JSONType = dict[str, Any] | list[Any] | str | int | float | bool | None
@@ -82,12 +84,17 @@ class DefaultSimulator:
         self,
         circuit: QuantumCircuit,
         removed_locations: set | None = None,
+        gate_registry: GateRegistry | None = None,
     ) -> dict[int | tuple[int, ...], JSONType]:
         """Run a quantum circuit on the simulator.
+
+        If a gate_registry is provided and a gate symbol is registered in it,
+        the gate is decomposed into base gates before being passed to run_gate.
 
         Args:
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
             removed_locations (set | None): Optional set of locations to skip when running the circuit.
+            gate_registry: Optional GateRegistry for custom gate decomposition at simulation time.
 
         Returns:
             dict[int | tuple[int, ...], JSONType]: Circuit output. Note that this output format may differ
@@ -102,9 +109,41 @@ class DefaultSimulator:
                 gate_locations = set(locations) - removed_locations
                 # TODO: need to handle multi-qubit ops that are partially removed
 
-            gate_output = self.run_gate(symbol, gate_locations, **params)
+            if gate_registry and symbol not in self.bindings and gate_registry.contains(symbol):
+                gate_output = self._run_decomposed_gate(gate_registry, symbol, gate_locations, **params)
+            else:
+                gate_output = self.run_gate(symbol, gate_locations, **params)
 
             if gate_output:
                 output.update(gate_output)
 
+        return output
+
+    def _run_decomposed_gate(
+        self,
+        gate_registry: GateRegistry,
+        symbol: str,
+        locations: set[int] | set[tuple[int, ...]],
+        **params: JSONType,
+    ) -> dict[int | tuple[int, ...], JSONType]:
+        """Decompose a registered gate and run each step via run_gate."""
+        output = {}
+        for location in locations:
+            qubits = list(location) if isinstance(location, tuple) else [location]
+            angles = list(params.get("angles", ()))
+            steps = gate_registry.decompose(symbol, qubits, angles)
+            for step_symbol, step_qubits, step_angles, step_meta in steps:
+                step_loc = {step_qubits[0] if len(step_qubits) == 1 else tuple(step_qubits)}
+                step_params = dict(params)
+                if step_angles:
+                    step_params["angles"] = tuple(step_angles)
+                    if len(step_angles) == 1:
+                        step_params["angle"] = step_angles[0]
+                else:
+                    step_params.pop("angles", None)
+                    step_params.pop("angle", None)
+                step_params.update(step_meta)
+                step_output = self.run_gate(step_symbol, step_loc, **step_params)
+                if step_output:
+                    output.update(step_output)
         return output

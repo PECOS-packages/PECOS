@@ -23,10 +23,12 @@
 //! from the pecos-quantum crate, as well as HUGR conversion utilities.
 
 use crate::dtypes::AngleParam;
-use pecos::core::{Angle64, Nanoseconds, TimeUnits};
+use crate::gate_registry_bindings::PyGateRegistry;
+use pecos::core::{Angle64, GateQubits, GateSignature, Nanoseconds, TimeUnits};
 use pecos::quantum::{Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
+use std::collections::HashMap;
 
 /// Convert a Rust Attribute to a Python object.
 fn attribute_to_py(py: Python<'_>, attr: &Attribute) -> Py<PyAny> {
@@ -405,6 +407,14 @@ impl PyGateType {
     fn qfree() -> Self {
         Self {
             inner: GateType::QFree,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "Custom")]
+    fn custom() -> Self {
+        Self {
+            inner: GateType::Custom,
         }
     }
 }
@@ -1344,6 +1354,12 @@ pyo3::create_exception!(
 // Qubit conflict exception
 pyo3::create_exception!(
     pecos_rslib,
+    GateSignatureMismatchError,
+    pyo3::exceptions::PyValueError
+);
+
+pyo3::create_exception!(
+    pecos_rslib,
     QubitConflictError,
     pyo3::exceptions::PyValueError
 );
@@ -2154,6 +2170,52 @@ impl PyTickCircuit {
         }
     }
 
+    // =========================================================================
+    // Gate signature validation
+    // =========================================================================
+
+    /// Import gate signatures for validation.
+    ///
+    /// Args:
+    ///     sigs: A dictionary mapping gate names to (`quantum_arity`, `angle_arity`) tuples.
+    fn import_gate_signatures(&mut self, sigs: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut sig_map = HashMap::new();
+        for (key, value) in sigs.iter() {
+            let name: String = key.extract()?;
+            let (quantum_arity, angle_arity): (usize, usize) = value.extract()?;
+            sig_map.insert(
+                name,
+                GateSignature {
+                    quantum_arity,
+                    angle_arity,
+                },
+            );
+        }
+        self.inner.import_signatures(&sig_map);
+        Ok(())
+    }
+
+    /// Get gate signatures as a dictionary.
+    ///
+    /// Returns:
+    ///     A dictionary mapping gate names to (`quantum_arity`, `angle_arity`) tuples.
+    fn gate_signatures(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new(py);
+        for (name, sig) in self.inner.gate_signatures() {
+            dict.set_item(name, (sig.quantum_arity, sig.angle_arity))?;
+        }
+        Ok(dict.into())
+    }
+
+    /// Import signatures from a `GateRegistry`.
+    ///
+    /// Extracts signatures from all registered gates and imports them
+    /// for validation when adding custom gates.
+    fn import_registry(&mut self, registry: &PyGateRegistry) {
+        let sigs = registry.inner.signatures();
+        self.inner.import_signatures(&sigs);
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "TickCircuit(ticks={}, gates={})",
@@ -2597,6 +2659,93 @@ impl PyTickHandle {
     }
 
     // =========================================================================
+    // Custom (unrecognized) gates
+    // =========================================================================
+
+    /// Add a custom (unrecognized) gate on the given qubits.
+    fn custom(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        let qubit_ids: GateQubits = qubits.into_iter().map(QubitId::from).collect();
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::custom(qubit_ids))?;
+        Ok(slf)
+    }
+
+    /// Add a custom gate with signature validation.
+    ///
+    /// On first use, the gate name's signature (quantum arity, angle arity)
+    /// is recorded. Subsequent uses are validated against this signature.
+    ///
+    /// Args:
+    ///     name: The gate name.
+    ///     qubits: List of qubit IDs.
+    ///     angles: Optional list of angle values (radians).
+    ///
+    /// Raises:
+    ///     `GateSignatureMismatchError`: If the arity does not match a previous use.
+    ///     `QubitConflictError`: If a qubit is already in use in this tick.
+    #[pyo3(signature = (name, qubits, angles=None))]
+    fn custom_gate(
+        slf: Py<Self>,
+        py: Python<'_>,
+        name: &str,
+        qubits: Vec<usize>,
+        angles: Option<Vec<f64>>,
+    ) -> PyResult<Py<Self>> {
+        let angle_vals: Vec<Angle64> = angles
+            .unwrap_or_default()
+            .into_iter()
+            .map(Angle64::from_radians)
+            .collect();
+
+        let handle = slf.borrow_mut(py);
+        let tick_idx = handle.tick_idx;
+        let circuit_py = handle.circuit.clone_ref(py);
+
+        // Validate/register and add gate
+        let mut circuit = circuit_py.borrow_mut(py);
+        match circuit
+            .inner
+            .validate_or_register_gate(name, qubits.len(), angle_vals.len())
+        {
+            Ok(()) => {}
+            Err(e) => {
+                return Err(PyErr::new::<GateSignatureMismatchError, _>(e.to_string()));
+            }
+        }
+
+        let qubit_ids: GateQubits = qubits.into_iter().map(QubitId::from).collect();
+        let gate = Gate::new(GateType::Custom, angle_vals, vec![], qubit_ids);
+
+        if let Some(tick) = circuit.inner.get_tick_mut(tick_idx) {
+            match tick.try_add_gate(gate) {
+                Ok(idx) => {
+                    tick.set_gate_attr(idx, "_symbol", Attribute::String(name.to_string()));
+                    drop(circuit);
+                    drop(handle);
+                    // Update last_gate_idx through a fresh borrow
+                    slf.borrow_mut(py).last_gate_idx = Some(idx);
+                    Ok(slf)
+                }
+                Err(err) => {
+                    let msg = format!(
+                        "Qubit(s) {:?} already in use in tick {}",
+                        err.conflicting_qubits
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        tick_idx
+                    );
+                    Err(PyErr::new::<QubitConflictError, _>(msg))
+                }
+            }
+        } else {
+            drop(circuit);
+            drop(handle);
+            Ok(slf)
+        }
+    }
+
+    // =========================================================================
     // State preparation and measurement
     // =========================================================================
 
@@ -2729,6 +2878,10 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
     )?;
     parent_module.add("HugrConversionError", py.get_type::<HugrConversionError>())?;
     parent_module.add("QubitConflictError", py.get_type::<QubitConflictError>())?;
+    parent_module.add(
+        "GateSignatureMismatchError",
+        py.get_type::<GateSignatureMismatchError>(),
+    )?;
 
     // Add HUGR conversion functions
     parent_module.add_function(wrap_pyfunction!(py_hugr_to_dag_circuit, parent_module)?)?;

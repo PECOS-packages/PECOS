@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 
 [build-dependencies]
-bindgen = "0.71"
+bindgen.workspace = true
 pecos-build = { path = "../pecos-build" }
 log.workspace = true
 env_logger.workspace = true

@@ -32,8 +32,11 @@ from typing import TYPE_CHECKING
 
 import pecos_rslib
 from pecos_rslib import (
+    AngleSource,  # Angle source specification for gate decomposition
     Array,  # Array type with generic dtype support (Array[f64], etc.)
     BitInt,  # Fixed-width binary integer type
+    GateRegistry,  # Gate registration system for custom gate decomposition
+    GateSignatureMismatchError,  # Raised when custom gate arity mismatches
     Nanoseconds,  # Time duration in nanoseconds
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
@@ -249,6 +252,7 @@ __all__ = [
     "NUMERIC_TYPES",
     "SIGNED_INTEGER_TYPES",
     "UNSIGNED_INTEGER_TYPES",
+    "AngleSource",
     # Core types
     "Array",
     # Deprecated
@@ -257,6 +261,8 @@ __all__ = [
     # Type categories
     "Complex",
     "Float",
+    "GateRegistry",
+    "GateSignatureMismatchError",
     "GeneralNoiseModelBuilder",
     # Program wrapper classes for sim() - also available via pecos.programs
     "Guppy",

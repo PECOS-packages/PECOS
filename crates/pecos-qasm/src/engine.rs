@@ -627,7 +627,8 @@ impl QASMEngine {
             | GateType::Idle
             | GateType::MeasCrosstalkLocalPayload
             | GateType::MeasCrosstalkGlobalPayload
-            | GateType::QFree => Ok(()), // No-op gates (QFree is just a marker)
+            | GateType::QFree
+            | GateType::Custom => Ok(()), // No-op gates (QFree is just a marker, Custom is a placeholder)
             GateType::X
             | GateType::Z
             | GateType::Y

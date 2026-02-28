@@ -18,6 +18,8 @@ mod modules {
     pub mod dem_sampler;
     pub mod dod_statevec;
     // TODO: pub mod hadamard_ops;
+    #[cfg(feature = "cuquantum")]
+    pub mod cuquantum;
     #[cfg(feature = "gpu-sims")]
     pub mod gpu_influence_sampler;
     pub mod measurement_sampling;
@@ -34,6 +36,8 @@ mod modules {
     pub mod trig;
 }
 
+#[cfg(feature = "cuquantum")]
+use modules::cuquantum;
 #[cfg(feature = "gpu-sims")]
 use modules::gpu_influence_sampler;
 #[cfg(feature = "cppsparsesim")]
@@ -47,6 +51,8 @@ use modules::{
 fn all_benchmarks(c: &mut Criterion) {
     allocation_overhead::benchmarks(c);
     cpu_stabilizer_comparison::benchmarks(c);
+    #[cfg(feature = "cuquantum")]
+    cuquantum::benchmarks(c);
     dem_sampler::benchmarks(c);
     dod_statevec::benchmarks(c);
     #[cfg(feature = "gpu-sims")]

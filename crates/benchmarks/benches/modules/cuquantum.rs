@@ -1,17 +1,29 @@
-//! Benchmarks for pecos-cuquantum GPU simulators
+// Copyright 2026 The PECOS Developers
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License
+// is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+// or implied. See the License for the specific language governing permissions and limitations under
+// the License.
+
+//! Benchmarks for pecos-cuquantum GPU simulators.
 //!
-//! These benchmarks compare cuQuantum GPU simulation performance against
-//! other backends (e.g., wgpu-based simulators).
+//! Benchmarks cuQuantum state vector and stabilizer simulation performance.
 //!
-//! Run with: `cargo bench -p pecos-cuquantum --features integration-tests`
+//! Run with: `cargo bench -p benchmarks --features cuquantum`
 //!
 //! **Requires cuQuantum to be installed.**
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput};
 use pecos_core::Angle64;
 use pecos_cuquantum::{CuStabilizer, CuStateVec, QubitId, TryClone, is_cuquantum_available};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use std::f64::consts::PI;
+use std::hint::black_box;
 
 /// Benchmark state vector simulation for different qubit counts
 fn bench_statevec_gates(c: &mut Criterion) {
@@ -368,7 +380,7 @@ fn bench_sampling(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark Clone and TryClone operations
+/// Benchmark Clone and `TryClone` operations
 fn bench_clone(c: &mut Criterion) {
     if !is_cuquantum_available() {
         eprintln!("Skipping clone benchmarks: cuQuantum not available");
@@ -424,15 +436,13 @@ fn bench_clone(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_statevec_gates,
-    bench_stabilizer_gates,
-    bench_bell_state,
-    bench_surface_code_syndrome,
-    bench_rotation_gates,
-    bench_two_qubit_rotation_gates,
-    bench_sampling,
-    bench_clone,
-);
-criterion_main!(benches);
+pub fn benchmarks(c: &mut Criterion) {
+    bench_statevec_gates(c);
+    bench_stabilizer_gates(c);
+    bench_bell_state(c);
+    bench_surface_code_syndrome(c);
+    bench_rotation_gates(c);
+    bench_two_qubit_rotation_gates(c);
+    bench_sampling(c);
+    bench_clone(c);
+}

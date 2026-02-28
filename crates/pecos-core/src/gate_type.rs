@@ -101,6 +101,8 @@ pub enum GateType {
     Idle = 200,
     MeasCrosstalkGlobalPayload = 218,
     MeasCrosstalkLocalPayload = 219,
+    /// Custom/unrecognized gate type, with actual name stored in metadata
+    Custom = 255,
 }
 
 impl From<u8> for GateType {
@@ -145,6 +147,7 @@ impl From<u8> for GateType {
             200 => GateType::Idle,
             218 => GateType::MeasCrosstalkGlobalPayload,
             219 => GateType::MeasCrosstalkLocalPayload,
+            255 => GateType::Custom,
             _ => panic!("Invalid gate type ID: {value}"),
         }
     }
@@ -188,7 +191,8 @@ impl GateType {
             | GateType::MeasCrosstalkLocalPayload
             | GateType::Prep
             | GateType::QAlloc
-            | GateType::QFree => 0,
+            | GateType::QFree
+            | GateType::Custom => 0,
 
             // Gates with one parameter
             GateType::RX
@@ -244,7 +248,8 @@ impl GateType {
             | GateType::QFree
             | GateType::Idle
             | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload => 1,
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::Custom => 1,
 
             // Two-qubit gates
             GateType::CX
@@ -356,6 +361,7 @@ impl fmt::Display for GateType {
             GateType::Idle => write!(f, "Idle"),
             GateType::MeasCrosstalkGlobalPayload => write!(f, "MeasCrosstalkGlobalPayload"),
             GateType::MeasCrosstalkLocalPayload => write!(f, "MeasCrosstalkLocalPayload"),
+            GateType::Custom => write!(f, "Custom"),
         }
     }
 }
@@ -384,6 +390,7 @@ mod tests {
         assert_eq!(GateType::Idle as u8, 200);
         assert_eq!(GateType::MeasCrosstalkGlobalPayload as u8, 218);
         assert_eq!(GateType::MeasCrosstalkLocalPayload as u8, 219);
+        assert_eq!(GateType::Custom as u8, 255);
 
         assert_eq!(GateType::from(0u8), GateType::I);
         assert_eq!(GateType::from(1u8), GateType::X);
@@ -403,6 +410,7 @@ mod tests {
         assert_eq!(GateType::from(200u8), GateType::Idle);
         assert_eq!(GateType::from(218u8), GateType::MeasCrosstalkGlobalPayload);
         assert_eq!(GateType::from(219u8), GateType::MeasCrosstalkLocalPayload);
+        assert_eq!(GateType::from(255u8), GateType::Custom);
     }
 
     #[test]

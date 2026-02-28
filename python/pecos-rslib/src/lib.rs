@@ -40,6 +40,7 @@ mod pecos_rng_bindings;
 mod phir_json_bridge;
 // mod qir_bindings;  // Removed - replaced by llvm_bindings
 mod engines_module;
+mod gate_registry_bindings;
 mod llvm_bindings;
 mod programs_module;
 mod quest_bindings;
@@ -267,6 +268,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register quantum circuit types (DagCircuit, Gate, GateType, QubitId)
     dag_circuit_bindings::register_quantum_circuit_types(m)?;
+
+    // Register gate registry types (GateRegistry, GateDefBuilder, AngleSource)
+    gate_registry_bindings::register_gate_registry_types(m)?;
 
     // Register time unit types at top level (Nanoseconds, TimeUnits)
     dag_circuit_bindings::register_time_unit_types(m)?;

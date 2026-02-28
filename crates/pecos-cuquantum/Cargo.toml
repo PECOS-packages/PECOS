@@ -24,10 +24,6 @@ pecos-build = { path = "../pecos-build" }
 log.workspace = true
 env_logger.workspace = true
 
-[dev-dependencies]
-# For testing, we don't actually need CUDA - tests use stub mode
-criterion = { version = "0.5", features = ["html_reports"] }
-
 [features]
 default = []
 # Enable this feature when cuQuantum is installed and you want to run integration tests
@@ -36,8 +32,3 @@ integration-tests = []
 [package.metadata.docs.rs]
 # Don't try to build docs on docs.rs (no CUDA/cuQuantum available)
 targets = []
-
-[[bench]]
-name = "cuquantum_benchmark"
-harness = false
-required-features = ["integration-tests"]

@@ -496,10 +496,12 @@ where
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree => {
+                | GateType::QFree
+                | GateType::Custom => {
                     // Just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
                     // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)
+                    // Custom is a no-op placeholder (actual gate name is in metadata)
                 }
                 GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
                     return Err(quantum_error(format!(

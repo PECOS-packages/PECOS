@@ -51,6 +51,7 @@ wat = "1"
 ron = "0.12"
 tket = { version = "0.17", default-features = false }
 tket-qsystem = { version = "0.23", default-features = false }
+bindgen = "0.72"
 cc = "1"
 cxx = "1"
 cxx-build = "1"

@@ -213,7 +213,8 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree => {}
+                | GateType::QFree
+                | GateType::Custom => {}
             }
         }
 

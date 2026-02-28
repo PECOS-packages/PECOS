@@ -143,6 +143,6 @@ For detailed guides and reference material, see the [docs/](docs/) directory:
 
 - [Design Patterns](docs/design-patterns.md) -- API hierarchy, conventions, best practices
 - [Noise Usage Guide](docs/noise-usage-guide.md) -- Composable noise, idle time, key types, custom channels
-- [Extended Runner](docs/extended-runner.md) -- Custom gates, decomposition, rotation gates
+- [Runner](docs/runner.md) -- Custom gates, decomposition, rotation gates
 - [Performance](docs/performance.md) -- Large-scale simulation benchmarks
 - [Full documentation index](docs/README.md)

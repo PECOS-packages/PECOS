@@ -110,7 +110,7 @@ let circuit = OpBuilder::new()
     .build();
 
 // Run with decomposition
-let mut runner = Runner::new(SparseStab::new(1), definitions);
+let mut runner = Runner::with_definitions(SparseStab::new(1), definitions);
 let outcomes = runner.run(&circuit)?;
 ```
 
@@ -127,8 +127,7 @@ let mut runner = Runner::new(SparseStab::new(n))
     .with_noise(noise)
     .with_seed(42);
 
-runner.run(&commands);
-let outcomes = runner.take_outcomes();
+let outcomes = runner.execute(&commands)?;
 ```
 
 ## Noise Model Selection
@@ -355,12 +354,13 @@ pecos-neo uses trait bounds to express capabilities at compile time rather than 
 ```rust
 // GOOD: Trait bound expresses capability
 impl<S: CliffordGateable> Runner<S> {
-    pub fn new(sim: S, defs: GateDefinitions) -> Self { /* ... */ }
+    pub fn new(sim: S) -> Self { /* ... */ }
+    pub fn with_definitions(sim: S, defs: GateDefinitions) -> Self { /* ... */ }
 }
 
 // The rotations() constructor adds ArbitraryRotationGateable bound
 impl<S: CliffordGateable + ArbitraryRotationGateable> Runner<S> {
-    pub fn rotations(sim: S, defs: GateDefinitions) -> Self { /* ... */ }
+    pub fn rotations(sim: S) -> Self { /* ... */ }
 }
 
 // BAD: Runtime check for capability

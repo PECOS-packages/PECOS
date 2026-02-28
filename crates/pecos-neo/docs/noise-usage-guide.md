@@ -165,10 +165,7 @@ let mut runner = Runner::new(SparseStab::new(2))
     .with_noise(noise)
     .with_seed(42);
 
-runner.run(&circuit);
-
-// Get results
-let outcomes = runner.outcomes();
+let outcomes = runner.execute(&circuit)?;
 println!("Qubit 0: {}", outcomes.get_bit(QubitId(0)).unwrap());
 println!("Qubit 1: {}", outcomes.get_bit(QubitId(1)).unwrap());
 ```

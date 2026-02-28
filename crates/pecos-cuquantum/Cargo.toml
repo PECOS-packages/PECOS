@@ -12,15 +12,15 @@ categories = ["science", "simulation"]
 readme = "README.md"
 
 [dependencies]
-pecos-cuquantum-sys = { path = "../pecos-cuquantum-sys" }
-pecos-build = { path = "../pecos-build" }
-pecos-core = { path = "../pecos-core" }
-pecos-qsim = { path = "../pecos-qsim" }
-thiserror = "2.0"
-fastrand = "2.3"
+pecos-cuquantum-sys.workspace = true
+pecos-build.workspace = true
+pecos-core.workspace = true
+pecos-qsim.workspace = true
+thiserror.workspace = true
+fastrand.workspace = true
 
 [build-dependencies]
-pecos-build = { path = "../pecos-build" }
+pecos-build.workspace = true
 log.workspace = true
 env_logger.workspace = true
 

@@ -41,7 +41,7 @@ pest = "2"
 pest_derive = "2"
 tempfile = "3"
 assert_cmd = "2"
-wasmtime = { version = "41", default-features = false, features = [
+wasmtime = { version = "42", default-features = false, features = [
   "cranelift",
   "runtime",
   "wat",
@@ -99,6 +99,7 @@ bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.17"
 
 # RNG
+fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = "0.8"
@@ -146,6 +147,7 @@ pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
 pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
 pecos-cuquantum = { version = "0.1.1", path = "crates/pecos-cuquantum" }
+pecos-cuquantum-sys = { version = "0.1.1", path = "crates/pecos-cuquantum-sys" }
 
 # Decoder crates
 pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }

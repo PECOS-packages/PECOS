@@ -35,7 +35,7 @@ pecos-qasm = { workspace = true, features = ["wasm"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
 rand.workspace = true
-pecos-rng = { path = "../../crates/pecos-rng" }
+pecos-rng.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 parking_lot.workspace = true

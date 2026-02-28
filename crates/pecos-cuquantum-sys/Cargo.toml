@@ -15,7 +15,7 @@ readme = "README.md"
 
 [build-dependencies]
 bindgen.workspace = true
-pecos-build = { path = "../pecos-build" }
+pecos-build.workspace = true
 log.workspace = true
 env_logger.workspace = true
 

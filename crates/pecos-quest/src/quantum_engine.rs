@@ -192,7 +192,8 @@ impl Engine for QuestStateVecEngine {
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree => {
+                | GateType::QFree
+                | GateType::Custom => {
                     // No operation needed (QFree is just a marker for qubit lifecycle)
                 }
                 GateType::U => {
@@ -412,7 +413,8 @@ impl Engine for QuestDensityMatrixEngine {
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree => {
+                | GateType::QFree
+                | GateType::Custom => {
                     // No operation needed (QFree is just a marker for qubit lifecycle)
                 }
                 GateType::U => {
@@ -1157,10 +1159,11 @@ impl Engine for QuestCudaStateVecEngine {
                 }
                 GateType::I
                 | GateType::Idle
+                | GateType::Custom
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::QFree => {
-                    // No operation needed (QFree is just a marker for qubit lifecycle)
+                    // No operation needed (Custom is a placeholder whose actual gate name is in metadata)
                 }
                 GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
                     return Err(PecosError::Processing(format!(

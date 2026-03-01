@@ -19,7 +19,6 @@
 use anyhow::{Result, anyhow, bail};
 use pecos_core::{Angle64, QubitId};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, StateVec};
-use pecos_rng::PecosRng;
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;
@@ -30,7 +29,7 @@ use std::sync::Arc;
 /// The PECOS `StateVec` simulator wrapped for Selene compatibility.
 pub struct StateVecSimulator {
     /// The underlying PECOS state vector simulator
-    simulator: StateVec<PecosRng>,
+    simulator: StateVec,
     /// Number of qubits in the system
     n_qubits: u64,
     /// Cumulative probability of postselection outcomes

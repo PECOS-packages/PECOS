@@ -13,11 +13,11 @@ readme = "README.md"
 
 [dependencies]
 ndarray.workspace = true
-pecos-core = { path = "../pecos-core" }
-pecos-decoder-core = { path = "../pecos-decoder-core" }
-pecos-quantum = { path = "../pecos-quantum" }
-pecos-qsim = { path = "../pecos-qsim" }
-pecos-rng = { path = "../pecos-rng" }
+pecos-core.workspace = true
+pecos-decoder-core.workspace = true
+pecos-quantum.workspace = true
+pecos-qsim.workspace = true
+pecos-rng.workspace = true
 rand.workspace = true
 rand_core.workspace = true
 rayon.workspace = true

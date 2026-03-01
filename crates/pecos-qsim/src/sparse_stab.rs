@@ -281,6 +281,20 @@ where
         self
     }
 
+    /// Returns generator data as sparse index vectors.
+    ///
+    /// Returns `(col_x, col_z, row_x, row_z)` where each is a `Vec<Vec<usize>>`.
+    pub fn gens_data(&self, is_stab: bool) -> crate::GensData {
+        let gens = if is_stab { &self.stabs } else { &self.destabs };
+
+        let col_x: Vec<Vec<usize>> = gens.col_x.iter().map(|s| s.iter().collect()).collect();
+        let col_z: Vec<Vec<usize>> = gens.col_z.iter().map(|s| s.iter().collect()).collect();
+        let row_x: Vec<Vec<usize>> = gens.row_x.iter().map(|s| s.iter().collect()).collect();
+        let row_z: Vec<Vec<usize>> = gens.row_z.iter().map(|s| s.iter().collect()).collect();
+
+        (col_x, col_z, row_x, row_z)
+    }
+
     #[inline]
     pub fn verify_matrix(&self) {
         Self::check_row_eq_col(&self.stabs);

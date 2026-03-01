@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import os
 import platform
 import shutil
 import subprocess
@@ -26,33 +25,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from packaging.tags import sys_tags
 
 
-def is_cuda_available() -> bool:
-    """Check if CUDA is available on the system."""
-    # Check for nvcc (CUDA compiler)
-    nvcc_path = shutil.which("nvcc")
-    if nvcc_path:
-        return True
-
-    # Check common CUDA installation paths
-    cuda_paths = [
-        Path("/usr/local/cuda/bin/nvcc"),
-        Path("/opt/cuda/bin/nvcc"),
-    ]
-    for path in cuda_paths:
-        if path.exists():
-            return True
-
-    # Check CUDA_HOME environment variable
-    cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
-    if cuda_home:
-        nvcc = Path(cuda_home) / "bin" / "nvcc"
-        if nvcc.exists():
-            return True
-
-    return False
-
-
-class PecosSeleneQuestBuildHook(BuildHookInterface):
+class PecosSeleneStabBuildHook(BuildHookInterface):
     """Build hook that compiles the Rust plugin and copies it to the Python package."""
 
     def _set_wheel_tag(self, build_data: dict[str, Any]) -> None:
@@ -87,7 +60,7 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
 
         # Check if library already exists (e.g., from `make build-selene`)
         # If so, skip building and just collect artifacts
-        dist_dir = root / "python" / "pecos_selene_quest" / "_dist"
+        dist_dir = root / "python" / "pecos_selene_stab" / "_dist"
         lib_dir = dist_dir / "lib"
         if lib_dir.exists() and any(lib_dir.iterdir()):
             self.app.display_info("Library already built, skipping cargo build...")
@@ -120,37 +93,22 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
             msg = f"Unsupported platform: {system}"
             raise RuntimeError(msg)
 
-        lib_name = "pecos_selene_quest"
-        cargo_package = "pecos-selene-quest"
+        lib_name = "pecos_selene_stab"
+        cargo_package = "pecos-selene-stab"
 
-        # Check if CUDA is available for CUDA support
-        cuda_available = is_cuda_available()
-        features = []
-        if cuda_available:
-            features.append("cuda")
-            self.app.display_info(
-                f"Building {cargo_package} with CUDA support...",
-            )
-        else:
-            self.app.display_info(
-                f"Building {cargo_package} (CPU only, CUDA not detected)...",
-            )
+        self.app.display_info(f"Building {cargo_package}...")
 
         # Run cargo build from the PECOS workspace root
         # Plugin is at python/selene-plugins/<plugin>/, so 3 levels up to workspace
         workspace_root = root.parent.parent.parent
-        cargo_cmd = [
-            "cargo",
-            "build",
-            "--release",
-            "--package",
-            cargo_package,
-        ]
-        if features:
-            cargo_cmd.extend(["--features", ",".join(features)])
-
         result = subprocess.run(
-            cargo_cmd,
+            [
+                "cargo",
+                "build",
+                "--release",
+                "--package",
+                cargo_package,
+            ],
             check=False,
             cwd=workspace_root,
             capture_output=True,
@@ -172,34 +130,16 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
             raise RuntimeError(msg)
 
         # Copy to the _dist/lib directory in the Python package
-        dest_dir = root / "python" / "pecos_selene_quest" / "_dist" / "lib"
+        dest_dir = root / "python" / "pecos_selene_stab" / "_dist" / "lib"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_lib = dest_dir / lib_filename
 
         self.app.display_info(f"Copying {source_lib} -> {dest_lib}")
         shutil.copy2(source_lib, dest_lib)
 
-        # Also copy the QuEST CUDA backend if it exists (built when --features cuda is used)
-        # This backend library is loaded at runtime via dlopen, allowing the wheel to work
-        # on systems both with and without NVIDIA CUDA installed.
-        cuda_backend_filename = f"{lib_prefix}pecos_quest_cuda{lib_suffix}"
-        source_cuda_backend = workspace_root / "target" / "release" / cuda_backend_filename
-        if source_cuda_backend.exists():
-            dest_cuda_backend = dest_dir / cuda_backend_filename
-            self.app.display_info(
-                f"Copying QuEST CUDA backend {source_cuda_backend} -> {dest_cuda_backend}",
-            )
-            shutil.copy2(source_cuda_backend, dest_cuda_backend)
-        elif cuda_available:
-            # CUDA was requested but backend wasn't built - this is unexpected
-            self.app.display_warning(
-                f"CUDA detected but QuEST CUDA backend not found at {source_cuda_backend}. "
-                "CUDA acceleration may not be available.",
-            )
-
         # Collect artifacts
         artifacts = []
-        dist_dir = root / "python" / "pecos_selene_quest" / "_dist"
+        dist_dir = root / "python" / "pecos_selene_stab" / "_dist"
         for artifact in dist_dir.rglob("*"):
             if artifact.is_file():
                 rel_path = artifact.relative_to(root)

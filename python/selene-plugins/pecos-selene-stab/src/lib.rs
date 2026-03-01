@@ -10,16 +10,16 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! PECOS `SparseStab` simulator plugin for the Selene quantum emulator.
+//! PECOS `Stab` simulator plugin for the Selene quantum emulator.
 //!
-//! This crate provides a Selene-compatible plugin wrapping the PECOS sparse stabilizer simulator.
+//! This crate provides a Selene-compatible plugin wrapping the PECOS stabilizer simulator.
 //! As a stabilizer simulator, it can only simulate Clifford operations (rotations that are
 //! multiples of pi/2).
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, SparseStab};
+use pecos_qsim::{CliffordGateable, Stab};
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;
@@ -40,7 +40,7 @@ enum ApproxAngle {
     NoSuitableApproximation,
 }
 
-/// Command-line parameters for the `SparseStab` plugin.
+/// Command-line parameters for the `Stab` plugin.
 #[derive(Parser, Debug)]
 struct Params {
     /// Threshold for angle approximation. Angles within this threshold of a
@@ -49,17 +49,17 @@ struct Params {
     angle_threshold: f64,
 }
 
-/// The PECOS `SparseStab` simulator wrapped for Selene compatibility.
-pub struct SparseStabSimulator {
-    /// The underlying PECOS sparse stabilizer simulator
-    simulator: SparseStab,
+/// The PECOS `Stab` simulator wrapped for Selene compatibility.
+pub struct StabSimulator {
+    /// The underlying PECOS stabilizer simulator
+    simulator: Stab,
     /// Number of qubits in the system
     n_qubits: u64,
     /// Threshold for angle approximation to Clifford rotations
     angle_threshold: f64,
 }
 
-impl SparseStabSimulator {
+impl StabSimulator {
     /// Convert a `u64` to `usize` for use with the simulator.
     ///
     /// # Safety
@@ -111,14 +111,14 @@ impl SparseStabSimulator {
     }
 }
 
-impl SimulatorInterface for SparseStabSimulator {
+impl SimulatorInterface for StabSimulator {
     fn exit(&mut self) -> Result<()> {
         Ok(())
     }
 
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         // Create a fresh simulator with the given seed for deterministic behavior
-        self.simulator = SparseStab::with_seed(Self::to_usize(self.n_qubits), seed);
+        self.simulator = Stab::with_seed(Self::to_usize(self.n_qubits), seed);
         Ok(())
     }
 
@@ -160,7 +160,7 @@ impl SimulatorInterface for SparseStabSimulator {
                 return Err(anyhow!(
                     "RXY(qubit={qubit}, theta={theta}, phi={phi}) is not representable in \
                      stabilizer form. Angles must be (approximate) multiples of pi/2 to use \
-                     the PECOS SparseStab simulator."
+                     the PECOS Stab simulator."
                 ));
             }
         }
@@ -181,7 +181,7 @@ impl SimulatorInterface for SparseStabSimulator {
                 return Err(anyhow!(
                     "RXY(qubit={qubit}, theta={theta}, phi={phi}) is not representable in \
                      stabilizer form. Angles must be (approximate) multiples of pi/2 to use \
-                     the PECOS SparseStab simulator."
+                     the PECOS Stab simulator."
                 ));
             }
         }
@@ -206,7 +206,7 @@ impl SimulatorInterface for SparseStabSimulator {
                 return Err(anyhow!(
                     "RXY(qubit={qubit}, theta={theta}, phi={phi}) is not representable in \
                      stabilizer form. Angles must be (approximate) multiples of pi/2 to use \
-                     the PECOS SparseStab simulator."
+                     the PECOS Stab simulator."
                 ));
             }
         }
@@ -240,7 +240,7 @@ impl SimulatorInterface for SparseStabSimulator {
             ApproxAngle::NoSuitableApproximation => {
                 return Err(anyhow!(
                     "RZ(qubit={qubit}, theta={theta}) is not representable in stabilizer form. \
-                     Angles must be (approximate) multiples of pi/2 to use the PECOS SparseStab \
+                     Angles must be (approximate) multiples of pi/2 to use the PECOS Stab \
                      simulator."
                 ));
             }
@@ -279,7 +279,7 @@ impl SimulatorInterface for SparseStabSimulator {
                 return Err(anyhow!(
                     "RZZ(qubit1={qubit1}, qubit2={qubit2}, theta={theta}) is not representable \
                      in stabilizer form. Angles must be (approximate) multiples of pi/2 to use \
-                     the PECOS SparseStab simulator."
+                     the PECOS Stab simulator."
                 ));
             }
         }
@@ -364,17 +364,17 @@ impl SimulatorInterface for SparseStabSimulator {
     fn dump_state(&mut self, _file: &std::path::Path, _qubits: &[u64]) -> Result<()> {
         // State dumping is not yet implemented for the stabilizer simulator
         Err(anyhow!(
-            "State dumping is not yet supported for the PECOS SparseStab simulator."
+            "State dumping is not yet supported for the PECOS Stab simulator."
         ))
     }
 }
 
-/// Factory for creating `SparseStabSimulator` instances.
+/// Factory for creating `StabSimulator` instances.
 #[derive(Default)]
-pub struct SparseStabSimulatorFactory;
+pub struct StabSimulatorFactory;
 
-impl SimulatorInterfaceFactory for SparseStabSimulatorFactory {
-    type Interface = SparseStabSimulator;
+impl SimulatorInterfaceFactory for StabSimulatorFactory {
+    type Interface = StabSimulator;
 
     fn init(
         self: Arc<Self>,
@@ -384,11 +384,9 @@ impl SimulatorInterfaceFactory for SparseStabSimulatorFactory {
         let args: Vec<String> = args.iter().map(|s| s.as_ref().to_string()).collect();
 
         match Params::try_parse_from(args) {
-            Err(e) => Err(anyhow!(
-                "Error parsing arguments to PECOS SparseStab plugin: {e}"
-            )),
-            Ok(params) => Ok(Box::new(SparseStabSimulator {
-                simulator: SparseStab::with_seed(SparseStabSimulator::to_usize(n_qubits), 0),
+            Err(e) => Err(anyhow!("Error parsing arguments to PECOS Stab plugin: {e}")),
+            Ok(params) => Ok(Box::new(StabSimulator {
+                simulator: Stab::with_seed(StabSimulator::to_usize(n_qubits), 0),
                 n_qubits,
                 angle_threshold: params.angle_threshold,
             })),
@@ -397,17 +395,17 @@ impl SimulatorInterfaceFactory for SparseStabSimulatorFactory {
 }
 
 // Export the plugin using Selene's macro
-export_simulator_plugin!(crate::SparseStabSimulatorFactory);
+export_simulator_plugin!(crate::StabSimulatorFactory);
 
 #[cfg(test)]
 mod tests {
-    use super::SparseStabSimulatorFactory;
+    use super::StabSimulatorFactory;
     use selene_core::simulator::conformance_testing::run_basic_tests;
     use std::sync::Arc;
 
     #[test]
     fn basic_conformance_test() {
-        let interface = Arc::new(SparseStabSimulatorFactory);
+        let interface = Arc::new(StabSimulatorFactory);
         let args = vec![String::new(), "--angle-threshold=0.001".to_string()];
         run_basic_tests(interface, args);
     }

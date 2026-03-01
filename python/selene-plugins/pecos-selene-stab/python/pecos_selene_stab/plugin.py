@@ -10,7 +10,7 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""PECOS SparseStab simulator plugin for Selene."""
+"""PECOS Stab simulator plugin for Selene."""
 
 import platform
 from dataclasses import dataclass
@@ -20,10 +20,10 @@ from selene_core import Simulator
 
 
 @dataclass
-class SparseStabPlugin(Simulator):
-    """A plugin for using the PECOS SparseStab stabilizer simulator as a backend for Selene.
+class StabPlugin(Simulator):
+    """A plugin for using the PECOS Stab stabilizer simulator as a backend for Selene.
 
-    PECOS SparseStab is a sparse stabilizer simulator that can efficiently simulate
+    PECOS Stab is a stabilizer simulator that can efficiently simulate
     Clifford circuits. As a stabilizer simulator, it can only simulate Clifford operations
     (rotations that are multiples of pi/2).
 
@@ -53,10 +53,10 @@ class SparseStabPlugin(Simulator):
         libdir = Path(__file__).parent / "_dist" / "lib"
         system = platform.system()
         if system == "Linux":
-            return libdir / "libpecos_selene_sparsestab.so"
+            return libdir / "libpecos_selene_stab.so"
         if system == "Darwin":
-            return libdir / "libpecos_selene_sparsestab.dylib"
+            return libdir / "libpecos_selene_stab.dylib"
         if system == "Windows":
-            return libdir / "pecos_selene_sparsestab.dll"
+            return libdir / "pecos_selene_stab.dll"
         msg = f"Unsupported platform: {system}"
         raise RuntimeError(msg)

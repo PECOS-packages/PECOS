@@ -1,6 +1,6 @@
-# PECOS SparseStab Selene Plugin
+# PECOS Stab Selene Plugin
 
-A stabilizer simulator plugin for the [Selene](https://github.com/Quantinuum/selene) quantum emulator using the PECOS sparse stabilizer implementation.
+A stabilizer simulator plugin for the [Selene](https://github.com/Quantinuum/selene) quantum emulator using the PECOS stabilizer implementation.
 
 ## Overview
 
@@ -9,20 +9,20 @@ This plugin provides a Clifford simulator backend for Selene. As a stabilizer si
 ## Installation
 
 ```bash
-pip install pecos-selene-sparsestab
+pip install pecos-selene-stab
 ```
 
 ## Usage
 
 ```python
 from selene_sim.build import build
-from pecos_selene_sparsestab import SparseStabPlugin
+from pecos_selene_stab import StabPlugin
 
 # Create a plugin instance
-simulator = SparseStabPlugin()
+simulator = StabPlugin()
 
 # Or customize the angle threshold for Clifford approximation
-simulator = SparseStabPlugin(angle_threshold=1e-4)
+simulator = StabPlugin(angle_threshold=1e-4)
 
 # Use with Selene
 runner = build(program)
@@ -46,7 +46,7 @@ This package requires Rust to build. The Rust components will be automatically c
 
 ```bash
 # From the PECOS repository root
-cd python/pecos-selene-sparsestab
+cd python/pecos-selene-stab
 pip install -e ".[test]"
 ```
 

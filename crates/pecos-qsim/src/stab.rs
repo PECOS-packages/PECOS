@@ -35,11 +35,14 @@
 //!
 //! # Implementation Selection
 //!
-//! Currently uses [`DenseStab`] for all sizes, which benchmarks show is fastest
-//! for typical workloads up to ~1000 qubits. The selection logic may be refined
-//! in future versions based on qubit count and workload patterns.
+//! Currently uses [`SparseStab`] (BitSet-based sparse row+column representation),
+//! which benchmarks show is fastest for QEC workloads at realistic distances
+//! (d >= 11). The selection logic may be refined in future versions based on
+//! qubit count and workload patterns.
 
-use crate::{CliffordGateable, DenseStab, MeasurementResult, QuantumSimulator};
+use crate::{
+    CliffordGateable, MeasurementResult, QuantumSimulator, SparseStab, StabilizerTableauSimulator,
+};
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::PecosRng;
 
@@ -52,7 +55,7 @@ use pecos_rng::PecosRng;
 /// See the [module documentation](self) for more details.
 #[derive(Debug, Clone)]
 pub struct Stab {
-    inner: DenseStab<PecosRng>,
+    inner: SparseStab,
 }
 
 impl Stab {
@@ -72,7 +75,7 @@ impl Stab {
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
         Self {
-            inner: DenseStab::new(num_qubits),
+            inner: SparseStab::new(num_qubits),
         }
     }
 
@@ -91,7 +94,7 @@ impl Stab {
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self {
-            inner: DenseStab::with_seed(num_qubits, seed),
+            inner: SparseStab::with_seed(num_qubits, seed),
         }
     }
 
@@ -100,6 +103,14 @@ impl Stab {
     #[must_use]
     pub fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
+    }
+
+    /// Returns generator data as sparse index vectors.
+    ///
+    /// Returns `(col_x, col_z, row_x, row_z)` where each is a `Vec<Vec<usize>>`.
+    #[must_use]
+    pub fn gens_data(&self, is_stab: bool) -> crate::GensData {
+        self.inner.gens_data(is_stab)
     }
 }
 
@@ -198,6 +209,20 @@ impl RngManageable for Stab {
     #[inline]
     fn rng_mut(&mut self) -> &mut Self::Rng {
         self.inner.rng_mut()
+    }
+}
+
+impl StabilizerTableauSimulator for Stab {
+    fn stab_tableau(&self) -> String {
+        self.inner.stab_tableau()
+    }
+
+    fn destab_tableau(&self) -> String {
+        self.inner.destab_tableau()
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
     }
 }
 

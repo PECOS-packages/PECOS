@@ -3,10 +3,8 @@ resolver = "2"
 members = [
   "python/pecos-rslib",
   "python/pecos-rslib-cuda",
-  "python/selene-plugins/pecos-selene-sparsestab",
+  "python/selene-plugins/pecos-selene-stab",
   "python/selene-plugins/pecos-selene-statevec",
-  "python/selene-plugins/pecos-selene-quest",
-  "python/selene-plugins/pecos-selene-qulacs",
   "julia/pecos-julia-ffi",
   "go/pecos-go-ffi",
   "crates/pecos*",
@@ -43,7 +41,7 @@ pest = "2"
 pest_derive = "2"
 tempfile = "3"
 assert_cmd = "2"
-wasmtime = { version = "41", default-features = false, features = [
+wasmtime = { version = "42", default-features = false, features = [
   "cranelift",
   "runtime",
   "wat",
@@ -53,6 +51,7 @@ wat = "1"
 ron = "0.12"
 tket = { version = "0.17", default-features = false }
 tket-qsystem = { version = "0.23", default-features = false }
+bindgen = "0.72"
 cc = "1"
 cxx = "1"
 cxx-build = "1"
@@ -100,6 +99,7 @@ bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.17"
 
 # RNG
+fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = "0.8"
@@ -147,6 +147,7 @@ pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
 pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
 pecos-cuquantum = { version = "0.1.1", path = "crates/pecos-cuquantum" }
+pecos-cuquantum-sys = { version = "0.1.1", path = "crates/pecos-cuquantum-sys" }
 
 # Decoder crates
 pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }

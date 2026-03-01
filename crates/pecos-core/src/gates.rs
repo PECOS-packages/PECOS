@@ -110,6 +110,12 @@ impl Gate {
             .collect()
     }
 
+    /// Create a Custom gate on the given qubits
+    #[must_use]
+    pub fn custom(qubits: impl Into<GateQubits>) -> Self {
+        Self::simple(GateType::Custom, qubits)
+    }
+
     /// Create Identity gate on multiple qubits
     #[must_use]
     pub fn i(qubits: &[impl Into<QubitId> + Copy]) -> Self {

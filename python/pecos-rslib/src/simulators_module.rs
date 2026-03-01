@@ -16,7 +16,7 @@
 //! quantum simulator backends:
 //!
 //! - `SparseSim` - Rust sparse stabilizer simulator
-//! - `SparseSimCpp` - C++ sparse stabilizer simulator (via FFI)
+//! - `Stab` - Generic stabilizer simulator (recommended)
 //! - `StateVec` - State vector simulator
 //! - `Qulacs` - Qulacs-based state vector simulator
 //! - `CoinToss` - Random measurement simulator for testing
@@ -44,7 +44,7 @@ pub fn register_simulators_module(parent: &Bound<'_, PyModule>) -> PyResult<()> 
 
     // Stabilizer simulators
     simulators.add("SparseSim", parent.getattr("SparseSim")?)?;
-    simulators.add("SparseSimCpp", parent.getattr("SparseSimCpp")?)?;
+    simulators.add("Stab", parent.getattr("Stab")?)?;
 
     // State vector simulators
     simulators.add("StateVec", parent.getattr("StateVec")?)?;

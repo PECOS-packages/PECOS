@@ -61,8 +61,8 @@
 //! ```
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, GateQubits, Nanoseconds, QubitId};
-use std::collections::{BTreeMap, BTreeSet};
+use pecos_core::{Angle64, Gate, GateQubits, GateSignature, Nanoseconds, QubitId};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::Attribute;
 use crate::dag_circuit::DagCircuit;
@@ -102,6 +102,62 @@ impl fmt::Display for QubitConflictError {
 }
 
 impl std::error::Error for QubitConflictError {}
+
+/// Error when a custom gate is used with a different signature than previously established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateSignatureMismatchError {
+    pub name: String,
+    pub expected_quantum_arity: usize,
+    pub actual_quantum_arity: usize,
+    pub expected_angle_arity: usize,
+    pub actual_angle_arity: usize,
+}
+
+impl fmt::Display for GateSignatureMismatchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Gate '{}' signature mismatch: expected ({} qubits, {} angles), got ({} qubits, {} angles)",
+            self.name,
+            self.expected_quantum_arity,
+            self.expected_angle_arity,
+            self.actual_quantum_arity,
+            self.actual_angle_arity,
+        )
+    }
+}
+
+impl std::error::Error for GateSignatureMismatchError {}
+
+/// Error when adding a custom gate to a tick.
+#[derive(Debug, Clone)]
+pub enum CustomGateError {
+    SignatureMismatch(GateSignatureMismatchError),
+    QubitConflict(QubitConflictError),
+}
+
+impl fmt::Display for CustomGateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SignatureMismatch(e) => write!(f, "{e}"),
+            Self::QubitConflict(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for CustomGateError {}
+
+impl From<GateSignatureMismatchError> for CustomGateError {
+    fn from(e: GateSignatureMismatchError) -> Self {
+        Self::SignatureMismatch(e)
+    }
+}
+
+impl From<QubitConflictError> for CustomGateError {
+    fn from(e: QubitConflictError) -> Self {
+        Self::QubitConflict(e)
+    }
+}
 
 /// A single time slice containing gates that execute in parallel.
 #[derive(Debug, Clone, Default)]
@@ -372,6 +428,8 @@ pub struct TickCircuit {
     next_tick: usize,
     /// Circuit-level metadata.
     circuit_attrs: BTreeMap<String, Attribute>,
+    /// Gate signatures for custom gate validation (JIT + AOT).
+    gate_signatures: HashMap<String, GateSignature>,
 }
 
 /// Handle to a specific tick for adding gates.
@@ -452,17 +510,14 @@ impl TickCircuit {
             ticks: Vec::new(),
             next_tick: 0,
             circuit_attrs: BTreeMap::new(),
+            gate_signatures: HashMap::new(),
         }
     }
 
-    /// Get the number of ticks (excluding trailing empty ticks).
+    /// Get the number of ticks in the circuit.
     #[must_use]
     pub fn num_ticks(&self) -> usize {
-        let mut count = self.ticks.len();
-        while count > 0 && self.ticks[count - 1].is_empty() {
-            count -= 1;
-        }
-        count
+        self.ticks.len()
     }
 
     /// Get the total number of gates across all ticks.
@@ -593,6 +648,7 @@ impl TickCircuit {
         self.ticks.clear();
         self.next_tick = 0;
         self.circuit_attrs.clear();
+        self.gate_signatures.clear();
     }
 
     /// Reserve empty ticks in advance.
@@ -729,6 +785,57 @@ impl TickCircuit {
         let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| q.into()).collect();
         self.get_tick_mut(tick_idx)
             .map(|tick| tick.discard(&qubit_ids))
+    }
+
+    // =========================================================================
+    // Gate signature validation
+    // =========================================================================
+
+    /// Import gate signatures in bulk (e.g., from a `GateRegistry`).
+    pub fn import_signatures(&mut self, sigs: &HashMap<String, GateSignature>) {
+        self.gate_signatures
+            .extend(sigs.iter().map(|(name, sig)| (name.clone(), sig.clone())));
+    }
+
+    /// Get read access to the gate signatures.
+    #[must_use]
+    pub fn gate_signatures(&self) -> &HashMap<String, GateSignature> {
+        &self.gate_signatures
+    }
+
+    /// Validate a custom gate against its previously established signature,
+    /// or register it if this is the first use.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GateSignatureMismatchError` if the gate has been seen before
+    /// with a different quantum or angle arity.
+    pub fn validate_or_register_gate(
+        &mut self,
+        name: &str,
+        quantum_arity: usize,
+        angle_arity: usize,
+    ) -> Result<(), GateSignatureMismatchError> {
+        if let Some(existing) = self.gate_signatures.get(name) {
+            if existing.quantum_arity != quantum_arity || existing.angle_arity != angle_arity {
+                return Err(GateSignatureMismatchError {
+                    name: name.to_string(),
+                    expected_quantum_arity: existing.quantum_arity,
+                    actual_quantum_arity: quantum_arity,
+                    expected_angle_arity: existing.angle_arity,
+                    actual_angle_arity: angle_arity,
+                });
+            }
+        } else {
+            self.gate_signatures.insert(
+                name.to_string(),
+                GateSignature {
+                    quantum_arity,
+                    angle_arity,
+                },
+            );
+        }
+        Ok(())
     }
 
     // =========================================================================
@@ -1441,6 +1548,52 @@ impl<'a> TickHandle<'a> {
             ns.as_f64(),
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         ))
+    }
+
+    // =========================================================================
+    // Custom gates with signature validation
+    // =========================================================================
+
+    /// Add a custom gate with signature validation.
+    ///
+    /// On first use, the gate name's signature (quantum arity, angle arity)
+    /// is recorded. Subsequent uses are validated against this signature.
+    ///
+    /// The `_symbol` metadata is automatically set to the gate name.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CustomGateError::SignatureMismatch` if the arity does not match
+    /// a previous use, or `CustomGateError::QubitConflict` if a qubit is already
+    /// in use in this tick.
+    pub fn custom_gate(
+        &mut self,
+        name: &str,
+        qubits: &[usize],
+        angles: &[Angle64],
+    ) -> Result<&mut Self, CustomGateError> {
+        self.circuit
+            .validate_or_register_gate(name, qubits.len(), angles.len())?;
+
+        let qubit_ids: GateQubits = qubits.iter().map(|&q| QubitId::from(q)).collect();
+        let gate = Gate::new(GateType::Custom, angles.to_vec(), vec![], qubit_ids);
+
+        match self.circuit.ticks[self.tick_idx].try_add_gate(gate) {
+            Ok(idx) => {
+                self.last_gate_idx = Some(idx);
+                // Auto-store _symbol metadata
+                self.circuit.ticks[self.tick_idx].set_gate_attr(
+                    idx,
+                    "_symbol",
+                    Attribute::String(name.to_string()),
+                );
+                Ok(self)
+            }
+            Err(mut err) => {
+                err.tick_idx = Some(self.tick_idx);
+                Err(CustomGateError::QubitConflict(err))
+            }
+        }
     }
 }
 
@@ -2360,5 +2513,141 @@ mod tests {
 
         let removed = tc.discard(&[0], 5);
         assert_eq!(removed, None);
+    }
+
+    // =========================================================================
+    // Gate signature validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_custom_gate_jit_registration() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("MY_GATE", &[0, 1], &[])
+            .expect("first use should succeed");
+
+        assert!(tc.gate_signatures().contains_key("MY_GATE"));
+        let sig = &tc.gate_signatures()["MY_GATE"];
+        assert_eq!(sig.quantum_arity, 2);
+        assert_eq!(sig.angle_arity, 0);
+    }
+
+    #[test]
+    fn test_custom_gate_consistent_use_ok() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("MY_GATE", &[0, 1], &[])
+            .expect("first use");
+        tc.tick()
+            .custom_gate("MY_GATE", &[2, 3], &[])
+            .expect("consistent use should succeed");
+    }
+
+    #[test]
+    fn test_custom_gate_mismatch_quantum_arity() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("MY_GATE", &[0, 1], &[])
+            .expect("first use");
+        let mut handle = tc.tick();
+        let result = handle.custom_gate("MY_GATE", &[0, 1, 2], &[]);
+        if let Err(CustomGateError::SignatureMismatch(e)) = result {
+            assert_eq!(e.expected_quantum_arity, 2);
+            assert_eq!(e.actual_quantum_arity, 3);
+        } else {
+            panic!("expected SignatureMismatch error");
+        }
+    }
+
+    #[test]
+    fn test_custom_gate_mismatch_angle_arity() {
+        let mut tc = TickCircuit::new();
+        let angle = Angle64::from_radians(1.0);
+        tc.tick()
+            .custom_gate("PARAM_GATE", &[0], &[angle])
+            .expect("first use");
+        let mut handle = tc.tick();
+        let result = handle.custom_gate("PARAM_GATE", &[0], &[]);
+        if let Err(CustomGateError::SignatureMismatch(e)) = result {
+            assert_eq!(e.expected_angle_arity, 1);
+            assert_eq!(e.actual_angle_arity, 0);
+        } else {
+            panic!("expected SignatureMismatch error");
+        }
+    }
+
+    #[test]
+    fn test_custom_gate_stores_symbol_metadata() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("FOOBAR", &[0], &[])
+            .expect("should succeed");
+
+        let tick = tc.get_tick(0).unwrap();
+        let symbol = tick.get_gate_attr(0, "_symbol");
+        assert_eq!(symbol, Some(&Attribute::String("FOOBAR".to_string())));
+    }
+
+    #[test]
+    fn test_custom_gate_with_angles() {
+        let mut tc = TickCircuit::new();
+        let a1 = Angle64::from_radians(0.5);
+        let a2 = Angle64::from_radians(1.0);
+        tc.tick()
+            .custom_gate("PARAM2", &[0], &[a1, a2])
+            .expect("should succeed");
+
+        let tick = tc.get_tick(0).unwrap();
+        let gate = &tick.gates()[0];
+        assert_eq!(gate.gate_type, GateType::Custom);
+        assert_eq!(gate.angles.len(), 2);
+        assert_eq!(gate.angles[0], a1);
+        assert_eq!(gate.angles[1], a2);
+    }
+
+    #[test]
+    fn test_custom_gate_qubit_conflict() {
+        let mut tc = TickCircuit::new();
+        let mut handle = tc.tick();
+        handle.h(&[0]);
+        let result = handle.custom_gate("MY_GATE", &[0], &[]);
+        assert!(matches!(result, Err(CustomGateError::QubitConflict(_))));
+    }
+
+    #[test]
+    fn test_import_signatures() {
+        let mut tc = TickCircuit::new();
+        let mut sigs = HashMap::new();
+        sigs.insert(
+            "AOT_GATE".to_string(),
+            GateSignature {
+                quantum_arity: 2,
+                angle_arity: 1,
+            },
+        );
+        tc.import_signatures(&sigs);
+
+        // Now using AOT_GATE with correct arity succeeds
+        let angle = Angle64::from_radians(0.5);
+        tc.tick()
+            .custom_gate("AOT_GATE", &[0, 1], &[angle])
+            .expect("correct arity");
+
+        // Wrong arity fails
+        let mut handle = tc.tick();
+        let result = handle.custom_gate("AOT_GATE", &[0], &[angle]);
+        assert!(matches!(result, Err(CustomGateError::SignatureMismatch(_))));
+    }
+
+    #[test]
+    fn test_reset_clears_signatures() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("MY_GATE", &[0, 1], &[])
+            .expect("first use");
+        assert!(!tc.gate_signatures().is_empty());
+
+        tc.reset();
+        assert!(tc.gate_signatures().is_empty());
     }
 }

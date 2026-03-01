@@ -308,7 +308,8 @@ where
             | GateType::SWAP
             | GateType::CRZ
             | GateType::CH
-            | GateType::CCX => {
+            | GateType::CCX
+            | GateType::Custom => {
                 return Err(HugrExecutionError::UnsupportedGate {
                     gate_type: gate.gate_type,
                     gate_index: gate_idx,

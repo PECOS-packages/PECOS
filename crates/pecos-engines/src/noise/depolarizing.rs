@@ -218,7 +218,8 @@ impl DepolarizingNoiseModel {
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree => {
+                | GateType::QFree
+                | GateType::Custom => {
                     // Just pass through with no added noise
                     // QFree has no physical operation to apply noise to
                 }

@@ -19,6 +19,7 @@ pub mod clifford_rep;
 pub mod duration;
 pub mod element;
 pub mod errors;
+pub mod gate_registry;
 pub mod gate_type;
 pub mod gates;
 pub mod index_set;
@@ -30,6 +31,7 @@ pub mod qubit_id;
 pub mod rng;
 pub mod sets;
 pub mod sorted_vec_set;
+pub mod value;
 
 pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
 pub use bit::{Bit, Bits};
@@ -53,6 +55,10 @@ pub use rng::{choose_weighted, coin_flip, gen_bools};
 // Random utilities struct for improved RNG API
 pub use rng::RandomUtils;
 
+pub use gate_registry::{
+    AngleSource, ConcreteStep, DecompStep, GateDefinition, GateDefinitionBuilder, GateRegistry,
+    GateSignature,
+};
 pub use gates::{Gate, GateAngles, GateParams, GateQubits};
 pub use pauli::pauli_bitmap::PauliBitmap;
 pub use pauli::pauli_sparse::PauliSparse;
@@ -60,6 +66,7 @@ pub use pauli::pauli_string::{ParsePauliStringError, PauliString};
 pub use pauli::{Pauli, PauliOperator};
 pub use phase::Phase;
 pub use rng::choices::Choices;
+pub use value::Value;
 
 // Operator algebra
 pub use operator::{I, Is, Operator, X, Xs, Y, Ys, Z, Zs};

@@ -60,6 +60,11 @@ pub fn register_types_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     types.add("ByteMessage", parent.getattr("ByteMessage")?)?;
     types.add("ByteMessageBuilder", parent.getattr("ByteMessageBuilder")?)?;
 
+    // Gate registry types
+    types.add("GateRegistry", parent.getattr("GateRegistry")?)?;
+    types.add("GateDefBuilder", parent.getattr("GateDefBuilder")?)?;
+    types.add("AngleSource", parent.getattr("AngleSource")?)?;
+
     // Foreign object types (conditionally compiled)
     #[cfg(feature = "wasm")]
     types.add("WasmForeignObject", parent.getattr("WasmForeignObject")?)?;

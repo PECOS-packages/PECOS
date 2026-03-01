@@ -40,12 +40,12 @@ use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 /// Single-qubit gates are O(1). Two-qubit gates are O(degree) amortized.
 /// Measurements are O(degree^2) in the worst case.
 #[derive(Clone, Debug)]
-pub struct GraphState<R: SeedableRng + Rng + Debug = PecosRng> {
+pub struct GraphStateSim<R: SeedableRng + Rng + Debug = PecosRng> {
     num_qubits: usize,
     /// Vertex operators: one single-qubit Clifford per qubit.
-    vops: Vec<CliffordFrame>,
+    pub(crate) vops: Vec<CliffordFrame>,
     /// Adjacency lists: `neighbors[v]` is the set of vertices adjacent to v.
-    neighbors: Vec<BitSet>,
+    pub(crate) neighbors: Vec<BitSet>,
     rng: R,
 }
 
@@ -53,7 +53,7 @@ pub struct GraphState<R: SeedableRng + Rng + Debug = PecosRng> {
 // Constructors
 // ============================================================================
 
-impl GraphState<PecosRng> {
+impl GraphStateSim<PecosRng> {
     /// Create a new graph state simulator with the default RNG.
     #[inline]
     #[must_use]
@@ -71,7 +71,7 @@ impl GraphState<PecosRng> {
     }
 }
 
-impl<R: SeedableRng + Rng + Debug> GraphState<R> {
+impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
     /// Create a new graph state simulator with a custom RNG.
     #[inline]
     pub fn with_rng(num_qubits: usize, rng: R) -> Self {
@@ -89,6 +89,18 @@ impl<R: SeedableRng + Rng + Debug> GraphState<R> {
     #[inline]
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
+    }
+
+    /// Extract the graph state representation (cloning VOPs and neighbors).
+    #[must_use]
+    pub fn to_graph_state(&self) -> crate::graph_state_repr::GraphState {
+        crate::graph_state_repr::GraphState::from_parts(self.vops.clone(), self.neighbors.clone())
+    }
+
+    /// Consume this simulator and return the graph state representation.
+    #[must_use]
+    pub fn into_graph_state(self) -> crate::graph_state_repr::GraphState {
+        crate::graph_state_repr::GraphState::from_parts(self.vops, self.neighbors)
     }
 
     // ========================================================================
@@ -466,7 +478,7 @@ impl<R: SeedableRng + Rng + Debug> GraphState<R> {
 // Trait implementations
 // ============================================================================
 
-impl<R: SeedableRng + Rng + Debug> QuantumSimulator for GraphState<R> {
+impl<R: SeedableRng + Rng + Debug> QuantumSimulator for GraphStateSim<R> {
     fn reset(&mut self) -> &mut Self {
         // |0>^n = H^n |+>^n = H^n |G_empty>
         // So all VOPs are H, and the graph has no edges.
@@ -480,7 +492,7 @@ impl<R: SeedableRng + Rng + Debug> QuantumSimulator for GraphState<R> {
     }
 }
 
-impl<R: SeedableRng + Rng + Debug> RngManageable for GraphState<R> {
+impl<R: SeedableRng + Rng + Debug> RngManageable for GraphStateSim<R> {
     type Rng = R;
 
     fn set_rng(&mut self, rng: Self::Rng) {
@@ -498,7 +510,7 @@ impl<R: SeedableRng + Rng + Debug> RngManageable for GraphState<R> {
     }
 }
 
-impl<R: SeedableRng + Rng + Debug> CliffordGateable for GraphState<R> {
+impl<R: SeedableRng + Rng + Debug> CliffordGateable for GraphStateSim<R> {
     // -- Single-qubit gates: O(1) VOP composition --
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
@@ -614,13 +626,13 @@ impl<R: SeedableRng + Rng + Debug> CliffordGateable for GraphState<R> {
 // ForcedMeasurement & StabilizerSimulator
 // ============================================================================
 
-impl<R: SeedableRng + Rng + Debug> ForcedMeasurement for GraphState<R> {
+impl<R: SeedableRng + Rng + Debug> ForcedMeasurement for GraphStateSim<R> {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         self.measure_z_internal(qubit, Some(forced_outcome))
     }
 }
 
-impl StabilizerSimulator for GraphState<PecosRng> {
+impl StabilizerSimulator for GraphStateSim<PecosRng> {
     fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self::with_seed(num_qubits, seed)
     }
@@ -636,11 +648,11 @@ mod tests {
     use crate::stabilizer_test_suite;
     use pecos_core::qid;
 
-    stabilizer_test_suite!(GraphState);
+    stabilizer_test_suite!(GraphStateSim);
 
     #[test]
     fn test_initial_state_is_all_zero() {
-        let mut sim = GraphState::with_seed(3, 42);
+        let mut sim = GraphStateSim::with_seed(3, 42);
         for i in 0..3 {
             let result = sim.mz(&[QubitId::new(i)]);
             assert!(result[0].is_deterministic, "qubit {i} should be deterministic");
@@ -650,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_single_qubit_x_flips() {
-        let mut sim = GraphState::with_seed(1, 42);
+        let mut sim = GraphStateSim::with_seed(1, 42);
         sim.x(&qid(0));
         let result = sim.mz(&qid(0));
         assert!(result[0].is_deterministic);
@@ -659,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_hadamard_creates_superposition() {
-        let mut sim = GraphState::with_seed(1, 42);
+        let mut sim = GraphStateSim::with_seed(1, 42);
         sim.h(&qid(0));
         let result = sim.mz(&qid(0));
         assert!(!result[0].is_deterministic, "H|0> = |+> should be non-deterministic for mz");
@@ -669,7 +681,7 @@ mod tests {
     fn test_bell_state_correlations() {
         // Create Bell state and verify correlations over many seeds
         for seed in 0..20 {
-            let mut sim = GraphState::with_seed(2, seed);
+            let mut sim = GraphStateSim::with_seed(2, seed);
             sim.h(&qid(0));
             sim.cx(&[QubitId::new(0), QubitId::new(1)]);
 
@@ -683,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_cz_creates_cluster_state() {
-        let mut sim = GraphState::with_seed(2, 42);
+        let mut sim = GraphStateSim::with_seed(2, 42);
         sim.h(&qid(0));
         sim.h(&[QubitId::new(1)]);
         sim.cz(&[QubitId::new(0), QubitId::new(1)]);
@@ -697,7 +709,7 @@ mod tests {
     #[test]
     fn test_ghz_state() {
         for seed in 0..20 {
-            let mut sim = GraphState::with_seed(3, seed);
+            let mut sim = GraphStateSim::with_seed(3, seed);
             sim.h(&qid(0));
             sim.cx(&[QubitId::new(0), QubitId::new(1)]);
             sim.cx(&[QubitId::new(1), QubitId::new(2)]);
@@ -714,7 +726,7 @@ mod tests {
 
     #[test]
     fn test_measurement_idempotent() {
-        let mut sim = GraphState::with_seed(1, 42);
+        let mut sim = GraphStateSim::with_seed(1, 42);
         sim.h(&qid(0));
         let r1 = sim.mz(&qid(0));
         let r2 = sim.mz(&qid(0));
@@ -724,7 +736,7 @@ mod tests {
 
     #[test]
     fn test_sz_gate() {
-        let mut sim = GraphState::with_seed(1, 42);
+        let mut sim = GraphStateSim::with_seed(1, 42);
         // SZ SZ = Z, and Z|0> = |0>
         sim.sz(&qid(0));
         sim.sz(&qid(0));
@@ -738,7 +750,7 @@ mod tests {
         use crate::stabilizer_test_utils::compare_simulators_on_random_circuits_direct;
         use crate::SparseStab;
 
-        let mut gs = GraphState::with_seed(6, 0);
+        let mut gs = GraphStateSim::with_seed(6, 0);
         let mut ss = SparseStab::with_seed(6, 0);
         compare_simulators_on_random_circuits_direct(&mut gs, &mut ss, 6, 30, 50, 98765);
     }

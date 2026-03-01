@@ -15,6 +15,7 @@ pub mod bit;
 pub mod bit_int;
 pub mod bitset;
 pub mod bitvec;
+pub mod circuit_diagram;
 pub mod clifford_rep;
 pub mod duration;
 pub mod element;

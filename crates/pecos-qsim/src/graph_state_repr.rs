@@ -1160,21 +1160,43 @@ impl GraphState {
     /// `{}` F-like. Identity vertices get a blank VOP column.
     #[must_use]
     pub fn to_ascii(&self) -> String {
-        self.format_ascii(false)
+        self.format_graph(false, "--")
     }
 
-    /// Export as ANSI-colored ASCII text for terminal display.
+    /// ASCII text with ANSI color codes.
     ///
     /// Same layout as [`to_ascii`](Self::to_ascii) with 16-color ANSI codes
     /// encoding the coset (hue) and sign parity (bold = even, normal = odd).
     /// A two-line legend is appended when non-identity VOPs are present.
     #[must_use]
-    pub fn to_ascii_color(&self) -> String {
-        self.format_ascii(true)
+    pub fn to_color_ascii(&self) -> String {
+        self.format_graph(true, "--")
     }
 
-    /// Shared layout logic for [`to_ascii`] and [`to_ascii_color`].
-    fn format_ascii(&self, color: bool) -> String {
+    /// Unicode text (no escape codes).
+    ///
+    /// Same layout as [`to_ascii`](Self::to_ascii) with a Unicode separator
+    /// (`\u{2500}\u{2500}`) instead of `--`.
+    #[must_use]
+    pub fn to_unicode(&self) -> String {
+        self.format_graph(false, "\u{2500}\u{2500}")
+    }
+
+    /// Unicode text with ANSI color codes.
+    #[must_use]
+    pub fn to_color_unicode(&self) -> String {
+        self.format_graph(true, "\u{2500}\u{2500}")
+    }
+
+    /// Deprecated: use [`to_color_ascii`](Self::to_color_ascii) instead.
+    #[deprecated(note = "renamed to to_color_ascii")]
+    #[must_use]
+    pub fn to_ascii_color(&self) -> String {
+        self.to_color_ascii()
+    }
+
+    /// Shared layout logic.
+    fn format_graph(&self, color: bool, separator: &str) -> String {
         let n = self.num_qubits();
         let num_edges = self.num_edges();
         let mut out = format!("GraphState: {n} qubits, {num_edges} edges\n\n");
@@ -1206,7 +1228,6 @@ impl GraphState {
             if show_vops {
                 let idx = self.vops[v].index() as usize;
                 if self.vops[v].is_identity() {
-                    // Blank VOP column so `--` aligns with other rows.
                     write!(out, " {:<max_vop_width$}", "").unwrap();
                 } else {
                     let name = CLIFFORD_NAMES[idx];
@@ -1228,8 +1249,8 @@ impl GraphState {
             // Neighbor list
             let nbrs: Vec<usize> = self.neighbors[v].iter().collect();
             if !nbrs.is_empty() {
-                let nbr_str: Vec<String> = nbrs.iter().map(|u| u.to_string()).collect();
-                write!(out, " -- {}", nbr_str.join(", ")).unwrap();
+                let nbr_str: Vec<String> = nbrs.iter().map(ToString::to_string).collect();
+                write!(out, " {separator} {}", nbr_str.join(", ")).unwrap();
             }
 
             out.push('\n');

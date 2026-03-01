@@ -543,6 +543,87 @@ impl TickCircuit {
         &self.ticks
     }
 
+    /// Export as a plain ASCII circuit diagram.
+    ///
+    /// Produces horizontal qubit-wire lines with gate symbols placed at each
+    /// tick column. Two-qubit gates show `.`/`[X]` with `|` connectors.
+    #[must_use]
+    pub fn to_ascii(&self) -> String {
+        self.format_diagram(&pecos_core::circuit_diagram::DiagramOptions::ascii())
+    }
+
+    /// ASCII circuit diagram with ANSI color codes.
+    ///
+    /// Same layout as [`to_ascii`](Self::to_ascii) with color-coded gate
+    /// categories: blue for single-qubit, green for two-qubit, yellow for
+    /// measurements, cyan for preparations.
+    #[must_use]
+    pub fn to_color_ascii(&self) -> String {
+        self.format_diagram(&pecos_core::circuit_diagram::DiagramOptions::color_ascii())
+    }
+
+    /// Unicode circuit diagram with box-drawing characters.
+    #[must_use]
+    pub fn to_unicode(&self) -> String {
+        self.format_diagram(&pecos_core::circuit_diagram::DiagramOptions::unicode())
+    }
+
+    /// Unicode circuit diagram with ANSI color codes.
+    #[must_use]
+    pub fn to_color_unicode(&self) -> String {
+        self.format_diagram(&pecos_core::circuit_diagram::DiagramOptions::color_unicode())
+    }
+
+    /// Export as an SVG circuit diagram.
+    #[must_use]
+    pub fn to_svg(&self) -> String {
+        let (header, layers) = self.diagram_parts();
+        crate::circuit_display::format_circuit_svg(&header, &layers)
+    }
+
+    /// Export as a `TikZ` `tikzpicture`.
+    #[must_use]
+    pub fn to_tikz(&self) -> String {
+        let (header, layers) = self.diagram_parts();
+        crate::circuit_display::format_circuit_tikz(&header, &layers)
+    }
+
+    /// Export as a Graphviz DOT digraph.
+    #[must_use]
+    pub fn to_dot(&self) -> String {
+        let (header, layers) = self.diagram_parts();
+        crate::circuit_display::format_circuit_dot(&header, &layers)
+    }
+
+    /// Deprecated: use [`to_color_ascii`](Self::to_color_ascii) instead.
+    #[deprecated(note = "renamed to to_color_ascii")]
+    #[must_use]
+    pub fn to_ascii_color(&self) -> String {
+        self.to_color_ascii()
+    }
+
+    fn diagram_parts(&self) -> (String, Vec<Vec<&pecos_core::Gate>>) {
+        let layers: Vec<Vec<&pecos_core::Gate>> = self
+            .ticks
+            .iter()
+            .map(|t| t.gates().iter().collect())
+            .collect();
+        let num_qubits = self.all_qubits().len();
+        let header = format!(
+            "TickCircuit: {} qubit{}, {} tick{}",
+            num_qubits,
+            if num_qubits == 1 { "" } else { "s" },
+            self.ticks.len(),
+            if self.ticks.len() == 1 { "" } else { "s" },
+        );
+        (header, layers)
+    }
+
+    fn format_diagram(&self, options: &pecos_core::circuit_diagram::DiagramOptions) -> String {
+        let (header, layers) = self.diagram_parts();
+        crate::circuit_display::format_circuit(&header, &layers, options)
+    }
+
     /// Get the next tick index that will be allocated.
     #[must_use]
     pub fn next_tick_index(&self) -> usize {

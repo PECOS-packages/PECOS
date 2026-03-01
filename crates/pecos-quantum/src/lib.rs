@@ -64,6 +64,7 @@
 //! ```
 
 mod circuit;
+mod circuit_display;
 mod dag_circuit;
 pub mod operator_matrix;
 mod tick_circuit;

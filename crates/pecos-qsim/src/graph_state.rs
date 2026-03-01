@@ -632,6 +632,60 @@ impl<R: SeedableRng + Rng + Debug> ForcedMeasurement for GraphStateSim<R> {
     }
 }
 
+impl<R: SeedableRng + Rng + Debug> crate::StabilizerTableauSimulator for GraphStateSim<R> {
+    fn stab_tableau(&self) -> String {
+        let gs = self.to_graph_state();
+        let n = gs.num_qubits();
+        let gens = gs.stabilizer_generators();
+        let mut result = String::with_capacity(n * (n + 3));
+        for g in &gens {
+            pauli_string_to_tableau_line(g, n, &mut result);
+        }
+        result
+    }
+
+    fn destab_tableau(&self) -> String {
+        let n = self.num_qubits;
+        let mut result = String::with_capacity(n * (n + 3));
+        for v in 0..n {
+            let z_img = self.vops[v].z_image();
+            let pauli = match z_img.axis {
+                PauliAxis::X => pecos_core::Pauli::X,
+                PauliAxis::Y => pecos_core::Pauli::Y,
+                PauliAxis::Z => pecos_core::Pauli::Z,
+            };
+            let phase = if z_img.positive {
+                pecos_core::QuarterPhase::PlusOne
+            } else {
+                pecos_core::QuarterPhase::MinusOne
+            };
+            let mut paulis = vec![pecos_core::Pauli::I; n];
+            paulis[v] = pauli;
+            let ps = pecos_core::PauliString::from_paulis_with_phase(phase, &paulis);
+            pauli_string_to_tableau_line(&ps, n, &mut result);
+        }
+        result
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+/// Format a `PauliString` as a tableau line matching the `DenseStab` format.
+///
+/// Produces e.g. `"+ZI\n"` or `"-iXY\n"`.
+fn pauli_string_to_tableau_line(ps: &pecos_core::PauliString, n: usize, out: &mut String) {
+    use std::fmt::Write;
+    let phase_str = match ps.phase() {
+        pecos_core::QuarterPhase::PlusOne => "+",
+        pecos_core::QuarterPhase::MinusOne => "-",
+        pecos_core::QuarterPhase::PlusI => "+i",
+        pecos_core::QuarterPhase::MinusI => "-i",
+    };
+    writeln!(out, "{}{}", phase_str, ps.pauli_str(Some(n))).unwrap();
+}
+
 impl StabilizerSimulator for GraphStateSim<PecosRng> {
     fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self::with_seed(num_qubits, seed)

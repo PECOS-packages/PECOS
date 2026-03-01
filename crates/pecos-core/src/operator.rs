@@ -2516,19 +2516,93 @@ impl Mul for Operator {
 // Circuit diagram generation
 // ============================================================================
 
+use crate::circuit_diagram::{CellColor, CircuitDiagram, DiagramOptions, GateFamily};
+
+/// Map a `GateType` to its `GateFamily` for diagram bracket/stroke styling.
+fn gate_type_family(gt: GateType) -> GateFamily {
+    match gt {
+        GateType::I | GateType::X | GateType::Y | GateType::Z => GateFamily::Pauli,
+        GateType::SX
+        | GateType::SXdg
+        | GateType::SY
+        | GateType::SYdg
+        | GateType::SZ
+        | GateType::SZdg => GateFamily::SLike,
+        GateType::H => GateFamily::HLike,
+        GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateFamily::Measurement
+        }
+        GateType::Prep | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
+        _ => GateFamily::Default,
+    }
+}
+
 impl Operator {
-    /// Generates an ASCII circuit diagram for this expression.
+    /// Generates a Unicode circuit diagram for this expression.
+    ///
+    /// This is an alias for [`to_unicode`](Self::to_unicode).
     #[must_use]
     pub fn to_diagram(&self, num_qubits: usize) -> String {
+        self.to_unicode(num_qubits)
+    }
+
+    /// Plain ASCII circuit diagram.
+    #[must_use]
+    pub fn to_ascii(&self, num_qubits: usize) -> String {
+        self.render_diagram(num_qubits, &DiagramOptions::ascii())
+    }
+
+    /// ASCII circuit diagram with ANSI colors.
+    #[must_use]
+    pub fn to_color_ascii(&self, num_qubits: usize) -> String {
+        self.render_diagram(num_qubits, &DiagramOptions::color_ascii())
+    }
+
+    /// Unicode circuit diagram.
+    #[must_use]
+    pub fn to_unicode(&self, num_qubits: usize) -> String {
+        self.render_diagram(num_qubits, &DiagramOptions::unicode())
+    }
+
+    /// Unicode circuit diagram with ANSI colors.
+    #[must_use]
+    pub fn to_color_unicode(&self, num_qubits: usize) -> String {
+        self.render_diagram(num_qubits, &DiagramOptions::color_unicode())
+    }
+
+    /// Export as an SVG circuit diagram.
+    #[must_use]
+    pub fn to_svg(&self, num_qubits: usize) -> String {
         let mut diagram = CircuitDiagram::new(num_qubits);
         self.add_to_diagram(&mut diagram);
-        diagram.render()
+        diagram.render_svg("")
+    }
+
+    /// Export as a `TikZ` `tikzpicture`.
+    #[must_use]
+    pub fn to_tikz(&self, num_qubits: usize) -> String {
+        let mut diagram = CircuitDiagram::new(num_qubits);
+        self.add_to_diagram(&mut diagram);
+        diagram.render_tikz("")
+    }
+
+    /// Export as a Graphviz DOT digraph.
+    #[must_use]
+    pub fn to_dot(&self, num_qubits: usize) -> String {
+        let mut diagram = CircuitDiagram::new(num_qubits);
+        self.add_to_diagram(&mut diagram);
+        diagram.render_dot("")
+    }
+
+    fn render_diagram(&self, num_qubits: usize, options: &DiagramOptions) -> String {
+        let mut diagram = CircuitDiagram::new(num_qubits);
+        self.add_to_diagram(&mut diagram);
+        diagram.render("", options)
     }
 
     fn add_to_diagram(&self, diagram: &mut CircuitDiagram) {
         match self {
             Self::Pauli(ps) => {
-                // Draw each Pauli on its qubit
                 for (pauli, qubit) in ps.iter_pairs() {
                     let q = usize::from(qubit);
                     let name = match pauli {
@@ -2537,7 +2611,7 @@ impl Operator {
                         crate::Pauli::Y => "Y",
                         crate::Pauli::Z => "Z",
                     };
-                    diagram.add_single_gate(q, name);
+                    diagram.add_gate(q, name, CellColor::SingleQubit, GateFamily::Pauli);
                 }
             }
             Self::Rotation {
@@ -2545,253 +2619,80 @@ impl Operator {
                 angle,
                 qubits,
             } => {
-                let name = if let Some(gate_type) = rotation_to_gate_type(*rotation_type, *angle) {
-                    format!("{gate_type:?}")
+                let resolved_gt = rotation_to_gate_type(*rotation_type, *angle);
+                let name = if let Some(gt) = resolved_gt {
+                    format!("{gt:?}")
                 } else {
                     format!("{rotation_type:?}")
                 };
+                let family = resolved_gt.map_or(GateFamily::Default, gate_type_family);
 
                 if qubits.len() == 1 {
-                    diagram.add_single_gate(qubits[0], &name);
+                    diagram.add_gate(qubits[0], &name, CellColor::SingleQubit, family);
                 } else if qubits.len() == 2 {
-                    diagram.add_two_qubit_gate(qubits[0], qubits[1], &name);
+                    let color = CellColor::MultiQubit;
+                    diagram.add_gate(qubits[0], &name, color, family);
+                    diagram.add_gate(qubits[1], &name, color, family);
+                    diagram.connect_vertical(qubits[0], qubits[1], color);
                 }
             }
             Self::Gate { gate_type, qubits } => match gate_type {
                 GateType::CX => {
-                    diagram.add_controlled_gate(qubits[0], qubits[1], "X");
+                    diagram.add_control(qubits[0]);
+                    diagram.add_gate(qubits[1], "X", CellColor::MultiQubit, GateFamily::Default);
+                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::MultiQubit);
                 }
                 GateType::CY => {
-                    diagram.add_controlled_gate(qubits[0], qubits[1], "Y");
+                    diagram.add_control(qubits[0]);
+                    diagram.add_gate(qubits[1], "Y", CellColor::MultiQubit, GateFamily::Default);
+                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::MultiQubit);
                 }
                 GateType::CZ => {
-                    diagram.add_controlled_gate(qubits[0], qubits[1], "Z");
+                    diagram.add_control(qubits[0]);
+                    diagram.add_gate(qubits[1], "Z", CellColor::MultiQubit, GateFamily::Default);
+                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::MultiQubit);
                 }
                 GateType::SWAP => {
-                    diagram.add_swap(qubits[0], qubits[1]);
+                    let color = CellColor::MultiQubit;
+                    diagram.add_gate(qubits[0], "x", color, GateFamily::Default);
+                    diagram.add_gate(qubits[1], "x", color, GateFamily::Default);
+                    diagram.connect_vertical(qubits[0], qubits[1], color);
                 }
                 GateType::CCX => {
-                    diagram.add_toffoli(qubits[0], qubits[1], qubits[2]);
+                    diagram.add_control(qubits[0]);
+                    diagram.add_control(qubits[1]);
+                    diagram.add_gate(qubits[2], "X", CellColor::MultiQubit, GateFamily::Default);
+                    let min_q = qubits[0].min(qubits[1]).min(qubits[2]);
+                    let max_q = qubits[0].max(qubits[1]).max(qubits[2]);
+                    diagram.connect_vertical(min_q, max_q, CellColor::MultiQubit);
                 }
                 _ => {
                     if qubits.len() == 1 {
-                        diagram.add_single_gate(qubits[0], &format!("{gate_type:?}"));
+                        let family = gate_type_family(*gate_type);
+                        diagram.add_gate(
+                            qubits[0],
+                            &format!("{gate_type:?}"),
+                            CellColor::SingleQubit,
+                            family,
+                        );
                     }
                 }
             },
             Self::Tensor(parts) => {
-                // Tensor products can be drawn simultaneously
                 for part in parts {
                     part.add_to_diagram(diagram);
                 }
             }
             Self::Compose(parts) => {
-                // Sequential composition: draw in order
                 for part in parts {
                     part.add_to_diagram(diagram);
                     diagram.advance();
                 }
             }
-            Self::Adjoint(inner) => {
-                // Mark as adjoint somehow?
-                inner.add_to_diagram(diagram);
-            }
-            Self::Phase { inner, .. } => {
-                // Global phase doesn't appear in circuit diagrams
+            Self::Adjoint(inner) | Self::Phase { inner, .. } => {
                 inner.add_to_diagram(diagram);
             }
         }
-    }
-}
-
-struct CircuitDiagram {
-    num_qubits: usize,
-    columns: Vec<Vec<String>>,
-    current_col: usize,
-}
-
-impl CircuitDiagram {
-    fn new(num_qubits: usize) -> Self {
-        Self {
-            num_qubits,
-            columns: vec![vec![String::new(); num_qubits * 2 - 1]],
-            current_col: 0,
-        }
-    }
-
-    fn ensure_column(&mut self) {
-        if self.current_col >= self.columns.len() {
-            self.columns
-                .push(vec![String::new(); self.num_qubits * 2 - 1]);
-        }
-    }
-
-    fn advance(&mut self) {
-        self.current_col += 1;
-    }
-
-    fn add_single_gate(&mut self, qubit: usize, name: &str) {
-        self.ensure_column();
-        let row = qubit * 2;
-        if row < self.columns[self.current_col].len() {
-            self.columns[self.current_col][row] = format!("[{name}]");
-        }
-    }
-
-    fn add_controlled_gate(&mut self, control: usize, target: usize, target_name: &str) {
-        self.ensure_column();
-        let ctrl_row = control * 2;
-        let targ_row = target * 2;
-
-        if ctrl_row < self.columns[self.current_col].len() {
-            self.columns[self.current_col][ctrl_row] = "●".to_string();
-        }
-        if targ_row < self.columns[self.current_col].len() {
-            self.columns[self.current_col][targ_row] = format!("[{target_name}]");
-        }
-
-        // Draw vertical line
-        let (min_row, max_row) = if ctrl_row < targ_row {
-            (ctrl_row, targ_row)
-        } else {
-            (targ_row, ctrl_row)
-        };
-        for row in (min_row + 1)..max_row {
-            if row % 2 == 1 && self.columns[self.current_col][row].is_empty() {
-                self.columns[self.current_col][row] = "│".to_string();
-            }
-        }
-    }
-
-    fn add_swap(&mut self, q0: usize, q1: usize) {
-        self.ensure_column();
-        let row0 = q0 * 2;
-        let row1 = q1 * 2;
-
-        if row0 < self.columns[self.current_col].len() {
-            self.columns[self.current_col][row0] = "×".to_string();
-        }
-        if row1 < self.columns[self.current_col].len() {
-            self.columns[self.current_col][row1] = "×".to_string();
-        }
-
-        // Draw vertical line
-        let (min_row, max_row) = (row0.min(row1), row0.max(row1));
-        for row in (min_row + 1)..max_row {
-            if row % 2 == 1 && self.columns[self.current_col][row].is_empty() {
-                self.columns[self.current_col][row] = "│".to_string();
-            }
-        }
-    }
-
-    fn add_toffoli(&mut self, c0: usize, c1: usize, target: usize) {
-        self.ensure_column();
-        let c0_row = c0 * 2;
-        let c1_row = c1 * 2;
-        let targ_row = target * 2;
-
-        if c0_row < self.columns[self.current_col].len() {
-            self.columns[self.current_col][c0_row] = "●".to_string();
-        }
-        if c1_row < self.columns[self.current_col].len() {
-            self.columns[self.current_col][c1_row] = "●".to_string();
-        }
-        if targ_row < self.columns[self.current_col].len() {
-            self.columns[self.current_col][targ_row] = "[X]".to_string();
-        }
-
-        // Draw vertical lines
-        let min_row = c0_row.min(c1_row).min(targ_row);
-        let max_row = c0_row.max(c1_row).max(targ_row);
-        for row in (min_row + 1)..max_row {
-            if row % 2 == 1 && self.columns[self.current_col][row].is_empty() {
-                self.columns[self.current_col][row] = "│".to_string();
-            }
-        }
-    }
-
-    fn add_two_qubit_gate(&mut self, q0: usize, q1: usize, name: &str) {
-        self.ensure_column();
-        let row0 = q0 * 2;
-        let row1 = q1 * 2;
-
-        if row0 < self.columns[self.current_col].len() {
-            self.columns[self.current_col][row0] = format!("[{name}]");
-        }
-        if row1 < self.columns[self.current_col].len() {
-            self.columns[self.current_col][row1] = format!("[{name}]");
-        }
-
-        // Draw vertical line
-        let (min_row, max_row) = (row0.min(row1), row0.max(row1));
-        for row in (min_row + 1)..max_row {
-            if row % 2 == 1 && self.columns[self.current_col][row].is_empty() {
-                self.columns[self.current_col][row] = "│".to_string();
-            }
-        }
-    }
-
-    fn render(&self) -> String {
-        let lines: Vec<String> = (0..self.num_qubits).map(|q| format!("q{q}: ")).collect();
-
-        // Add spacing lines between qubits
-        let mut all_lines: Vec<String> = Vec::new();
-        for (idx, line) in lines.iter().enumerate() {
-            all_lines.push(line.clone());
-            if idx < self.num_qubits - 1 {
-                all_lines.push("    ".to_string()); // spacing line
-            }
-        }
-
-        // Process each column
-        for col in &self.columns {
-            // Find max width in this column
-            let max_width = col
-                .iter()
-                .map(|s| s.chars().count())
-                .max()
-                .unwrap_or(0)
-                .max(3);
-
-            for (row, cell) in col.iter().enumerate() {
-                if row < all_lines.len() {
-                    if cell.is_empty() {
-                        // Wire or empty
-                        if row % 2 == 0 {
-                            all_lines[row].push_str(&"─".repeat(max_width));
-                        } else {
-                            all_lines[row].push_str(&" ".repeat(max_width));
-                        }
-                    } else {
-                        // Center the cell content
-                        let padding = max_width.saturating_sub(cell.chars().count());
-                        let left_pad = padding / 2;
-                        let right_pad = padding - left_pad;
-
-                        if row % 2 == 0 {
-                            // Qubit line
-                            all_lines[row].push_str(&"─".repeat(left_pad));
-                            all_lines[row].push_str(cell);
-                            all_lines[row].push_str(&"─".repeat(right_pad));
-                        } else {
-                            // Spacing line
-                            all_lines[row].push_str(&" ".repeat(left_pad));
-                            all_lines[row].push_str(cell);
-                            all_lines[row].push_str(&" ".repeat(right_pad));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add trailing wire
-        for (idx, line) in all_lines.iter_mut().enumerate() {
-            if idx % 2 == 0 {
-                line.push('─');
-            }
-        }
-
-        all_lines.join("\n")
     }
 }
 
@@ -2903,15 +2804,15 @@ mod tests {
     fn test_diagram_single_qubit() {
         let h = H(0);
         let diagram = h.to_diagram(1);
-        assert!(diagram.contains("[H]"));
+        assert!(diagram.contains("<H>")); // HLike family
     }
 
     #[test]
     fn test_diagram_cx() {
         let cx = CX(0, 1);
         let diagram = cx.to_diagram(2);
-        assert!(diagram.contains("●"));
-        assert!(diagram.contains("[X]"));
+        assert!(diagram.contains("\u{25CF}")); // control dot
+        assert!(diagram.contains("[X]")); // Default family for controlled target
     }
 
     #[test]
@@ -4094,5 +3995,40 @@ mod tests {
         let ps = ps.unwrap();
         assert_eq!(ps.get(0), crate::Pauli::X);
         assert_eq!(ps.phase(), QuarterPhase::PlusI);
+    }
+
+    // ====================== SVG/TikZ/DOT export ======================
+
+    #[test]
+    fn operator_svg() {
+        let op = H(0);
+        let svg = op.to_svg(2);
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains(">H</text>"));
+        assert!(svg.contains("q0</text>"));
+    }
+
+    #[test]
+    fn operator_tikz() {
+        let op = H(0);
+        let tikz = op.to_tikz(2);
+        assert!(tikz.contains("\\begin{tikzpicture}"));
+        assert!(tikz.contains("{H}"));
+    }
+
+    #[test]
+    fn operator_dot() {
+        let op = H(0);
+        let dot = op.to_dot(2);
+        assert!(dot.contains("digraph circuit"));
+        assert!(dot.contains("label=\"H\""));
+    }
+
+    #[test]
+    fn operator_cx_svg() {
+        let op = CX(0, 1);
+        let svg = op.to_svg(2);
+        assert!(svg.contains("<circle")); // control dot
+        assert!(svg.contains("<rect")); // gate box
     }
 }

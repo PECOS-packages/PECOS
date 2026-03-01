@@ -17,6 +17,7 @@ pub use crate::{
     clifford_gateable::{CliffordGateable, MeasurementResult},
     coin_toss::CoinToss,
     gens::Gens,
+    graph_state::GraphState,
     measurement_sampler::{MeasurementSampler, SampleResult, SequentialMeasurementSampler},
     pauli_prop::PauliProp,
     quantum_simulator::QuantumSimulator,

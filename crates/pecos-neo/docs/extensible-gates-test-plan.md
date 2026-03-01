@@ -595,7 +595,7 @@ fn test_build_warns_unhandled_by_noise() {
         Gate::custom(custom, &[0, 1], &[]),
     ]);
 
-    let noise = FlowNoiseModelBuilder::new()
+    let noise = CompositeNoiseModelBuilder::new()
         .with_p1(0.01)  // Only handles SingleQubitUnitary
         .build();
 
@@ -617,7 +617,7 @@ fn test_build_warns_unhandled_by_noise() {
 #[test]
 fn test_single_qubit_filter_matches_h() {
     let registry = GateRegistry::new();
-    let filter = FlowEventFilter::SingleQubitGate;
+    let filter = CompositeEventFilter::SingleQubitGate;
 
     let gate = Gate::h(&[0]);
     assert!(filter.matches(&gate, &registry));
@@ -626,7 +626,7 @@ fn test_single_qubit_filter_matches_h() {
 #[test]
 fn test_single_qubit_filter_rejects_cx() {
     let registry = GateRegistry::new();
-    let filter = FlowEventFilter::SingleQubitGate;
+    let filter = CompositeEventFilter::SingleQubitGate;
 
     let gate = Gate::cx(&[0, 1]);
     assert!(!filter.matches(&gate, &registry));
@@ -641,7 +641,7 @@ fn test_two_qubit_filter_matches_custom_2q_gate() {
         ..default()
     });
 
-    let filter = FlowEventFilter::TwoQubitGate;
+    let filter = CompositeEventFilter::TwoQubitGate;
     let gate = Gate::custom(custom, &[0, 1], &[]);
 
     assert!(filter.matches(&gate, &registry));
@@ -650,7 +650,7 @@ fn test_two_qubit_filter_matches_custom_2q_gate() {
 #[test]
 fn test_parameterized_filter_matches_rz() {
     let registry = GateRegistry::new();
-    let filter = FlowEventFilter::ParameterizedGate;
+    let filter = CompositeEventFilter::ParameterizedGate;
 
     let gate = Gate::rz(Angle64::QUARTER_TURN, &[0]);
     assert!(filter.matches(&gate, &registry));
@@ -659,7 +659,7 @@ fn test_parameterized_filter_matches_rz() {
 #[test]
 fn test_parameterized_filter_rejects_h() {
     let registry = GateRegistry::new();
-    let filter = FlowEventFilter::ParameterizedGate;
+    let filter = CompositeEventFilter::ParameterizedGate;
 
     let gate = Gate::h(&[0]);
     assert!(!filter.matches(&gate, &registry));
@@ -670,9 +670,9 @@ fn test_compound_filter() {
     let registry = GateRegistry::new();
 
     // Two-qubit AND parameterized
-    let filter = FlowEventFilter::And(
-        Box::new(FlowEventFilter::TwoQubitGate),
-        Box::new(FlowEventFilter::ParameterizedGate),
+    let filter = CompositeEventFilter::And(
+        Box::new(CompositeEventFilter::TwoQubitGate),
+        Box::new(CompositeEventFilter::ParameterizedGate),
     );
 
     let rzz = Gate::rzz(Angle64::QUARTER_TURN, &[0, 1]);
@@ -830,7 +830,7 @@ fn test_custom_gate_gets_two_qubit_noise() {
         ..default()
     });
 
-    let noise = FlowNoiseModelBuilder::new()
+    let noise = CompositeNoiseModelBuilder::new()
         .with_p2(1.0) // 100% error on 2Q gates for testing
         .build();
 

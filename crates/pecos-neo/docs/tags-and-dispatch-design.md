@@ -728,6 +728,24 @@ noise model with zero overhead.
 **Files:**
 - `crates/pecos-neo/src/runner.rs` (DispatchContext, GateEventHandlers, PrioritizedHandler)
 
+### Phase 6: EventHandlers for sim_neo() -- DONE
+
+Changed handler storage from `Box<dyn Fn>` to `Arc<dyn Fn>`, making
+`GateEventHandlers` and `SignalHandlerRegistry` `Clone`. Added public
+`EventHandlers` type wrapping both, with builder-pattern registration methods
+mirroring Runner's `on_*` API. `Runner::with_event_handlers()` merges an
+`EventHandlers` into the runner's registries.
+
+Plumbed through `sim_neo()`: `SimNeoBuilder::event_handlers()` stores handlers
+as a resource, applied at startup for both `SparseStab` and `StateVec`
+backends. In parallel mode, handlers are cloned per worker via
+`ParallelExecutionData`.
+
+**Files:**
+- `crates/pecos-neo/src/runner.rs` (Arc types, EventHandlers, with_event_handlers)
+- `crates/pecos-neo/src/program.rs` (ProgramRunner::with_event_handlers)
+- `crates/pecos-neo/src/tool/simulation.rs` (EventHandlersResource, builder method, parallel plumbing)
+
 ---
 
 ## Performance Considerations
@@ -805,5 +823,5 @@ simple data is fast, complex data costs more. No artificial distinction needed.
 - [Bevy Observer Overhaul Design Doc](https://hackmd.io/@bevy/rk4S92hmlg) -- Observer architecture
 - [Bevy 0.18 Release Notes](https://bevy.org/news/bevy-0-18/) -- Safe component access
 - [Bevy Events - Unofficial Cheat Book](https://bevy-cheatbook.github.io/programming/events.html) -- Typed event patterns
-- [noise-flow-design.md](noise-flow-design.md) -- Existing composable noise design
+- [noise-composite-design.md](noise-composite-design.md) -- Existing composable noise design
 - [design-patterns.md](design-patterns.md) -- pecos-neo API conventions

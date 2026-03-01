@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
 
-//! Fast batch flow processing with geometric sampling.
+//! Fast batch composite processing with geometric sampling.
 //!
 //! This module provides optimized batch noise processing using geometric sampling
 //! with lazy filter checks. The key insight is that for low probability events,
@@ -21,8 +21,8 @@
 //! # Example
 //!
 //! ```
-//! use pecos_neo::noise::flow::batch_flow::*;
-//! use pecos_neo::noise::flow::prelude::*;
+//! use pecos_neo::noise::composite::batch_composite::*;
+//! use pecos_neo::noise::composite::prelude::*;
 //! use pecos_neo::noise::NoiseContext;
 //! use pecos_rng::PecosRng;
 //!
@@ -39,7 +39,7 @@
 
 use super::Primitive;
 use super::batch::GeometricSampler;
-use super::response::FlowResponse;
+use super::response::CompositeResponse;
 use crate::noise::NoiseContext;
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
@@ -175,7 +175,7 @@ impl BatchState {
 
 /// Result of batch processing.
 #[derive(Debug, Clone, Default)]
-pub struct BatchFlowResult {
+pub struct BatchCompositeResult {
     /// Qubits to skip.
     pub skip: SmallVec<[QubitId; 8]>,
     /// Qubits that leaked.
@@ -183,10 +183,10 @@ pub struct BatchFlowResult {
     /// Qubits that unleaked.
     pub unleaked: SmallVec<[QubitId; 8]>,
     /// Flow responses per qubit.
-    pub responses: SmallVec<[(QubitId, FlowResponse); 16]>,
+    pub responses: SmallVec<[(QubitId, CompositeResponse); 16]>,
 }
 
-impl BatchFlowResult {
+impl BatchCompositeResult {
     /// Check if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -256,8 +256,8 @@ impl<P: Primitive> FastBatchProcessor<P> {
         state: &BatchState,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> BatchFlowResult {
-        let mut result = BatchFlowResult::default();
+    ) -> BatchCompositeResult {
+        let mut result = BatchCompositeResult::default();
         let n = end.saturating_sub(start);
         if n == 0 {
             return result;
@@ -285,7 +285,7 @@ impl<P: Primitive> FastBatchProcessor<P> {
                 if response.causes_leak() {
                     result.leaked.push(qubit);
                 }
-                if matches!(response, FlowResponse::Unleak) {
+                if matches!(response, CompositeResponse::Unleak) {
                     result.unleaked.push(qubit);
                 }
                 if response.skips_gate() {
@@ -304,7 +304,7 @@ impl<P: Primitive> FastBatchProcessor<P> {
         state: &BatchState,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> BatchFlowResult {
+    ) -> BatchCompositeResult {
         self.process_range(0, state.num_qubits(), state, ctx, rng)
     }
 }
@@ -324,7 +324,7 @@ pub fn fast_depolarizing<P: Primitive>(probability: f64, action: P) -> FastBatch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::noise::flow::action::actions::*;
+    use crate::noise::composite::action::actions::*;
 
     #[test]
     fn test_batch_state() {

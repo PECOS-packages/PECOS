@@ -13,17 +13,17 @@
 //! Two-qubit gate noise channel.
 //!
 //! This is a traditional standalone channel implementation. For composable,
-//! declarative noise models with conditional logic, see `FlowChannel` in
-//! `pecos_neo::noise::flow::prelude`.
+//! declarative noise models with conditional logic, see `CompositeChannel` in
+//! `pecos_neo::noise::composite::prelude`.
 //!
-//! ## When to use this vs `FlowChannel`
+//! ## When to use this vs `CompositeChannel`
 //!
 //! **Use `TwoQubitChannel` when:**
 //! - You want a simple, direct noise model
 //! - Performance is critical (no primitive tree traversal)
 //! - The built-in options (depolarizing, angle scaling, emission) suffice
 //!
-//! **Use `FlowChannel` when:**
+//! **Use `CompositeChannel` when:**
 //! - You need complex conditional logic (partner leaked, cross-qubit conditions)
 //! - You want two-stage processing for correlated effects
 //! - You need custom branching or sampling behavior

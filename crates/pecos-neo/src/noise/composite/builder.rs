@@ -10,18 +10,18 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Builder for flow-based noise models.
+//! Builder for composite-based noise models.
 //!
-//! This module provides `FlowNoiseModelBuilder`, which creates noise models using
-//! the flow primitive system. It provides a similar API to `GeneralNoiseModelBuilder`
-//! but uses the composable flow primitives underneath.
+//! This module provides `CompositeNoiseModelBuilder`, which creates noise models using
+//! the composite primitive system. It provides a similar API to `GeneralNoiseModelBuilder`
+//! but uses the composable composite primitives underneath.
 //!
 //! # Example
 //!
 //! ```
-//! use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+//! use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 //!
-//! let noise = FlowNoiseModelBuilder::new()
+//! let noise = CompositeNoiseModelBuilder::new()
 //!     .with_p1(0.001)                    // 0.1% single-qubit gate error
 //!     .with_p2(0.01)                     // 1% two-qubit gate error
 //!     .with_p_meas(0.02, 0.03)           // Asymmetric measurement error
@@ -36,7 +36,7 @@
 //! - **Extensibility**: Add custom conditions and actions
 
 use super::channel::{
-    FlowChannel, FlowChannelBuilder, FlowCrosstalkChannel, FlowEventFilter, NeighborFn,
+    CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel, CompositeEventFilter, NeighborFn,
 };
 use super::prelude::*;
 use crate::command::GateType;
@@ -85,21 +85,21 @@ fn validate_rate(value: f64, param_name: &str) -> f64 {
     }
 }
 
-/// Builder for creating flow-based noise models.
+/// Builder for creating composite-based noise models.
 ///
 /// This builder provides a convenient API for constructing noise models
-/// using the flow primitive system. It mirrors the `GeneralNoiseModelBuilder`
-/// API while using flow primitives underneath.
+/// using the composite primitive system. It mirrors the `GeneralNoiseModelBuilder`
+/// API while using composite primitives underneath.
 ///
 /// # Mixing Channel Types
 ///
-/// You can mix flow channels with traditional channels using [`with_channel`]:
+/// You can mix composite channels with traditional channels using [`with_channel`]:
 ///
 /// ```
-/// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+/// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 /// use pecos_neo::noise::MeasurementChannel;
 ///
-/// let model = FlowNoiseModelBuilder::new()
+/// let model = CompositeNoiseModelBuilder::new()
 ///     .with_p1(0.001)                              // Flow 1Q channel
 ///     .with_p2(0.01)                               // Flow 2Q channel
 ///     .with_channel(MeasurementChannel::symmetric(0.02))  // Traditional channel
@@ -107,7 +107,7 @@ fn validate_rate(value: f64, param_name: &str) -> f64 {
 /// ```
 ///
 /// [`with_channel`]: Self::with_channel
-pub struct FlowNoiseModelBuilder {
+pub struct CompositeNoiseModelBuilder {
     // Single-qubit gate parameters
     p1: f64,
     p1_emission_ratio: f64,
@@ -159,11 +159,11 @@ pub struct FlowNoiseModelBuilder {
     // Time scale for physical time interpretation
     time_scale: Option<TimeScale>,
 
-    // Custom channels (flow or traditional)
+    // Custom channels (composite or traditional)
     custom_channels: Vec<Box<dyn crate::noise::NoiseChannel>>,
 }
 
-impl Default for FlowNoiseModelBuilder {
+impl Default for CompositeNoiseModelBuilder {
     fn default() -> Self {
         Self {
             p1: 0.0,
@@ -202,7 +202,7 @@ impl Default for FlowNoiseModelBuilder {
     }
 }
 
-impl FlowNoiseModelBuilder {
+impl CompositeNoiseModelBuilder {
     /// Create a new builder with all parameters set to zero.
     #[must_use]
     pub fn new() -> Self {
@@ -267,12 +267,12 @@ impl FlowNoiseModelBuilder {
     ///
     /// ```
     /// use pecos_neo::noise::SingleQubitEmissionWeights;
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
     /// // 25% each for X, Y, Z Pauli errors, 25% leakage
     /// let emission = SingleQubitEmissionWeights::custom(0.25, 0.25, 0.25, 0.25);
     ///
-    /// let model = FlowNoiseModelBuilder::new()
+    /// let model = CompositeNoiseModelBuilder::new()
     ///     .with_p1(0.01)
     ///     .with_p1_emission_ratio(0.5)  // 50% of errors are emission
     ///     .with_p1_emission_model(emission)
@@ -336,10 +336,10 @@ impl FlowNoiseModelBuilder {
     ///
     /// ```
     /// use pecos_neo::noise::TwoQubitPauliWeights;
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
     /// // ZZ-biased errors (common in certain gate implementations)
-    /// let model = FlowNoiseModelBuilder::new()
+    /// let model = CompositeNoiseModelBuilder::new()
     ///     .with_p2(0.01)
     ///     .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(0.5))
     ///     .build();
@@ -363,10 +363,10 @@ impl FlowNoiseModelBuilder {
     ///
     /// ```
     /// use pecos_neo::noise::TwoQubitEmissionWeights;
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
     /// // Use uniform weights with leakage
-    /// let model = FlowNoiseModelBuilder::new()
+    /// let model = CompositeNoiseModelBuilder::new()
     ///     .with_p2(0.01)
     ///     .with_p2_emission_ratio(0.5)
     ///     .with_p2_emission_model(TwoQubitEmissionWeights::uniform_with_leakage())
@@ -386,10 +386,10 @@ impl FlowNoiseModelBuilder {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_neo::noise::two_qubit::AngleScaling;
     ///
-    /// let model = FlowNoiseModelBuilder::new()
+    /// let model = CompositeNoiseModelBuilder::new()
     ///     .with_p2(0.01)
     ///     .with_p2_angle_scaling(AngleScaling::linear())  // Error ~ |theta/pi|
     ///     .build();
@@ -501,7 +501,7 @@ impl FlowNoiseModelBuilder {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_core::QubitId;
     ///
     /// // Define neighbors as adjacent qubits in a linear chain
@@ -512,7 +512,7 @@ impl FlowNoiseModelBuilder {
     ///         .collect()
     /// }
     ///
-    /// let model = FlowNoiseModelBuilder::new()
+    /// let model = CompositeNoiseModelBuilder::new()
     ///     .with_p_meas_crosstalk(0.001, 0.01)
     ///     .with_p_meas_crosstalk_local_fn(linear_neighbors)
     ///     .build();
@@ -537,7 +537,7 @@ impl FlowNoiseModelBuilder {
     ///
     /// ```
     /// use pecos_neo::noise::CrosstalkTransitions;
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
     /// // Asymmetric crosstalk: qubits in |0⟩ more likely to leak
     /// let transitions = CrosstalkTransitions::custom(
@@ -545,7 +545,7 @@ impl FlowNoiseModelBuilder {
     ///     0.4, 0.5, 0.1,  // from 1: 40% stay, 50% flip, 10% leak
     /// );
     ///
-    /// let model = FlowNoiseModelBuilder::new()
+    /// let model = CompositeNoiseModelBuilder::new()
     ///     .with_p_crosstalk(0.01)
     ///     .with_p_meas_crosstalk_model(transitions)
     ///     .build();
@@ -711,10 +711,10 @@ impl FlowNoiseModelBuilder {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_core::TimeScale;
     ///
-    /// let noise = FlowNoiseModelBuilder::new()
+    /// let noise = CompositeNoiseModelBuilder::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
     ///     .with_idle_t1_t2(50e-6, 30e-6)  // T1=50us, T2=30us
     ///     .build();
@@ -740,10 +740,10 @@ impl FlowNoiseModelBuilder {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_core::TimeScale;
     ///
-    /// let noise = FlowNoiseModelBuilder::new()
+    /// let noise = CompositeNoiseModelBuilder::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
     ///     .with_idle_t1_t2(50e-6, 30e-6)  // T1=50us, T2=30us in seconds
     ///     .build();
@@ -768,7 +768,7 @@ impl FlowNoiseModelBuilder {
     // Custom channels
     // ========================================================================
 
-    /// Add a custom noise channel (flow or traditional).
+    /// Add a custom noise channel (composite or traditional).
     ///
     /// This allows mixing different channel types in a single noise model.
     /// Channels are applied in the order they are added.
@@ -776,10 +776,10 @@ impl FlowNoiseModelBuilder {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_neo::noise::MeasurementChannel;
     ///
-    /// let model = FlowNoiseModelBuilder::new()
+    /// let model = CompositeNoiseModelBuilder::new()
     ///     .with_p1(0.001)  // Flow single-qubit noise
     ///     .with_channel(MeasurementChannel::symmetric(0.02))  // Traditional channel
     ///     .build();
@@ -796,7 +796,7 @@ impl FlowNoiseModelBuilder {
 
     /// Build the configured noise model.
     ///
-    /// Returns a `ComposableNoiseModel` with flow-based channels.
+    /// Returns a `ComposableNoiseModel` with composite-based channels.
     #[must_use]
     pub fn build(self) -> ComposableNoiseModel {
         let mut model = ComposableNoiseModel::new();
@@ -814,36 +814,36 @@ impl FlowNoiseModelBuilder {
         // Single-qubit gate noise
         if self.p1 > 0.0 {
             let sq_noise = self.build_single_qubit_noise();
-            let channel = FlowChannelBuilder::single_qubit("flow_sq", sq_noise);
+            let channel = CompositeChannelBuilder::single_qubit("flow_sq", sq_noise);
             model = model.add_channel(channel);
         }
 
         // Two-qubit gate noise (including p2_idle)
         if self.p2 > 0.0 || self.p2_idle_rate > 0.0 {
             let tq_noise = self.build_two_qubit_noise();
-            let channel = FlowChannelBuilder::two_qubit("flow_tq", tq_noise);
+            let channel = CompositeChannelBuilder::two_qubit("flow_tq", tq_noise);
             model = model.add_channel(channel);
         }
 
         // Preparation noise
         if self.p_prep > 0.0 {
             let prep_noise = self.build_preparation_noise();
-            let channel = FlowChannelBuilder::preparation("flow_prep", prep_noise);
+            let channel = CompositeChannelBuilder::preparation("flow_prep", prep_noise);
             model = model.add_channel(channel);
         }
 
         // Measurement noise
         if self.p_meas_0 > 0.0 || self.p_meas_1 > 0.0 {
             let meas_noise = self.build_measurement_noise();
-            let channel = FlowChannel::new("flow_meas", meas_noise)
-                .with_filter(FlowEventFilter::AfterMeasurement);
+            let channel = CompositeChannel::new("flow_meas", meas_noise)
+                .with_filter(CompositeEventFilter::AfterMeasurement);
             model = model.add_channel(channel);
         }
 
         // Measurement crosstalk (global)
         if self.p_meas_crosstalk_global > 0.0 {
             let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_global);
-            let channel = FlowCrosstalkChannel::new("flow_meas_crosstalk_global", crosstalk_noise)
+            let channel = CompositeCrosstalkChannel::new("flow_meas_crosstalk_global", crosstalk_noise)
                 .responds_to_measurement()
                 .global();
             model = model.add_channel(channel);
@@ -854,7 +854,7 @@ impl FlowNoiseModelBuilder {
             if let Some(neighbor_fn) = self.p_meas_crosstalk_local_fn {
                 let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_local);
                 let channel =
-                    FlowCrosstalkChannel::new("flow_meas_crosstalk_local", crosstalk_noise)
+                    CompositeCrosstalkChannel::new("flow_meas_crosstalk_local", crosstalk_noise)
                         .responds_to_measurement()
                         .local(neighbor_fn);
                 model = model.add_channel(channel);
@@ -871,7 +871,7 @@ impl FlowNoiseModelBuilder {
         // Preparation crosstalk
         if self.p_prep_crosstalk > 0.0 {
             let crosstalk_noise = prob(self.p_prep_crosstalk, pauli());
-            let channel = FlowCrosstalkChannel::new("flow_prep_crosstalk", crosstalk_noise)
+            let channel = CompositeCrosstalkChannel::new("flow_prep_crosstalk", crosstalk_noise)
                 .responds_to_preparation()
                 .global();
             model = model.add_channel(channel);
@@ -880,25 +880,25 @@ impl FlowNoiseModelBuilder {
         // Idle noise (T1/T2)
         if self.p_idle_linear_rate > 0.0 || self.p_idle_quadratic_rate > 0.0 {
             let idle_noise = self.build_idle_noise();
-            let channel = FlowChannelBuilder::idle("flow_idle", idle_noise);
+            let channel = CompositeChannelBuilder::idle("flow_idle", idle_noise);
             model = model.add_channel(channel);
         }
 
         // Before-gate channel for skip logic (if leakage is enabled)
         if self.has_leakage() {
-            let skip_channel = FlowChannelBuilder::before_gate("flow_skip", skip_if_leaked());
+            let skip_channel = CompositeChannelBuilder::before_gate("flow_skip", skip_if_leaked());
             model = model.add_channel(skip_channel);
         }
 
         // MeasureLeaked handling: return outcome 2 for leaked qubits
         if self.handle_measure_leaked {
             let measure_leaked_noise = self.build_measure_leaked_noise();
-            let channel = FlowChannel::new("flow_measure_leaked", measure_leaked_noise)
-                .with_filter(FlowEventFilter::AfterMeasurement);
+            let channel = CompositeChannel::new("flow_measure_leaked", measure_leaked_noise)
+                .with_filter(CompositeEventFilter::AfterMeasurement);
             model = model.add_channel(channel);
         }
 
-        // Custom channels (flow or traditional)
+        // Custom channels (composite or traditional)
         for channel in self.custom_channels {
             model = model.add_boxed_channel(channel);
         }
@@ -968,7 +968,7 @@ impl FlowNoiseModelBuilder {
         effective_leak: f64,
     ) -> BoxSeq
     where
-        E: crate::noise::flow::Primitive + 'static,
+        E: crate::noise::composite::Primitive + 'static,
     {
         if self.p1_seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage: complex decision tree
@@ -1070,8 +1070,8 @@ impl FlowNoiseModelBuilder {
         effective_leak: f64,
     ) -> BoxSeq
     where
-        P: crate::noise::flow::Primitive + 'static,
-        E: crate::noise::flow::Primitive + 'static,
+        P: crate::noise::composite::Primitive + 'static,
+        E: crate::noise::composite::Primitive + 'static,
     {
         if self.p2_seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage
@@ -1154,8 +1154,8 @@ impl FlowNoiseModelBuilder {
         effective_leak: f64,
     ) -> BoxSeq
     where
-        P: crate::noise::flow::Primitive + 'static,
-        E: crate::noise::flow::Primitive + 'static,
+        P: crate::noise::composite::Primitive + 'static,
+        E: crate::noise::composite::Primitive + 'static,
     {
         let base_p2 = self.p2;
         let seepage = self.p2_seepage;
@@ -1289,13 +1289,13 @@ mod tests {
 
     #[test]
     fn test_empty_builder() {
-        let model = FlowNoiseModelBuilder::new().build();
+        let model = CompositeNoiseModelBuilder::new().build();
         assert_eq!(model.channel_count(), 0);
     }
 
     #[test]
     fn test_simple_depolarizing() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
             .with_p2(0.02)
             .build();
@@ -1306,7 +1306,7 @@ mod tests {
 
     #[test]
     fn test_with_leakage() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
             .with_leakage(0.1, 0.2)
             .build();
@@ -1317,7 +1317,7 @@ mod tests {
 
     #[test]
     fn test_full_configuration() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
             .with_p2(0.02)
             .with_p_prep(0.005)
@@ -1332,7 +1332,7 @@ mod tests {
 
     #[test]
     fn test_noiseless_gates() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
             .with_noiseless_gate(GateType::I)
             .with_noiseless_gates(&[GateType::SX, GateType::SXdg])
@@ -1362,7 +1362,7 @@ mod tests {
         let mut errors = 0;
 
         for seed in 0..shots {
-            let model = FlowNoiseModelBuilder::new().with_p1(p1).build();
+            let model = CompositeNoiseModelBuilder::new().with_p1(p1).build();
             let mut runner = Runner::new(SparseStab::new(1))
                 .with_noise(model)
                 .with_seed(seed);
@@ -1392,7 +1392,7 @@ mod tests {
         let mut flips = 0;
 
         for seed in 0..shots {
-            let model = FlowNoiseModelBuilder::new()
+            let model = CompositeNoiseModelBuilder::new()
                 .with_p_meas(p_0_to_1, p_1_to_0)
                 .build();
             let mut runner = Runner::new(SparseStab::new(1))
@@ -1418,7 +1418,7 @@ mod tests {
     #[test]
     fn test_idle_noise_builder() {
         // Test that idle noise channels are created
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
             .with_p_idle_quadratic(0.01)
             .build();
@@ -1429,7 +1429,7 @@ mod tests {
 
     #[test]
     fn test_idle_noise_t1_only() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
             .build();
 
@@ -1438,7 +1438,7 @@ mod tests {
 
     #[test]
     fn test_idle_noise_t2_only() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.01)
             .with_coherent_to_incoherent_factor(2.0)
             .build();
@@ -1448,7 +1448,7 @@ mod tests {
 
     #[test]
     fn test_idle_noise_convenience() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_idle_noise(0.001, 0.01)
             .build();
 
@@ -1457,7 +1457,7 @@ mod tests {
 
     #[test]
     fn test_full_model_with_idle() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
             .with_p2(0.02)
             .with_p_prep(0.005)
@@ -1472,7 +1472,7 @@ mod tests {
     #[test]
     fn test_custom_pauli_weights() {
         // Create model with Z-only errors
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
             .with_p1_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0))
             .with_p2(0.01)
@@ -1485,7 +1485,7 @@ mod tests {
 
     #[test]
     fn test_preparation_crosstalk() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_prep(0.01)
             .with_p_prep_crosstalk(0.001)
             .build();
@@ -1497,7 +1497,7 @@ mod tests {
     #[test]
     fn test_measurement_crosstalk_methods() {
         // Test with_p_crosstalk
-        let model1 = FlowNoiseModelBuilder::new()
+        let model1 = CompositeNoiseModelBuilder::new()
             .with_p_meas_symmetric(0.01)
             .with_p_crosstalk(0.001)
             .build();
@@ -1506,7 +1506,7 @@ mod tests {
         assert_eq!(model1.channel_count(), 2);
 
         // Test with_p_meas_crosstalk
-        let model2 = FlowNoiseModelBuilder::new()
+        let model2 = CompositeNoiseModelBuilder::new()
             .with_p_meas_symmetric(0.01)
             .with_p_meas_crosstalk(0.001, 0.0)
             .build();
@@ -1517,7 +1517,7 @@ mod tests {
 
     #[test]
     fn test_p2_idle() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.01)
             .with_p2_idle(0.001)
             .build();
@@ -1538,7 +1538,7 @@ mod tests {
             prob(1.0, inject_z()), // 100% idle Z error
         ];
 
-        let channel = FlowChannelBuilder::two_qubit("test_idle", tq_noise);
+        let channel = CompositeChannelBuilder::two_qubit("test_idle", tq_noise);
 
         let mut ctx = crate::noise::NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1587,7 +1587,7 @@ mod tests {
 
         for seed in 0..shots {
             // With p2 error
-            let model_with = FlowNoiseModelBuilder::new().with_p2(p2).build();
+            let model_with = CompositeNoiseModelBuilder::new().with_p2(p2).build();
             let mut runner = Runner::new(SparseStab::new(2))
                 .with_noise(model_with)
                 .with_seed(seed);
@@ -1600,7 +1600,7 @@ mod tests {
             }
 
             // Without noise
-            let model_without = FlowNoiseModelBuilder::new().build();
+            let model_without = CompositeNoiseModelBuilder::new().build();
             let mut runner = Runner::new(SparseStab::new(2))
                 .with_noise(model_without)
                 .with_seed(seed);
@@ -1622,7 +1622,7 @@ mod tests {
         );
     }
 
-    // Note: FlowNoiseModelBuilder no longer implements Clone because it can hold
+    // Note: CompositeNoiseModelBuilder no longer implements Clone because it can hold
     // Box<dyn NoiseChannel> via with_channel(). Use the builder pattern instead.
 
     #[test]
@@ -1630,7 +1630,7 @@ mod tests {
         use crate::noise::two_qubit::AngleScaling;
 
         // Build model with linear angle scaling
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
             .with_p2_angle_scaling(AngleScaling::linear())
             .build();
@@ -1664,7 +1664,7 @@ mod tests {
         let mut errors_half = 0;
 
         for seed in 0..shots {
-            let model = FlowNoiseModelBuilder::new()
+            let model = CompositeNoiseModelBuilder::new()
                 .with_p2(base_p2)
                 .with_p2_angle_scaling(AngleScaling::linear())
                 .build();
@@ -1702,7 +1702,7 @@ mod tests {
         let mut errors_quarter = 0;
 
         for seed in 0..shots {
-            let model = FlowNoiseModelBuilder::new()
+            let model = CompositeNoiseModelBuilder::new()
                 .with_p2(base_p2)
                 .with_p2_angle_scaling(AngleScaling::linear())
                 .build();
@@ -1733,7 +1733,7 @@ mod tests {
         use crate::noise::two_qubit::AngleScaling;
 
         // Build model with angle scaling AND leakage
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
             .with_p2_angle_scaling(AngleScaling::linear())
             .with_p2_emission_ratio(0.2) // 20% of errors cause leakage
@@ -1747,7 +1747,7 @@ mod tests {
     #[test]
     fn test_leakage_scale() {
         // With leakage_scale = 1.0 (default), leakage is enabled
-        let model_full_leak = FlowNoiseModelBuilder::new()
+        let model_full_leak = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
             .with_p1_emission_ratio(0.5)
             .build();
@@ -1756,7 +1756,7 @@ mod tests {
         assert_eq!(model_full_leak.channel_count(), 2);
 
         // With leakage_scale = 0.0, no leakage (emission becomes depolarizing)
-        let model_no_leak = FlowNoiseModelBuilder::new()
+        let model_no_leak = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
             .with_p1_emission_ratio(0.5)
             .with_leakage_scale(0.0)
@@ -1769,7 +1769,7 @@ mod tests {
     #[test]
     fn test_leakage_scale_partial() {
         // With leakage_scale = 0.5, half of emission events become leakage
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
             .with_p1_emission_ratio(0.5)
             .with_leakage_scale(0.5) // Half become leakage, half depolarizing
@@ -1782,7 +1782,7 @@ mod tests {
     #[test]
     fn test_idle_linear_weights() {
         // Test with Z-only idle noise (typical for T2 dephasing)
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
             .with_p_idle_linear_weights(PauliWeights::custom(0.0, 0.0, 1.0)) // Z-only
             .build();
@@ -1794,7 +1794,7 @@ mod tests {
     #[test]
     fn test_idle_linear_weights_with_t2() {
         // Combined T1 (custom weights) and T2
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_idle_noise(0.001, 0.01) // Both T1 and T2
             .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0)) // X-only for T1
             .with_coherent_to_incoherent_factor(2.0)
@@ -1805,10 +1805,10 @@ mod tests {
     }
 
     // ========================================================================
-    // Builder Comparison Tests (FlowNoiseModelBuilder vs GeneralNoiseModelBuilder)
+    // Builder Comparison Tests (CompositeNoiseModelBuilder vs GeneralNoiseModelBuilder)
     // ========================================================================
 
-    /// Compare `FlowNoiseModelBuilder` with `GeneralNoiseModelBuilder` for basic depolarizing.
+    /// Compare `CompositeNoiseModelBuilder` with `GeneralNoiseModelBuilder` for basic depolarizing.
     #[test]
     fn test_builder_comparison_depolarizing() {
         use crate::noise::GeneralNoiseModelBuilder;
@@ -1851,8 +1851,8 @@ mod tests {
                 general_errors += 1;
             }
 
-            // FlowNoiseModelBuilder
-            let flow_model = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+            // CompositeNoiseModelBuilder
+            let flow_model = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
 
             let mut runner_flow = Runner::new(SparseStab::new(2))
                 .with_noise(flow_model)
@@ -1871,7 +1871,7 @@ mod tests {
         // Both should produce similar error rates (within statistical tolerance)
         assert!(
             (general_rate - flow_rate).abs() < 0.15,
-            "GeneralNoiseModelBuilder error rate {general_rate:.3} vs FlowNoiseModelBuilder {flow_rate:.3}"
+            "GeneralNoiseModelBuilder error rate {general_rate:.3} vs CompositeNoiseModelBuilder {flow_rate:.3}"
         );
     }
 
@@ -1906,8 +1906,8 @@ mod tests {
                 general_flips += 1;
             }
 
-            // FlowNoiseModelBuilder
-            let flow_model = FlowNoiseModelBuilder::new()
+            // CompositeNoiseModelBuilder
+            let flow_model = CompositeNoiseModelBuilder::new()
                 .with_p_meas(p_meas_0, p_meas_1)
                 .build();
 
@@ -1930,7 +1930,7 @@ mod tests {
         );
         assert!(
             (flow_rate - p_meas_0).abs() < 0.05,
-            "FlowNoiseModelBuilder flip rate {flow_rate:.3} far from expected {p_meas_0}"
+            "CompositeNoiseModelBuilder flip rate {flow_rate:.3} far from expected {p_meas_0}"
         );
     }
 
@@ -1966,8 +1966,8 @@ mod tests {
                 general_errors += 1;
             }
 
-            // FlowNoiseModelBuilder
-            let flow_model = FlowNoiseModelBuilder::new().with_p_prep(p_prep).build();
+            // CompositeNoiseModelBuilder
+            let flow_model = CompositeNoiseModelBuilder::new().with_p_prep(p_prep).build();
 
             let mut runner = Runner::new(SparseStab::new(1))
                 .with_noise(flow_model)
@@ -1992,7 +1992,7 @@ mod tests {
         );
         assert!(
             (flow_rate - p_prep).abs() < 0.05,
-            "FlowNoiseModelBuilder prep error rate {flow_rate:.3} far from expected {p_prep}"
+            "CompositeNoiseModelBuilder prep error rate {flow_rate:.3} far from expected {p_prep}"
         );
     }
 
@@ -2018,7 +2018,7 @@ mod tests {
                 .collect()
         }
 
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_meas_crosstalk(0.001, 0.01)
             .with_p_meas_crosstalk_local_fn(linear_neighbors)
             .build();
@@ -2030,7 +2030,7 @@ mod tests {
     #[test]
     fn test_local_crosstalk_without_fn_is_ignored() {
         // If local crosstalk probability is set but no neighbor function, it's ignored
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_meas_crosstalk(0.001, 0.01) // local is 0.01 but no fn
             .build();
 
@@ -2048,7 +2048,7 @@ mod tests {
             0.4, 0.4, 0.2, // from 1: 40% stay, 40% flip, 20% leak
         );
 
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_crosstalk(0.1)
             .with_p_meas_crosstalk_model(transitions)
             .build();
@@ -2059,7 +2059,7 @@ mod tests {
 
     #[test]
     fn test_measure_leaked_handling_builder() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_measure_leaked_handling(true)
             .build();
 
@@ -2069,7 +2069,7 @@ mod tests {
 
     #[test]
     fn test_measure_leaked_with_leakage() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
             .with_p1_emission_ratio(0.5) // 50% of errors cause leakage
             .with_measure_leaked_handling(true)
@@ -2093,7 +2093,7 @@ mod tests {
 
         let transitions = CrosstalkTransitions::flip_only();
 
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
             .with_p2(0.02)
             .with_p_meas(0.03, 0.04)
@@ -2113,7 +2113,7 @@ mod tests {
 
     #[test]
     fn test_time_scale_configuration() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
             .with_p1(0.01)
             .build();
@@ -2126,7 +2126,7 @@ mod tests {
     #[test]
     fn test_idle_t1_t2_configuration() {
         // T1=50us, T2=30us with nanosecond time units
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
             .with_idle_t1_t2(50e-6, 30e-6)
             .build();
@@ -2139,7 +2139,7 @@ mod tests {
 
     #[test]
     fn test_time_scale_with_full_model() {
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
             .with_p1(0.01)
             .with_p2(0.02)
@@ -2154,7 +2154,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "with_time_scale() must be called before with_idle_t1_t2()")]
     fn test_idle_t1_t2_without_time_scale_panics() {
-        let _ = FlowNoiseModelBuilder::new()
+        let _ = CompositeNoiseModelBuilder::new()
             .with_idle_t1_t2(50e-6, 30e-6) // Should panic - no time scale set
             .build();
     }
@@ -2166,7 +2166,7 @@ mod tests {
     #[test]
     fn test_validation_clamps_negative_probability() {
         // Negative probability should be clamped to 0.0
-        let model = FlowNoiseModelBuilder::new().with_p1(-0.5).build();
+        let model = CompositeNoiseModelBuilder::new().with_p1(-0.5).build();
 
         // Model should build successfully (clamped to 0.0)
         // No channels since p1=0.0 after clamping
@@ -2176,7 +2176,7 @@ mod tests {
     #[test]
     fn test_validation_clamps_probability_over_one() {
         // Probability > 1.0 should be clamped to 1.0
-        let model = FlowNoiseModelBuilder::new().with_p1(1.5).build();
+        let model = CompositeNoiseModelBuilder::new().with_p1(1.5).build();
 
         // Model should build successfully (clamped to 1.0)
         assert_eq!(model.channel_count(), 1);
@@ -2185,7 +2185,7 @@ mod tests {
     #[test]
     fn test_validation_handles_nan() {
         // NaN should be set to 0.0
-        let model = FlowNoiseModelBuilder::new().with_p1(f64::NAN).build();
+        let model = CompositeNoiseModelBuilder::new().with_p1(f64::NAN).build();
 
         // Model should build successfully (set to 0.0)
         assert_eq!(model.channel_count(), 0);
@@ -2194,7 +2194,7 @@ mod tests {
     #[test]
     fn test_local_crosstalk_without_neighbor_fn_warns() {
         // This should print a warning but still build successfully
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p_meas_crosstalk(0.0, 0.05) // Local rate set but no neighbor fn
             .build();
 
@@ -2213,7 +2213,7 @@ mod tests {
         // Create model with custom emission weights
         let emission = SingleQubitEmissionWeights::custom(0.25, 0.25, 0.25, 0.25);
 
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
             .with_p1_emission_ratio(0.5)
             .with_p1_emission_model(emission)
@@ -2230,7 +2230,7 @@ mod tests {
         // Create model with uniform emission weights
         let emission = TwoQubitEmissionWeights::uniform_with_leakage();
 
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
             .with_p2_emission_ratio(0.5)
             .with_p2_emission_model(emission)
@@ -2262,7 +2262,7 @@ mod tests {
         let mut outcomes_different = 0;
 
         for seed in 0..shots {
-            let model = FlowNoiseModelBuilder::new()
+            let model = CompositeNoiseModelBuilder::new()
                 .with_p1(0.5) // 50% error rate
                 .with_p1_emission_ratio(1.0) // All errors are emission
                 .with_p1_emission_model(emission)
@@ -2294,7 +2294,7 @@ mod tests {
         use crate::noise::TwoQubitPauliWeights;
 
         // Create model with ZZ-biased errors
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
             .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(0.8))
             .build();
@@ -2308,7 +2308,7 @@ mod tests {
         use crate::noise::{TwoQubitEmissionWeights, TwoQubitPauliWeights};
 
         // Create model with both correlated Pauli and emission models
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
             .with_p2_pauli_model(TwoQubitPauliWeights::uniform())
             .with_p2_emission_ratio(0.3)
@@ -2324,7 +2324,7 @@ mod tests {
         use crate::noise::TwoQubitPauliWeights;
 
         // When both are set, p2_pauli_model takes precedence
-        let model = FlowNoiseModelBuilder::new()
+        let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
             .with_p2_pauli_weights(PauliWeights::custom(1.0, 0.0, 0.0)) // X-only
             .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(1.0)) // ZZ-only
@@ -2370,8 +2370,8 @@ mod tests {
                 general_errors += 1;
             }
 
-            // FlowNoiseModelBuilder
-            let flow_model = FlowNoiseModelBuilder::new()
+            // CompositeNoiseModelBuilder
+            let flow_model = CompositeNoiseModelBuilder::new()
                 .with_p1(p1)
                 .with_p1_emission_ratio(emission_ratio)
                 .with_p1_emission_model(emission)
@@ -2392,7 +2392,7 @@ mod tests {
         // Both builders should produce similar error rates
         assert!(
             (general_rate - flow_rate).abs() < 0.15,
-            "Emission model comparison: GeneralNoiseModelBuilder {general_rate:.3} vs FlowNoiseModelBuilder {flow_rate:.3}"
+            "Emission model comparison: GeneralNoiseModelBuilder {general_rate:.3} vs CompositeNoiseModelBuilder {flow_rate:.3}"
         );
     }
 
@@ -2433,8 +2433,8 @@ mod tests {
                 general_errors += 1;
             }
 
-            // FlowNoiseModelBuilder
-            let flow_model = FlowNoiseModelBuilder::new()
+            // CompositeNoiseModelBuilder
+            let flow_model = CompositeNoiseModelBuilder::new()
                 .with_p2(p2)
                 .with_p2_pauli_model(TwoQubitPauliWeights::uniform())
                 .build();
@@ -2456,7 +2456,7 @@ mod tests {
         // Both builders should produce similar error rates
         assert!(
             (general_rate - flow_rate).abs() < 0.15,
-            "Two-qubit Pauli model comparison: GeneralNoiseModelBuilder {general_rate:.3} vs FlowNoiseModelBuilder {flow_rate:.3}"
+            "Two-qubit Pauli model comparison: GeneralNoiseModelBuilder {general_rate:.3} vs CompositeNoiseModelBuilder {flow_rate:.3}"
         );
     }
 }

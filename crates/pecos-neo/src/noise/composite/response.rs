@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Noise response types for the flow-based noise system.
+//! Noise response types for the composite-based noise system.
 
 use crate::command::GateCommand;
 
@@ -18,7 +18,7 @@ use crate::command::GateCommand;
 ///
 /// This represents what action(s) to take after evaluating a noise decision tree.
 #[derive(Debug, Clone, Default)]
-pub enum FlowResponse {
+pub enum CompositeResponse {
     /// No noise applied - continue normally
     #[default]
     None,
@@ -49,10 +49,10 @@ pub enum FlowResponse {
     LeakedMeasurement,
 
     /// Multiple responses to combine
-    Multiple(Vec<FlowResponse>),
+    Multiple(Vec<CompositeResponse>),
 }
 
-impl FlowResponse {
+impl CompositeResponse {
     /// Check if this response has any effect.
     #[must_use]
     pub fn is_none(&self) -> bool {
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_response_none() {
-        let r = FlowResponse::None;
+        let r = CompositeResponse::None;
         assert!(r.is_none());
         assert!(!r.skips_gate());
         assert!(!r.causes_leak());
@@ -162,21 +162,21 @@ mod tests {
 
     #[test]
     fn test_response_skip_gate() {
-        let r = FlowResponse::SkipGate;
+        let r = CompositeResponse::SkipGate;
         assert!(!r.is_none());
         assert!(r.skips_gate());
     }
 
     #[test]
     fn test_response_leak() {
-        let r = FlowResponse::Leak;
+        let r = CompositeResponse::Leak;
         assert!(r.causes_leak());
     }
 
     #[test]
     fn test_response_combine() {
-        let r1 = FlowResponse::SkipGate;
-        let r2 = FlowResponse::Leak;
+        let r1 = CompositeResponse::SkipGate;
+        let r2 = CompositeResponse::Leak;
         let combined = r1.combine(r2);
 
         assert!(combined.skips_gate());
@@ -185,10 +185,10 @@ mod tests {
 
     #[test]
     fn test_response_combine_with_none() {
-        let r1 = FlowResponse::None;
-        let r2 = FlowResponse::SkipGate;
+        let r1 = CompositeResponse::None;
+        let r2 = CompositeResponse::SkipGate;
         let combined = r1.combine(r2);
 
-        assert!(matches!(combined, FlowResponse::SkipGate));
+        assert!(matches!(combined, CompositeResponse::SkipGate));
     }
 }

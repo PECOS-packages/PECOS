@@ -58,22 +58,24 @@ use rand_core::SeedableRng;
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // ============================================================================
 // Signal Handler Infrastructure
 // ============================================================================
 
 /// Type-erased observe-only signal handler.
-type ErasedHandler = Box<dyn Fn(&dyn Any) + Send + Sync>;
+type ErasedHandler = Arc<dyn Fn(&dyn Any) + Send + Sync>;
 
 /// Type-erased response-producing signal handler.
 type ErasedResponseHandler =
-    Box<dyn Fn(&dyn Any, &DispatchContext<'_>) -> NoiseResponse + Send + Sync>;
+    Arc<dyn Fn(&dyn Any, &DispatchContext<'_>) -> NoiseResponse + Send + Sync>;
 
 /// Registry of signal handlers, keyed by signal `TypeId`.
 ///
 /// Uses a flat `Vec` rather than a `HashMap` -- with typically 1-3 signal
 /// types registered, linear scan on contiguous memory is faster than hashing.
+#[derive(Clone, Default)]
 struct SignalHandlerRegistry {
     handlers: Vec<(TypeId, Vec<ErasedHandler>)>,
     response_handlers: Vec<(TypeId, Vec<ErasedResponseHandler>)>,
@@ -172,9 +174,10 @@ pub struct DispatchContext<'a> {
 // ============================================================================
 
 /// Type-erased gate event handler.
-type ErasedGateHandler = Box<dyn Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync>;
+type ErasedGateHandler = Arc<dyn Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync>;
 
 /// A handler with an associated priority for ordering.
+#[derive(Clone)]
 struct PrioritizedHandler {
     handler: ErasedGateHandler,
     priority: i32,
@@ -184,6 +187,7 @@ struct PrioritizedHandler {
 ///
 /// Each Vec is kept sorted by priority (higher runs first).
 /// Using flat Vecs avoids runtime event-type filtering.
+#[derive(Clone, Default)]
 struct GateEventHandlers {
     before_gate: Vec<PrioritizedHandler>,
     after_gate: Vec<PrioritizedHandler>,
@@ -225,6 +229,259 @@ impl GateEventHandlers {
     }
 }
 
+// ============================================================================
+// EventHandlers (public, cloneable handler collection for sim_neo)
+// ============================================================================
+
+/// A cloneable collection of gate event and signal handlers.
+///
+/// `EventHandlers` lets you register handlers once and pass them through
+/// `sim_neo().event_handlers(...)` so that each parallel worker receives
+/// a clone. Handlers are stored as `Arc<dyn Fn>`, so cloning is cheap.
+///
+/// # Example
+///
+/// ```
+/// use pecos_neo::prelude::*;
+/// use std::sync::atomic::{AtomicUsize, Ordering};
+/// use std::sync::Arc;
+///
+/// let counter = Arc::new(AtomicUsize::new(0));
+/// let c = counter.clone();
+///
+/// let handlers = EventHandlers::new()
+///     .on_before_gate(move |_ctx| {
+///         c.fetch_add(1, Ordering::Relaxed);
+///         NoiseResponse::None
+///     });
+/// ```
+#[derive(Clone, Default)]
+pub struct EventHandlers {
+    gate_handlers: GateEventHandlers,
+    signal_handlers: SignalHandlerRegistry,
+}
+
+impl EventHandlers {
+    /// Create an empty handler collection.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check if no handlers have been registered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.gate_handlers.before_gate.is_empty()
+            && self.gate_handlers.after_gate.is_empty()
+            && self.gate_handlers.before_measurement.is_empty()
+            && self.gate_handlers.after_measurement.is_empty()
+            && self.gate_handlers.after_preparation.is_empty()
+            && self.gate_handlers.idle.is_empty()
+            && self.signal_handlers.handlers.is_empty()
+            && self.signal_handlers.response_handlers.is_empty()
+    }
+
+    // ================================================================
+    // Gate event handler registration (builder pattern)
+    // ================================================================
+
+    /// Register a handler called before each gate is applied.
+    #[must_use]
+    pub fn on_before_gate(
+        mut self,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(&mut self.gate_handlers.before_gate, Arc::new(handler), 0);
+        self
+    }
+
+    /// Register a before-gate handler with explicit priority.
+    #[must_use]
+    pub fn on_before_gate_with_priority(
+        mut self,
+        priority: i32,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(
+            &mut self.gate_handlers.before_gate,
+            Arc::new(handler),
+            priority,
+        );
+        self
+    }
+
+    /// Register a handler called after each gate is applied.
+    #[must_use]
+    pub fn on_after_gate(
+        mut self,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(&mut self.gate_handlers.after_gate, Arc::new(handler), 0);
+        self
+    }
+
+    /// Register an after-gate handler with explicit priority.
+    #[must_use]
+    pub fn on_after_gate_with_priority(
+        mut self,
+        priority: i32,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(
+            &mut self.gate_handlers.after_gate,
+            Arc::new(handler),
+            priority,
+        );
+        self
+    }
+
+    /// Register a handler called before each measurement.
+    #[must_use]
+    pub fn on_before_measurement(
+        mut self,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(
+            &mut self.gate_handlers.before_measurement,
+            Arc::new(handler),
+            0,
+        );
+        self
+    }
+
+    /// Register a before-measurement handler with explicit priority.
+    #[must_use]
+    pub fn on_before_measurement_with_priority(
+        mut self,
+        priority: i32,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(
+            &mut self.gate_handlers.before_measurement,
+            Arc::new(handler),
+            priority,
+        );
+        self
+    }
+
+    /// Register a handler called after each measurement.
+    #[must_use]
+    pub fn on_after_measurement(
+        mut self,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(
+            &mut self.gate_handlers.after_measurement,
+            Arc::new(handler),
+            0,
+        );
+        self
+    }
+
+    /// Register an after-measurement handler with explicit priority.
+    #[must_use]
+    pub fn on_after_measurement_with_priority(
+        mut self,
+        priority: i32,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(
+            &mut self.gate_handlers.after_measurement,
+            Arc::new(handler),
+            priority,
+        );
+        self
+    }
+
+    /// Register a handler called after each preparation.
+    #[must_use]
+    pub fn on_after_preparation(
+        mut self,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(
+            &mut self.gate_handlers.after_preparation,
+            Arc::new(handler),
+            0,
+        );
+        self
+    }
+
+    /// Register an after-preparation handler with explicit priority.
+    #[must_use]
+    pub fn on_after_preparation_with_priority(
+        mut self,
+        priority: i32,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(
+            &mut self.gate_handlers.after_preparation,
+            Arc::new(handler),
+            priority,
+        );
+        self
+    }
+
+    /// Register a handler called during idle time.
+    #[must_use]
+    pub fn on_idle(
+        mut self,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(&mut self.gate_handlers.idle, Arc::new(handler), 0);
+        self
+    }
+
+    /// Register an idle handler with explicit priority.
+    #[must_use]
+    pub fn on_idle_with_priority(
+        mut self,
+        priority: i32,
+        handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        GateEventHandlers::insert(&mut self.gate_handlers.idle, Arc::new(handler), priority);
+        self
+    }
+
+    // ================================================================
+    // Signal handler registration (builder pattern)
+    // ================================================================
+
+    /// Register a handler that will be called when a signal of type `Sig` is dispatched.
+    #[must_use]
+    pub fn on_signal<Sig: Signal>(
+        mut self,
+        handler: impl Fn(&Sig) + Send + Sync + 'static,
+    ) -> Self {
+        let erased: ErasedHandler = Arc::new(move |data: &dyn Any| {
+            if let Some(signal) = data.downcast_ref::<Sig>() {
+                handler(signal);
+            }
+        });
+        self.signal_handlers.add(TypeId::of::<Sig>(), erased);
+        self
+    }
+
+    /// Register a response-producing signal handler.
+    #[must_use]
+    pub fn on_signal_with_response<Sig: Signal>(
+        mut self,
+        handler: impl Fn(&Sig, &DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
+    ) -> Self {
+        let erased: ErasedResponseHandler =
+            Arc::new(move |data: &dyn Any, ctx: &DispatchContext<'_>| {
+                if let Some(signal) = data.downcast_ref::<Sig>() {
+                    handler(signal, ctx)
+                } else {
+                    NoiseResponse::None
+                }
+            });
+        self.signal_handlers
+            .add_response(TypeId::of::<Sig>(), erased);
+        self
+    }
+}
+
 /// Cursor for tracking position within a signal channel during dispatch.
 struct SignalCursor {
     type_id: TypeId,
@@ -242,15 +499,15 @@ struct SignalCursor {
 
 /// Function signature for custom gate executors.
 ///
-/// Takes a mutable reference to the simulator, qubit operands, and angles.
+/// Takes a mutable reference to the simulator, angles, and qubit operands.
 /// Returns `true` if the gate was executed successfully, `false` otherwise.
-pub type GateExecutorFn<S> = fn(&mut S, &[QubitId], &[Angle64]) -> bool;
+pub type GateExecutorFn<S> = fn(&mut S, &[Angle64], &[QubitId]) -> bool;
 
 /// Function signature for rotation gate execution.
 ///
 /// Used internally to enable `execute_gate()` to execute rotation gates when the
 /// simulator supports `ArbitraryRotationGateable`. Set by `rotations()` constructor.
-type RotationExecutorFn<S> = fn(&mut S, GateId, &[QubitId], &[Angle64]) -> bool;
+type RotationExecutorFn<S> = fn(&mut S, GateId, &[Angle64], &[QubitId]) -> bool;
 
 /// Registry of custom gate implementations.
 ///
@@ -267,13 +524,21 @@ type RotationExecutorFn<S> = fn(&mut S, GateId, &[QubitId], &[Angle64]) -> bool;
 /// use pecos_neo::extensible::gates;
 ///
 /// let overrides: GateOverrides<SparseStab> = GateOverrides::new()
-///     .register(gates::X, |sim, qubits, _angles| {
+///     .register(gates::X, |sim, _angles, qubits| {
 ///         sim.h(qubits);
 ///         true
 ///     });
 /// ```
 pub struct GateOverrides<S> {
     overrides: HashMap<GateId, GateExecutorFn<S>>,
+}
+
+impl<S> Clone for GateOverrides<S> {
+    fn clone(&self) -> Self {
+        Self {
+            overrides: self.overrides.clone(),
+        }
+    }
 }
 
 impl<S> Default for GateOverrides<S> {
@@ -521,6 +786,75 @@ impl<S: CliffordGateable> Runner<S> {
         self
     }
 
+    /// Merge an [`EventHandlers`] collection into this runner.
+    ///
+    /// Extends the existing gate and signal handler registries. Gate handler
+    /// Vecs are re-sorted by priority after merging.
+    #[must_use]
+    pub fn with_event_handlers(mut self, handlers: EventHandlers) -> Self {
+        // Merge gate handlers
+        fn merge_vec(dst: &mut Vec<PrioritizedHandler>, src: Vec<PrioritizedHandler>) {
+            if !src.is_empty() {
+                dst.extend(src);
+                dst.sort_by(|a, b| b.priority.cmp(&a.priority));
+            }
+        }
+        merge_vec(
+            &mut self.gate_handlers.before_gate,
+            handlers.gate_handlers.before_gate,
+        );
+        merge_vec(
+            &mut self.gate_handlers.after_gate,
+            handlers.gate_handlers.after_gate,
+        );
+        merge_vec(
+            &mut self.gate_handlers.before_measurement,
+            handlers.gate_handlers.before_measurement,
+        );
+        merge_vec(
+            &mut self.gate_handlers.after_measurement,
+            handlers.gate_handlers.after_measurement,
+        );
+        merge_vec(
+            &mut self.gate_handlers.after_preparation,
+            handlers.gate_handlers.after_preparation,
+        );
+        merge_vec(
+            &mut self.gate_handlers.idle,
+            handlers.gate_handlers.idle,
+        );
+
+        // Merge signal handlers by TypeId
+        for (type_id, src_handlers) in handlers.signal_handlers.handlers {
+            if let Some((_, dst_handlers)) = self
+                .signal_handlers
+                .handlers
+                .iter_mut()
+                .find(|(id, _)| *id == type_id)
+            {
+                dst_handlers.extend(src_handlers);
+            } else {
+                self.signal_handlers.handlers.push((type_id, src_handlers));
+            }
+        }
+        for (type_id, src_handlers) in handlers.signal_handlers.response_handlers {
+            if let Some((_, dst_handlers)) = self
+                .signal_handlers
+                .response_handlers
+                .iter_mut()
+                .find(|(id, _)| *id == type_id)
+            {
+                dst_handlers.extend(src_handlers);
+            } else {
+                self.signal_handlers
+                    .response_handlers
+                    .push((type_id, src_handlers));
+            }
+        }
+
+        self
+    }
+
     /// Get a reference to the simulator.
     #[must_use]
     pub fn simulator(&self) -> &S {
@@ -550,7 +884,7 @@ impl<S: CliffordGateable> Runner<S> {
         &mut self,
         handler: impl Fn(&Sig) + Send + Sync + 'static,
     ) -> &mut Self {
-        let erased: ErasedHandler = Box::new(move |data: &dyn Any| {
+        let erased: ErasedHandler = Arc::new(move |data: &dyn Any| {
             if let Some(signal) = data.downcast_ref::<Sig>() {
                 handler(signal);
             }
@@ -568,7 +902,7 @@ impl<S: CliffordGateable> Runner<S> {
         handler: impl Fn(&Sig, &DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
     ) -> &mut Self {
         let erased: ErasedResponseHandler =
-            Box::new(move |data: &dyn Any, ctx: &DispatchContext<'_>| {
+            Arc::new(move |data: &dyn Any, ctx: &DispatchContext<'_>| {
                 if let Some(signal) = data.downcast_ref::<Sig>() {
                     handler(signal, ctx)
                 } else {
@@ -592,7 +926,7 @@ impl<S: CliffordGateable> Runner<S> {
         &mut self,
         handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
     ) -> &mut Self {
-        GateEventHandlers::insert(&mut self.gate_handlers.before_gate, Box::new(handler), 0);
+        GateEventHandlers::insert(&mut self.gate_handlers.before_gate, Arc::new(handler), 0);
         self
     }
 
@@ -604,7 +938,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> &mut Self {
         GateEventHandlers::insert(
             &mut self.gate_handlers.before_gate,
-            Box::new(handler),
+            Arc::new(handler),
             priority,
         );
         self
@@ -615,7 +949,7 @@ impl<S: CliffordGateable> Runner<S> {
         &mut self,
         handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
     ) -> &mut Self {
-        GateEventHandlers::insert(&mut self.gate_handlers.after_gate, Box::new(handler), 0);
+        GateEventHandlers::insert(&mut self.gate_handlers.after_gate, Arc::new(handler), 0);
         self
     }
 
@@ -627,7 +961,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> &mut Self {
         GateEventHandlers::insert(
             &mut self.gate_handlers.after_gate,
-            Box::new(handler),
+            Arc::new(handler),
             priority,
         );
         self
@@ -640,7 +974,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> &mut Self {
         GateEventHandlers::insert(
             &mut self.gate_handlers.before_measurement,
-            Box::new(handler),
+            Arc::new(handler),
             0,
         );
         self
@@ -654,7 +988,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> &mut Self {
         GateEventHandlers::insert(
             &mut self.gate_handlers.before_measurement,
-            Box::new(handler),
+            Arc::new(handler),
             priority,
         );
         self
@@ -669,7 +1003,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> &mut Self {
         GateEventHandlers::insert(
             &mut self.gate_handlers.after_measurement,
-            Box::new(handler),
+            Arc::new(handler),
             0,
         );
         self
@@ -683,7 +1017,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> &mut Self {
         GateEventHandlers::insert(
             &mut self.gate_handlers.after_measurement,
-            Box::new(handler),
+            Arc::new(handler),
             priority,
         );
         self
@@ -696,7 +1030,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> &mut Self {
         GateEventHandlers::insert(
             &mut self.gate_handlers.after_preparation,
-            Box::new(handler),
+            Arc::new(handler),
             0,
         );
         self
@@ -710,7 +1044,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> &mut Self {
         GateEventHandlers::insert(
             &mut self.gate_handlers.after_preparation,
-            Box::new(handler),
+            Arc::new(handler),
             priority,
         );
         self
@@ -721,7 +1055,7 @@ impl<S: CliffordGateable> Runner<S> {
         &mut self,
         handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
     ) -> &mut Self {
-        GateEventHandlers::insert(&mut self.gate_handlers.idle, Box::new(handler), 0);
+        GateEventHandlers::insert(&mut self.gate_handlers.idle, Arc::new(handler), 0);
         self
     }
 
@@ -731,7 +1065,7 @@ impl<S: CliffordGateable> Runner<S> {
         priority: i32,
         handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
     ) -> &mut Self {
-        GateEventHandlers::insert(&mut self.gate_handlers.idle, Box::new(handler), priority);
+        GateEventHandlers::insert(&mut self.gate_handlers.idle, Arc::new(handler), priority);
         self
     }
 
@@ -844,8 +1178,8 @@ impl<S: CliffordGateable> Runner<S> {
                             executor(
                                 &mut self.simulator,
                                 gate_id,
-                                qubits,
                                 command.angles.as_slice(),
+                                qubits,
                             )
                         });
 
@@ -1023,7 +1357,7 @@ impl<S: CliffordGateable> Runner<S> {
             || self.try_execute_clifford(gate_id, qubits)
             || self
                 .rotation_executor
-                .is_some_and(|executor| executor(&mut self.simulator, gate_id, qubits, angles));
+                .is_some_and(|executor| executor(&mut self.simulator, gate_id, angles, qubits));
 
         if !executed {
             self.execute_via_decomposition(gate_id, qubits, angles, depth)?;
@@ -1045,7 +1379,7 @@ impl<S: CliffordGateable> Runner<S> {
         self.overrides
             .as_ref()
             .and_then(|o| o.get(gate_id))
-            .is_some_and(|executor| executor(&mut self.simulator, qubits, angles))
+            .is_some_and(|executor| executor(&mut self.simulator, angles, qubits))
     }
 
     /// Try to execute a Clifford gate natively via trait methods.
@@ -1778,8 +2112,8 @@ where
     fn execute_rotation_gate(
         sim: &mut S,
         gate_id: GateId,
-        qubits: &[QubitId],
         angles: &[Angle64],
+        qubits: &[QubitId],
     ) -> bool {
         let Some(gate_type) = gate_id.try_to_gate_type() else {
             return false;
@@ -2408,7 +2742,7 @@ mod tests {
         );
 
         let overrides: GateOverrides<SparseStab> =
-            GateOverrides::new().register(custom_id, |sim, qubits, _angles| {
+            GateOverrides::new().register(custom_id, |sim, _angles, qubits| {
                 sim.x(qubits);
                 true
             });
@@ -2432,7 +2766,7 @@ mod tests {
         let gates_def = GateDefinitions::new();
 
         let overrides: GateOverrides<SparseStab> =
-            GateOverrides::new().register(gates::H, |_sim, _qubits, _angles| {
+            GateOverrides::new().register(gates::H, |_sim, _angles, _qubits| {
                 true // Do nothing
             });
 
@@ -2456,7 +2790,7 @@ mod tests {
         assert!(overrides.is_empty());
         assert_eq!(overrides.len(), 0);
 
-        overrides.insert(gates::H, |sim, qubits, _| {
+        overrides.insert(gates::H, |sim, _, qubits| {
             sim.h(qubits);
             true
         });

@@ -45,7 +45,7 @@ pecos-neo provides several subset simulation implementations:
 ```rust
 use pecos_neo::sampling::subset::{SubsetSimulation, SubsetConfig};
 use pecos_neo::command::CommandBuilder;
-use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 use pecos_neo::outcome::MeasurementOutcomes;
 use pecos_core::QubitId;
 
@@ -83,7 +83,7 @@ let config = SubsetConfig::new()
 
 // Run with noise
 let noise_builder = || {
-    Some(FlowNoiseModelBuilder::new()
+    Some(CompositeNoiseModelBuilder::new()
         .with_p1(0.01)
         .with_p2(0.05)
         .build())

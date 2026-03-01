@@ -13,17 +13,17 @@
 //! Single-qubit gate noise channel.
 //!
 //! This is a traditional standalone channel implementation. For composable,
-//! declarative noise models with conditional logic, see `FlowChannel` in
-//! `pecos_neo::noise::flow::prelude`.
+//! declarative noise models with conditional logic, see `CompositeChannel` in
+//! `pecos_neo::noise::composite::prelude`.
 //!
-//! ## When to use this vs `FlowChannel`
+//! ## When to use this vs `CompositeChannel`
 //!
 //! **Use `SingleQubitChannel` when:**
 //! - You want a simple, direct noise model
 //! - Performance is critical (no primitive tree traversal)
 //! - The built-in options (depolarizing, emission, seepage) suffice
 //!
-//! **Use `FlowChannel` when:**
+//! **Use `CompositeChannel` when:**
 //! - You need complex conditional logic (when leaked, when partner fired, etc.)
 //! - You want to compose reusable noise primitives
 //! - You need custom branching or sampling behavior
@@ -50,7 +50,7 @@ use smallvec::SmallVec;
 ///
 /// This matches the structure of `GeneralNoiseModel`'s single-qubit noise.
 ///
-/// See also: `FlowChannel` for composable, primitive-based noise models.
+/// See also: `CompositeChannel` for composable, primitive-based noise models.
 #[derive(Debug, Clone)]
 pub struct SingleQubitChannel {
     /// Probability of any error occurring (total error rate).

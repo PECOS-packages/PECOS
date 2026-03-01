@@ -442,7 +442,7 @@ impl ExecutionContext {
     /// Find all applicable noise channels for a gate - O(channels)
     /// But each check is O(1) bit test
     #[inline]
-    pub fn channels_for_gate(&self, gate_id: GateId) -> impl Iterator<Item = &FlowChannel> {
+    pub fn channels_for_gate(&self, gate_id: GateId) -> impl Iterator<Item = &CompositeChannel> {
         self.channel_registry.iter()
             .filter(|ch| ch.filter.matches_gate(gate_id, &self.gate_registry))
     }
@@ -1480,7 +1480,7 @@ Noise channels can match gates by their properties (arity, category) rather than
 
 ```rust
 /// Filter for which gates a noise channel applies to
-pub enum FlowEventFilter {
+pub enum CompositeEventFilter {
     // Match specific gate
     GateId(GateId),
 
@@ -1496,12 +1496,12 @@ pub enum FlowEventFilter {
     Category(GateCategory),
 
     // Compound filters
-    And(Box<FlowEventFilter>, Box<FlowEventFilter>),
-    Or(Box<FlowEventFilter>, Box<FlowEventFilter>),
-    Not(Box<FlowEventFilter>),
+    And(Box<CompositeEventFilter>, Box<CompositeEventFilter>),
+    Or(Box<CompositeEventFilter>, Box<CompositeEventFilter>),
+    Not(Box<CompositeEventFilter>),
 }
 
-impl FlowEventFilter {
+impl CompositeEventFilter {
     /// Check if gate matches - O(1) for core gates via const tables
     pub fn matches(&self, gate: &Gate, registry: &GateRegistry) -> bool {
         match self {
@@ -1595,15 +1595,15 @@ static CORE_CATEGORY: [GateCategory; 256] = const {
 
 ```rust
 // Define noise that applies to ALL 2-qubit gates
-let two_qubit_noise = FlowChannel::new("tq_depol", prob(0.01, two_qubit_pauli()))
-    .with_filter(FlowEventFilter::TwoQubitGate);
+let two_qubit_noise = CompositeChannel::new("tq_depol", prob(0.01, two_qubit_pauli()))
+    .with_filter(CompositeEventFilter::TwoQubitGate);
 
 // Define noise for parameterized gates with angle-dependent probability
-let angle_noise = FlowChannel::new("angle_dep",
+let angle_noise = CompositeChannel::new("angle_dep",
     prob_fn(|gate| gate.angles.first().map(|a| a.abs()).unwrap_or(0.0) * 0.01,
         depolarize()
     ))
-    .with_filter(FlowEventFilter::ParameterizedGate);
+    .with_filter(CompositeEventFilter::ParameterizedGate);
 
 // User registers a custom 2-qubit parameterized gate
 let my_gate = builder.register_gate(GateSpec {

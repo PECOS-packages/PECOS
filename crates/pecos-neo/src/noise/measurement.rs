@@ -13,16 +13,16 @@
 //! Measurement noise channel.
 //!
 //! This is a traditional standalone channel implementation. For composable,
-//! declarative noise models with conditional logic, see `FlowChannel` in
-//! `pecos_neo::noise::flow::prelude`.
+//! declarative noise models with conditional logic, see `CompositeChannel` in
+//! `pecos_neo::noise::composite::prelude`.
 //!
-//! ## When to use this vs `FlowChannel`
+//! ## When to use this vs `CompositeChannel`
 //!
 //! **Use `MeasurementChannel` when:**
 //! - You want simple symmetric or asymmetric readout error
 //! - Performance is critical
 //!
-//! **Use `FlowChannel` when:**
+//! **Use `CompositeChannel` when:**
 //! - You need outcome-dependent noise (different error on 0 vs 1)
 //! - You need to compose with other noise effects
 //! - You need leaked qubit handling integrated with measurement

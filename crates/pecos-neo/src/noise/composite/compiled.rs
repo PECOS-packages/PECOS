@@ -31,7 +31,7 @@
 
 use super::Primitive;
 use super::action::PauliWeights;
-use super::response::FlowResponse;
+use super::response::CompositeResponse;
 use crate::command::{GateCommand, GateType};
 use crate::noise::{
     NoiseContext, SingleQubitEmissionWeights, TwoQubitEmissionWeights, TwoQubitPauliWeights,
@@ -91,17 +91,17 @@ impl CompiledAction {
         qubit: QubitId,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> FlowResponse {
+    ) -> CompositeResponse {
         match self {
-            Self::Nothing => FlowResponse::None,
-            Self::SkipGate => FlowResponse::SkipGate,
+            Self::Nothing => CompositeResponse::None,
+            Self::SkipGate => CompositeResponse::SkipGate,
             Self::Leak => {
                 ctx.mark_leaked(qubit);
-                FlowResponse::Leak
+                CompositeResponse::Leak
             }
             Self::Unleak => {
                 ctx.mark_unleaked(qubit);
-                FlowResponse::Unleak
+                CompositeResponse::Unleak
             }
             Self::Seep(weights) => apply_seep(qubit, ctx, rng, weights),
             Self::Inject(gate_type) => {
@@ -110,15 +110,15 @@ impl CompiledAction {
                     qubits: smallvec![qubit],
                     angles: smallvec![],
                 };
-                FlowResponse::InjectGates(vec![cmd])
+                CompositeResponse::InjectGates(vec![cmd])
             }
             Self::Pauli(weights) => apply_pauli(qubit, rng, weights),
             Self::Emission(weights) => apply_emission(qubit, ctx, rng, weights),
             Self::TwoQubitPauli(weights) => apply_two_qubit_pauli(qubit, ctx, rng, weights),
             Self::TwoQubitEmission(weights) => apply_two_qubit_emission(qubit, ctx, rng, weights),
-            Self::FlipOutcome => FlowResponse::FlipOutcome,
-            Self::ForceOutcome(value) => FlowResponse::ForceOutcome(*value),
-            Self::LeakedMeasurement => FlowResponse::LeakedMeasurement,
+            Self::FlipOutcome => CompositeResponse::FlipOutcome,
+            Self::ForceOutcome(value) => CompositeResponse::ForceOutcome(*value),
+            Self::LeakedMeasurement => CompositeResponse::LeakedMeasurement,
             Self::CrosstalkTransitions(transitions) => {
                 apply_crosstalk_transitions(qubit, ctx, rng, transitions)
             }
@@ -213,14 +213,14 @@ impl CompiledPrimitive {
         qubit: QubitId,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> FlowResponse {
+    ) -> CompositeResponse {
         match self {
             Self::Action(action) => action.apply(qubit, ctx, rng),
             Self::Prob { probability, inner } => {
                 if rng.random::<f64>() < *probability {
                     inner.apply(qubit, ctx, rng)
                 } else {
-                    FlowResponse::None
+                    CompositeResponse::None
                 }
             }
             Self::When {
@@ -239,7 +239,7 @@ impl CompiledPrimitive {
                 cumulative_weights,
             } => {
                 if branches.is_empty() {
-                    return FlowResponse::None;
+                    return CompositeResponse::None;
                 }
                 let r: f64 = rng.random();
                 for (i, &threshold) in cumulative_weights.iter().enumerate() {
@@ -254,7 +254,7 @@ impl CompiledPrimitive {
                     .apply(qubit, ctx, rng)
             }
             Self::Seq(primitives) => {
-                let mut combined = FlowResponse::None;
+                let mut combined = CompositeResponse::None;
                 for prim in primitives {
                     let response = prim.apply(qubit, ctx, rng);
                     if response.skips_gate() {
@@ -266,9 +266,9 @@ impl CompiledPrimitive {
             }
             Self::SkipIf(condition) => {
                 if condition.evaluate(qubit, ctx) {
-                    FlowResponse::SkipGate
+                    CompositeResponse::SkipGate
                 } else {
-                    FlowResponse::None
+                    CompositeResponse::None
                 }
             }
             Self::Custom(prim) => prim.apply(qubit, ctx, rng),
@@ -277,7 +277,7 @@ impl CompiledPrimitive {
 }
 
 impl Primitive for CompiledPrimitive {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         CompiledPrimitive::apply(self, qubit, ctx, rng)
     }
 
@@ -303,7 +303,7 @@ impl Primitive for CompiledPrimitive {
 // ============================================================================
 
 #[inline]
-fn apply_pauli(qubit: QubitId, rng: &mut PecosRng, weights: &PauliWeights) -> FlowResponse {
+fn apply_pauli(qubit: QubitId, rng: &mut PecosRng, weights: &PauliWeights) -> CompositeResponse {
     let r: f64 = rng.random();
     let normalized = weights.normalized();
 
@@ -320,7 +320,7 @@ fn apply_pauli(qubit: QubitId, rng: &mut PecosRng, weights: &PauliWeights) -> Fl
         qubits: smallvec![qubit],
         angles: smallvec![],
     };
-    FlowResponse::InjectGates(vec![cmd])
+    CompositeResponse::InjectGates(vec![cmd])
 }
 
 #[inline]
@@ -329,12 +329,12 @@ fn apply_seep(
     ctx: &mut NoiseContext,
     rng: &mut PecosRng,
     weights: &PauliWeights,
-) -> FlowResponse {
+) -> CompositeResponse {
     ctx.mark_unleaked(qubit);
 
     let r: f64 = rng.random();
     if r < 0.25 {
-        return FlowResponse::Unleak;
+        return CompositeResponse::Unleak;
     }
 
     let r_scaled = (r - 0.25) / 0.75;
@@ -354,7 +354,7 @@ fn apply_seep(
         angles: smallvec![],
     };
 
-    FlowResponse::Unleak.combine(FlowResponse::InjectGates(vec![cmd]))
+    CompositeResponse::Unleak.combine(CompositeResponse::InjectGates(vec![cmd]))
 }
 
 #[inline]
@@ -363,7 +363,7 @@ fn apply_emission(
     ctx: &mut NoiseContext,
     rng: &mut PecosRng,
     weights: &SingleQubitEmissionWeights,
-) -> FlowResponse {
+) -> CompositeResponse {
     let r: f64 = rng.random();
     let result = weights.sample(r);
 
@@ -374,11 +374,11 @@ fn apply_emission(
                 qubits: smallvec![qubit],
                 angles: smallvec![],
             };
-            FlowResponse::InjectGates(vec![cmd])
+            CompositeResponse::InjectGates(vec![cmd])
         }
         crate::noise::SingleQubitEmissionResult::Leaked => {
             ctx.mark_leaked(qubit);
-            FlowResponse::Leak
+            CompositeResponse::Leak
         }
     }
 }
@@ -389,7 +389,7 @@ fn apply_two_qubit_pauli(
     ctx: &mut NoiseContext,
     rng: &mut PecosRng,
     weights: &TwoQubitPauliWeights,
-) -> FlowResponse {
+) -> CompositeResponse {
     let qubit_index = ctx.current_qubit_index();
 
     let idx = if qubit_index == 0 {
@@ -412,14 +412,14 @@ fn apply_two_qubit_pauli(
     };
 
     if my_pauli == GateType::I {
-        FlowResponse::None
+        CompositeResponse::None
     } else {
         let cmd = GateCommand {
             gate_type: my_pauli,
             qubits: smallvec![qubit],
             angles: smallvec![],
         };
-        FlowResponse::InjectGates(vec![cmd])
+        CompositeResponse::InjectGates(vec![cmd])
     }
 }
 
@@ -429,7 +429,7 @@ fn apply_two_qubit_emission(
     ctx: &mut NoiseContext,
     rng: &mut PecosRng,
     weights: &TwoQubitEmissionWeights,
-) -> FlowResponse {
+) -> CompositeResponse {
     let qubit_index = ctx.current_qubit_index();
 
     let idx = if qubit_index == 0 {
@@ -456,7 +456,7 @@ fn apply_two_qubit_emission(
     // Handle leakage
     if my_leaked {
         ctx.mark_leaked(qubit);
-        return FlowResponse::Leak;
+        return CompositeResponse::Leak;
     }
 
     // Handle Pauli (if any)
@@ -467,9 +467,9 @@ fn apply_two_qubit_emission(
                 qubits: smallvec![qubit],
                 angles: smallvec![],
             };
-            FlowResponse::InjectGates(vec![cmd])
+            CompositeResponse::InjectGates(vec![cmd])
         }
-        _ => FlowResponse::None,
+        _ => CompositeResponse::None,
     }
 }
 
@@ -479,7 +479,7 @@ fn apply_crosstalk_transitions(
     ctx: &mut NoiseContext,
     rng: &mut PecosRng,
     transitions: &crate::noise::CrosstalkTransitions,
-) -> FlowResponse {
+) -> CompositeResponse {
     // Determine current state from outcome
     let is_one = ctx.current_outcome().unwrap_or(false);
 
@@ -487,18 +487,18 @@ fn apply_crosstalk_transitions(
     let result = transitions.sample(is_one, r);
 
     match result {
-        crate::noise::CrosstalkResult::NoChange => FlowResponse::None,
+        crate::noise::CrosstalkResult::NoChange => CompositeResponse::None,
         crate::noise::CrosstalkResult::Flip => {
             let cmd = GateCommand {
                 gate_type: GateType::X,
                 qubits: smallvec![qubit],
                 angles: smallvec![],
             };
-            FlowResponse::InjectGates(vec![cmd])
+            CompositeResponse::InjectGates(vec![cmd])
         }
         crate::noise::CrosstalkResult::Leak => {
             ctx.mark_leaked(qubit);
-            FlowResponse::Leak
+            CompositeResponse::Leak
         }
     }
 }
@@ -609,7 +609,7 @@ mod tests {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
         let response = action.apply(QubitId(0), &mut ctx, &mut rng);
-        assert!(matches!(response, FlowResponse::None));
+        assert!(matches!(response, CompositeResponse::None));
     }
 
     #[test]
@@ -618,7 +618,7 @@ mod tests {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
         let response = action.apply(QubitId(0), &mut ctx, &mut rng);
-        assert!(matches!(response, FlowResponse::InjectGates(_)));
+        assert!(matches!(response, CompositeResponse::InjectGates(_)));
     }
 
     #[test]
@@ -632,7 +632,7 @@ mod tests {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
         let response = prim.apply(QubitId(0), &mut ctx, &mut rng);
-        assert!(matches!(response, FlowResponse::InjectGates(_)));
+        assert!(matches!(response, CompositeResponse::InjectGates(_)));
     }
 
     #[test]
@@ -644,7 +644,7 @@ mod tests {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
         let response = prim.apply(QubitId(0), &mut ctx, &mut rng);
-        assert!(matches!(response, FlowResponse::InjectGates(_)));
+        assert!(matches!(response, CompositeResponse::InjectGates(_)));
     }
 
     #[test]
@@ -699,7 +699,7 @@ mod tests {
         let mut x_count = 0;
         for _ in 0..1000 {
             let response = prim.apply(QubitId(0), &mut ctx, &mut rng);
-            if let FlowResponse::InjectGates(gates) = response
+            if let CompositeResponse::InjectGates(gates) = response
                 && gates[0].gate_type == GateType::X
             {
                 x_count += 1;

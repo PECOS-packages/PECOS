@@ -182,7 +182,7 @@ impl Condition for GateTypeIs {
 /// # Example
 ///
 /// ```
-/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // If partner is leaked (and I'm not), apply random Pauli to me
 /// let partner_effect = when(partner_leaked(), pauli(), nothing());
@@ -398,7 +398,7 @@ pub mod conditions {
     /// # Example
     ///
     /// ```
-    /// # use pecos_neo::noise::flow::prelude::*;
+    /// # use pecos_neo::noise::composite::prelude::*;
     /// // If partner is leaked, apply Pauli to me
     /// when(partner_leaked(), pauli(), nothing());
     /// ```
@@ -423,7 +423,7 @@ pub mod conditions {
 
     /// Condition: the current qubit fired in stage 1.
     ///
-    /// Used for two-stage flow processing. Stage 1 samples and records
+    /// Used for two-stage composite processing. Stage 1 samples and records
     /// whether each qubit "fired" (e.g., emission event occurred).
     /// Stage 2 uses this to apply effects based on what fired.
     #[must_use]
@@ -449,8 +449,8 @@ pub mod conditions {
     /// # Example
     ///
     /// ```
-    /// # use pecos_neo::noise::flow::prelude::*;
-    /// // Stage 2 flow: if partner emitted but I didn't, depolarize me
+    /// # use pecos_neo::noise::composite::prelude::*;
+    /// // Stage 2: if partner emitted but I didn't, depolarize me
     /// when(partner_only_fired(), pauli(), nothing());
     /// ```
     #[must_use]

@@ -14,7 +14,7 @@
 //!
 //! This example demonstrates:
 //! - Using pre-built noise patterns for quick setup
-//! - Building custom noise with the flow primitive system
+//! - Building custom noise with the composite primitive system
 //! - Configuring topology-aware crosstalk
 //! - Creating realistic device noise models
 //! - Integration with `sim_neo()` builder API
@@ -33,7 +33,7 @@ fn main() {
     recipe_sim_neo_integration();
     recipe_measurement_noise();
     recipe_leakage_model();
-    recipe_custom_flow();
+    recipe_custom_composite();
     recipe_crosstalk();
     recipe_realistic_device();
 }
@@ -193,7 +193,7 @@ fn recipe_measurement_noise() {
         error_rate * 100.0
     );
 
-    // Using flow primitives for outcome-dependent noise
+    // Using composite primitives for outcome-dependent noise
     let error_rate = run_with_noise(
         &commands,
         || {
@@ -237,7 +237,7 @@ fn recipe_leakage_model() {
         error_rate * 100.0
     );
 
-    // Custom leakage with flow primitives
+    // Custom leakage with composite primitives
     let error_rate = run_with_noise(
         &commands,
         || {
@@ -262,18 +262,18 @@ fn recipe_leakage_model() {
         1000,
     );
     println!(
-        "  Custom flow primitives: {:.1}% error rate",
+        "  Custom composite primitives: {:.1}% error rate",
         error_rate * 100.0
     );
 
     println!();
 }
 
-/// Recipe 5: Custom Flow Primitives
+/// Recipe 5: Custom Composite Primitives
 ///
-/// Build exactly the noise model you need with flow primitives.
-fn recipe_custom_flow() {
-    println!("--- Recipe 5: Custom Flow Primitives ---");
+/// Build exactly the noise model you need with composite primitives.
+fn recipe_custom_composite() {
+    println!("--- Recipe 5: Custom Composite Primitives ---");
 
     let commands = CommandBuilder::new()
         .pz(0)
@@ -336,7 +336,7 @@ fn recipe_crosstalk() {
     // Chain crosstalk: measuring qubit 1 can flip qubits 0 and 2
     let mut neighbor_errors = 0;
     for seed in 0..1000 {
-        let crosstalk = FlowCrosstalkChannel::new("chain_xt", prob(0.1, inject_x()))
+        let crosstalk = CompositeCrosstalkChannel::new("chain_xt", prob(0.1, inject_x()))
             .responds_to_measurement()
             .local(chain_neighbors);
 

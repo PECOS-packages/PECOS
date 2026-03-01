@@ -13,16 +13,16 @@
 //! Idle noise channel.
 //!
 //! This is a traditional standalone channel implementation. For composable,
-//! declarative noise models with conditional logic, see `FlowChannel` in
-//! `pecos_neo::noise::flow::prelude`.
+//! declarative noise models with conditional logic, see `CompositeChannel` in
+//! `pecos_neo::noise::composite::prelude`.
 //!
-//! ## When to use this vs `FlowChannel`
+//! ## When to use this vs `CompositeChannel`
 //!
 //! **Use `IdleChannel` when:**
 //! - You want standard T1/T2 decay with linear/quadratic scaling
 //! - Performance is critical (batched processing)
 //!
-//! **Use `FlowChannel` when:**
+//! **Use `CompositeChannel` when:**
 //! - You need conditional idle noise (different for leaked qubits)
 //! - You want to combine T1, T2, and ZZ crosstalk
 //! - You need custom time-dependent behavior

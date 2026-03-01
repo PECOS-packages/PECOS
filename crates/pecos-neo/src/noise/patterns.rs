@@ -85,7 +85,7 @@
 use super::CorrelatedNoiseChannel;
 use super::builder::NoiseModelBuilder;
 use super::composer::ComposableNoiseModel;
-use super::flow::prelude::*;
+use super::composite::prelude::*;
 use super::topology::{chain_neighbors, grid_neighbors};
 
 // ============================================================================
@@ -181,8 +181,8 @@ pub fn dephasing_only(p1: f64, p2: f64) -> ComposableNoiseModel {
     // For two-qubit dephasing: ZI, IZ, or ZZ
     let tq_noise = prob(p2, inject_z());
 
-    let sq_channel = FlowChannelBuilder::single_qubit("sq_dephasing", sq_noise);
-    let tq_channel = FlowChannelBuilder::two_qubit("tq_dephasing", tq_noise);
+    let sq_channel = CompositeChannelBuilder::single_qubit("sq_dephasing", sq_noise);
+    let tq_channel = CompositeChannelBuilder::two_qubit("tq_dephasing", tq_noise);
 
     ComposableNoiseModel::new()
         .add_channel(sq_channel)
@@ -244,9 +244,9 @@ pub fn with_leakage(
         ),
     ];
 
-    let sq_channel = FlowChannelBuilder::single_qubit("sq_leakage", sq_noise);
-    let tq_channel = FlowChannelBuilder::two_qubit("tq_leakage", tq_noise);
-    let before_channel = FlowChannelBuilder::before_gate("skip_leaked", skip_if_leaked());
+    let sq_channel = CompositeChannelBuilder::single_qubit("sq_leakage", sq_noise);
+    let tq_channel = CompositeChannelBuilder::two_qubit("tq_leakage", tq_noise);
+    let before_channel = CompositeChannelBuilder::before_gate("skip_leaked", skip_if_leaked());
 
     ComposableNoiseModel::new()
         .add_channel(before_channel)
@@ -296,7 +296,7 @@ pub fn chain_correlated(base_probability: f64, correlation_factor: f64) -> Compo
 #[must_use]
 pub fn chain_measurement_crosstalk(crosstalk_probability: f64) -> ComposableNoiseModel {
     let crosstalk =
-        FlowCrosstalkChannel::new("chain_crosstalk", prob(crosstalk_probability, pauli()))
+        CompositeCrosstalkChannel::new("chain_crosstalk", prob(crosstalk_probability, pauli()))
             .responds_to_measurement()
             .local(chain_neighbors);
 
@@ -320,7 +320,7 @@ pub fn chain_measurement_crosstalk(crosstalk_probability: f64) -> ComposableNois
 #[must_use]
 pub fn grid_measurement_crosstalk(cols: usize, crosstalk_probability: f64) -> ComposableNoiseModel {
     let crosstalk =
-        FlowCrosstalkChannel::new("grid_crosstalk", prob(crosstalk_probability, pauli()))
+        CompositeCrosstalkChannel::new("grid_crosstalk", prob(crosstalk_probability, pauli()))
             .responds_to_measurement()
             .local(grid_neighbors(cols));
 
@@ -504,14 +504,14 @@ pub fn realistic_device_noise(params: DeviceNoiseParams) -> ComposableNoiseModel
     // Add idle noise if rates are set
     if params.t1_rate > 0.0 {
         // T1 decay: energy relaxation causes bit flips (amplitude damping approximated as Pauli)
-        let t1_channel = FlowChannelBuilder::idle("t1_decay", prob_linear(params.t1_rate, pauli()));
+        let t1_channel = CompositeChannelBuilder::idle("t1_decay", prob_linear(params.t1_rate, pauli()));
         model = model.add_channel(t1_channel);
     }
 
     if params.t2_rate > 0.0 {
         // T2 dephasing: pure dephasing (Z errors)
         let t2_channel =
-            FlowChannelBuilder::idle("t2_dephasing", prob_linear(params.t2_rate, inject_z()));
+            CompositeChannelBuilder::idle("t2_dephasing", prob_linear(params.t2_rate, inject_z()));
         model = model.add_channel(t2_channel);
     }
 
@@ -554,7 +554,7 @@ pub fn surface_code_noise(physical_error_rate: f64, with_crosstalk: bool) -> Com
 
     if with_crosstalk {
         // Add global measurement crosstalk for surface code
-        let crosstalk = FlowCrosstalkChannel::new(
+        let crosstalk = CompositeCrosstalkChannel::new(
             "meas_crosstalk",
             prob(physical_error_rate * 0.1, inject_z()),
         )

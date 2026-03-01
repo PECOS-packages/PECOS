@@ -109,12 +109,12 @@ let definitions = GateDefinitions::new();
 // Register custom implementations
 let overrides: GateOverrides<SparseStab> = GateOverrides::new()
     // Custom gate implemented as H
-    .register(my_custom_gate, |sim, qubits, _angles| {
+    .register(my_custom_gate, |sim, _angles, qubits| {
         sim.h(qubits);
         true
     })
     // Override core H gate (e.g., for debugging)
-    .register(gates::H, |sim, qubits, _angles| {
+    .register(gates::H, |sim, _angles, qubits| {
         println!("H gate on {:?}", qubits);
         sim.h(qubits);
         true
@@ -273,8 +273,22 @@ runner.run_adapted_shot(&circuit)? // Execute, return owned outcomes, reset sim 
 
 ### Signal and Event Handlers
 
+Handlers can be registered directly on `Runner`, or built via `EventHandlers`
+for use with `sim_neo()` (including parallel workers):
+
 ```rust
-// Signal handlers (typed)
+// --- Via EventHandlers (works with sim_neo, cloneable) ---
+let handlers = EventHandlers::new()
+    .on_before_gate(|ctx| NoiseResponse::None)
+    .on_signal(|sig: &MySignal| { /* observe */ });
+
+// Pass to sim_neo (cloned per worker in parallel mode)
+sim_neo(circuit).event_handlers(handlers).workers(4).shots(1000).run();
+
+// Or merge into a Runner
+let runner = Runner::new(sim).with_event_handlers(handlers);
+
+// --- Direct registration on Runner ---
 runner.on_signal::<MySignal>(|sig| { /* observe */ });
 runner.on_signal_with_response::<MySignal>(|sig, ctx| NoiseResponse::None);
 

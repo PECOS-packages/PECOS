@@ -102,7 +102,7 @@ pub mod composer;
 pub mod context;
 pub mod correlated;
 pub mod crosstalk;
-pub mod flow;
+pub mod composite;
 pub mod gate_dependent;
 pub mod gate_id_dependent;
 pub mod general_builder;

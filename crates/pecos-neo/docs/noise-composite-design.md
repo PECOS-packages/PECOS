@@ -8,21 +8,21 @@
 
 | Component | Status | Location |
 |-----------|--------|----------|
-| Core primitives (Prob, When, Sample, Seq, SkipIf) | Complete | `flow/primitive.rs` |
-| Conditions (Leaked, NotLeaked, OutcomeIs, etc.) | Complete | `flow/condition.rs` |
-| Gate actions (Pauli, Leak, Seep, Inject, etc.) | Complete | `flow/action.rs` |
-| Outcome actions (FlipOutcome, ForceOutcome) | Complete | `flow/action.rs` |
-| Dynamic probability (ProbFn) | Complete | `flow/primitive.rs` |
-| FlowChannel integration | Complete | `flow/channel.rs` |
-| FlowNoiseModelBuilder | Complete | `flow/builder.rs` |
-| Geometric sampling optimization | Complete | `flow/batch.rs` |
-| Compiled primitives | Complete | `flow/compiled.rs` |
-| Crosstalk channel | Complete | `flow/channel.rs` |
-| Two-stage primitives | Complete | `flow/primitive.rs` |
+| Core primitives (Prob, When, Sample, Seq, SkipIf) | Complete | `composite/primitive.rs` |
+| Conditions (Leaked, NotLeaked, OutcomeIs, etc.) | Complete | `composite/condition.rs` |
+| Gate actions (Pauli, Leak, Seep, Inject, etc.) | Complete | `composite/action.rs` |
+| Outcome actions (FlipOutcome, ForceOutcome) | Complete | `composite/action.rs` |
+| Dynamic probability (ProbFn) | Complete | `composite/primitive.rs` |
+| CompositeChannel integration | Complete | `composite/channel.rs` |
+| CompositeNoiseModelBuilder | Complete | `composite/builder.rs` |
+| Geometric sampling optimization | Complete | `composite/batch.rs` |
+| Compiled primitives | Complete | `composite/compiled.rs` |
+| Crosstalk channel | Complete | `composite/channel.rs` |
+| Two-stage primitives | Complete | `composite/primitive.rs` |
 
 ### Additional Features (Beyond Original Design)
 
-- **FlowNoiseModelBuilder**: High-level builder API mirroring `GeneralNoiseModelBuilder`
+- **CompositeNoiseModelBuilder**: High-level builder API mirroring `GeneralNoiseModelBuilder`
 - **Batch processing**: Geometric sampling for efficient low-probability channels
 - **ForceOutcome**: Force measurement outcomes to specific values (not just flip)
 - **Two-stage primitives**: Support for correlated multi-qubit noise
@@ -514,13 +514,13 @@ Recommendation: Start with option 1 (internal), validate the design works.
 **Files created:**
 ```
 crates/pecos-neo/src/noise/
-  flow/
+  composite/
     mod.rs           # Module exports
     primitive.rs     # Primitive types (Prob, When, Sample, Seq, SkipIf)
     condition.rs     # Condition trait and built-in conditions
     action.rs        # GateAction trait and built-in actions
-    response.rs      # FlowResponse type
-    channel.rs       # FlowChannel integration
+    response.rs      # CompositeResponse type
+    channel.rs       # CompositeChannel integration
 ```
 
 ### Phase 2: Complete Coverage - COMPLETE
@@ -531,7 +531,7 @@ crates/pecos-neo/src/noise/
 - Remaining gate actions: `seep` with probability, emission model sampling
 - Outcome actions: `flip_outcome`, `force_outcome`, `on_outcome`
 - Dynamic probability: `prob_fn(|gate| ...)`
-- Crosstalk special construct: `FlowCrosstalkChannel`
+- Crosstalk special construct: `CompositeCrosstalkChannel`
 - All noise types: prep, two-qubit, measurement, idle
 - Comparison tests against GeneralNoiseModel
 
@@ -545,13 +545,13 @@ crates/pecos-neo/src/noise/
 **Goal:** Make it usable for real users.
 
 **Deliverables:**
-- Integration with `ComposableNoiseModel`: Complete via `FlowChannel`
-- `FlowNoiseModelBuilder`: High-level builder API (implemented instead of hardware presets)
+- Integration with `ComposableNoiseModel`: Complete via `CompositeChannel`
+- `CompositeNoiseModelBuilder`: High-level builder API (implemented instead of hardware presets)
 - Visualization: `describe_tree()` for primitive trees
 - Documentation: See `docs/noise-usage-guide.md`
 
 **Files created:**
-- `flow/builder.rs` - `FlowNoiseModelBuilder`
+- `composite/builder.rs` - `CompositeNoiseModelBuilder`
 - `noise/introspection.rs` - Tree visualization
 
 ### Phase 4: Performance - PARTIAL
@@ -559,8 +559,8 @@ crates/pecos-neo/src/noise/
 **Goal:** Make it fast for large-scale simulations.
 
 **Deliverables:**
-- Geometric sampling for batch processing: Complete (`flow/batch.rs`)
-- Tree compilation: Complete (`flow/compiled.rs`)
+- Geometric sampling for batch processing: Complete (`composite/batch.rs`)
+- Tree compilation: Complete (`composite/compiled.rs`)
 - RNG batching: Complete (`GeometricSampler`)
 - Benchmarks: Available in `benches/hot_path.rs`
 

@@ -57,17 +57,17 @@ use pecos_core::TimeScale;
 ///
 /// # Mixing Channel Types
 ///
-/// You can mix traditional channels with flow channels using [`with_channel`]:
+/// You can mix traditional channels with composite channels using [`with_channel`]:
 ///
 /// ```no_run
 /// use pecos_neo::noise::GeneralNoiseModelBuilder;
-/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::noise::composite::prelude::*;
 ///
 /// let model = GeneralNoiseModelBuilder::new()
 ///     .with_p1(0.001)                    // Traditional 1Q channel
 ///     .with_p_meas(0.02, 0.03)           // Traditional measurement channel
-///     .with_channel(                      // Custom flow channel for 2Q
-///         FlowChannelBuilder::two_qubit("custom_2q", seq![
+///     .with_channel(                      // Custom composite channel for 2Q
+///         CompositeChannelBuilder::two_qubit("custom_2q", seq![
 ///             skip_if_leaked(),
 ///             prob(0.01, pauli()),
 ///         ])
@@ -121,7 +121,7 @@ pub struct GeneralNoiseModelBuilder {
     // Time scale for physical time interpretation
     time_scale: Option<TimeScale>,
 
-    // Custom channels (flow or traditional)
+    // Custom channels (composite or traditional)
     custom_channels: Vec<Box<dyn super::NoiseChannel>>,
 }
 
@@ -189,7 +189,7 @@ impl GeneralNoiseModelBuilder {
     // Custom channels
     // ========================================================================
 
-    /// Add a custom noise channel (flow or traditional).
+    /// Add a custom noise channel (composite or traditional).
     ///
     /// This allows mixing different channel types in a single noise model.
     /// Channels are applied in the order they are added.
@@ -198,12 +198,12 @@ impl GeneralNoiseModelBuilder {
     ///
     /// ```no_run
     /// use pecos_neo::noise::GeneralNoiseModelBuilder;
-    /// use pecos_neo::noise::flow::prelude::*;
+    /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// let model = GeneralNoiseModelBuilder::new()
     ///     .with_p1(0.001)  // Traditional single-qubit noise
-    ///     .with_channel(   // Custom flow channel
-    ///         FlowChannelBuilder::two_qubit("leaky_2q", seq![
+    ///     .with_channel(   // Custom composite channel
+    ///         CompositeChannelBuilder::two_qubit("leaky_2q", seq![
     ///             skip_if_leaked(),
     ///             prob(0.01, when_leaked(seep(), pauli())),
     ///         ])
@@ -589,7 +589,7 @@ impl GeneralNoiseModelBuilder {
             model = model.add_channel(channel);
         }
 
-        // Custom channels (flow or traditional)
+        // Custom channels (composite or traditional)
         for channel in self.custom_channels {
             model = model.add_boxed_channel(channel);
         }
@@ -765,15 +765,15 @@ mod tests {
 
     #[test]
     fn test_general_builder_with_flow_channel() {
-        use crate::noise::flow::{FlowChannelBuilder, prelude::*};
+        use crate::noise::composite::{CompositeChannelBuilder, prelude::*};
 
-        // Mix traditional channels with a flow channel
+        // Mix traditional channels with a composite channel
         let model = GeneralNoiseModelBuilder::new()
             .with_p1(0.001) // Traditional 1Q channel
             .with_p_meas(0.02, 0.03) // Traditional measurement channel
             .with_channel(
                 // Flow 2Q channel
-                FlowChannelBuilder::two_qubit("custom_2q", seq![prob(0.01, pauli()),]),
+                CompositeChannelBuilder::two_qubit("custom_2q", seq![prob(0.01, pauli()),]),
             )
             .build();
 
@@ -783,10 +783,10 @@ mod tests {
 
     #[test]
     fn test_flow_builder_with_traditional_channel() {
-        use crate::noise::flow::FlowNoiseModelBuilder;
+        use crate::noise::composite::CompositeNoiseModelBuilder;
 
-        // Mix flow channels with a traditional channel
-        let model = FlowNoiseModelBuilder::new()
+        // Mix composite channels with a traditional channel
+        let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.001) // Flow 1Q channel
             .with_p2(0.01) // Flow 2Q channel
             .with_channel(MeasurementChannel::symmetric(0.02)) // Traditional
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn test_mixed_channels_execution() {
         use crate::command::CommandBuilder;
-        use crate::noise::flow::{FlowChannelBuilder, prelude::*};
+        use crate::noise::composite::{CompositeChannelBuilder, prelude::*};
         use crate::runner::Runner;
         use pecos_qsim::SparseStab;
 
@@ -807,8 +807,8 @@ mod tests {
         let model = GeneralNoiseModelBuilder::new()
             .with_p1(0.0) // No traditional 1Q noise
             .with_channel(
-                // But use flow for 2Q
-                FlowChannelBuilder::two_qubit("flow_2q", prob(0.5, pauli())),
+                // But use composite for 2Q
+                CompositeChannelBuilder::two_qubit("flow_2q", prob(0.5, pauli())),
             )
             .build();
 
@@ -830,13 +830,13 @@ mod tests {
     }
 
     // ========================================================================
-    // Builder Parity Tests (GeneralNoiseModelBuilder vs FlowNoiseModelBuilder)
+    // Builder Parity Tests (GeneralNoiseModelBuilder vs CompositeNoiseModelBuilder)
     // ========================================================================
 
     #[test]
     fn test_general_vs_flow_builder_single_qubit_parity() {
         use crate::command::CommandBuilder;
-        use crate::noise::flow::FlowNoiseModelBuilder;
+        use crate::noise::composite::CompositeNoiseModelBuilder;
         use crate::runner::Runner;
         use pecos_core::QubitId;
         use pecos_qsim::SparseStab;
@@ -866,10 +866,10 @@ mod tests {
             }
         }
 
-        // Run with FlowNoiseModelBuilder
+        // Run with CompositeNoiseModelBuilder
         let mut flow_ones = 0;
         for seed in 0..shots {
-            let model = FlowNoiseModelBuilder::new().with_p1(p1).build();
+            let model = CompositeNoiseModelBuilder::new().with_p1(p1).build();
 
             let mut runner = Runner::new(SparseStab::new(1))
                 .with_noise(model)
@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn test_general_vs_flow_builder_two_qubit_parity() {
         use crate::command::CommandBuilder;
-        use crate::noise::flow::FlowNoiseModelBuilder;
+        use crate::noise::composite::CompositeNoiseModelBuilder;
         use crate::runner::Runner;
         use pecos_core::QubitId;
         use pecos_qsim::SparseStab;
@@ -933,10 +933,10 @@ mod tests {
             }
         }
 
-        // Run with FlowNoiseModelBuilder
-        let mut flow_errors = 0;
+        // Run with CompositeNoiseModelBuilder
+        let mut composite_errors = 0;
         for seed in 0..shots {
-            let model = FlowNoiseModelBuilder::new().with_p2(p2).build();
+            let model = CompositeNoiseModelBuilder::new().with_p2(p2).build();
 
             let mut runner = Runner::new(SparseStab::new(2))
                 .with_noise(model)
@@ -946,24 +946,24 @@ mod tests {
             let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 || q1 {
-                flow_errors += 1;
+                composite_errors += 1;
             }
         }
 
         // Both should have similar error rates
-        let rate_diff = (i64::from(general_errors) - i64::from(flow_errors)).abs();
+        let rate_diff = (i64::from(general_errors) - i64::from(composite_errors)).abs();
         let tolerance = (0.15 * shots as f64) as i64;
 
         assert!(
             rate_diff < tolerance,
-            "2Q builders differ too much: general={general_errors}, flow={flow_errors}, diff={rate_diff}, tolerance={tolerance}"
+            "2Q builders differ too much: general={general_errors}, composite={composite_errors}, diff={rate_diff}, tolerance={tolerance}"
         );
     }
 
     #[test]
     fn test_general_vs_flow_builder_measurement_parity() {
         use crate::command::CommandBuilder;
-        use crate::noise::flow::FlowNoiseModelBuilder;
+        use crate::noise::composite::CompositeNoiseModelBuilder;
         use crate::runner::Runner;
         use pecos_core::QubitId;
         use pecos_qsim::SparseStab;
@@ -991,10 +991,10 @@ mod tests {
             }
         }
 
-        // Run with FlowNoiseModelBuilder
+        // Run with CompositeNoiseModelBuilder
         let mut flow_ones = 0;
         for seed in 0..shots {
-            let model = FlowNoiseModelBuilder::new()
+            let model = CompositeNoiseModelBuilder::new()
                 .with_p_meas_symmetric(p_meas)
                 .build();
 

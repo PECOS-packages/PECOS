@@ -77,7 +77,7 @@
 //!
 //! ## 3. Composed Primitives (Full Control)
 //!
-//! Build custom decision trees using flow primitives:
+//! Build custom decision trees using composite primitives:
 //!
 //! ```
 //! use pecos_neo::noise::prelude::*;
@@ -113,8 +113,8 @@
 //! let model = depolarizing_only(0.001, 0.01);
 //!
 //! // Using primitives
-//! let sq = FlowChannelBuilder::single_qubit("sq", prob(0.001, pauli()));
-//! let tq = FlowChannelBuilder::two_qubit("tq", prob(0.01, pauli()));
+//! let sq = CompositeChannelBuilder::single_qubit("sq", prob(0.001, pauli()));
+//! let tq = CompositeChannelBuilder::two_qubit("tq", prob(0.01, pauli()));
 //! ```
 //!
 //! ## Measurement Noise
@@ -162,8 +162,8 @@
 //!     .build();
 //!
 //! // Using primitives for custom idle behavior
-//! let t1 = FlowChannelBuilder::idle("t1", prob_linear(0.0001, pauli()));
-//! let t2 = FlowChannelBuilder::idle("t2", prob_linear(0.0005, inject_z()));
+//! let t1 = CompositeChannelBuilder::idle("t1", prob_linear(0.0001, pauli()));
+//! let t2 = CompositeChannelBuilder::idle("t2", prob_linear(0.0005, inject_z()));
 //! ```
 //!
 //! ## Crosstalk
@@ -178,8 +178,8 @@
 //! // 2D grid crosstalk (5 columns)
 //! let model = grid_measurement_crosstalk(5, 0.01);
 //!
-//! // Custom crosstalk with flow primitives
-//! let crosstalk = FlowCrosstalkChannel::new("custom", prob(0.01, inject_z()))
+//! // Custom crosstalk with composite primitives
+//! let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z()))
 //!     .responds_to_measurement()
 //!     .local(chain_neighbors);  // Only affect adjacent qubits
 //! ```
@@ -236,7 +236,7 @@
 //! | `AfterCircuit` | Circuit end | Final errors |
 //! | `BetweenLayers` | Between circuit layers | Layer idle noise |
 //!
-//! # Flow Primitives Reference
+//! # Composite Primitives Reference
 //!
 //! ## Control Flow
 //! - `prob(p, inner)` - Apply inner with probability p
@@ -297,11 +297,11 @@ pub use super::TwoQubitEmissionWeights;
 pub use super::TwoQubitPauliWeights;
 
 // ============================================================================
-// Flow System (Composition)
-// Re-export everything from the flow prelude
+// Composite System (Composition)
+// Re-export everything from the composite prelude
 // ============================================================================
 
-pub use super::flow::prelude::*;
+pub use super::composite::prelude::*;
 
 // ============================================================================
 // Core Traits and Types

@@ -165,7 +165,7 @@ pub enum QubitState {
 
 /// Information about the current gate being processed.
 ///
-/// This struct is used to pass gate context to flow primitives that need
+/// This struct is used to pass gate context to composite primitives that need
 /// dynamic parameters (e.g., angle-dependent error rates).
 #[derive(Debug, Clone)]
 pub struct GateInfo {
@@ -207,7 +207,7 @@ impl GateInfo {
 
 /// Information about the current idle event being processed.
 ///
-/// This struct is used to pass idle duration to flow primitives that need
+/// This struct is used to pass idle duration to composite primitives that need
 /// time-dependent parameters (e.g., T1/T2 decay rates).
 #[derive(Debug, Clone, Copy)]
 pub struct IdleInfo {
@@ -382,12 +382,12 @@ impl NoiseContext {
     }
 
     // ========================================================================
-    // Measurement Outcome Tracking (for flow-based noise)
+    // Measurement Outcome Tracking (for composite-based noise)
     // ========================================================================
 
     /// Set the current measurement outcome for noise processing.
     ///
-    /// This is used by the flow noise system to pass outcome information
+    /// This is used by the composite noise system to pass outcome information
     /// to primitives during measurement noise application.
     pub fn set_current_outcome(&mut self, outcome: bool) {
         self.current_outcome = Some(outcome);
@@ -407,12 +407,12 @@ impl NoiseContext {
     }
 
     // ========================================================================
-    // Gate Context Tracking (for flow-based noise with dynamic parameters)
+    // Gate Context Tracking (for composite-based noise with dynamic parameters)
     // ========================================================================
 
     /// Set the current gate information for noise processing.
     ///
-    /// This is used by the flow noise system to pass gate information
+    /// This is used by the composite noise system to pass gate information
     /// to primitives that need dynamic parameters (e.g., angle-dependent error rates).
     pub fn set_current_gate(&mut self, gate_type: GateType, angles: &[Angle64], num_qubits: usize) {
         self.current_gate = Some(GateInfo::new(
@@ -436,12 +436,12 @@ impl NoiseContext {
     }
 
     // ========================================================================
-    // Idle Context Tracking (for flow-based noise with time-dependent parameters)
+    // Idle Context Tracking (for composite-based noise with time-dependent parameters)
     // ========================================================================
 
     /// Set the current idle information for noise processing.
     ///
-    /// This is used by the flow noise system to pass duration information
+    /// This is used by the composite noise system to pass duration information
     /// to primitives that need time-dependent parameters (e.g., T1/T2 decay).
     pub fn set_current_idle(&mut self, duration: TimeUnits) {
         self.current_idle = Some(IdleInfo::new(duration));
@@ -466,7 +466,7 @@ impl NoiseContext {
 
     /// Set the current qubit index and gate qubits for correlated noise.
     ///
-    /// This is called by `FlowChannel` when processing multi-qubit gates,
+    /// This is called by `CompositeChannel` when processing multi-qubit gates,
     /// allowing actions to know which qubit they're processing and access
     /// the other qubits involved.
     pub fn set_current_qubit_index(&mut self, index: usize, gate_qubits: &[QubitId]) {

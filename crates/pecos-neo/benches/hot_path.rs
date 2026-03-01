@@ -779,12 +779,12 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
 // Flow vs Channel Noise System Comparison
 // ============================================================================
 
-/// Compare flow-based noise (`FlowNoiseModelBuilder`) vs channel-based (`GeneralNoiseModelBuilder`)
-fn bench_flow_vs_channel_noise(c: &mut Criterion) {
+/// Compare composite-based noise (`CompositeNoiseModelBuilder`) vs channel-based (`GeneralNoiseModelBuilder`)
+fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     use pecos_neo::noise::GeneralNoiseModelBuilder;
-    use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+    use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 
-    let mut group = c.benchmark_group("flow_vs_channel");
+    let mut group = c.benchmark_group("composite_vs_channel");
 
     // Simple depolarizing noise
     let p1 = 0.001;
@@ -835,8 +835,8 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flow_noise_emission_1q", |b| {
-        let mut noise = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+    group.bench_function("composite_noise_emission_1q", |b| {
+        let mut noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0)];
 
@@ -870,8 +870,8 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flow_noise_emission_2q", |b| {
-        let mut noise = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+    group.bench_function("composite_noise_emission_2q", |b| {
+        let mut noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0), QubitId(1)];
 
@@ -899,8 +899,8 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flow_bell_shot", |b| {
-        let noise = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+    group.bench_function("composite_bell_shot", |b| {
+        let noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
         let mut runner = Runner::new(SparseStab::new(2)).with_noise(noise);
         b.iter(|| {
             let outcomes = runner.run_shot(&bell_circuit).unwrap();
@@ -921,8 +921,8 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flow_20q_shot", |b| {
-        let noise = FlowNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+    group.bench_function("composite_20q_shot", |b| {
+        let noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
         let mut runner = Runner::new(SparseStab::new(20)).with_noise(noise);
         b.iter(|| {
             let outcomes = runner.run_shot(&large_circuit).unwrap();
@@ -947,8 +947,8 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("flow_20q_with_leakage", |b| {
-        let noise = FlowNoiseModelBuilder::new()
+    group.bench_function("composite_20q_with_leakage", |b| {
+        let noise = CompositeNoiseModelBuilder::new()
             .with_p1(p1)
             .with_p1_emission_ratio(0.1)
             .with_p1_seepage(0.05)
@@ -972,8 +972,8 @@ fn bench_flow_vs_channel_noise(c: &mut Criterion) {
 
 /// Benchmark batch probability filtering at scale
 fn bench_batch_filtering(c: &mut Criterion) {
-    use pecos_neo::noise::flow::batch::{filter_by_probability, filter_range_by_probability};
-    use pecos_neo::noise::flow::batch_flow::BatchState;
+    use pecos_neo::noise::composite::batch::{filter_by_probability, filter_range_by_probability};
+    use pecos_neo::noise::composite::batch_composite::BatchState;
 
     let mut group = c.benchmark_group("batch_filtering");
 
@@ -1007,7 +1007,7 @@ fn bench_batch_filtering(c: &mut Criterion) {
     });
 
     // Compare with RngProbabilityExt optimized version
-    use pecos_neo::noise::flow::batch::{
+    use pecos_neo::noise::composite::batch::{
         ProbabilityThreshold, filter_by_probability_fast, sample_noise_1q_batch,
     };
 
@@ -1096,10 +1096,10 @@ fn bench_batch_filtering(c: &mut Criterion) {
 // Batch Processor Comparison
 // ============================================================================
 
-/// Compare `FastBatchProcessor` vs `BatchFlowChannel` vs `FlowChannel` at scale
+/// Compare `FastBatchProcessor` vs `BatchCompositeChannel` vs `CompositeChannel` at scale
 fn bench_batch_processor(c: &mut Criterion) {
-    use pecos_neo::noise::flow::batch_flow::{BatchState, fast_depolarizing};
-    use pecos_neo::noise::flow::prelude::*;
+    use pecos_neo::noise::composite::batch_composite::{BatchState, fast_depolarizing};
+    use pecos_neo::noise::composite::prelude::*;
     use pecos_neo::noise::{NoiseChannel, NoiseContext, NoiseEvent};
 
     let mut group = c.benchmark_group("batch_processor");
@@ -1125,8 +1125,8 @@ fn bench_batch_processor(c: &mut Criterion) {
             b.iter(|| black_box(processor.process_all(&state, &mut ctx, &mut rng)));
         });
 
-        // BatchFlowChannel (geometric sampling via NoiseChannel interface)
-        let batch_channel = FlowChannelBuilder::batch_single_qubit("batch", 1e-4, pauli());
+        // BatchCompositeChannel (geometric sampling via NoiseChannel interface)
+        let batch_channel = CompositeChannelBuilder::batch_single_qubit("batch", 1e-4, pauli());
         group.bench_function(BenchmarkId::new("batch_channel_p1e-4", num_qubits), |b| {
             let mut ctx = NoiseContext::new();
             let mut rng = PecosRng::seed_from_u64(42);
@@ -1139,11 +1139,11 @@ fn bench_batch_processor(c: &mut Criterion) {
             b.iter(|| black_box(batch_channel.apply(&event, &mut ctx, &mut rng)));
         });
 
-        // FlowChannel with probability (geometric sampling - new consolidated API)
-        let flow_with_prob = FlowChannel::new("flow_fast", pauli())
+        // CompositeChannel with probability (geometric sampling - new consolidated API)
+        let composite_with_prob = CompositeChannel::new("composite_fast", pauli())
             .with_probability(1e-4)
-            .with_filter(FlowEventFilter::SingleQubitGate);
-        group.bench_function(BenchmarkId::new("flow_with_prob_p1e-4", num_qubits), |b| {
+            .with_filter(CompositeEventFilter::SingleQubitGate);
+        group.bench_function(BenchmarkId::new("composite_with_prob_p1e-4", num_qubits), |b| {
             let mut ctx = NoiseContext::new();
             let mut rng = PecosRng::seed_from_u64(42);
             let event = NoiseEvent::AfterGate {
@@ -1152,13 +1152,13 @@ fn bench_batch_processor(c: &mut Criterion) {
                 angles: &angles,
                 gate_id: None,
             };
-            b.iter(|| black_box(flow_with_prob.apply(&event, &mut ctx, &mut rng)));
+            b.iter(|| black_box(composite_with_prob.apply(&event, &mut ctx, &mut rng)));
         });
 
-        // FlowChannel (linear, no probability) - skip for 1M (too slow)
+        // CompositeChannel (linear, no probability) - skip for 1M (too slow)
         if num_qubits <= 100_000 {
-            let flow_channel = FlowChannelBuilder::single_qubit("flow", prob(1e-4, pauli()));
-            group.bench_function(BenchmarkId::new("flow_linear_p1e-4", num_qubits), |b| {
+            let composite_channel = CompositeChannelBuilder::single_qubit("composite", prob(1e-4, pauli()));
+            group.bench_function(BenchmarkId::new("composite_linear_p1e-4", num_qubits), |b| {
                 let mut ctx = NoiseContext::new();
                 let mut rng = PecosRng::seed_from_u64(42);
                 let event = NoiseEvent::AfterGate {
@@ -1167,7 +1167,7 @@ fn bench_batch_processor(c: &mut Criterion) {
                     angles: &angles,
                     gate_id: None,
                 };
-                b.iter(|| black_box(flow_channel.apply(&event, &mut ctx, &mut rng)));
+                b.iter(|| black_box(composite_channel.apply(&event, &mut ctx, &mut rng)));
             });
         }
     }
@@ -1202,11 +1202,11 @@ fn bench_batch_processor(c: &mut Criterion) {
     group.finish();
 }
 
-/// Compare trait object dispatch vs compiled enum dispatch for flow primitives
+/// Compare trait object dispatch vs compiled enum dispatch for composite primitives
 fn bench_dispatch_comparison(c: &mut Criterion) {
     use pecos_neo::noise::NoiseContext;
-    use pecos_neo::noise::flow::prelude::*;
-    use pecos_neo::noise::flow::{CompiledAction, CompiledCondition, CompiledPrimitive};
+    use pecos_neo::noise::composite::prelude::*;
+    use pecos_neo::noise::composite::{CompiledAction, CompiledCondition, CompiledPrimitive};
 
     let mut group = c.benchmark_group("dispatch_comparison");
 
@@ -1294,7 +1294,7 @@ criterion_group!(
     bench_simulator_ops,
     bench_memory_usage,
     bench_monte_carlo_comparison,
-    bench_flow_vs_channel_noise,
+    bench_composite_vs_channel_noise,
     bench_batch_filtering,
     bench_batch_processor,
     bench_dispatch_comparison,

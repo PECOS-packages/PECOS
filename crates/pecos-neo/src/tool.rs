@@ -98,8 +98,9 @@ pub use resource::{Resource, Resources};
 pub use simulation::{
     Circuit, CustomBackendBuilder, ImportanceSamplingBuilder, NoiseResource, Orchestrator,
     QuantumBackend, SimConfig, SimNeoBuilder, SimNeoInput, Simulation, SimulationResults,
-    SimulatorFactory, SparseStabBuilder, StateVecBuilder, custom_backend, importance_sampling,
-    sim_neo, sim_neo_builder, sparse_stab, state_vector,
+    SimulatorFactory, SparseStabBuilder, StateVecBuilder, StoredOverrides, custom_backend,
+    custom_backend_with_rotations, importance_sampling, sim_neo, sim_neo_builder, sparse_stab,
+    state_vector,
 };
 #[cfg(feature = "engines-adapter")]
 pub use simulation::{PendingEngineBuilder, TypedProgram};

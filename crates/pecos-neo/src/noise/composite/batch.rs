@@ -46,11 +46,11 @@
 //!
 //! # Usage
 //!
-//! For high-level batch noise processing, see [`batch_flow`](super::batch_flow).
+//! For high-level batch noise processing, see [`batch_composite`](super::batch_composite).
 //! This module provides the low-level sampling primitives.
 //!
 //! ```
-//! use pecos_neo::noise::flow::batch::GeometricSampler;
+//! use pecos_neo::noise::composite::batch::GeometricSampler;
 //! use pecos_rng::PecosRng;
 //!
 //! let mut rng = PecosRng::seed_from_u64(42);

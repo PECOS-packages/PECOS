@@ -19,7 +19,7 @@ use std::fmt::Write as _;
 
 use super::action::GateAction;
 use super::condition::Condition;
-use super::response::FlowResponse;
+use super::response::CompositeResponse;
 use crate::noise::NoiseContext;
 use pecos_core::QubitId;
 use pecos_rng::PecosRng;
@@ -31,7 +31,7 @@ use rand::RngExt;
 /// control flow (branching, probability gates) or terminal actions.
 pub trait Primitive: Send + Sync {
     /// Apply this primitive for a specific qubit.
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse;
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse;
 
     /// Human-readable description for visualization (single line).
     fn describe(&self) -> String;
@@ -75,8 +75,8 @@ pub trait Primitive: Send + Sync {
         _qubit: QubitId,
         _ctx: &mut NoiseContext,
         _rng: &mut PecosRng,
-    ) -> FlowResponse {
-        FlowResponse::None
+    ) -> CompositeResponse {
+        CompositeResponse::None
     }
 
     /// Stage 2 of two-pass processing: effect phase.
@@ -88,7 +88,7 @@ pub trait Primitive: Send + Sync {
         qubit: QubitId,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> FlowResponse {
+    ) -> CompositeResponse {
         self.apply(qubit, ctx, rng)
     }
 }
@@ -158,7 +158,7 @@ impl MultiQubitSamples {
 /// # Example Implementation
 ///
 /// ```ignore
-/// # use pecos_neo::noise::flow::prelude::*;
+/// # use pecos_neo::noise::composite::prelude::*;
 /// struct EmissionWithPartnerDepolarize { prob: f64 }
 ///
 /// impl TwoStagePrimitive for EmissionWithPartnerDepolarize {
@@ -170,19 +170,19 @@ impl MultiQubitSamples {
 ///     }
 ///
 ///     fn apply_effects(&self, qubit: QubitId, index: usize, samples: &MultiQubitSamples,
-///                      num_qubits: usize, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+///                      num_qubits: usize, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
 ///         let my_result = samples.get(index);
 ///         let other_index = 1 - index; // For 2-qubit gates
 ///         let other_result = samples.get(other_index);
 ///
 ///         if my_result.occurred {
 ///             ctx.mark_leaked(qubit);
-///             FlowResponse::Leak
+///             CompositeResponse::Leak
 ///         } else if other_result.occurred {
 ///             // Partner emitted, I didn't → depolarize me
-///             FlowResponse::InjectGates(vec![random_pauli_gate(qubit, rng)])
+///             CompositeResponse::InjectGates(vec![random_pauli_gate(qubit, rng)])
 ///         } else {
-///             FlowResponse::None
+///             CompositeResponse::None
 ///         }
 ///     }
 /// }
@@ -213,7 +213,7 @@ pub trait TwoStagePrimitive: Send + Sync {
         num_qubits: usize,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> FlowResponse;
+    ) -> CompositeResponse;
 
     /// Human-readable description.
     fn describe(&self) -> String;
@@ -238,7 +238,7 @@ pub trait TwoStagePrimitive: Send + Sync {
 /// # Example
 ///
 /// ```
-/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Two-stage emission with partner depolarizing
 /// let noise = two_stage(
@@ -281,7 +281,7 @@ impl<P1: Primitive, P2: Primitive> TwoStage<P1, P2> {
 }
 
 impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         // Fallback for single-qubit processing: run both stages sequentially
         let r1 = self.stage1.apply(qubit, ctx, rng);
         let r2 = self.stage2.apply(qubit, ctx, rng);
@@ -305,7 +305,7 @@ impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
         qubit: QubitId,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> FlowResponse {
+    ) -> CompositeResponse {
         self.stage1.apply(qubit, ctx, rng)
     }
 
@@ -314,7 +314,7 @@ impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
         qubit: QubitId,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> FlowResponse {
+    ) -> CompositeResponse {
         self.stage2.apply(qubit, ctx, rng)
     }
 
@@ -327,7 +327,7 @@ impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
 }
 
 impl Primitive for Box<dyn Primitive> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         (**self).apply(qubit, ctx, rng)
     }
 
@@ -352,7 +352,7 @@ impl Primitive for Box<dyn Primitive> {
         qubit: QubitId,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> FlowResponse {
+    ) -> CompositeResponse {
         (**self).apply_stage1(qubit, ctx, rng)
     }
 
@@ -361,7 +361,7 @@ impl Primitive for Box<dyn Primitive> {
         qubit: QubitId,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
-    ) -> FlowResponse {
+    ) -> CompositeResponse {
         (**self).apply_stage2(qubit, ctx, rng)
     }
 
@@ -372,7 +372,7 @@ impl Primitive for Box<dyn Primitive> {
 
 // Implement Primitive for all GateActions
 impl<A: GateAction + Clone + 'static> Primitive for A {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         GateAction::apply(self, qubit, ctx, rng)
     }
 
@@ -431,11 +431,11 @@ impl<P: Primitive> Prob<P> {
 }
 
 impl<P: Primitive> Primitive for Prob<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         if rng.random::<f64>() < self.probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
-            FlowResponse::None
+            CompositeResponse::None
         }
     }
 
@@ -468,7 +468,7 @@ impl<P: Primitive> Primitive for Prob<P> {
 /// # Example
 ///
 /// ```
-/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Angle-dependent two-qubit noise
 /// let tq_noise = prob_fn(
@@ -527,12 +527,12 @@ where
     F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync + Clone + 'static,
     P: Primitive,
 {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         let probability = (self.probability_fn)(ctx.current_gate()).clamp(0.0, 1.0);
         if rng.random::<f64>() < probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
-            FlowResponse::None
+            CompositeResponse::None
         }
     }
 
@@ -556,7 +556,7 @@ where
 /// # Example
 ///
 /// ```
-/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // 0.001 error rate per time unit, applying Z error
 /// let idle_noise = prob_linear(0.001, pauli());
@@ -591,7 +591,7 @@ impl<P: Primitive> ProbLinear<P> {
 }
 
 impl<P: Primitive> Primitive for ProbLinear<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         let duration = ctx
             .current_idle()
             .map_or(0.0, crate::noise::IdleInfo::duration_f64);
@@ -599,7 +599,7 @@ impl<P: Primitive> Primitive for ProbLinear<P> {
         if rng.random::<f64>() < probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
-            FlowResponse::None
+            CompositeResponse::None
         }
     }
 
@@ -626,7 +626,7 @@ impl<P: Primitive> Primitive for ProbLinear<P> {
 /// # Example
 ///
 /// ```
-/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Quadratic dephasing with 0.01 rate
 /// let dephasing = prob_quadratic(0.01, inject_z());
@@ -674,7 +674,7 @@ impl<P: Primitive> ProbQuadratic<P> {
 }
 
 impl<P: Primitive> Primitive for ProbQuadratic<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         let duration = ctx
             .current_idle()
             .map_or(0.0, crate::noise::IdleInfo::duration_f64);
@@ -684,7 +684,7 @@ impl<P: Primitive> Primitive for ProbQuadratic<P> {
         if rng.random::<f64>() < probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
-            FlowResponse::None
+            CompositeResponse::None
         }
     }
 
@@ -731,7 +731,7 @@ impl<C: Condition, T: Primitive, E: Primitive> When<C, T, E> {
 }
 
 impl<C: Condition + Clone + 'static, T: Primitive, E: Primitive> Primitive for When<C, T, E> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         if self.condition.evaluate(qubit, ctx) {
             self.then_branch.apply(qubit, ctx, rng)
         } else {
@@ -807,9 +807,9 @@ impl<P: Primitive> Sample<P> {
 }
 
 impl<P: Primitive> Primitive for Sample<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         if self.branches.is_empty() {
-            return FlowResponse::None;
+            return CompositeResponse::None;
         }
 
         let r: f64 = rng.random();
@@ -888,8 +888,8 @@ impl<P: Primitive> Seq<P> {
 }
 
 impl<P: Primitive> Primitive for Seq<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
-        let mut combined = FlowResponse::None;
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+        let mut combined = CompositeResponse::None;
 
         for prim in &self.primitives {
             let response = prim.apply(qubit, ctx, rng);
@@ -960,8 +960,8 @@ impl BoxSeq {
 }
 
 impl Primitive for BoxSeq {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
-        let mut combined = FlowResponse::None;
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+        let mut combined = CompositeResponse::None;
 
         for prim in &self.primitives {
             let response = prim.apply(qubit, ctx, rng);
@@ -1027,11 +1027,11 @@ impl<C: Condition> SkipIf<C> {
 }
 
 impl<C: Condition + Clone + 'static> Primitive for SkipIf<C> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
         if self.condition.evaluate(qubit, ctx) {
-            FlowResponse::SkipGate
+            CompositeResponse::SkipGate
         } else {
-            FlowResponse::None
+            CompositeResponse::None
         }
     }
 
@@ -1051,7 +1051,7 @@ impl<C: Condition + Clone + 'static> Primitive for SkipIf<C> {
 /// # Example
 ///
 /// ```
-/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::noise::composite::prelude::*;
 ///
 /// let noise = seq![
 ///     skip_if_leaked(),
@@ -1061,8 +1061,8 @@ impl<C: Condition + Clone + 'static> Primitive for SkipIf<C> {
 #[macro_export]
 macro_rules! seq {
     ($($prim:expr),* $(,)?) => {
-        $crate::noise::flow::BoxSeq::new(vec![
-            $(Box::new($prim) as Box<dyn $crate::noise::flow::Primitive>),*
+        $crate::noise::composite::BoxSeq::new(vec![
+            $(Box::new($prim) as Box<dyn $crate::noise::composite::Primitive>),*
         ])
     };
 }
@@ -1074,7 +1074,7 @@ macro_rules! seq {
 /// # Example
 ///
 /// ```
-/// use pecos_neo::noise::flow::prelude::*;
+/// use pecos_neo::noise::composite::prelude::*;
 ///
 /// let noise = sample![
 ///     (0.25, leak()),
@@ -1084,8 +1084,8 @@ macro_rules! seq {
 #[macro_export]
 macro_rules! sample {
     ($(($weight:expr, $prim:expr)),* $(,)?) => {
-        $crate::noise::flow::BoxSample::new(vec![
-            $(($weight, Box::new($prim) as Box<dyn $crate::noise::flow::Primitive>)),*
+        $crate::noise::composite::BoxSample::new(vec![
+            $(($weight, Box::new($prim) as Box<dyn $crate::noise::composite::Primitive>)),*
         ])
     };
 }
@@ -1136,9 +1136,9 @@ impl BoxSample {
 }
 
 impl Primitive for BoxSample {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> FlowResponse {
+    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
         if self.branches.is_empty() {
-            return FlowResponse::None;
+            return CompositeResponse::None;
         }
 
         let r: f64 = rng.random();
@@ -1197,8 +1197,8 @@ pub mod primitives {
         TwoStage, When,
     };
     use crate::noise::GateInfo;
-    use crate::noise::flow::action::Nothing;
-    use crate::noise::flow::condition::{Always, GateTypeIs, Leaked, NotLeaked, OutcomeIs};
+    use crate::noise::composite::action::Nothing;
+    use crate::noise::composite::condition::{Always, GateTypeIs, Leaked, NotLeaked, OutcomeIs};
 
     /// Probability gate.
     #[must_use]
@@ -1214,7 +1214,7 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::prelude::*;
+    /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // Angle-dependent error: p = 0.01 * |angle|
     /// let noise = prob_fn(
@@ -1243,7 +1243,7 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::prelude::*;
+    /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // T1 relaxation: 0.001 error per time unit
     /// let t1_noise = prob_linear(0.001, pauli());
@@ -1260,7 +1260,7 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::prelude::*;
+    /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // T2 dephasing
     /// let t2_noise = prob_quadratic(0.01, inject_z());
@@ -1306,7 +1306,7 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
-    /// # use pecos_neo::noise::flow::prelude::*;
+    /// # use pecos_neo::noise::composite::prelude::*;
     /// // Partner depolarizing: apply random Pauli when partner is leaked
     /// when_partner_leaked(pauli(), nothing());
     /// ```
@@ -1314,8 +1314,8 @@ pub mod primitives {
     pub fn when_partner_leaked<T: Primitive, E: Primitive>(
         then_branch: T,
         else_branch: E,
-    ) -> When<crate::noise::flow::PartnerLeaked, T, E> {
-        When::new(crate::noise::flow::PartnerLeaked, then_branch, else_branch)
+    ) -> When<crate::noise::composite::PartnerLeaked, T, E> {
+        When::new(crate::noise::composite::PartnerLeaked, then_branch, else_branch)
     }
 
     /// Conditional (then only, else is nothing).
@@ -1372,7 +1372,7 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
-    /// # use pecos_neo::noise::flow::prelude::*;
+    /// # use pecos_neo::noise::composite::prelude::*;
     /// // Asymmetric measurement noise
     /// let meas_noise = seq![
     ///     on_outcome(false, prob(0.02, flip_outcome())),  // 2% error on 0
@@ -1401,7 +1401,7 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::prelude::*;
+    /// use pecos_neo::noise::composite::prelude::*;
     /// use pecos_neo::command::GateType;
     ///
     /// // Special handling for MeasureLeaked gates
@@ -1431,7 +1431,7 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::prelude::*;
+    /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // Linear angle scaling: p = 0.01 * |angle/π|
     /// let noise = prob_angle_scaled(0.01, 1.0, pauli());
@@ -1496,7 +1496,7 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
-    /// use pecos_neo::noise::flow::prelude::*;
+    /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // Two-stage emission with partner depolarizing
     /// let noise = two_stage(
@@ -1524,8 +1524,8 @@ mod tests {
     use super::primitives::*;
     use super::*;
     use crate::command::GateType;
-    use crate::noise::flow::action::actions::*;
-    use crate::noise::flow::condition::Leaked;
+    use crate::noise::composite::action::actions::*;
+    use crate::noise::composite::condition::Leaked;
     use pecos_core::Angle64;
 
     fn make_test_context() -> NoiseContext {

@@ -10,17 +10,17 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Flow-based composable noise system.
+//! Composite-based composable noise system.
 //!
 //! This module provides a primitive-based approach to building noise models
 //! as decision trees. It complements the traditional standalone channel
 //! implementations (`SingleQubitChannel`, `TwoQubitChannel`, etc.).
 //!
-//! ## Flow Channels vs Traditional Channels
+//! ## Composite Channels vs Traditional Channels
 //!
 //! Both approaches integrate with `ComposableNoiseModel`. Choose based on your needs:
 //!
-//! **Use Flow Channels when:**
+//! **Use Composite Channels when:**
 //! - You need complex conditional logic (leaked states, cross-qubit conditions)
 //! - You want two-stage processing for correlated effects (partner depolarizing)
 //! - You want to compose and reuse noise primitives
@@ -37,14 +37,14 @@
 //! - **Conditions**: State checks (`Leaked`, `PartnerFired`, `OutcomeIs`, custom)
 //! - **Actions**: Terminal operations (`Pauli`, `Leak`, `Seep`, `AmplitudeDamping`, etc.)
 //! - **Responses**: What to do (`InjectGates`, `SkipGate`, `FlipOutcome`, etc.)
-//! - **Channels**: Integration with `ComposableNoiseModel` via `FlowChannel`
+//! - **Channels**: Integration with `ComposableNoiseModel` via `CompositeChannel`
 //!
 //! # Building Noise Decision Trees
 //!
 //! Use the `seq!` and `sample!` macros for heterogeneous compositions:
 //!
 //! ```
-//! use pecos_neo::noise::flow::prelude::*;
+//! use pecos_neo::noise::composite::prelude::*;
 //!
 //! // Build single-qubit gate noise as a decision tree
 //! let sq_noise = seq![
@@ -60,32 +60,32 @@
 //!
 //! # Integrating with `ComposableNoiseModel`
 //!
-//! Use `FlowChannel` to integrate flow primitives with the noise model:
+//! Use `CompositeChannel` to integrate composite primitives with the noise model:
 //!
 //! ```
-//! use pecos_neo::noise::flow::prelude::*;
+//! use pecos_neo::noise::composite::prelude::*;
 //! use pecos_neo::noise::ComposableNoiseModel;
 //!
-//! // Create a flow-based noise channel
+//! // Create a composite-based noise channel
 //! let gate_noise = seq![
 //!     skip_if_leaked(),
 //!     prob(0.01, pauli()),
 //! ];
-//! let channel = FlowChannelBuilder::single_qubit("sq_depolarizing", gate_noise);
+//! let channel = CompositeChannelBuilder::single_qubit("sq_depolarizing", gate_noise);
 //!
 //! // Add to composable noise model
 //! let model = ComposableNoiseModel::new()
 //!     .add_channel(channel);
 //! ```
 //!
-//! # Using the `FlowNoiseModelBuilder`
+//! # Using the `CompositeNoiseModelBuilder`
 //!
 //! For a simpler API similar to `GeneralNoiseModelBuilder`:
 //!
 //! ```
-//! use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+//! use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 //!
-//! let model = FlowNoiseModelBuilder::new()
+//! let model = CompositeNoiseModelBuilder::new()
 //!     .with_p1(0.001)                 // Single-qubit gate error
 //!     .with_p2(0.01)                  // Two-qubit gate error
 //!     .with_p_meas(0.02, 0.03)        // Asymmetric measurement error
@@ -99,9 +99,9 @@
 //! The builder supports angle-dependent noise, leakage scaling, and custom Pauli weights:
 //!
 //! ```
-//! use pecos_neo::noise::flow::prelude::*;
+//! use pecos_neo::noise::composite::prelude::*;
 //!
-//! let model = FlowNoiseModelBuilder::new()
+//! let model = CompositeNoiseModelBuilder::new()
 //!     // Angle-dependent two-qubit noise
 //!     .with_p2(0.01)
 //!     .with_p2_angle_scaling(AngleScaling::linear())
@@ -123,15 +123,15 @@
 //! and `prob_quadratic` (T2-like) primitives:
 //!
 //! ```
-//! use pecos_neo::noise::flow::prelude::*;
+//! use pecos_neo::noise::composite::prelude::*;
 //!
 //! // T1 relaxation: probability grows linearly with time
-//! let t1_channel = FlowChannelBuilder::idle("t1",
+//! let t1_channel = CompositeChannelBuilder::idle("t1",
 //!     prob_linear(0.001, pauli())  // 0.001 per time unit
 //! );
 //!
 //! // T2 dephasing: probability follows sin^2(rate * duration)
-//! let t2_channel = FlowChannelBuilder::idle("t2",
+//! let t2_channel = CompositeChannelBuilder::idle("t2",
 //!     prob_quadratic(0.01, inject_z())
 //! );
 //! ```
@@ -141,7 +141,7 @@
 //! For angle-dependent or gate-type-dependent error rates:
 //!
 //! ```
-//! use pecos_neo::noise::flow::prelude::*;
+//! use pecos_neo::noise::composite::prelude::*;
 //!
 //! // Angle-dependent two-qubit noise
 //! let tq_noise = prob_fn(
@@ -156,7 +156,7 @@
 
 mod action;
 pub mod batch;
-pub mod batch_flow;
+pub mod batch_composite;
 mod builder;
 pub mod channel;
 mod compiled;
@@ -171,9 +171,9 @@ pub use action::{
     LeakedMeasurementAction, Nothing, PartnerDepolarize, Pauli, PauliWeights, RandomOutcome, Seep,
     SkipGate, TwoQubitEmission, TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak,
 };
-pub use builder::FlowNoiseModelBuilder;
+pub use builder::CompositeNoiseModelBuilder;
 pub use channel::{
-    BatchFlowChannel, FlowChannel, FlowChannelBuilder, FlowCrosstalkChannel, FlowEventFilter,
+    BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel, CompositeEventFilter,
 };
 pub use compiled::{CompiledAction, CompiledCondition, CompiledPrimitive};
 pub use condition::{
@@ -184,19 +184,19 @@ pub use primitive::{
     BoxSample, BoxSeq, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Sample, Seq, SkipIf,
     TwoStage, When,
 };
-pub use response::FlowResponse;
+pub use response::CompositeResponse;
 
 /// Prelude for convenient imports.
 pub mod prelude {
     pub use super::action::actions::*;
-    pub use super::builder::FlowNoiseModelBuilder;
+    pub use super::builder::CompositeNoiseModelBuilder;
     pub use super::channel::{
-        BatchFlowChannel, FlowChannel, FlowChannelBuilder, FlowCrosstalkChannel, FlowEventFilter,
+        BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel, CompositeEventFilter,
     };
     pub use super::condition::conditions::*;
     pub use super::primitive::primitives::*;
     pub use super::{
-        BoxSample, BoxSeq, FlowResponse, GateAction, OutcomeIs, Pauli, PauliWeights, Primitive,
+        BoxSample, BoxSeq, CompositeResponse, GateAction, OutcomeIs, Pauli, PauliWeights, Primitive,
         ProbFn, ProbLinear, ProbQuadratic, TwoStage,
     };
     // Re-export GateInfo, IdleInfo, and AngleScaling for use in closures/builders
@@ -314,7 +314,7 @@ mod tests {
         assert!(!ctx.is_leaked(QubitId(0)));
     }
 
-    /// Integration test: `FlowChannel` with `ComposableNoiseModel` and `Runner`.
+    /// Integration test: `CompositeChannel` with `ComposableNoiseModel` and `Runner`.
     #[test]
     fn test_flow_channel_with_composable_model() {
         use crate::command::CommandBuilder;
@@ -325,9 +325,9 @@ mod tests {
         // Build a simple Hadamard circuit
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        // Create a flow-based noise channel with 100% error rate for testing
+        // Create a composite-based noise channel with 100% error rate for testing
         let sq_noise = prob(1.0, pauli());
-        let channel = FlowChannelBuilder::single_qubit("test_depolarizing", sq_noise);
+        let channel = CompositeChannelBuilder::single_qubit("test_depolarizing", sq_noise);
 
         // Add to composable noise model
         let noise = ComposableNoiseModel::new().add_channel(channel);
@@ -344,7 +344,7 @@ mod tests {
         // This just verifies the integration works - detailed stats are in other tests
     }
 
-    /// Test that flow channels can be combined with other noise channels.
+    /// Test that composite channels can be combined with other noise channels.
     #[test]
     fn test_flow_channel_mixed_model() {
         use crate::command::CommandBuilder;
@@ -355,9 +355,9 @@ mod tests {
         // Build circuit
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        // Flow-based gate noise
+        // Composite-based gate noise
         let gate_noise = prob(0.0, pauli()); // No gate noise
-        let flow_channel = FlowChannelBuilder::single_qubit("flow_sq", gate_noise);
+        let flow_channel = CompositeChannelBuilder::single_qubit("flow_sq", gate_noise);
 
         // Traditional measurement noise channel
         let meas_channel = MeasurementChannel::symmetric(0.0); // No measurement noise
@@ -379,8 +379,8 @@ mod tests {
     /// Test outcome condition evaluation.
     #[test]
     fn test_outcome_condition() {
-        use crate::noise::flow::Condition;
-        use crate::noise::flow::condition::OutcomeIs;
+        use crate::noise::composite::Condition;
+        use crate::noise::composite::condition::OutcomeIs;
 
         let mut ctx = NoiseContext::new();
 
@@ -466,7 +466,7 @@ mod tests {
         assert!(response.forces_outcome().is_some());
     }
 
-    /// Test dynamic probability (`prob_fn`) through `FlowChannel`.
+    /// Test dynamic probability (`prob_fn`) through `CompositeChannel`.
     #[test]
     fn test_prob_fn_through_channel() {
         use crate::command::GateType;
@@ -483,7 +483,7 @@ mod tests {
             pauli(),
         );
 
-        let channel = FlowChannelBuilder::any_gate("angle_dependent", angle_dependent_noise);
+        let channel = CompositeChannelBuilder::any_gate("angle_dependent", angle_dependent_noise);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -546,7 +546,7 @@ mod tests {
         let commands = CommandBuilder::new().pz(0).pz(1).pz(2).h(0).mz(0).build();
 
         // Create crosstalk channel: 100% chance to flip other qubits during measurement
-        let crosstalk = FlowCrosstalkChannel::new("test_crosstalk", inject_x())
+        let crosstalk = CompositeCrosstalkChannel::new("test_crosstalk", inject_x())
             .responds_to_measurement()
             .global();
 
@@ -562,7 +562,7 @@ mod tests {
         // Detailed behavior is tested in unit tests
     }
 
-    /// Test gate-type dependent noise through `FlowChannel`.
+    /// Test gate-type dependent noise through `CompositeChannel`.
     #[test]
     fn test_gate_type_dependent_noise() {
         use crate::command::GateType;
@@ -577,7 +577,7 @@ mod tests {
             pauli(),
         );
 
-        let channel = FlowChannelBuilder::any_gate("gate_dependent", gate_dependent_noise);
+        let channel = CompositeChannelBuilder::any_gate("gate_dependent", gate_dependent_noise);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -620,7 +620,7 @@ mod tests {
     // Comparison Tests (Flow vs Traditional Channels)
     // ========================================================================
 
-    /// Compare flow-based single-qubit depolarizing to traditional `SingleQubitChannel`.
+    /// Compare composite-based single-qubit depolarizing to traditional `SingleQubitChannel`.
     #[test]
     fn test_flow_vs_traditional_single_qubit() {
         use crate::command::CommandBuilder;
@@ -665,9 +665,9 @@ mod tests {
                 traditional_errors += 1;
             }
 
-            // Flow-based approach (recreate each iteration)
+            // Composite-based approach (recreate each iteration)
             let flow_noise = prob(p1, pauli());
-            let flow_channel = FlowChannelBuilder::single_qubit("flow_sq", flow_noise);
+            let flow_channel = CompositeChannelBuilder::single_qubit("flow_sq", flow_noise);
             let flow_noise_model = ComposableNoiseModel::new().add_channel(flow_channel);
 
             let mut runner_flow = Runner::new(SparseStab::new(1))
@@ -691,7 +691,7 @@ mod tests {
         );
     }
 
-    /// Compare flow-based measurement noise to traditional `MeasurementChannel`.
+    /// Compare composite-based measurement noise to traditional `MeasurementChannel`.
     #[test]
     fn test_flow_vs_traditional_measurement() {
         use crate::command::CommandBuilder;
@@ -722,10 +722,10 @@ mod tests {
                 traditional_flips += 1;
             }
 
-            // Flow-based approach (recreate each iteration)
+            // Composite-based approach (recreate each iteration)
             let flow_meas_noise = prob(p_meas, flip_outcome());
-            let flow_channel = FlowChannel::new("flow_meas", flow_meas_noise)
-                .with_filter(FlowEventFilter::AfterMeasurement);
+            let flow_channel = CompositeChannel::new("flow_meas", flow_meas_noise)
+                .with_filter(CompositeEventFilter::AfterMeasurement);
             let flow_noise_model = ComposableNoiseModel::new().add_channel(flow_channel);
 
             let mut runner_flow = Runner::new(SparseStab::new(1))
@@ -755,7 +755,7 @@ mod tests {
         );
     }
 
-    /// Test that flow-based noise can replicate a complex `GeneralNoiseModel` configuration.
+    /// Test that composite-based noise can replicate a complex `GeneralNoiseModel` configuration.
     #[test]
     fn test_flow_replicates_general_noise_model() {
         use crate::command::CommandBuilder;
@@ -793,13 +793,13 @@ mod tests {
                 traditional_ones += 1;
             }
 
-            // Flow-based equivalent (recreate each iteration)
+            // Composite-based equivalent (recreate each iteration)
             let sq_noise = prob(p1, pauli());
-            let sq_channel = FlowChannelBuilder::single_qubit("flow_sq", sq_noise);
+            let sq_channel = CompositeChannelBuilder::single_qubit("flow_sq", sq_noise);
 
             let meas_noise = prob(p_meas, flip_outcome());
-            let meas_channel = FlowChannel::new("flow_meas", meas_noise)
-                .with_filter(FlowEventFilter::AfterMeasurement);
+            let meas_channel = CompositeChannel::new("flow_meas", meas_noise)
+                .with_filter(CompositeEventFilter::AfterMeasurement);
 
             let flow_model = ComposableNoiseModel::new()
                 .add_channel(sq_channel)
@@ -833,7 +833,7 @@ mod tests {
     // Idle Noise Tests
     // ========================================================================
 
-    /// Test idle noise through `FlowChannel` with `prob_linear` primitive.
+    /// Test idle noise through `CompositeChannel` with `prob_linear` primitive.
     #[test]
     fn test_idle_noise_linear() {
         use crate::noise::NoiseChannel;
@@ -841,7 +841,7 @@ mod tests {
 
         // Create idle noise with linear time dependence: rate 0.1 per time unit
         let idle_noise = prob_linear(0.1, inject_z());
-        let channel = FlowChannelBuilder::idle("idle_linear", idle_noise);
+        let channel = CompositeChannelBuilder::idle("idle_linear", idle_noise);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -889,7 +889,7 @@ mod tests {
         );
     }
 
-    /// Test idle noise through `FlowChannel` with `prob_quadratic` primitive.
+    /// Test idle noise through `CompositeChannel` with `prob_quadratic` primitive.
     #[test]
     fn test_idle_noise_quadratic() {
         use crate::noise::NoiseChannel;
@@ -898,7 +898,7 @@ mod tests {
         // Create idle noise with quadratic time dependence (T2-like dephasing)
         // Rate = pi/2 -> at duration 1, angle = pi/2, p = sin(pi/2)^2 = 1.0
         let idle_noise = prob_quadratic(std::f64::consts::FRAC_PI_2, inject_z());
-        let channel = FlowChannelBuilder::idle("idle_quadratic", idle_noise);
+        let channel = CompositeChannelBuilder::idle("idle_quadratic", idle_noise);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -925,7 +925,7 @@ mod tests {
         );
     }
 
-    /// Test flow-based idle noise vs traditional `IdleChannel`.
+    /// Test composite-based idle noise vs traditional `IdleChannel`.
     #[test]
     fn test_flow_vs_traditional_idle() {
         use crate::noise::{IdleChannel, NoiseChannel};
@@ -936,9 +936,9 @@ mod tests {
         // Traditional IdleChannel
         let traditional = IdleChannel::linear(rate);
 
-        // Flow-based equivalent
+        // Composite-based equivalent
         let flow_noise = prob_linear(rate, inject_z());
-        let flow_channel = FlowChannelBuilder::idle("flow_idle", flow_noise);
+        let flow_channel = CompositeChannelBuilder::idle("flow_idle", flow_noise);
 
         let mut ctx = NoiseContext::new();
         let mut rng_trad = PecosRng::seed_from_u64(42);
@@ -1116,7 +1116,7 @@ mod tests {
         );
 
         let channel =
-            FlowChannel::new("two_stage_test", noise).with_filter(FlowEventFilter::TwoQubitGate);
+            CompositeChannel::new("two_stage_test", noise).with_filter(CompositeEventFilter::TwoQubitGate);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1156,7 +1156,7 @@ mod tests {
         );
 
         let channel =
-            FlowChannel::new("partial_test", noise).with_filter(FlowEventFilter::TwoQubitGate);
+            CompositeChannel::new("partial_test", noise).with_filter(CompositeEventFilter::TwoQubitGate);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1220,7 +1220,7 @@ mod tests {
     // Channel Adapter Tests
     // ========================================================================
 
-    /// Test that `channel_action` wraps a traditional channel as a flow primitive.
+    /// Test that `channel_action` wraps a traditional channel as a composite primitive.
     #[test]
     fn test_channel_action_wraps_traditional_channel() {
         use crate::command::GateType;
@@ -1237,11 +1237,11 @@ mod tests {
             0.0,
         );
 
-        // Wrap it in a flow primitive and use within a decision tree
+        // Wrap it in a composite primitive and use within a decision tree
         let flow_noise = seq![skip_if_leaked(), channel_action(traditional_channel),];
 
-        // Build a FlowChannel from it
-        let channel = FlowChannelBuilder::single_qubit("adapted_channel", flow_noise);
+        // Build a CompositeChannel from it
+        let channel = CompositeChannelBuilder::single_qubit("adapted_channel", flow_noise);
 
         // Test that it responds appropriately
         let mut ctx = NoiseContext::new();
@@ -1292,7 +1292,7 @@ mod tests {
             channel_action(always_error_channel), // Apply channel if not leaked
         );
 
-        let channel = FlowChannelBuilder::single_qubit("conditional_adapted", noise);
+        let channel = CompositeChannelBuilder::single_qubit("conditional_adapted", noise);
 
         let mut ctx = NoiseContext::new();
         ctx.set_current_gate(GateType::H, &[], 1);
@@ -1347,7 +1347,7 @@ mod tests {
     /// Test that `describe_tree()` produces readable tree output.
     #[test]
     fn test_primitive_describe_tree() {
-        use crate::noise::flow::Primitive;
+        use crate::noise::composite::Primitive;
 
         // Build a complex decision tree
         let noise = seq![
@@ -1379,8 +1379,8 @@ mod tests {
     fn test_model_introspection() {
         use crate::noise::ComposableNoiseModel;
 
-        let channel1 = FlowChannelBuilder::single_qubit("sq_depolarizing", prob(0.01, pauli()));
-        let channel2 = FlowChannelBuilder::after_measurement("meas_error", flip_outcome());
+        let channel1 = CompositeChannelBuilder::single_qubit("sq_depolarizing", prob(0.01, pauli()));
+        let channel2 = CompositeChannelBuilder::after_measurement("meas_error", flip_outcome());
 
         let model = ComposableNoiseModel::new()
             .add_channel(channel1)

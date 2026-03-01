@@ -6,19 +6,19 @@ This guide covers practical usage of the pecos-neo noise modeling system.
 
 pecos-neo provides two approaches to noise modeling:
 
-1. **FlowNoiseModelBuilder** (recommended) - Parameter-based builder with sensible defaults
+1. **CompositeNoiseModelBuilder** (recommended) - Parameter-based builder with sensible defaults
 2. **Custom primitives** - Build noise decision trees from composable primitives
 
 Both produce a `ComposableNoiseModel` that integrates with `Runner`.
 
-## FlowNoiseModelBuilder
+## CompositeNoiseModelBuilder
 
 ### Basic Usage
 
 ```rust
-use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 
-let noise = FlowNoiseModelBuilder::new()
+let noise = CompositeNoiseModelBuilder::new()
     .with_p1(0.001)           // Single-qubit gate error rate
     .with_p2(0.01)            // Two-qubit gate error rate
     .with_p_meas(0.02, 0.03)  // Measurement error (0→1, 1→0)
@@ -30,7 +30,7 @@ let noise = FlowNoiseModelBuilder::new()
 #### Single-Qubit Gates
 
 ```rust
-FlowNoiseModelBuilder::new()
+CompositeNoiseModelBuilder::new()
     // Base error probability
     .with_p1(0.001)
 
@@ -50,7 +50,7 @@ FlowNoiseModelBuilder::new()
 #### Two-Qubit Gates
 
 ```rust
-FlowNoiseModelBuilder::new()
+CompositeNoiseModelBuilder::new()
     // Base error probability
     .with_p2(0.01)
 
@@ -73,7 +73,7 @@ FlowNoiseModelBuilder::new()
 #### Preparation
 
 ```rust
-FlowNoiseModelBuilder::new()
+CompositeNoiseModelBuilder::new()
     // Preparation error rate
     .with_p_prep(0.001)
 
@@ -87,7 +87,7 @@ FlowNoiseModelBuilder::new()
 #### Measurement
 
 ```rust
-FlowNoiseModelBuilder::new()
+CompositeNoiseModelBuilder::new()
     // Asymmetric measurement error
     .with_p_meas(0.02, 0.03)  // P(report 1 | true 0), P(report 0 | true 1)
 
@@ -98,7 +98,7 @@ FlowNoiseModelBuilder::new()
 #### Leakage
 
 ```rust
-FlowNoiseModelBuilder::new()
+CompositeNoiseModelBuilder::new()
     // Leakage and seepage rates
     .with_leakage(
         0.001,  // Probability of leaking per gate
@@ -109,7 +109,7 @@ FlowNoiseModelBuilder::new()
 #### Idle/Decoherence
 
 ```rust
-FlowNoiseModelBuilder::new()
+CompositeNoiseModelBuilder::new()
     // T1/T2 style decoherence
     .with_idle_t1_t2(50e-6, 30e-6)  // T1, T2 in seconds
 
@@ -120,7 +120,7 @@ FlowNoiseModelBuilder::new()
 #### Crosstalk
 
 ```rust
-FlowNoiseModelBuilder::new()
+CompositeNoiseModelBuilder::new()
     // Measurement-induced crosstalk
     .with_measurement_crosstalk(
         0.001,  // Global probability (affects all other qubits)
@@ -155,7 +155,7 @@ let circuit = CommandBuilder::new()
     .build();
 
 // Build noise model
-let noise = FlowNoiseModelBuilder::new()
+let noise = CompositeNoiseModelBuilder::new()
     .with_p1(0.001)
     .with_p2(0.01)
     .build();
@@ -175,8 +175,8 @@ println!("Qubit 1: {}", outcomes.get_bit(QubitId(1)).unwrap());
 For advanced customization, build noise directly from primitives:
 
 ```rust
-use pecos_neo::noise::flow::prelude::*;
-use pecos_neo::noise::flow::{FlowChannel, FlowEventFilter};
+use pecos_neo::noise::composite::prelude::*;
+use pecos_neo::noise::composite::{CompositeChannel, CompositeEventFilter};
 
 // Custom single-qubit noise: skip leaked qubits, then apply depolarizing
 let sq_primitive = seq(vec![
@@ -185,8 +185,8 @@ let sq_primitive = seq(vec![
 ]);
 
 // Create channel
-let channel = FlowChannel::new("custom_sq", sq_primitive)
-    .with_filter(FlowEventFilter::SingleQubitGate);
+let channel = CompositeChannel::new("custom_sq", sq_primitive)
+    .with_filter(CompositeEventFilter::SingleQubitGate);
 
 // Add to model
 let model = ComposableNoiseModel::new()
@@ -303,9 +303,9 @@ For low error rates with many qubits, the system uses geometric sampling to skip
 
 ```rust
 // Automatic for channels with probability < 0.01 and > 100 qubits
-let channel = FlowChannel::new("fast_depol", prob(0.001, depolarize()))
+let channel = CompositeChannel::new("fast_depol", prob(0.001, depolarize()))
     .with_probability(0.001)  // Enables geometric sampling
-    .with_filter(FlowEventFilter::SingleQubitGate);
+    .with_filter(CompositeEventFilter::SingleQubitGate);
 ```
 
 ### Compiled Primitives
@@ -313,7 +313,7 @@ let channel = FlowChannel::new("fast_depol", prob(0.001, depolarize()))
 Complex primitive trees can be compiled for better performance:
 
 ```rust
-use pecos_neo::noise::flow::compiled::CompiledPrimitive;
+use pecos_neo::noise::composite::compiled::CompiledPrimitive;
 
 let primitive = seq(vec![...]);
 let compiled = CompiledPrimitive::compile(&primitive);
@@ -350,7 +350,7 @@ for warning in warnings {
 ### Ion Trap Style
 
 ```rust
-let noise = FlowNoiseModelBuilder::new()
+let noise = CompositeNoiseModelBuilder::new()
     .with_p1(0.0001)
     .with_p2(0.001)
     .with_p1_emission_ratio(0.1)
@@ -363,7 +363,7 @@ let noise = FlowNoiseModelBuilder::new()
 ### Superconducting Style
 
 ```rust
-let noise = FlowNoiseModelBuilder::new()
+let noise = CompositeNoiseModelBuilder::new()
     .with_p1(0.001)
     .with_p2(0.01)
     .with_idle_t1_t2(50e-6, 30e-6)
@@ -375,7 +375,7 @@ let noise = FlowNoiseModelBuilder::new()
 ### Pure Depolarizing (Testing)
 
 ```rust
-let noise = FlowNoiseModelBuilder::new()
+let noise = CompositeNoiseModelBuilder::new()
     .with_p1(p)
     .with_p2(p)
     .build();

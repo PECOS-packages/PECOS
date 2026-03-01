@@ -114,13 +114,15 @@
 //! ```
 
 use crate::command::CommandQueue;
+use crate::extensible::GateDefinitions;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::{MeasurementOutcomes, RegisterMap};
 use crate::program::{CommandSource, DynProgramRunner, ProgramRunner, StaticProgram};
+use crate::runner::{EventHandlers, GateOverrides};
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
-use pecos_qsim::{CliffordGateable, SparseStab, StateVec};
+use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, SparseStab, StateVec};
 use pecos_rng::PecosRng;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
@@ -363,6 +365,65 @@ where
 {
     CustomBackendBuilder {
         factory: Box::new(factory),
+    }
+}
+
+/// Create a custom backend with rotation support from a factory closure.
+///
+/// Like [`custom_backend()`], but enables rotation gates (T, RZ, etc.) for
+/// simulators implementing `ArbitraryRotationGateable`. Use this instead of
+/// `custom_backend()` when your simulator supports non-Clifford gates.
+///
+/// # Example
+///
+/// ```no_run
+/// use pecos_neo::tool::{sim_neo, custom_backend_with_rotations};
+/// use pecos_neo::prelude::*;
+/// use pecos_qsim::StateVec;
+///
+/// let circuit = CommandBuilder::new().pz(0).t(0).mz(0).build();
+///
+/// let results = sim_neo(circuit)
+///     .quantum(custom_backend_with_rotations(|n| StateVec::new(n)))
+///     .shots(100)
+///     .seed(42)
+///     .build()
+///     .run();
+/// ```
+#[must_use]
+pub fn custom_backend_with_rotations<S, F>(factory: F) -> CustomBackendBuilder
+where
+    S: CliffordGateable + ArbitraryRotationGateable + RngManageable<Rng = PecosRng> + Send + Sync + 'static,
+    F: Fn(usize) -> S + Send + Sync + 'static,
+{
+    CustomBackendBuilder {
+        factory: Box::new(RotationSimulatorFactory(factory)),
+    }
+}
+
+/// Factory wrapper that creates rotation-enabled runners.
+struct RotationSimulatorFactory<F>(F);
+
+impl<S, F> SimulatorFactory for RotationSimulatorFactory<F>
+where
+    S: CliffordGateable + ArbitraryRotationGateable + RngManageable<Rng = PecosRng> + Send + Sync + 'static,
+    F: Fn(usize) -> S + Send + Sync,
+{
+    fn create_runner(
+        &self,
+        num_qubits: usize,
+        noise: Option<ComposableNoiseModel>,
+        seed: Option<u64>,
+    ) -> Box<dyn DynProgramRunner> {
+        let sim = (self.0)(num_qubits);
+        let mut runner = ProgramRunner::rotations(sim);
+        if let Some(n) = noise {
+            runner = runner.with_noise(n);
+        }
+        if let Some(s) = seed {
+            runner = runner.with_seed(s);
+        }
+        Box::new(runner)
     }
 }
 
@@ -951,6 +1012,43 @@ impl SimulationResults {
 /// Wrapper for noise model resource.
 pub struct NoiseResource(pub ComposableNoiseModel);
 
+/// Wrapper for gate definitions resource.
+struct GateDefinitionsResource(GateDefinitions);
+
+/// Wrapper for max decomposition depth resource.
+struct MaxDecompDepthResource(usize);
+
+/// Type-erased storage for gate overrides.
+///
+/// Gate overrides are generic over the simulator type `S`, but the builder
+/// doesn't know `S` until build time. This enum carries the typed overrides
+/// as data, deferring application to startup when the backend is known.
+#[derive(Clone)]
+pub enum StoredOverrides {
+    /// Overrides for the sparse stabilizer backend.
+    SparseStab(GateOverrides<SparseStab>),
+    /// Overrides for the state vector backend.
+    StateVec(GateOverrides<StateVec>),
+}
+
+impl From<GateOverrides<SparseStab>> for StoredOverrides {
+    fn from(overrides: GateOverrides<SparseStab>) -> Self {
+        Self::SparseStab(overrides)
+    }
+}
+
+impl From<GateOverrides<StateVec>> for StoredOverrides {
+    fn from(overrides: GateOverrides<StateVec>) -> Self {
+        Self::StateVec(overrides)
+    }
+}
+
+/// Wrapper for gate overrides resource.
+struct GateOverridesResource(StoredOverrides);
+
+/// Wrapper for event handlers resource.
+struct EventHandlersResource(EventHandlers);
+
 // ============================================================================
 // Classical Engine Support
 // ============================================================================
@@ -1151,6 +1249,8 @@ pub struct SimNeoBuilder {
     pending_builder: Option<PendingEngineBuilder>,
     /// Noise model (collected as data, used at build time).
     noise: Option<ComposableNoiseModel>,
+    /// Gate definitions for custom/decomposed gates.
+    definitions: Option<GateDefinitions>,
     /// Simulation configuration (data).
     config: SimConfig,
     /// Orchestration strategy (data).
@@ -1159,6 +1259,12 @@ pub struct SimNeoBuilder {
     quantum_backend: QuantumBackend,
     /// Explicit qubit count override (data).
     explicit_num_qubits: Option<usize>,
+    /// Maximum decomposition depth for gate resolution.
+    max_decomp_depth: Option<usize>,
+    /// Gate overrides (type-erased, applied at startup).
+    overrides: Option<StoredOverrides>,
+    /// Event handlers (cloned per worker for parallel execution).
+    event_handlers: Option<EventHandlers>,
 }
 
 impl SimNeoBuilder {
@@ -1170,10 +1276,14 @@ impl SimNeoBuilder {
             #[cfg(feature = "engines-adapter")]
             pending_builder: None,
             noise: None,
+            definitions: None,
             config: SimConfig::default(),
             orchestrator: Orchestrator::default(),
             quantum_backend: QuantumBackend::default(),
             explicit_num_qubits: None,
+            max_decomp_depth: None,
+            overrides: None,
+            event_handlers: None,
         }
     }
 
@@ -1187,10 +1297,14 @@ impl SimNeoBuilder {
             source: Some(ProgramSource::RawSource(source)),
             pending_builder: None,
             noise: None,
+            definitions: None,
             config: SimConfig::default(),
             orchestrator: Orchestrator::default(),
             quantum_backend: QuantumBackend::default(),
             explicit_num_qubits: None,
+            max_decomp_depth: None,
+            overrides: None,
+            event_handlers: None,
         }
     }
 
@@ -1205,10 +1319,14 @@ impl SimNeoBuilder {
             source: Some(ProgramSource::Typed(program)),
             pending_builder: None,
             noise: None,
+            definitions: None,
             config: SimConfig::default(),
             orchestrator: Orchestrator::default(),
             quantum_backend: QuantumBackend::default(),
             explicit_num_qubits: None,
+            max_decomp_depth: None,
+            overrides: None,
+            event_handlers: None,
         }
     }
 
@@ -1228,10 +1346,14 @@ impl SimNeoBuilder {
             #[cfg(feature = "engines-adapter")]
             pending_builder: None,
             noise: None,
+            definitions: None,
             config: SimConfig::default(),
             orchestrator: Orchestrator::default(),
             quantum_backend: QuantumBackend::default(),
             explicit_num_qubits: None,
+            max_decomp_depth: None,
+            overrides: None,
+            event_handlers: None,
         }
     }
 
@@ -1580,6 +1702,135 @@ impl SimNeoBuilder {
         self
     }
 
+    /// Set custom gate definitions (decompositions, user-defined gates).
+    ///
+    /// Gate definitions control how gate identifiers are mapped to simulator
+    /// operations. Use this to add custom gates or override built-in gate
+    /// decompositions.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pecos_neo::tool::sim_neo;
+    /// use pecos_neo::prelude::*;
+    ///
+    /// let defs = GateDefinitions::new(); // core gates included by default
+    ///
+    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let results = sim_neo(circuit)
+    ///     .gate_definitions(defs)
+    ///     .shots(100)
+    ///     .seed(42)
+    ///     .build()
+    ///     .run();
+    /// ```
+    #[must_use]
+    pub fn gate_definitions(mut self, definitions: GateDefinitions) -> Self {
+        self.definitions = Some(definitions);
+        self
+    }
+
+    /// Set the maximum decomposition depth for gate resolution.
+    ///
+    /// Custom gates can decompose into other gates, which may themselves
+    /// decompose further. This setting limits the recursion depth to prevent
+    /// infinite loops from circular definitions. The default is 10.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pecos_neo::tool::sim_neo;
+    /// use pecos_neo::prelude::*;
+    ///
+    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let results = sim_neo(circuit)
+    ///     .max_decomp_depth(20)
+    ///     .shots(100)
+    ///     .seed(42)
+    ///     .run();
+    /// ```
+    #[must_use]
+    pub fn max_decomp_depth(mut self, depth: usize) -> Self {
+        self.max_decomp_depth = Some(depth);
+        self
+    }
+
+    /// Set custom gate overrides for built-in backends.
+    ///
+    /// Gate overrides replace the default implementation of specific gates
+    /// with custom executor functions. The overrides must match the selected
+    /// backend type (`SparseStab` or `StateVec`).
+    ///
+    /// Type inference selects the correct `StoredOverrides` variant automatically
+    /// via `From` impls, so just pass `GateOverrides<SparseStab>` or
+    /// `GateOverrides<StateVec>` directly.
+    ///
+    /// # Panics
+    ///
+    /// Panics at run time if the overrides don't match the selected backend
+    /// (e.g., `SparseStab` overrides with `state_vector()` backend).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pecos_neo::tool::sim_neo;
+    /// use pecos_neo::prelude::*;
+    /// use pecos_qsim::SparseStab;
+    ///
+    /// let overrides = GateOverrides::<SparseStab>::new()
+    ///     .register(gates::X, |_sim, _angles, _qubits| {
+    ///         // Custom X gate implementation
+    ///         true
+    ///     });
+    ///
+    /// let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    /// let results = sim_neo(circuit)
+    ///     .gate_overrides(overrides)
+    ///     .shots(100)
+    ///     .seed(42)
+    ///     .run();
+    /// ```
+    #[must_use]
+    pub fn gate_overrides(mut self, overrides: impl Into<StoredOverrides>) -> Self {
+        self.overrides = Some(overrides.into());
+        self
+    }
+
+    /// Set event handlers (gate and signal handlers) for the simulation.
+    ///
+    /// Event handlers are cloned per worker in parallel execution, so they
+    /// work correctly with `.workers(n)` and `.auto_workers()`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pecos_neo::tool::sim_neo;
+    /// use pecos_neo::prelude::*;
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use std::sync::Arc;
+    ///
+    /// let gate_count = Arc::new(AtomicUsize::new(0));
+    /// let c = gate_count.clone();
+    ///
+    /// let handlers = EventHandlers::new()
+    ///     .on_before_gate(move |_ctx| {
+    ///         c.fetch_add(1, Ordering::Relaxed);
+    ///         NoiseResponse::None
+    ///     });
+    ///
+    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let results = sim_neo(circuit)
+    ///     .event_handlers(handlers)
+    ///     .shots(100)
+    ///     .seed(42)
+    ///     .run();
+    /// ```
+    #[must_use]
+    pub fn event_handlers(mut self, handlers: EventHandlers) -> Self {
+        self.event_handlers = Some(handlers);
+        self
+    }
+
     /// Add uniform depolarizing noise to all operations.
     ///
     /// This is a convenience method equivalent to:
@@ -1679,6 +1930,10 @@ impl SimNeoBuilder {
                     num_qubits,
                     backend: BuiltinBackend::SparseStab,
                     noise: self.noise.clone(),
+                    definitions: self.definitions.clone(),
+                    max_decomp_depth: self.max_decomp_depth,
+                    overrides: self.overrides.clone(),
+                    event_handlers: self.event_handlers.clone(),
                 })
             }
             (ProgramSource::Static(circuit), QuantumBackend::StateVec) => {
@@ -1695,6 +1950,10 @@ impl SimNeoBuilder {
                     num_qubits,
                     backend: BuiltinBackend::StateVec,
                     noise: self.noise.clone(),
+                    definitions: self.definitions.clone(),
+                    max_decomp_depth: self.max_decomp_depth,
+                    overrides: self.overrides.clone(),
+                    event_handlers: self.event_handlers.clone(),
                 })
             }
             _ => None,
@@ -1722,6 +1981,26 @@ impl SimNeoBuilder {
         // Add noise if configured
         if let Some(noise) = self.noise {
             tool = tool.insert_resource(NoiseResource(noise));
+        }
+
+        // Add gate definitions if configured
+        if let Some(definitions) = self.definitions {
+            tool = tool.insert_resource(GateDefinitionsResource(definitions));
+        }
+
+        // Add max decomposition depth if configured
+        if let Some(depth) = self.max_decomp_depth {
+            tool = tool.insert_resource(MaxDecompDepthResource(depth));
+        }
+
+        // Add gate overrides if configured
+        if let Some(overrides) = self.overrides.clone() {
+            tool = tool.insert_resource(GateOverridesResource(overrides));
+        }
+
+        // Add event handlers if configured
+        if let Some(handlers) = self.event_handlers {
+            tool = tool.insert_resource(EventHandlersResource(handlers));
         }
 
         Simulation {
@@ -1906,30 +2185,82 @@ fn unified_simulation_startup(resources: &mut Resources) {
 
     // Create quantum runner based on backend choice
     let noise = resources.try_remove::<NoiseResource>();
+    let definitions = resources.try_remove::<GateDefinitionsResource>();
+    let max_depth = resources.try_remove::<MaxDecompDepthResource>();
+    let overrides = resources.try_remove::<GateOverridesResource>();
+    let event_handlers = resources.try_remove::<EventHandlersResource>();
     let quantum_runner = match backend {
         QuantumBackend::SparseStab => {
             let sim = SparseStab::new(num_qubits);
-            let mut runner = ProgramRunner::new(sim);
+            let mut runner = if let Some(defs) = definitions {
+                ProgramRunner::with_definitions(sim, defs.0)
+            } else {
+                ProgramRunner::new(sim)
+            };
             if let Some(n) = noise {
                 runner = runner.with_noise(n.0);
             }
             if let Some(seed) = config.seed {
                 runner = runner.with_seed(seed);
+            }
+            if let Some(ref d) = max_depth {
+                runner = runner.with_max_decomp_depth(d.0);
+            }
+            if let Some(ref o) = overrides {
+                match o.0 {
+                    StoredOverrides::SparseStab(ref ov) => {
+                        runner = runner.with_overrides(ov.clone());
+                    }
+                    StoredOverrides::StateVec(_) => {
+                        panic!(
+                            "StateVec gate overrides used with SparseStab backend. \
+                             Use GateOverrides::<SparseStab> instead."
+                        );
+                    }
+                }
+            }
+            if let Some(ref eh) = event_handlers {
+                runner = runner.with_event_handlers(eh.0.clone());
             }
             QuantumRunner::SparseStab(runner)
         }
         QuantumBackend::StateVec => {
             let sim = StateVec::new(num_qubits);
-            let mut runner = ProgramRunner::new(sim);
+            let mut runner = if let Some(defs) = definitions {
+                ProgramRunner::rotations_with_definitions(sim, defs.0)
+            } else {
+                ProgramRunner::rotations(sim)
+            };
             if let Some(n) = noise {
                 runner = runner.with_noise(n.0);
             }
             if let Some(seed) = config.seed {
                 runner = runner.with_seed(seed);
             }
+            if let Some(ref d) = max_depth {
+                runner = runner.with_max_decomp_depth(d.0);
+            }
+            if let Some(ref o) = overrides {
+                match o.0 {
+                    StoredOverrides::StateVec(ref ov) => {
+                        runner = runner.with_overrides(ov.clone());
+                    }
+                    StoredOverrides::SparseStab(_) => {
+                        panic!(
+                            "SparseStab gate overrides used with StateVec backend. \
+                             Use GateOverrides::<StateVec> instead."
+                        );
+                    }
+                }
+            }
+            if let Some(ref eh) = event_handlers {
+                runner = runner.with_event_handlers(eh.0.clone());
+            }
             QuantumRunner::StateVec(runner)
         }
         QuantumBackend::Custom(factory) => {
+            // Custom backends create their own runner; gate definitions
+            // should be captured in the factory closure if needed.
             let runner = factory.create_runner(num_qubits, noise.map(|n| n.0), config.seed);
             QuantumRunner::Custom(runner)
         }
@@ -2187,6 +2518,14 @@ struct ParallelExecutionData {
     backend: BuiltinBackend,
     /// Noise model (cloned per worker for parallel execution).
     noise: Option<ComposableNoiseModel>,
+    /// Gate definitions (cloned per worker for parallel execution).
+    definitions: Option<GateDefinitions>,
+    /// Max decomposition depth (cloned per worker for parallel execution).
+    max_decomp_depth: Option<usize>,
+    /// Gate overrides (cloned per worker for parallel execution).
+    overrides: Option<StoredOverrides>,
+    /// Event handlers (cloned per worker for parallel execution).
+    event_handlers: Option<EventHandlers>,
 }
 
 impl Simulation {
@@ -2289,6 +2628,18 @@ impl Simulation {
                 resources.insert(SimulationResults::new());
                 if let Some(ref noise) = data.noise {
                     resources.insert(NoiseResource(noise.clone()));
+                }
+                if let Some(ref defs) = data.definitions {
+                    resources.insert(GateDefinitionsResource(defs.clone()));
+                }
+                if let Some(depth) = data.max_decomp_depth {
+                    resources.insert(MaxDecompDepthResource(depth));
+                }
+                if let Some(ref overrides) = data.overrides {
+                    resources.insert(GateOverridesResource(overrides.clone()));
+                }
+                if let Some(ref handlers) = data.event_handlers {
+                    resources.insert(EventHandlersResource(handlers.clone()));
                 }
 
                 // Run Startup (creates runner/simulator via UnifiedSimulationPlugin systems)
@@ -3625,5 +3976,439 @@ mod tests {
             counts.is_empty(),
             "Unmeasured register should have no counts"
         );
+    }
+
+    #[test]
+    fn test_sim_neo_with_gate_definitions() {
+        use crate::extensible::GateDefinitions;
+
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0) // Flip to |1>
+            .mz(0)
+            .build();
+
+        let defs = GateDefinitions::new();
+
+        let results = sim_neo(circuit)
+            .gate_definitions(defs)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        // All outcomes should be 1 (X gate flips |0> to |1>)
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_gate_definitions_with_statevec() {
+        use crate::extensible::GateDefinitions;
+
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0)
+            .mz(0)
+            .build();
+
+        let defs = GateDefinitions::new();
+
+        let results = sim_neo(circuit)
+            .quantum(state_vector())
+            .gate_definitions(defs)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_statevec_t_gate() {
+        // T gate is non-Clifford -- needs rotation support.
+        // Verify T gate runs without error on StateVec.
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .t(0) // Non-Clifford gate
+            .mz(0)
+            .build();
+
+        // This would fail with ProgramRunner::new() (Clifford-only)
+        let results = sim_neo(circuit)
+            .quantum(state_vector())
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        // T|0> = |0> (up to phase), so measurement should always be 0
+        for outcome in &results.outcomes {
+            assert!(
+                !outcome.get_bit(QubitId(0)).unwrap(),
+                "T|0> should measure as |0>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_statevec_rz_gate() {
+        use pecos_core::Angle64;
+        use std::f64::consts::PI;
+
+        // RZ(pi) on |+> should flip phase, so H then RZ(pi) then H = X (up to global phase)
+        // Instead, simpler test: RZ on |0> leaves |0>
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .rz(0, Angle64::from_radians(PI / 4.0)) // arbitrary rotation
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(state_vector())
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        // RZ on |0> gives e^{-i*pi/8}|0> -- still |0> when measured
+        for outcome in &results.outcomes {
+            assert!(
+                !outcome.get_bit(QubitId(0)).unwrap(),
+                "RZ|0> should measure as |0>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_statevec_parallel() {
+        // Verify StateVec rotation support works with parallel workers too
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .t(0) // Non-Clifford
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(state_vector())
+            .workers(2)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                !outcome.get_bit(QubitId(0)).unwrap(),
+                "T|0> should measure as |0>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_max_decomp_depth() {
+        // Verify that max_decomp_depth builder method works without error
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0)
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .max_decomp_depth(20)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_max_decomp_depth_parallel() {
+        // Verify max_decomp_depth works with parallel workers
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0)
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .max_decomp_depth(20)
+            .workers(2)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_custom_backend_with_rotations() {
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .t(0) // Non-Clifford
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(custom_backend_with_rotations(|n| StateVec::new(n)))
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                !outcome.get_bit(QubitId(0)).unwrap(),
+                "T|0> should measure as |0>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_gate_overrides() {
+        use crate::extensible::gates;
+        use crate::runner::GateOverrides;
+
+        // Override X gate to be identity (do nothing) -- measurement should stay 0
+        let overrides = GateOverrides::<SparseStab>::new().register(
+            gates::X,
+            |_sim, _angles, _qubits| true,
+        );
+
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0) // Would flip to |1>, but override makes it a no-op
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .gate_overrides(overrides)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        // X was overridden to be identity, so all measurements should be 0
+        for outcome in &results.outcomes {
+            assert!(
+                !outcome.get_bit(QubitId(0)).unwrap(),
+                "Overridden X should be identity, measuring |0>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_gate_overrides_parallel() {
+        use crate::extensible::gates;
+        use crate::runner::GateOverrides;
+
+        // Override X to be identity -- verify it works with parallel workers
+        let overrides = GateOverrides::<SparseStab>::new().register(
+            gates::X,
+            |_sim, _angles, _qubits| true,
+        );
+
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0)
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .gate_overrides(overrides)
+            .workers(2)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                !outcome.get_bit(QubitId(0)).unwrap(),
+                "Overridden X should be identity, measuring |0>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_gate_overrides_statevec() {
+        use crate::extensible::gates;
+        use crate::runner::GateOverrides;
+
+        // Override X to be identity on StateVec backend
+        let overrides = GateOverrides::<StateVec>::new().register(
+            gates::X,
+            |_sim, _angles, _qubits| true,
+        );
+
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0)
+            .mz(0)
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(state_vector())
+            .gate_overrides(overrides)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                !outcome.get_bit(QubitId(0)).unwrap(),
+                "Overridden X should be identity, measuring |0>"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "StateVec gate overrides used with SparseStab backend")]
+    fn test_sim_neo_gate_overrides_backend_mismatch_statevec_on_sparsestab() {
+        use crate::extensible::gates;
+        use crate::runner::GateOverrides;
+
+        let overrides = GateOverrides::<StateVec>::new().register(
+            gates::X,
+            |_sim, _angles, _qubits| true,
+        );
+
+        // SparseStab is the default backend -- StateVec overrides should panic
+        sim_neo(CommandBuilder::new().pz(0).x(0).mz(0).build())
+            .gate_overrides(overrides)
+            .shots(1)
+            .seed(42)
+            .build()
+            .run();
+    }
+
+    #[test]
+    #[should_panic(expected = "SparseStab gate overrides used with StateVec backend")]
+    fn test_sim_neo_gate_overrides_backend_mismatch_sparsestab_on_statevec() {
+        use crate::extensible::gates;
+        use crate::runner::GateOverrides;
+
+        let overrides = GateOverrides::<SparseStab>::new().register(
+            gates::X,
+            |_sim, _angles, _qubits| true,
+        );
+
+        sim_neo(CommandBuilder::new().pz(0).x(0).mz(0).build())
+            .quantum(state_vector())
+            .gate_overrides(overrides)
+            .shots(1)
+            .seed(42)
+            .build()
+            .run();
+    }
+
+    #[test]
+    fn test_sim_neo_gate_overrides_observable_effect() {
+        use crate::extensible::gates;
+        use crate::runner::GateOverrides;
+        use pecos_qsim::CliffordGateable;
+
+        // Override X to apply Z instead. Z|0> = |0>, so measurement stays 0
+        // (without override, X|0> = |1>)
+        let overrides = GateOverrides::<SparseStab>::new().register(
+            gates::X,
+            |sim, _angles, qubits| {
+                sim.z(qubits);
+                true
+            },
+        );
+
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+
+        let results = sim_neo(circuit)
+            .gate_overrides(overrides)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        // Z|0> = |0>, so all outcomes should be 0
+        for outcome in &results.outcomes {
+            assert!(
+                !outcome.get_bit(QubitId(0)).unwrap(),
+                "X overridden to Z: Z|0> should measure |0>"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_gate_definitions_parallel() {
+        use crate::extensible::GateDefinitions;
+
+        let circuit = CommandBuilder::new()
+            .pz(0)
+            .x(0)
+            .mz(0)
+            .build();
+
+        let defs = GateDefinitions::new();
+
+        let results = sim_neo(circuit)
+            .gate_definitions(defs)
+            .workers(2)
+            .shots(10)
+            .seed(42)
+            .build()
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+        }
     }
 }

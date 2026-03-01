@@ -54,8 +54,8 @@
 //! ```
 
 use super::crosstalk::CrosstalkChannel;
-use super::flow::Primitive;
-use super::flow::channel::{FlowChannel, FlowChannelBuilder};
+use super::composite::Primitive;
+use super::composite::channel::{CompositeChannel, CompositeChannelBuilder};
 use super::idle::IdleChannel;
 use super::leakage::LeakageChannel;
 use super::measurement::MeasurementChannel;
@@ -405,7 +405,7 @@ impl NoiseModelBuilder {
     /// ```
     #[must_use]
     pub fn with_single_qubit_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
-        let channel = FlowChannelBuilder::single_qubit("single_qubit", primitive);
+        let channel = CompositeChannelBuilder::single_qubit("single_qubit", primitive);
         self.custom_channels.push(Box::new(channel));
         self.single_qubit_override = true;
         self
@@ -416,7 +416,7 @@ impl NoiseModelBuilder {
     /// This overrides the simple p2-based configuration.
     #[must_use]
     pub fn with_two_qubit_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
-        let channel = FlowChannelBuilder::two_qubit("two_qubit", primitive);
+        let channel = CompositeChannelBuilder::two_qubit("two_qubit", primitive);
         self.custom_channels.push(Box::new(channel));
         self.two_qubit_override = true;
         self
@@ -427,7 +427,7 @@ impl NoiseModelBuilder {
     /// This overrides the simple p_meas-based configuration.
     #[must_use]
     pub fn with_measurement_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
-        let channel = FlowChannelBuilder::after_measurement("measurement", primitive);
+        let channel = CompositeChannelBuilder::after_measurement("measurement", primitive);
         self.custom_channels.push(Box::new(channel));
         self.measurement_override = true;
         self
@@ -438,7 +438,7 @@ impl NoiseModelBuilder {
     /// This overrides the simple p_prep-based configuration.
     #[must_use]
     pub fn with_preparation_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
-        let channel = FlowChannelBuilder::preparation("preparation", primitive);
+        let channel = CompositeChannelBuilder::preparation("preparation", primitive);
         self.custom_channels.push(Box::new(channel));
         self.preparation_override = true;
         self
@@ -453,7 +453,7 @@ impl NoiseModelBuilder {
     ///
     /// let model = NoiseModelBuilder::new()
     ///     .with_custom_channel(
-    ///         FlowChannelBuilder::any_gate("custom_noise", seq![
+    ///         CompositeChannelBuilder::any_gate("custom_noise", seq![
     ///             skip_if_leaked(),
     ///             prob(0.05, pauli()),
     ///         ])
@@ -463,7 +463,7 @@ impl NoiseModelBuilder {
     #[must_use]
     pub fn with_custom_channel<P: Primitive + Clone + 'static>(
         mut self,
-        channel: FlowChannel<P>,
+        channel: CompositeChannel<P>,
     ) -> Self {
         self.custom_channels.push(Box::new(channel));
         self
@@ -604,7 +604,7 @@ impl NoiseModelBuilder {
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;
-    use crate::noise::flow::prelude::*;
+    use crate::noise::composite::prelude::*;
     use crate::runner::Runner;
     use pecos_core::QubitId;
     use pecos_qsim::SparseStab;

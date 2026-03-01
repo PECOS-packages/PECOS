@@ -78,11 +78,12 @@
 //! ```
 
 use crate::command::CommandQueue;
+use crate::extensible::GateDefinitions;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
-use crate::runner::Runner;
+use crate::runner::{EventHandlers, GateOverrides, Runner};
 use pecos_core::rng::RngManageable;
-use pecos_qsim::CliffordGateable;
+use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_rng::PecosRng;
 
 /// A source of quantum commands for program execution.
@@ -136,6 +137,13 @@ impl<S: CliffordGateable> ProgramRunner<S> {
         }
     }
 
+    /// Create a new program runner with explicit gate definitions.
+    pub fn with_definitions(simulator: S, definitions: GateDefinitions) -> Self {
+        Self {
+            runner: Runner::with_definitions(simulator, definitions),
+        }
+    }
+
     /// Set the noise model.
     #[must_use]
     pub fn with_noise(mut self, noise: ComposableNoiseModel) -> Self {
@@ -147,6 +155,13 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     #[must_use]
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.runner = self.runner.with_seed(seed);
+        self
+    }
+
+    /// Set custom gate overrides.
+    #[must_use]
+    pub fn with_overrides(mut self, overrides: GateOverrides<S>) -> Self {
+        self.runner = self.runner.with_overrides(overrides);
         self
     }
 
@@ -209,6 +224,39 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     /// Get a mutable reference to the underlying runner.
     pub fn runner_mut(&mut self) -> &mut Runner<S> {
         &mut self.runner
+    }
+
+    /// Set maximum decomposition depth for gate resolution.
+    #[must_use]
+    pub fn with_max_decomp_depth(mut self, depth: usize) -> Self {
+        self.runner = self.runner.with_max_decomp_depth(depth);
+        self
+    }
+
+    /// Merge an [`EventHandlers`] collection into the underlying runner.
+    #[must_use]
+    pub fn with_event_handlers(mut self, handlers: EventHandlers) -> Self {
+        self.runner = self.runner.with_event_handlers(handlers);
+        self
+    }
+}
+
+impl<S: CliffordGateable + ArbitraryRotationGateable> ProgramRunner<S> {
+    /// Create a program runner with rotation gate support and default definitions.
+    ///
+    /// For simulators implementing `ArbitraryRotationGateable`, this constructor
+    /// enables native execution of rotation gates (T, Tdg, RX, RY, RZ, etc.).
+    pub fn rotations(simulator: S) -> Self {
+        Self {
+            runner: Runner::rotations(simulator),
+        }
+    }
+
+    /// Create a program runner with rotation gate support and explicit definitions.
+    pub fn rotations_with_definitions(simulator: S, definitions: GateDefinitions) -> Self {
+        Self {
+            runner: Runner::rotations_with_definitions(simulator, definitions),
+        }
     }
 }
 

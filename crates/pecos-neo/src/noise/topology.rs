@@ -26,19 +26,19 @@
 //!
 //! # Neighbor Functions
 //!
-//! Use these with `FlowCrosstalkChannel::local()` to define which qubits
+//! Use these with `CompositeCrosstalkChannel::local()` to define which qubits
 //! are affected by crosstalk:
 //!
 //! ```
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // 1D chain: qubit i has neighbors i-1 and i+1
-//! let crosstalk = FlowCrosstalkChannel::new("chain", prob(0.01, pauli()))
+//! let crosstalk = CompositeCrosstalkChannel::new("chain", prob(0.01, pauli()))
 //!     .responds_to_measurement()
 //!     .local(chain_neighbors);
 //!
 //! // 2D grid (5 columns): up/down/left/right neighbors
-//! let crosstalk = FlowCrosstalkChannel::new("grid", prob(0.01, pauli()))
+//! let crosstalk = CompositeCrosstalkChannel::new("grid", prob(0.01, pauli()))
 //!     .responds_to_measurement()
 //!     .local(grid_neighbors(5));
 //! ```

@@ -1,7 +1,7 @@
 use pecos_core::{Angle64, QubitId};
 use pecos_neo::GateType;
-use pecos_neo::noise::flow::channel::FlowChannel;
-use pecos_neo::noise::flow::prelude::*;
+use pecos_neo::noise::composite::channel::CompositeChannel;
+use pecos_neo::noise::composite::prelude::*;
 use pecos_neo::noise::{NoiseChannel, NoiseContext, NoiseEvent};
 use pecos_rng::PecosRng;
 use std::time::Instant;
@@ -10,9 +10,9 @@ fn bench_scale(num_qubits: usize, prob: f64, iterations: usize) {
     let qubits: Vec<QubitId> = (0..num_qubits).map(QubitId).collect();
     let angles: Vec<Angle64> = vec![];
 
-    let channel = FlowChannel::new("test", pauli())
+    let channel = CompositeChannel::new("test", pauli())
         .with_probability(prob)
-        .with_filter(FlowEventFilter::SingleQubitGate);
+        .with_filter(CompositeEventFilter::SingleQubitGate);
 
     let event = NoiseEvent::AfterGate {
         gate_type: GateType::H,
@@ -43,7 +43,7 @@ fn bench_scale(num_qubits: usize, prob: f64, iterations: usize) {
 }
 
 fn main() {
-    println!("=== FlowChannel.with_probability() Scale Test ===\n");
+    println!("=== CompositeChannel.with_probability() Scale Test ===\n");
 
     println!("At p=1e-4:");
     bench_scale(100_000, 1e-4, 10000);

@@ -14,8 +14,15 @@ Need to run a quantum circuit simulation?
 ├─► Simple case (standard gates, basic noise)?
 │   └─► Use sim_neo() - highest level, batteries included
 │
-├─► Need custom gates or gate overrides?
-│   └─► Use Runner with GateDefinitions
+├─► Need non-Clifford gates (T, rotations)?
+│   └─► Use sim_neo() with .quantum(state_vector()) -- rotations auto-enabled
+│
+├─► Need custom gates or decompositions?
+│   └─► Use sim_neo() with .gate_definitions()
+│
+├─► Need gate overrides (swap implementations at runtime)?
+│   └─► Use sim_neo() with .gate_overrides() (built-in backends)
+│       or Runner with GateOverrides (custom backends, closures)
 │
 ├─► Need fine-grained control over execution?
 │   └─► Use Runner (GateType-based) or ProgramRunner
@@ -36,9 +43,8 @@ Need to run a quantum circuit simulation?
 
 | API | Abstraction | Use Case |
 |-----|-------------|----------|
-| `sim_neo()` | Highest | Standard simulations, quick prototyping |
-| `Runner` | High | Custom gates, decomposition, gate overrides |
-| `Runner` | Medium | Direct control, GateType-based circuits |
+| `sim_neo()` | Highest | Standard simulations, custom gates, gate overrides, event handlers, quick prototyping |
+| `Runner` | High | Direct simulator access, closure-based overrides, custom execution logic |
 | `ProgramRunner` | Medium | Programs with classical control flow |
 | `ImportanceSamplingRunner` | Medium | Direct importance sampling control |
 | `World<S>` | Low | Population simulation, trajectory management |
@@ -80,38 +86,79 @@ let results = sim_neo(circuit)
     .workers(4)
     .shots(1000)
     .run();
+
+// With custom gate definitions
+let defs = GateDefinitions::new();
+let results = sim_neo(circuit)
+    .gate_definitions(defs)
+    .shots(1000)
+    .run();
+
+// State vector with non-Clifford gates (rotations auto-enabled)
+let results = sim_neo(circuit)
+    .quantum(state_vector())
+    .shots(1000)
+    .run();
+
+// Control decomposition depth for deeply nested custom gates
+let results = sim_neo(circuit)
+    .max_decomp_depth(20)
+    .shots(1000)
+    .run();
+
+// Gate overrides (swap gate implementations at runtime)
+let overrides = GateOverrides::<SparseStab>::new()
+    .register(gates::X, |sim, _angles, qubits| {
+        // Custom implementation
+        true
+    });
+let results = sim_neo(circuit)
+    .gate_overrides(overrides)
+    .shots(1000)
+    .run();
+```
+
+### Event Handlers via sim_neo()
+
+Event handlers (gate and signal handlers) can be passed through `sim_neo()` using
+`EventHandlers`, which works with both sequential and parallel execution:
+
+```rust
+use pecos_neo::prelude::*;
+use pecos_neo::tool::sim_neo;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+let gate_count = Arc::new(AtomicUsize::new(0));
+let c = gate_count.clone();
+
+let handlers = EventHandlers::new()
+    .on_before_gate(move |_ctx| {
+        c.fetch_add(1, Ordering::Relaxed);
+        NoiseResponse::None
+    });
+
+let results = sim_neo(circuit)
+    .event_handlers(handlers)
+    .workers(4)  // handlers are cloned per worker
+    .shots(1000)
+    .run();
 ```
 
 ### When to Use Runner
 
-Use `Runner` when you need:
-- Custom gate definitions
-- Gate decomposition (custom gates → native gates)
-- Gate overrides (swap implementations)
-- GateId-based circuits (via `OpBuilder`)
+Use `Runner` directly when you need:
+- Direct simulator access between shots
+- Custom execution logic beyond what `sim_neo()` provides
 
 ```rust
 use pecos_neo::prelude::*;
 
-// Define custom gate
-let mut definitions = GateDefinitions::new();
-let my_gate = definitions.register(
-    GateSpec::new("MyGate")
-        .with_quantum_arity(1)
-        .with_decomposition(|q, _| vec![
-            (gates::H, vec![q[0]], vec![]),
-            (gates::SZ, vec![q[0]], vec![]),
-        ])
-);
+let mut runner = Runner::new(SparseStab::new(1))
+    .with_noise(noise)
+    .with_seed(42);
 
-// Build circuit with custom gate
-let circuit = OpBuilder::new()
-    .gate1(my_gate, QubitId(0))
-    .build();
-
-// Run with decomposition
-let mut runner = Runner::with_definitions(SparseStab::new(1), definitions);
-let outcomes = runner.run(&circuit)?;
+let outcomes = runner.execute(&commands)?;
 ```
 
 ### When to Use Lower-Level APIs
@@ -119,6 +166,7 @@ let outcomes = runner.run(&circuit)?;
 Use `Runner` or `ProgramRunner` when:
 - You need direct simulator access
 - You're building custom execution logic
+- You need gate overrides (`GateOverrides<S>`)
 - You're integrating with existing infrastructure
 
 ```rust
@@ -145,14 +193,14 @@ Need noise modeling?
 │       .with_p1(), .with_p2(), .with_p_meas()
 │
 ├─► Need leakage, seepage, emission?
-│   └─► Use FlowNoiseModelBuilder
+│   └─► Use CompositeNoiseModelBuilder
 │       .with_p1_emission_ratio(), .with_leak_rate()
 │
 ├─► Need gate-specific noise?
-│   └─► Use GateDependentChannel or custom FlowChannel
+│   └─► Use GateDependentChannel or custom CompositeChannel
 │
 └─► Need custom noise logic?
-    └─► Implement NoiseChannel trait or use flow primitives
+    └─► Implement NoiseChannel trait or use composite primitives
 ```
 
 ### Noise Model Comparison
@@ -161,8 +209,8 @@ Need noise modeling?
 |---------|----------|------------|
 | `.depolarizing(p)` | Uniform depolarizing | Simplest |
 | `GeneralNoiseModelBuilder` | Separate p1/p2/p_meas | Simple |
-| `FlowNoiseModelBuilder` | Leakage, emission, seepage | Medium |
-| Custom `FlowChannel` | Gate-specific, conditional | Advanced |
+| `CompositeNoiseModelBuilder` | Leakage, emission, seepage | Medium |
+| Custom `CompositeChannel` | Gate-specific, conditional | Advanced |
 | Flow primitives | Full decision trees | Most flexible |
 
 ## Builder Patterns
@@ -310,7 +358,7 @@ This pattern is used by three traits:
 
 ### Type-Erased Cloning for Primitives
 
-The `Primitive` trait (flow-based noise decision trees) also has `clone_box()`.
+The `Primitive` trait (composite-based noise decision trees) also has `clone_box()`.
 Composite primitives like `Prob<P>`, `When<C, T, E>`, and `Seq<P>` use
 type-erased reconstruction in their `clone_box()` implementations. This avoids
 requiring `P: Clone` on generic Primitive impls:
@@ -406,7 +454,7 @@ impl<S: CliffordGateable + MyCapability> Runner<S> {
 | Configurations | `*Config` | `SubsetConfig`, `SimConfig` |
 | Results | `*Result` or `*Results` | `SimulationResults` |
 | Runners | `*Runner` | `Runner`, `Runner` |
-| Channels | `*Channel` | `FlowChannel`, `SingleQubitChannel` |
+| Channels | `*Channel` | `CompositeChannel`, `SingleQubitChannel` |
 
 ### Methods
 

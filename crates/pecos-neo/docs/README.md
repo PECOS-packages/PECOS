@@ -20,9 +20,9 @@ This directory contains documentation for `pecos-neo`, a quantum circuit simulat
 
 ### Noise Modeling
 
-- **[noise-flow-design.md](noise-flow-design.md)** - Design document for the composable noise flow system. Describes the primitive-based approach to noise modeling with decision trees.
+- **[noise-composite-design.md](noise-composite-design.md)** - Design document for the composable noise composite system. Describes the primitive-based approach to noise modeling with decision trees.
 
-- **[noise-usage-guide.md](noise-usage-guide.md)** - Practical guide to using the noise system. Covers `FlowNoiseModelBuilder`, `ComposableNoiseModel`, and common noise patterns.
+- **[noise-usage-guide.md](noise-usage-guide.md)** - Practical guide to using the noise system. Covers `CompositeNoiseModelBuilder`, `ComposableNoiseModel`, and common noise patterns.
 
 ### Signals and Dispatch
 
@@ -70,6 +70,82 @@ for outcome in &results.outcomes {
 }
 ```
 
+### State Vector with Non-Clifford Gates
+
+Use `state_vector()` for circuits with T gates, rotations, and other non-Clifford operations. Rotation support is automatically enabled:
+
+```rust
+use pecos_neo::tool::{sim_neo, state_vector};
+use pecos_neo::command::CommandBuilder;
+
+let circuit = CommandBuilder::new()
+    .pz(0)
+    .h(0)
+    .t(0)           // Non-Clifford gate
+    .rz(0, 0.123)   // Arbitrary rotation
+    .mz(0)
+    .build();
+
+let results = sim_neo(circuit)
+    .quantum(state_vector())
+    .shots(1000)
+    .seed(42)
+    .run();
+```
+
+### Gate Overrides
+
+Swap gate implementations at runtime using `gate_overrides()`:
+
+```rust
+use pecos_neo::tool::sim_neo;
+use pecos_neo::prelude::*;
+use pecos_qsim::SparseStab;
+
+let overrides = GateOverrides::<SparseStab>::new()
+    .register(gates::X, |sim, _angles, qubits| {
+        // Custom X gate implementation
+        sim.x(qubits);
+        true
+    });
+
+let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+let results = sim_neo(circuit)
+    .gate_overrides(overrides)
+    .shots(1000)
+    .seed(42)
+    .run();
+```
+
+### Event Handlers
+
+Register gate/signal event handlers via `EventHandlers`. They work with both
+sequential and parallel execution:
+
+```rust
+use pecos_neo::tool::sim_neo;
+use pecos_neo::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+let gate_count = Arc::new(AtomicUsize::new(0));
+let c = gate_count.clone();
+
+let handlers = EventHandlers::new()
+    .on_before_gate(move |_ctx| {
+        c.fetch_add(1, Ordering::Relaxed);
+        NoiseResponse::None
+    });
+
+let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+let results = sim_neo(circuit)
+    .event_handlers(handlers)
+    .workers(4)
+    .shots(1000)
+    .seed(42)
+    .run();
+```
+
 ### Importance Sampling for Rare Events
 
 For estimating rare event probabilities efficiently:
@@ -109,9 +185,30 @@ let results = sim_neo(circuit)
     .run();
 ```
 
-### Running with Custom Gates (Runner)
+### Running with Custom Gate Definitions
 
-For circuits with custom gates and decomposition:
+Pass custom gate definitions (decompositions, user-defined gates) through `sim_neo()`:
+
+```rust
+use pecos_neo::tool::sim_neo;
+use pecos_neo::prelude::*;
+
+let defs = GateDefinitions::new(); // core gates included by default
+
+let circuit = CommandBuilder::new()
+    .pz(0).h(0).mz(0)
+    .build();
+
+let results = sim_neo(circuit)
+    .gate_definitions(defs)
+    .depolarizing(0.01)
+    .shots(1000)
+    .seed(42)
+    .run();
+```
+
+For GateId-based circuits with `OpBuilder`, or when you need gate overrides,
+use `Runner` directly:
 
 ```rust
 use pecos_neo::prelude::*;
@@ -166,12 +263,12 @@ pecos-neo/
 │   ├── adaptor.rs     # Gate adaptors and decomposition
 │   └── ...
 ├── noise/             # Noise modeling system
-│   ├── flow/          # Composable primitive-based noise
+│   ├── composite/          # Composable primitive-based noise
 │   │   ├── primitive.rs   # Core Primitive trait and composites
 │   │   ├── action.rs      # Terminal actions (Pauli, Leak, Seep, etc.)
 │   │   ├── condition.rs   # Conditions (Leaked, OutcomeIs, etc.)
-│   │   ├── channel.rs     # FlowChannel integration
-│   │   └── builder.rs     # FlowNoiseModelBuilder
+│   │   ├── channel.rs     # CompositeChannel integration
+│   │   └── builder.rs     # CompositeNoiseModelBuilder
 │   ├── composer.rs    # ComposableNoiseModel (Clone for parallel)
 │   ├── plugin.rs      # NoisePlugin, EventHandler, ContextObserver
 │   └── ...            # Channel-based noise (single/two qubit, etc.)

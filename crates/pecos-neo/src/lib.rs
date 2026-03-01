@@ -238,7 +238,7 @@ pub use program::{
     RepeatedProgram, StaticProgram,
 };
 pub use runner::DispatchContext;
-pub use runner::{ExecutionError, GateExecutorFn, GateOverrides, Runner};
+pub use runner::{EventHandlers, ExecutionError, GateExecutorFn, GateOverrides, Runner};
 
 // Re-export adapter utilities (always available)
 pub use adapter::{command_queue_to_gates, gate_to_command, gates_to_command_queue};
@@ -313,7 +313,7 @@ pub mod prelude {
     };
     pub use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
     pub use crate::runner::DispatchContext;
-    pub use crate::runner::{ExecutionError, GateOverrides, Runner};
+    pub use crate::runner::{EventHandlers, ExecutionError, GateOverrides, Runner};
 
     // Re-export commonly used types from dependencies
     pub use pecos_core::{Angle64, QubitId};

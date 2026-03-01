@@ -67,7 +67,7 @@ The main runner for importance-sampled circuit execution:
 
 ```rust
 use pecos_neo::sampling::{ImportanceSamplingRunner, OutcomeBiasConfig};
-use pecos_neo::noise::flow::FlowNoiseModelBuilder;
+use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 use pecos_qsim::SparseStab;
 
 // Configure outcome biasing
@@ -76,7 +76,7 @@ let bias_config = OutcomeBiasConfig::new()
     .with_bias_strength(0.8);    // 80% bias (vs 50% unbiased)
 
 // Create runner with biased sampling
-let noise = FlowNoiseModelBuilder::new()
+let noise = CompositeNoiseModelBuilder::new()
     .with_p1(0.001)
     .build();
 
@@ -191,7 +191,7 @@ println!("P(all 1s) ~ {:.2e} (from {} biased hits)", p_estimate, count);
 Importance sampling can be combined with noise models:
 
 ```rust
-let noise = FlowNoiseModelBuilder::new()
+let noise = CompositeNoiseModelBuilder::new()
     .with_p1(0.001)
     .with_p2(0.01)
     .build();

@@ -151,11 +151,13 @@ fn example_noiseless(code: &RepetitionCode) {
     println!("--- Noiseless Operation ---");
 
     let commands = code.build_circuit(3);
-    let mut runner = Runner::new(SparseStab::new(code.num_qubits())).with_seed(42);
+    let mut state = SparseStab::new(code.num_qubits());
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
     let mut all_zero = true;
     for _ in 0..100 {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         // Check final data qubits
         for &d in &code.data_qubits {
@@ -186,7 +188,8 @@ fn example_with_noise(code: &RepetitionCode) {
 
     let commands = code.build_circuit(3);
 
-    let mut runner = Runner::new(SparseStab::new(code.num_qubits()))
+    let mut state = SparseStab::new(code.num_qubits());
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
 
@@ -194,7 +197,8 @@ fn example_with_noise(code: &RepetitionCode) {
     let shots = 2000;
 
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         // Extract data outcomes (last 3 measurements)
         let all_outcomes: Vec<bool> = outcomes.iter().map(|o| o.outcome).collect();
@@ -266,7 +270,8 @@ fn example_error_scaling(code: &RepetitionCode) {
             .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0))
             .add_channel(MeasurementChannel::symmetric(p_phys));
 
-        let mut runner = Runner::new(SparseStab::new(code.num_qubits()))
+        let mut state = SparseStab::new(code.num_qubits());
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
@@ -274,7 +279,8 @@ fn example_error_scaling(code: &RepetitionCode) {
         let mut errors = 0;
 
         for _ in 0..shots {
-            let outcomes = runner.run_shot(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             let all_outcomes: Vec<bool> = outcomes.iter().map(|o| o.outcome).collect();
             let num_ancilla_meas = 3 * 2;
             let data_outcomes: Vec<bool> = all_outcomes[num_ancilla_meas..].to_vec();
@@ -322,7 +328,8 @@ fn example_round_scaling(code: &RepetitionCode) {
             .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0))
             .add_channel(MeasurementChannel::symmetric(p_phys));
 
-        let mut runner = Runner::new(SparseStab::new(code.num_qubits()))
+        let mut state = SparseStab::new(code.num_qubits());
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
@@ -330,7 +337,8 @@ fn example_round_scaling(code: &RepetitionCode) {
         let mut errors = 0;
 
         for _ in 0..shots {
-            let outcomes = runner.run_shot(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             let all_outcomes: Vec<bool> = outcomes.iter().map(|o| o.outcome).collect();
             let num_ancilla_meas = num_rounds * 2;
             let data_outcomes: Vec<bool> = all_outcomes[num_ancilla_meas..].to_vec();

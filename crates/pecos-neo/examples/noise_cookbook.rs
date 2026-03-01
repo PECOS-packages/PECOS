@@ -342,10 +342,11 @@ fn recipe_crosstalk() {
 
         let noise = ComposableNoiseModel::new().add_channel(crosstalk);
 
-        let mut runner = Runner::new(SparseStab::new(3))
+        let mut state = SparseStab::new(3);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed);
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         // Count errors on neighbor qubits (should be 0 without crosstalk)
         if outcomes
@@ -434,10 +435,11 @@ where
     let mut ones = 0;
     for seed in 0..shots {
         let noise = make_noise();
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed);
-        let outcomes = runner.execute(commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, commands).unwrap();
         if outcomes
             .get(pecos_core::QubitId(0))
             .is_some_and(|o| o.outcome)
@@ -456,10 +458,11 @@ where
     let mut errors = 0;
     for seed in 0..shots {
         let noise = make_noise();
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed);
-        let outcomes = runner.execute(commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, commands).unwrap();
         // For a CX on |00>, expect |00>
         let o0 = outcomes.get(pecos_core::QubitId(0)).map(|o| o.outcome);
         let o1 = outcomes.get(pecos_core::QubitId(1)).map(|o| o.outcome);
@@ -478,10 +481,11 @@ where
     let mut same = 0;
     for seed in 0..shots {
         let noise = make_noise();
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed);
-        let outcomes = runner.execute(commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, commands).unwrap();
         let o0 = outcomes.get(pecos_core::QubitId(0)).map(|o| o.outcome);
         let o1 = outcomes.get(pecos_core::QubitId(1)).map(|o| o.outcome);
         if o0 == o1 {

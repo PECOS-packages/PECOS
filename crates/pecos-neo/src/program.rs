@@ -81,7 +81,7 @@ use crate::command::CommandQueue;
 use crate::extensible::GateDefinitions;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
-use crate::runner::{EventHandlers, GateOverrides, Runner};
+use crate::runner::{EventHandlers, GateOverrides, CircuitRunner};
 use pecos_core::rng::RngManageable;
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_rng::PecosRng;
@@ -123,24 +123,28 @@ pub struct ProgramResult {
 
 /// Runs hybrid programs with classical-quantum feedback.
 ///
-/// The `ProgramRunner` executes programs that implement `CommandSource`,
-/// handling the back-and-forth between classical control and quantum execution.
+/// The `ProgramRunner` owns both a [`CircuitRunner`] and a simulator, providing
+/// a stateful wrapper for program execution. This is the higher-level
+/// interface that manages simulator lifecycle.
 pub struct ProgramRunner<S: CliffordGateable> {
-    runner: Runner<S>,
+    runner: CircuitRunner<S>,
+    simulator: S,
 }
 
 impl<S: CliffordGateable> ProgramRunner<S> {
     /// Create a new program runner with the given simulator.
     pub fn new(simulator: S) -> Self {
         Self {
-            runner: Runner::new(simulator),
+            runner: CircuitRunner::new(),
+            simulator,
         }
     }
 
     /// Create a new program runner with explicit gate definitions.
     pub fn with_definitions(simulator: S, definitions: GateDefinitions) -> Self {
         Self {
-            runner: Runner::with_definitions(simulator, definitions),
+            runner: CircuitRunner::with_definitions(definitions),
+            simulator,
         }
     }
 
@@ -176,7 +180,7 @@ impl<S: CliffordGateable> ProgramRunner<S> {
         program.reset();
 
         // Reset simulator to |0>^n state at the start of each shot
-        self.runner.simulator_mut().reset();
+        self.simulator.reset();
 
         let mut all_outcomes = MeasurementOutcomes::new();
         let mut num_batches = 0;
@@ -189,7 +193,7 @@ impl<S: CliffordGateable> ProgramRunner<S> {
                 Some(cmds) if !cmds.is_empty() => {
                     let outcomes = self
                         .runner
-                        .run_shot(&cmds)
+                        .apply_circuit(&mut self.simulator, &cmds)
                         .expect("core gates should not fail");
                     num_batches += 1;
 
@@ -215,15 +219,26 @@ impl<S: CliffordGateable> ProgramRunner<S> {
         }
     }
 
-    /// Get a reference to the underlying runner.
+    /// Get a reference to the underlying circuit runner.
     #[must_use]
-    pub fn runner(&self) -> &Runner<S> {
+    pub fn circuit_runner(&self) -> &CircuitRunner<S> {
         &self.runner
     }
 
-    /// Get a mutable reference to the underlying runner.
-    pub fn runner_mut(&mut self) -> &mut Runner<S> {
+    /// Get a mutable reference to the underlying circuit runner.
+    pub fn circuit_runner_mut(&mut self) -> &mut CircuitRunner<S> {
         &mut self.runner
+    }
+
+    /// Get a reference to the simulator.
+    #[must_use]
+    pub fn simulator(&self) -> &S {
+        &self.simulator
+    }
+
+    /// Get a mutable reference to the simulator.
+    pub fn simulator_mut(&mut self) -> &mut S {
+        &mut self.simulator
     }
 
     /// Set maximum decomposition depth for gate resolution.
@@ -241,6 +256,19 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     }
 }
 
+impl<S> ProgramRunner<S>
+where
+    S: CliffordGateable + RngManageable<Rng = PecosRng>,
+{
+    /// Set the full seed for deterministic execution.
+    ///
+    /// Seeds both the noise RNG and the simulator's internal RNG using
+    /// derived seeds from a single base seed.
+    pub fn set_full_seed(&mut self, seed: u64) {
+        self.runner.set_full_seed(&mut self.simulator, seed);
+    }
+}
+
 impl<S: CliffordGateable + ArbitraryRotationGateable> ProgramRunner<S> {
     /// Create a program runner with rotation gate support and default definitions.
     ///
@@ -248,14 +276,16 @@ impl<S: CliffordGateable + ArbitraryRotationGateable> ProgramRunner<S> {
     /// enables native execution of rotation gates (T, Tdg, RX, RY, RZ, etc.).
     pub fn rotations(simulator: S) -> Self {
         Self {
-            runner: Runner::rotations(simulator),
+            runner: CircuitRunner::rotations(),
+            simulator,
         }
     }
 
     /// Create a program runner with rotation gate support and explicit definitions.
     pub fn rotations_with_definitions(simulator: S, definitions: GateDefinitions) -> Self {
         Self {
-            runner: Runner::rotations_with_definitions(simulator, definitions),
+            runner: CircuitRunner::rotations_with_definitions(definitions),
+            simulator,
         }
     }
 }
@@ -286,7 +316,7 @@ where
     }
 
     fn set_full_seed(&mut self, seed: u64) {
-        self.runner_mut().set_full_seed(seed);
+        self.runner.set_full_seed(&mut self.simulator, seed);
     }
 }
 

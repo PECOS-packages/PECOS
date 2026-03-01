@@ -15,7 +15,7 @@
 //! Run with: `cargo run --release --example profile_scaling -p pecos-neo`
 
 use pecos_neo::prelude::{
-    CommandBuilder, ComposableNoiseModel, CorePlugin, Runner, SingleQubitChannel, TwoQubitChannel,
+    CommandBuilder, ComposableNoiseModel, CorePlugin, CircuitRunner, SingleQubitChannel, TwoQubitChannel,
 };
 use pecos_qsim::SparseStab;
 use std::time::Instant;
@@ -60,16 +60,19 @@ fn bench_no_noise(num_qubits: usize, shots: usize) -> f64 {
     let commands = build_circuit(num_qubits);
     let num_gates = commands.len();
 
-    let mut runner = Runner::new(SparseStab::new(num_qubits)).with_seed(42);
+    let mut state = SparseStab::new(num_qubits);
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
     // Warmup
     for _ in 0..10 {
-        runner.run_shot(&commands).unwrap();
+        state.reset();
+        runner.apply_circuit(&mut state, &commands).unwrap();
     }
 
     let start = Instant::now();
     for _ in 0..shots {
-        runner.run_shot(&commands).unwrap();
+        state.reset();
+        runner.apply_circuit(&mut state, &commands).unwrap();
     }
     let elapsed = start.elapsed();
 
@@ -91,18 +94,21 @@ fn bench_with_noise(num_qubits: usize, shots: usize) -> f64 {
         .add_channel(SingleQubitChannel::depolarizing(0.001))
         .add_channel(TwoQubitChannel::depolarizing(0.01));
 
-    let mut runner = Runner::new(SparseStab::new(num_qubits))
+    let mut state = SparseStab::new(num_qubits);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
 
     // Warmup
     for _ in 0..10 {
-        runner.run_shot(&commands).unwrap();
+        state.reset();
+        runner.apply_circuit(&mut state, &commands).unwrap();
     }
 
     let start = Instant::now();
     for _ in 0..shots {
-        runner.run_shot(&commands).unwrap();
+        state.reset();
+        runner.apply_circuit(&mut state, &commands).unwrap();
     }
     let elapsed = start.elapsed();
 

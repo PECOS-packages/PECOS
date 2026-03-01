@@ -372,7 +372,7 @@ simulation where entity splitting/sync is needed.
 | pecos-neo (multi-channel) | 93 µs | 1.07 Melem/s |
 | pecos-neo (no noise) | 37 µs | 2.68 Melem/s |
 
-**Runner Reuse Impact** (100K iterations):
+**CircuitRunner Reuse Impact** (100K iterations):
 
 | Mode | Time | Per-iteration |
 |------|------|---------------|

@@ -15,7 +15,7 @@
 //! Run with: `cargo run --release --example profile_hotpath_reuse -p pecos-neo`
 
 use pecos_neo::prelude::{
-    CommandBuilder, ComposableNoiseModel, CorePlugin, Runner, SingleQubitChannel, TwoQubitChannel,
+    CommandBuilder, ComposableNoiseModel, CorePlugin, CircuitRunner, SingleQubitChannel, TwoQubitChannel,
 };
 use pecos_qsim::SparseStab;
 use std::hint::black_box;
@@ -39,15 +39,17 @@ fn main() {
         .add_channel(SingleQubitChannel::depolarizing(0.001))
         .add_channel(TwoQubitChannel::depolarizing(0.001));
 
-    // Build runner once
-    let mut runner = Runner::new(SparseStab::new(2))
+    // Build runner and state once
+    let mut state = SparseStab::new(2);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
 
     println!("Running {iterations} iterations of shot execution with REUSED runner...");
 
     for _ in 0..iterations {
-        let result = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let result = runner.apply_circuit(&mut state, &commands).unwrap();
         black_box(result);
     }
 

@@ -447,7 +447,7 @@ impl<S: CliffordGateable + Clone + Send + Sync> ParallelCoordinator<S> {
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;
-    use crate::runner::Runner;
+    use crate::runner::CircuitRunner;
     use pecos_core::QubitId;
     use pecos_qsim::SparseStab;
 
@@ -590,10 +590,11 @@ mod tests {
                         let rng_comp = world.rngs.get(entity).unwrap();
 
                         // Create a runner with the entity's components
+                        let mut sim = sim_comp.simulator.clone();
                         let mut runner =
-                            Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
+                            CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
 
-                        let outcomes = runner.run_shot(&commands).unwrap();
+                        let outcomes = runner.apply_circuit(&mut sim, &commands).unwrap();
                         outcomes.get_bit(QubitId(0)).unwrap_or(false)
                     })
                     .collect()

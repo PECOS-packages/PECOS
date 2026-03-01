@@ -66,7 +66,7 @@
 use crate::command::CommandQueue;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
-use crate::runner::Runner;
+use crate::runner::CircuitRunner;
 use crate::sampling::weight::SampleWeight;
 use pecos_qsim::{CliffordGateable, SparseStab};
 use pecos_rng::{PecosRng, resolve_seed};
@@ -480,8 +480,8 @@ where
 
     /// Run one sample and return (`outcomes`, `score`, `is_failure`).
     fn run_one_sample(&self, rng: &mut PecosRng) -> (MeasurementOutcomes, f64, bool) {
-        let simulator = SparseStab::new(self.num_qubits);
-        let mut runner = Runner::new(simulator).with_rng(rng.clone());
+        let mut sim = SparseStab::new(self.num_qubits);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_rng(rng.clone());
 
         // Get fresh noise model from builder
         if let Some(noise) = (self.noise_builder)() {
@@ -492,7 +492,7 @@ where
         rng.random::<u64>();
 
         let outcomes = runner
-            .run_shot_fresh(&self.circuit)
+            .apply_circuit(&mut sim, &self.circuit)
             .expect("gate execution failed during subset simulation shot");
         let score = (self.score_fn)(&outcomes);
         let is_failure = (self.is_failure_fn)(&outcomes);
@@ -2514,13 +2514,14 @@ mod tests {
         let circuit = bit_flip_syndrome_circuit();
 
         // Run without errors - syndrome should be 0
-        let mut runner = Runner::new(SparseStab::new(5)).with_rng(PecosRng::seed_from_u64(42));
+        let mut sim = SparseStab::new(5);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_rng(PecosRng::seed_from_u64(42));
 
         // Initialize all qubits to |0>
         let init_circuit = CommandBuilder::new().pz(0).pz(1).pz(2).build();
 
-        runner.run_shot(&init_circuit).unwrap();
-        let outcomes = runner.run_shot(&circuit).unwrap();
+        runner.apply_circuit(&mut sim, &init_circuit).unwrap();
+        let outcomes = runner.apply_circuit(&mut sim, &circuit).unwrap();
 
         // With no errors, both ancillas should measure 0
         let s1 = outcomes.get_bit(QubitId(3)).unwrap_or(true);

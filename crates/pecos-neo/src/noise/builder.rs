@@ -605,7 +605,7 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use crate::noise::composite::prelude::*;
-    use crate::runner::Runner;
+    use crate::runner::CircuitRunner;
     use pecos_core::QubitId;
     use pecos_qsim::SparseStab;
 
@@ -655,13 +655,15 @@ mod tests {
         let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
 
         // Simple configuration
+        let mut state = SparseStab::new(1);
         let mut simple_errors = 0;
         for seed in 0..shots {
             let model = NoiseModelBuilder::new().with_p1(p1).build();
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             if outcomes.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 simple_errors += 1;
             }
@@ -673,10 +675,11 @@ mod tests {
             let model = NoiseModelBuilder::new()
                 .with_single_qubit_noise(prob(p1, pauli()))
                 .build();
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             if outcomes.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 composed_errors += 1;
             }

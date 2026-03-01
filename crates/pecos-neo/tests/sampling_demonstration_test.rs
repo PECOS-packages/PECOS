@@ -27,7 +27,7 @@ use pecos_neo::command::CommandBuilder;
 use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
 use pecos_neo::outcome::MeasurementOutcomes;
 use pecos_neo::program::{CommandSource, ConditionalProgram, ProgramRunner};
-use pecos_neo::runner::Runner;
+use pecos_neo::runner::CircuitRunner;
 use pecos_neo::sampling::path::{EnumeratedPath, PathEnumerator, PathExplorer, PathStatistics};
 use pecos_neo::sampling::weight::WeightedStatistics;
 use pecos_neo::sampling::{
@@ -257,7 +257,8 @@ fn demo_variance_comparison() {
 
     for trial in 0..num_trials {
         // Standard Monte Carlo (true error rate)
-        let mut mc_runner = Runner::new(SparseStab::new(1))
+        let mut mc_state = SparseStab::new(1);
+        let mut mc_runner = CircuitRunner::<SparseStab>::new()
             .with_noise(
                 ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p_true)),
             )
@@ -265,7 +266,8 @@ fn demo_variance_comparison() {
 
         let mut mc_count = 0;
         for _ in 0..shots_per_trial {
-            let outcomes = mc_runner.run_shot_fresh(&circuit).unwrap();
+            mc_state.reset();
+            let outcomes = mc_runner.apply_circuit(&mut mc_state, &circuit).unwrap();
             if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
                 mc_count += 1;
             }

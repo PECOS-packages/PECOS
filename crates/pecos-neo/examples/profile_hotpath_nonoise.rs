@@ -14,7 +14,7 @@
 //!
 //! Run with: `cargo run --release --example profile_hotpath_nonoise -p pecos-neo`
 
-use pecos_neo::prelude::{CommandBuilder, Runner};
+use pecos_neo::prelude::{CommandBuilder, CircuitRunner};
 use pecos_qsim::SparseStab;
 use std::hint::black_box;
 
@@ -34,8 +34,10 @@ fn main() {
     println!("Running {iterations} iterations of shot execution WITHOUT noise...");
 
     for _ in 0..iterations {
-        let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
-        let result = runner.run_shot(&commands).unwrap();
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+        state.reset();
+        let result = runner.apply_circuit(&mut state, &commands).unwrap();
         black_box(result);
     }
 

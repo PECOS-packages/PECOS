@@ -15,7 +15,7 @@
 //! This example demonstrates:
 //! - Converting `TickCircuit` to `CommandQueue`
 //! - Converting `DagCircuit` to `CommandQueue`
-//! - Executing circuits directly with `Runner`
+//! - Executing circuits directly with `CircuitRunner`
 //! - Round-trip conversions
 //!
 //! Run with: cargo run --example `circuit_integration`
@@ -52,11 +52,13 @@ fn example_tick_circuit_execution() {
 
     // Convert to CommandQueue and execute
     let commands = pecos_neo::command::CommandQueue::from(&circuit);
-    let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
+    let mut state = SparseStab::new(2);
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
     let mut counts: HashMap<String, usize> = HashMap::new();
     for _ in 0..1000 {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
         let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
         let key = format!("{}{}", u8::from(q0), u8::from(q1));
@@ -90,11 +92,13 @@ fn example_dag_circuit_execution() {
 
     // Convert to CommandQueue and execute
     let commands = pecos_neo::command::CommandQueue::from(&dag);
-    let mut runner = Runner::new(SparseStab::new(3)).with_seed(42);
+    let mut state = SparseStab::new(3);
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
     let mut counts: HashMap<String, usize> = HashMap::new();
     for _ in 0..1000 {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         let mut key = String::new();
         for i in 0..3 {
             let bit = outcomes.get_bit(QubitId(i)).unwrap_or(false);
@@ -132,7 +136,8 @@ fn example_tick_with_noise() {
         .add_channel(SingleQubitChannel::depolarizing(0.01))
         .add_channel(TwoQubitChannel::depolarizing(0.02));
 
-    let mut runner = Runner::new(SparseStab::new(2))
+    let mut state = SparseStab::new(2);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
 
@@ -141,7 +146,8 @@ fn example_tick_with_noise() {
 
     let commands = pecos_neo::command::CommandQueue::from(&circuit);
     for _ in 0..1000 {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
         let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
 
@@ -189,16 +195,20 @@ fn example_round_trip() {
     println!("  Converted back to CommandQueue: {} commands", back.len());
 
     // Both should produce statistically identical results
-    let mut runner1 = Runner::new(SparseStab::new(2)).with_seed(42);
-    let mut runner2 = Runner::new(SparseStab::new(2)).with_seed(42);
+    let mut state1 = SparseStab::new(2);
+    let mut runner1 = CircuitRunner::<SparseStab>::new().with_seed(42);
+    let mut state2 = SparseStab::new(2);
+    let mut runner2 = CircuitRunner::<SparseStab>::new().with_seed(42);
 
     let mut corr1 = 0;
     let mut corr2 = 0;
     let shots = 1000;
 
     for _ in 0..shots {
-        let outcomes1 = runner1.run_shot(&original).unwrap();
-        let outcomes2 = runner2.run_shot(&back).unwrap();
+        state1.reset();
+        let outcomes1 = runner1.apply_circuit(&mut state1, &original).unwrap();
+        state2.reset();
+        let outcomes2 = runner2.apply_circuit(&mut state2, &back).unwrap();
 
         if outcomes1.get_bit(QubitId(0)) == outcomes1.get_bit(QubitId(1)) {
             corr1 += 1;
@@ -263,7 +273,8 @@ fn example_qec_style_circuit() {
         .add_channel(TwoQubitChannel::depolarizing(0.01))
         .add_channel(MeasurementChannel::symmetric(0.005));
 
-    let mut runner = Runner::new(SparseStab::new(5))
+    let mut state = SparseStab::new(5);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
 
@@ -271,7 +282,8 @@ fn example_qec_style_circuit() {
 
     let commands = pecos_neo::command::CommandQueue::from(&circuit);
     for _ in 0..1000 {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         // Extract syndrome (ancilla measurements)
         let s0 = outcomes.get_bit(QubitId(3)).unwrap_or(false);

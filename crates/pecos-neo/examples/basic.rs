@@ -14,7 +14,7 @@
 //!
 //! This example demonstrates:
 //! - Building quantum circuits with `CommandBuilder`
-//! - Running simulations with `Runner`
+//! - Running simulations with `CircuitRunner`
 //! - Collecting and analyzing measurement outcomes
 //!
 //! Run with: cargo run --example basic
@@ -46,14 +46,16 @@ fn example_bell_state() {
         .mz(1)
         .build();
 
-    // Create a runner with the stabilizer simulator
-    let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
+    // Create a simulator and a stateless runner
+    let mut state = SparseStab::new(2);
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
     // Run 1000 shots and collect statistics
     let mut counts: HashMap<String, usize> = HashMap::new();
 
     for _ in 0..1000 {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
         let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
 
@@ -91,12 +93,14 @@ fn example_ghz_state() {
         .mz(3)
         .build();
 
-    let mut runner = Runner::new(SparseStab::new(4)).with_seed(123);
+    let mut state = SparseStab::new(4);
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(123);
 
     let mut counts: HashMap<String, usize> = HashMap::new();
 
     for _ in 0..1000 {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let mut key = String::new();
         for i in 0..4 {
@@ -139,12 +143,14 @@ fn example_random_circuit() {
         .mz(2)
         .build();
 
-    let mut runner = Runner::new(SparseStab::new(3)).with_seed(456);
+    let mut state = SparseStab::new(3);
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(456);
 
     let mut counts: HashMap<String, usize> = HashMap::new();
 
     for _ in 0..1000 {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let mut key = String::new();
         for i in 0..3 {
@@ -170,14 +176,16 @@ fn example_shot_statistics() {
     // Simple Hadamard circuit - should give 50/50 distribution
     let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-    let mut runner = Runner::new(SparseStab::new(1)).with_seed(789);
+    let mut state = SparseStab::new(1);
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(789);
 
     let num_shots = 10000;
     let mut count_0 = 0;
     let mut count_1 = 0;
 
     for _ in 0..num_shots {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             count_1 += 1;
         } else {

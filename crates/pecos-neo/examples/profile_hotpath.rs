@@ -15,7 +15,7 @@
 //! Run with: `samply record cargo run --release --example profile_hotpath -p pecos-neo`
 
 use pecos_neo::prelude::{
-    CommandBuilder, ComposableNoiseModel, CorePlugin, Runner, SingleQubitChannel, TwoQubitChannel,
+    CommandBuilder, ComposableNoiseModel, CorePlugin, CircuitRunner, SingleQubitChannel, TwoQubitChannel,
 };
 use pecos_qsim::SparseStab;
 use std::hint::black_box;
@@ -40,10 +40,12 @@ fn main() {
             .add_plugin(CorePlugin)
             .add_channel(SingleQubitChannel::depolarizing(0.001))
             .add_channel(TwoQubitChannel::depolarizing(0.001));
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
-        let result = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let result = runner.apply_circuit(&mut state, &commands).unwrap();
         black_box(result);
     }
 

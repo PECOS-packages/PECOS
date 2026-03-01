@@ -9,7 +9,7 @@ pecos-neo provides two approaches to noise modeling:
 1. **CompositeNoiseModelBuilder** (recommended) - Parameter-based builder with sensible defaults
 2. **Custom primitives** - Build noise decision trees from composable primitives
 
-Both produce a `ComposableNoiseModel` that integrates with `Runner`.
+Both produce a `ComposableNoiseModel` that integrates with `CircuitRunner`.
 
 ## CompositeNoiseModelBuilder
 
@@ -137,10 +137,10 @@ CompositeNoiseModelBuilder::new()
     })
 ```
 
-## Using Noise with Runner
+## Using Noise with CircuitRunner
 
 ```rust
-use pecos_neo::runner::Runner;
+use pecos_neo::runner::CircuitRunner;
 use pecos_neo::command::CommandBuilder;
 use pecos_qsim::SparseStab;
 
@@ -161,11 +161,12 @@ let noise = CompositeNoiseModelBuilder::new()
     .build();
 
 // Run with noise
-let mut runner = Runner::new(SparseStab::new(2))
+let mut state = SparseStab::new(2);
+let mut runner = CircuitRunner::<SparseStab>::new()
     .with_noise(noise)
     .with_seed(42);
 
-let outcomes = runner.execute(&circuit)?;
+let outcomes = runner.apply_circuit(&mut state, &circuit)?;
 println!("Qubit 0: {}", outcomes.get_bit(QubitId(0)).unwrap());
 println!("Qubit 1: {}", outcomes.get_bit(QubitId(1)).unwrap());
 ```

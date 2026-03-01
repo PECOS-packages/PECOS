@@ -147,11 +147,12 @@ fn event_handlers_on_runner_directly() {
 
     let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-    let mut runner = Runner::new(pecos_qsim::SparseStab::new(1))
+    let mut state = pecos_qsim::SparseStab::new(1);
+    let mut runner = CircuitRunner::<pecos_qsim::SparseStab>::new()
         .with_event_handlers(handlers)
         .with_seed(42);
 
-    let _outcomes = runner.execute(&circuit).unwrap();
+    let _outcomes = runner.apply_circuit(&mut state, &circuit).unwrap();
     assert_eq!(counter.load(Ordering::Relaxed), 1); // 1 H gate
 }
 

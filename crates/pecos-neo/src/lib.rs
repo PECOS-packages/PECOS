@@ -19,7 +19,7 @@
 //! - **Typed Commands**: [`GateCommand`] and [`CommandQueue`] replacing `ByteMessage`
 //! - **Composable Noise**: Event-driven channels that can be freely combined
 //! - **Plugin System**: Bevy-inspired architecture for bundling functionality
-//! - **Simple Runner**: Direct simulator execution via [`Runner`]
+//! - **Simple `CircuitRunner`**: Direct simulator execution via [`CircuitRunner`]
 //!
 //! ## Architecture
 //!
@@ -84,8 +84,9 @@
 //!     .build();
 //!
 //! // Run without noise
-//! let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
-//! let outcomes = runner.execute(&commands).unwrap();
+//! let mut state = SparseStab::new(2);
+//! let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+//! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //!
 //! // Outcomes are correlated (Bell state)
 //! let o0 = outcomes.get_bit(QubitId(0)).unwrap();
@@ -110,17 +111,18 @@
 //!     .add_channel(SingleQubitChannel::depolarizing(0.01))
 //!     .add_channel(MeasurementChannel::symmetric(0.005));
 //!
-//! let mut runner = Runner::new(SparseStab::new(1))
+//! let mut state = SparseStab::new(1);
+//! let mut runner = CircuitRunner::<SparseStab>::new()
 //!     .with_noise(noise)
 //!     .with_seed(42);
 //!
-//! let outcomes = runner.execute(&commands).unwrap();
+//! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //! ```
 //!
 //! ## With Rotation Gates (Universal Simulation)
 //!
 //! For simulators that support arbitrary rotation gates (like state vector simulators),
-//! use `Runner::rotations()`:
+//! use `CircuitRunner::rotations()`:
 //!
 //! ```
 //! use pecos_neo::prelude::*;
@@ -132,8 +134,9 @@
 //!     .mz(0)
 //!     .build();
 //!
-//! let mut runner = Runner::rotations(StateVec::new(1)).with_seed(42);
-//! let outcomes = runner.execute(&commands).unwrap();
+//! let mut state = StateVec::new(1);
+//! let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
+//! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //!
 //! assert!(outcomes.get_bit(QubitId(0)).unwrap());
 //! ```
@@ -238,7 +241,7 @@ pub use program::{
     RepeatedProgram, StaticProgram,
 };
 pub use runner::DispatchContext;
-pub use runner::{EventHandlers, ExecutionError, GateExecutorFn, GateOverrides, Runner};
+pub use runner::{EventHandlers, ExecutionError, GateExecutorFn, GateOverrides, CircuitRunner};
 
 // Re-export adapter utilities (always available)
 pub use adapter::{command_queue_to_gates, gate_to_command, gates_to_command_queue};
@@ -313,7 +316,7 @@ pub mod prelude {
     };
     pub use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
     pub use crate::runner::DispatchContext;
-    pub use crate::runner::{EventHandlers, ExecutionError, GateOverrides, Runner};
+    pub use crate::runner::{EventHandlers, ExecutionError, GateOverrides, CircuitRunner};
 
     // Re-export commonly used types from dependencies
     pub use pecos_core::{Angle64, QubitId};
@@ -328,8 +331,9 @@ mod tests {
     fn test_prelude_usage() {
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         assert_eq!(outcomes.len(), 1);
     }
@@ -349,11 +353,12 @@ mod tests {
             .add_channel(SingleQubitChannel::depolarizing(0.0))
             .add_channel(TwoQubitChannel::depolarizing(0.0));
 
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let o0 = outcomes.get_bit(QubitId(0)).unwrap();
         let o1 = outcomes.get_bit(QubitId(1)).unwrap();
@@ -377,11 +382,12 @@ mod tests {
             .add_plugin(DepolarizingPlugin::new(0.0, 0.0))
             .add_plugin(MeasurementNoisePlugin::symmetric(0.0));
 
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let o0 = outcomes.get_bit(QubitId(0)).unwrap();
         let o1 = outcomes.get_bit(QubitId(1)).unwrap();
@@ -392,13 +398,15 @@ mod tests {
     fn test_multiple_shots() {
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
         let mut count_0 = 0;
         let mut count_1 = 0;
 
         for _ in 0..100 {
-            let outcomes = runner.run_shot(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             if outcomes.get_bit(QubitId(0)).unwrap() {
                 count_1 += 1;
             } else {

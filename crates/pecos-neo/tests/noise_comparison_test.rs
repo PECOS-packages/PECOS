@@ -82,7 +82,8 @@ fn run_composable_noise_model(
     num_qubits: usize,
     num_shots: usize,
 ) -> BTreeMap<String, usize> {
-    let mut runner = Runner::new(SparseStab::new(num_qubits))
+    let mut state = SparseStab::new(num_qubits);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise_model)
         .with_seed(42);
 
@@ -92,7 +93,8 @@ fn run_composable_noise_model(
     let mut counts = BTreeMap::new();
 
     for _ in 0..num_shots {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         // Convert outcomes to bitstring
         let result = if let Some(bits) = outcomes.bitstring(&qubits) {
@@ -574,7 +576,8 @@ fn test_idle_noise_with_time_scale() {
         .mz(0)
         .build();
 
-    let mut runner = Runner::new(SparseStab::new(1))
+    let mut state = SparseStab::new(1);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(model)
         .with_seed(42);
 
@@ -582,7 +585,8 @@ fn test_idle_noise_with_time_scale() {
     let mut error_count = 0;
 
     for _ in 0..NUM_SHOTS {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         if let Some(bits) = outcomes.bitstring(&qubits)
             && bits[0]
         {

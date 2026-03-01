@@ -21,7 +21,7 @@ use pecos_core::QubitId;
 use pecos_neo::command::CommandBuilder;
 use pecos_neo::ecs::{ParallelConfig, ParallelCoordinator};
 use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
-use pecos_neo::runner::Runner;
+use pecos_neo::runner::CircuitRunner;
 use pecos_neo::sampling::{MonteCarloConfig, MonteCarloRunner};
 use pecos_qsim::SparseStab;
 use std::collections::BTreeMap;
@@ -82,7 +82,7 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
     let mc_results = MonteCarloRunner::run(
         &commands,
         mc_config,
-        || Runner::new(SparseStab::new(2)),
+        || (CircuitRunner::new(), SparseStab::new(2)),
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
@@ -126,10 +126,12 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
                     let sim_comp = world.simulators.get(entity).unwrap();
                     let rng_comp = world.rngs.get(entity).unwrap();
 
+                    let mut sim = sim_comp.simulator.clone();
                     let mut runner =
-                        Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
+                        CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
 
-                    let outcomes = runner.run_shot(&commands).unwrap();
+                    sim.reset();
+                    let outcomes = runner.apply_circuit(&mut sim, &commands).unwrap();
                     let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
                     let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
                     format!(
@@ -186,7 +188,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
         || {
             let noise =
                 ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p1));
-            Runner::new(SparseStab::new(1)).with_noise(noise)
+            (CircuitRunner::new().with_noise(noise), SparseStab::new(1))
         },
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     );
@@ -215,11 +217,13 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
 
                     let noise = ComposableNoiseModel::new()
                         .add_channel(SingleQubitChannel::depolarizing(p1));
-                    let mut runner = Runner::new(sim_comp.simulator.clone())
+                    let mut sim = sim_comp.simulator.clone();
+                    let mut runner = CircuitRunner::<SparseStab>::new()
                         .with_noise(noise)
                         .with_rng(rng_comp.rng.clone());
 
-                    let outcomes = runner.run_shot(&commands).unwrap();
+                    sim.reset();
+                    let outcomes = runner.apply_circuit(&mut sim, &commands).unwrap();
                     outcomes.get_bit(QubitId(0)).unwrap_or(false)
                 })
                 .collect()
@@ -268,10 +272,12 @@ fn test_coordinator_determinism() {
                         let sim_comp = world.simulators.get(entity).unwrap();
                         let rng_comp = world.rngs.get(entity).unwrap();
 
+                        let mut sim = sim_comp.simulator.clone();
                         let mut runner =
-                            Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
+                            CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
 
-                        let outcomes = runner.run_shot(&commands).unwrap();
+                        sim.reset();
+                        let outcomes = runner.apply_circuit(&mut sim, &commands).unwrap();
                         outcomes.get_bit(QubitId(0)).unwrap_or(false)
                     })
                     .collect()
@@ -292,10 +298,12 @@ fn test_coordinator_determinism() {
                         let sim_comp = world.simulators.get(entity).unwrap();
                         let rng_comp = world.rngs.get(entity).unwrap();
 
+                        let mut sim = sim_comp.simulator.clone();
                         let mut runner =
-                            Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
+                            CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
 
-                        let outcomes = runner.run_shot(&commands).unwrap();
+                        sim.reset();
+                        let outcomes = runner.apply_circuit(&mut sim, &commands).unwrap();
                         outcomes.get_bit(QubitId(0)).unwrap_or(false)
                     })
                     .collect()
@@ -370,10 +378,12 @@ fn test_coordinator_hadamard_distribution() {
                     let sim_comp = world.simulators.get(entity).unwrap();
                     let rng_comp = world.rngs.get(entity).unwrap();
 
+                    let mut sim = sim_comp.simulator.clone();
                     let mut runner =
-                        Runner::new(sim_comp.simulator.clone()).with_rng(rng_comp.rng.clone());
+                        CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
 
-                    let outcomes = runner.run_shot(&commands).unwrap();
+                    sim.reset();
+                    let outcomes = runner.apply_circuit(&mut sim, &commands).unwrap();
                     outcomes.get_bit(QubitId(0)).unwrap_or(false)
                 })
                 .collect()

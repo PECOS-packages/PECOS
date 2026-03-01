@@ -860,7 +860,7 @@ fn test_resolution_error_missing_requirements() {
 /// 4. Verify the expected quantum behavior
 #[test]
 fn test_e2e_custom_gate_definition_and_execution() {
-    use pecos_neo::runner::Runner;
+    use pecos_neo::runner::CircuitRunner;
 
     // Step 1: Define a custom BELL gate that creates |00> + |11>
     let mut user_registry = UserGateRegistry::new();
@@ -929,8 +929,9 @@ fn test_e2e_custom_gate_definition_and_execution() {
     let num_shots = 100;
 
     for seed in 0..num_shots {
-        let mut runner = Runner::new(SparseStab::new(2)).with_seed(seed as u64);
-        let outcomes = runner.run_shot(&commands).unwrap();
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(seed as u64);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let m0 = outcomes.get_bit(QubitId(0)).unwrap();
         let m1 = outcomes.get_bit(QubitId(1)).unwrap();
@@ -1100,7 +1101,7 @@ fn test_e2e_hierarchical_custom_gates() {
 #[test]
 fn test_e2e_custom_gate_noise_limitation() {
     use pecos_neo::noise::GateDependentChannel;
-    use pecos_neo::runner::Runner;
+    use pecos_neo::runner::CircuitRunner;
 
     // Define a custom gate
     let mut user_registry = UserGateRegistry::new();
@@ -1143,11 +1144,12 @@ fn test_e2e_custom_gate_noise_limitation() {
         .mz(0)
         .build();
 
-    let mut runner = Runner::new(SparseStab::new(1))
+    let mut state = SparseStab::new(1);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
 
-    let outcomes = runner.run_shot(&commands).unwrap();
+    let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
     // H*H = I, so |0> -> |0>
     assert_eq!(
@@ -1223,13 +1225,13 @@ fn test_e2e_gate_id_noise_config_infrastructure() {
     );
 
     // NOTE: This infrastructure exists but isn't connected to ComposableNoiseModel
-    // or Runner. The gap is in wiring GateIdNoiseConfig to actual execution.
+    // or CircuitRunner. The gap is in wiring GateIdNoiseConfig to actual execution.
 }
 
-/// End-to-end: Complete workflow using `Runner` directly.
+/// End-to-end: Complete workflow using `CircuitRunner` directly.
 #[test]
 fn test_e2e_complete_workflow_with_shot_runner() {
-    use pecos_neo::runner::Runner;
+    use pecos_neo::runner::CircuitRunner;
 
     // Simple circuit using standard gates
     let commands = CommandBuilder::new()
@@ -1241,9 +1243,10 @@ fn test_e2e_complete_workflow_with_shot_runner() {
         .mz(1)
         .build();
 
-    // Use Runner directly
-    let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
-    let outcomes = runner.run_shot(&commands).unwrap();
+    // Use CircuitRunner directly
+    let mut state = SparseStab::new(2);
+    let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+    let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
     // Verify we got results
     assert_eq!(outcomes.len(), 2);

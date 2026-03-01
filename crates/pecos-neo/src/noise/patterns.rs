@@ -572,7 +572,7 @@ pub fn surface_code_noise(physical_error_rate: f64, with_crosstalk: bool) -> Com
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;
-    use crate::runner::Runner;
+    use crate::runner::CircuitRunner;
     use pecos_qsim::SparseStab;
 
     #[test]
@@ -580,26 +580,29 @@ mod tests {
         let model = depolarizing_only(0.5, 0.5);
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
 
         // Just verify it runs
-        let _ = runner.execute(&commands).unwrap();
+        let _ = runner.apply_circuit(&mut state, &commands).unwrap();
     }
 
     #[test]
     fn test_depolarizing_with_measurement() {
         let commands = CommandBuilder::new().pz(0).mz(0).build();
 
+        let mut state = SparseStab::new(1);
         let mut errors = 0;
         for seed in 0..100 {
             // Recreate model for each iteration since ComposableNoiseModel doesn't Clone
             let model = depolarizing_with_measurement(0.0, 0.0, 0.5);
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             if outcomes
                 .get(pecos_core::QubitId(0))
                 .is_some_and(|o| o.outcome)
@@ -620,11 +623,12 @@ mod tests {
         let model = dephasing_only(0.5, 0.5);
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands).unwrap();
+        let _ = runner.apply_circuit(&mut state, &commands).unwrap();
     }
 
     #[test]
@@ -632,11 +636,12 @@ mod tests {
         let model = with_leakage(0.5, 0.5, 0.5, 0.5);
         let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands).unwrap();
+        let _ = runner.apply_circuit(&mut state, &commands).unwrap();
     }
 
     #[test]
@@ -651,11 +656,12 @@ mod tests {
             .mz(1)
             .build();
 
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands).unwrap();
+        let _ = runner.apply_circuit(&mut state, &commands).unwrap();
     }
 
     #[test]
@@ -668,11 +674,12 @@ mod tests {
         let model = realistic_device_noise(params);
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands).unwrap();
+        let _ = runner.apply_circuit(&mut state, &commands).unwrap();
     }
 
     #[test]
@@ -686,11 +693,12 @@ mod tests {
             .mz(1)
             .build();
 
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
 
-        let _ = runner.execute(&commands).unwrap();
+        let _ = runner.apply_circuit(&mut state, &commands).unwrap();
     }
 
     #[test]

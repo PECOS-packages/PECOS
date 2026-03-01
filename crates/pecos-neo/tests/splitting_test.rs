@@ -816,7 +816,7 @@ fn test_quantum_circuit_subset_simulation() {
     use pecos_core::QubitId;
     use pecos_neo::command::CommandBuilder;
     use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
-    use pecos_neo::runner::Runner;
+    use pecos_neo::runner::CircuitRunner;
 
     // Configuration
     let num_rounds = 3; // Error correction rounds
@@ -845,7 +845,8 @@ fn test_quantum_circuit_subset_simulation() {
 
     for sample in 0..num_samples {
         let mut syndrome_detections = 0;
-        let mut runner = Runner::new(SparseStab::new(2)).with_rng(PecosRng::seed_from_u64(sample));
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_rng(PecosRng::seed_from_u64(sample));
 
         for round in 0..num_rounds {
             // Create fresh noise model for this round
@@ -859,7 +860,8 @@ fn test_quantum_circuit_subset_simulation() {
                 syndrome_circuit()
             };
 
-            let outcomes = runner.run_shot(&circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &circuit).unwrap();
 
             if outcomes.get_bit(QubitId(1)).unwrap_or(false) {
                 syndrome_detections += 1;
@@ -900,7 +902,7 @@ fn test_quantum_circuit_subset_simulation() {
             if let Some(sim_comp) = world.simulators.get_mut(entity) {
                 // Run circuit directly on the simulator
                 let noise = make_noise(p_error);
-                let mut runner = Runner::new(SparseStab::new(2))
+                let mut runner = CircuitRunner::<SparseStab>::new()
                     .with_noise(noise)
                     .with_rng(PecosRng::seed_from_u64(seed));
 
@@ -910,7 +912,8 @@ fn test_quantum_circuit_subset_simulation() {
                     syndrome_circuit()
                 };
 
-                let outcomes = runner.run_shot(&circuit).unwrap();
+                sim_comp.simulator.reset();
+                let outcomes = runner.apply_circuit(&mut sim_comp.simulator, &circuit).unwrap();
 
                 // Track syndrome detection
                 if outcomes.get_bit(QubitId(1)).unwrap_or(false)
@@ -918,9 +921,6 @@ fn test_quantum_circuit_subset_simulation() {
                 {
                     *count += 1;
                 }
-
-                // Update simulator state (simplified - in real subset sim we'd preserve state)
-                sim_comp.simulator = runner.simulator().clone();
             }
         }
 

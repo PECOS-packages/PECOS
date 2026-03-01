@@ -314,12 +314,12 @@ mod tests {
         assert!(!ctx.is_leaked(QubitId(0)));
     }
 
-    /// Integration test: `CompositeChannel` with `ComposableNoiseModel` and `Runner`.
+    /// Integration test: `CompositeChannel` with `ComposableNoiseModel` and `CircuitRunner`.
     #[test]
     fn test_flow_channel_with_composable_model() {
         use crate::command::CommandBuilder;
         use crate::noise::ComposableNoiseModel;
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         // Build a simple Hadamard circuit
@@ -333,12 +333,13 @@ mod tests {
         let noise = ComposableNoiseModel::new().add_channel(channel);
 
         // Run with noise
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
         // Execute - the noise should apply after the H gate
-        let _outcomes = runner.execute(&commands).unwrap();
+        let _outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         // With 100% error rate and random Pauli, we expect ~1/3 each of X, Y, Z
         // This just verifies the integration works - detailed stats are in other tests
@@ -349,7 +350,7 @@ mod tests {
     fn test_flow_channel_mixed_model() {
         use crate::command::CommandBuilder;
         use crate::noise::{ComposableNoiseModel, MeasurementChannel};
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         // Build circuit
@@ -367,12 +368,13 @@ mod tests {
             .add_channel(flow_channel)
             .add_channel(meas_channel);
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
         // Should work without errors
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         assert_eq!(outcomes.len(), 1);
     }
 
@@ -539,7 +541,7 @@ mod tests {
     fn test_crosstalk_with_composable_model() {
         use crate::command::CommandBuilder;
         use crate::noise::ComposableNoiseModel;
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         // Create a circuit that measures qubit 0
@@ -552,11 +554,12 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(crosstalk);
 
-        let mut runner = Runner::new(SparseStab::new(3))
+        let mut state = SparseStab::new(3);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
-        let _outcomes = runner.execute(&commands).unwrap();
+        let _outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         // The test verifies the integration works without errors
         // Detailed behavior is tested in unit tests
@@ -625,7 +628,7 @@ mod tests {
     fn test_flow_vs_traditional_single_qubit() {
         use crate::command::CommandBuilder;
         use crate::noise::{ComposableNoiseModel, PauliWeights, SingleQubitChannel};
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         let p1 = 0.1; // 10% error rate for clear statistical signal
@@ -657,10 +660,11 @@ mod tests {
             );
             let traditional_noise = ComposableNoiseModel::new().add_channel(traditional_channel);
 
-            let mut runner_trad = Runner::new(SparseStab::new(1))
+            let mut state_trad = SparseStab::new(1);
+            let mut runner_trad = CircuitRunner::<SparseStab>::new()
                 .with_noise(traditional_noise)
                 .with_seed(seed);
-            let outcomes_trad = runner_trad.execute(&commands).unwrap();
+            let outcomes_trad = runner_trad.apply_circuit(&mut state_trad, &commands).unwrap();
             if outcomes_trad.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 traditional_errors += 1;
             }
@@ -670,10 +674,11 @@ mod tests {
             let flow_channel = CompositeChannelBuilder::single_qubit("flow_sq", flow_noise);
             let flow_noise_model = ComposableNoiseModel::new().add_channel(flow_channel);
 
-            let mut runner_flow = Runner::new(SparseStab::new(1))
+            let mut state_flow = SparseStab::new(1);
+            let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_noise_model)
                 .with_seed(seed);
-            let outcomes_flow = runner_flow.execute(&commands).unwrap();
+            let outcomes_flow = runner_flow.apply_circuit(&mut state_flow, &commands).unwrap();
             if outcomes_flow.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 flow_errors += 1;
             }
@@ -696,7 +701,7 @@ mod tests {
     fn test_flow_vs_traditional_measurement() {
         use crate::command::CommandBuilder;
         use crate::noise::{ComposableNoiseModel, MeasurementChannel};
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         let p_meas = 0.1; // 10% measurement error
@@ -713,10 +718,11 @@ mod tests {
             let traditional_channel = MeasurementChannel::symmetric(p_meas);
             let traditional_noise = ComposableNoiseModel::new().add_channel(traditional_channel);
 
-            let mut runner_trad = Runner::new(SparseStab::new(1))
+            let mut state_trad = SparseStab::new(1);
+            let mut runner_trad = CircuitRunner::<SparseStab>::new()
                 .with_noise(traditional_noise)
                 .with_seed(seed);
-            let outcomes_trad = runner_trad.execute(&commands).unwrap();
+            let outcomes_trad = runner_trad.apply_circuit(&mut state_trad, &commands).unwrap();
             // Prep |0> and measure - should be 0 without error
             if outcomes_trad.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 traditional_flips += 1;
@@ -728,10 +734,11 @@ mod tests {
                 .with_filter(CompositeEventFilter::AfterMeasurement);
             let flow_noise_model = ComposableNoiseModel::new().add_channel(flow_channel);
 
-            let mut runner_flow = Runner::new(SparseStab::new(1))
+            let mut state_flow = SparseStab::new(1);
+            let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_noise_model)
                 .with_seed(seed);
-            let outcomes_flow = runner_flow.execute(&commands).unwrap();
+            let outcomes_flow = runner_flow.apply_circuit(&mut state_flow, &commands).unwrap();
             if outcomes_flow.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 flow_flips += 1;
             }
@@ -760,7 +767,7 @@ mod tests {
     fn test_flow_replicates_general_noise_model() {
         use crate::command::CommandBuilder;
         use crate::noise::{ComposableNoiseModel, GeneralNoiseModelBuilder};
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         let p1 = 0.05;
@@ -781,11 +788,12 @@ mod tests {
                 .with_p_meas_symmetric(p_meas)
                 .build();
 
-            let mut runner_trad = Runner::new(SparseStab::new(1))
+            let mut state_trad = SparseStab::new(1);
+            let mut runner_trad = CircuitRunner::<SparseStab>::new()
                 .with_noise(traditional_model)
                 .with_seed(seed);
             if runner_trad
-                .execute(&commands)
+                .apply_circuit(&mut state_trad, &commands)
                 .unwrap()
                 .get(QubitId(0))
                 .is_some_and(|o| o.outcome)
@@ -805,11 +813,12 @@ mod tests {
                 .add_channel(sq_channel)
                 .add_channel(meas_channel);
 
-            let mut runner_flow = Runner::new(SparseStab::new(1))
+            let mut state_flow = SparseStab::new(1);
+            let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
             if runner_flow
-                .execute(&commands)
+                .apply_circuit(&mut state_flow, &commands)
                 .unwrap()
                 .get(QubitId(0))
                 .is_some_and(|o| o.outcome)

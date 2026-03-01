@@ -39,8 +39,9 @@
 //!     .mz(0)
 //!     .build();
 //!
-//! let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
-//! let outcomes = runner.execute(&commands).unwrap();
+//! let mut state = SparseStab::new(1);
+//! let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+//! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType, SignalStore};
@@ -627,21 +628,26 @@ impl std::fmt::Display for ExecutionError {
 impl std::error::Error for ExecutionError {}
 
 // ============================================================================
-// Runner
+// CircuitRunner
 // ============================================================================
 
-/// Unified quantum simulation runner.
+/// Stateless quantum simulation runner.
 ///
-/// Executes both `CommandQueue` (GateType-based) and `AdaptedSequence` (GateId-based)
-/// circuits with noise, signal dispatch, gate overrides, and automatic decomposition.
+/// Applies noise and circuits to a simulator state, producing measurement outcomes.
+/// The runner does not own the simulator -- it borrows it during execution.
+///
+/// Three granularity levels:
+/// - [`apply_circuit`](CircuitRunner::apply_circuit) -- full circuit execution (common case)
+/// - [`apply_gate`](CircuitRunner::apply_gate) -- single gate with noise/handlers (interpreter mode)
+/// - [`apply_noise`](CircuitRunner::apply_noise) -- apply a noise event directly to state
 ///
 /// # Constructors
 ///
-/// - [`Runner::new(sim)`](Runner::new) -- Clifford gates with default definitions
-/// - [`Runner::with_definitions(sim, defs)`](Runner::with_definitions) -- Explicit definitions
-/// - [`Runner::rotations(sim)`](Runner::rotations) -- Clifford + rotation gates (requires
+/// - [`CircuitRunner::new()`](CircuitRunner::new) -- Clifford gates with default definitions
+/// - [`CircuitRunner::with_definitions(defs)`](CircuitRunner::with_definitions) -- Explicit definitions
+/// - [`CircuitRunner::rotations()`](CircuitRunner::rotations) -- Clifford + rotation gates (requires
 ///   `ArbitraryRotationGateable`)
-/// - [`Runner::rotations_with_definitions(sim, defs)`](Runner::rotations_with_definitions)
+/// - [`CircuitRunner::rotations_with_definitions(defs)`](CircuitRunner::rotations_with_definitions)
 ///   -- Rotation gates with explicit definitions
 ///
 /// # Example
@@ -658,38 +664,47 @@ impl std::error::Error for ExecutionError {}
 ///     .mz(1)
 ///     .build();
 ///
-/// let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
-/// let outcomes = runner.execute(&commands).unwrap();
+/// let mut state = SparseStab::new(2);
+/// let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+/// let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 ///
 /// let o0 = outcomes.get_bit(QubitId(0)).unwrap();
 /// let o1 = outcomes.get_bit(QubitId(1)).unwrap();
 /// assert_eq!(o0, o1);
 /// ```
-pub struct Runner<S: CliffordGateable> {
-    // Core
-    simulator: S,
+pub struct CircuitRunner<S: CliffordGateable> {
+    // Configuration (set at construction, immutable during execution)
     definitions: GateDefinitions,
-    rng: PecosRng,
-    outcomes: MeasurementOutcomes,
-
-    // From ExtendedRunner
     overrides: Option<GateOverrides<S>>,
     rotation_executor: Option<RotationExecutorFn<S>>,
-    results: Vec<bool>,
     max_decomp_depth: usize,
 
-    // From ShotRunner
+    // Execution state (owned by runner, mutated during execution)
+    rng: PecosRng,
     noise: Option<ComposableNoiseModel>,
     signal_handlers: SignalHandlerRegistry,
     gate_handlers: GateEventHandlers,
+
+    // Scratch buffers (cleared at start of apply_circuit)
+    outcomes: MeasurementOutcomes,
+    results: Vec<bool>,
 }
 
 // ============================================================================
 // Constructors and Configuration
 // ============================================================================
 
-impl<S: CliffordGateable> Runner<S> {
+impl<S: CliffordGateable> Default for CircuitRunner<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S: CliffordGateable> CircuitRunner<S> {
     /// Create a new runner with Clifford gate support and default definitions.
+    ///
+    /// The type parameter `S` is inferred from usage (e.g., `apply_circuit(&mut sparse_stab, ...)`)
+    /// or via turbofish (`CircuitRunner::<SparseStab>::new()`).
     ///
     /// # Example
     ///
@@ -697,10 +712,11 @@ impl<S: CliffordGateable> Runner<S> {
     /// use pecos_neo::prelude::*;
     /// use pecos_qsim::SparseStab;
     ///
-    /// let mut runner = Runner::new(SparseStab::new(1));
+    /// let mut runner = CircuitRunner::<SparseStab>::new();
     /// ```
-    pub fn new(simulator: S) -> Self {
-        Self::with_definitions(simulator, GateDefinitions::new())
+    #[must_use]
+    pub fn new() -> Self {
+        Self::with_definitions(GateDefinitions::new())
     }
 
     /// Create a new runner with Clifford gate support and explicit definitions.
@@ -712,11 +728,11 @@ impl<S: CliffordGateable> Runner<S> {
     /// use pecos_qsim::SparseStab;
     ///
     /// let defs = GateDefinitions::new();
-    /// let mut runner = Runner::with_definitions(SparseStab::new(1), defs);
+    /// let mut runner = CircuitRunner::<SparseStab>::with_definitions(defs);
     /// ```
-    pub fn with_definitions(simulator: S, definitions: GateDefinitions) -> Self {
+    #[must_use]
+    pub fn with_definitions(definitions: GateDefinitions) -> Self {
         Self {
-            simulator,
             definitions,
             rng: PecosRng::from_rng(&mut rand::rng()),
             outcomes: MeasurementOutcomes::new(),
@@ -853,17 +869,6 @@ impl<S: CliffordGateable> Runner<S> {
         }
 
         self
-    }
-
-    /// Get a reference to the simulator.
-    #[must_use]
-    pub fn simulator(&self) -> &S {
-        &self.simulator
-    }
-
-    /// Get a mutable reference to the simulator.
-    pub fn simulator_mut(&mut self) -> &mut S {
-        &mut self.simulator
     }
 
     /// Get gate definitions.
@@ -1073,34 +1078,28 @@ impl<S: CliffordGateable> Runner<S> {
     // CommandQueue execution
     // ================================================================
 
-    /// Execute a command queue and return measurement outcomes.
+    /// Apply a circuit to the given simulator state, returning measurement outcomes.
     ///
-    /// Converts each `GateType` to a `GateId` and executes through the unified
-    /// precedence chain (overrides -> Clifford -> rotation -> decomposition).
-    /// Signal dispatch is interleaved at recorded positions.
-    pub fn execute(
+    /// Clears the internal outcomes buffer, executes all commands (with noise/handlers/signals),
+    /// resets the noise model, and returns the accumulated outcomes.
+    ///
+    /// The caller is responsible for resetting the simulator state if needed
+    /// (e.g., `state.reset()` before calling this method).
+    pub fn apply_circuit(
         &mut self,
+        state: &mut S,
         commands: &CommandQueue,
-    ) -> Result<&MeasurementOutcomes, ExecutionError> {
+    ) -> Result<MeasurementOutcomes, ExecutionError> {
         self.outcomes.clear();
 
         if commands.has_signals() {
-            self.execute_queue_with_signals(commands)?;
+            self.execute_queue_with_signals(state, commands)?;
         } else {
             for command in commands {
-                self.execute_queue_command(command)?;
+                self.execute_queue_command(state, command)?;
             }
         }
 
-        Ok(&self.outcomes)
-    }
-
-    /// Execute a single shot and return outcomes, then reset for next shot.
-    pub fn run_shot(
-        &mut self,
-        commands: &CommandQueue,
-    ) -> Result<MeasurementOutcomes, ExecutionError> {
-        self.execute(commands)?;
         let outcomes = std::mem::take(&mut self.outcomes);
 
         // Reset noise model state for next shot
@@ -1111,42 +1110,108 @@ impl<S: CliffordGateable> Runner<S> {
         Ok(outcomes)
     }
 
-    /// Execute a shot with simulator reset -- optimized for Monte Carlo.
+    // ================================================================
+    // Outcome access
+    // ================================================================
+
+    /// Take the accumulated measurement outcomes, leaving the buffer empty.
     ///
-    /// Resets the simulator to |0>^n before running. This is faster than
-    /// creating a new runner for each shot.
-    pub fn run_shot_fresh(
+    /// Useful after a sequence of `apply_gate` calls to retrieve results.
+    pub fn take_outcomes(&mut self) -> MeasurementOutcomes {
+        std::mem::take(&mut self.outcomes)
+    }
+
+    /// Clear accumulated outcomes without returning them.
+    pub fn clear_outcomes(&mut self) {
+        self.outcomes.clear();
+    }
+
+    /// Reset the runner's execution state for a new shot.
+    ///
+    /// Clears accumulated outcomes and resets the noise model's internal context
+    /// (leakage tracking, qubit history, etc.). Call this between shots when using
+    /// `apply_gate` in interpreter mode.
+    ///
+    /// Note: This does **not** reset the simulator state or the RNG.
+    /// The caller should reset the simulator separately if needed.
+    pub fn reset(&mut self) {
+        self.outcomes.clear();
+        if let Some(ref mut noise) = self.noise {
+            noise.reset();
+        }
+    }
+
+    // ================================================================
+    // Single gate execution (interpreter mode)
+    // ================================================================
+
+    /// Execute a single gate through the full pipeline.
+    ///
+    /// Runs before handlers -> noise -> gate execution -> noise -> after handlers.
+    /// Measurement outcomes accumulate in the internal buffer; retrieve them
+    /// via [`take_outcomes`](CircuitRunner::take_outcomes).
+    pub fn apply_gate(
         &mut self,
-        commands: &CommandQueue,
-    ) -> Result<MeasurementOutcomes, ExecutionError> {
-        self.simulator.reset();
-        self.run_shot(commands)
+        state: &mut S,
+        gate_type: GateType,
+        qubits: &[QubitId],
+        angles: &[Angle64],
+    ) -> Result<(), ExecutionError> {
+        let command = GateCommand::with_angles(
+            gate_type,
+            qubits.to_vec(),
+            angles.to_vec(),
+        );
+        self.execute_queue_command(state, &command)
+    }
+
+    // ================================================================
+    // Direct noise injection
+    // ================================================================
+
+    /// Apply a noise event directly to the simulator state.
+    ///
+    /// Emits the event to the noise model, applies the response to state,
+    /// and returns the response. Useful for idle noise between manually-applied
+    /// gates, testing noise models, or custom execution loops.
+    pub fn apply_noise(&mut self, state: &mut S, event: NoiseEvent<'_>) -> NoiseResponse {
+        let Some(ref mut noise) = self.noise else {
+            return NoiseResponse::None;
+        };
+
+        let response = noise.emit(event, &mut self.rng);
+        self.apply_noise_response(state, response.clone());
+        response
     }
 
     /// Execute a single command from a `CommandQueue`.
-    fn execute_queue_command(&mut self, command: &GateCommand) -> Result<(), ExecutionError> {
+    fn execute_queue_command(
+        &mut self,
+        sim: &mut S,
+        command: &GateCommand,
+    ) -> Result<(), ExecutionError> {
         let qubits = command.qubits.as_slice();
 
         match command.gate_type {
             // Preparation
             GateType::PZ | GateType::QAlloc => {
-                self.simulator.pz(qubits);
-                self.dispatch_after_preparation(command);
+                sim.pz(qubits);
+                self.dispatch_after_preparation(sim, command);
             }
 
             // Measurement
             GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
-                self.dispatch_before_measurement(command);
-                let results = self.simulator.mz(qubits);
+                self.dispatch_before_measurement(sim, command);
+                let results = sim.mz(qubits);
                 let outcomes: SmallVec<[bool; 4]> = results.iter().map(|r| r.outcome).collect();
                 self.record_measurements(command.gate_type, qubits, &results);
-                self.dispatch_after_measurement(command, outcomes.as_slice());
+                self.dispatch_after_measurement(sim, command, outcomes.as_slice());
             }
 
             // Idle
             GateType::Idle => {
                 if let Some(duration) = command.get_idle_duration() {
-                    self.dispatch_idle(command, duration);
+                    self.dispatch_idle(sim, command, duration);
                 }
             }
 
@@ -1154,6 +1219,7 @@ impl<S: CliffordGateable> Runner<S> {
             _ => {
                 let gate_id = command.gate_type.to_gate_id();
                 let skip = self.dispatch_before_gate_for_id(
+                    sim,
                     gate_id,
                     command.gate_type,
                     qubits,
@@ -1162,6 +1228,7 @@ impl<S: CliffordGateable> Runner<S> {
                 if skip {
                     // Still emit after-gate for channels that want to inject errors
                     self.dispatch_after_gate_for_id(
+                        sim,
                         gate_id,
                         command.gate_type,
                         qubits,
@@ -1172,22 +1239,24 @@ impl<S: CliffordGateable> Runner<S> {
 
                 // Execute through unified precedence chain
                 let executed =
-                    self.try_execute_override(gate_id, qubits, command.angles.as_slice())
-                        || self.try_execute_clifford(gate_id, qubits)
+                    self.try_execute_override(sim, gate_id, qubits, command.angles.as_slice())
+                        || self.try_execute_clifford(sim, gate_id, qubits)
                         || self.rotation_executor.is_some_and(|executor| {
-                            executor(
-                                &mut self.simulator,
-                                gate_id,
-                                command.angles.as_slice(),
-                                qubits,
-                            )
+                            executor(sim, gate_id, command.angles.as_slice(), qubits)
                         });
 
                 if !executed {
-                    self.execute_via_decomposition(gate_id, qubits, command.angles.as_slice(), 0)?;
+                    self.execute_via_decomposition(
+                        sim,
+                        gate_id,
+                        qubits,
+                        command.angles.as_slice(),
+                        0,
+                    )?;
                 }
 
                 self.dispatch_after_gate_for_id(
+                    sim,
                     gate_id,
                     command.gate_type,
                     qubits,
@@ -1202,6 +1271,7 @@ impl<S: CliffordGateable> Runner<S> {
     /// Execute commands with interleaved signal dispatch.
     fn execute_queue_with_signals(
         &mut self,
+        sim: &mut S,
         commands: &CommandQueue,
     ) -> Result<(), ExecutionError> {
         let store = commands.signals();
@@ -1220,11 +1290,11 @@ impl<S: CliffordGateable> Runner<S> {
         }
 
         for (gate_idx, command) in commands.iter().enumerate() {
-            self.dispatch_signals_at(gate_idx as u32, store, &mut cursors);
-            self.execute_queue_command(command)?;
+            self.dispatch_signals_at(sim, gate_idx as u32, store, &mut cursors);
+            self.execute_queue_command(sim, command)?;
         }
         // Dispatch trailing signals (positioned after the last gate)
-        self.dispatch_signals_at(commands.len() as u32, store, &mut cursors);
+        self.dispatch_signals_at(sim, commands.len() as u32, store, &mut cursors);
         Ok(())
     }
 
@@ -1232,33 +1302,27 @@ impl<S: CliffordGateable> Runner<S> {
     // AdaptedSequence execution
     // ================================================================
 
-    /// Execute an `AdaptedSequence` and return measurement outcomes.
+    /// Apply an `AdaptedSequence` circuit to the given simulator state.
+    ///
+    /// Clears the internal outcomes buffer, executes all operations (with noise/handlers),
+    /// resets the noise model, and returns the accumulated outcomes.
     ///
     /// This path uses `GateId` natively and supports conditional execution,
     /// multi-basis prep/measure, and result tracking.
-    pub fn run(
+    pub fn apply_adapted_circuit(
         &mut self,
+        state: &mut S,
         circuit: &AdaptedSequence,
-    ) -> Result<&MeasurementOutcomes, ExecutionError> {
+    ) -> Result<MeasurementOutcomes, ExecutionError> {
         self.outcomes.clear();
         self.results.clear();
         self.results.resize(circuit.result_count, false);
 
-        self.execute_ops(&circuit.ops, 0)?;
+        self.execute_ops(state, &circuit.ops, 0)?;
 
-        Ok(&self.outcomes)
-    }
-
-    /// Execute a single shot of an `AdaptedSequence` and return outcomes, then reset.
-    pub fn run_adapted_shot(
-        &mut self,
-        circuit: &AdaptedSequence,
-    ) -> Result<MeasurementOutcomes, ExecutionError> {
-        self.run(circuit)?;
         let outcomes = std::mem::take(&mut self.outcomes);
 
-        // Reset for next shot
-        self.simulator.reset();
+        // Reset noise model state for next shot
         if let Some(ref mut noise) = self.noise {
             noise.reset();
         }
@@ -1267,36 +1331,46 @@ impl<S: CliffordGateable> Runner<S> {
     }
 
     /// Execute a list of operations.
-    fn execute_ops(&mut self, ops: &[AdaptedOp], depth: usize) -> Result<(), ExecutionError> {
+    fn execute_ops(
+        &mut self,
+        sim: &mut S,
+        ops: &[AdaptedOp],
+        depth: usize,
+    ) -> Result<(), ExecutionError> {
         if depth > self.max_decomp_depth {
             return Err(ExecutionError::MaxDecompositionDepthExceeded);
         }
 
         for op in ops {
-            self.execute_op(op, depth)?;
+            self.execute_op(sim, op, depth)?;
         }
         Ok(())
     }
 
     /// Execute a single operation from an `AdaptedSequence`.
-    fn execute_op(&mut self, op: &AdaptedOp, depth: usize) -> Result<(), ExecutionError> {
+    fn execute_op(
+        &mut self,
+        sim: &mut S,
+        op: &AdaptedOp,
+        depth: usize,
+    ) -> Result<(), ExecutionError> {
         match op {
             AdaptedOp::Gate {
                 gate_id,
                 qubits,
                 angles,
             } => {
-                self.execute_gate(*gate_id, qubits, angles, depth)?;
+                self.execute_gate(sim, *gate_id, qubits, angles, depth)?;
             }
             AdaptedOp::Prep { qubit, basis } => {
-                self.execute_prep(*qubit, *basis);
+                self.execute_prep(sim, *qubit, *basis);
             }
             AdaptedOp::Measure {
                 qubit,
                 basis,
                 result,
             } => {
-                self.execute_measure(*qubit, *basis, *result);
+                self.execute_measure(sim, *qubit, *basis, *result);
             }
             AdaptedOp::Conditional {
                 condition,
@@ -1309,9 +1383,9 @@ impl<S: CliffordGateable> Runner<S> {
                     .copied()
                     .unwrap_or(false);
                 if result_val {
-                    self.execute_ops(if_one, depth)?;
+                    self.execute_ops(sim, if_one, depth)?;
                 } else {
-                    self.execute_ops(if_zero, depth)?;
+                    self.execute_ops(sim, if_zero, depth)?;
                 }
             }
             AdaptedOp::XorResult { target, source } => {
@@ -1341,30 +1415,31 @@ impl<S: CliffordGateable> Runner<S> {
     /// Before and after the gate, noise events and user handlers are dispatched.
     fn execute_gate(
         &mut self,
+        sim: &mut S,
         gate_id: GateId,
         qubits: &[QubitId],
         angles: &[Angle64],
         depth: usize,
     ) -> Result<(), ExecutionError> {
         // Emit before-gate noise event
-        let skip = self.emit_before_gate(gate_id, qubits, angles);
+        let skip = self.emit_before_gate(sim, gate_id, qubits, angles);
         if skip {
             return Ok(());
         }
 
         // Try execution in order of precedence
-        let executed = self.try_execute_override(gate_id, qubits, angles)
-            || self.try_execute_clifford(gate_id, qubits)
+        let executed = self.try_execute_override(sim, gate_id, qubits, angles)
+            || self.try_execute_clifford(sim, gate_id, qubits)
             || self
                 .rotation_executor
-                .is_some_and(|executor| executor(&mut self.simulator, gate_id, angles, qubits));
+                .is_some_and(|executor| executor(sim, gate_id, angles, qubits));
 
         if !executed {
-            self.execute_via_decomposition(gate_id, qubits, angles, depth)?;
+            self.execute_via_decomposition(sim, gate_id, qubits, angles, depth)?;
         }
 
         // Emit after-gate noise event
-        self.emit_after_gate(gate_id, qubits, angles);
+        self.emit_after_gate(sim, gate_id, qubits, angles);
 
         Ok(())
     }
@@ -1372,6 +1447,7 @@ impl<S: CliffordGateable> Runner<S> {
     /// Try to execute a gate via registered overrides.
     fn try_execute_override(
         &mut self,
+        sim: &mut S,
         gate_id: GateId,
         qubits: &[QubitId],
         angles: &[Angle64],
@@ -1379,11 +1455,11 @@ impl<S: CliffordGateable> Runner<S> {
         self.overrides
             .as_ref()
             .and_then(|o| o.get(gate_id))
-            .is_some_and(|executor| executor(&mut self.simulator, angles, qubits))
+            .is_some_and(|executor| executor(sim, angles, qubits))
     }
 
     /// Try to execute a Clifford gate natively via trait methods.
-    fn try_execute_clifford(&mut self, gate_id: GateId, qubits: &[QubitId]) -> bool {
+    fn try_execute_clifford(&mut self, sim: &mut S, gate_id: GateId, qubits: &[QubitId]) -> bool {
         let Some(gate_type) = gate_id.try_to_gate_type() else {
             return false;
         };
@@ -1391,67 +1467,67 @@ impl<S: CliffordGateable> Runner<S> {
         match gate_type {
             GateType::I | GateType::Idle => true,
             GateType::X => {
-                self.simulator.x(qubits);
+                sim.x(qubits);
                 true
             }
             GateType::Y => {
-                self.simulator.y(qubits);
+                sim.y(qubits);
                 true
             }
             GateType::Z => {
-                self.simulator.z(qubits);
+                sim.z(qubits);
                 true
             }
             GateType::H => {
-                self.simulator.h(qubits);
+                sim.h(qubits);
                 true
             }
             GateType::SX => {
-                self.simulator.sx(qubits);
+                sim.sx(qubits);
                 true
             }
             GateType::SXdg => {
-                self.simulator.sxdg(qubits);
+                sim.sxdg(qubits);
                 true
             }
             GateType::SY => {
-                self.simulator.sy(qubits);
+                sim.sy(qubits);
                 true
             }
             GateType::SYdg => {
-                self.simulator.sydg(qubits);
+                sim.sydg(qubits);
                 true
             }
             GateType::SZ => {
-                self.simulator.sz(qubits);
+                sim.sz(qubits);
                 true
             }
             GateType::SZdg => {
-                self.simulator.szdg(qubits);
+                sim.szdg(qubits);
                 true
             }
             GateType::CX => {
-                self.simulator.cx(qubits);
+                sim.cx(qubits);
                 true
             }
             GateType::CY => {
-                self.simulator.cy(qubits);
+                sim.cy(qubits);
                 true
             }
             GateType::CZ => {
-                self.simulator.cz(qubits);
+                sim.cz(qubits);
                 true
             }
             GateType::SZZ => {
-                self.simulator.szz(qubits);
+                sim.szz(qubits);
                 true
             }
             GateType::SZZdg => {
-                self.simulator.szzdg(qubits);
+                sim.szzdg(qubits);
                 true
             }
             GateType::SWAP => {
-                self.simulator.swap(qubits);
+                sim.swap(qubits);
                 true
             }
             _ => false,
@@ -1461,6 +1537,7 @@ impl<S: CliffordGateable> Runner<S> {
     /// Execute a gate via decomposition from `GateDefinitions`.
     fn execute_via_decomposition(
         &mut self,
+        sim: &mut S,
         gate_id: GateId,
         qubits: &[QubitId],
         angles: &[Angle64],
@@ -1477,7 +1554,7 @@ impl<S: CliffordGateable> Runner<S> {
             .collect();
 
         for inst in instantiated_ops {
-            self.execute_gate(inst.gate, &inst.qubits, &inst.angles, depth + 1)?;
+            self.execute_gate(sim, inst.gate, &inst.qubits, &inst.angles, depth + 1)?;
         }
 
         Ok(())
@@ -1488,36 +1565,36 @@ impl<S: CliffordGateable> Runner<S> {
     // ================================================================
 
     /// Execute preparation in a given basis.
-    fn execute_prep(&mut self, qubit: QubitId, basis: PrepBasis) {
-        self.simulator.pz(&[qubit]);
+    fn execute_prep(&mut self, sim: &mut S, qubit: QubitId, basis: PrepBasis) {
+        sim.pz(&[qubit]);
         match basis {
             PrepBasis::Z => {}
             PrepBasis::X => {
-                self.simulator.h(&[qubit]);
+                sim.h(&[qubit]);
             }
             PrepBasis::Y => {
-                self.simulator.h(&[qubit]);
-                self.simulator.sz(&[qubit]);
+                sim.h(&[qubit]);
+                sim.sz(&[qubit]);
             }
         }
     }
 
     /// Execute measurement in a given basis with result tracking.
-    fn execute_measure(&mut self, qubit: QubitId, basis: MeasBasis, result_id: ResultId) {
+    fn execute_measure(&mut self, sim: &mut S, qubit: QubitId, basis: MeasBasis, result_id: ResultId) {
         // Rotate to Z basis
         match basis {
             MeasBasis::Z => {}
             MeasBasis::X => {
-                self.simulator.h(&[qubit]);
+                sim.h(&[qubit]);
             }
             MeasBasis::Y => {
-                self.simulator.szdg(&[qubit]);
-                self.simulator.h(&[qubit]);
+                sim.szdg(&[qubit]);
+                sim.h(&[qubit]);
             }
         }
 
         // Perform measurement
-        let results = self.simulator.mz(&[qubit]);
+        let results = sim.mz(&[qubit]);
         let meas_result = results.first();
         let outcome = meas_result.is_some_and(|r| r.outcome);
         let is_deterministic = meas_result.is_none_or(|r| r.is_deterministic);
@@ -1535,11 +1612,11 @@ impl<S: CliffordGateable> Runner<S> {
         match basis {
             MeasBasis::Z => {}
             MeasBasis::X => {
-                self.simulator.h(&[qubit]);
+                sim.h(&[qubit]);
             }
             MeasBasis::Y => {
-                self.simulator.h(&[qubit]);
-                self.simulator.sz(&[qubit]);
+                sim.h(&[qubit]);
+                sim.sz(&[qubit]);
             }
         }
     }
@@ -1578,6 +1655,7 @@ impl<S: CliffordGateable> Runner<S> {
     /// Returns `true` if the gate should be skipped.
     fn dispatch_before_gate_for_id(
         &mut self,
+        sim: &mut S,
         gate_id: GateId,
         gate_type: GateType,
         qubits: &[QubitId],
@@ -1585,7 +1663,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> bool {
         // Fast path: no handlers registered, go directly to noise model
         if self.gate_handlers.before_gate.is_empty() {
-            return self.emit_before_gate_noise_for_id(gate_id, gate_type, qubits, angles);
+            return self.emit_before_gate_noise_for_id(sim, gate_id, gate_type, qubits, angles);
         }
 
         // 1. User before-gate handlers
@@ -1607,13 +1685,14 @@ impl<S: CliffordGateable> Runner<S> {
         // 3. Combine
         let combined = user_response.combine(noise_response);
         let should_skip = combined.should_skip_gate();
-        self.apply_noise_response(combined);
+        self.apply_noise_response(sim, combined);
         should_skip
     }
 
     /// Dispatch after-gate event for a gate identified by `GateId`.
     fn dispatch_after_gate_for_id(
         &mut self,
+        sim: &mut S,
         gate_id: GateId,
         gate_type: GateType,
         qubits: &[QubitId],
@@ -1621,7 +1700,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) {
         // Fast path
         if self.gate_handlers.after_gate.is_empty() {
-            self.emit_after_gate_noise_for_id(gate_id, gate_type, qubits, angles);
+            self.emit_after_gate_noise_for_id(sim, gate_id, gate_type, qubits, angles);
             return;
         }
 
@@ -1643,16 +1722,16 @@ impl<S: CliffordGateable> Runner<S> {
 
         // 3. Combine and apply
         let combined = noise_response.combine(user_response);
-        self.apply_noise_response(combined);
+        self.apply_noise_response(sim, combined);
     }
 
     /// Dispatch before-measurement event.
-    fn dispatch_before_measurement(&mut self, command: &GateCommand) {
+    fn dispatch_before_measurement(&mut self, sim: &mut S, command: &GateCommand) {
         let qubits = command.qubits.as_slice();
 
         // Fast path
         if self.gate_handlers.before_measurement.is_empty() {
-            self.emit_before_measurement_noise(qubits);
+            self.emit_before_measurement_noise(sim, qubits);
             return;
         }
 
@@ -1661,16 +1740,21 @@ impl<S: CliffordGateable> Runner<S> {
             GateEventHandlers::dispatch(&self.gate_handlers.before_measurement, &ctx);
         let noise_response = self.emit_before_measurement_noise_raw(qubits);
         let combined = user_response.combine(noise_response);
-        self.apply_noise_response(combined);
+        self.apply_noise_response(sim, combined);
     }
 
     /// Dispatch after-measurement event.
-    fn dispatch_after_measurement(&mut self, command: &GateCommand, outcomes: &[bool]) {
+    fn dispatch_after_measurement(
+        &mut self,
+        sim: &mut S,
+        command: &GateCommand,
+        outcomes: &[bool],
+    ) {
         let qubits = command.qubits.as_slice();
 
         // Fast path
         if self.gate_handlers.after_measurement.is_empty() {
-            self.emit_after_measurement_noise(qubits, outcomes);
+            self.emit_after_measurement_noise(sim, qubits, outcomes);
             return;
         }
 
@@ -1687,16 +1771,16 @@ impl<S: CliffordGateable> Runner<S> {
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.after_measurement, &ctx);
         let combined = noise_response.combine(user_response);
-        self.apply_noise_response(combined);
+        self.apply_noise_response(sim, combined);
     }
 
     /// Dispatch after-preparation event.
-    fn dispatch_after_preparation(&mut self, command: &GateCommand) {
+    fn dispatch_after_preparation(&mut self, sim: &mut S, command: &GateCommand) {
         let qubits = command.qubits.as_slice();
 
         // Fast path
         if self.gate_handlers.after_preparation.is_empty() {
-            self.emit_after_preparation_noise(qubits);
+            self.emit_after_preparation_noise(sim, qubits);
             return;
         }
 
@@ -1705,16 +1789,16 @@ impl<S: CliffordGateable> Runner<S> {
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.after_preparation, &ctx);
         let combined = noise_response.combine(user_response);
-        self.apply_noise_response(combined);
+        self.apply_noise_response(sim, combined);
     }
 
     /// Dispatch idle event.
-    fn dispatch_idle(&mut self, command: &GateCommand, duration: TimeUnits) {
+    fn dispatch_idle(&mut self, sim: &mut S, command: &GateCommand, duration: TimeUnits) {
         let qubits = command.qubits.as_slice();
 
         // Fast path
         if self.gate_handlers.idle.is_empty() {
-            self.emit_idle_noise(qubits, duration);
+            self.emit_idle_noise(sim, qubits, duration);
             return;
         }
 
@@ -1730,7 +1814,7 @@ impl<S: CliffordGateable> Runner<S> {
         };
         let user_response = GateEventHandlers::dispatch(&self.gate_handlers.idle, &ctx);
         let combined = noise_response.combine(user_response);
-        self.apply_noise_response(combined);
+        self.apply_noise_response(sim, combined);
     }
 
     // ================================================================
@@ -1740,6 +1824,7 @@ impl<S: CliffordGateable> Runner<S> {
     /// Emit before-gate to noise model (`AdaptedSequence` path). Returns `true` if gate should be skipped.
     fn emit_before_gate(
         &mut self,
+        sim: &mut S,
         gate_id: GateId,
         qubits: &[QubitId],
         angles: &[Angle64],
@@ -1758,12 +1843,18 @@ impl<S: CliffordGateable> Runner<S> {
 
         let response = noise.emit(event, &mut self.rng);
         let should_skip = response.should_skip_gate();
-        self.apply_noise_response(response);
+        self.apply_noise_response(sim, response);
         should_skip
     }
 
     /// Emit after-gate to noise model (`AdaptedSequence` path).
-    fn emit_after_gate(&mut self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) {
+    fn emit_after_gate(
+        &mut self,
+        sim: &mut S,
+        gate_id: GateId,
+        qubits: &[QubitId],
+        angles: &[Angle64],
+    ) {
         let Some(ref mut noise) = self.noise else {
             return;
         };
@@ -1777,7 +1868,7 @@ impl<S: CliffordGateable> Runner<S> {
         };
 
         let response = noise.emit(event, &mut self.rng);
-        self.apply_noise_response(response);
+        self.apply_noise_response(sim, response);
     }
 
     // ================================================================
@@ -1787,6 +1878,7 @@ impl<S: CliffordGateable> Runner<S> {
     /// Emit before-gate noise for a gate identified by `GateId`. Returns `true` if gate should be skipped.
     fn emit_before_gate_noise_for_id(
         &mut self,
+        sim: &mut S,
         gate_id: GateId,
         gate_type: GateType,
         qubits: &[QubitId],
@@ -1794,7 +1886,7 @@ impl<S: CliffordGateable> Runner<S> {
     ) -> bool {
         let response = self.emit_before_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles);
         let should_skip = response.should_skip_gate();
-        self.apply_noise_response(response);
+        self.apply_noise_response(sim, response);
         should_skip
     }
 
@@ -1819,13 +1911,14 @@ impl<S: CliffordGateable> Runner<S> {
 
     fn emit_after_gate_noise_for_id(
         &mut self,
+        sim: &mut S,
         gate_id: GateId,
         gate_type: GateType,
         qubits: &[QubitId],
         angles: &[Angle64],
     ) {
         let response = self.emit_after_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles);
-        self.apply_noise_response(response);
+        self.apply_noise_response(sim, response);
     }
 
     fn emit_after_gate_noise_raw_for_id(
@@ -1847,9 +1940,9 @@ impl<S: CliffordGateable> Runner<S> {
         NoiseResponse::None
     }
 
-    fn emit_before_measurement_noise(&mut self, qubits: &[QubitId]) {
+    fn emit_before_measurement_noise(&mut self, sim: &mut S, qubits: &[QubitId]) {
         let response = self.emit_before_measurement_noise_raw(qubits);
-        self.apply_noise_response(response);
+        self.apply_noise_response(sim, response);
     }
 
     fn emit_before_measurement_noise_raw(&mut self, qubits: &[QubitId]) -> NoiseResponse {
@@ -1860,9 +1953,9 @@ impl<S: CliffordGateable> Runner<S> {
         NoiseResponse::None
     }
 
-    fn emit_after_measurement_noise(&mut self, qubits: &[QubitId], outcomes: &[bool]) {
+    fn emit_after_measurement_noise(&mut self, sim: &mut S, qubits: &[QubitId], outcomes: &[bool]) {
         let response = self.emit_after_measurement_noise_raw(qubits, outcomes);
-        self.apply_noise_response(response);
+        self.apply_noise_response(sim, response);
     }
 
     fn emit_after_measurement_noise_raw(
@@ -1877,9 +1970,9 @@ impl<S: CliffordGateable> Runner<S> {
         NoiseResponse::None
     }
 
-    fn emit_after_preparation_noise(&mut self, qubits: &[QubitId]) {
+    fn emit_after_preparation_noise(&mut self, sim: &mut S, qubits: &[QubitId]) {
         let response = self.emit_after_preparation_noise_raw(qubits);
-        self.apply_noise_response(response);
+        self.apply_noise_response(sim, response);
     }
 
     fn emit_after_preparation_noise_raw(&mut self, qubits: &[QubitId]) -> NoiseResponse {
@@ -1890,9 +1983,9 @@ impl<S: CliffordGateable> Runner<S> {
         NoiseResponse::None
     }
 
-    fn emit_idle_noise(&mut self, qubits: &[QubitId], duration: TimeUnits) {
+    fn emit_idle_noise(&mut self, sim: &mut S, qubits: &[QubitId], duration: TimeUnits) {
         let response = self.emit_idle_noise_raw(qubits, duration);
-        self.apply_noise_response(response);
+        self.apply_noise_response(sim, response);
     }
 
     fn emit_idle_noise_raw(&mut self, qubits: &[QubitId], duration: TimeUnits) -> NoiseResponse {
@@ -1908,7 +2001,13 @@ impl<S: CliffordGateable> Runner<S> {
     // ================================================================
 
     /// Dispatch all signals at a given command position.
-    fn dispatch_signals_at(&mut self, pos: u32, store: &SignalStore, cursors: &mut [SignalCursor]) {
+    fn dispatch_signals_at(
+        &mut self,
+        sim: &mut S,
+        pos: u32,
+        store: &SignalStore,
+        cursors: &mut [SignalCursor],
+    ) {
         let has_response_handlers = self.signal_handlers.has_response_handlers();
 
         for cursor in cursors.iter_mut() {
@@ -1935,12 +2034,12 @@ impl<S: CliffordGateable> Runner<S> {
                         .signal_handlers
                         .call_response(cursor.type_id, data, &ctx);
                     if !response.is_none() {
-                        self.apply_noise_response(response);
+                        self.apply_noise_response(sim, response);
                     }
                 }
 
                 // 3. Emit to noise model
-                self.emit_signal_to_noise(cursor.type_id, data);
+                self.emit_signal_to_noise(sim, cursor.type_id, data);
 
                 cursor.entry_idx += 1;
             }
@@ -1948,11 +2047,11 @@ impl<S: CliffordGateable> Runner<S> {
     }
 
     /// Emit a signal event to the noise model.
-    fn emit_signal_to_noise(&mut self, type_id: TypeId, data: &dyn Any) {
+    fn emit_signal_to_noise(&mut self, sim: &mut S, type_id: TypeId, data: &dyn Any) {
         if let Some(ref mut noise) = self.noise {
             let event = NoiseEvent::Signal { type_id, data };
             let response = noise.emit(event, &mut self.rng);
-            self.apply_noise_response(response);
+            self.apply_noise_response(sim, response);
         }
     }
 
@@ -1993,7 +2092,7 @@ impl<S: CliffordGateable> Runner<S> {
     }
 
     /// Apply a noise response (inject gates, flip outcomes, etc.).
-    fn apply_noise_response(&mut self, response: NoiseResponse) {
+    fn apply_noise_response(&mut self, sim: &mut S, response: NoiseResponse) {
         match response {
             NoiseResponse::None
             | NoiseResponse::SkipGate
@@ -2002,7 +2101,7 @@ impl<S: CliffordGateable> Runner<S> {
 
             NoiseResponse::InjectGates(gates) => {
                 for gate in gates.iter() {
-                    self.execute_noise_gate(gate);
+                    Self::execute_noise_gate(sim, gate);
                 }
             }
 
@@ -2026,24 +2125,24 @@ impl<S: CliffordGateable> Runner<S> {
 
             NoiseResponse::Multiple(responses) => {
                 for r in responses {
-                    self.apply_noise_response(r);
+                    self.apply_noise_response(sim, r);
                 }
             }
         }
     }
 
     /// Execute a noise gate (injected Pauli error).
-    fn execute_noise_gate(&mut self, gate: &GateCommand) {
+    fn execute_noise_gate(sim: &mut S, gate: &GateCommand) {
         let qubits = gate.qubits.as_slice();
         match gate.gate_type {
             GateType::X => {
-                self.simulator.x(qubits);
+                sim.x(qubits);
             }
             GateType::Y => {
-                self.simulator.y(qubits);
+                sim.y(qubits);
             }
             GateType::Z => {
-                self.simulator.z(qubits);
+                sim.z(qubits);
             }
             _ => {}
         }
@@ -2054,7 +2153,7 @@ impl<S: CliffordGateable> Runner<S> {
 // RNG management (for simulators with RngManageable)
 // ============================================================================
 
-impl<S> Runner<S>
+impl<S> CircuitRunner<S>
 where
     S: CliffordGateable + RngManageable<Rng = PecosRng>,
 {
@@ -2063,25 +2162,23 @@ where
     /// Seeds both the noise RNG and the simulator's internal RNG using
     /// derived seeds from a single base seed.
     #[must_use]
-    pub fn with_full_seed(mut self, seed: u64) -> Self {
+    pub fn with_full_seed(mut self, state: &mut S, seed: u64) -> Self {
         let noise_seed = derive_seed(seed, "noise");
         let sim_seed = derive_seed(seed, "simulator");
         self.rng = PecosRng::seed_from_u64(noise_seed);
-        self.simulator.set_seed(sim_seed);
+        state.set_seed(sim_seed);
         self
     }
 
-    /// Seed the simulator's internal RNG directly.
-    pub fn seed_simulator(&mut self, seed: u64) {
-        self.simulator.set_seed(seed);
-    }
-
     /// Set full seed (mutable version).
-    pub fn set_full_seed(&mut self, seed: u64) {
+    ///
+    /// Seeds both the noise RNG and the simulator's internal RNG using
+    /// derived seeds from a single base seed.
+    pub fn set_full_seed(&mut self, state: &mut S, seed: u64) {
         let noise_seed = derive_seed(seed, "noise");
         let sim_seed = derive_seed(seed, "simulator");
         self.rng = PecosRng::seed_from_u64(noise_seed);
-        self.simulator.set_seed(sim_seed);
+        state.set_seed(sim_seed);
     }
 }
 
@@ -2089,7 +2186,7 @@ where
 // Rotation gate support (for ArbitraryRotationGateable simulators)
 // ============================================================================
 
-impl<S> Runner<S>
+impl<S> CircuitRunner<S>
 where
     S: CliffordGateable + ArbitraryRotationGateable,
 {
@@ -2097,13 +2194,14 @@ where
     ///
     /// For simulators implementing `ArbitraryRotationGateable`, this constructor
     /// enables native execution of rotation gates (T, Tdg, RX, RY, RZ, etc.).
-    pub fn rotations(simulator: S) -> Self {
-        Self::rotations_with_definitions(simulator, GateDefinitions::new())
+    #[must_use]
+    pub fn rotations() -> Self {
+        Self::rotations_with_definitions(GateDefinitions::new())
     }
 
     /// Create a runner with rotation gate support and explicit definitions.
-    pub fn rotations_with_definitions(simulator: S, definitions: GateDefinitions) -> Self {
-        let mut runner = Self::with_definitions(simulator, definitions);
+    pub fn rotations_with_definitions(definitions: GateDefinitions) -> Self {
+        let mut runner = Self::with_definitions(definitions);
         runner.rotation_executor = Some(Self::execute_rotation_gate);
         runner
     }
@@ -2249,15 +2347,16 @@ mod tests {
     use pecos_qsim::{SparseStab, StateVec};
 
     // ================================================================
-    // Basic execution tests (from old ShotRunner)
+    // Basic execution tests
     // ================================================================
 
     #[test]
     fn test_basic_execution() {
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         assert_eq!(outcomes.len(), 1);
     }
@@ -2273,8 +2372,9 @@ mod tests {
             .mz(1)
             .build();
 
-        let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         assert_eq!(outcomes.len(), 2);
         let o0 = outcomes.get_bit(QubitId(0)).unwrap();
@@ -2288,22 +2388,24 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         assert_eq!(outcomes.len(), 1);
     }
 
     #[test]
-    fn test_run_shot_resets() {
+    fn test_apply_circuit_resets_noise() {
         let commands = CommandBuilder::new().pz(0).mz(0).build();
 
-        let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
-        let outcomes1 = runner.run_shot(&commands).unwrap();
-        let outcomes2 = runner.run_shot(&commands).unwrap();
+        let outcomes1 = runner.apply_circuit(&mut state, &commands).unwrap();
+        let outcomes2 = runner.apply_circuit(&mut state, &commands).unwrap();
 
         assert_eq!(outcomes1.len(), 1);
         assert_eq!(outcomes2.len(), 1);
@@ -2323,10 +2425,11 @@ mod tests {
         let mut noise = ComposableNoiseModel::new().add_channel(LeakageChannel::new());
         noise.context_mut().mark_leaked(QubitId(0));
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let outcome = outcomes.get(QubitId(0)).unwrap();
         assert!(outcome.is_leaked);
@@ -2342,10 +2445,11 @@ mod tests {
         let mut noise = ComposableNoiseModel::new().add_channel(LeakageChannel::new());
         noise.context_mut().mark_leaked(QubitId(0));
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let outcome = outcomes.get(QubitId(0)).unwrap();
         assert!(outcome.outcome);
@@ -2365,10 +2469,11 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(LeakageChannel::new());
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let outcome = outcomes.get(QubitId(0)).unwrap();
         assert!(!outcome.is_leaked);
@@ -2395,8 +2500,9 @@ mod tests {
             smallvec::smallvec![QubitId(0)],
         ));
 
-        let mut runner = Runner::rotations(StateVec::new(1)).with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let mut state = StateVec::new(1);
+        let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let outcome = outcomes.get(QubitId(0)).unwrap();
         assert!(outcome.outcome, "RX(pi) on |0> should give |1>");
@@ -2420,8 +2526,9 @@ mod tests {
             .mz(1)
             .build();
 
-        let mut runner = Runner::rotations(StateVec::new(2)).with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let mut state = StateVec::new(2);
+        let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let outcome = outcomes.get(QubitId(1)).unwrap();
         assert!(
@@ -2442,8 +2549,9 @@ mod tests {
             .mz(2)
             .build();
 
-        let mut runner = Runner::rotations(StateVec::new(3)).with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let mut state = StateVec::new(3);
+        let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let outcome = outcomes.get(QubitId(2)).unwrap();
         assert!(
@@ -2463,8 +2571,9 @@ mod tests {
             .mz(2)
             .build();
 
-        let mut runner = Runner::rotations(StateVec::new(3)).with_seed(42);
-        let outcomes = runner.execute(&commands).unwrap();
+        let mut state = StateVec::new(3);
+        let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
         let outcome = outcomes.get(QubitId(2)).unwrap();
         assert!(
@@ -2481,11 +2590,12 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0));
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         assert_eq!(outcomes.len(), 1);
     }
 
@@ -2505,11 +2615,12 @@ mod tests {
 
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(1), gates)
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates)
             .with_noise(noise)
             .with_seed(42);
 
-        let outcomes = runner.execute(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         assert_eq!(outcomes.len(), 1);
     }
 
@@ -2529,7 +2640,7 @@ mod tests {
             CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 0.0),
         );
 
-        let runner = Runner::with_definitions(SparseStab::new(1), gates).with_noise(noise);
+        let runner = CircuitRunner::<SparseStab>::with_definitions(gates).with_noise(noise);
 
         assert_eq!(runner.definitions().name(custom_id), Some("CustomGate"));
     }
@@ -2566,12 +2677,13 @@ mod tests {
                 .mz(0)
                 .build();
 
-            let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
             runner.on_signal(move |_: &RoundBoundary| {
                 counter_clone.fetch_add(1, Ordering::Relaxed);
             });
 
-            let _outcomes = runner.execute(&commands).unwrap();
+            let _outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
             assert_eq!(
                 counter.load(Ordering::Relaxed),
@@ -2595,7 +2707,8 @@ mod tests {
                 .mz(0)
                 .build();
 
-            let mut runner = Runner::new(SparseStab::new(1)).with_seed(42);
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
             runner.on_signal(move |_: &RoundBoundary| {
                 rc.fetch_add(1, Ordering::Relaxed);
             });
@@ -2603,7 +2716,7 @@ mod tests {
                 tc.fetch_add(1, Ordering::Relaxed);
             });
 
-            let _outcomes = runner.execute(&commands).unwrap();
+            let _outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
             assert_eq!(round_count.load(Ordering::Relaxed), 1);
             assert_eq!(temp_count.load(Ordering::Relaxed), 1);
@@ -2611,7 +2724,7 @@ mod tests {
     }
 
     // ================================================================
-    // ExtendedRunner tests (now on Runner)
+    // AdaptedSequence tests
     // ================================================================
 
     #[test]
@@ -2623,9 +2736,10 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(1), gates_def).with_seed(42);
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
-        let outcomes = runner.run(&circuit).unwrap();
+        let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
         assert_eq!(outcomes.len(), 1);
     }
 
@@ -2641,9 +2755,10 @@ mod tests {
             .mz(QubitId(1), ResultId(1))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(2), gates_def).with_seed(42);
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
-        let outcomes = runner.run(&circuit).unwrap();
+        let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
         assert_eq!(outcomes.len(), 2);
         let o0 = outcomes.get_bit(QubitId(0)).unwrap();
         let o1 = outcomes.get_bit(QubitId(1)).unwrap();
@@ -2663,9 +2778,10 @@ mod tests {
             .mz(QubitId(1), ResultId(1))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(2), gates_def).with_seed(42);
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
-        let outcomes = runner.run(&circuit).unwrap();
+        let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
         assert!(outcomes.get_bit(QubitId(0)).unwrap());
         assert!(outcomes.get_bit(QubitId(1)).unwrap());
     }
@@ -2686,9 +2802,10 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(1), gates_def);
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def);
 
-        let result = runner.run(&circuit);
+        let result = runner.apply_adapted_circuit(&mut state, &circuit);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -2697,17 +2814,19 @@ mod tests {
     }
 
     #[test]
-    fn test_adapted_run_shot_resets() {
+    fn test_adapted_circuit_resets_noise() {
         let gates_def = GateDefinitions::new();
         let circuit = OpBuilder::new()
             .pz(QubitId(0))
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(1), gates_def).with_seed(42);
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
-        let outcomes1 = runner.run_adapted_shot(&circuit).unwrap();
-        let outcomes2 = runner.run_adapted_shot(&circuit).unwrap();
+        let outcomes1 = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
+        state.reset();
+        let outcomes2 = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
 
         assert_eq!(outcomes1.len(), 1);
         assert_eq!(outcomes2.len(), 1);
@@ -2722,9 +2841,10 @@ mod tests {
             .mx(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(1), gates_def).with_seed(42);
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
-        let outcomes = runner.run(&circuit).unwrap();
+        let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
         assert!(
             !outcomes.get_bit(QubitId(0)).unwrap(),
             "|+> measured in X should give 0"
@@ -2753,11 +2873,12 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(1), gates_def)
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def)
             .with_overrides(overrides)
             .with_seed(42);
 
-        let outcomes = runner.run(&circuit).unwrap();
+        let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
         assert!(outcomes.get_bit(QubitId(0)).unwrap());
     }
 
@@ -2776,11 +2897,12 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(1), gates_def)
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def)
             .with_overrides(overrides)
             .with_seed(42);
 
-        let outcomes = runner.run(&circuit).unwrap();
+        let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
         assert!(!outcomes.get_bit(QubitId(0)).unwrap());
     }
 
@@ -2815,12 +2937,13 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
+        let mut state = StateVec::new(1);
         let mut runner =
-            Runner::rotations_with_definitions(StateVec::new(1), gates_def).with_seed(42);
+            CircuitRunner::<StateVec>::rotations_with_definitions(gates_def).with_seed(42);
 
         assert!(runner.has_rotation_support());
 
-        let outcomes = runner.run(&circuit).unwrap();
+        let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
         assert!(outcomes.get_bit(QubitId(0)).unwrap());
     }
 
@@ -2834,15 +2957,33 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut runner = Runner::with_definitions(SparseStab::new(1), gates_def);
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def);
 
         assert!(!runner.has_rotation_support());
 
-        let result = runner.run(&circuit);
+        let result = runner.apply_adapted_circuit(&mut state, &circuit);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
             ExecutionError::NoDecomposition { .. }
         ));
+    }
+
+    // ================================================================
+    // apply_gate (interpreter mode) tests
+    // ================================================================
+
+    #[test]
+    fn test_apply_gate_basic() {
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+
+        runner.apply_gate(&mut state, GateType::PZ, &[QubitId(0)], &[]).unwrap();
+        runner.apply_gate(&mut state, GateType::H, &[QubitId(0)], &[]).unwrap();
+        runner.apply_gate(&mut state, GateType::MZ, &[QubitId(0)], &[]).unwrap();
+
+        let outcomes = runner.take_outcomes();
+        assert_eq!(outcomes.len(), 1);
     }
 }

@@ -1,8 +1,8 @@
-# Runner: Unified Circuit Execution
+# CircuitRunner: Unified Circuit Execution
 
 ## Overview
 
-`Runner<S>` is the unified circuit runner for pecos-neo. It handles both `CommandQueue` (GateType-based) and `AdaptedSequence` (GateId-based) circuits, providing:
+`CircuitRunner<S>` is the stateless circuit runner for pecos-neo. It does not own the simulator; instead, the simulator state is passed to execution methods. It handles both `CommandQueue` (GateType-based) and `AdaptedSequence` (GateId-based) circuits, providing:
 
 - **Trait-based native execution** - Compile-time checked via `CliffordGateable` / `ArbitraryRotationGateable`
 - **Custom gate overrides** - Swap implementations for any gate, including core gates
@@ -13,18 +13,18 @@
 
 ## Circuit Types
 
-`Runner` supports two circuit representations through different methods:
+`CircuitRunner` supports two circuit representations through different methods:
 
 | Circuit Type | Built With | Execution Method | Gate Identifier |
 |---|---|---|---|
-| `CommandQueue` | `CommandBuilder` | `execute()`, `run_shot()` | `GateType` (enum) |
-| `AdaptedSequence` | `OpBuilder` | `run()`, `run_adapted_shot()` | `GateId` (u16) |
+| `CommandQueue` | `CommandBuilder` | `apply_circuit()` | `GateType` (enum) |
+| `AdaptedSequence` | `OpBuilder` | `run()` | `GateId` (u16) |
 
 Use `CommandQueue` for simple circuits with core gates. Use `AdaptedSequence` when you need custom gates, decomposition, or gate overrides.
 
 ## Gate Execution Order
 
-When `Runner` encounters a gate, it tries execution in this order:
+When `CircuitRunner` encounters a gate, it tries execution in this order:
 
 ```
 1. Before-gate handlers + noise  (user handlers, then noise model)
@@ -52,8 +52,9 @@ let commands = CommandBuilder::new()
     .mz(0).mz(1)
     .build();
 
-let mut runner = Runner::new(SparseStab::new(2));
-let outcomes = runner.execute(&commands)?;
+let mut state = SparseStab::new(2);
+let mut runner = CircuitRunner::<SparseStab>::new();
+let outcomes = runner.apply_circuit(&mut state, &commands)?;
 ```
 
 ### Clifford Circuits with Custom Gates (AdaptedSequence)
@@ -72,8 +73,9 @@ let circuit = OpBuilder::new()
     .mz(QubitId(1), ResultId(1))
     .build();
 
-let mut runner = Runner::with_definitions(SparseStab::new(2), definitions);
-let outcomes = runner.run(&circuit)?;
+let mut state = SparseStab::new(2);
+let mut runner = CircuitRunner::<SparseStab>::with_definitions(definitions);
+let outcomes = runner.run(&mut state, &circuit)?;
 ```
 
 ### Circuits with Rotation Gates
@@ -90,8 +92,9 @@ let circuit = OpBuilder::new()
     .build();
 
 // Use rotations() constructor for native rotation support
-let mut runner = Runner::rotations(StateVec::new(1));
-let outcomes = runner.run(&circuit)?;  // Same run() method!
+let mut state = StateVec::new(1);
+let mut runner = CircuitRunner::<StateVec>::rotations();
+let outcomes = runner.run(&mut state, &circuit)?;  // Same run() method!
 ```
 
 **Key insight**: The constructor (`new()` vs `rotations()`) determines which gates are native. The execution methods are the same.
@@ -120,7 +123,7 @@ let overrides: GateOverrides<SparseStab> = GateOverrides::new()
         true
     });
 
-let mut runner = Runner::with_definitions(SparseStab::new(1), definitions)
+let mut runner = CircuitRunner::<SparseStab>::with_definitions(definitions)
     .with_overrides(overrides);
 ```
 
@@ -134,7 +137,7 @@ let mut runner = Runner::with_definitions(SparseStab::new(1), definitions)
 
 ## Decomposition
 
-When a gate has no override and isn't natively supported, `Runner` looks up its decomposition in `GateDefinitions`:
+When a gate has no override and isn't natively supported, `CircuitRunner` looks up its decomposition in `GateDefinitions`:
 
 ```rust
 use pecos_neo::prelude::*;
@@ -157,8 +160,9 @@ let circuit = OpBuilder::new()
     .mz(QubitId(0), ResultId(0))
     .build();
 
-let mut runner = Runner::with_definitions(SparseStab::new(1), definitions);
-let outcomes = runner.run(&circuit)?;  // my_gate is expanded automatically
+let mut state = SparseStab::new(1);
+let mut runner = CircuitRunner::<SparseStab>::with_definitions(definitions);
+let outcomes = runner.run(&mut state, &circuit)?;  // my_gate is expanded automatically
 ```
 
 ### Decomposition Depth
@@ -166,13 +170,13 @@ let outcomes = runner.run(&circuit)?;  // my_gate is expanded automatically
 To prevent infinite recursion, decomposition has a maximum depth (default: 10):
 
 ```rust
-let runner = Runner::with_definitions(sim, definitions)
+let runner = CircuitRunner::<SparseStab>::with_definitions(definitions)
     .with_max_decomp_depth(20);  // Increase if needed
 ```
 
 ## Noise Integration
 
-`Runner` integrates with `ComposableNoiseModel`:
+`CircuitRunner` integrates with `ComposableNoiseModel`:
 
 ```rust
 use pecos_neo::prelude::*;
@@ -181,16 +185,17 @@ let noise = ComposableNoiseModel::new()
     .add_channel(SingleQubitChannel::depolarizing(0.001))
     .add_channel(TwoQubitChannel::depolarizing(0.01));
 
-let mut runner = Runner::with_definitions(SparseStab::new(2), definitions)
+let mut state = SparseStab::new(2);
+let mut runner = CircuitRunner::<SparseStab>::with_definitions(definitions)
     .with_noise(noise)
     .with_seed(42);
 
-let outcomes = runner.run(&circuit)?;
+let outcomes = runner.run(&mut state, &circuit)?;
 ```
 
 ### Noise Events
 
-`Runner` emits `NoiseEvent::BeforeGate` and `NoiseEvent::AfterGate` with full gate metadata including `GateId`, enabling noise models to handle custom gates:
+`CircuitRunner` emits `NoiseEvent::BeforeGate` and `NoiseEvent::AfterGate` with full gate metadata including `GateId`, enabling noise models to handle custom gates:
 
 ```rust
 NoiseEvent::AfterGate {
@@ -204,16 +209,19 @@ NoiseEvent::AfterGate {
 ## Multiple Shots
 
 ```rust
-let mut runner = Runner::with_definitions(sim, definitions)
+let mut state = SparseStab::new(2);
+let mut runner = CircuitRunner::<SparseStab>::with_definitions(definitions)
     .with_seed(42);
 
-// run() keeps state for inspection
-let outcomes = runner.run(&circuit)?;
+// apply_circuit keeps state for inspection
+let outcomes = runner.apply_circuit(&mut state, &circuit)?;
 println!("First: {:?}", outcomes);
 
-// run_adapted_shot() returns outcomes and resets simulator + noise
+// For multiple shots, reset state and runner between iterations
 for _ in 0..1000 {
-    let outcomes = runner.run_adapted_shot(&circuit)?;
+    state.reset();
+    runner.reset();
+    let outcomes = runner.apply_circuit(&mut state, &circuit)?;
     // Process each shot...
 }
 ```
@@ -221,14 +229,14 @@ for _ in 0..1000 {
 For `CommandQueue` circuits:
 
 ```rust
-let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
+let mut state = SparseStab::new(2);
+let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
-// run_shot() returns outcomes and resets noise (not simulator)
-let outcomes = runner.run_shot(&commands)?;
-
-// run_shot_fresh() also resets simulator -- optimized for Monte Carlo
+// For multiple shots, reset state and runner between iterations
 for _ in 0..1000 {
-    let outcomes = runner.run_shot_fresh(&commands)?;
+    state.reset();
+    runner.reset();
+    let outcomes = runner.apply_circuit(&mut state, &commands)?;
     // Process each shot...
 }
 ```
@@ -239,10 +247,10 @@ for _ in 0..1000 {
 
 | Constructor | Trait Bound | Use Case |
 |---|---|---|
-| `Runner::new(sim)` | `CliffordGateable` | Simple circuits, default definitions |
-| `Runner::with_definitions(sim, defs)` | `CliffordGateable` | Custom gates, decomposition |
-| `Runner::rotations(sim)` | `+ ArbitraryRotationGateable` | Rotation gates, default definitions |
-| `Runner::rotations_with_definitions(sim, defs)` | `+ ArbitraryRotationGateable` | Rotation gates + custom gates |
+| `CircuitRunner::<S>::new()` | `CliffordGateable` | Simple circuits, default definitions |
+| `CircuitRunner::<S>::with_definitions(defs)` | `CliffordGateable` | Custom gates, decomposition |
+| `CircuitRunner::<S>::rotations()` | `+ ArbitraryRotationGateable` | Rotation gates, default definitions |
+| `CircuitRunner::<S>::rotations_with_definitions(defs)` | `+ ArbitraryRotationGateable` | Rotation gates + custom gates |
 
 Native Clifford gates: H, X, Y, Z, SX, SY, SZ, CX, CY, CZ, SWAP, etc.
 Additional rotation gates (with `rotations()`): T, Tdg, RX, RY, RZ, RXX, RYY, RZZ.
@@ -261,19 +269,24 @@ runner
 ### Execution Methods
 
 ```rust
-// CommandQueue (GateType-based)
-runner.execute(&commands)?          // Execute, return &MeasurementOutcomes
-runner.run_shot(&commands)?         // Execute, return owned outcomes, reset noise
-runner.run_shot_fresh(&commands)?   // Reset simulator + run_shot (for Monte Carlo)
+// Circuit execution (both CommandQueue and AdaptedSequence)
+runner.apply_circuit(&mut state, &commands)?  // Execute CommandQueue, return &MeasurementOutcomes
+runner.apply_gate(&mut state, &gate)?         // Execute a single gate
+runner.apply_noise(&mut state, &event)?       // Apply noise for an event
+runner.run(&mut state, &circuit)?             // Execute AdaptedSequence (GateId-based)
 
-// AdaptedSequence (GateId-based)
-runner.run(&circuit)?              // Execute, return &MeasurementOutcomes
-runner.run_adapted_shot(&circuit)? // Execute, return owned outcomes, reset sim + noise
+// Outcome management
+runner.take_outcomes()              // Take outcomes, leaving empty
+runner.clear_outcomes()             // Clear outcomes without returning
+
+// Reset between shots
+runner.reset()                      // Clear outcomes and reset noise context
+state.reset()                       // Reset simulator to initial state
 ```
 
 ### Signal and Event Handlers
 
-Handlers can be registered directly on `Runner`, or built via `EventHandlers`
+Handlers can be registered directly on `CircuitRunner`, or built via `EventHandlers`
 for use with `sim_neo()` (including parallel workers):
 
 ```rust
@@ -285,10 +298,10 @@ let handlers = EventHandlers::new()
 // Pass to sim_neo (cloned per worker in parallel mode)
 sim_neo(circuit).event_handlers(handlers).workers(4).shots(1000).run();
 
-// Or merge into a Runner
-let runner = Runner::new(sim).with_event_handlers(handlers);
+// Or merge into a CircuitRunner
+let runner = CircuitRunner::<SparseStab>::new().with_event_handlers(handlers);
 
-// --- Direct registration on Runner ---
+// --- Direct registration on CircuitRunner ---
 runner.on_signal::<MySignal>(|sig| { /* observe */ });
 runner.on_signal_with_response::<MySignal>(|sig, ctx| NoiseResponse::None);
 
@@ -307,8 +320,8 @@ runner.on_before_gate_with_priority(10, |ctx| NoiseResponse::None);
 ### Inspection
 
 ```rust
-runner.simulator()              // &S - read-only simulator access
-runner.simulator_mut()          // &mut S - mutable simulator access
+// Simulator state is accessed directly (not through the runner)
+state                           // The simulator variable directly
 runner.definitions()            // &GateDefinitions
 runner.has_rotation_support()   // bool - was rotations() used?
 runner.has_override(gate_id)    // bool - is gate overridden?

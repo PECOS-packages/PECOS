@@ -10,7 +10,7 @@ This directory contains documentation for `pecos-neo`, a quantum circuit simulat
 
 ### Circuit Execution
 
-- **[runner.md](runner.md)** - Guide to `Runner` for GateId-based circuit execution. Covers custom gates, gate overrides, decomposition, and the unified `run()` API.
+- **[runner.md](runner.md)** - Guide to `CircuitRunner` for GateId-based circuit execution. Covers custom gates, gate overrides, decomposition, and the unified `run()` API.
 
 ### Extensible Gate System
 
@@ -208,7 +208,7 @@ let results = sim_neo(circuit)
 ```
 
 For GateId-based circuits with `OpBuilder`, or when you need gate overrides,
-use `Runner` directly:
+use `CircuitRunner` directly:
 
 ```rust
 use pecos_neo::prelude::*;
@@ -221,10 +221,11 @@ let circuit = OpBuilder::new()
     .mz(QubitId(0), ResultId(0))
     .build();
 
-let mut runner = Runner::with_definitions(SparseStab::new(1), definitions)
+let mut state = SparseStab::new(1);
+let mut runner = CircuitRunner::<SparseStab>::with_definitions(definitions)
     .with_noise(noise);
 
-let outcomes = runner.run(&circuit)?;
+let outcomes = runner.apply_adapted_circuit(&mut state, &circuit)?;
 ```
 
 ### Subset Simulation for Very Rare Events
@@ -276,7 +277,7 @@ pecos-neo/
 │   ├── subset.rs      # Subset simulation
 │   ├── importance*.rs # Importance sampling
 │   └── ...
-├── runner.rs          # Unified Runner (Clifford + rotation gates)
+├── runner.rs          # Unified CircuitRunner (Clifford + rotation gates)
 ├── engines.rs         # Native CommandSource engines (TickCircuit, DagCircuit)
 └── outcome.rs         # MeasurementOutcomes
 ```

@@ -144,7 +144,7 @@ fn test_monte_carlo_bell_state_no_noise() {
     let neo_results = MonteCarloRunner::run(
         &commands,
         config,
-        || Runner::new(SparseStab::new(2)),
+        || (CircuitRunner::new(), SparseStab::new(2)),
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
@@ -226,7 +226,7 @@ fn test_monte_carlo_with_depolarizing_noise() {
         config,
         || {
             let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
-            Runner::new(SparseStab::new(1)).with_noise(neo_noise)
+            (CircuitRunner::new().with_noise(neo_noise), SparseStab::new(1))
         },
         |outcomes| {
             let b = outcomes.get_bit(QubitId(0)).unwrap_or(false);
@@ -302,7 +302,7 @@ fn test_monte_carlo_measurement_errors() {
             let neo_noise = GeneralNoiseModelBuilder::new()
                 .with_p_meas(p_meas, p_meas)
                 .build();
-            Runner::new(SparseStab::new(1)).with_noise(neo_noise)
+            (CircuitRunner::new().with_noise(neo_noise), SparseStab::new(1))
         },
         |outcomes| {
             let b = outcomes.get_bit(QubitId(0)).unwrap_or(false);
@@ -348,7 +348,7 @@ fn test_monte_carlo_parallel_execution() {
     let results_parallel = MonteCarloRunner::run(
         &commands,
         config_parallel,
-        || Runner::new(SparseStab::new(1)),
+        || (CircuitRunner::new(), SparseStab::new(1)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     );
 
@@ -361,7 +361,7 @@ fn test_monte_carlo_parallel_execution() {
     let results_single = MonteCarloRunner::run(
         &commands,
         config_single,
-        || Runner::new(SparseStab::new(1)),
+        || (CircuitRunner::new(), SparseStab::new(1)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     );
 
@@ -441,7 +441,7 @@ fn test_monte_carlo_two_qubit_noise() {
         config,
         || {
             let neo_noise = GeneralNoiseModelBuilder::new().with_p2(p2).build();
-            Runner::new(SparseStab::new(2)).with_noise(neo_noise)
+            (CircuitRunner::new().with_noise(neo_noise), SparseStab::new(2))
         },
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
@@ -503,7 +503,7 @@ fn test_monte_carlo_deterministic_circuit() {
     let results: Vec<bool> = MonteCarloRunner::run(
         &commands,
         config,
-        || Runner::new(SparseStab::new(1)),
+        || (CircuitRunner::new(), SparseStab::new(1)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     )
     .into_iter()
@@ -529,7 +529,7 @@ fn test_monte_carlo_statistical_consistency() {
     let results: Vec<bool> = MonteCarloRunner::run(
         &commands,
         config,
-        || Runner::new(SparseStab::new(1)),
+        || (CircuitRunner::new(), SparseStab::new(1)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     )
     .into_iter()
@@ -550,23 +550,27 @@ fn test_full_seed_determinism() {
     let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
     // Run twice with same full seed - should produce identical results
-    let mut runner1 = Runner::new(SparseStab::new(1)).with_full_seed(42);
-    let mut runner2 = Runner::new(SparseStab::new(1)).with_full_seed(42);
+    let mut state1 = SparseStab::new(1);
+    let mut runner1 = CircuitRunner::<SparseStab>::new().with_full_seed(&mut state1, 42);
+    let mut state2 = SparseStab::new(1);
+    let mut runner2 = CircuitRunner::<SparseStab>::new().with_full_seed(&mut state2, 42);
 
     let mut results1 = Vec::new();
     let mut results2 = Vec::new();
 
     for _ in 0..100 {
+        state1.reset();
         results1.push(
             runner1
-                .run_shot(&commands)
+                .apply_circuit(&mut state1, &commands)
                 .unwrap()
                 .get_bit(QubitId(0))
                 .unwrap_or(false),
         );
+        state2.reset();
         results2.push(
             runner2
-                .run_shot(&commands)
+                .apply_circuit(&mut state2, &commands)
                 .unwrap()
                 .get_bit(QubitId(0))
                 .unwrap_or(false),
@@ -605,10 +609,11 @@ fn test_importance_sampling_matches_standard_monte_carlo() {
     let mut standard_ones = 0;
     for seed in 0..num_shots {
         let noise = GeneralNoiseModelBuilder::new().with_p1(p_error).build();
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed as u64);
-        let outcomes = runner.run_shot(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             standard_ones += 1;
         }
@@ -679,10 +684,11 @@ fn test_importance_sampling_rare_events() {
     let mut standard_ones = 0;
     for seed in 0..num_shots {
         let noise = GeneralNoiseModelBuilder::new().with_p1(p_error).build();
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed as u64);
-        let outcomes = runner.run_shot(&commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             standard_ones += 1;
         }
@@ -746,10 +752,11 @@ fn test_importance_sampling_variance_reduction() {
         let mut ones = 0;
         for shot in 0..shots_per_trial {
             let noise = GeneralNoiseModelBuilder::new().with_p1(p_error).build();
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(noise)
                 .with_seed((base_seed + shot) as u64);
-            let outcomes = runner.run_shot(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
                 ones += 1;
             }

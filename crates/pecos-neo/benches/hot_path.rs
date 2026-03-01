@@ -25,7 +25,7 @@ use pecos_neo::ecs::{WorkerState, World, redistribute_by_weight};
 use pecos_neo::noise::{
     ComposableNoiseModel, MeasurementChannel, NoiseEvent, SingleQubitChannel, TwoQubitChannel,
 };
-use pecos_neo::runner::Runner;
+use pecos_neo::runner::CircuitRunner;
 use pecos_qsim::{CliffordGateable, SparseStab};
 use pecos_rng::PecosRng;
 use rand::RngExt;
@@ -121,35 +121,43 @@ fn bench_shot_execution(c: &mut Criterion) {
 
     // No noise
     group.bench_function("bell_no_noise", |b| {
-        let mut runner = Runner::new(SparseStab::new(2));
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new();
         b.iter(|| {
-            let outcomes = runner.run_shot(&bell_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &bell_circuit).unwrap();
             black_box(outcomes)
         });
     });
 
     // With noise
     group.bench_function("bell_with_noise", |b| {
-        let mut runner = Runner::new(SparseStab::new(2)).with_noise(make_noise_model());
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(make_noise_model());
         b.iter(|| {
-            let outcomes = runner.run_shot(&bell_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &bell_circuit).unwrap();
             black_box(outcomes)
         });
     });
 
     // Larger circuit
     group.bench_function("10q_circuit_no_noise", |b| {
-        let mut runner = Runner::new(SparseStab::new(10));
+        let mut state = SparseStab::new(10);
+        let mut runner = CircuitRunner::<SparseStab>::new();
         b.iter(|| {
-            let outcomes = runner.run_shot(&large_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &large_circuit).unwrap();
             black_box(outcomes)
         });
     });
 
     group.bench_function("10q_circuit_with_noise", |b| {
-        let mut runner = Runner::new(SparseStab::new(10)).with_noise(make_noise_model());
+        let mut state = SparseStab::new(10);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(make_noise_model());
         b.iter(|| {
-            let outcomes = runner.run_shot(&large_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &large_circuit).unwrap();
             black_box(outcomes)
         });
     });
@@ -176,26 +184,30 @@ fn bench_multi_shot(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("bell_no_noise", shots), |b| {
             b.iter(|| {
-                let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
+                let mut state = SparseStab::new(2);
+                let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
                 for _ in 0..shots {
-                    black_box(runner.run_shot(&bell_circuit).unwrap());
+                    state.reset();
+                    black_box(runner.apply_circuit(&mut state, &bell_circuit).unwrap());
                 }
             });
         });
 
         group.bench_function(BenchmarkId::new("bell_with_noise", shots), |b| {
             b.iter(|| {
-                let mut runner = Runner::new(SparseStab::new(2))
+                let mut state = SparseStab::new(2);
+                let mut runner = CircuitRunner::<SparseStab>::new()
                     .with_noise(make_noise_model())
                     .with_seed(42);
                 for _ in 0..shots {
-                    black_box(runner.run_shot(&bell_circuit).unwrap());
+                    state.reset();
+                    black_box(runner.apply_circuit(&mut state, &bell_circuit).unwrap());
                 }
             });
         });
     }
 
-    // Compare clone-per-shot vs run_shot_fresh for larger qubit counts
+    // Compare clone-per-shot vs reset-per-shot for larger qubit counts
     let large_circuit = {
         let mut builder = CommandBuilder::new();
         builder = builder.pz_all(0..50);
@@ -214,18 +226,21 @@ fn bench_multi_shot(c: &mut Criterion) {
         let base_sim = SparseStab::new(50);
         b.iter(|| {
             for _ in 0..100 {
-                let mut runner = Runner::new(base_sim.clone()).with_seed(42);
-                black_box(runner.run_shot(&large_circuit).unwrap());
+                let mut state = base_sim.clone();
+                let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+                black_box(runner.apply_circuit(&mut state, &large_circuit).unwrap());
             }
         });
     });
 
-    // run_shot_fresh pattern (new optimized approach)
+    // reset-per-shot pattern (optimized approach)
     group.bench_function("50q_fresh_shot_100", |b| {
         b.iter(|| {
-            let mut runner = Runner::new(SparseStab::new(50)).with_seed(42);
+            let mut state = SparseStab::new(50);
+            let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
             for _ in 0..100 {
-                black_box(runner.run_shot_fresh(&large_circuit).unwrap());
+                state.reset();
+                black_box(runner.apply_circuit(&mut state, &large_circuit).unwrap());
             }
         });
     });
@@ -465,8 +480,8 @@ fn bench_memory_usage(c: &mut Criterion) {
         std::mem::size_of::<ComposableNoiseModel>()
     );
     println!(
-        "Runner<SparseStab> (stack): {} bytes",
-        std::mem::size_of::<pecos_neo::runner::Runner<SparseStab>>()
+        "CircuitRunner<SparseStab> (stack): {} bytes",
+        std::mem::size_of::<pecos_neo::runner::CircuitRunner<SparseStab>>()
     );
     println!(
         "WorkerState<SparseStab> (stack): {} bytes",
@@ -622,7 +637,7 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
                 let results = MonteCarloRunner::run(
                     &bell_commands,
                     config,
-                    || Runner::new(SparseStab::new(2)),
+                    || (CircuitRunner::new(), SparseStab::new(2)),
                     |outcomes| {
                         black_box((
                             outcomes.get_bit(QubitId(0)).unwrap_or(false),
@@ -686,7 +701,7 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
                         .with_p1(0.001)
                         .with_p2(0.01)
                         .build();
-                    Runner::new(SparseStab::new(2)).with_noise(noise)
+                    (CircuitRunner::new().with_noise(noise), SparseStab::new(2))
                 },
                 |outcomes| {
                     black_box((
@@ -757,7 +772,7 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
             let results = MonteCarloRunner::run(
                 &large_commands,
                 config,
-                || Runner::new(SparseStab::new(10)),
+                || (CircuitRunner::new(), SparseStab::new(10)),
                 |outcomes| {
                     let mut sum = 0u32;
                     for i in 0..10 {
@@ -892,18 +907,22 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
             .with_p1(p1)
             .with_p2(p2)
             .build();
-        let mut runner = Runner::new(SparseStab::new(2)).with_noise(noise);
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
-            let outcomes = runner.run_shot(&bell_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &bell_circuit).unwrap();
             black_box(outcomes)
         });
     });
 
     group.bench_function("composite_bell_shot", |b| {
         let noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
-        let mut runner = Runner::new(SparseStab::new(2)).with_noise(noise);
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
-            let outcomes = runner.run_shot(&bell_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &bell_circuit).unwrap();
             black_box(outcomes)
         });
     });
@@ -914,18 +933,22 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
             .with_p1(p1)
             .with_p2(p2)
             .build();
-        let mut runner = Runner::new(SparseStab::new(20)).with_noise(noise);
+        let mut state = SparseStab::new(20);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
-            let outcomes = runner.run_shot(&large_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &large_circuit).unwrap();
             black_box(outcomes)
         });
     });
 
     group.bench_function("composite_20q_shot", |b| {
         let noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
-        let mut runner = Runner::new(SparseStab::new(20)).with_noise(noise);
+        let mut state = SparseStab::new(20);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
-            let outcomes = runner.run_shot(&large_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &large_circuit).unwrap();
             black_box(outcomes)
         });
     });
@@ -940,9 +963,11 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
             .with_p2_emission_ratio(0.1)
             .with_p2_seepage(0.05)
             .build();
-        let mut runner = Runner::new(SparseStab::new(20)).with_noise(noise);
+        let mut state = SparseStab::new(20);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
-            let outcomes = runner.run_shot(&large_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &large_circuit).unwrap();
             black_box(outcomes)
         });
     });
@@ -956,9 +981,11 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
             .with_p2_emission_ratio(0.1)
             .with_p2_seepage(0.05)
             .build();
-        let mut runner = Runner::new(SparseStab::new(20)).with_noise(noise);
+        let mut state = SparseStab::new(20);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
-            let outcomes = runner.run_shot(&large_circuit).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &large_circuit).unwrap();
             black_box(outcomes)
         });
     });

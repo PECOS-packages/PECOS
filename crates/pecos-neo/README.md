@@ -8,7 +8,7 @@ This crate provides a composable approach to quantum simulation with:
 - **Composable Noise**: Event-driven noise channels that can be freely combined
 - **Plugin System**: ECS-inspired architecture for bundling functionality
 - **Program Support**: Classical control engines (QASM, HUGR) with mid-circuit measurement and feedback
-- **Simple Runner**: Direct simulator execution via [`Runner`]
+- **Simple CircuitRunner**: Direct simulator execution via [`CircuitRunner`]
 
 ## Architecture
 
@@ -83,8 +83,8 @@ sim_neo(circuit)
     .run();
 ```
 
-For lower-level control, `Runner` is available directly --
-see the [Noise Usage Guide](docs/noise-usage-guide.md) and [Runner Guide](docs/runner.md) docs.
+For lower-level control, `CircuitRunner` is available directly --
+see the [Noise Usage Guide](docs/noise-usage-guide.md) and [CircuitRunner Guide](docs/runner.md) docs.
 
 ## Classical Control Programs
 
@@ -103,11 +103,9 @@ use pecos_qsim::SparseStab;
 let mut program = ClassicalEngineAdapter::new(engine);
 
 // ProgramRunner drives the command-measure-feedback loop
-let mut runner = ProgramRunner::new(
-    Runner::new(SparseStab::new(num_qubits))
-        .with_noise(noise)
-        .with_seed(42),
-);
+let mut runner = ProgramRunner::new(SparseStab::new(num_qubits))
+    .with_noise(noise)
+    .with_seed(42);
 
 let result = runner.run_shot(&mut program);
 ```
@@ -143,6 +141,6 @@ For detailed guides and reference material, see the [docs/](docs/) directory:
 
 - [Design Patterns](docs/design-patterns.md) -- API hierarchy, conventions, best practices
 - [Noise Usage Guide](docs/noise-usage-guide.md) -- Composable noise, idle time, key types, custom channels
-- [Runner](docs/runner.md) -- Custom gates, decomposition, rotation gates
+- [CircuitRunner](docs/runner.md) -- Custom gates, decomposition, rotation gates
 - [Performance](docs/performance.md) -- Large-scale simulation benchmarks
 - [Full documentation index](docs/README.md)

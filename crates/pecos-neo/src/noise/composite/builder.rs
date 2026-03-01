@@ -1283,7 +1283,7 @@ impl CompositeNoiseModelBuilder {
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;
-    use crate::runner::Runner;
+    use crate::runner::CircuitRunner;
     use pecos_core::QubitId;
     use pecos_qsim::SparseStab;
 
@@ -1363,10 +1363,11 @@ mod tests {
 
         for seed in 0..shots {
             let model = CompositeNoiseModelBuilder::new().with_p1(p1).build();
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             if outcomes.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 errors += 1;
             }
@@ -1395,11 +1396,12 @@ mod tests {
             let model = CompositeNoiseModelBuilder::new()
                 .with_p_meas(p_0_to_1, p_1_to_0)
                 .build();
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
             if runner
-                .execute(&commands)
+                .apply_circuit(&mut state, &commands)
                 .unwrap()
                 .get(QubitId(0))
                 .is_some_and(|o| o.outcome)
@@ -1588,10 +1590,11 @@ mod tests {
         for seed in 0..shots {
             // With p2 error
             let model_with = CompositeNoiseModelBuilder::new().with_p2(p2).build();
-            let mut runner = Runner::new(SparseStab::new(2))
+            let mut state = SparseStab::new(2);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model_with)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             // Bell state: q0 != q1 indicates error
@@ -1601,10 +1604,11 @@ mod tests {
 
             // Without noise
             let model_without = CompositeNoiseModelBuilder::new().build();
-            let mut runner = Runner::new(SparseStab::new(2))
+            let mut state = SparseStab::new(2);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model_without)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 != q1 {
@@ -1643,7 +1647,7 @@ mod tests {
     fn test_angle_scaling_statistical_behavior() {
         use crate::command::CommandBuilder;
         use crate::noise::two_qubit::AngleScaling;
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_core::{Angle64, QubitId};
         use pecos_qsim::StateVec;
 
@@ -1669,10 +1673,11 @@ mod tests {
                 .with_p2_angle_scaling(AngleScaling::linear())
                 .build();
 
-            let mut runner = Runner::rotations(StateVec::new(2))
+            let mut state = StateVec::new(2);
+            let mut runner = CircuitRunner::<StateVec>::rotations()
                 .with_noise(model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands_half).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands_half).unwrap();
 
             // Count if either qubit has unexpected outcome (both should be 0 without noise)
             let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
@@ -1707,10 +1712,11 @@ mod tests {
                 .with_p2_angle_scaling(AngleScaling::linear())
                 .build();
 
-            let mut runner = Runner::rotations(StateVec::new(2))
+            let mut state = StateVec::new(2);
+            let mut runner = CircuitRunner::<StateVec>::rotations()
                 .with_noise(model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands_quarter).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands_quarter).unwrap();
 
             let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
@@ -1812,7 +1818,7 @@ mod tests {
     #[test]
     fn test_builder_comparison_depolarizing() {
         use crate::noise::GeneralNoiseModelBuilder;
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         let p1 = 0.1;
@@ -1840,10 +1846,11 @@ mod tests {
                 .with_p2(p2)
                 .build();
 
-            let mut runner_general = Runner::new(SparseStab::new(2))
+            let mut state_general = SparseStab::new(2);
+            let mut runner_general = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
-            let outcomes_general = runner_general.execute(&commands).unwrap();
+            let outcomes_general = runner_general.apply_circuit(&mut state_general, &commands).unwrap();
             let q0 = outcomes_general.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes_general.get(QubitId(1)).is_some_and(|o| o.outcome);
             // Bell state should give correlated results; errors break this
@@ -1854,10 +1861,11 @@ mod tests {
             // CompositeNoiseModelBuilder
             let flow_model = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
 
-            let mut runner_flow = Runner::new(SparseStab::new(2))
+            let mut state_flow = SparseStab::new(2);
+            let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
-            let outcomes_flow = runner_flow.execute(&commands).unwrap();
+            let outcomes_flow = runner_flow.apply_circuit(&mut state_flow, &commands).unwrap();
             let q0 = outcomes_flow.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes_flow.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 != q1 {
@@ -1879,7 +1887,7 @@ mod tests {
     #[test]
     fn test_builder_comparison_measurement() {
         use crate::noise::GeneralNoiseModelBuilder;
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         let p_meas_0 = 0.1;
@@ -1898,10 +1906,11 @@ mod tests {
                 .with_p_meas(p_meas_0, p_meas_1)
                 .build();
 
-            let mut runner_general = Runner::new(SparseStab::new(1))
+            let mut state_general = SparseStab::new(1);
+            let mut runner_general = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
-            let outcomes = runner_general.execute(&commands).unwrap();
+            let outcomes = runner_general.apply_circuit(&mut state_general, &commands).unwrap();
             if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 general_flips += 1;
             }
@@ -1911,10 +1920,11 @@ mod tests {
                 .with_p_meas(p_meas_0, p_meas_1)
                 .build();
 
-            let mut runner_flow = Runner::new(SparseStab::new(1))
+            let mut state_flow = SparseStab::new(1);
+            let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
-            let outcomes = runner_flow.execute(&commands).unwrap();
+            let outcomes = runner_flow.apply_circuit(&mut state_flow, &commands).unwrap();
             if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 flow_flips += 1;
             }
@@ -1938,7 +1948,7 @@ mod tests {
     #[test]
     fn test_builder_comparison_preparation() {
         use crate::noise::GeneralNoiseModelBuilder;
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         let p_prep = 0.15;
@@ -1954,11 +1964,12 @@ mod tests {
             // GeneralNoiseModelBuilder
             let general_model = GeneralNoiseModelBuilder::new().with_p_prep(p_prep).build();
 
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
             if runner
-                .execute(&commands)
+                .apply_circuit(&mut state, &commands)
                 .unwrap()
                 .get(QubitId(0))
                 .is_some_and(|o| o.outcome)
@@ -1969,11 +1980,12 @@ mod tests {
             // CompositeNoiseModelBuilder
             let flow_model = CompositeNoiseModelBuilder::new().with_p_prep(p_prep).build();
 
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
             if runner
-                .execute(&commands)
+                .apply_circuit(&mut state, &commands)
                 .unwrap()
                 .get(QubitId(0))
                 .is_some_and(|o| o.outcome)
@@ -2243,7 +2255,7 @@ mod tests {
     #[test]
     fn test_emission_model_statistical_behavior() {
         use crate::noise::SingleQubitEmissionWeights;
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         // Test that emission model affects behavior
@@ -2268,10 +2280,11 @@ mod tests {
                 .with_p1_emission_model(emission)
                 .build();
 
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
             // With H^3 = H on |0>, noiseless outcome is 50/50
             // With leakage, we might see different behavior
@@ -2341,7 +2354,7 @@ mod tests {
     #[test]
     fn test_emission_model_comparison_with_general_builder() {
         use crate::noise::{GeneralNoiseModelBuilder, SingleQubitEmissionWeights};
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         let p1 = 0.3;
@@ -2362,10 +2375,11 @@ mod tests {
                 .with_p1_emission_weights(emission)
                 .build();
 
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 general_errors += 1;
             }
@@ -2377,10 +2391,11 @@ mod tests {
                 .with_p1_emission_model(emission)
                 .build();
 
-            let mut runner = Runner::new(SparseStab::new(1))
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 flow_errors += 1;
             }
@@ -2399,7 +2414,7 @@ mod tests {
     #[test]
     fn test_two_qubit_pauli_model_comparison() {
         use crate::noise::{GeneralNoiseModelBuilder, TwoQubitPauliWeights};
-        use crate::runner::Runner;
+        use crate::runner::CircuitRunner;
         use pecos_qsim::SparseStab;
 
         let p2 = 0.3;
@@ -2423,10 +2438,11 @@ mod tests {
                 .with_p2_pauli_weights(TwoQubitPauliWeights::uniform())
                 .build();
 
-            let mut runner = Runner::new(SparseStab::new(2))
+            let mut state = SparseStab::new(2);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 || q1 {
@@ -2439,10 +2455,11 @@ mod tests {
                 .with_p2_pauli_model(TwoQubitPauliWeights::uniform())
                 .build();
 
-            let mut runner = Runner::new(SparseStab::new(2))
+            let mut state = SparseStab::new(2);
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
-            let outcomes = runner.execute(&commands).unwrap();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 || q1 {

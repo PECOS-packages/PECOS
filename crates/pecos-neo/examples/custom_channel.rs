@@ -115,7 +115,8 @@ fn example_amplitude_damping() {
             .add_plugin(CorePlugin)
             .add_channel(AmplitudeDampingChannel::new(gamma));
 
-        let mut runner = Runner::new(SparseStab::new(1))
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
@@ -123,7 +124,8 @@ fn example_amplitude_damping() {
         let mut decays = 0;
 
         for _ in 0..shots {
-            let outcomes = runner.run_shot(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             // If we get |0⟩, decay occurred
             if !outcomes.get_bit(QubitId(0)).unwrap_or(true) {
                 decays += 1;
@@ -252,13 +254,15 @@ fn example_gate_specific_noise() {
                 .with_default(0.05),
         );
 
-    let mut runner = Runner::new(SparseStab::new(1))
+    let mut state = SparseStab::new(1);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise_h)
         .with_seed(42);
 
     let mut h_errors = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&h_commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &h_commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             h_errors += 1;
         }
@@ -281,13 +285,15 @@ fn example_gate_specific_noise() {
                 .with_default(0.05),
         );
 
-    let mut runner = Runner::new(SparseStab::new(1))
+    let mut state = SparseStab::new(1);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise_sz)
         .with_seed(42);
 
     let mut sz_errors = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&sz_commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &sz_commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             sz_errors += 1;
         }
@@ -408,7 +414,8 @@ fn example_correlated_noise() {
             .mz(1)
             .build();
 
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
@@ -416,7 +423,8 @@ fn example_correlated_noise() {
         let mut both_different = 0;
 
         for _ in 0..shots {
-            let outcomes = runner.run_shot(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
 
@@ -526,13 +534,15 @@ fn example_context_aware_noise() {
         .mz(0)
         .build();
 
-    let mut runner = Runner::new(SparseStab::new(1))
+    let mut state = SparseStab::new(1);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(active_noise)
         .with_seed(42);
 
     let mut active_errors = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             active_errors += 1;
         }
@@ -583,13 +593,15 @@ fn example_builtin_gate_dependent() {
         .add_plugin(CorePlugin)
         .add_channel(gate_noise.clone());
 
-    let mut runner = Runner::new(SparseStab::new(1))
+    let mut state = SparseStab::new(1);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
 
     let mut h_errors = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&h_commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &h_commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             h_errors += 1;
         }
@@ -607,13 +619,15 @@ fn example_builtin_gate_dependent() {
         .add_plugin(CorePlugin)
         .add_channel(gate_noise);
 
-    let mut runner = Runner::new(SparseStab::new(1))
+    let mut state = SparseStab::new(1);
+    let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
 
     let mut sz_errors = 0;
     for _ in 0..shots {
-        let outcomes = runner.run_shot(&sz_commands).unwrap();
+        state.reset();
+        let outcomes = runner.apply_circuit(&mut state, &sz_commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
             sz_errors += 1;
         }
@@ -659,7 +673,8 @@ fn example_builtin_correlated() {
             .mz(1)
             .build();
 
-        let mut runner = Runner::new(SparseStab::new(2))
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
 
@@ -667,7 +682,8 @@ fn example_builtin_correlated() {
         let mut both_different = 0;
 
         for _ in 0..shots {
-            let outcomes = runner.run_shot(&commands).unwrap();
+            state.reset();
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
             let q0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let q1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
 

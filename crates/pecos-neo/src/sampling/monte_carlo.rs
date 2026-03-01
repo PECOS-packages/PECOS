@@ -13,7 +13,7 @@
 //! Monte Carlo simulation runner for pecos-neo.
 //!
 //! This module provides parallel Monte Carlo simulation with support for:
-//! - Standard sampling with the base `Runner`
+//! - Standard sampling with the base `CircuitRunner`
 //! - Importance sampling with `ImportanceSamplingRunner`
 //! - Custom result aggregation via callbacks
 //!
@@ -29,9 +29,9 @@
 //!
 //! ## Performance Optimization
 //!
-//! This implementation uses `run_shot_fresh()` which resets the simulator between
-//! shots instead of cloning. This is 8-12x faster for the reset operation and
-//! provides ~20% overall speedup for multi-shot simulations on larger qubit counts.
+//! This implementation resets the simulator between shots instead of cloning.
+//! This is 8-12x faster for the reset operation and provides ~20% overall
+//! speedup for multi-shot simulations on larger qubit counts.
 //!
 //! ## Example
 //!
@@ -54,7 +54,7 @@
 //! let count_ones = MonteCarloRunner::run(
 //!     &commands,
 //!     config,
-//!     || Runner::new(SparseStab::new(1)),
+//!     || (CircuitRunner::new(), SparseStab::new(1)),
 //!     |outcomes| if outcomes.get_bit(QubitId(0)).unwrap_or(false) { 1u64 } else { 0u64 },
 //! );
 //!
@@ -63,7 +63,7 @@
 
 use crate::command::CommandQueue;
 use crate::outcome::MeasurementOutcomes;
-use crate::runner::Runner;
+use crate::runner::CircuitRunner;
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use crate::sampling::weight::WeightedStatistics;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
@@ -183,7 +183,7 @@ impl MonteCarloRunner {
     /// # Arguments
     /// * `commands` - The circuit to execute
     /// * `config` - Simulation configuration
-    /// * `make_runner` - Factory function to create a `Runner` for each worker
+    /// * `make_runner` - Factory function to create a `CircuitRunner` and simulator for each worker
     /// * `process_result` - Function to process each shot's outcomes
     ///
     /// # Returns
@@ -196,7 +196,7 @@ impl MonteCarloRunner {
     ) -> MonteCarloResults<T>
     where
         S: CliffordGateable + RngManageable<Rng = PecosRng> + Clone + Send,
-        F: Fn() -> Runner<S> + Send + Sync,
+        F: Fn() -> (CircuitRunner<S>, S) + Send + Sync,
         G: Fn(&MeasurementOutcomes) -> T + Send + Sync,
         T: Send,
     {
@@ -212,18 +212,19 @@ impl MonteCarloRunner {
                     return vec![];
                 }
 
-                // Create worker-specific runner with derived seed for full determinism
+                // Create worker-specific runner and simulator with derived seed
                 // This seeds both noise RNG and simulator RNG
                 let worker_seed = derive_seed(config.seed, &format!("worker_{worker_id}"));
-                let mut runner = make_runner();
-                runner = runner.with_full_seed(worker_seed);
+                let (mut runner, mut sim) = make_runner();
+                runner = runner.with_full_seed(&mut sim, worker_seed);
 
                 // Run shots for this worker
-                // Use run_shot_fresh to reset simulator between shots (faster than clone)
+                // Reset simulator between shots (faster than clone)
                 let mut worker_results = Vec::with_capacity(shots_this_worker);
                 for shot_id in 0..shots_this_worker {
+                    sim.reset();
                     let outcomes = runner
-                        .run_shot_fresh(commands)
+                        .apply_circuit(&mut sim, commands)
                         .expect("gate execution failed during Monte Carlo shot");
                     let result = process_result(&outcomes);
                     worker_results.push((worker_id, shot_id, result));
@@ -395,7 +396,7 @@ mod tests {
         let results = MonteCarloRunner::run(
             &commands,
             config,
-            || Runner::new(SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
@@ -432,7 +433,7 @@ mod tests {
             || {
                 let noise =
                     ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
-                Runner::new(SparseStab::new(1)).with_noise(noise)
+                (CircuitRunner::new().with_noise(noise), SparseStab::new(1))
             },
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
@@ -496,7 +497,7 @@ mod tests {
         let results = MonteCarloRunner::run(
             &commands,
             config,
-            || Runner::new(SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
@@ -531,14 +532,14 @@ mod tests {
         let results1 = MonteCarloRunner::run(
             &commands,
             config1,
-            || Runner::new(SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
         let results2 = MonteCarloRunner::run(
             &commands,
             config2,
-            || Runner::new(SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
@@ -571,14 +572,14 @@ mod tests {
         let results1 = MonteCarloRunner::run(
             &commands,
             config1,
-            || Runner::new(SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
         let results2 = MonteCarloRunner::run(
             &commands,
             config2,
-            || Runner::new(SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 

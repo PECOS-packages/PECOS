@@ -21,7 +21,7 @@
 //!
 //! A graph state `|G>` is defined by an undirected graph G = (V, E). Each vertex
 //! starts in `|+>`, then a CZ gate is applied for each edge. The stabilizer
-//! generators are K_v = X_v * prod_{u in N(v)} Z_u.
+//! generators are `K_v` = `X_v` * prod_{u in N(v)} `Z_u`.
 //!
 //! Any stabilizer state can be written as local Cliffords applied to a graph state:
 //! `|psi> = (tensor_v VOP_v) |G>`. The VOP (vertex operator) on each qubit is a
@@ -51,7 +51,8 @@
 
 use crate::clifford_frame::{CliffordFrame, PauliAxis};
 use core::fmt::{self, Write as _};
-use pecos_core::{BitSet, Pauli, Phase, PauliString, QuarterPhase};
+use pecos_core::circuit_diagram::{CellColor, FillPattern, GateFamily, GraphStyle, blend_hex};
+use pecos_core::{BitSet, Pauli, PauliString, Phase, QuarterPhase};
 use pecos_rng::{PecosRng, SeedableRng};
 use std::collections::{BTreeSet, VecDeque};
 
@@ -194,7 +195,7 @@ impl GraphState {
         Self::from_edges(n, &edges)
     }
 
-    /// Complete graph state K_n.
+    /// Complete graph state `K_n`.
     #[must_use]
     pub fn complete(n: usize) -> Self {
         let mut edges = Vec::new();
@@ -330,7 +331,7 @@ impl GraphState {
     /// Perform local complementation about vertex v.
     ///
     /// This complements all edges among N(v) and updates VOPs:
-    /// - Prepend sqrt(-iX) = SXDG to VOP_v
+    /// - Prepend sqrt(-iX) = SXDG to `VOP_v`
     /// - Prepend sqrt(iZ) = SZ to each neighbor's VOP
     pub fn local_complement(&mut self, v: usize) {
         let nbrs: Vec<usize> = self.neighbors[v].iter().collect();
@@ -356,10 +357,7 @@ impl GraphState {
     ///
     /// Panics if u and v are not adjacent.
     pub fn pivot(&mut self, u: usize, v: usize) {
-        assert!(
-            self.has_edge(u, v),
-            "pivot requires u and v to be adjacent"
-        );
+        assert!(self.has_edge(u, v), "pivot requires u and v to be adjacent");
         self.local_complement(u);
         self.local_complement(v);
         self.local_complement(u);
@@ -475,8 +473,8 @@ impl GraphState {
 impl GraphState {
     /// Compute the stabilizer generator for vertex v.
     ///
-    /// The bare generator is K_v = X_v * prod_{u in N(v)} Z_u.
-    /// The conjugated generator is VOP_v(X_v) * prod_{u in N(v)} VOP_u(Z_u).
+    /// The bare generator is `K_v` = `X_v` * prod_{u in N(v)} `Z_u`.
+    /// The conjugated generator is `VOP_v(X_v)` * prod_{u in N(v)} `VOP_u(Z_u)`.
     #[must_use]
     pub fn stabilizer_generator(&self, v: usize) -> PauliString {
         let n = self.num_qubits();
@@ -491,7 +489,7 @@ impl GraphState {
         }
 
         // Each neighbor u contributes: VOP_u maps Z
-        for u in self.neighbors[v].iter() {
+        for u in &self.neighbors[v] {
             let z_img = self.vops[u].z_image();
             let u_pauli = pauli_axis_to_pauli(z_img.axis);
 
@@ -561,7 +559,7 @@ impl GraphState {
         // Shift other's neighbor indices by n1
         for nbrs in &other.neighbors {
             let mut shifted = BitSet::new();
-            for u in nbrs.iter() {
+            for u in nbrs {
                 shifted.insert(u + n1);
             }
             neighbors.push(shifted);
@@ -598,7 +596,7 @@ impl GraphState {
 
         for (new_idx, &old_idx) in vertices.iter().enumerate() {
             vops.push(self.vops[old_idx]);
-            for u in self.neighbors[old_idx].iter() {
+            for u in &self.neighbors[old_idx] {
                 if let Some(new_u) = old_to_new[u] {
                     neighbors[new_idx].insert(new_u);
                 }
@@ -696,9 +694,8 @@ impl GraphState {
 
 /// Names for the 24 single-qubit Cliffords.
 const CLIFFORD_NAMES: [&str; 24] = [
-    "I", "X", "Y", "Z", "S", "Sdg", "H", "SH", "HS", "S2H", "HS2", "S3H",
-    "SHS", "HSH", "SHSH", "S2HS", "SHS2", "S3HS", "S2HS2", "S2HSH", "HS2HS",
-    "S3HS2", "S3HSH", "HS2HS3",
+    "I", "X", "Y", "Z", "S", "Sdg", "H", "SH", "HS", "S2H", "HS2", "S3H", "SHS", "HSH", "SHSH",
+    "S2HS", "SHS2", "S3HS", "S2HS2", "S2HSH", "HS2HS", "S3HS2", "S3HSH", "HS2HS3",
 ];
 
 // ============================================================================
@@ -709,12 +706,11 @@ const CLIFFORD_NAMES: [&str; 24] = [
 //
 // 1. **Fill hue** — axis permutation coset (which pair of Pauli axes
 //    the Clifford interconverts, ignoring signs):
-//      Blue (#6495ED)   — identity perm (X→X, Z→Z)
-//      Purple (#C850C0) — X↔Z swap (H-type)
-//      Gold (#DAA520)   — X↔Y swap (S-type)
-//      Cyan (#00B4D8)   — Y↔Z swap (SX-type)
-//      Gray             — 3-cycle (dark #707070 = fwd X→Y→Z→X,
-//                                  light #B0B0B0 = inv X→Z→Y→X)
+//      Blue   — identity perm (X->X, Z->Z)       -> CellColor::ZAxis
+//      Purple — X<->Z swap (H-type)               -> CellColor::XZMix
+//      Gold   — X<->Y swap (S-type)               -> CellColor::XYMix
+//      Cyan   — Y<->Z swap (SX-type)              -> CellColor::YZMix
+//      Gray   — 3-cycle                            -> CellColor::XYZMix
 //
 // 2. **Fill brightness** — sign parity of the Heisenberg action:
 //      Saturated — even parity (0 or 2 negative signs)
@@ -722,72 +718,47 @@ const CLIFFORD_NAMES: [&str; 24] = [
 //
 // 3. **Stroke colour** — gate family (geometric rotation type on the
 //    Bloch sphere):
-//      Navy (#1E3A8A)     — Pauli (identity / π-rotations)
-//      Green (#2D6A2E)    — sqrt-of-Pauli / S-like (π/2 rotations)
-//      Maroon (#8B1A1A)   — Hadamard-like (π rotations about face diagonals)
-//      Charcoal (#404040) — Face-like / cyclic (2π/3 rotations)
+//      Navy     — Pauli (identity / pi-rotations)  -> GateFamily::Pauli
+//      Green    — sqrt-of-Pauli / S-like            -> GateFamily::SLike
+//      Maroon   — Hadamard-like                     -> GateFamily::HLike
+//      Charcoal — Face-like / cyclic                -> GateFamily::FLike
 
-/// Visual style for a VOP vertex: fill, stroke, and text colours.
-struct VopStyle {
-    fill: &'static str,
-    stroke: &'static str,
-    text: &'static str,
+/// Map a Clifford index to its axis permutation coset [`CellColor`].
+#[rustfmt::skip]
+fn vop_cell_color(idx: u8) -> CellColor {
+    match idx {
+        0..=3                   => CellColor::ZAxis,   // Identity/Pauli
+        4 | 5 | 20 | 23                 => CellColor::XYMix,   // X<->Y (S-type)
+        6 | 9 | 10 | 18                 => CellColor::XZMix,   // X<->Z (H-type)
+        12 | 13 | 17 | 19               => CellColor::YZMix,   // Y<->Z (SX-type)
+        7 | 8 | 11 | 14 | 15 | 16 | 21 | 22 => CellColor::XYZMix, // Cyclic
+        _ => CellColor::None,
+    }
 }
 
-/// Precomputed visual styles for all 24 single-qubit Cliffords.
-///
-/// Indexed by [`CliffordFrame::index()`]. Derived from the HEIS table:
-/// unsigned axis permutation → fill hue, sign parity → brightness,
-/// geometric rotation type → stroke colour.
+/// Map a Clifford index to its gate family ([`GateFamily`]).
 #[rustfmt::skip]
-const VOP_STYLES: [VopStyle; 24] = [
-    //                fill        stroke      text
-    // Identity coset (X→X, Z→Z) — Pauli family
-    VopStyle { fill: "#6495ED", stroke: "#1E3A8A", text: "white" }, //  0: I       even
-    VopStyle { fill: "#A0BEF5", stroke: "#1E3A8A", text: "#333"  }, //  1: X       odd
-    VopStyle { fill: "#6495ED", stroke: "#1E3A8A", text: "white" }, //  2: Y       even
-    VopStyle { fill: "#A0BEF5", stroke: "#1E3A8A", text: "#333"  }, //  3: Z       odd
-    // X↔Y coset (S-type)
-    VopStyle { fill: "#F0D080", stroke: "#2D6A2E", text: "#333"  }, //  4: S       odd,  S-like
-    VopStyle { fill: "#DAA520", stroke: "#2D6A2E", text: "white" }, //  5: Sdg     even, S-like
-    // X↔Z coset (H-type)
-    VopStyle { fill: "#C850C0", stroke: "#8B1A1A", text: "white" }, //  6: H       even, H-like
-    // Cyclic forward (X→Y→Z→X)
-    VopStyle { fill: "#707070", stroke: "#404040", text: "white" }, //  7: SH      F-like
-    // Cyclic inverse (X→Z→Y→X)
-    VopStyle { fill: "#B0B0B0", stroke: "#404040", text: "#333"  }, //  8: HS      F-like
-    // X↔Z coset cont.
-    VopStyle { fill: "#E8A0E0", stroke: "#2D6A2E", text: "#333"  }, //  9: S²H     odd,  S-like (=SYdg)
-    VopStyle { fill: "#E8A0E0", stroke: "#2D6A2E", text: "#333"  }, // 10: HS²     odd,  S-like (=SY)
-    // Cyclic forward cont.
-    VopStyle { fill: "#707070", stroke: "#404040", text: "white" }, // 11: S³H     F-like
-    // Y↔Z coset (SX-type)
-    VopStyle { fill: "#80D8E8", stroke: "#2D6A2E", text: "#333"  }, // 12: SHS     odd,  S-like (=SXdg)
-    VopStyle { fill: "#00B4D8", stroke: "#2D6A2E", text: "white" }, // 13: HSH     even, S-like (=SX)
-    // Cyclic inverse cont.
-    VopStyle { fill: "#B0B0B0", stroke: "#404040", text: "#333"  }, // 14: SHSH    F-like
-    VopStyle { fill: "#B0B0B0", stroke: "#404040", text: "#333"  }, // 15: S²HS    F-like
-    // Cyclic forward cont.
-    VopStyle { fill: "#707070", stroke: "#404040", text: "white" }, // 16: SHS²    F-like
-    // Y↔Z coset cont.
-    VopStyle { fill: "#00B4D8", stroke: "#8B1A1A", text: "white" }, // 17: S³HS    even, H-like
-    // X↔Z coset cont.
-    VopStyle { fill: "#C850C0", stroke: "#8B1A1A", text: "white" }, // 18: S²HS²   even, H-like
-    // Y↔Z coset cont.
-    VopStyle { fill: "#80D8E8", stroke: "#8B1A1A", text: "#333"  }, // 19: S²HSH   odd,  H-like
-    // X↔Y coset cont.
-    VopStyle { fill: "#DAA520", stroke: "#8B1A1A", text: "white" }, // 20: HS²HS   even, H-like
-    // Cyclic forward cont.
-    VopStyle { fill: "#707070", stroke: "#404040", text: "white" }, // 21: S³HS²   F-like
-    // Cyclic inverse cont.
-    VopStyle { fill: "#B0B0B0", stroke: "#404040", text: "#333"  }, // 22: S³HSH   F-like
-    // X↔Y coset cont.
-    VopStyle { fill: "#F0D080", stroke: "#8B1A1A", text: "#333"  }, // 23: HS²HS³  odd,  H-like
-];
+fn vop_gate_family(idx: u8) -> GateFamily {
+    match idx {
+        0..=3                         => GateFamily::Pauli,
+        4 | 5 | 9 | 10 | 12 | 13              => GateFamily::SLike,
+        6 | 17 | 18 | 19 | 20 | 23            => GateFamily::HLike,
+        7 | 8 | 11 | 14 | 15 | 16 | 21 | 22  => GateFamily::FLike,
+        _ => GateFamily::Default,
+    }
+}
 
-/// Returns the visual style for a VOP by its Clifford index.
-fn vop_style(idx: u8) -> &'static VopStyle {
-    &VOP_STYLES[idx as usize]
+/// Returns true if the Clifford at this index has even sign parity (saturated fill).
+///
+/// Even parity = 0 or 2 negative signs in the Heisenberg image.
+/// For cyclic coset: forward (7,11,16,21) = saturated, inverse (8,14,15,22) = light.
+#[rustfmt::skip]
+fn vop_saturated(idx: u8) -> bool {
+    match idx {
+        0 | 2 | 5 | 6 | 7 | 11 | 13 | 16 | 17 | 18 | 20 | 21 => true,
+        1 | 3 | 4 | 8 | 9 | 10 | 12 | 14 | 15 | 19 | 22 | 23 => false,
+        _ => true,
+    }
 }
 
 /// ANSI SGR escape codes for each of the 24 single-qubit Cliffords.
@@ -855,121 +826,57 @@ const VOP_BRACKETS: [(&str, &str); 24] = [
     ("<", ">"),  // 23: HS2HS3  H-like
 ];
 
-/// Append a compact SVG legend showing coset hues and gate-family strokes.
-fn svg_legend(svg: &mut String, width: f64, height: f64, legend_height: f64) {
-    let y_top = height - legend_height + 8.0;
-    let r = 6.0; // legend circle radius
-
-    // Row 1: fill hues (axis permutation cosets)
-    let cosets: &[(&str, &str, &str)] = &[
-        ("#6495ED", "#1E3A8A", "I/Pauli"),
-        ("#C850C0", "#6A006A", "X\u{2194}Z"),
-        ("#DAA520", "#8B6914", "X\u{2194}Y"),
-        ("#00B4D8", "#006880", "Y\u{2194}Z"),
-        ("#808080", "#404040", "Cyclic"),
-    ];
-
-    let total_items = cosets.len();
-    let spacing = width / (total_items as f64 + 1.0);
-
-    for (i, &(fill, stroke, label)) in cosets.iter().enumerate() {
-        let cx = spacing * (i as f64 + 1.0);
-        svg.push_str(&format!(
-            "  <circle cx=\"{cx:.1}\" cy=\"{y_top:.1}\" r=\"{r}\" \
-             fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1.5\"/>\n"
-        ));
-        let tx = cx + r + 4.0;
-        svg.push_str(&format!(
-            "  <text x=\"{tx:.1}\" y=\"{:.1}\" \
-             font-family=\"sans-serif\" font-size=\"9\" fill=\"#555\">\
-             {label}</text>\n",
-            y_top + 3.0
-        ));
-    }
-
-    // Row 2: stroke colours (gate families)
-    let families: &[(&str, &str)] = &[
-        ("#1E3A8A", "Pauli"),
-        ("#2D6A2E", "S-like"),
-        ("#8B1A1A", "H-like"),
-        ("#404040", "F-like"),
-    ];
-
-    let y_row2 = y_top + 18.0;
-    let fam_spacing = width / (families.len() as f64 + 1.0);
-
-    for (i, &(stroke_col, label)) in families.iter().enumerate() {
-        let cx = fam_spacing * (i as f64 + 1.0);
-        svg.push_str(&format!(
-            "  <circle cx=\"{cx:.1}\" cy=\"{y_row2:.1}\" r=\"{r}\" \
-             fill=\"white\" stroke=\"{stroke_col}\" stroke-width=\"2.5\"/>\n"
-        ));
-        let tx = cx + r + 4.0;
-        svg.push_str(&format!(
-            "  <text x=\"{tx:.1}\" y=\"{:.1}\" \
-             font-family=\"sans-serif\" font-size=\"9\" fill=\"#555\">\
-             {label}</text>\n",
-            y_row2 + 3.0
-        ));
-    }
-}
-
-/// Map a VOP fill hex colour to its TikZ colour name.
-fn tikz_fill_name(hex: &str) -> &'static str {
-    match hex {
-        "#6495ED" => "vopIdentity",
-        "#A0BEF5" => "vopIdentityLt",
-        "#C850C0" => "vopXZ",
-        "#E8A0E0" => "vopXZLt",
-        "#DAA520" => "vopXY",
-        "#F0D080" => "vopXYLt",
-        "#00B4D8" => "vopYZ",
-        "#80D8E8" => "vopYZLt",
-        "#707070" => "vopCyclicFwd",
-        "#B0B0B0" => "vopCyclicInv",
+/// `TikZ` color name for a [`CellColor`] coset.
+fn tikz_coset_name(color: CellColor, saturated: bool) -> &'static str {
+    match (color, saturated) {
+        (CellColor::ZAxis, true) => "vopIdentity",
+        (CellColor::ZAxis, false) => "vopIdentityLt",
+        (CellColor::XZMix, true) => "vopXZ",
+        (CellColor::XZMix, false) => "vopXZLt",
+        (CellColor::XYMix, true) => "vopXY",
+        (CellColor::XYMix, false) => "vopXYLt",
+        (CellColor::YZMix, true) => "vopYZ",
+        (CellColor::YZMix, false) => "vopYZLt",
+        (CellColor::XYZMix, true) => "vopCyclicFwd",
+        (CellColor::XYZMix, false) => "vopCyclicInv",
         _ => "black",
     }
 }
 
-/// Map a VOP stroke hex colour to its TikZ colour name.
-fn tikz_stroke_name(hex: &str) -> &'static str {
-    match hex {
-        "#1E3A8A" => "famPauli",
-        "#2D6A2E" => "famSqrt",
-        "#8B1A1A" => "famHadamard",
-        "#404040" => "famCyclic",
-        _ => "black",
+/// `TikZ` color name for a [`GateFamily`] stroke.
+fn tikz_family_name(family: GateFamily) -> &'static str {
+    match family {
+        GateFamily::Pauli
+        | GateFamily::Default
+        | GateFamily::Measurement
+        | GateFamily::Preparation => "famPauli",
+        GateFamily::SLike => "famSqrt",
+        GateFamily::HLike => "famHadamard",
+        GateFamily::FLike => "famCyclic",
     }
 }
 
 impl GraphState {
-    /// Export to DOT format for Graphviz visualization.
+    /// Create a renderer bound to a [`GraphStyle`].
     ///
-    /// Vertices are coloured using the PECOS colour algebra (fill hue = axis
-    /// permutation coset, stroke = gate family).
+    /// # Examples
+    /// ```
+    /// use pecos_qsim::GraphState;
+    /// use pecos_core::GraphStyle;
+    ///
+    /// let gs = GraphState::linear_cluster(3);
+    /// let svg = gs.render_with(&GraphStyle::default()).svg();
+    /// assert!(svg.contains("<svg"));
+    /// ```
+    #[must_use]
+    pub fn render_with<'a>(&'a self, style: &'a GraphStyle) -> GraphStateRenderer<'a> {
+        GraphStateRenderer { graph: self, style }
+    }
+
+    /// Export to DOT format with default style.
     #[must_use]
     pub fn to_dot(&self) -> String {
-        let n = self.num_qubits();
-        let mut dot = String::from("graph G {\n");
-        dot.push_str("  node [shape=circle, style=filled, fontsize=12];\n");
-
-        for v in 0..n {
-            let idx = self.vops[v].index();
-            let name = CLIFFORD_NAMES[idx as usize];
-            let style = vop_style(idx);
-            dot.push_str(&format!(
-                "  {v} [label=\"{v}\\n{name}\" fillcolor=\"{}\" \
-                 color=\"{}\" fontcolor=\"{}\"];\n",
-                style.fill, style.stroke, style.text
-            ));
-        }
-
-        for (u, v) in self.edges() {
-            dot.push_str(&format!("  {u} -- {v};\n"));
-        }
-
-        dot.push_str("}\n");
-        dot
+        self.render_with(&GraphStyle::default()).dot()
     }
 
     /// Compute vertex positions using a circular layout.
@@ -985,23 +892,107 @@ impl GraphState {
         }
         (0..n)
             .map(|i| {
-                let angle =
-                    -std::f64::consts::FRAC_PI_2 + 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                let angle = -std::f64::consts::FRAC_PI_2
+                    + 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
                 (cx + radius * angle.cos(), cy + radius * angle.sin())
             })
             .collect()
     }
 
-    /// Export to SVG format.
-    ///
-    /// Produces a standalone SVG image with vertices arranged in a circular
-    /// layout. Vertex colours encode Clifford structure via the PECOS colour
-    /// algebra (fill hue = axis permutation, brightness = sign parity,
-    /// stroke = gate family). Non-identity VOPs are labeled below their node.
-    /// A compact legend is drawn at the bottom.
+    /// Export to SVG with default style.
     #[must_use]
     pub fn to_svg(&self) -> String {
-        let n = self.num_qubits();
+        self.render_with(&GraphStyle::default()).svg()
+    }
+
+    /// Export to `TikZ` with default style.
+    #[must_use]
+    pub fn to_tikz(&self) -> String {
+        self.render_with(&GraphStyle::default()).tikz()
+    }
+
+    /// Export as plain ASCII text (no escape codes).
+    #[must_use]
+    pub fn to_ascii(&self) -> String {
+        self.render_with(&GraphStyle::default()).ascii()
+    }
+
+    /// ASCII text with ANSI color codes.
+    #[must_use]
+    pub fn to_color_ascii(&self) -> String {
+        self.render_with(&GraphStyle::builder().ansi_color(true).build())
+            .ascii()
+    }
+
+    /// Unicode text (no escape codes).
+    #[must_use]
+    pub fn to_unicode(&self) -> String {
+        self.render_with(&GraphStyle::default()).unicode()
+    }
+
+    /// Unicode text with ANSI color codes.
+    #[must_use]
+    pub fn to_color_unicode(&self) -> String {
+        self.render_with(&GraphStyle::builder().ansi_color(true).build())
+            .unicode()
+    }
+}
+
+// ============================================================================
+// GraphStateRenderer
+// ============================================================================
+
+/// A graph state bound to a [`GraphStyle`], ready to render in any output format.
+///
+/// Obtained via [`GraphState::render_with`].
+pub struct GraphStateRenderer<'a> {
+    graph: &'a GraphState,
+    style: &'a GraphStyle,
+}
+
+impl GraphStateRenderer<'_> {
+    /// Render as a Graphviz DOT graph.
+    #[must_use]
+    pub fn dot(&self) -> String {
+        let n = self.graph.num_qubits();
+        let mut dot = String::from("graph G {\n");
+        dot.push_str("  node [shape=circle, style=filled, fontsize=12];\n");
+
+        for v in 0..n {
+            let idx = self.graph.vops[v].index();
+            let name = CLIFFORD_NAMES[idx as usize];
+            let coset = vop_cell_color(idx);
+            let family = vop_gate_family(idx);
+            let sat = vop_saturated(idx);
+            let fill = self.style.vop_fill(coset, sat);
+            let stroke = self.style.vop_stroke(family);
+            let text = self.style.vop_text(coset, sat);
+            let dot_style = self.style.vop_dot_style(family);
+            let style_attr = if dot_style.is_empty() {
+                "filled".to_string()
+            } else {
+                format!("filled,{dot_style}")
+            };
+            writeln!(
+                dot,
+                "  {v} [label=\"{v}\\n{name}\" fillcolor=\"{fill}\" \
+                 color=\"{stroke}\" fontcolor=\"{text}\" style=\"{style_attr}\"];",
+            )
+            .unwrap();
+        }
+
+        for (u, v) in self.graph.edges() {
+            writeln!(dot, "  {u} -- {v};").unwrap();
+        }
+
+        dot.push_str("}\n");
+        dot
+    }
+
+    /// Render as a standalone SVG string.
+    #[must_use]
+    pub fn svg(&self) -> String {
+        let n = self.graph.num_qubits();
         let node_radius = 20.0;
         let layout_radius = if n <= 2 { 60.0 } else { 40.0 + 25.0 * n as f64 };
         let margin = node_radius + 40.0;
@@ -1010,103 +1001,265 @@ impl GraphState {
         let height = width + legend_height;
         let center = layout_radius + margin;
 
-        let positions = Self::circular_layout(n, center, center, layout_radius);
+        let positions = GraphState::circular_layout(n, center, center, layout_radius);
 
         let mut svg = format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" \
              width=\"{width}\" height=\"{height}\" \
              viewBox=\"0 0 {width} {height}\">\n"
         );
-        svg.push_str(&format!(
-            "  <rect width=\"{width}\" height=\"{height}\" fill=\"white\"/>\n"
-        ));
+        writeln!(
+            svg,
+            "  <rect width=\"{width}\" height=\"{height}\" fill=\"white\"/>"
+        )
+        .unwrap();
+
+        // Collect needed fill patterns and emit <defs>
+        let mut needed_patterns = BTreeSet::new();
+        for v in 0..n {
+            let idx = self.graph.vops[v].index();
+            let pattern = self.style.vop_pattern(vop_cell_color(idx));
+            if pattern != FillPattern::Solid {
+                needed_patterns.insert(pattern);
+            }
+        }
+        // Also include patterns used by legend cosets
+        for coset in [
+            CellColor::ZAxis,
+            CellColor::XZMix,
+            CellColor::XYMix,
+            CellColor::YZMix,
+            CellColor::XYZMix,
+        ] {
+            let pattern = self.style.vop_pattern(coset);
+            if pattern != FillPattern::Solid {
+                needed_patterns.insert(pattern);
+            }
+        }
+        if !needed_patterns.is_empty() {
+            svg.push_str("  <defs>\n");
+            for pat in &needed_patterns {
+                writeln!(svg, "    {}", pat.svg_pattern_def()).unwrap();
+            }
+            svg.push_str("  </defs>\n");
+        }
 
         // Draw edges
-        for (u, v) in self.edges() {
+        for (u, v) in self.graph.edges() {
             let (x1, y1) = positions[u];
             let (x2, y2) = positions[v];
-            svg.push_str(&format!(
+            writeln!(
+                svg,
                 "  <line x1=\"{x1:.1}\" y1=\"{y1:.1}\" \
                  x2=\"{x2:.1}\" y2=\"{y2:.1}\" \
-                 stroke=\"#555\" stroke-width=\"1.5\"/>\n"
-            ));
+                 stroke=\"#555\" stroke-width=\"1.5\"/>"
+            )
+            .unwrap();
         }
 
         // Draw vertices
-        for v in 0..n {
-            let (x, y) = positions[v];
-            let idx = self.vops[v].index();
+        for (v, &(x, y)) in positions.iter().enumerate() {
+            let idx = self.graph.vops[v].index();
             let vop_name = CLIFFORD_NAMES[idx as usize];
-            let style = vop_style(idx);
+            let coset = vop_cell_color(idx);
+            let family = vop_gate_family(idx);
+            let sat = vop_saturated(idx);
+            let fill = self.style.vop_fill(coset, sat);
+            let stroke = self.style.vop_stroke(family);
+            let text = self.style.vop_text(coset, sat);
+            let dash = self.style.vop_dasharray(family);
+            let dash_attr = if dash.is_empty() {
+                String::new()
+            } else {
+                format!(" stroke-dasharray=\"{dash}\"")
+            };
 
-            svg.push_str(&format!(
+            writeln!(
+                svg,
                 "  <circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"{node_radius}\" \
-                 fill=\"{}\" stroke=\"{}\" stroke-width=\"2\"/>\n",
-                style.fill, style.stroke
-            ));
+                 fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"2\"{dash_attr}/>"
+            )
+            .unwrap();
+
+            // Pattern overlay
+            let pattern = self.style.vop_pattern(coset);
+            if pattern != FillPattern::Solid {
+                let pat_r = node_radius - 1.0;
+                writeln!(
+                    svg,
+                    "  <circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"{pat_r:.1}\" \
+                     fill=\"url(#{})\" stroke=\"none\"/>",
+                    pattern.svg_id()
+                )
+                .unwrap();
+            }
 
             // Vertex index label
-            svg.push_str(&format!(
+            writeln!(
+                svg,
                 "  <text x=\"{x:.1}\" y=\"{y:.1}\" \
                  text-anchor=\"middle\" dominant-baseline=\"central\" \
                  font-family=\"sans-serif\" font-size=\"12\" \
-                 fill=\"{}\" font-weight=\"bold\">{v}</text>\n",
-                style.text
-            ));
+                 fill=\"{text}\" font-weight=\"bold\">{v}</text>"
+            )
+            .unwrap();
 
             // VOP label (below the node, only if non-identity)
-            if !self.vops[v].is_identity() {
+            if !self.graph.vops[v].is_identity() {
                 let label_y = y + node_radius + 14.0;
-                svg.push_str(&format!(
+                writeln!(
+                    svg,
                     "  <text x=\"{x:.1}\" y=\"{label_y:.1}\" \
                      text-anchor=\"middle\" \
                      font-family=\"sans-serif\" font-size=\"10\" \
-                     fill=\"#666\">{vop_name}</text>\n"
-                ));
+                     fill=\"#666\">{vop_name}</text>"
+                )
+                .unwrap();
             }
         }
 
         // Legend
-        svg_legend(&mut svg, width, height, legend_height);
+        self.svg_legend(&mut svg, width, height, legend_height);
 
         svg.push_str("</svg>\n");
         svg
     }
 
-    /// Export to TikZ format for LaTeX documents.
-    ///
-    /// Produces a `tikzpicture` environment with vertices coloured by the
-    /// PECOS colour algebra. Requires `\usepackage{tikz}` and
-    /// `\usepackage[dvipsnames]{xcolor}` (or `\usepackage{xcolor}`) in
-    /// your LaTeX preamble.
+    /// Append an SVG legend derived from the style palette.
+    fn svg_legend(&self, svg: &mut String, width: f64, height: f64, legend_height: f64) {
+        let y_top = height - legend_height + 8.0;
+        let r = 6.0;
+
+        // Row 1: fill hues (cosets) -- show saturated fill + family stroke
+        let cosets: &[(CellColor, &str)] = &[
+            (CellColor::ZAxis, "I/Pauli"),
+            (CellColor::XZMix, "X\u{2194}Z"),
+            (CellColor::XYMix, "X\u{2194}Y"),
+            (CellColor::YZMix, "Y\u{2194}Z"),
+            (CellColor::XYZMix, "Cyclic"),
+        ];
+
+        let spacing = width / (cosets.len() as f64 + 1.0);
+        for (i, &(coset, label)) in cosets.iter().enumerate() {
+            let cx = spacing * (i as f64 + 1.0);
+            let fill = self.style.vop_fill(coset, true);
+            let stroke = blend_hex(&fill, "#000000", 0.4);
+            writeln!(
+                svg,
+                "  <circle cx=\"{cx:.1}\" cy=\"{y_top:.1}\" r=\"{r}\" \
+                 fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1.5\"/>"
+            )
+            .unwrap();
+            let pattern = self.style.vop_pattern(coset);
+            if pattern != FillPattern::Solid {
+                let pr = r - 0.5;
+                writeln!(
+                    svg,
+                    "  <circle cx=\"{cx:.1}\" cy=\"{y_top:.1}\" r=\"{pr:.1}\" \
+                     fill=\"url(#{})\" stroke=\"none\"/>",
+                    pattern.svg_id()
+                )
+                .unwrap();
+            }
+            let tx = cx + r + 4.0;
+            let ty = y_top + 3.0;
+            writeln!(
+                svg,
+                "  <text x=\"{tx:.1}\" y=\"{ty:.1}\" \
+                 font-family=\"sans-serif\" font-size=\"9\" fill=\"#555\">\
+                 {label}</text>"
+            )
+            .unwrap();
+        }
+
+        // Row 2: stroke colours (gate families)
+        let families: &[(GateFamily, &str)] = &[
+            (GateFamily::Pauli, "Pauli"),
+            (GateFamily::SLike, "S-like"),
+            (GateFamily::HLike, "H-like"),
+            (GateFamily::FLike, "F-like"),
+        ];
+
+        let y_row2 = y_top + 18.0;
+        let fam_spacing = width / (families.len() as f64 + 1.0);
+        for (i, &(family, label)) in families.iter().enumerate() {
+            let cx = fam_spacing * (i as f64 + 1.0);
+            let stroke_col = self.style.vop_stroke(family);
+            let dash = self.style.vop_dasharray(family);
+            let dash_attr = if dash.is_empty() {
+                String::new()
+            } else {
+                format!(" stroke-dasharray=\"{dash}\"")
+            };
+            writeln!(
+                svg,
+                "  <circle cx=\"{cx:.1}\" cy=\"{y_row2:.1}\" r=\"{r}\" \
+                 fill=\"white\" stroke=\"{stroke_col}\" stroke-width=\"2.5\"{dash_attr}/>"
+            )
+            .unwrap();
+            let tx = cx + r + 4.0;
+            let ty = y_row2 + 3.0;
+            writeln!(
+                svg,
+                "  <text x=\"{tx:.1}\" y=\"{ty:.1}\" \
+                 font-family=\"sans-serif\" font-size=\"9\" fill=\"#555\">\
+                 {label}</text>"
+            )
+            .unwrap();
+        }
+    }
+
+    /// Render as a `TikZ` `tikzpicture` environment.
     #[must_use]
-    pub fn to_tikz(&self) -> String {
-        let n = self.num_qubits();
+    pub fn tikz(&self) -> String {
+        let n = self.graph.num_qubits();
         let radius = if n <= 2 { 1.5 } else { 1.0 + 0.5 * n as f64 };
-        let positions = Self::circular_layout(n, 0.0, 0.0, radius);
+        let positions = GraphState::circular_layout(n, 0.0, 0.0, radius);
 
         let mut tikz = String::from("\\begin{tikzpicture}\n");
 
-        // Colour definitions — fill hues (axis permutation cosets)
+        // Colour definitions derived from style
         tikz.push_str("  % Fill: axis permutation coset (bright / light)\n");
-        for &(name, hex) in &[
-            ("vopIdentity",   "6495ED"), ("vopIdentityLt", "A0BEF5"),
-            ("vopXZ",         "C850C0"), ("vopXZLt",       "E8A0E0"),
-            ("vopXY",         "DAA520"), ("vopXYLt",       "F0D080"),
-            ("vopYZ",         "00B4D8"), ("vopYZLt",       "80D8E8"),
-            ("vopCyclicFwd",  "707070"), ("vopCyclicInv",  "B0B0B0"),
+        for &(coset, sat, name) in &[
+            (CellColor::ZAxis, true, "vopIdentity"),
+            (CellColor::ZAxis, false, "vopIdentityLt"),
+            (CellColor::XZMix, true, "vopXZ"),
+            (CellColor::XZMix, false, "vopXZLt"),
+            (CellColor::XYMix, true, "vopXY"),
+            (CellColor::XYMix, false, "vopXYLt"),
+            (CellColor::YZMix, true, "vopYZ"),
+            (CellColor::YZMix, false, "vopYZLt"),
+            (CellColor::XYZMix, true, "vopCyclicFwd"),
+            (CellColor::XYZMix, false, "vopCyclicInv"),
         ] {
-            tikz.push_str(&format!("  \\definecolor{{{name}}}{{HTML}}{{{hex}}}\n"));
+            let hex = self.style.vop_fill(coset, sat);
+            let hex = hex.strip_prefix('#').unwrap_or(&hex);
+            writeln!(tikz, "  \\definecolor{{{name}}}{{HTML}}{{{hex}}}").unwrap();
         }
-        // Stroke colours — gate families
         tikz.push_str("  % Stroke: gate family\n");
-        for &(name, hex) in &[
-            ("famPauli",    "1E3A8A"),
-            ("famSqrt",     "2D6A2E"),
-            ("famHadamard", "8B1A1A"),
-            ("famCyclic",   "404040"),
+        for &(family, name) in &[
+            (GateFamily::Pauli, "famPauli"),
+            (GateFamily::SLike, "famSqrt"),
+            (GateFamily::HLike, "famHadamard"),
+            (GateFamily::FLike, "famCyclic"),
         ] {
-            tikz.push_str(&format!("  \\definecolor{{{name}}}{{HTML}}{{{hex}}}\n"));
+            let hex = self.style.vop_stroke(family);
+            let hex = hex.strip_prefix('#').unwrap_or(hex);
+            writeln!(tikz, "  \\definecolor{{{name}}}{{HTML}}{{{hex}}}").unwrap();
+        }
+
+        // Check if any coset uses patterns (need patterns library)
+        let any_pattern = [
+            CellColor::ZAxis,
+            CellColor::XZMix,
+            CellColor::XYMix,
+            CellColor::YZMix,
+            CellColor::XYZMix,
+        ]
+        .iter()
+        .any(|&c| self.style.vop_pattern(c) != FillPattern::Solid);
+        if any_pattern {
+            tikz.push_str("  % Requires: \\usetikzlibrary{patterns}\n");
         }
 
         // Base vertex style
@@ -1114,91 +1267,83 @@ impl GraphState {
             "  \\tikzstyle{vertex}=[circle, minimum size=20pt, \
              inner sep=0pt, font=\\small, line width=1.5pt]\n",
         );
-        tikz.push_str(
-            "  \\tikzstyle{vop label}=[font=\\scriptsize, text=gray]\n",
-        );
+        tikz.push_str("  \\tikzstyle{vop label}=[font=\\scriptsize, text=gray]\n");
 
         // Draw vertices
-        for v in 0..n {
-            let (x, y) = positions[v];
-            let idx = self.vops[v].index();
-            let style = vop_style(idx);
-            let fill_name = tikz_fill_name(style.fill);
-            let draw_name = tikz_stroke_name(style.stroke);
-            let text_opt = if style.text == "white" { ", text=white" } else { "" };
+        for (v, &(x, y)) in positions.iter().enumerate() {
+            let idx = self.graph.vops[v].index();
+            let coset = vop_cell_color(idx);
+            let family = vop_gate_family(idx);
+            let sat = vop_saturated(idx);
+            let fill_name = tikz_coset_name(coset, sat);
+            let draw_name = tikz_family_name(family);
+            let text_opt = if self.style.vop_text(coset, sat) == "white" {
+                ", text=white"
+            } else {
+                ""
+            };
+            let tikz_dash = self.style.vop_tikz_dash(family);
+            let dash_opt = if tikz_dash.is_empty() {
+                String::new()
+            } else {
+                format!(", {tikz_dash}")
+            };
+            let tikz_pat = self.style.vop_pattern(coset).tikz_pattern();
+            let pat_opt = if tikz_pat.is_empty() {
+                String::new()
+            } else {
+                format!(", postaction={{pattern={tikz_pat}, pattern color=black!30}}")
+            };
 
-            tikz.push_str(&format!(
-                "  \\node[vertex, fill={fill_name}, draw={draw_name}{text_opt}] \
-                 (v{v}) at ({x:.2}, {y:.2}) {{{v}}};\n"
-            ));
+            writeln!(
+                tikz,
+                "  \\node[vertex, fill={fill_name}, draw={draw_name}{text_opt}{dash_opt}{pat_opt}] \
+                 (v{v}) at ({x:.2}, {y:.2}) {{{v}}};",
+            )
+            .unwrap();
 
             // VOP annotation
-            if !self.vops[v].is_identity() {
+            if !self.graph.vops[v].is_identity() {
                 let vop_name = CLIFFORD_NAMES[idx as usize];
                 let label_y = y - 0.45;
-                tikz.push_str(&format!(
-                    "  \\node[vop label] at ({x:.2}, {label_y:.2}) {{${vop_name}$}};\n"
-                ));
+                writeln!(
+                    tikz,
+                    "  \\node[vop label] at ({x:.2}, {label_y:.2}) {{${vop_name}$}};",
+                )
+                .unwrap();
             }
         }
 
         // Draw edges
-        for (u, v) in self.edges() {
-            tikz.push_str(&format!("  \\draw (v{u}) -- (v{v});\n"));
+        for (u, v) in self.graph.edges() {
+            writeln!(tikz, "  \\draw (v{u}) -- (v{v});").unwrap();
         }
 
         tikz.push_str("\\end{tikzpicture}\n");
         tikz
     }
 
-    /// Export as plain ASCII text (no escape codes).
+    /// Render as plain ASCII text.
     ///
-    /// Compact vertex-per-line format. When all VOPs are identity (a pure
-    /// graph state), the VOP column is omitted for a clean adjacency-list
-    /// view. When any VOP is non-trivial, non-identity VOPs are shown in
-    /// brackets encoding gate family: `()` Pauli, `[]` S-like, `<>` H-like,
-    /// `{}` F-like. Identity vertices get a blank VOP column.
+    /// Produces ANSI color codes when `style.ansi_color` is true.
     #[must_use]
-    pub fn to_ascii(&self) -> String {
-        self.format_graph(false, "--")
+    pub fn ascii(&self) -> String {
+        self.format_text("--")
     }
 
-    /// ASCII text with ANSI color codes.
+    /// Render as Unicode text.
     ///
-    /// Same layout as [`to_ascii`](Self::to_ascii) with 16-color ANSI codes
-    /// encoding the coset (hue) and sign parity (bold = even, normal = odd).
-    /// A two-line legend is appended when non-identity VOPs are present.
+    /// Produces ANSI color codes when `style.ansi_color` is true.
     #[must_use]
-    pub fn to_color_ascii(&self) -> String {
-        self.format_graph(true, "--")
+    pub fn unicode(&self) -> String {
+        self.format_text("\u{2500}\u{2500}")
     }
 
-    /// Unicode text (no escape codes).
-    ///
-    /// Same layout as [`to_ascii`](Self::to_ascii) with a Unicode separator
-    /// (`\u{2500}\u{2500}`) instead of `--`.
-    #[must_use]
-    pub fn to_unicode(&self) -> String {
-        self.format_graph(false, "\u{2500}\u{2500}")
-    }
-
-    /// Unicode text with ANSI color codes.
-    #[must_use]
-    pub fn to_color_unicode(&self) -> String {
-        self.format_graph(true, "\u{2500}\u{2500}")
-    }
-
-    /// Deprecated: use [`to_color_ascii`](Self::to_color_ascii) instead.
-    #[deprecated(note = "renamed to to_color_ascii")]
-    #[must_use]
-    pub fn to_ascii_color(&self) -> String {
-        self.to_color_ascii()
-    }
-
-    /// Shared layout logic.
-    fn format_graph(&self, color: bool, separator: &str) -> String {
-        let n = self.num_qubits();
-        let num_edges = self.num_edges();
+    /// Shared text layout logic.
+    fn format_text(&self, separator: &str) -> String {
+        let color = self.style.ansi_color;
+        let n = self.graph.num_qubits();
+        let num_edges = self.graph.num_edges();
         let mut out = format!("GraphState: {n} qubits, {num_edges} edges\n\n");
 
         if n == 0 {
@@ -1206,14 +1351,14 @@ impl GraphState {
         }
 
         let idx_width = (n - 1).to_string().len();
-        let show_vops = !self.is_pure_graph_state();
+        let show_vops = !self.graph.is_pure_graph_state();
 
         // Compute maximum bracketed VOP width across non-identity vertices.
         let max_vop_width = if show_vops {
             (0..n)
-                .filter(|&v| !self.vops[v].is_identity())
+                .filter(|&v| !self.graph.vops[v].is_identity())
                 .map(|v| {
-                    let idx = self.vops[v].index() as usize;
+                    let idx = self.graph.vops[v].index() as usize;
                     CLIFFORD_NAMES[idx].len() + 2 // +2 for brackets
                 })
                 .max()
@@ -1226,8 +1371,8 @@ impl GraphState {
             write!(out, "  {v:>idx_width$}").unwrap();
 
             if show_vops {
-                let idx = self.vops[v].index() as usize;
-                if self.vops[v].is_identity() {
+                let idx = self.graph.vops[v].index() as usize;
+                if self.graph.vops[v].is_identity() {
                     write!(out, " {:<max_vop_width$}", "").unwrap();
                 } else {
                     let name = CLIFFORD_NAMES[idx];
@@ -1235,11 +1380,7 @@ impl GraphState {
                     let bracketed = format!("{open}{name}{close}");
                     if color {
                         let ansi = VOP_ANSI[idx];
-                        write!(
-                            out,
-                            " {ansi}{bracketed:<max_vop_width$}\x1b[0m",
-                        )
-                        .unwrap();
+                        write!(out, " {ansi}{bracketed:<max_vop_width$}\x1b[0m",).unwrap();
                     } else {
                         write!(out, " {bracketed:<max_vop_width$}").unwrap();
                     }
@@ -1247,7 +1388,7 @@ impl GraphState {
             }
 
             // Neighbor list
-            let nbrs: Vec<usize> = self.neighbors[v].iter().collect();
+            let nbrs: Vec<usize> = self.graph.neighbors[v].iter().collect();
             if !nbrs.is_empty() {
                 let nbr_str: Vec<String> = nbrs.iter().map(ToString::to_string).collect();
                 write!(out, " {separator} {}", nbr_str.join(", ")).unwrap();
@@ -1418,7 +1559,7 @@ mod tests {
     fn test_edges_iterator() {
         let gs = GraphState::from_edges(4, &[(0, 1), (2, 3), (0, 3)]);
         let mut edges: Vec<(usize, usize)> = gs.edges().collect();
-        edges.sort();
+        edges.sort_unstable();
         assert_eq!(edges, vec![(0, 1), (0, 3), (2, 3)]);
     }
 
@@ -1852,7 +1993,7 @@ mod tests {
         let dot = gs.to_dot();
         assert!(dot.contains("graph G {"));
         assert!(dot.contains("0 -- 1"));
-        assert!(dot.contains("}"));
+        assert!(dot.contains('}'));
     }
 
     #[test]
@@ -1868,14 +2009,26 @@ mod tests {
 
     #[test]
     fn test_to_svg_with_vops() {
+        use pecos_core::GraphStyle;
+
         let mut gs = GraphState::from_edges(2, &[(0, 1)]);
         gs.set_vop(0, CliffordFrame::H);
         let svg = gs.to_svg();
         // Non-identity VOP should get a label
-        assert!(svg.contains("H"));
-        // Identity vertex gets identity fill, H vertex gets H-type fill
-        assert!(svg.contains("#6495ED")); // identity coset fill
-        assert!(svg.contains("#C850C0")); // X<->Z coset fill (H)
+        assert!(svg.contains('H'));
+
+        // Colors are now derived from the palette via blend_hex.
+        // Check that the computed fills for identity (saturated ZAxis)
+        // and H (saturated XZMix) both appear.
+        let style = GraphStyle::default();
+        let identity_fill = style.vop_fill(CellColor::ZAxis, true);
+        let h_fill = style.vop_fill(CellColor::XZMix, true);
+        assert!(
+            svg.contains(&identity_fill),
+            "identity fill missing: {identity_fill}"
+        );
+        assert!(svg.contains(&h_fill), "H fill missing: {h_fill}");
+
         // Gate family strokes: Pauli (identity) vs H-like (H gate)
         assert!(svg.contains("#1E3A8A")); // Pauli stroke
         assert!(svg.contains("#8B1A1A")); // H-like stroke
@@ -1952,11 +2105,7 @@ mod tests {
 
         // For a pure graph state with the same graph, generators should match exactly
         for (i, (mg, sg)) in math_gens.iter().zip(sim_gens.iter()).enumerate() {
-            assert_eq!(
-                mg.phase(),
-                sg.phase(),
-                "generator {i}: phase mismatch"
-            );
+            assert_eq!(mg.phase(), sg.phase(), "generator {i}: phase mismatch");
             for q in 0..3 {
                 assert_eq!(
                     mg.get(q),
@@ -2001,7 +2150,10 @@ mod tests {
         assert!(ascii.contains("GraphState: 3 qubits, 2 edges"));
 
         // Pure graph state: VOP column is omitted entirely
-        assert!(!ascii.contains("(I)"), "identity VOPs should be hidden: {ascii}");
+        assert!(
+            !ascii.contains("(I)"),
+            "identity VOPs should be hidden: {ascii}"
+        );
 
         // Edge info
         assert!(ascii.contains("-- 1"));
@@ -2012,11 +2164,11 @@ mod tests {
     }
 
     #[test]
-    fn test_to_ascii_color_contains_ansi() {
+    fn test_to_color_ascii_contains_ansi() {
         // Need non-identity VOPs for color output (pure states have no VOPs to color)
         let mut gs = GraphState::from_edges(3, &[(0, 1), (1, 2)]);
         gs.set_vop(0, CliffordFrame::H);
-        let colored = gs.to_ascii_color();
+        let colored = gs.to_color_ascii();
 
         // Should contain ANSI escape codes and resets
         assert!(colored.contains("\x1b["), "missing ANSI codes: {colored}");
@@ -2032,12 +2184,40 @@ mod tests {
     }
 
     #[test]
-    fn test_to_ascii_color_pure_has_no_ansi() {
+    fn test_to_color_ascii_pure_has_no_ansi() {
         // Pure graph state: nothing to color, no legend
         let gs = GraphState::linear_cluster(3);
-        let colored = gs.to_ascii_color();
-        assert!(!colored.contains("\x1b["), "pure state should have no ANSI: {colored}");
-        assert!(!colored.contains("Pauli"), "pure state should have no legend");
+        let colored = gs.to_color_ascii();
+        assert!(
+            !colored.contains("\x1b["),
+            "pure state should have no ANSI: {colored}"
+        );
+        assert!(
+            !colored.contains("Pauli"),
+            "pure state should have no legend"
+        );
+    }
+
+    #[test]
+    fn render_with_ansi_color_matches_to_color_ascii() {
+        let mut gs = GraphState::from_edges(3, &[(0, 1), (1, 2)]);
+        gs.set_vop(0, CliffordFrame::H);
+        let via_convenience = gs.to_color_ascii();
+        let via_render_with = gs
+            .render_with(&GraphStyle::builder().ansi_color(true).build())
+            .ascii();
+        assert_eq!(via_convenience, via_render_with);
+    }
+
+    #[test]
+    fn render_with_ansi_color_matches_to_color_unicode() {
+        let mut gs = GraphState::from_edges(3, &[(0, 1), (1, 2)]);
+        gs.set_vop(0, CliffordFrame::H);
+        let via_convenience = gs.to_color_unicode();
+        let via_render_with = gs
+            .render_with(&GraphStyle::builder().ansi_color(true).build())
+            .unicode();
+        assert_eq!(via_convenience, via_render_with);
     }
 
     #[test]
@@ -2067,9 +2247,9 @@ mod tests {
     fn test_to_ascii_bracket_families() {
         let mut gs = GraphState::new(4);
         gs.set_vop(0, CliffordFrame::from_index(1)); // idx 1: X, Pauli -> ()
-        gs.set_vop(1, CliffordFrame::SZ);             // idx 4: S-like   -> []
-        gs.set_vop(2, CliffordFrame::H);              // idx 6: H-like   -> <>
-        gs.set_vop(3, CliffordFrame::from_index(7));  // idx 7: F-like   -> {}
+        gs.set_vop(1, CliffordFrame::SZ); // idx 4: S-like   -> []
+        gs.set_vop(2, CliffordFrame::H); // idx 6: H-like   -> <>
+        gs.set_vop(3, CliffordFrame::from_index(7)); // idx 7: F-like   -> {}
         let ascii = gs.to_ascii();
 
         assert!(ascii.contains("(X)"), "Pauli bracket missing: {ascii}");
@@ -2087,10 +2267,7 @@ mod tests {
         let ascii = gs.to_ascii();
 
         // Find the `--` column for each line that has neighbors
-        let dash_cols: Vec<usize> = ascii
-            .lines()
-            .filter_map(|line| line.find("--"))
-            .collect();
+        let dash_cols: Vec<usize> = ascii.lines().filter_map(|line| line.find("--")).collect();
         assert!(dash_cols.len() >= 2, "expected at least 2 lines with --");
         assert!(
             dash_cols.windows(2).all(|w| w[0] == w[1]),
@@ -2103,5 +2280,75 @@ mod tests {
         let gs = GraphState::new(0);
         let ascii = gs.to_ascii();
         assert!(ascii.contains("0 qubits, 0 edges"));
+    }
+
+    // ========================================================================
+    // render_with tests
+    // ========================================================================
+
+    #[test]
+    fn render_with_default_matches_to_svg() {
+        use pecos_core::GraphStyle;
+
+        let gs = GraphState::linear_cluster(3);
+        let default_style = GraphStyle::default();
+        assert_eq!(gs.render_with(&default_style).svg(), gs.to_svg());
+    }
+
+    #[test]
+    fn render_with_custom_palette() {
+        use pecos_core::{ColorPalette, ColorTriplet, GraphStyle};
+
+        let mut palette = ColorPalette::default();
+        palette.z_axis = ColorTriplet::new("#FF0000", "#880000", "#440000");
+        let style = GraphStyle::builder().palette(palette).build();
+
+        let gs = GraphState::linear_cluster(3); // pure: all identity (ZAxis coset)
+        let svg = gs.render_with(&style).svg();
+
+        // Saturated ZAxis fill = blend("#FF0000", "#880000", 0.5)
+        let expected_fill = pecos_core::blend_hex("#FF0000", "#880000", 0.5);
+        assert!(
+            svg.contains(&expected_fill),
+            "custom ZAxis fill {expected_fill} not found in SVG"
+        );
+    }
+
+    #[test]
+    fn render_with_monochrome() {
+        use pecos_core::{ColorPalette, ColorTriplet, GraphStyle};
+
+        // Set all cosets to the same color
+        let grey = ColorTriplet::new("#CCCCCC", "#666666", "#333333");
+        let palette = ColorPalette {
+            z_axis: grey.clone(),
+            xz_mix: grey.clone(),
+            xy_mix: grey.clone(),
+            yz_mix: grey.clone(),
+            xyz_mix: grey.clone(),
+            ..ColorPalette::default()
+        };
+        let style = GraphStyle::builder().palette(palette).build();
+
+        let mut gs = GraphState::from_edges(2, &[(0, 1)]);
+        gs.set_vop(0, CliffordFrame::H); // XZMix coset
+
+        let svg = gs.render_with(&style).svg();
+        // Both vertices should use the same grey palette
+        let sat_fill = pecos_core::blend_hex("#CCCCCC", "#666666", 0.5);
+        // Count occurrences of the saturated fill (both vertices are saturated: I=even, H=even)
+        assert!(
+            svg.matches(&sat_fill).count() >= 2,
+            "monochrome fill {sat_fill} should appear at least twice"
+        );
+    }
+
+    #[test]
+    fn render_with_ascii_matches_to_ascii() {
+        use pecos_core::GraphStyle;
+
+        let gs = GraphState::linear_cluster(4);
+        let default_style = GraphStyle::default();
+        assert_eq!(gs.render_with(&default_style).ascii(), gs.to_ascii());
     }
 }

@@ -131,7 +131,7 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
     /// Perform local complementation about vertex `a`.
     ///
     /// This complements all edges among neighbors of `a`, then updates VOPs:
-    /// - Prepend sqrt(-iX) to VOP_a
+    /// - Prepend sqrt(-iX) to `VOP_a`
     /// - Prepend sqrt(iZ) to each neighbor's VOP
     fn local_complement(&mut self, a: usize) {
         let nbrs: Vec<usize> = self.neighbors[a].iter().collect();
@@ -162,7 +162,7 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
         if nbrs.contains(other) {
             nbrs.len() >= 2
         } else {
-            nbrs.len() >= 1
+            !nbrs.is_empty()
         }
     }
 
@@ -181,12 +181,12 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
 
         // Pick a neighbor that isn't `avoid` (if possible)
         let mut vb = self.neighbors[v].iter().next().unwrap();
-        if vb == avoid {
-            if let Some(alt) = self.neighbors[v].iter().find(|&u| u != avoid) {
-                vb = alt;
-            }
-            // If avoid is the only neighbor, we'll use it anyway
+        if vb == avoid
+            && let Some(alt) = self.neighbors[v].iter().find(|&u| u != avoid)
+        {
+            vb = alt;
         }
+        // If avoid is the only neighbor, we'll use it anyway
 
         let (len, steps) = VOP_DECOMP[self.vops[v].index() as usize];
 
@@ -233,7 +233,7 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
         let op1 = self.vops[v1].index() as usize;
         let op2 = self.vops[v2].index() as usize;
 
-        let we_idx = if was_edge { 1 } else { 0 };
+        let we_idx = usize::from(was_edge);
         let [new_edge, new_op1, new_op2] = CPHASE_TBL[we_idx * 24 + op1][op2];
 
         // Set edge state
@@ -292,11 +292,7 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
     /// Follows the reference's `graph_X_measure` algorithm.
     /// If N(v) is empty: deterministic, outcome = 0 (always +1 eigenvalue).
     /// Otherwise: non-deterministic with 3-step edge toggling.
-    fn measure_x_on_graph(
-        &mut self,
-        v: usize,
-        forced_outcome: Option<bool>,
-    ) -> MeasurementResult {
+    fn measure_x_on_graph(&mut self, v: usize, forced_outcome: Option<bool>) -> MeasurementResult {
         if self.neighbors[v].is_empty() {
             // Deterministic: isolated graph state vertex is |+>, X eigenvalue +1
             return MeasurementResult {
@@ -320,20 +316,20 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
         let vbn_set: BitSet = self.neighbors[vb].clone();
 
         // VOP updates
-        if !outcome {
-            // Measured +1 (|+>): SYDG on vb, Z on N(v) \ N(vb) \ {vb}
-            self.vops[vb] = CliffordFrame::SYDG.compose(self.vops[vb]);
-            for &u in &vn {
-                if u != vb && !vbn_set.contains(u) {
-                    self.vops[u] = CliffordFrame::Z.compose(self.vops[u]);
-                }
-            }
-        } else {
+        if outcome {
             // Measured -1 (|->): SY on vb, Z on v, Z on N(vb) \ N(v) \ {v}
             self.vops[vb] = CliffordFrame::SY.compose(self.vops[vb]);
             self.vops[v] = CliffordFrame::Z.compose(self.vops[v]);
             for &u in &vbn {
                 if u != v && !vn_set.contains(u) {
+                    self.vops[u] = CliffordFrame::Z.compose(self.vops[u]);
+                }
+            }
+        } else {
+            // Measured +1 (|+>): SYDG on vb, Z on N(v) \ N(vb) \ {vb}
+            self.vops[vb] = CliffordFrame::SYDG.compose(self.vops[vb]);
+            for &u in &vn {
+                if u != vb && !vbn_set.contains(u) {
                     self.vops[u] = CliffordFrame::Z.compose(self.vops[u]);
                 }
             }
@@ -388,11 +384,7 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
     ///
     /// Follows the reference's `graph_Y_measure` algorithm (direct, no reduction to X).
     /// Always non-deterministic.
-    fn measure_y_on_graph(
-        &mut self,
-        v: usize,
-        forced_outcome: Option<bool>,
-    ) -> MeasurementResult {
+    fn measure_y_on_graph(&mut self, v: usize, forced_outcome: Option<bool>) -> MeasurementResult {
         let outcome = forced_outcome.unwrap_or_else(|| self.rng.coin_flip());
 
         // Right-multiply each neighbor's VOP by SZDG (outcome=1) or SZ (outcome=0)
@@ -415,10 +407,10 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
         }
 
         // Right-multiply v's VOP by SZ (outcome=0) or SZDG (outcome=1)
-        if !outcome {
-            self.vops[v] = CliffordFrame::SZ.compose(self.vops[v]);
-        } else {
+        if outcome {
             self.vops[v] = CliffordFrame::SZDG.compose(self.vops[v]);
+        } else {
+            self.vops[v] = CliffordFrame::SZ.compose(self.vops[v]);
         }
 
         MeasurementResult {
@@ -433,11 +425,7 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
     /// Disconnects v from all neighbors (no edge complement among neighbors).
     /// If outcome=1, right-multiplies each neighbor's VOP by Z.
     /// Sets v's VOP by right-multiplying by H (outcome=0) or X*H=SY (outcome=1).
-    fn measure_z_on_graph(
-        &mut self,
-        v: usize,
-        forced_outcome: Option<bool>,
-    ) -> MeasurementResult {
+    fn measure_z_on_graph(&mut self, v: usize, forced_outcome: Option<bool>) -> MeasurementResult {
         let outcome = forced_outcome.unwrap_or_else(|| self.rng.coin_flip());
 
         let nbrs: Vec<usize> = self.neighbors[v].iter().collect();
@@ -453,11 +441,11 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
         }
 
         // Set v's VOP: right-multiply by H (outcome=0) or X*H=SY (outcome=1)
-        if !outcome {
-            self.vops[v] = CliffordFrame::H.compose(self.vops[v]);
-        } else {
+        if outcome {
             // X * H = SY (index 10). Right-multiply: compose(SY, VOP) = VOP * SY
             self.vops[v] = CliffordFrame::SY.compose(self.vops[v]);
+        } else {
+            self.vops[v] = CliffordFrame::H.compose(self.vops[v]);
         }
 
         // Determine if deterministic: isolated vertices (no neighbors) have
@@ -709,7 +697,10 @@ mod tests {
         let mut sim = GraphStateSim::with_seed(3, 42);
         for i in 0..3 {
             let result = sim.mz(&[QubitId::new(i)]);
-            assert!(result[0].is_deterministic, "qubit {i} should be deterministic");
+            assert!(
+                result[0].is_deterministic,
+                "qubit {i} should be deterministic"
+            );
             assert!(!result[0].outcome, "qubit {i} should be |0>");
         }
     }
@@ -728,7 +719,10 @@ mod tests {
         let mut sim = GraphStateSim::with_seed(1, 42);
         sim.h(&qid(0));
         let result = sim.mz(&qid(0));
-        assert!(!result[0].is_deterministic, "H|0> = |+> should be non-deterministic for mz");
+        assert!(
+            !result[0].is_deterministic,
+            "H|0> = |+> should be non-deterministic for mz"
+        );
     }
 
     #[test]
@@ -742,8 +736,14 @@ mod tests {
             let r0 = sim.mz(&qid(0));
             let r1 = sim.mz(&qid(1));
             assert!(!r0[0].is_deterministic);
-            assert!(r1[0].is_deterministic, "second qubit should be deterministic after first measured");
-            assert_eq!(r0[0].outcome, r1[0].outcome, "Bell state qubits should be correlated");
+            assert!(
+                r1[0].is_deterministic,
+                "second qubit should be deterministic after first measured"
+            );
+            assert_eq!(
+                r0[0].outcome, r1[0].outcome,
+                "Bell state qubits should be correlated"
+            );
         }
     }
 
@@ -784,8 +784,14 @@ mod tests {
         sim.h(&qid(0));
         let r1 = sim.mz(&qid(0));
         let r2 = sim.mz(&qid(0));
-        assert!(r2[0].is_deterministic, "second measurement should be deterministic");
-        assert_eq!(r1[0].outcome, r2[0].outcome, "repeated measurement should give same result");
+        assert!(
+            r2[0].is_deterministic,
+            "second measurement should be deterministic"
+        );
+        assert_eq!(
+            r1[0].outcome, r2[0].outcome,
+            "repeated measurement should give same result"
+        );
     }
 
     #[test]
@@ -801,8 +807,8 @@ mod tests {
 
     #[test]
     fn test_cross_validation_random_circuits() {
-        use crate::stabilizer_test_utils::compare_simulators_on_random_circuits_direct;
         use crate::SparseStab;
+        use crate::stabilizer_test_utils::compare_simulators_on_random_circuits_direct;
 
         let mut gs = GraphStateSim::with_seed(6, 0);
         let mut ss = SparseStab::with_seed(6, 0);

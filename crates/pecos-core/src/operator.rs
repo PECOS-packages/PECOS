@@ -2516,19 +2516,38 @@ impl Mul for Operator {
 // Circuit diagram generation
 // ============================================================================
 
-use crate::circuit_diagram::{CellColor, CircuitDiagram, DiagramOptions, GateFamily};
+use crate::circuit_diagram::{
+    CellColor, CircuitDiagram, DiagramRenderer, DiagramStyle, GateFamily, SymbolSet,
+};
+
+/// Map a `GateType` to its axis color using PECOS color algebra.
+fn gate_type_color(gt: GateType) -> CellColor {
+    match gt {
+        GateType::X | GateType::RX | GateType::RXX => CellColor::XAxis,
+        GateType::Y | GateType::RY | GateType::RYY => CellColor::YAxis,
+        GateType::Z
+        | GateType::RZ
+        | GateType::T
+        | GateType::Tdg
+        | GateType::RZZ
+        | GateType::Measure
+        | GateType::Prep
+        | GateType::SZZ
+        | GateType::SZZdg
+        | GateType::CRZ => CellColor::ZAxis,
+        GateType::SX | GateType::SXdg => CellColor::YZMix,
+        GateType::SY | GateType::SYdg | GateType::H | GateType::CH => CellColor::XZMix,
+        GateType::SZ | GateType::SZdg => CellColor::XYMix,
+        _ => CellColor::None,
+    }
+}
 
 /// Map a `GateType` to its `GateFamily` for diagram bracket/stroke styling.
+///
+/// Most gates use `Default` brackets (`[G]`). Only measurement and preparation
+/// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_type_family(gt: GateType) -> GateFamily {
     match gt {
-        GateType::I | GateType::X | GateType::Y | GateType::Z => GateFamily::Pauli,
-        GateType::SX
-        | GateType::SXdg
-        | GateType::SY
-        | GateType::SYdg
-        | GateType::SZ
-        | GateType::SZdg => GateFamily::SLike,
-        GateType::H => GateFamily::HLike,
         GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
             GateFamily::Measurement
         }
@@ -2549,55 +2568,75 @@ impl Operator {
     /// Plain ASCII circuit diagram.
     #[must_use]
     pub fn to_ascii(&self, num_qubits: usize) -> String {
-        self.render_diagram(num_qubits, &DiagramOptions::ascii())
+        self.render_with(num_qubits, &DiagramStyle::default())
+            .ascii()
     }
 
     /// ASCII circuit diagram with ANSI colors.
     #[must_use]
     pub fn to_color_ascii(&self, num_qubits: usize) -> String {
-        self.render_diagram(num_qubits, &DiagramOptions::color_ascii())
+        self.render_with(
+            num_qubits,
+            &DiagramStyle::builder().ansi_color(true).build(),
+        )
+        .ascii()
     }
 
     /// Unicode circuit diagram.
     #[must_use]
     pub fn to_unicode(&self, num_qubits: usize) -> String {
-        self.render_diagram(num_qubits, &DiagramOptions::unicode())
+        self.render_with(
+            num_qubits,
+            &DiagramStyle::builder().symbols(SymbolSet::Unicode).build(),
+        )
+        .unicode()
     }
 
     /// Unicode circuit diagram with ANSI colors.
     #[must_use]
     pub fn to_color_unicode(&self, num_qubits: usize) -> String {
-        self.render_diagram(num_qubits, &DiagramOptions::color_unicode())
+        self.render_with(
+            num_qubits,
+            &DiagramStyle::builder()
+                .symbols(SymbolSet::Unicode)
+                .ansi_color(true)
+                .build(),
+        )
+        .unicode()
     }
 
     /// Export as an SVG circuit diagram.
     #[must_use]
     pub fn to_svg(&self, num_qubits: usize) -> String {
-        let mut diagram = CircuitDiagram::new(num_qubits);
-        self.add_to_diagram(&mut diagram);
-        diagram.render_svg("")
+        self.render_with(num_qubits, &DiagramStyle::default()).svg()
     }
 
     /// Export as a `TikZ` `tikzpicture`.
     #[must_use]
     pub fn to_tikz(&self, num_qubits: usize) -> String {
-        let mut diagram = CircuitDiagram::new(num_qubits);
-        self.add_to_diagram(&mut diagram);
-        diagram.render_tikz("")
+        self.render_with(num_qubits, &DiagramStyle::default())
+            .tikz()
     }
 
     /// Export as a Graphviz DOT digraph.
     #[must_use]
     pub fn to_dot(&self, num_qubits: usize) -> String {
-        let mut diagram = CircuitDiagram::new(num_qubits);
-        self.add_to_diagram(&mut diagram);
-        diagram.render_dot("")
+        self.render_with(num_qubits, &DiagramStyle::default()).dot()
     }
 
-    fn render_diagram(&self, num_qubits: usize, options: &DiagramOptions) -> String {
+    /// Create a [`DiagramRenderer`] bound to a custom [`DiagramStyle`].
+    ///
+    /// The renderer can produce text, SVG, `TikZ`, or DOT output using the
+    /// given style configuration.
+    #[must_use]
+    pub fn render_with<'a>(
+        &self,
+        num_qubits: usize,
+        style: &'a DiagramStyle,
+    ) -> DiagramRenderer<'a> {
         let mut diagram = CircuitDiagram::new(num_qubits);
         self.add_to_diagram(&mut diagram);
-        diagram.render("", options)
+        DiagramRenderer::new(diagram, String::new(), style)
     }
 
     fn add_to_diagram(&self, diagram: &mut CircuitDiagram) {
@@ -2605,13 +2644,13 @@ impl Operator {
             Self::Pauli(ps) => {
                 for (pauli, qubit) in ps.iter_pairs() {
                     let q = usize::from(qubit);
-                    let name = match pauli {
+                    let (name, color) = match pauli {
                         crate::Pauli::I => continue,
-                        crate::Pauli::X => "X",
-                        crate::Pauli::Y => "Y",
-                        crate::Pauli::Z => "Z",
+                        crate::Pauli::X => ("X", CellColor::XAxis),
+                        crate::Pauli::Y => ("Y", CellColor::YAxis),
+                        crate::Pauli::Z => ("Z", CellColor::ZAxis),
                     };
-                    diagram.add_gate(q, name, CellColor::SingleQubit, GateFamily::Pauli);
+                    diagram.add_gate(q, name, color, GateFamily::Default);
                 }
             }
             Self::Rotation {
@@ -2626,55 +2665,50 @@ impl Operator {
                     format!("{rotation_type:?}")
                 };
                 let family = resolved_gt.map_or(GateFamily::Default, gate_type_family);
+                let color = resolved_gt.map_or(CellColor::None, gate_type_color);
 
                 if qubits.len() == 1 {
-                    diagram.add_gate(qubits[0], &name, CellColor::SingleQubit, family);
+                    diagram.add_gate(qubits[0], &name, color, family);
                 } else if qubits.len() == 2 {
-                    let color = CellColor::MultiQubit;
                     diagram.add_gate(qubits[0], &name, color, family);
                     diagram.add_gate(qubits[1], &name, color, family);
-                    diagram.connect_vertical(qubits[0], qubits[1], color);
+                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
                 }
             }
             Self::Gate { gate_type, qubits } => match gate_type {
                 GateType::CX => {
                     diagram.add_control(qubits[0]);
-                    diagram.add_gate(qubits[1], "X", CellColor::MultiQubit, GateFamily::Default);
-                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::MultiQubit);
+                    diagram.add_gate(qubits[1], "X", CellColor::XAxis, GateFamily::Default);
+                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
                 }
                 GateType::CY => {
                     diagram.add_control(qubits[0]);
-                    diagram.add_gate(qubits[1], "Y", CellColor::MultiQubit, GateFamily::Default);
-                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::MultiQubit);
+                    diagram.add_gate(qubits[1], "Y", CellColor::YAxis, GateFamily::Default);
+                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
                 }
                 GateType::CZ => {
                     diagram.add_control(qubits[0]);
-                    diagram.add_gate(qubits[1], "Z", CellColor::MultiQubit, GateFamily::Default);
-                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::MultiQubit);
+                    diagram.add_gate(qubits[1], "Z", CellColor::ZAxis, GateFamily::Default);
+                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
                 }
                 GateType::SWAP => {
-                    let color = CellColor::MultiQubit;
-                    diagram.add_gate(qubits[0], "x", color, GateFamily::Default);
-                    diagram.add_gate(qubits[1], "x", color, GateFamily::Default);
-                    diagram.connect_vertical(qubits[0], qubits[1], color);
+                    diagram.add_gate(qubits[0], "x", CellColor::None, GateFamily::Default);
+                    diagram.add_gate(qubits[1], "x", CellColor::None, GateFamily::Default);
+                    diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
                 }
                 GateType::CCX => {
                     diagram.add_control(qubits[0]);
                     diagram.add_control(qubits[1]);
-                    diagram.add_gate(qubits[2], "X", CellColor::MultiQubit, GateFamily::Default);
+                    diagram.add_gate(qubits[2], "X", CellColor::XAxis, GateFamily::Default);
                     let min_q = qubits[0].min(qubits[1]).min(qubits[2]);
                     let max_q = qubits[0].max(qubits[1]).max(qubits[2]);
-                    diagram.connect_vertical(min_q, max_q, CellColor::MultiQubit);
+                    diagram.connect_vertical(min_q, max_q, CellColor::None);
                 }
                 _ => {
                     if qubits.len() == 1 {
                         let family = gate_type_family(*gate_type);
-                        diagram.add_gate(
-                            qubits[0],
-                            &format!("{gate_type:?}"),
-                            CellColor::SingleQubit,
-                            family,
-                        );
+                        let color = gate_type_color(*gate_type);
+                        diagram.add_gate(qubits[0], &format!("{gate_type:?}"), color, family);
                     }
                 }
             },
@@ -2804,7 +2838,7 @@ mod tests {
     fn test_diagram_single_qubit() {
         let h = H(0);
         let diagram = h.to_diagram(1);
-        assert!(diagram.contains("<H>")); // HLike family
+        assert!(diagram.contains("[H]")); // Default family
     }
 
     #[test]

@@ -416,20 +416,20 @@ pub const VOP_DECOMP: [(u8, [u8; VOP_DECOMP_MAX_LEN]); 24] = compute_vop_decomp(
 // CZ (cphase) lookup table
 // ============================================================================
 
-/// Mapping from reference (GraphSim) Clifford indices to our CliffordFrame indices.
+/// Mapping from reference (`GraphSim`) Clifford indices to our `CliffordFrame` indices.
 /// Derived by generating all 24 elements from H and S in both systems.
 const REF_TO_OURS: [u8; 24] = [
     0, 1, 2, 3, 20, 5, 4, 23, 18, 10, 6, 9, 17, 19, 12, 13, 14, 15, 22, 8, 7, 11, 21, 16,
 ];
 
-/// Mapping from our CliffordFrame indices to reference (GraphSim) indices.
+/// Mapping from our `CliffordFrame` indices to reference (`GraphSim`) indices.
 const OURS_TO_REF: [u8; 24] = [
     0, 1, 2, 3, 6, 5, 10, 20, 19, 11, 9, 21, 14, 15, 16, 17, 23, 12, 8, 13, 4, 22, 18, 7,
 ];
 
-/// Reference CZ table from GraphSim (Anders & Briegel), indexed by reference indices.
+/// Reference CZ table from `GraphSim` (Anders & Briegel), indexed by reference indices.
 /// Layout: `REF_CPHASE[was_edge][v1_ref][v2_ref]` = `[new_edge, new_v1_ref, new_v2_ref]`.
-/// This is the verified table from `cphase.tbl` in the GraphSim reference implementation.
+/// This is the verified table from `cphase.tbl` in the `GraphSim` reference implementation.
 #[rustfmt::skip]
 const REF_CPHASE: [[[[u8; 3]; 24]; 24]; 2] = [
     // was_edge = 0
@@ -488,8 +488,8 @@ const REF_CPHASE: [[[[u8; 3]; 24]; 24]; 2] = [
     ],
 ];
 
-/// Compute the CZ lookup table by remapping the reference GraphSim table
-/// to our CliffordFrame index system.
+/// Compute the CZ lookup table by remapping the reference `GraphSim` table
+/// to our `CliffordFrame` index system.
 ///
 /// For each `(was_edge, v1, v2)`, finds `(new_edge, v1', v2')` such that
 /// after applying CZ to state `(V1 x V2) |G_{was_edge}>`,

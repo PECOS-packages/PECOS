@@ -801,7 +801,8 @@ impl DagCircuit {
     /// Horizontal qubit wires with gate symbols placed at each layer column.
     #[must_use]
     pub fn to_ascii(&self) -> String {
-        self.format_diagram(&pecos_core::circuit_diagram::DiagramOptions::ascii())
+        self.render_with(&pecos_core::circuit_diagram::DiagramStyle::default())
+            .ascii()
     }
 
     /// ASCII circuit diagram with ANSI color codes.
@@ -811,58 +812,74 @@ impl DagCircuit {
     /// measurements, cyan for preparations.
     #[must_use]
     pub fn to_color_ascii(&self) -> String {
-        self.format_diagram(&pecos_core::circuit_diagram::DiagramOptions::color_ascii())
+        self.render_with(
+            &pecos_core::circuit_diagram::DiagramStyle::builder()
+                .ansi_color(true)
+                .build(),
+        )
+        .ascii()
     }
 
     /// Unicode circuit diagram with box-drawing characters.
     #[must_use]
     pub fn to_unicode(&self) -> String {
-        self.format_diagram(&pecos_core::circuit_diagram::DiagramOptions::unicode())
+        self.render_with(
+            &pecos_core::circuit_diagram::DiagramStyle::builder()
+                .symbols(pecos_core::circuit_diagram::SymbolSet::Unicode)
+                .build(),
+        )
+        .unicode()
     }
 
     /// Unicode circuit diagram with ANSI color codes.
     #[must_use]
     pub fn to_color_unicode(&self) -> String {
-        self.format_diagram(&pecos_core::circuit_diagram::DiagramOptions::color_unicode())
+        self.render_with(
+            &pecos_core::circuit_diagram::DiagramStyle::builder()
+                .symbols(pecos_core::circuit_diagram::SymbolSet::Unicode)
+                .ansi_color(true)
+                .build(),
+        )
+        .unicode()
     }
 
     /// Export as an SVG circuit diagram.
     #[must_use]
     pub fn to_svg(&self) -> String {
-        let (header, layers) = self.diagram_parts();
-        crate::circuit_display::format_circuit_svg(&header, &layers)
+        self.render_with(&pecos_core::circuit_diagram::DiagramStyle::default())
+            .svg()
     }
 
     /// Export as a `TikZ` `tikzpicture`.
     #[must_use]
     pub fn to_tikz(&self) -> String {
-        let (header, layers) = self.diagram_parts();
-        crate::circuit_display::format_circuit_tikz(&header, &layers)
+        self.render_with(&pecos_core::circuit_diagram::DiagramStyle::default())
+            .tikz()
     }
 
     /// Export as a Graphviz DOT digraph.
     #[must_use]
     pub fn to_dot(&self) -> String {
-        let (header, layers) = self.diagram_parts();
-        crate::circuit_display::format_circuit_dot(&header, &layers)
+        self.render_with(&pecos_core::circuit_diagram::DiagramStyle::default())
+            .dot()
     }
 
-    /// Deprecated: use [`to_color_ascii`](Self::to_color_ascii) instead.
-    #[deprecated(note = "renamed to to_color_ascii")]
+    /// Create a [`DiagramRenderer`](pecos_core::circuit_diagram::DiagramRenderer)
+    /// bound to a custom [`DiagramStyle`](pecos_core::circuit_diagram::DiagramStyle).
     #[must_use]
-    pub fn to_ascii_color(&self) -> String {
-        self.to_color_ascii()
+    pub fn render_with<'a>(
+        &self,
+        style: &'a pecos_core::circuit_diagram::DiagramStyle,
+    ) -> pecos_core::circuit_diagram::DiagramRenderer<'a> {
+        let (header, layers) = self.diagram_parts();
+        let diagram = crate::circuit_display::build_diagram_or_empty(&layers, style.angle_unit);
+        pecos_core::circuit_diagram::DiagramRenderer::new(diagram, header, style)
     }
 
     fn diagram_parts(&self) -> (String, Vec<Vec<&Gate>>) {
         let layers: Vec<Vec<&Gate>> = self
             .layers()
-            .map(|node_ids| {
-                node_ids
-                    .iter()
-                    .filter_map(|&id| self.gate(id))
-                    .collect()
-            })
+            .map(|node_ids| node_ids.iter().filter_map(|&id| self.gate(id)).collect())
             .collect();
         let num_qubits = self.qubits().len();
         let num_layers = layers.len();
@@ -874,11 +891,6 @@ impl DagCircuit {
             if num_layers == 1 { "" } else { "s" },
         );
         (header, layers)
-    }
-
-    fn format_diagram(&self, options: &pecos_core::circuit_diagram::DiagramOptions) -> String {
-        let (header, layers) = self.diagram_parts();
-        crate::circuit_display::format_circuit(&header, &layers, options)
     }
 
     /// Returns the root gates (gates with no incoming wires).

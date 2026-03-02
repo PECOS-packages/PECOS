@@ -20,6 +20,9 @@ smallvec.workspace = true
 tket = { workspace = true, optional = true }
 log.workspace = true
 
+[dev-dependencies]
+pecos-qsim.workspace = true
+
 [features]
 default = []
 hugr = ["tket"]

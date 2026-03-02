@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-> **Status: Implemented** - The core design described in this document has been implemented. See [noise-usage-guide.md](noise-usage-guide.md) for practical usage.
+> **Status: Implemented** - The core design described in this document has been implemented. See [noise-usage-guide.md](../user-guides/noise.md) for practical usage.
 
 ### What's Implemented
 

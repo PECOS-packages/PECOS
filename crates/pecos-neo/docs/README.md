@@ -1,52 +1,6 @@
 # pecos-neo Documentation
 
-This directory contains documentation for `pecos-neo`, a quantum circuit simulation framework with composable noise models and advanced sampling techniques.
-
-## Documentation Index
-
-### Getting Started
-
-- **[design-patterns.md](design-patterns.md)** - API hierarchy, builder patterns, conventions, and best practices. **Read this first** to understand which APIs to use and how to contribute.
-
-### Circuit Execution
-
-- **[runner.md](runner.md)** - Guide to `CircuitRunner` for GateId-based circuit execution. Covers custom gates, gate overrides, decomposition, and the unified `run()` API.
-
-### Extensible Gate System
-
-- **[extensible-gates-design.md](extensible-gates-design.md)** - Design document for the extensible gate system. Covers `GateId`, `GateDefinitions`, validation philosophy, and adaptor patterns.
-
-- **[extensible-gates-test-plan.md](extensible-gates-test-plan.md)** - Test plan for the extensible gate system.
-
-### Noise Modeling
-
-- **[noise-composite-design.md](noise-composite-design.md)** - Design document for the composable noise composite system. Describes the primitive-based approach to noise modeling with decision trees.
-
-- **[noise-usage-guide.md](noise-usage-guide.md)** - Practical guide to using the noise system. Covers `CompositeNoiseModelBuilder`, `ComposableNoiseModel`, and common noise patterns.
-
-### Signals and Dispatch
-
-- **[tags-and-dispatch-design.md](tags-and-dispatch-design.md)** - Design and implementation of the signal/dispatch system. Covers typed signals in the command stream, gate event handlers, `DispatchContext`, and integration with `NoiseEvent::Signal`.
-
-### Performance
-
-- **[performance.md](performance.md)** - Benchmarks and scaling characteristics for large-scale simulations (1M+ qubits).
-
-### Sampling and Rare Event Estimation
-
-- **[subset-simulation.md](subset-simulation.md)** - Guide to subset simulation for estimating very rare event probabilities (e.g., logical error rates in QEC). Covers `SubsetSimulation`, `ProperSubsetSimulation`, and `QecSubsetSimulation`.
-
-- **[importance-sampling.md](importance-sampling.md)** - Guide to importance sampling for variance reduction in Monte Carlo estimation.
-
-### Architecture
-
-- **[architecture-evolution.md](architecture-evolution.md)** - How pecos-neo relates to pecos-engines. Compares DOD/functional patterns with OOP/trait patterns.
-
-## Quick Start
-
-### Simple Simulation with sim_neo (Recommended)
-
-The `sim_neo` Tool API is the primary entry point for running simulations:
+Build a circuit, add noise, run it:
 
 ```rust
 use pecos_neo::tool::sim_neo;
@@ -58,125 +12,31 @@ let circuit = CommandBuilder::new()
     .mz(0).mz(1)
     .build();
 
-// Run 1000 shots with depolarizing noise
 let results = sim_neo(circuit)
     .depolarizing(0.01)
     .shots(1000)
     .seed(42)
     .run();
-
-for outcome in &results.outcomes {
-    println!("{:?}", outcome);
-}
 ```
 
-### State Vector with Non-Clifford Gates
+Everything chains off `sim_neo()`. The sections below show what you can plug in.
 
-Use `state_vector()` for circuits with T gates, rotations, and other non-Clifford operations. Rotation support is automatically enabled:
+---
+
+## What do you want to do?
+
+### Add noise
+
+The simplest option -- uniform depolarizing noise:
 
 ```rust
-use pecos_neo::tool::{sim_neo, state_vector};
-use pecos_neo::command::CommandBuilder;
-
-let circuit = CommandBuilder::new()
-    .pz(0)
-    .h(0)
-    .t(0)           // Non-Clifford gate
-    .rz(0, 0.123)   // Arbitrary rotation
-    .mz(0)
-    .build();
-
-let results = sim_neo(circuit)
-    .quantum(state_vector())
-    .shots(1000)
-    .seed(42)
-    .run();
+sim_neo(circuit).depolarizing(0.01).shots(1000).run();
 ```
 
-### Gate Overrides
-
-Swap gate implementations at runtime using `gate_overrides()`:
+Need per-channel control (single-qubit, two-qubit, measurement)?
 
 ```rust
-use pecos_neo::tool::sim_neo;
-use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
-
-let overrides = GateOverrides::<SparseStab>::new()
-    .register(gates::X, |sim, _angles, qubits| {
-        // Custom X gate implementation
-        sim.x(qubits);
-        true
-    });
-
-let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
-let results = sim_neo(circuit)
-    .gate_overrides(overrides)
-    .shots(1000)
-    .seed(42)
-    .run();
-```
-
-### Event Handlers
-
-Register gate/signal event handlers via `EventHandlers`. They work with both
-sequential and parallel execution:
-
-```rust
-use pecos_neo::tool::sim_neo;
-use pecos_neo::prelude::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-
-let gate_count = Arc::new(AtomicUsize::new(0));
-let c = gate_count.clone();
-
-let handlers = EventHandlers::new()
-    .on_before_gate(move |_ctx| {
-        c.fetch_add(1, Ordering::Relaxed);
-        NoiseResponse::None
-    });
-
-let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
-let results = sim_neo(circuit)
-    .event_handlers(handlers)
-    .workers(4)
-    .shots(1000)
-    .seed(42)
-    .run();
-```
-
-### Importance Sampling for Rare Events
-
-For estimating rare event probabilities efficiently:
-
-```rust
-use pecos_neo::tool::{sim_neo, importance_sampling};
-
-let results = sim_neo(circuit)
-    .orchestrator(importance_sampling()
-        .with_p1(0.001)      // Single-qubit error rate
-        .with_p2(0.01)       // Two-qubit error rate
-        .with_boost(10.0))   // Sample 10x more errors
-    .shots(10000)
-    .seed(42)
-    .run();
-
-// Compute weighted estimate of logical error rate
-if let Some(error_rate) = results.weighted_mean(|outcome| {
-    if check_logical_error(outcome) { 1.0 } else { 0.0 }
-}) {
-    println!("Logical error rate: {:.2e}", error_rate);
-}
-```
-
-### Custom Noise Models
-
-```rust
-use pecos_neo::tool::sim_neo;
-use pecos_neo::noise::GeneralNoiseModelBuilder;
-
-let results = sim_neo(circuit)
+sim_neo(circuit)
     .noise(GeneralNoiseModelBuilder::new()
         .with_p1(0.001)
         .with_p2(0.01)
@@ -185,218 +45,95 @@ let results = sim_neo(circuit)
     .run();
 ```
 
-### Running with Custom Gate Definitions
+Noise is [event-driven](user-guides/events.md) -- channels respond to gate and
+measurement events during simulation. The builders above wire this up for you.
 
-Pass custom gate definitions (decompositions, user-defined gates) through `sim_neo()`:
+Full guide: [Adding Noise](user-guides/noise.md) |
+[Composable Noise Model](user-guides/noise-model.md) |
+[Noise Channels](user-guides/noise-channels.md)
 
-```rust
-use pecos_neo::tool::sim_neo;
-use pecos_neo::prelude::*;
+### Use non-Clifford gates
 
-let defs = GateDefinitions::new(); // core gates included by default
-
-let circuit = CommandBuilder::new()
-    .pz(0).h(0).mz(0)
-    .build();
-
-let results = sim_neo(circuit)
-    .gate_definitions(defs)
-    .depolarizing(0.01)
-    .shots(1000)
-    .seed(42)
-    .run();
-```
-
-For GateId-based circuits with `OpBuilder`, or when you need gate overrides,
-use `CircuitRunner` directly:
+Switch to the state vector backend for T gates, arbitrary rotations, etc.:
 
 ```rust
-use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
-
-let definitions = GateDefinitions::new();
-let circuit = OpBuilder::new()
-    .pz(QubitId(0))
-    .h(QubitId(0))
-    .mz(QubitId(0), ResultId(0))
-    .build();
-
-let mut state = SparseStab::new(1);
-let mut runner = CircuitRunner::<SparseStab>::with_definitions(definitions)
-    .with_noise(noise);
-
-let outcomes = runner.apply_adapted_circuit(&mut state, &circuit)?;
+sim_neo(circuit).quantum(state_vector()).shots(1000).run();
 ```
 
-### Subset Simulation for Very Rare Events
+### Run in parallel
 
-For probabilities below 10^-6:
+Add `.workers(n)` -- works with or without noise:
 
 ```rust
-use pecos_neo::sampling::subset::{SubsetSimulation, SubsetConfig};
-
-let config = SubsetConfig::new()
-    .with_samples_per_level(1000)
-    .with_seed(42);
-
-let result = SubsetSimulation::new(circuit, num_qubits, score_fn, is_failure_fn)
-    .with_noise_builder(|| Some(noise.clone()))
-    .with_config(config)
-    .run();
-
-println!("P(failure) = {:.2e}", result.probability());
+sim_neo(circuit).depolarizing(0.01).workers(4).shots(10000).seed(42).run();
 ```
 
-## Architecture Overview
+### Estimate rare event probabilities
 
-```
-pecos-neo/
-├── tool/              # High-level Tool API (recommended entry point)
-│   ├── simulation.rs  # sim_neo(), SimNeoBuilder, Orchestrator
-│   ├── core.rs        # Tool, Resources, Plugin system
-│   └── ...
-├── command/           # Circuit representation (CommandQueue, GateCommand)
-│   ├── signal_store.rs # Type-erased signal storage (SignalStore)
-│   └── ...
-├── extensible/        # GateId-based gate system
-│   ├── definitions.rs # GateDefinitions, GateSpec
-│   ├── op_builder.rs  # OpBuilder for AdaptedSequence
-│   ├── adaptor.rs     # Gate adaptors and decomposition
-│   └── ...
-├── noise/             # Noise modeling system
-│   ├── composite/          # Composable primitive-based noise
-│   │   ├── primitive.rs   # Core Primitive trait and composites
-│   │   ├── action.rs      # Terminal actions (Pauli, Leak, Seep, etc.)
-│   │   ├── condition.rs   # Conditions (Leaked, OutcomeIs, etc.)
-│   │   ├── channel.rs     # CompositeChannel integration
-│   │   └── builder.rs     # CompositeNoiseModelBuilder
-│   ├── composer.rs    # ComposableNoiseModel (Clone for parallel)
-│   ├── plugin.rs      # NoisePlugin, EventHandler, ContextObserver
-│   └── ...            # Channel-based noise (single/two qubit, etc.)
-├── sampling/          # Advanced sampling techniques
-│   ├── subset.rs      # Subset simulation
-│   ├── importance*.rs # Importance sampling
-│   └── ...
-├── runner.rs          # Unified CircuitRunner (Clifford + rotation gates)
-├── engines.rs         # Native CommandSource engines (TickCircuit, DagCircuit)
-└── outcome.rs         # MeasurementOutcomes
-```
+**Importance sampling** (10^-3 to 10^-6) -- boost error rates, reweight
+results. **Subset simulation** (below 10^-6) -- decompose into conditional
+probabilities. Both plug into `sim_neo()`.
 
-## Key Concepts
+Full guides: [Importance Sampling](user-guides/importance-sampling.md) |
+[Subset Simulation](user-guides/subset-simulation.md)
 
-### Orchestrators
+### Override gate implementations
 
-The `sim_neo` API supports different execution strategies via orchestrators:
+Swap how specific gates execute at runtime via `GateOverrides`. Useful for
+custom decompositions or hardware-specific implementations.
 
-| Orchestrator | Use Case |
-|--------------|----------|
-| `MonteCarlo { workers: 1 }` (default) | Single-worker execution via Tool schedule |
-| `MonteCarlo { workers: n }` | Parallel execution across n workers |
-| `ImportanceSampling` | Biased sampling for rare event estimation (via Tool schedule) |
+### Hook into the execution pipeline
 
-All orchestrators run through the Tool/Schedule/Plugin system, so user-registered
-plugins fire correctly regardless of orchestrator. `ImportanceSampling` uses
-`ImportanceSamplingSimPlugin` (which replaces `UnifiedSimulationPlugin`) to run
-`ImportanceSamplingRunner` inside the standard Stage pipeline.
+Register handlers for gate events, measurements, idle time, or custom signals.
+This is the same event system that drives noise -- you can observe, respond to,
+or inject behavior at any point in execution.
 
-```rust
-// Default (single worker)
-sim_neo(circuit).shots(1000).run();
+Full guide: [Events, Signals, and Handlers](user-guides/events.md)
 
-// Parallel Monte Carlo (works with or without noise)
-sim_neo(circuit).workers(4).shots(1000).run();
-sim_neo(circuit).depolarizing(0.01).workers(4).shots(1000).run();
+### Run simple circuits or control the simulation step-by-step
 
-// Importance sampling
-sim_neo(circuit)
-    .orchestrator(importance_sampling().with_boost(10.0))
-    .shots(10000)
-    .run();
-```
+`CircuitRunner` is a good fit when you just want to run a circuit without the
+full `sim_neo` orchestration, or when you want direct control over the
+simulation process -- stepping through gates, inspecting state between
+operations, or integrating into your own execution loop.
 
-### Signals and Dispatch
+Full guide: [CircuitRunner](user-guides/runner.md)
 
-The command stream can carry typed signals alongside gate operations, enabling
-communication between circuit layers and noise/analysis tools:
+---
 
-```rust
-use pecos_neo::command::CommandBuilder;
-use pecos_core::Signal;
+## Guides
 
-#[derive(Debug, Clone)]
-struct RoundBoundary(pub usize);
-impl Signal for RoundBoundary {}
+| Guide | What it covers |
+|-------|----------------|
+| [Adding Noise](user-guides/noise.md) | Builder options, per-channel control, common presets |
+| [Composable Noise Model](user-guides/noise-model.md) | Composing channels directly, plugins, mixing approaches |
+| [Noise Channels](user-guides/noise-channels.md) | Built-in channels: single-qubit, two-qubit, measurement, idle, crosstalk |
+| [Events, Signals, and Handlers](user-guides/events.md) | Event hooks, typed signals, DispatchContext |
+| [CircuitRunner](user-guides/runner.md) | Simple circuits, step-by-step control, custom gates |
+| [Importance Sampling](user-guides/importance-sampling.md) | Rare event estimation (10^-3 to 10^-6) |
+| [Subset Simulation](user-guides/subset-simulation.md) | Very rare event estimation (below 10^-6) |
+| [Performance](user-guides/performance.md) | Benchmarks and scaling (1M+ qubits) |
 
-let mut commands = CommandBuilder::new()
-    .pz(0).h(0).cx(0, 1).mz(0).mz(1)
-    .build();
-commands.signal(RoundBoundary(1));  // Inject signal into command stream
-```
+---
 
-Noise channels can observe signals via `NoiseEvent::Signal`, and gate event
-handlers can react to gate operations via `DispatchContext`. See
-[tags-and-dispatch-design.md](tags-and-dispatch-design.md) for full details.
+## Developer Docs
 
-### Cloneability and Parallel Execution
+Full API details, custom implementations, and internals:
 
-`ComposableNoiseModel` implements `Clone`, enabling parallel Monte Carlo
-execution for noisy circuits. Each parallel worker gets its own clone of the
-noise model with independent state:
+| Doc | What it covers |
+|-----|----------------|
+| [Design Patterns](dev/design-patterns.md) | API conventions, builder patterns, naming, testing standards |
+| [Noise (full)](dev/noise.md) | Custom primitives, NoiseChannel trait, composable decision trees |
+| [CircuitRunner (full)](dev/runner.md) | Decomposition, gate overrides, signal dispatch, full API reference |
+| [Importance Sampling (full)](dev/importance-sampling.md) | ImportanceSamplingRunner API, SampleWeight, theory |
+| [Subset Simulation (full)](dev/subset-simulation.md) | ProperSubsetSimulation, QEC variant, ECS trajectories |
 
-```rust
-// Parallel noisy simulation -- each worker clones the noise model
-sim_neo(circuit)
-    .depolarizing(0.01)
-    .workers(4)
-    .shots(10000)
-    .seed(42)
-    .run();
-```
+## Design Documents
 
-Custom `NoiseChannel` and `Primitive` implementations must provide a
-`clone_box()` method that returns `Box<dyn NoiseChannel>` or
-`Box<dyn Primitive>`. This enables cloning trait objects without requiring
-`Clone` as a supertrait. See the [clone_box pattern](design-patterns.md#the-clone_box-pattern-for-trait-objects)
-in the design patterns guide.
+Architecture and design decisions:
 
-### Noise Primitives
-
-The noise system is built on composable primitives:
-
-| Primitive | Purpose |
-|-----------|---------|
-| `prob(p, action)` | Apply action with probability p |
-| `when(cond, then, else)` | Branch based on condition |
-| `sample(weights, actions)` | Weighted random choice |
-| `seq([a, b, c])` | Execute all in order |
-| `skip_if(cond)` | Early exit if condition met |
-
-### NoiseResponse Types
-
-| Response | Effect |
-|----------|--------|
-| `None` | No noise applied |
-| `InjectGates(gates)` | Add gates after current operation |
-| `SkipGate` | Remove/skip the triggering gate |
-| `FlipOutcomes(qubits)` | Flip measurement outcomes |
-| `ForceOutcomes([(q, v)])` | Force outcomes to specific values |
-| `MarkLeaked(qubits)` | Mark qubits as leaked |
-
-### Importance Sampling
-
-For estimating rare event probabilities (10^-3 to 10^-6):
-
-1. Boost error rates to observe more failures
-2. Track importance weights (true_rate / proposal_rate)
-3. Use weighted statistics for unbiased estimates
-
-Results include weights for proper reweighting via `weighted_mean()` or `weighted_stats()`.
-
-### Subset Simulation
-
-For estimating P(rare event) ~ 10^-6 or smaller:
-
-1. Define a "score" function that increases toward failure
-2. Define thresholds that decompose P(F) into conditional probabilities
-3. Resample trajectories that exceed each threshold
-4. Multiply conditional probabilities for final estimate
+- [Extensible Gates](design/extensible-gates.md) -- `GateId`, `GateDefinitions`, adaptor patterns
+- [Extensible Gates Test Plan](design/extensible-gates-test-plan.md)
+- [Noise Composite](design/noise-composite.md) -- Primitive-based noise decision trees
+- [Signals and Dispatch](design/tags-and-dispatch.md) -- Typed signals, gate event handlers
+- [Architecture Evolution](design/architecture-evolution.md) -- DOD/functional vs OOP/trait patterns

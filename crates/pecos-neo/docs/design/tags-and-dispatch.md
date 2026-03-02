@@ -823,5 +823,5 @@ simple data is fast, complex data costs more. No artificial distinction needed.
 - [Bevy Observer Overhaul Design Doc](https://hackmd.io/@bevy/rk4S92hmlg) -- Observer architecture
 - [Bevy 0.18 Release Notes](https://bevy.org/news/bevy-0-18/) -- Safe component access
 - [Bevy Events - Unofficial Cheat Book](https://bevy-cheatbook.github.io/programming/events.html) -- Typed event patterns
-- [noise-composite-design.md](noise-composite-design.md) -- Existing composable noise design
-- [design-patterns.md](design-patterns.md) -- pecos-neo API conventions
+- [noise-composite.md](noise-composite.md) -- Existing composable noise design
+- [design-patterns.md](../dev/design-patterns.md) -- pecos-neo API conventions

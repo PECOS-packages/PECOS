@@ -1,12 +1,11 @@
 //! Build script for `QuEST` integration
 //!
-//! This build script produces a static library (libquest-bridge.a) for `QuEST` operations.
+//! This build script produces:
+//! 1. A static library (libquest-bridge.a) for CPU-only `QuEST` operations
+//! 2. Optionally, a shared library (`libpecos_quest_cuda.so`) for CUDA operations (when cuda feature enabled)
 //!
-//! When the `cuda` feature is enabled, GPU source files (`gpu_config.cpp`, `gpu_subroutines.cpp`)
-//! are compiled with nvcc into a separate static archive (`libquest-gpu.a`) and linked in.
-//! The remaining `QuEST` sources compile with the standard C++ compiler (they only contain
-//! declarations with standard C++ types, no CUDA-specific syntax). This means the same
-//! `quest_ffi` functions run on GPU transparently when CUDA is enabled.
+//! The CUDA library is loaded at runtime via dlopen, allowing a single binary to work
+//! on systems with and without CUDA installed.
 
 use log::{debug, info};
 use pecos_build::{Manifest, Result, ensure_dep_ready, report_cache_config};
@@ -84,18 +83,15 @@ fn detect_cuda_path() -> Option<String> {
     None
 }
 
-/// Build GPU source files with nvcc into a static archive (`libquest-gpu.a`)
+/// Build the GPU shared library (`libpecos_quest_cuda.so`)
 ///
-/// Only compiles the two GPU implementation files that require nvcc:
-/// - `gpu_config.cpp` (GPU device management)
-/// - `gpu_subroutines.cpp` (GPU kernel implementations)
-///
-/// All other `QuEST` sources compile fine with the standard C++ compiler even
-/// with `COMPILE_CUDA=1`, since the GPU headers only contain declarations
-/// with standard C++ types.
-fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -> Option<()> {
-    info!("Building GPU static archive (libquest-gpu.a)...");
+/// This library contains the GPU-accelerated `QuEST` implementation and is loaded
+/// at runtime via dlopen. This allows the main library to work on systems without CUDA.
+#[allow(clippy::too_many_lines)]
+fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -> Option<PathBuf> {
+    info!("Building GPU shared library (libpecos_quest_cuda.so)...");
 
+    // nvcc executable name differs by platform
     let nvcc_name = if cfg!(target_os = "windows") {
         "nvcc.exe"
     } else {
@@ -103,28 +99,71 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
     };
     let nvcc_path = Path::new(cuda_path).join("bin").join(nvcc_name);
     info!("Using nvcc at: {}", nvcc_path.display());
-
     let quest_include_dir = quest_dir.join("include");
     let quest_src_dir = quest_dir.join("src");
     let gpu_dir = quest_src_dir.join("gpu");
 
-    // Only the GPU implementation files need nvcc
-    let gpu_sources = [
-        gpu_dir.join("gpu_config.cpp"),
-        gpu_dir.join("gpu_subroutines.cpp"),
+    // Source files for the GPU library
+    let bridge_gpu = PathBuf::from("src/bridge_cuda.cpp");
+    let gpu_config = gpu_dir.join("gpu_config.cpp");
+    let gpu_subroutines = gpu_dir.join("gpu_subroutines.cpp");
+
+    // QuEST core files needed by the GPU library
+    let api_dir = quest_src_dir.join("api");
+    let core_dir = quest_src_dir.join("core");
+    let cpu_dir = quest_src_dir.join("cpu");
+    let comm_dir = quest_src_dir.join("comm");
+
+    // Collect all source files
+    let source_files = vec![
+        bridge_gpu,
+        gpu_config,
+        gpu_subroutines,
+        // API layer
+        api_dir.join("calculations.cpp"),
+        api_dir.join("channels.cpp"),
+        api_dir.join("debug.cpp"),
+        api_dir.join("decoherence.cpp"),
+        api_dir.join("environment.cpp"),
+        api_dir.join("initialisations.cpp"),
+        api_dir.join("matrices.cpp"),
+        api_dir.join("modes.cpp"),
+        api_dir.join("operations.cpp"),
+        api_dir.join("paulis.cpp"),
+        api_dir.join("qureg.cpp"),
+        api_dir.join("types.cpp"),
+        // Core utilities
+        core_dir.join("errors.cpp"),
+        core_dir.join("utilities.cpp"),
+        core_dir.join("validation.cpp"),
+        core_dir.join("memory.cpp"),
+        core_dir.join("printer.cpp"),
+        core_dir.join("randomiser.cpp"),
+        core_dir.join("parser.cpp"),
+        core_dir.join("localiser.cpp"),
+        core_dir.join("autodeployer.cpp"),
+        core_dir.join("accelerator.cpp"),
+        // CPU backend (still needed for some operations)
+        cpu_dir.join("cpu_config.cpp"),
+        cpu_dir.join("cpu_subroutines.cpp"),
+        // Communication
+        comm_dir.join("comm_config.cpp"),
+        comm_dir.join("comm_routines.cpp"),
     ];
 
+    // Compile all source files to object files
     let mut object_files = Vec::new();
-    for src_file in &gpu_sources {
+    for src_file in &source_files {
         let file_stem = src_file.file_stem()?.to_str()?;
+        // Windows uses .obj extension, Unix uses .o
         let obj_ext = if cfg!(target_os = "windows") {
             "obj"
         } else {
             "o"
         };
-        let obj_file = out_dir.join(format!("gpu_static_{file_stem}.{obj_ext}"));
+        let obj_file = out_dir.join(format!("gpu_{file_stem}.{obj_ext}"));
 
-        debug!("Compiling GPU source with nvcc: {}", src_file.display());
+        debug!("Compiling for GPU lib: {}", src_file.display());
         let mut compile_cmd = Command::new(&nvcc_path);
         compile_cmd
             .arg("-c")
@@ -132,7 +171,7 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
             .arg("-o")
             .arg(&obj_file)
             .arg("-x")
-            .arg("cu")
+            .arg("cu") // Treat .cpp files as CUDA source
             .arg("-I")
             .arg(&quest_include_dir)
             .arg("-I")
@@ -140,7 +179,7 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
             .arg("-I")
             .arg(quest_dir.parent()?)
             .arg("-I")
-            .arg("include")
+            .arg("include") // For quest_ffi.h
             .arg("--std=c++20")
             .arg("-DCOMPILE_GPU=1")
             .arg("-DCOMPILE_CUDA=1")
@@ -149,12 +188,19 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
             .arg("-DCOMPILE_MPI=0")
             .arg("-DCOMPILE_CUQUANTUM=0")
             .arg("-DFLOAT_PRECISION=2")
+            // Target compute capability 7.5 (Turing) which supports atomicAdd(double*, double)
+            // sm_75 is the minimum supported by both CUDA 12.x and 13.x
             .arg("-arch=sm_75")
+            // Allow newer GCC versions (e.g., GCC 14 in manylinux_2_28)
             .arg("-allow-unsupported-compiler");
 
+        // Platform-specific compiler flags
         if cfg!(target_os = "windows") {
+            // Windows/MSVC: no -fPIC needed (not applicable)
+            // Use /EHsc for C++ exception handling
             compile_cmd.arg("-Xcompiler").arg("/EHsc");
         } else {
+            // Unix: position-independent code for shared libraries
             compile_cmd.arg("-Xcompiler").arg("-fPIC");
         }
 
@@ -163,7 +209,10 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
         if !output.status.success() {
             let stdout_str = String::from_utf8_lossy(&output.stdout);
             let stderr_str = String::from_utf8_lossy(&output.stderr);
-            eprintln!("ERROR: Failed to compile {} with nvcc", src_file.display());
+            eprintln!(
+                "ERROR: Failed to compile {} for GPU library",
+                src_file.display()
+            );
             eprintln!("Exit status: {:?}", output.status);
             if !stdout_str.is_empty() {
                 eprintln!("stdout:\n{stdout_str}");
@@ -177,38 +226,90 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
         object_files.push(obj_file);
     }
 
-    // Archive into libquest-gpu.a
-    let archive_path = out_dir.join("libquest-gpu.a");
-    info!("Archiving GPU objects into: {}", archive_path.display());
-
-    let ar_name = if cfg!(target_os = "windows") {
-        "lib.exe"
+    // Link into a shared library
+    let lib_name = if cfg!(target_os = "macos") {
+        "libpecos_quest_cuda.dylib"
+    } else if cfg!(target_os = "windows") {
+        "pecos_quest_cuda.dll"
     } else {
-        "ar"
+        "libpecos_quest_cuda.so"
     };
 
-    let mut ar_cmd = Command::new(ar_name);
+    let gpu_lib_path = out_dir.join(lib_name);
+
+    info!("Linking GPU shared library: {}", gpu_lib_path.display());
+
+    let mut link_cmd = Command::new(&nvcc_path);
+    link_cmd
+        .arg("-shared")
+        .arg("-o")
+        .arg(&gpu_lib_path)
+        .args(&object_files);
+
+    // Platform-specific library paths and linking
     if cfg!(target_os = "windows") {
-        ar_cmd
-            .arg(format!("/OUT:{}", archive_path.display()))
-            .args(&object_files);
+        // Windows: CUDA libraries are in lib\x64
+        link_cmd
+            .arg(format!("-L{cuda_path}/lib/x64"))
+            .arg("-lcudart")
+            .arg("-lcublas");
+        // Windows uses MSVC runtime, no need to explicitly link C++ stdlib
     } else {
-        ar_cmd.arg("rcs").arg(&archive_path).args(&object_files);
+        // Unix: CUDA libraries are in lib64
+        link_cmd
+            .arg(format!("-L{cuda_path}/lib64"))
+            .arg("-lcudart")
+            .arg("-lcublas");
+        // Add C++ standard library
+        if cfg!(target_os = "macos") {
+            link_cmd.arg("-lc++");
+        } else {
+            link_cmd.arg("-lstdc++");
+        }
     }
 
-    let output = ar_cmd.output().ok()?;
+    let output = link_cmd.output().ok()?;
+
     if !output.status.success() {
         let stderr_str = String::from_utf8_lossy(&output.stderr);
-        eprintln!("ERROR: Failed to create GPU static archive");
+        eprintln!("ERROR: Failed to link GPU shared library");
         eprintln!("{stderr_str}");
         return None;
     }
 
     info!(
-        "Successfully built GPU static archive: {}",
-        archive_path.display()
+        "Successfully built GPU shared library: {}",
+        gpu_lib_path.display()
     );
-    Some(())
+
+    // Also copy to target directory for easier discovery
+    // Try CARGO_TARGET_DIR first, then derive from OUT_DIR
+    let target_lib_dir = if let Ok(target_dir) = env::var("CARGO_TARGET_DIR") {
+        let profile = get_build_profile();
+        Some(Path::new(&target_dir).join(&profile))
+    } else {
+        // OUT_DIR is something like: target/release/build/pecos-quest-xxx/out
+        // We want: target/release/
+        out_dir
+            .parent() // build/pecos-quest-xxx
+            .and_then(|p| p.parent()) // build
+            .and_then(|p| p.parent()) // release or debug
+            .map(std::path::Path::to_path_buf)
+    };
+
+    if let Some(target_dir) = target_lib_dir {
+        let target_lib_path = target_dir.join(lib_name);
+        if let Some(parent) = target_lib_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Err(e) = fs::copy(&gpu_lib_path, &target_lib_path) {
+            debug!("Could not copy CUDA lib to target dir: {e}");
+        } else {
+            info!("Copied CUDA lib to: {}", target_lib_path.display());
+        }
+    }
+
+    Some(gpu_lib_path)
 }
 
 /// Patch `QuEST` GPU code for CUDA 13 compatibility
@@ -300,9 +401,10 @@ fn generate_quest_header(quest_dir: &Path) -> Result<()> {
     // Since MULTI_LIB_HEADERS=0, we want the #if !0 block to be active
     // which means we need to process the #cmakedefine directives
     //
-    // COMPILE_CUDA is set based on the `cuda` Cargo feature:
-    // - cuda feature enabled: COMPILE_CUDA=1 (GPU dispatch paths active)
-    // - cuda feature disabled: COMPILE_CUDA=0 (CPU only)
+    // IMPORTANT: The main library is ALWAYS CPU-only (COMPILE_CUDA=0).
+    // GPU support is provided via a separate shared library (libpecos_quest_cuda.so)
+    // which is compiled with nvcc and has its own COMPILE_CUDA=1 flag.
+    // This generated quest.h is only used by the main library.
 
     // Process the template line by line to handle conditional blocks
     let mut in_multi_lib_block = false;
@@ -329,10 +431,7 @@ fn generate_quest_header(quest_dir: &Path) -> Result<()> {
                     return Some("#define COMPILE_OPENMP 0".to_string());
                 }
                 if line.contains("#cmakedefine01 COMPILE_CUDA") {
-                    // The embedded QuEST library always runs in CPU-only mode.
-                    // GPU acceleration is handled by the CUDA engine builder
-                    // (QuestCudaStateVecEngine) which loads a separate GPU backend
-                    // at runtime via dlopen.
+                    // Main library is always CPU-only; GPU library is separate
                     return Some("#define COMPILE_CUDA 0".to_string());
                 }
                 if line.contains("#cmakedefine01 COMPILE_CUQUANTUM") {
@@ -515,11 +614,11 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
     let cpu_dir = quest_src_dir.join("cpu");
     let comm_dir = quest_src_dir.join("comm");
 
-    // When CUDA is enabled, GPU implementations come from the nvcc-compiled
-    // static archive (libquest-gpu.a). Otherwise, use gpu_stubs.cpp.
-    if !gpu_enabled {
-        build.file("src/gpu_stubs.cpp");
-    }
+    // IMPORTANT: The main library ALWAYS uses gpu_stubs.cpp (CPU only).
+    // GPU support is provided by a separate shared library (libpecos_quest_cuda.so)
+    // that is loaded at runtime via dlopen. This allows a single binary to work
+    // on systems with and without CUDA installed.
+    build.file("src/gpu_stubs.cpp");
 
     build
         .file("src/bridge.cpp")
@@ -549,7 +648,8 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
         // Accelerator.cpp contains dispatch logic for both CPU and GPU
         .file(core_dir.join("accelerator.cpp"));
 
-    // Build the GPU static archive if CUDA feature is enabled
+    // Build the separate GPU shared library if GPU feature is enabled
+    // This library will be loaded at runtime via dlopen
     if gpu_enabled {
         let gpu_dir = quest_src_dir.join("gpu");
         if !gpu_dir.exists() {
@@ -559,11 +659,21 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
             std::process::exit(1);
         }
 
-        // Build GPU source files (gpu_config.cpp, gpu_subroutines.cpp) with nvcc
-        if build_quest_gpu_objects(cuda_path.as_ref().unwrap(), quest_dir, out_dir).is_some() {
-            info!("GPU static archive built successfully");
+        // Build the separate GPU shared library
+        if let Some(gpu_lib_path) =
+            build_gpu_shared_library(cuda_path.as_ref().unwrap(), quest_dir, out_dir)
+        {
+            info!(
+                "GPU shared library built successfully: {}",
+                gpu_lib_path.display()
+            );
+            // Emit the GPU library path so downstream crates can find it
+            println!(
+                "cargo:rustc-env=PECOS_QUEST_CUDA_LIB={}",
+                gpu_lib_path.display()
+            );
         } else {
-            eprintln!("\nERROR: GPU feature enabled but GPU archive build failed");
+            eprintln!("\nERROR: GPU feature enabled but GPU library build failed");
             eprintln!("  See warnings above for compilation errors");
             eprintln!("  Solutions:");
             eprintln!("    1. Use CUDA 11 or 12 instead of CUDA 13 (QuEST incompatibility)");
@@ -571,15 +681,6 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
             eprintln!("    3. Use Python GPU simulators (CuStateVec/MPS) which work with CUDA 13");
             std::process::exit(1);
         }
-
-        // Link the GPU static archive and CUDA runtime libraries
-        println!("cargo:rustc-link-lib=static=quest-gpu");
-        println!(
-            "cargo:rustc-link-search=native={}/lib64",
-            cuda_path.as_ref().unwrap()
-        );
-        println!("cargo:rustc-link-lib=cudart");
-        println!("cargo:rustc-link-lib=cublas");
     }
 
     // CPU backend
@@ -598,18 +699,20 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
         .include("include");
 
     // Define preprocessor flags based on features
-    // When CUDA is enabled, COMPILE_CUDA=1 and COMPILE_GPU=1 so the standard C++
-    // compiler sees GPU dispatch declarations (which use only standard C++ types).
-    // The actual GPU kernel implementations are in the nvcc-compiled static archive.
-    let (cuda_flag, gpu_flag) = if gpu_enabled { ("1", "1") } else { ("0", "0") };
+    // IMPORTANT: The main library is ALWAYS CPU-only. GPU support is provided via
+    // a separate shared library (libpecos_quest_cuda.so) loaded at runtime via dlopen.
+    // This allows a single binary to work on systems with and without CUDA.
     build
         .define("COMPILE_CPU", "1")
-        .define("COMPILE_OPENMP", "0")
-        .define("COMPILE_MPI", "0")
-        .define("FLOAT_PRECISION", "2")
-        .define("COMPILE_CUDA", cuda_flag)
-        .define("COMPILE_GPU", gpu_flag)
+        .define("COMPILE_OPENMP", "0") // Disable OpenMP for simplicity initially
+        .define("COMPILE_MPI", "0") // Disable MPI for simplicity initially
+        .define("FLOAT_PRECISION", "2") // Double precision by default
+        .define("COMPILE_CUDA", "0") // Main library never uses CUDA directly
+        .define("COMPILE_GPU", "0") // GPU ops are in the separate GPU library
         .define("COMPILE_CUQUANTUM", "0");
+
+    // Note: We do NOT link cudart/cublas here. The GPU library handles CUDA linking
+    // and is loaded at runtime only when GPU is requested.
 
     // Use C++20 standard (QuEST v4 uses designated initializers which require C++20)
     // However, on macOS there's a known issue with C++20 and cxx crate's pointer_traits
@@ -679,6 +782,10 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
     }
 
     build.compile("quest-bridge");
+
+    // Note: GPU object files are now compiled into a separate shared library
+    // (libpecos_quest_cuda.so) which is built by build_gpu_shared_library()
+    // and loaded at runtime via dlopen.
 
     // On macOS, ensure the C++ standard library is linked correctly
     // Use the system libc++ which is in the dyld shared cache (macOS Big Sur+)

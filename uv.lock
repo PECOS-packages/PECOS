@@ -2606,7 +2606,7 @@ wheels = [
 
 [[package]]
 name = "pecos-rslib"
-version = "0.8.0.dev4"
+version = "0.8.0.dev5"
 source = { editable = "python/pecos-rslib" }
 
 [package.dev-dependencies]
@@ -2635,7 +2635,7 @@ test = [{ name = "pytest", specifier = ">=7.0" }]
 
 [[package]]
 name = "pecos-rslib-cuda"
-version = "0.8.0.dev4"
+version = "0.8.0.dev5"
 source = { editable = "python/pecos-rslib-cuda" }
 
 [package.dev-dependencies]
@@ -2651,7 +2651,7 @@ test = [{ name = "pytest", specifier = ">=7.0" }]
 
 [[package]]
 name = "pecos-selene-stab"
-version = "0.8.0.dev4"
+version = "0.8.0.dev5"
 source = { editable = "python/selene-plugins/pecos-selene-stab" }
 dependencies = [
     { name = "selene-core" },
@@ -2675,7 +2675,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-selene-statevec"
-version = "0.8.0.dev4"
+version = "0.8.0.dev5"
 source = { editable = "python/selene-plugins/pecos-selene-statevec" }
 dependencies = [
     { name = "selene-core" },
@@ -2699,7 +2699,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-workspace"
-version = "0.8.0.dev4"
+version = "0.8.0.dev5"
 source = { virtual = "." }
 dependencies = [
     { name = "stim" },
@@ -3628,7 +3628,7 @@ wheels = [
 
 [[package]]
 name = "quantum-pecos"
-version = "0.8.0.dev4"
+version = "0.8.0.dev5"
 source = { editable = "python/quantum-pecos" }
 dependencies = [
     { name = "guppylang" },

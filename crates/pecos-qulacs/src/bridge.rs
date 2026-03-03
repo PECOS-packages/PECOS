@@ -8,6 +8,7 @@ pub mod ffi {
         type QulacsState;
 
         // Constructor and destructor
+        #[must_use]
         fn create_quantum_state(num_qubits: usize) -> UniquePtr<QulacsState>;
         fn clone_quantum_state(state: &QulacsState) -> UniquePtr<QulacsState>;
 
@@ -57,6 +58,7 @@ pub mod ffi {
         fn apply_swap(state: Pin<&mut QulacsState>, qubit1: usize, qubit2: usize);
 
         // Measurement
+        #[must_use]
         fn measure_z(state: Pin<&mut QulacsState>, qubit: usize) -> u8;
 
         // Direct csim-level gate functions (bypass gate object allocation)

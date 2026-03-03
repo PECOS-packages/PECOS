@@ -317,13 +317,14 @@ fn configure_build(
     }
 
     // Enable SIMD-optimized gate kernels in Qulacs (matches Qulacs CMake USE_SIMD=Yes).
-    // On x86/x86_64, _USE_SIMD activates hand-written AVX2 intrinsics for gates like H, X,
-    // CNOT, RZ, etc. Qulacs's type.hpp will #undef _USE_SIMD if the compiler doesn't define
+    // _USE_SIMD activates hand-written SIMD intrinsics for gates like H, X, CNOT, RZ, etc.
+    // On x86/x86_64, Qulacs's type.hpp will #undef _USE_SIMD if the compiler doesn't define
     // __AVX2__, so this is safe even when -march=native isn't used.
-    // On aarch64, Qulacs uses _USE_SVE for SVE intrinsics instead.
-    if target.contains("x86_64") || target.contains("x86") || target.contains("i686") {
-        build.define("_USE_SIMD", None);
-    } else if target.contains("aarch64") {
+    if target.contains("x86_64")
+        || target.contains("x86")
+        || target.contains("i686")
+        || target.contains("aarch64")
+    {
         build.define("_USE_SIMD", None);
     }
 }

@@ -12,7 +12,7 @@
 
 //! Native state vector comparison benchmarks.
 //!
-//! Calls QuEST and Qulacs FFI directly (bypassing the PECOS wrapper layer's qubit index
+//! Calls `QuEST` and Qulacs FFI directly (bypassing the PECOS wrapper layer's qubit index
 //! remapping, bounds checks, and `QubitId`/`Angle64` conversions) to give an apples-to-apples
 //! comparison of raw gate computation performance against the pure-Rust PECOS simulators.
 //!
@@ -74,9 +74,7 @@ impl QuestState {
     fn new(num_qubits: usize) -> Self {
         let env_ptr = quest_ffi::quest_create_env();
         assert!(!env_ptr.is_null(), "Failed to create QuEST environment");
-        let qureg_ptr = unsafe {
-            quest_ffi::quest_create_qureg(env_ptr, num_qubits as i32)
-        };
+        let qureg_ptr = unsafe { quest_ffi::quest_create_qureg(env_ptr, num_qubits as i32) };
         assert!(!qureg_ptr.is_null(), "Failed to create QuEST qureg");
         unsafe { quest_ffi::quest_init_zero_state(qureg_ptr) };
         Self { env_ptr, qureg_ptr }
@@ -166,10 +164,22 @@ mod cuquantum_matrices {
     pub const X: [[f64; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [0.0, 0.0]];
 
     pub const CX: [[f64; 2]; 16] = [
-        [1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0],
-        [0.0, 0.0], [1.0, 0.0], [0.0, 0.0], [0.0, 0.0],
-        [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [1.0, 0.0],
-        [0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 0.0],
     ];
 
     pub fn rz(theta: f64) -> [[f64; 2]; 4] {
@@ -201,14 +211,7 @@ fn bench_native_statevec_comparison<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Native StateVec Comparison");
     group.sample_size(20);
 
-    let configs = [
-        (10, 20),
-        (14, 20),
-        (18, 20),
-        (20, 20),
-        (22, 10),
-        (24, 5),
-    ];
+    let configs = [(10, 20), (14, 20), (18, 20), (20, 20), (22, 10), (24, 5)];
 
     for (num_qubits, num_layers) in configs {
         let label = format!("{num_qubits}q_{num_layers}l");
@@ -360,7 +363,6 @@ fn bench_native_statevec_comparison<M: Measurement>(c: &mut Criterion<M>) {
             }
             Err(e) => eprintln!("CuStateVec not available: {e}"),
         }
-
     }
 
     group.finish();

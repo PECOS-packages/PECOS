@@ -2742,6 +2742,8 @@ where
             let q1 = pair[0].index();
             let q2 = pair[1].index();
 
+            self.flush_two_qubit(q1, q2);
+
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
 
@@ -2981,6 +2983,8 @@ where
             let q1 = pair[0].index();
             let q2 = pair[1].index();
 
+            self.flush_two_qubit(q1, q2);
+
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
 
@@ -3199,6 +3203,9 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
+
             let q_lo = q1.min(q2);
 
             // When both qubits >= 2, consecutive indices share the same phase
@@ -3803,6 +3810,9 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
+
             let q_lo = q1.min(q2);
 
             // When both qubits >= 2, consecutive indices share the same phase
@@ -3861,6 +3871,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
 
             // Use strided iteration for cache efficiency
             let (lo, hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -3924,6 +3936,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
 
             // Use strided iteration for cache efficiency
             let (lo, hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };

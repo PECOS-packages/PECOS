@@ -45,8 +45,8 @@ use modules::gpu_influence_sampler;
 use modules::sparse_stab_vs_cpp;
 use modules::{
     allocation_overhead, cpu_stabilizer_comparison, dem_sampler, dod_statevec,
-    measurement_sampling, native_statevec_comparison, noise_models, rng, set_ops,
-    sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code, trig,
+    measurement_sampling, native_statevec_comparison, noise_models, rng, set_ops, sparse_state_vec,
+    stabilizer_sims, state_vec_sims, surface_code, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {

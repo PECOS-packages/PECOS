@@ -90,7 +90,7 @@ fn detect_cuda_path() -> Option<String> {
 /// - `gpu_config.cpp` (GPU device management)
 /// - `gpu_subroutines.cpp` (GPU kernel implementations)
 ///
-/// All other QuEST sources compile fine with the standard C++ compiler even
+/// All other `QuEST` sources compile fine with the standard C++ compiler even
 /// with `COMPILE_CUDA=1`, since the GPU headers only contain declarations
 /// with standard C++ types.
 fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -> Option<()> {
@@ -163,10 +163,7 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
         if !output.status.success() {
             let stdout_str = String::from_utf8_lossy(&output.stdout);
             let stderr_str = String::from_utf8_lossy(&output.stderr);
-            eprintln!(
-                "ERROR: Failed to compile {} with nvcc",
-                src_file.display()
-            );
+            eprintln!("ERROR: Failed to compile {} with nvcc", src_file.display());
             eprintln!("Exit status: {:?}", output.status);
             if !stdout_str.is_empty() {
                 eprintln!("stdout:\n{stdout_str}");
@@ -196,10 +193,7 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
             .arg(format!("/OUT:{}", archive_path.display()))
             .args(&object_files);
     } else {
-        ar_cmd
-            .arg("rcs")
-            .arg(&archive_path)
-            .args(&object_files);
+        ar_cmd.arg("rcs").arg(&archive_path).args(&object_files);
     }
 
     let output = ar_cmd.output().ok()?;
@@ -210,7 +204,10 @@ fn build_quest_gpu_objects(cuda_path: &str, quest_dir: &Path, out_dir: &Path) ->
         return None;
     }
 
-    info!("Successfully built GPU static archive: {}", archive_path.display());
+    info!(
+        "Successfully built GPU static archive: {}",
+        archive_path.display()
+    );
     Some(())
 }
 
@@ -332,12 +329,10 @@ fn generate_quest_header(quest_dir: &Path) -> Result<()> {
                     return Some("#define COMPILE_OPENMP 0".to_string());
                 }
                 if line.contains("#cmakedefine01 COMPILE_CUDA") {
-                    // When the cuda feature is enabled, COMPILE_CUDA=1 so QuEST's
-                    // GPU dispatch paths are active in the generated header.
-                    let cuda_enabled = env::var("CARGO_FEATURE_CUDA").is_ok();
-                    if cuda_enabled {
-                        return Some("#define COMPILE_CUDA 1".to_string());
-                    }
+                    // The embedded QuEST library always runs in CPU-only mode.
+                    // GPU acceleration is handled by the CUDA engine builder
+                    // (QuestCudaStateVecEngine) which loads a separate GPU backend
+                    // at runtime via dlopen.
                     return Some("#define COMPILE_CUDA 0".to_string());
                 }
                 if line.contains("#cmakedefine01 COMPILE_CUQUANTUM") {
@@ -579,7 +574,10 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
 
         // Link the GPU static archive and CUDA runtime libraries
         println!("cargo:rustc-link-lib=static=quest-gpu");
-        println!("cargo:rustc-link-search=native={}/lib64", cuda_path.as_ref().unwrap());
+        println!(
+            "cargo:rustc-link-search=native={}/lib64",
+            cuda_path.as_ref().unwrap()
+        );
         println!("cargo:rustc-link-lib=cudart");
         println!("cargo:rustc-link-lib=cublas");
     }
@@ -603,11 +601,7 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
     // When CUDA is enabled, COMPILE_CUDA=1 and COMPILE_GPU=1 so the standard C++
     // compiler sees GPU dispatch declarations (which use only standard C++ types).
     // The actual GPU kernel implementations are in the nvcc-compiled static archive.
-    let (cuda_flag, gpu_flag) = if gpu_enabled {
-        ("1", "1")
-    } else {
-        ("0", "0")
-    };
+    let (cuda_flag, gpu_flag) = if gpu_enabled { ("1", "1") } else { ("0", "0") };
     build
         .define("COMPILE_CPU", "1")
         .define("COMPILE_OPENMP", "0")

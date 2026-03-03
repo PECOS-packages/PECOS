@@ -319,7 +319,11 @@ class QuantumCircuit(MutableSequence):
             method_name = _ROTATION_GATES[symbol_upper]
             if hasattr(tick_handle, method_name):
                 method = getattr(tick_handle, method_name)
-                angle = params.get("angle", params.get("theta", 0.0))
+                angles_val = params.get("angles")
+                if angles_val is not None and len(angles_val) >= 1:
+                    angle = angles_val[0]
+                else:
+                    angle = params.get("angle", params.get("theta", 0.0))
                 for loc in loc_list:
                     if isinstance(loc, tuple):
                         for q in loc:
@@ -345,7 +349,11 @@ class QuantumCircuit(MutableSequence):
             method_name = _TWO_QUBIT_ROTATION_GATES[symbol_upper]
             if hasattr(tick_handle, method_name):
                 method = getattr(tick_handle, method_name)
-                angle = params.get("angle", params.get("theta", 0.0))
+                angles_val = params.get("angles")
+                if angles_val is not None and len(angles_val) >= 1:
+                    angle = angles_val[0]
+                else:
+                    angle = params.get("angle", params.get("theta", 0.0))
                 for loc in loc_list:
                     if isinstance(loc, tuple) and len(loc) == 2:
                         add_with_symbol(method, angle, loc[0], loc[1])

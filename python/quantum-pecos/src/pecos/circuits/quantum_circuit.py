@@ -262,14 +262,6 @@ class QuantumCircuit(MutableSequence):
             symbol = symbol.symbol if hasattr(symbol, "symbol") else str(symbol)
         symbol_upper = symbol.upper()
 
-        # Convert locations to list, filtering out None values (placeholders for logical gates)
-        loc_list = [loc for loc in locations if loc is not None]
-        if not loc_list:
-            # No qubit operands -- store symbol as tick-level metadata
-            # (e.g., global barriers or marker gates)
-            tick_handle.meta("_symbol", symbol)
-            return
-
         # Serialize params for storage (handle tuples -> lists)
         def make_serializable(obj: object) -> object:
             if isinstance(obj, tuple):
@@ -767,7 +759,15 @@ class QuantumCircuit(MutableSequence):
         if not grouped:
             tick_symbol = tick_obj.get_attr("_symbol")
             if tick_symbol is not None:
-                yield tick_symbol, set(), {}
+                tick_params: JSONDict = {}
+                tick_params_json = tick_obj.get_attr("_params")
+                if tick_params_json is not None:
+                    try:
+                        tick_params = json.loads(tick_params_json)
+                        tick_params = self._fix_json_meta(tick_params)
+                    except json.JSONDecodeError:
+                        pass
+                yield tick_symbol, set(), tick_params
                 return
 
         # Yield grouped results

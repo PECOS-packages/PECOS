@@ -1259,9 +1259,101 @@ class SurfaceDecoder:
 
         return correction, weight
 
+    def _compute_dem_detection_events_z(
+        self,
+        synx_list: list[NDArray[np.uint8]],
+        synz_list: list[NDArray[np.uint8]],
+        final: NDArray[np.uint8],
+    ) -> NDArray[np.uint8]:
+        """Compute full detection events for Z-basis DEM-based decoding.
+
+        The circuit-level DEM defines detectors in this order:
+        1. X stabilizer detectors for rounds 1..num_rounds-1
+           (X stabs are non-deterministic at round 0 for Z-basis)
+        2. Z stabilizer detectors for rounds 0..num_rounds-1
+           (round 0 is deterministic for Z-basis)
+        3. Final round detectors: last Z syndrome vs final data parity
+
+        Args:
+            synx_list: X syndrome arrays, one per round
+            synz_list: Z syndrome arrays, one per round
+            final: Final data qubit measurements
+
+        Returns:
+            Detection events array matching the DEM detector ordering
+        """
+        geom = self.patch.geometry
+        synx = np.array(synx_list, dtype=np.uint8)
+        synz = np.array(synz_list, dtype=np.uint8)
+
+        events: list[int] = []
+
+        # 1. X stabilizer detection events (rounds 1 to num_rounds-1)
+        for r in range(1, self.num_rounds):
+            events.extend((synx[r] ^ synx[r - 1]).tolist())
+
+        # 2. Z stabilizer detection events (all rounds)
+        events.extend(synz[0].tolist())  # round 0: compare to expected 0
+        for r in range(1, self.num_rounds):
+            events.extend((synz[r] ^ synz[r - 1]).tolist())
+
+        # 3. Final round: parity of final data on each Z stabilizer XOR last syndrome
+        for stab in geom.z_stabilizers:
+            data_parity = sum(int(final[q]) for q in stab.data_qubits) % 2
+            last_syn = int(synz[-1][stab.index])
+            events.append((data_parity ^ last_syn) & 1)
+
+        return np.array(events, dtype=np.uint8)
+
+    def _compute_dem_detection_events_x(
+        self,
+        synx_list: list[NDArray[np.uint8]],
+        synz_list: list[NDArray[np.uint8]],
+        final: NDArray[np.uint8],
+    ) -> NDArray[np.uint8]:
+        """Compute full detection events for X-basis DEM-based decoding.
+
+        The circuit-level DEM defines detectors in this order:
+        1. X stabilizer detectors for rounds 0..num_rounds-1
+           (X stabs are deterministic at round 0 for X-basis)
+        2. Z stabilizer detectors for rounds 1..num_rounds-1
+           (Z stabs are non-deterministic at round 0 for X-basis)
+        3. Final round detectors: last X syndrome vs final data parity
+
+        Args:
+            synx_list: X syndrome arrays, one per round
+            synz_list: Z syndrome arrays, one per round
+            final: Final data qubit measurements
+
+        Returns:
+            Detection events array matching the DEM detector ordering
+        """
+        geom = self.patch.geometry
+        synx = np.array(synx_list, dtype=np.uint8)
+        synz = np.array(synz_list, dtype=np.uint8)
+
+        events: list[int] = []
+
+        # 1. X stabilizer detection events (all rounds)
+        events.extend(synx[0].tolist())  # round 0: compare to expected 0
+        for r in range(1, self.num_rounds):
+            events.extend((synx[r] ^ synx[r - 1]).tolist())
+
+        # 2. Z stabilizer detection events (rounds 1 to num_rounds-1)
+        for r in range(1, self.num_rounds):
+            events.extend((synz[r] ^ synz[r - 1]).tolist())
+
+        # 3. Final round: parity of final data on each X stabilizer XOR last syndrome
+        for stab in geom.x_stabilizers:
+            data_parity = sum(int(final[q]) for q in stab.data_qubits) % 2
+            last_syn = int(synx[-1][stab.index])
+            events.append((data_parity ^ last_syn) & 1)
+
+        return np.array(events, dtype=np.uint8)
+
     def decode_memory_z(
         self,
-        _synx_list: list[NDArray[np.uint8]],
+        synx_list: list[NDArray[np.uint8]],
         synz_list: list[NDArray[np.uint8]],
         final: NDArray[np.uint8],
     ) -> tuple[bool, DecodingResult]:
@@ -1272,6 +1364,15 @@ class SurfaceDecoder:
         - We decode Z syndromes to find X corrections
         - Apply corrections to final measurements to get corrected logical Z parity
 
+        For DEM-based decoders (PyMatching, Tesseract with circuit-level DEM):
+        - All detection events (both X and Z syndromes + final round) are computed
+          to match the DEM's detector ordering
+        - The decoder returns a per-observable correction (logical flip prediction)
+
+        For check-matrix decoders (FusionBlossom, LDPC):
+        - Only Z syndrome detection events are used
+        - The decoder returns a per-qubit correction
+
         Args:
             synx_list: List of X syndrome arrays, one per round
             synz_list: List of Z syndrome arrays, one per round
@@ -1281,49 +1382,55 @@ class SurfaceDecoder:
             (is_logical_error, decoding_result)
         """
         geom = self.patch.geometry
-        num_z_stab = len(geom.z_stabilizers)
-
-        # Stack syndromes into 2D array
-        synz = np.array(synz_list, dtype=np.uint8)
-
-        # Convert to detection events
-        events = syndromes_to_detection_events(synz, self.num_rounds, num_z_stab)
-
-        # Get raw syndrome (last round) for LDPC decoders
-        raw_syn = synz[-1] if len(synz_list) > 0 else None
-
-        # Decode to get per-qubit X corrections
-        x_correction, weight = self.decode_z_syndrome(events, raw_syndrome=raw_syn)
-
-        # Compute logical Z parity from corrected final measurements
-        # X corrections flip Z measurements, so we XOR
         logical_z_qubits = geom.logical_z.data_qubits if geom.logical_z else ()
-
-        # Compute parity of final measurements on logical Z qubits
         final_parity = sum(final[q] for q in logical_z_qubits) % 2
 
-        if self.decoder_type == DecoderType.TESSERACT:
-            # Tesseract returns logical prediction directly in correction[0]
-            logical_prediction = x_correction[0] if len(x_correction) > 0 else 0
-            # Logical error if raw parity XOR prediction != 0
-            corrected_parity = (final_parity + logical_prediction) % 2
-            correction_parity = int(logical_prediction)
-        else:
-            # Compute parity of corrections on logical Z qubits
-            # (corrections flip the measurement values)
-            if len(x_correction) >= self.patch.num_data:
-                correction_parity = sum(x_correction[q] for q in logical_z_qubits) % 2
+        # DEM-based path: compute full detection events matching DEM detector order
+        if self.use_circuit_level_dem and self.decoder_type in (
+            DecoderType.PYMATCHING,
+            DecoderType.TESSERACT,
+        ):
+            events = self._compute_dem_detection_events_z(synx_list, synz_list, final)
+            events_flat = events.ravel().astype(np.uint8)
+
+            decoder = self._get_z_decoder()
+
+            if self.decoder_type == DecoderType.TESSERACT:
+                detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
+                result = decoder.decode(detection_indices)
+                predicted_obs = result.observables_mask & 1
+                weight = result.cost
             else:
-                correction_parity = 0
+                result = decoder.decode(events_flat.tolist())
+                predicted_obs = result.correction[0] if len(result.correction) > 0 else 0
+                weight = result.weight
 
-            # Corrected parity: XOR of final measurements and corrections
-            corrected_parity = (final_parity + correction_parity) % 2
+            corrected_parity = (final_parity + predicted_obs) % 2
+            is_logical_error = corrected_parity != 0
 
-        # Logical error if corrected parity is not 0 (expected for |0_L>)
+            return is_logical_error, DecodingResult(
+                x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+                z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+                logical_x_flip=bool(predicted_obs),
+                logical_z_flip=False,
+                decoding_weight=weight,
+            )
+
+        # Check-matrix path (FusionBlossom, LDPC)
+        num_z_stab = len(geom.z_stabilizers)
+        synz = np.array(synz_list, dtype=np.uint8)
+        events = syndromes_to_detection_events(synz, self.num_rounds, num_z_stab)
+        raw_syn = synz[-1] if len(synz_list) > 0 else None
+
+        x_correction, weight = self.decode_z_syndrome(events, raw_syndrome=raw_syn)
+
+        if len(x_correction) >= self.patch.num_data:
+            correction_parity = sum(x_correction[q] for q in logical_z_qubits) % 2
+        else:
+            correction_parity = 0
+
+        corrected_parity = (final_parity + correction_parity) % 2
         is_logical_error = corrected_parity != 0
-
-        # Compute logical X flip (did we apply an odd number of corrections on logical Z?)
-        logical_x_flip = correction_parity != 0
 
         result = DecodingResult(
             x_correction=(
@@ -1332,7 +1439,7 @@ class SurfaceDecoder:
                 else np.zeros(self.patch.num_data, dtype=np.uint8)
             ),
             z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
-            logical_x_flip=logical_x_flip,
+            logical_x_flip=correction_parity != 0,
             logical_z_flip=False,
             decoding_weight=weight,
         )
@@ -1342,7 +1449,7 @@ class SurfaceDecoder:
     def decode_memory_x(
         self,
         synx_list: list[NDArray[np.uint8]],
-        _synz_list: list[NDArray[np.uint8]],
+        synz_list: list[NDArray[np.uint8]],
         final: NDArray[np.uint8],
     ) -> tuple[bool, DecodingResult]:
         """Decode an X-basis memory experiment.
@@ -1351,6 +1458,15 @@ class SurfaceDecoder:
         - X stabilizers detect Z errors (which flip X measurements)
         - We decode X syndromes to find Z corrections
         - Apply corrections to final measurements to get corrected logical X parity
+
+        For DEM-based decoders (PyMatching, Tesseract with circuit-level DEM):
+        - All detection events (both X and Z syndromes + final round) are computed
+          to match the DEM's detector ordering
+        - The decoder returns a per-observable correction (logical flip prediction)
+
+        For check-matrix decoders (FusionBlossom, LDPC):
+        - Only X syndrome detection events are used
+        - The decoder returns a per-qubit correction
 
         Args:
             synx_list: List of X syndrome arrays, one per round
@@ -1361,48 +1477,55 @@ class SurfaceDecoder:
             (is_logical_error, decoding_result)
         """
         geom = self.patch.geometry
-        num_x_stab = len(geom.x_stabilizers)
-
-        # Stack syndromes into 2D array
-        synx = np.array(synx_list, dtype=np.uint8)
-
-        # Convert to detection events
-        events = syndromes_to_detection_events(synx, self.num_rounds, num_x_stab)
-
-        # Get raw syndrome (last round) for LDPC decoders
-        raw_syn = synx[-1] if len(synx_list) > 0 else None
-
-        # Decode to get per-qubit Z corrections
-        z_correction, weight = self.decode_x_syndrome(events, raw_syndrome=raw_syn)
-
-        # Compute logical X parity from corrected final measurements
-        # Z corrections flip X measurements, so we XOR
         logical_x_qubits = geom.logical_x.data_qubits if geom.logical_x else ()
-
-        # Compute parity of final measurements on logical X qubits
         final_parity = sum(final[q] for q in logical_x_qubits) % 2
 
-        if self.decoder_type == DecoderType.TESSERACT:
-            # Tesseract returns logical prediction directly in correction[0]
-            logical_prediction = z_correction[0] if len(z_correction) > 0 else 0
-            # Logical error if raw parity XOR prediction != 0
-            corrected_parity = (final_parity + logical_prediction) % 2
-            correction_parity = int(logical_prediction)
-        else:
-            # Compute parity of corrections on logical X qubits
-            if len(z_correction) >= self.patch.num_data:
-                correction_parity = sum(z_correction[q] for q in logical_x_qubits) % 2
+        # DEM-based path: compute full detection events matching DEM detector order
+        if self.use_circuit_level_dem and self.decoder_type in (
+            DecoderType.PYMATCHING,
+            DecoderType.TESSERACT,
+        ):
+            events = self._compute_dem_detection_events_x(synx_list, synz_list, final)
+            events_flat = events.ravel().astype(np.uint8)
+
+            decoder = self._get_x_decoder()
+
+            if self.decoder_type == DecoderType.TESSERACT:
+                detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
+                result = decoder.decode(detection_indices)
+                predicted_obs = result.observables_mask & 1
+                weight = result.cost
             else:
-                correction_parity = 0
+                result = decoder.decode(events_flat.tolist())
+                predicted_obs = result.correction[0] if len(result.correction) > 0 else 0
+                weight = result.weight
 
-            # Corrected parity: XOR of final measurements and corrections
-            corrected_parity = (final_parity + correction_parity) % 2
+            corrected_parity = (final_parity + predicted_obs) % 2
+            is_logical_error = corrected_parity != 0
 
-        # Logical error if corrected parity is not 0 (expected for |+_L>)
+            return is_logical_error, DecodingResult(
+                x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+                z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+                logical_x_flip=False,
+                logical_z_flip=bool(predicted_obs),
+                decoding_weight=weight,
+            )
+
+        # Check-matrix path (FusionBlossom, LDPC)
+        num_x_stab = len(geom.x_stabilizers)
+        synx = np.array(synx_list, dtype=np.uint8)
+        events = syndromes_to_detection_events(synx, self.num_rounds, num_x_stab)
+        raw_syn = synx[-1] if len(synx_list) > 0 else None
+
+        z_correction, weight = self.decode_x_syndrome(events, raw_syndrome=raw_syn)
+
+        if len(z_correction) >= self.patch.num_data:
+            correction_parity = sum(z_correction[q] for q in logical_x_qubits) % 2
+        else:
+            correction_parity = 0
+
+        corrected_parity = (final_parity + correction_parity) % 2
         is_logical_error = corrected_parity != 0
-
-        # Compute logical Z flip
-        logical_z_flip = correction_parity != 0
 
         result = DecodingResult(
             x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
@@ -1412,7 +1535,7 @@ class SurfaceDecoder:
                 else np.zeros(self.patch.num_data, dtype=np.uint8)
             ),
             logical_x_flip=False,
-            logical_z_flip=logical_z_flip,
+            logical_z_flip=correction_parity != 0,
             decoding_weight=weight,
         )
 

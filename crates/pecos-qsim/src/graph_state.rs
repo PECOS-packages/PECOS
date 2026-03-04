@@ -191,8 +191,8 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
         let (len, steps) = VOP_DECOMP[self.vops[v].index() as usize];
 
         // Apply steps in forward order: each step reduces the VOP toward identity
-        for i in 0..len as usize {
-            if steps[i] == 0 {
+        for &step in &steps[..len as usize] {
+            if step == 0 {
                 // U: local complement on v
                 self.local_complement(v);
             } else {

@@ -10,6 +10,7 @@ use pecos_quantum::pass::{
     AbsorbBasisGates, CancelInverses, CircuitPass, CompactTicks, MergeAdjacentRotations,
     PassPipeline, PeepholeOptimize, RemoveIdentity, SimplifyRotations,
 };
+use std::fmt::Write as _;
 use std::fs;
 
 fn build_circuit() -> TickCircuit {
@@ -57,7 +58,7 @@ fn ansi_to_html(s: &str) -> String {
                 // Handle compound codes like "1;34" (bold + color)
                 let style = ansi_code_to_css(code);
                 if let Some(css) = style {
-                    out.push_str(&format!("<span style=\"{css}\">"));
+                    write!(out, "<span style=\"{css}\">").unwrap();
                     in_span = true;
                 }
                 i = end + 1;
@@ -237,34 +238,44 @@ fn main() {
     html.push_str("<h2>SVG Outputs</h2>\n<div class=\"grid\">\n");
 
     let r_default = tc.render_with(&default_style);
-    html.push_str(&format!(
+    write!(
+        html,
         "<div><h3>Default</h3>{}</div>",
         svg_block(&r_default.svg())
-    ));
+    )
+    .unwrap();
 
     let r_custom = tc.render_with(&custom_palette);
-    html.push_str(&format!(
+    write!(
+        html,
         "<div><h3>Custom Palette</h3>{}</div>",
         svg_block(&r_custom.svg())
-    ));
+    )
+    .unwrap();
 
     let r_mono = tc.render_with(&monochrome);
-    html.push_str(&format!(
+    write!(
+        html,
         "<div><h3>Monochrome (color: false)</h3>{}</div>",
         svg_block(&r_mono.svg())
-    ));
+    )
+    .unwrap();
 
     let r_nodash = tc.render_with(&no_dashes);
-    html.push_str(&format!(
+    write!(
+        html,
         "<div><h3>No Dashes (show_dashes: false)</h3>{}</div>",
         svg_block(&r_nodash.svg())
-    ));
+    )
+    .unwrap();
 
     let r_mono_nodash = tc.render_with(&mono_no_dashes);
-    html.push_str(&format!(
+    write!(
+        html,
         "<div><h3>Monochrome + No Dashes</h3>{}</div>",
         svg_block(&r_mono_nodash.svg())
-    ));
+    )
+    .unwrap();
 
     html.push_str("</div>\n");
 
@@ -315,16 +326,20 @@ fn main() {
         let r_turns = angle_tc.render_with(&turns_style);
 
         html.push_str("<div class=\"grid\">\n");
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Radians (default)</h3>{}{}</div>",
             pre_block(&escape_html(&r_rad.ascii())),
             svg_block(&r_rad.svg()),
-        ));
-        html.push_str(&format!(
+        )
+        .unwrap();
+        write!(
+            html,
             "<div><h3>Turns</h3>{}{}</div>",
             pre_block(&escape_html(&r_turns.ascii())),
             svg_block(&r_turns.svg()),
-        ));
+        )
+        .unwrap();
         html.push_str("</div>\n");
     }
 
@@ -357,16 +372,20 @@ fn main() {
         let r_after = simplified_tc.render_with(&style);
 
         html.push_str("<div class=\"grid\">\n");
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Before pass</h3>{}{}</div>",
             pre_block(&escape_html(&r_before.ascii())),
             svg_block(&r_before.svg()),
-        ));
-        html.push_str(&format!(
+        )
+        .unwrap();
+        write!(
+            html,
             "<div><h3>After SimplifyRotations</h3>{}{}</div>",
             pre_block(&escape_html(&r_after.ascii())),
             svg_block(&r_after.svg()),
-        ));
+        )
+        .unwrap();
         html.push_str("</div>\n");
     }
 
@@ -393,16 +412,20 @@ fn main() {
         let r_after = optimized_tc.render_with(&style);
 
         html.push_str("<div class=\"grid\">\n");
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Before pass</h3>{}{}</div>",
             pre_block(&escape_html(&r_before.ascii())),
             svg_block(&r_before.svg()),
-        ));
-        html.push_str(&format!(
+        )
+        .unwrap();
+        write!(
+            html,
             "<div><h3>After PeepholeOptimize</h3>{}{}</div>",
             pre_block(&escape_html(&r_after.ascii())),
             svg_block(&r_after.svg()),
-        ));
+        )
+        .unwrap();
         html.push_str("</div>\n");
     }
 
@@ -439,16 +462,20 @@ fn main() {
         let r_after = optimized_tc.render_with(&style);
 
         html.push_str("<div class=\"grid\">\n");
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Before pipeline</h3>{}{}</div>",
             pre_block(&escape_html(&r_before.ascii())),
             svg_block(&r_before.svg()),
-        ));
-        html.push_str(&format!(
+        )
+        .unwrap();
+        write!(
+            html,
             "<div><h3>After pipeline</h3>{}{}</div>",
             pre_block(&escape_html(&r_after.ascii())),
             svg_block(&r_after.svg()),
-        ));
+        )
+        .unwrap();
         html.push_str("</div>\n");
     }
 
@@ -458,11 +485,13 @@ fn main() {
         use pecos_core::operator::{CX, H, T};
         let circuit = T(1) * CX(0, 1) * H(0);
         let op_renderer = circuit.render_with(2, &default_style);
-        html.push_str(&format!(
+        write!(
+            html,
             "<h3>T(1) * CX(0,1) * H(0)</h3>\n{}{}",
             pre_block(&escape_html(&op_renderer.ascii())),
             svg_block(&op_renderer.svg()),
-        ));
+        )
+        .unwrap();
     }
 
     // -- Overlapping multi-qubit gates --
@@ -478,11 +507,13 @@ fn main() {
         let r = overlap_tc.render_with(&default_style);
         html.push_str("<p>CX(0,2) and CZ(1,3) in the same tick have overlapping visual ranges, \
                         so they are split into separate sub-columns with a bracket annotation.</p>\n");
-        html.push_str(&format!(
+        write!(
+            html,
             "{}{}",
             pre_block(&escape_html(&r.ascii())),
             svg_block(&r.svg()),
-        ));
+        )
+        .unwrap();
     }
 
     // ================================================================
@@ -511,11 +542,13 @@ fn main() {
     ];
 
     for (label, gs) in patterns {
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>{label}</h3>{}{}</div>",
             pre_block(&escape_html(&gs.to_ascii())),
             svg_block(&gs.render_with(&gs_default).svg()),
-        ));
+        )
+        .unwrap();
     }
     html.push_str("</div>\n");
 
@@ -537,31 +570,41 @@ fn main() {
         gs.set_vop(5, CliffordFrame::from_index(8)); // F-like, cyclic inv
 
         html.push_str("<div class=\"grid\">\n");
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>ASCII</h3>{}</div>",
             pre_block(&escape_html(&gs.to_ascii())),
-        ));
-        html.push_str(&format!(
+        )
+        .unwrap();
+        write!(
+            html,
             "<div><h3>Color ASCII</h3>{}</div>",
             pre_block(&ansi_to_html(&gs.to_color_ascii())),
-        ));
-        html.push_str(&format!(
+        )
+        .unwrap();
+        write!(
+            html,
             "<div><h3>Unicode</h3>{}</div>",
             pre_block(&escape_html(&gs.to_unicode())),
-        ));
-        html.push_str(&format!(
+        )
+        .unwrap();
+        write!(
+            html,
             "<div><h3>Color Unicode</h3>{}</div>",
             pre_block(&ansi_to_html(&gs.to_color_unicode())),
-        ));
+        )
+        .unwrap();
         html.push_str("</div>\n");
 
         let r = gs.render_with(&gs_default);
         html.push_str("<div class=\"grid\">\n");
-        html.push_str(&format!("<div><h3>SVG</h3>{}</div>", svg_block(&r.svg()),));
-        html.push_str(&format!(
+        write!(html, "<div><h3>SVG</h3>{}</div>", svg_block(&r.svg())).unwrap();
+        write!(
+            html,
             "<div><h3>DOT</h3>{}</div>",
             code_block("DOT", &r.dot()),
-        ));
+        )
+        .unwrap();
         html.push_str("</div>\n");
         html.push_str(&section("TikZ", &code_block("TikZ", &r.tikz())));
     }
@@ -584,11 +627,13 @@ fn main() {
         }
 
         let r = gs.render_with(&gs_default);
-        html.push_str(&format!(
+        write!(
+            html,
             "{}{}",
             pre_block(&escape_html(&gs.to_ascii())),
             svg_block(&r.svg()),
-        ));
+        )
+        .unwrap();
     }
 
     // -- SVG style variations --
@@ -603,10 +648,12 @@ fn main() {
         gs.set_vop(4, CliffordFrame::from_index(7));
 
         // Default
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Default</h3>{}</div>",
             svg_block(&gs.render_with(&gs_default).svg()),
-        ));
+        )
+        .unwrap();
 
         // Custom palette: warm tones
         let warm_palette = ColorPalette {
@@ -618,10 +665,12 @@ fn main() {
             ..ColorPalette::default()
         };
         let warm_style = GraphStyle::builder().palette(warm_palette).build();
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Custom Palette (warm)</h3>{}</div>",
             svg_block(&gs.render_with(&warm_style).svg()),
-        ));
+        )
+        .unwrap();
 
         // Monochrome: varying grey levels, uniform strokes, dashes + patterns
         let mono_palette = ColorPalette {
@@ -651,10 +700,12 @@ fn main() {
             .show_dashes(true)
             .coset_patterns(mono_patterns)
             .build();
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Monochrome (grey + patterns + dashes)</h3>{}</div>",
             svg_block(&gs.render_with(&mono_style).svg()),
-        ));
+        )
+        .unwrap();
 
         // Custom family strokes
         let bold_families = FamilyPalette {
@@ -664,10 +715,12 @@ fn main() {
             f_like: "#AA00AA".to_string(),
         };
         let bold_style = GraphStyle::builder().family_strokes(bold_families).build();
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Bold Family Strokes</h3>{}</div>",
             svg_block(&gs.render_with(&bold_style).svg()),
-        ));
+        )
+        .unwrap();
     }
     html.push_str("</div>\n");
 
@@ -683,16 +736,20 @@ fn main() {
         gs_after.local_complement(0);
 
         html.push_str("<div class=\"grid\">\n");
-        html.push_str(&format!(
+        write!(
+            html,
             "<div><h3>Before LC(0)</h3>{}{}</div>",
             pre_block(&escape_html(&gs_before.to_ascii())),
             svg_block(&gs_before.render_with(&gs_default).svg()),
-        ));
-        html.push_str(&format!(
+        )
+        .unwrap();
+        write!(
+            html,
             "<div><h3>After LC(0)</h3>{}{}</div>",
             pre_block(&escape_html(&gs_after.to_ascii())),
             svg_block(&gs_after.render_with(&gs_default).svg()),
-        ));
+        )
+        .unwrap();
         html.push_str("</div>\n");
     }
 

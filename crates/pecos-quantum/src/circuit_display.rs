@@ -184,6 +184,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
         GateType::SX | GateType::SXdg => CellColor::YZMix,
         GateType::SY | GateType::SYdg | GateType::H | GateType::CH => CellColor::XZMix,
         GateType::SZ | GateType::SZdg => CellColor::XYMix,
+        // No clear single-axis color: idle, alloc/free, multi-qubit, custom
         GateType::Idle
         | GateType::I
         | GateType::MeasureLeaked
@@ -192,9 +193,8 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::QFree
         | GateType::Custom
         | GateType::MeasCrosstalkGlobalPayload
-        | GateType::MeasCrosstalkLocalPayload => CellColor::None,
-        // Multi-qubit gates that don't have a clear single-axis color:
-        GateType::CX
+        | GateType::MeasCrosstalkLocalPayload
+        | GateType::CX
         | GateType::CY
         | GateType::CZ
         | GateType::CCX

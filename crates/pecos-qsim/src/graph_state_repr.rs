@@ -115,13 +115,10 @@ impl GraphState {
             assert_eq!(row.len(), n, "adjacency matrix must be square");
         }
         let mut gs = Self::new(n);
-        for i in 0..n {
+        for (i, row) in matrix.iter().enumerate() {
             for j in (i + 1)..n {
-                assert_eq!(
-                    matrix[i][j], matrix[j][i],
-                    "adjacency matrix must be symmetric"
-                );
-                if matrix[i][j] {
+                assert_eq!(row[j], matrix[j][i], "adjacency matrix must be symmetric");
+                if row[j] {
                     gs.neighbors[i].insert(j);
                     gs.neighbors[j].insert(i);
                 }
@@ -732,7 +729,7 @@ fn vop_cell_color(idx: u8) -> CellColor {
         6 | 9 | 10 | 18                 => CellColor::XZMix,   // X<->Z (H-type)
         12 | 13 | 17 | 19               => CellColor::YZMix,   // Y<->Z (SX-type)
         7 | 8 | 11 | 14 | 15 | 16 | 21 | 22 => CellColor::XYZMix, // Cyclic
-        _ => CellColor::None,
+        _ => panic!("invalid Clifford index: {idx} (expected 0..24)"),
     }
 }
 
@@ -744,7 +741,7 @@ fn vop_gate_family(idx: u8) -> GateFamily {
         4 | 5 | 9 | 10 | 12 | 13              => GateFamily::SLike,
         6 | 17 | 18 | 19 | 20 | 23            => GateFamily::HLike,
         7 | 8 | 11 | 14 | 15 | 16 | 21 | 22  => GateFamily::FLike,
-        _ => GateFamily::Default,
+        _ => panic!("invalid Clifford index: {idx} (expected 0..24)"),
     }
 }
 
@@ -757,7 +754,7 @@ fn vop_saturated(idx: u8) -> bool {
     match idx {
         0 | 2 | 5 | 6 | 7 | 11 | 13 | 16 | 17 | 18 | 20 | 21 => true,
         1 | 3 | 4 | 8 | 9 | 10 | 12 | 14 | 15 | 19 | 22 | 23 => false,
-        _ => true,
+        _ => panic!("invalid Clifford index: {idx} (expected 0..24)"),
     }
 }
 
@@ -839,7 +836,7 @@ fn tikz_coset_name(color: CellColor, saturated: bool) -> &'static str {
         (CellColor::YZMix, false) => "vopYZLt",
         (CellColor::XYZMix, true) => "vopCyclicFwd",
         (CellColor::XYZMix, false) => "vopCyclicInv",
-        _ => "black",
+        (other, _) => panic!("unexpected CellColor for VOP coset: {other:?}"),
     }
 }
 
@@ -2299,8 +2296,10 @@ mod tests {
     fn render_with_custom_palette() {
         use pecos_core::{ColorPalette, ColorTriplet, GraphStyle};
 
-        let mut palette = ColorPalette::default();
-        palette.z_axis = ColorTriplet::new("#FF0000", "#880000", "#440000");
+        let palette = ColorPalette {
+            z_axis: ColorTriplet::new("#FF0000", "#880000", "#440000"),
+            ..ColorPalette::default()
+        };
         let style = GraphStyle::builder().palette(palette).build();
 
         let gs = GraphState::linear_cluster(3); // pure: all identity (ZAxis coset)

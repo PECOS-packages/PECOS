@@ -99,10 +99,10 @@
 pub mod builder;
 pub mod category_channel;
 pub mod composer;
+pub mod composite;
 pub mod context;
 pub mod correlated;
 pub mod crosstalk;
-pub mod composite;
 pub mod gate_dependent;
 pub mod gate_id_dependent;
 pub mod general_builder;

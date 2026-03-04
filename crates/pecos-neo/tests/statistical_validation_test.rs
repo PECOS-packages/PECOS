@@ -127,7 +127,8 @@ fn test_hadamard_distribution_high_statistics() {
                     let rng_comp = world.rngs.get(entity).unwrap();
 
                     let mut sim = sim_comp.simulator.clone();
-                    let mut runner = CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
+                    let mut runner =
+                        CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
                     sim.reset();
                     let outcomes = runner.apply_circuit(&mut sim, &commands).unwrap();
                     outcomes.get_bit(QubitId(0)).unwrap_or(false)

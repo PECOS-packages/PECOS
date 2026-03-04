@@ -846,7 +846,8 @@ fn test_quantum_circuit_subset_simulation() {
     for sample in 0..num_samples {
         let mut syndrome_detections = 0;
         let mut state = SparseStab::new(2);
-        let mut runner = CircuitRunner::<SparseStab>::new().with_rng(PecosRng::seed_from_u64(sample));
+        let mut runner =
+            CircuitRunner::<SparseStab>::new().with_rng(PecosRng::seed_from_u64(sample));
 
         for round in 0..num_rounds {
             // Create fresh noise model for this round
@@ -913,7 +914,9 @@ fn test_quantum_circuit_subset_simulation() {
                 };
 
                 sim_comp.simulator.reset();
-                let outcomes = runner.apply_circuit(&mut sim_comp.simulator, &circuit).unwrap();
+                let outcomes = runner
+                    .apply_circuit(&mut sim_comp.simulator, &circuit)
+                    .unwrap();
 
                 // Track syndrome detection
                 if outcomes.get_bit(QubitId(1)).unwrap_or(false)

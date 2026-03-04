@@ -173,7 +173,8 @@ pub use action::{
 };
 pub use builder::CompositeNoiseModelBuilder;
 pub use channel::{
-    BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel, CompositeEventFilter,
+    BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel,
+    CompositeEventFilter,
 };
 pub use compiled::{CompiledAction, CompiledCondition, CompiledPrimitive};
 pub use condition::{
@@ -191,13 +192,14 @@ pub mod prelude {
     pub use super::action::actions::*;
     pub use super::builder::CompositeNoiseModelBuilder;
     pub use super::channel::{
-        BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel, CompositeEventFilter,
+        BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder,
+        CompositeCrosstalkChannel, CompositeEventFilter,
     };
     pub use super::condition::conditions::*;
     pub use super::primitive::primitives::*;
     pub use super::{
-        BoxSample, BoxSeq, CompositeResponse, GateAction, OutcomeIs, Pauli, PauliWeights, Primitive,
-        ProbFn, ProbLinear, ProbQuadratic, TwoStage,
+        BoxSample, BoxSeq, CompositeResponse, GateAction, OutcomeIs, Pauli, PauliWeights,
+        Primitive, ProbFn, ProbLinear, ProbQuadratic, TwoStage,
     };
     // Re-export GateInfo, IdleInfo, and AngleScaling for use in closures/builders
     pub use crate::noise::two_qubit::AngleScaling;
@@ -664,7 +666,9 @@ mod tests {
             let mut runner_trad = CircuitRunner::<SparseStab>::new()
                 .with_noise(traditional_noise)
                 .with_seed(seed);
-            let outcomes_trad = runner_trad.apply_circuit(&mut state_trad, &commands).unwrap();
+            let outcomes_trad = runner_trad
+                .apply_circuit(&mut state_trad, &commands)
+                .unwrap();
             if outcomes_trad.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 traditional_errors += 1;
             }
@@ -678,7 +682,9 @@ mod tests {
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_noise_model)
                 .with_seed(seed);
-            let outcomes_flow = runner_flow.apply_circuit(&mut state_flow, &commands).unwrap();
+            let outcomes_flow = runner_flow
+                .apply_circuit(&mut state_flow, &commands)
+                .unwrap();
             if outcomes_flow.get(QubitId(0)).is_none_or(|o| o.outcome) {
                 flow_errors += 1;
             }
@@ -722,7 +728,9 @@ mod tests {
             let mut runner_trad = CircuitRunner::<SparseStab>::new()
                 .with_noise(traditional_noise)
                 .with_seed(seed);
-            let outcomes_trad = runner_trad.apply_circuit(&mut state_trad, &commands).unwrap();
+            let outcomes_trad = runner_trad
+                .apply_circuit(&mut state_trad, &commands)
+                .unwrap();
             // Prep |0> and measure - should be 0 without error
             if outcomes_trad.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 traditional_flips += 1;
@@ -738,7 +746,9 @@ mod tests {
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_noise_model)
                 .with_seed(seed);
-            let outcomes_flow = runner_flow.apply_circuit(&mut state_flow, &commands).unwrap();
+            let outcomes_flow = runner_flow
+                .apply_circuit(&mut state_flow, &commands)
+                .unwrap();
             if outcomes_flow.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 flow_flips += 1;
             }
@@ -1124,8 +1134,8 @@ mod tests {
             when(partner_only_fired(), pauli(), nothing()), // Stage 2: partner depolarizing
         );
 
-        let channel =
-            CompositeChannel::new("two_stage_test", noise).with_filter(CompositeEventFilter::TwoQubitGate);
+        let channel = CompositeChannel::new("two_stage_test", noise)
+            .with_filter(CompositeEventFilter::TwoQubitGate);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1164,8 +1174,8 @@ mod tests {
             when(partner_only_fired(), pauli(), nothing()),
         );
 
-        let channel =
-            CompositeChannel::new("partial_test", noise).with_filter(CompositeEventFilter::TwoQubitGate);
+        let channel = CompositeChannel::new("partial_test", noise)
+            .with_filter(CompositeEventFilter::TwoQubitGate);
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1388,7 +1398,8 @@ mod tests {
     fn test_model_introspection() {
         use crate::noise::ComposableNoiseModel;
 
-        let channel1 = CompositeChannelBuilder::single_qubit("sq_depolarizing", prob(0.01, pauli()));
+        let channel1 =
+            CompositeChannelBuilder::single_qubit("sq_depolarizing", prob(0.01, pauli()));
         let channel2 = CompositeChannelBuilder::after_measurement("meas_error", flip_outcome());
 
         let model = ComposableNoiseModel::new()

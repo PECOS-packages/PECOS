@@ -61,7 +61,7 @@
 //! let results = sim.mz(&qid(0));
 //! ```
 
-use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
+use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::PecosRng;
@@ -291,6 +291,8 @@ impl GpuStab {
         for w in 0..self.words_per_col {
             let x1 = self.stab_col_x[base1 + w];
             let x2 = self.stab_col_x[base2 + w];
+            // Sign update: toggle minus for generators with X on both qubits
+            self.stab_signs_minus[w] ^= x1 & x2;
             // X on q1 adds Z on q2
             self.stab_col_z[base2 + w] ^= x1;
             // X on q2 adds Z on q1
@@ -447,32 +449,96 @@ impl GpuStab {
     fn nondeterministic_meas(&mut self, qubit: usize, outcome: bool) -> MeasurementResult {
         let pivot = self.find_anticommuting_stabilizer(qubit).unwrap();
         let col_base = qubit * self.words_per_col;
+        let pivot_word = pivot / 32;
+        let pivot_shift = pivot % 32;
+        let pivot_bit = 1u32 << pivot_shift;
 
-        // XOR pivot stabilizer into all other stabilizers that anticommute with Z_qubit
-        for w in 0..self.words_per_col {
-            let mut others = self.stab_col_x[col_base + w];
-            // Clear the pivot bit
-            if w == pivot / 32 {
-                others &= !(1u32 << (pivot % 32));
-            }
+        // Cache pivot signs
+        let pivot_minus = (self.stab_signs_minus[pivot_word] >> pivot_shift) & 1 != 0;
+        let pivot_i = (self.stab_signs_i[pivot_word] >> pivot_shift) & 1 != 0;
 
-            // For each other anticommuting stabilizer, XOR with pivot
-            while others != 0 {
-                let bit = others.trailing_zeros() as usize;
-                let other_gen = w * 32 + bit;
-                self.xor_generators(other_gen, pivot, true);
-                others &= others - 1;
+        // Step 1: Handle pivot's i-phase (matches DenseStab algorithm).
+        // Multiply each anticommuting stab's sign by the pivot's i factor.
+        if pivot_i {
+            self.stab_signs_i[pivot_word] &= !pivot_bit;
+            for w in 0..self.words_per_col {
+                let mut anticom = self.stab_col_x[col_base + w];
+                if w == pivot_word {
+                    anticom &= !pivot_bit;
+                }
+                // i * i = -1: toggle minus for stabs that already have i
+                self.stab_signs_minus[w] ^= anticom & self.stab_signs_i[w];
+                // Toggle i for all anticommuting stabs
+                self.stab_signs_i[w] ^= anticom;
             }
         }
 
-        // XOR pivot stabilizer into all destabilizers that anticommute with Z_qubit
+        // Step 2: XOR pivot into other anticommuting stabilizers.
+        // Phase: count z_pivot & x_other overlaps (simplified formula that works
+        // because pivot's i-phase was already handled above).
+        for w in 0..self.words_per_col {
+            let mut mask = self.stab_col_x[col_base + w];
+            if w == pivot_word {
+                mask &= !pivot_bit;
+            }
+
+            while mask != 0 {
+                let bit = mask.trailing_zeros() as usize;
+                let g = w * 32 + bit;
+                let g_word = g / 32;
+                let g_bit = 1u32 << (g % 32);
+
+                // Count z_pivot & x_g overlaps for phase
+                let mut count = 0u32;
+                for q in 0..self.num_qubits {
+                    let base = q * self.words_per_col;
+                    let pz = (self.stab_col_z[base + pivot_word] >> pivot_shift) & 1;
+                    let gx = (self.stab_col_x[base + g_word] >> (g % 32)) & 1;
+                    count += pz & gx;
+                }
+                if count & 1 != 0 {
+                    self.stab_signs_minus[g_word] ^= g_bit;
+                }
+                if pivot_minus {
+                    self.stab_signs_minus[g_word] ^= g_bit;
+                }
+
+                // XOR Pauli content of pivot into g
+                for q in 0..self.num_qubits {
+                    let base = q * self.words_per_col;
+                    if (self.stab_col_x[base + pivot_word] >> pivot_shift) & 1 == 1 {
+                        self.stab_col_x[base + g_word] ^= g_bit;
+                    }
+                    if (self.stab_col_z[base + pivot_word] >> pivot_shift) & 1 == 1 {
+                        self.stab_col_z[base + g_word] ^= g_bit;
+                    }
+                }
+
+                mask &= mask - 1;
+            }
+        }
+
+        // Step 3: XOR pivot stabilizer into anticommuting destabilizers.
+        // Read from STAB arrays, write to DESTAB arrays. No sign update needed.
         for w in 0..self.words_per_col {
             let mut anticomm = self.destab_col_x[col_base + w];
 
             while anticomm != 0 {
                 let bit = anticomm.trailing_zeros() as usize;
-                let generator = w * 32 + bit;
-                self.xor_generators(generator, pivot, false);
+                let dst = w * 32 + bit;
+                let dst_word = dst / 32;
+                let dst_bit = 1u32 << (dst % 32);
+
+                for q in 0..self.num_qubits {
+                    let base = q * self.words_per_col;
+                    if (self.stab_col_x[base + pivot_word] >> pivot_shift) & 1 == 1 {
+                        self.destab_col_x[base + dst_word] ^= dst_bit;
+                    }
+                    if (self.stab_col_z[base + pivot_word] >> pivot_shift) & 1 == 1 {
+                        self.destab_col_z[base + dst_word] ^= dst_bit;
+                    }
+                }
+
                 anticomm &= anticomm - 1;
             }
         }
@@ -486,86 +552,6 @@ impl GpuStab {
         MeasurementResult {
             outcome,
             is_deterministic: false,
-        }
-    }
-
-    /// XOR generator `src` into generator `dst`.
-    fn xor_generators(&mut self, dst: usize, src: usize, is_stab: bool) {
-        let (col_x, col_z, signs_minus, signs_i) = if is_stab {
-            (
-                &mut self.stab_col_x,
-                &mut self.stab_col_z,
-                &mut self.stab_signs_minus,
-                &mut self.stab_signs_i,
-            )
-        } else {
-            (
-                &mut self.destab_col_x,
-                &mut self.destab_col_z,
-                &mut self.destab_signs_minus,
-                &mut self.destab_signs_i,
-            )
-        };
-
-        let dst_word = dst / 32;
-        let dst_bit = 1u32 << (dst % 32);
-        let src_word = src / 32;
-
-        // Compute phase contribution from Pauli multiplication
-        // Count overlaps: X*Z = iY, Z*X = -iY
-        let mut phase_contrib = 0i32;
-
-        for q in 0..self.num_qubits {
-            let base = q * self.words_per_col;
-            let dst_x = (col_x[base + dst_word] >> (dst % 32)) & 1;
-            let dst_z = (col_z[base + dst_word] >> (dst % 32)) & 1;
-            let src_x = (col_x[base + src_word] >> (src % 32)) & 1;
-            let src_z = (col_z[base + src_word] >> (src % 32)) & 1;
-
-            // X*Z = iY contributes +i, Z*X = -iY contributes -i
-            if dst_x == 1 && src_z == 1 && dst_z == 0 && src_x == 0 {
-                phase_contrib += 1;
-            }
-            if dst_z == 1 && src_x == 1 && dst_x == 0 && src_z == 0 {
-                phase_contrib -= 1;
-            }
-        }
-
-        // XOR the Pauli content
-        for q in 0..self.num_qubits {
-            let base = q * self.words_per_col;
-            let src_x_bit = (col_x[base + src_word] >> (src % 32)) & 1;
-            let src_z_bit = (col_z[base + src_word] >> (src % 32)) & 1;
-
-            if src_x_bit == 1 {
-                col_x[base + dst_word] ^= dst_bit;
-            }
-            if src_z_bit == 1 {
-                col_z[base + dst_word] ^= dst_bit;
-            }
-        }
-
-        // Update signs based on phase contribution
-        let src_minus = (signs_minus[src_word] >> (src % 32)) & 1;
-        let src_i = (signs_i[src_word] >> (src % 32)) & 1;
-
-        if src_minus == 1 {
-            signs_minus[dst_word] ^= dst_bit;
-        }
-        if src_i == 1 {
-            signs_i[dst_word] ^= dst_bit;
-        }
-
-        // Handle phase contribution (simplified)
-        let phase_mod = ((phase_contrib % 4) + 4) % 4;
-        match phase_mod {
-            1 => signs_i[dst_word] ^= dst_bit,     // +i
-            2 => signs_minus[dst_word] ^= dst_bit, // -1
-            3 => {
-                signs_minus[dst_word] ^= dst_bit;
-                signs_i[dst_word] ^= dst_bit;
-            } // -i
-            _ => {}
         }
     }
 
@@ -730,6 +716,77 @@ impl RngManageable for GpuStab {
 
     fn rng_mut(&mut self) -> &mut Self::Rng {
         &mut self.rng
+    }
+}
+
+// ========== StabilizerTableauSimulator ==========
+
+impl StabilizerTableauSimulator for GpuStab {
+    fn stab_tableau(&self) -> String {
+        Self::col_only_tableau_string_u32(
+            self.num_qubits,
+            self.words_per_col,
+            &self.stab_col_x,
+            &self.stab_col_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        )
+    }
+
+    fn destab_tableau(&self) -> String {
+        Self::col_only_tableau_string_u32(
+            self.num_qubits,
+            self.words_per_col,
+            &self.destab_col_x,
+            &self.destab_col_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        )
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+impl GpuStab {
+    fn col_only_tableau_string_u32(
+        num_qubits: usize,
+        words_per_col: usize,
+        col_x: &[u32],
+        col_z: &[u32],
+        signs_minus: &[u32],
+        signs_i: &[u32],
+    ) -> String {
+        let mut result = String::with_capacity(num_qubits * num_qubits + num_qubits + 2);
+        for g in 0..num_qubits {
+            let sign_minus = (signs_minus[g / 32] >> (g % 32)) & 1 != 0;
+            let sign_i = (signs_i[g / 32] >> (g % 32)) & 1 != 0;
+            if sign_minus {
+                result.push('-');
+            } else {
+                result.push('+');
+            }
+            if sign_i {
+                result.push('i');
+            }
+
+            for qubit in 0..num_qubits {
+                let word_idx = qubit * words_per_col + g / 32;
+                let bit_mask = 1u32 << (g % 32);
+                let in_x = col_x[word_idx] & bit_mask != 0;
+                let in_z = col_z[word_idx] & bit_mask != 0;
+                let ch = match (in_x, in_z) {
+                    (false, false) => 'I',
+                    (true, false) => 'X',
+                    (false, true) => 'Z',
+                    (true, true) => 'Y',
+                };
+                result.push(ch);
+            }
+            result.push('\n');
+        }
+        result
     }
 }
 

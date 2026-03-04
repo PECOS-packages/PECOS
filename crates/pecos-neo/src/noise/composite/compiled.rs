@@ -277,7 +277,12 @@ impl CompiledPrimitive {
 }
 
 impl Primitive for CompiledPrimitive {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         CompiledPrimitive::apply(self, qubit, ctx, rng)
     }
 

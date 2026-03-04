@@ -606,6 +606,43 @@ impl GpuStateVec {
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
+    /// Apply a single CX (CNOT) gate directly.
+    ///
+    /// This bypasses the trait layer and dispatches directly to the GPU.
+    pub fn apply_cx(&mut self, control: u32, target: u32) {
+        let params = GateParams {
+            target_qubit: target,
+            control_qubit: control,
+            num_qubits: self.num_qubits,
+            _padding: 0,
+            matrix_row0: [0.0; 4],
+            matrix_row1: [0.0; 4],
+        };
+
+        self.queue
+            .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("CX encoder"),
+            });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("CX pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.cx_pipeline);
+            pass.set_bind_group(0, &self.gate_bind_group, &[0]);
+
+            let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
+            pass.dispatch_workgroups(wg_x, wg_y, 1);
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
     /// Apply CX gates to multiple qubit pairs in a single GPU submission.
     ///
     /// Takes qubits as interleaved pairs: [control0, target0, control1, target1, ...]

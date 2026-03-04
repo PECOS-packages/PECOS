@@ -25,6 +25,8 @@ pub mod gens;
 pub mod gpu_stab;
 pub mod gpu_stab_opt;
 pub mod gpu_stab_parallel;
+pub mod graph_state;
+pub mod graph_state_repr;
 pub mod measurement_sampler;
 pub mod pauli_prop;
 // pub mod paulis;
@@ -52,13 +54,25 @@ pub use batched_ops::{BatchedOps, CommandBuffer, RawOps};
 pub use circuit_executor::{CircuitExecutor, GateSystem, GateSystemRegistry, execute_batched};
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
+/// Sparse index representation of stabilizer/destabilizer generators.
+///
+/// Returns `(col_x, col_z, row_x, row_z)` where each is a `Vec<Vec<usize>>`.
+pub type GensData = (
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+    Vec<Vec<usize>>,
+);
+
 pub use dense_stab::DenseStab;
-pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly};
+pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly, SparseRowOnly};
 pub use density_matrix::DensityMatrix;
 pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClassification};
 pub use gpu_stab::GpuStab;
 pub use gpu_stab_opt::GpuStabOpt;
 pub use gpu_stab_parallel::GpuStabParallel;
+pub use graph_state::GraphStateSim;
+pub use graph_state_repr::{GraphState, GraphStateRenderer};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,

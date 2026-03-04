@@ -15,7 +15,8 @@
 //! Run with: `samply record cargo run --release --example profile_hotpath -p pecos-neo`
 
 use pecos_neo::prelude::{
-    CommandBuilder, ComposableNoiseModel, CorePlugin, CircuitRunner, SingleQubitChannel, TwoQubitChannel,
+    CircuitRunner, CommandBuilder, ComposableNoiseModel, CorePlugin, SingleQubitChannel,
+    TwoQubitChannel,
 };
 use pecos_qsim::SparseStab;
 use std::hint::black_box;

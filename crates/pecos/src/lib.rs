@@ -191,8 +191,8 @@ pub mod engines {
 pub mod quantum {
     // Circuit representation from pecos-quantum
     pub use pecos_quantum::{
-        Attribute, Circuit, CircuitMut, DagCircuit, DagWouldCycleError, Gate, GateHandle, GateType,
-        GateView, QubitId, Tick, TickCircuit,
+        Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagWouldCycleError, Gate,
+        GateHandle, GateType, GateView, QubitId, Tick, TickCircuit,
     };
 
     // HUGR conversion (requires hugr feature)

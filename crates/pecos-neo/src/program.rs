@@ -81,7 +81,7 @@ use crate::command::CommandQueue;
 use crate::extensible::GateDefinitions;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
-use crate::runner::{EventHandlers, GateOverrides, CircuitRunner};
+use crate::runner::{CircuitRunner, EventHandlers, GateOverrides};
 use pecos_core::rng::RngManageable;
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_rng::PecosRng;

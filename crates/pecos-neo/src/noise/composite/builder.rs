@@ -36,7 +36,8 @@
 //! - **Extensibility**: Add custom conditions and actions
 
 use super::channel::{
-    CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel, CompositeEventFilter, NeighborFn,
+    CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel, CompositeEventFilter,
+    NeighborFn,
 };
 use super::prelude::*;
 use crate::command::GateType;
@@ -843,9 +844,10 @@ impl CompositeNoiseModelBuilder {
         // Measurement crosstalk (global)
         if self.p_meas_crosstalk_global > 0.0 {
             let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_global);
-            let channel = CompositeCrosstalkChannel::new("flow_meas_crosstalk_global", crosstalk_noise)
-                .responds_to_measurement()
-                .global();
+            let channel =
+                CompositeCrosstalkChannel::new("flow_meas_crosstalk_global", crosstalk_noise)
+                    .responds_to_measurement()
+                    .global();
             model = model.add_channel(channel);
         }
 
@@ -1850,7 +1852,9 @@ mod tests {
             let mut runner_general = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
-            let outcomes_general = runner_general.apply_circuit(&mut state_general, &commands).unwrap();
+            let outcomes_general = runner_general
+                .apply_circuit(&mut state_general, &commands)
+                .unwrap();
             let q0 = outcomes_general.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes_general.get(QubitId(1)).is_some_and(|o| o.outcome);
             // Bell state should give correlated results; errors break this
@@ -1859,13 +1863,18 @@ mod tests {
             }
 
             // CompositeNoiseModelBuilder
-            let flow_model = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+            let flow_model = CompositeNoiseModelBuilder::new()
+                .with_p1(p1)
+                .with_p2(p2)
+                .build();
 
             let mut state_flow = SparseStab::new(2);
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
-            let outcomes_flow = runner_flow.apply_circuit(&mut state_flow, &commands).unwrap();
+            let outcomes_flow = runner_flow
+                .apply_circuit(&mut state_flow, &commands)
+                .unwrap();
             let q0 = outcomes_flow.get(QubitId(0)).is_some_and(|o| o.outcome);
             let q1 = outcomes_flow.get(QubitId(1)).is_some_and(|o| o.outcome);
             if q0 != q1 {
@@ -1910,7 +1919,9 @@ mod tests {
             let mut runner_general = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
-            let outcomes = runner_general.apply_circuit(&mut state_general, &commands).unwrap();
+            let outcomes = runner_general
+                .apply_circuit(&mut state_general, &commands)
+                .unwrap();
             if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 general_flips += 1;
             }
@@ -1924,7 +1935,9 @@ mod tests {
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
-            let outcomes = runner_flow.apply_circuit(&mut state_flow, &commands).unwrap();
+            let outcomes = runner_flow
+                .apply_circuit(&mut state_flow, &commands)
+                .unwrap();
             if outcomes.get(QubitId(0)).is_some_and(|o| o.outcome) {
                 flow_flips += 1;
             }
@@ -1978,7 +1991,9 @@ mod tests {
             }
 
             // CompositeNoiseModelBuilder
-            let flow_model = CompositeNoiseModelBuilder::new().with_p_prep(p_prep).build();
+            let flow_model = CompositeNoiseModelBuilder::new()
+                .with_p_prep(p_prep)
+                .build();
 
             let mut state = SparseStab::new(1);
             let mut runner = CircuitRunner::<SparseStab>::new()

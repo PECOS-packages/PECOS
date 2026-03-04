@@ -11,7 +11,6 @@ on:
       - 'python/selene-plugins/**'
       - 'crates/pecos-qsim/**'
       - 'crates/pecos-core/**'
-      - 'crates/pecos-quest/**'
       - '.github/workflows/selene-plugins.yml'
   pull_request:
     branches: [master, development, dev]
@@ -19,7 +18,6 @@ on:
       - 'python/selene-plugins/**'
       - 'crates/pecos-qsim/**'
       - 'crates/pecos-core/**'
-      - 'crates/pecos-quest/**'
       - '.github/workflows/selene-plugins.yml'
   workflow_dispatch:
 
@@ -60,61 +58,18 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      # Install CUDA Toolkit for GPU support (compile-time only, no GPU needed)
-      # Linux: Use network method with non-cuda-sub-packages for libcublas
-      # Windows: Use local method with specific sub-packages to avoid VS integration bug
-      # macOS: NVIDIA dropped CUDA support in 2019
-      - name: Install CUDA Toolkit (Linux)
-        if: runner.os == 'Linux'
-        uses: Jimver/cuda-toolkit@v0.2.30
-        with:
-          cuda: '12.6.3'
-          method: 'network'
-          sub-packages: '["nvcc", "cudart-dev"]'
-          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
-
-      # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
-      - name: Set up Visual Studio environment (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      # Windows CUDA: Uses specific sub-packages to avoid VS 17.3.x bug
-      # See: https://github.com/Jimver/cuda-toolkit/issues/382
-      - name: Install CUDA Toolkit (Windows)
-        if: runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.30
-        with:
-          cuda: '12.5.1'
-          method: 'local'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
-
       - name: Build Selene plugins (Unix)
         if: runner.os != 'Windows'
         run: |
-          # Build all selene plugin Rust libraries
-          # pecos-selene-quest is built with CUDA feature on Linux (not macOS - NVIDIA dropped CUDA support in 2019)
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            cargo build --release -p pecos-selene-quest --features cuda
-          else
-            cargo build --release -p pecos-selene-quest
-          fi
           cargo build --release \
-            -p pecos-selene-qulacs \
-            -p pecos-selene-sparsestab \
+            -p pecos-selene-stab \
             -p pecos-selene-statevec
 
-      # Windows: Use PowerShell to avoid Git Bash PATH conflict where Git's /usr/bin/link
-      # shadows MSVC's link.exe linker
       - name: Build Selene plugins (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Build pecos-selene-quest with CUDA feature
-          cargo build --release -p pecos-selene-quest --features cuda
-          # Build other plugins
-          cargo build --release -p pecos-selene-qulacs -p pecos-selene-sparsestab -p pecos-selene-statevec
+          cargo build --release -p pecos-selene-stab -p pecos-selene-statevec
 
       - name: Copy libraries to Python packages (Unix)
         if: runner.os != 'Windows'
@@ -127,49 +82,25 @@ jobs:
           fi
 
           # Copy libraries
-          mkdir -p python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib
-          mkdir -p python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist/lib
-          mkdir -p python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib
+          mkdir -p python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab/_dist/lib
           mkdir -p python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib
 
-          cp target/release/libpecos_selene_quest.$EXT python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib/
-          cp target/release/libpecos_selene_qulacs.$EXT python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist/lib/
-          cp target/release/libpecos_selene_sparsestab.$EXT python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib/
+          cp target/release/libpecos_selene_stab.$EXT python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab/_dist/lib/
           cp target/release/libpecos_selene_statevec.$EXT python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
-
-          # Copy QuEST CUDA backend if it exists (built when --features cuda is used)
-          # This backend is loaded at runtime via dlopen, allowing the wheel to work
-          # on systems both with and without NVIDIA CUDA installed
-          if [ -f "target/release/libpecos_quest_cuda.$EXT" ]; then
-            echo "Copying QuEST CUDA backend..."
-            cp target/release/libpecos_quest_cuda.$EXT python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib/
-          fi
 
       - name: Copy libraries to Python packages (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib
-          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist/lib
-          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib
+          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab/_dist/lib
           New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib
 
-          Copy-Item target/release/pecos_selene_quest.dll python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib/
-          Copy-Item target/release/pecos_selene_qulacs.dll python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist/lib/
-          Copy-Item target/release/pecos_selene_sparsestab.dll python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib/
+          Copy-Item target/release/pecos_selene_stab.dll python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab/_dist/lib/
           Copy-Item target/release/pecos_selene_statevec.dll python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
-
-          # Copy QuEST CUDA backend if it exists (built when --features cuda is used)
-          if (Test-Path target/release/pecos_quest_cuda.dll) {
-            Write-Host "Copying QuEST CUDA backend..."
-            Copy-Item target/release/pecos_quest_cuda.dll python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib/
-          }
 
       - name: Install Python packages
         run: |
-          uv pip install --system -e ./python/selene-plugins/pecos-selene-quest[test]
-          uv pip install --system -e ./python/selene-plugins/pecos-selene-qulacs[test]
-          uv pip install --system -e ./python/selene-plugins/pecos-selene-sparsestab[test]
+          uv pip install --system -e ./python/selene-plugins/pecos-selene-stab[test]
           uv pip install --system -e ./python/selene-plugins/pecos-selene-statevec[test]
 
       - name: Run tests
@@ -185,12 +116,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
         plugin:
-          - name: pecos-selene-quest
-            package: pecos_selene_quest
-          - name: pecos-selene-qulacs
-            package: pecos_selene_qulacs
-          - name: pecos-selene-sparsestab
-            package: pecos_selene_sparsestab
+          - name: pecos-selene-stab
+            package: pecos_selene_stab
           - name: pecos-selene-statevec
             package: pecos_selene_statevec
 
@@ -213,62 +140,16 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      # Install CUDA Toolkit for GPU support (compile-time only, no GPU needed)
-      # Linux: Use network method with non-cuda-sub-packages for libcublas
-      # Windows: Use local method with specific sub-packages to avoid VS integration bug
-      # macOS: NVIDIA dropped CUDA support in 2019
-      - name: Install CUDA Toolkit (Linux)
-        if: runner.os == 'Linux' && matrix.plugin.name == 'pecos-selene-quest'
-        uses: Jimver/cuda-toolkit@v0.2.30
-        with:
-          cuda: '12.6.3'
-          method: 'network'
-          sub-packages: '["nvcc", "cudart-dev"]'
-          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
-
-      # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
-      - name: Set up Visual Studio environment (Windows)
-        if: runner.os == 'Windows' && matrix.plugin.name == 'pecos-selene-quest'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      # Windows CUDA: Uses specific sub-packages to avoid VS 17.3.x bug
-      # See: https://github.com/Jimver/cuda-toolkit/issues/382
-      - name: Install CUDA Toolkit (Windows)
-        if: runner.os == 'Windows' && matrix.plugin.name == 'pecos-selene-quest'
-        uses: Jimver/cuda-toolkit@v0.2.30
-        with:
-          cuda: '12.5.1'
-          method: 'local'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
-
       - name: Build Rust library (Unix)
         if: runner.os != 'Windows'
         run: |
-          # Build pecos-selene-quest with CUDA feature on Linux (not macOS - NVIDIA dropped CUDA support in 2019)
-          if [ "${{ matrix.plugin.name }}" = "pecos-selene-quest" ]; then
-            if [ "${{ runner.os }}" = "Linux" ]; then
-              cargo build --release -p ${{ matrix.plugin.name }} --features cuda
-            else
-              cargo build --release -p ${{ matrix.plugin.name }}
-            fi
-          else
-            cargo build --release -p ${{ matrix.plugin.name }}
-          fi
+          cargo build --release -p ${{ matrix.plugin.name }}
 
-      # Windows: Use PowerShell to avoid Git Bash PATH conflict where Git's /usr/bin/link
-      # shadows MSVC's link.exe linker
       - name: Build Rust library (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Build pecos-selene-quest with CUDA feature
-          if ("${{ matrix.plugin.name }}" -eq "pecos-selene-quest") {
-            cargo build --release -p ${{ matrix.plugin.name }} --features cuda
-          } else {
-            cargo build --release -p ${{ matrix.plugin.name }}
-          }
+          cargo build --release -p ${{ matrix.plugin.name }}
 
       - name: Copy library to Python package (Unix)
         if: runner.os != 'Windows'
@@ -282,15 +163,6 @@ jobs:
           mkdir -p "$PLUGIN_DIR/python/${{ matrix.plugin.package }}/_dist/lib"
           cp "target/release/lib${{ matrix.plugin.package }}.$EXT" "$PLUGIN_DIR/python/${{ matrix.plugin.package }}/_dist/lib/"
 
-          # Copy QuEST CUDA backend if it exists (built when --features cuda is used for pecos-selene-quest)
-          # Only available on Linux (NVIDIA dropped macOS CUDA support in 2019)
-          # This backend is loaded at runtime via dlopen, allowing the wheel to work
-          # on systems both with and without NVIDIA CUDA installed
-          if [ "${{ matrix.plugin.name }}" = "pecos-selene-quest" ] && [ -f "target/release/libpecos_quest_cuda.$EXT" ]; then
-            echo "Copying QuEST CUDA backend..."
-            cp "target/release/libpecos_quest_cuda.$EXT" "$PLUGIN_DIR/python/${{ matrix.plugin.package }}/_dist/lib/"
-          fi
-
       - name: Copy library to Python package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -298,12 +170,6 @@ jobs:
           $pluginDir = "python/selene-plugins/${{ matrix.plugin.name }}"
           New-Item -ItemType Directory -Force -Path "$pluginDir/python/${{ matrix.plugin.package }}/_dist/lib"
           Copy-Item "target/release/${{ matrix.plugin.package }}.dll" "$pluginDir/python/${{ matrix.plugin.package }}/_dist/lib/"
-
-          # Copy QuEST CUDA backend if it exists (built when --features cuda is used for pecos-selene-quest)
-          if ("${{ matrix.plugin.name }}" -eq "pecos-selene-quest" -and (Test-Path "target/release/pecos_quest_cuda.dll")) {
-            Write-Host "Copying QuEST CUDA backend..."
-            Copy-Item "target/release/pecos_quest_cuda.dll" "$pluginDir/python/${{ matrix.plugin.package }}/_dist/lib/"
-          }
 
       - name: Build wheel
         run: |

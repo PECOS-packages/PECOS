@@ -303,12 +303,19 @@ where
             | GateType::Tdg
             | GateType::U
             | GateType::R1XY
+            | GateType::F
+            | GateType::Fdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP
             | GateType::CRZ
             | GateType::CH
-            | GateType::CCX => {
+            | GateType::CCX
+            | GateType::Custom => {
                 return Err(HugrExecutionError::UnsupportedGate {
                     gate_type: gate.gate_type,
                     gate_index: gate_idx,

@@ -226,7 +226,10 @@ fn test_monte_carlo_with_depolarizing_noise() {
         config,
         || {
             let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
-            (CircuitRunner::new().with_noise(neo_noise), SparseStab::new(1))
+            (
+                CircuitRunner::new().with_noise(neo_noise),
+                SparseStab::new(1),
+            )
         },
         |outcomes| {
             let b = outcomes.get_bit(QubitId(0)).unwrap_or(false);
@@ -302,7 +305,10 @@ fn test_monte_carlo_measurement_errors() {
             let neo_noise = GeneralNoiseModelBuilder::new()
                 .with_p_meas(p_meas, p_meas)
                 .build();
-            (CircuitRunner::new().with_noise(neo_noise), SparseStab::new(1))
+            (
+                CircuitRunner::new().with_noise(neo_noise),
+                SparseStab::new(1),
+            )
         },
         |outcomes| {
             let b = outcomes.get_bit(QubitId(0)).unwrap_or(false);
@@ -441,7 +447,10 @@ fn test_monte_carlo_two_qubit_noise() {
         config,
         || {
             let neo_noise = GeneralNoiseModelBuilder::new().with_p2(p2).build();
-            (CircuitRunner::new().with_noise(neo_noise), SparseStab::new(2))
+            (
+                CircuitRunner::new().with_noise(neo_noise),
+                SparseStab::new(2),
+            )
         },
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);

@@ -53,9 +53,9 @@
 //!     .build();
 //! ```
 
-use super::crosstalk::CrosstalkChannel;
 use super::composite::Primitive;
 use super::composite::channel::{CompositeChannel, CompositeChannelBuilder};
+use super::crosstalk::CrosstalkChannel;
 use super::idle::IdleChannel;
 use super::leakage::LeakageChannel;
 use super::measurement::MeasurementChannel;

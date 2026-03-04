@@ -504,7 +504,8 @@ pub fn realistic_device_noise(params: DeviceNoiseParams) -> ComposableNoiseModel
     // Add idle noise if rates are set
     if params.t1_rate > 0.0 {
         // T1 decay: energy relaxation causes bit flips (amplitude damping approximated as Pauli)
-        let t1_channel = CompositeChannelBuilder::idle("t1_decay", prob_linear(params.t1_rate, pauli()));
+        let t1_channel =
+            CompositeChannelBuilder::idle("t1_decay", prob_linear(params.t1_rate, pauli()));
         model = model.add_channel(t1_channel);
     }
 

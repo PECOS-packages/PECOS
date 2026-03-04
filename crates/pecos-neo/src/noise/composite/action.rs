@@ -29,7 +29,12 @@ use smallvec::smallvec;
 /// (which can contain other primitives), actions directly produce responses.
 pub trait GateAction: Send + Sync {
     /// Apply this action for a specific qubit.
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse;
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse;
 
     /// Human-readable name for visualization.
     fn name(&self) -> &'static str;
@@ -40,7 +45,12 @@ pub trait GateAction: Send + Sync {
 pub struct Nothing;
 
 impl GateAction for Nothing {
-    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        _qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         CompositeResponse::None
     }
 
@@ -54,7 +64,12 @@ impl GateAction for Nothing {
 pub struct SkipGate;
 
 impl GateAction for SkipGate {
-    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        _qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         CompositeResponse::SkipGate
     }
 
@@ -68,7 +83,12 @@ impl GateAction for SkipGate {
 pub struct Leak;
 
 impl GateAction for Leak {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         ctx.mark_leaked(qubit);
         CompositeResponse::Leak
     }
@@ -83,7 +103,12 @@ impl GateAction for Leak {
 pub struct Unleak;
 
 impl GateAction for Unleak {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         ctx.mark_unleaked(qubit);
         CompositeResponse::Unleak
     }
@@ -126,7 +151,12 @@ impl Inject {
 }
 
 impl GateAction for Inject {
-    fn apply(&self, qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let cmd = GateCommand {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
@@ -234,7 +264,12 @@ impl Default for Pauli {
 }
 
 impl GateAction for Pauli {
-    fn apply(&self, qubit: QubitId, _ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let r: f64 = rng.random();
 
         let gate_type = if r < self.weights.x {
@@ -284,7 +319,12 @@ impl Seep {
 }
 
 impl GateAction for Seep {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // Unleak the qubit
         ctx.mark_unleaked(qubit);
 
@@ -372,7 +412,12 @@ impl Default for TwoQubitPauli {
 }
 
 impl GateAction for TwoQubitPauli {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let qubit_index = ctx.current_qubit_index();
 
         // Get or sample the two-qubit Pauli index
@@ -476,7 +521,12 @@ impl Default for Emission {
 }
 
 impl GateAction for Emission {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let r: f64 = rng.random();
         let result = self.weights.sample(r);
 
@@ -543,7 +593,12 @@ impl Default for TwoQubitEmission {
 }
 
 impl GateAction for TwoQubitEmission {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let qubit_index = ctx.current_qubit_index();
 
         // Get or sample the two-qubit emission index
@@ -631,7 +686,12 @@ impl SampleEmission {
 }
 
 impl GateAction for SampleEmission {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // This action is used inside prob(), so if we got here, the event fired
         let index = ctx.current_qubit_index();
         ctx.set_fired(index, true);
@@ -666,7 +726,12 @@ impl SampleEmissionWithProb {
 }
 
 impl GateAction for SampleEmissionWithProb {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let index = ctx.current_qubit_index();
         let fired = rng.random::<f64>() < self.prob;
 
@@ -751,7 +816,12 @@ const EMIT_NO: usize = 0;
 const EMIT_YES: usize = 1;
 
 impl GateAction for TwoQubitEmissionWithPartnerDepolarize {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let qubit_index = ctx.current_qubit_index();
 
         if qubit_index == 0 {
@@ -836,7 +906,12 @@ impl IndependentEmissionWithPartnerDepolarize {
 }
 
 impl GateAction for IndependentEmissionWithPartnerDepolarize {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let qubit_index = ctx.current_qubit_index();
 
         if qubit_index == 0 {
@@ -944,7 +1019,12 @@ impl PartnerDepolarize {
 }
 
 impl GateAction for PartnerDepolarize {
-    fn apply(&self, _qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        _qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // Get the other qubit in this two-qubit gate
         let Some(other) = ctx.other_qubit() else {
             // Not a two-qubit gate or can't find partner
@@ -1003,7 +1083,12 @@ impl InjectCoherentRZ {
 }
 
 impl GateAction for InjectCoherentRZ {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let duration = ctx
             .current_idle()
             .map_or(0.0, crate::noise::IdleInfo::duration_f64);
@@ -1057,7 +1142,12 @@ impl AmplitudeDamping {
 }
 
 impl GateAction for AmplitudeDamping {
-    fn apply(&self, qubit: QubitId, _ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // In stabilizer simulation, amplitude damping is approximated as:
         // - 50% chance of Z error (phase flip, preserves |0⟩, flips phase of |1⟩)
         // - 50% chance of X error (bit flip, approximates decay)
@@ -1127,7 +1217,12 @@ impl Default for BiasedAmplitudeDamping {
 }
 
 impl GateAction for BiasedAmplitudeDamping {
-    fn apply(&self, qubit: QubitId, _ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let gate_type = if rng.random::<f64>() < self.x_probability {
             GateType::X
         } else {
@@ -1188,7 +1283,12 @@ impl CoherentRotation {
 }
 
 impl GateAction for CoherentRotation {
-    fn apply(&self, qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         if self.angle.abs() < 1e-10 {
             return CompositeResponse::None;
         }
@@ -1248,7 +1348,12 @@ impl OverRotation {
 }
 
 impl GateAction for OverRotation {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // Get the gate's angle from context
         #[allow(clippy::redundant_closure)]
         let base_angle = ctx
@@ -1307,7 +1412,12 @@ impl ZZDephasing {
 }
 
 impl GateAction for ZZDephasing {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         if self.angle.abs() < 1e-10 {
             return CompositeResponse::None;
         }
@@ -1349,7 +1459,12 @@ pub struct ZZDephasingRate {
 }
 
 impl GateAction for ZZDephasingRate {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let duration = ctx
             .current_idle()
             .map_or(0.0, crate::noise::IdleInfo::duration_f64);
@@ -1407,7 +1522,12 @@ impl PrepFlip {
 }
 
 impl GateAction for PrepFlip {
-    fn apply(&self, qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let cmd = GateCommand {
             gate_type: GateType::X,
             qubits: smallvec![qubit],
@@ -1436,7 +1556,12 @@ impl PrepPhase {
 }
 
 impl GateAction for PrepPhase {
-    fn apply(&self, qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let cmd = GateCommand {
             gate_type: GateType::Z,
             qubits: smallvec![qubit],
@@ -1477,7 +1602,12 @@ impl Erasure {
 }
 
 impl GateAction for Erasure {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // Mark as leaked (erasure is a form of leakage)
         ctx.mark_leaked(qubit);
         // Return erasure response (currently same as Leak, but semantically distinct)
@@ -1506,7 +1636,12 @@ impl ErasureWithReplacement {
 }
 
 impl GateAction for ErasureWithReplacement {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // Unleak (reset to computational basis) with random Pauli
         ctx.mark_unleaked(qubit);
 
@@ -1582,7 +1717,12 @@ impl Default for CrosstalkAction {
 }
 
 impl GateAction for CrosstalkAction {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // Get the qubit's state from the measurement outcome if available,
         // otherwise sample randomly (unknown state).
         let state = ctx
@@ -1626,7 +1766,12 @@ impl GateAction for CrosstalkAction {
 pub struct FlipOutcomeAction;
 
 impl GateAction for FlipOutcomeAction {
-    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        _qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         CompositeResponse::FlipOutcome
     }
 
@@ -1665,7 +1810,12 @@ impl ForceOutcomeAction {
 }
 
 impl GateAction for ForceOutcomeAction {
-    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        _qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         CompositeResponse::ForceOutcome(self.value)
     }
 
@@ -1711,7 +1861,12 @@ impl Default for RandomOutcome {
 }
 
 impl GateAction for RandomOutcome {
-    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        _qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let r: f64 = rng.random();
         CompositeResponse::ForceOutcome(r < self.prob_one)
     }
@@ -1732,7 +1887,12 @@ impl GateAction for RandomOutcome {
 pub struct LeakedMeasurementAction;
 
 impl GateAction for LeakedMeasurementAction {
-    fn apply(&self, _qubit: QubitId, _ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        _qubit: QubitId,
+        _ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         CompositeResponse::LeakedMeasurement
     }
 
@@ -1744,12 +1904,12 @@ impl GateAction for LeakedMeasurementAction {
 /// Convenience functions for creating actions.
 pub mod actions {
     use super::{
-        AmplitudeDamping, BiasedAmplitudeDamping, CoherentRotation, CrosstalkAction, Emission,
-        Erasure, ErasureWithReplacement, FlipOutcomeAction, CompositeResponse, ForceOutcomeAction,
-        GateAction, GateType, IndependentEmissionWithPartnerDepolarize, Inject, InjectCoherentRZ,
-        Leak, LeakedMeasurementAction, NoiseContext, Nothing, OverRotation, PartnerDepolarize,
-        Pauli, PauliWeights, PecosRng, PrepFlip, PrepPhase, QubitId, RandomOutcome, SampleEmission,
-        SampleEmissionWithProb, Seep, SkipGate, TwoQubitEmission,
+        AmplitudeDamping, BiasedAmplitudeDamping, CoherentRotation, CompositeResponse,
+        CrosstalkAction, Emission, Erasure, ErasureWithReplacement, FlipOutcomeAction,
+        ForceOutcomeAction, GateAction, GateType, IndependentEmissionWithPartnerDepolarize, Inject,
+        InjectCoherentRZ, Leak, LeakedMeasurementAction, NoiseContext, Nothing, OverRotation,
+        PartnerDepolarize, Pauli, PauliWeights, PecosRng, PrepFlip, PrepPhase, QubitId,
+        RandomOutcome, SampleEmission, SampleEmissionWithProb, Seep, SkipGate, TwoQubitEmission,
         TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak, ZZDephasing, ZZDephasingRate,
     };
 

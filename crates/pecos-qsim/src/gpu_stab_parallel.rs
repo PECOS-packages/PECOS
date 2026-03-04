@@ -35,7 +35,7 @@
 //! - Independent row updates for gates (each thread processes its row)
 //! - Efficient row multiplication for measurement (SIMD-friendly XOR)
 
-use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
+use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::PecosRng;
@@ -424,6 +424,11 @@ impl GpuStabParallel {
             let x1 = (self.stab_row_x[row_base + word1] >> (q1 % 32)) & 1;
             let x2 = (self.stab_row_x[row_base + word2] >> (q2 % 32)) & 1;
 
+            // Sign update: toggle minus for generators with X on both qubits
+            if x1 == 1 && x2 == 1 {
+                self.flip_sign_minus(g, true);
+            }
+
             if x1 == 1 {
                 self.stab_row_z[row_base + word2] ^= bit2;
             }
@@ -527,93 +532,81 @@ impl GpuStabParallel {
         }
     }
 
-    /// XOR src row into dst row with phase tracking.
-    fn xor_rows(&mut self, dst: usize, src: usize, is_stab: bool) {
-        let (row_x, row_z, signs_minus, signs_i) = if is_stab {
-            (
-                &mut self.stab_row_x,
-                &mut self.stab_row_z,
-                &mut self.stab_signs_minus,
-                &mut self.stab_signs_i,
-            )
-        } else {
-            (
-                &mut self.destab_row_x,
-                &mut self.destab_row_z,
-                &mut self.destab_signs_minus,
-                &mut self.destab_signs_i,
-            )
-        };
-
-        let dst_base = dst * self.words_per_row;
-        let src_base = src * self.words_per_row;
-
-        // Compute phase contribution
-        let mut phase_minus = 0i32;
-        for w in 0..self.words_per_row {
-            let dx = row_x[dst_base + w];
-            let dz = row_z[dst_base + w];
-            let sx = row_x[src_base + w];
-            let sz = row_z[src_base + w];
-
-            // Count X*Z (contributes +i) and Z*X (contributes -i)
-            phase_minus += (dx & sz & !dz & !sx).count_ones() as i32;
-            phase_minus -= (dz & sx & !dx & !sz).count_ones() as i32;
-        }
-
-        // XOR content
-        for w in 0..self.words_per_row {
-            row_x[dst_base + w] ^= row_x[src_base + w];
-            row_z[dst_base + w] ^= row_z[src_base + w];
-        }
-
-        // Update signs
-        let src_word = src / 32;
-        let src_bit = src % 32;
-        let dst_word = dst / 32;
-        let dst_bit = 1u32 << (dst % 32);
-
-        if (signs_minus[src_word] >> src_bit) & 1 != 0 {
-            signs_minus[dst_word] ^= dst_bit;
-        }
-        if (signs_i[src_word] >> src_bit) & 1 != 0 {
-            signs_i[dst_word] ^= dst_bit;
-        }
-
-        let phase_mod = ((phase_minus % 4) + 4) % 4;
-        match phase_mod {
-            1 => signs_i[dst_word] ^= dst_bit,
-            2 => signs_minus[dst_word] ^= dst_bit,
-            3 => {
-                signs_minus[dst_word] ^= dst_bit;
-                signs_i[dst_word] ^= dst_bit;
-            }
-            _ => {}
-        }
-    }
-
     /// Non-deterministic measurement.
     fn nondeterministic_meas(&mut self, qubit: usize, outcome: bool) -> MeasurementResult {
         let pivot = self.find_anticommuting(qubit).unwrap();
         let word = qubit / 32;
         let bit_pos = qubit % 32;
+        let pivot_word = pivot / 32;
+        let pivot_shift = pivot % 32;
+        let pivot_bit = 1u32 << pivot_shift;
+        let pivot_base = pivot * self.words_per_row;
 
-        // XOR pivot into other anticommuting stabilizers
+        // Cache pivot signs
+        let pivot_minus = (self.stab_signs_minus[pivot_word] >> pivot_shift) & 1 != 0;
+        let pivot_i = (self.stab_signs_i[pivot_word] >> pivot_shift) & 1 != 0;
+
+        // Step 1: Handle pivot's i-phase (matches DenseStab algorithm).
+        if pivot_i {
+            self.stab_signs_i[pivot_word] &= !pivot_bit;
+            for g in 0..self.num_qubits {
+                if g == pivot {
+                    continue;
+                }
+                let row_base = g * self.words_per_row;
+                if (self.stab_row_x[row_base + word] >> bit_pos) & 1 != 0 {
+                    let g_word = g / 32;
+                    let g_bit = 1u32 << (g % 32);
+                    // i * i = -1: toggle minus for stabs that already have i
+                    if (self.stab_signs_i[g_word] >> (g % 32)) & 1 != 0 {
+                        self.stab_signs_minus[g_word] ^= g_bit;
+                    }
+                    // Toggle i for all anticommuting stabs
+                    self.stab_signs_i[g_word] ^= g_bit;
+                }
+            }
+        }
+
+        // Step 2: XOR pivot into other anticommuting stabilizers.
+        // Phase: count z_pivot & x_g overlaps.
         for g in 0..self.num_qubits {
             if g == pivot {
                 continue;
             }
             let row_base = g * self.words_per_row;
             if (self.stab_row_x[row_base + word] >> bit_pos) & 1 != 0 {
-                self.xor_rows(g, pivot, true);
+                let g_word = g / 32;
+                let g_bit = 1u32 << (g % 32);
+
+                let mut count = 0u32;
+                for w in 0..self.words_per_row {
+                    count += (self.stab_row_z[pivot_base + w] & self.stab_row_x[row_base + w])
+                        .count_ones();
+                }
+                if count & 1 != 0 {
+                    self.stab_signs_minus[g_word] ^= g_bit;
+                }
+                if pivot_minus {
+                    self.stab_signs_minus[g_word] ^= g_bit;
+                }
+
+                // XOR row data
+                for w in 0..self.words_per_row {
+                    self.stab_row_x[row_base + w] ^= self.stab_row_x[pivot_base + w];
+                    self.stab_row_z[row_base + w] ^= self.stab_row_z[pivot_base + w];
+                }
             }
         }
 
-        // XOR pivot into anticommuting destabilizers
+        // Step 3: XOR pivot stabilizer into anticommuting destabilizers.
+        // Read from STAB arrays, write to DESTAB arrays. No sign update needed.
         for g in 0..self.num_qubits {
             let row_base = g * self.words_per_row;
             if (self.destab_row_x[row_base + word] >> bit_pos) & 1 != 0 {
-                self.xor_rows(g, pivot, false);
+                for w in 0..self.words_per_row {
+                    self.destab_row_x[row_base + w] ^= self.stab_row_x[pivot_base + w];
+                    self.destab_row_z[row_base + w] ^= self.stab_row_z[pivot_base + w];
+                }
             }
         }
 
@@ -758,6 +751,78 @@ impl RngManageable for GpuStabParallel {
 
     fn rng_mut(&mut self) -> &mut Self::Rng {
         &mut self.rng
+    }
+}
+
+// ========== StabilizerTableauSimulator ==========
+
+impl StabilizerTableauSimulator for GpuStabParallel {
+    fn stab_tableau(&self) -> String {
+        Self::gen_tableau_string_u32(
+            self.num_qubits,
+            self.words_per_row,
+            &self.stab_row_x,
+            &self.stab_row_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        )
+    }
+
+    fn destab_tableau(&self) -> String {
+        Self::gen_tableau_string_u32(
+            self.num_qubits,
+            self.words_per_row,
+            &self.destab_row_x,
+            &self.destab_row_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        )
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+impl GpuStabParallel {
+    fn gen_tableau_string_u32(
+        num_qubits: usize,
+        words_per_row: usize,
+        row_x: &[u32],
+        row_z: &[u32],
+        signs_minus: &[u32],
+        signs_i: &[u32],
+    ) -> String {
+        let mut result = String::with_capacity(num_qubits * num_qubits + num_qubits + 2);
+        for g in 0..num_qubits {
+            let sign_minus = (signs_minus[g / 32] >> (g % 32)) & 1 != 0;
+            let sign_i = (signs_i[g / 32] >> (g % 32)) & 1 != 0;
+            if sign_minus {
+                result.push('-');
+            } else {
+                result.push('+');
+            }
+            if sign_i {
+                result.push('i');
+            }
+
+            let base = g * words_per_row;
+            for qubit in 0..num_qubits {
+                let word_idx = base + qubit / 32;
+                let bit_mask = 1u32 << (qubit % 32);
+                let in_x = row_x[word_idx] & bit_mask != 0;
+                let in_z = row_z[word_idx] & bit_mask != 0;
+                let ch = match (in_x, in_z) {
+                    (false, false) => 'I',
+                    (true, false) => 'X',
+                    (false, true) => 'Z',
+                    (true, true) => 'Y',
+                };
+                result.push(ch);
+            }
+            result.push('\n');
+        }
+        result
     }
 }
 

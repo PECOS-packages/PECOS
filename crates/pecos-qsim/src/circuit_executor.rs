@@ -145,6 +145,12 @@ fn execute_single_batch<S: CliffordGateable>(
         GateType::H => {
             sim.h(qubits);
         }
+        GateType::F => {
+            sim.f(qubits);
+        }
+        GateType::Fdg => {
+            sim.fdg(qubits);
+        }
         GateType::SX => {
             sim.sx(qubits);
         }
@@ -171,6 +177,18 @@ fn execute_single_batch<S: CliffordGateable>(
         }
         GateType::CZ => {
             sim.cz(qubits);
+        }
+        GateType::SXX => {
+            sim.sxx(qubits);
+        }
+        GateType::SXXdg => {
+            sim.sxxdg(qubits);
+        }
+        GateType::SYY => {
+            sim.syy(qubits);
+        }
+        GateType::SYYdg => {
+            sim.syydg(qubits);
         }
         GateType::SZZ => {
             sim.szz(qubits);

@@ -31,7 +31,12 @@ use rand::RngExt;
 /// control flow (branching, probability gates) or terminal actions.
 pub trait Primitive: Send + Sync {
     /// Apply this primitive for a specific qubit.
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse;
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse;
 
     /// Human-readable description for visualization (single line).
     fn describe(&self) -> String;
@@ -281,7 +286,12 @@ impl<P1: Primitive, P2: Primitive> TwoStage<P1, P2> {
 }
 
 impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         // Fallback for single-qubit processing: run both stages sequentially
         let r1 = self.stage1.apply(qubit, ctx, rng);
         let r2 = self.stage2.apply(qubit, ctx, rng);
@@ -327,7 +337,12 @@ impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
 }
 
 impl Primitive for Box<dyn Primitive> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         (**self).apply(qubit, ctx, rng)
     }
 
@@ -372,7 +387,12 @@ impl Primitive for Box<dyn Primitive> {
 
 // Implement Primitive for all GateActions
 impl<A: GateAction + Clone + 'static> Primitive for A {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         GateAction::apply(self, qubit, ctx, rng)
     }
 
@@ -431,7 +451,12 @@ impl<P: Primitive> Prob<P> {
 }
 
 impl<P: Primitive> Primitive for Prob<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         if rng.random::<f64>() < self.probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
@@ -527,7 +552,12 @@ where
     F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync + Clone + 'static,
     P: Primitive,
 {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let probability = (self.probability_fn)(ctx.current_gate()).clamp(0.0, 1.0);
         if rng.random::<f64>() < probability {
             self.inner.apply(qubit, ctx, rng)
@@ -591,7 +621,12 @@ impl<P: Primitive> ProbLinear<P> {
 }
 
 impl<P: Primitive> Primitive for ProbLinear<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let duration = ctx
             .current_idle()
             .map_or(0.0, crate::noise::IdleInfo::duration_f64);
@@ -674,7 +709,12 @@ impl<P: Primitive> ProbQuadratic<P> {
 }
 
 impl<P: Primitive> Primitive for ProbQuadratic<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let duration = ctx
             .current_idle()
             .map_or(0.0, crate::noise::IdleInfo::duration_f64);
@@ -731,7 +771,12 @@ impl<C: Condition, T: Primitive, E: Primitive> When<C, T, E> {
 }
 
 impl<C: Condition + Clone + 'static, T: Primitive, E: Primitive> Primitive for When<C, T, E> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         if self.condition.evaluate(qubit, ctx) {
             self.then_branch.apply(qubit, ctx, rng)
         } else {
@@ -807,7 +852,12 @@ impl<P: Primitive> Sample<P> {
 }
 
 impl<P: Primitive> Primitive for Sample<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         if self.branches.is_empty() {
             return CompositeResponse::None;
         }
@@ -888,7 +938,12 @@ impl<P: Primitive> Seq<P> {
 }
 
 impl<P: Primitive> Primitive for Seq<P> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let mut combined = CompositeResponse::None;
 
         for prim in &self.primitives {
@@ -960,7 +1015,12 @@ impl BoxSeq {
 }
 
 impl Primitive for BoxSeq {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         let mut combined = CompositeResponse::None;
 
         for prim in &self.primitives {
@@ -1027,7 +1087,12 @@ impl<C: Condition> SkipIf<C> {
 }
 
 impl<C: Condition + Clone + 'static> Primitive for SkipIf<C> {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, _rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        _rng: &mut PecosRng,
+    ) -> CompositeResponse {
         if self.condition.evaluate(qubit, ctx) {
             CompositeResponse::SkipGate
         } else {
@@ -1136,7 +1201,12 @@ impl BoxSample {
 }
 
 impl Primitive for BoxSample {
-    fn apply(&self, qubit: QubitId, ctx: &mut NoiseContext, rng: &mut PecosRng) -> CompositeResponse {
+    fn apply(
+        &self,
+        qubit: QubitId,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> CompositeResponse {
         if self.branches.is_empty() {
             return CompositeResponse::None;
         }
@@ -1315,7 +1385,11 @@ pub mod primitives {
         then_branch: T,
         else_branch: E,
     ) -> When<crate::noise::composite::PartnerLeaked, T, E> {
-        When::new(crate::noise::composite::PartnerLeaked, then_branch, else_branch)
+        When::new(
+            crate::noise::composite::PartnerLeaked,
+            then_branch,
+            else_branch,
+        )
     }
 
     /// Conditional (then only, else is nothing).

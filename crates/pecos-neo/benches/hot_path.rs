@@ -851,7 +851,10 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     });
 
     group.bench_function("composite_noise_emission_1q", |b| {
-        let mut noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+        let mut noise = CompositeNoiseModelBuilder::new()
+            .with_p1(p1)
+            .with_p2(p2)
+            .build();
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0)];
 
@@ -886,7 +889,10 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     });
 
     group.bench_function("composite_noise_emission_2q", |b| {
-        let mut noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+        let mut noise = CompositeNoiseModelBuilder::new()
+            .with_p1(p1)
+            .with_p2(p2)
+            .build();
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0), QubitId(1)];
 
@@ -917,7 +923,10 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     });
 
     group.bench_function("composite_bell_shot", |b| {
-        let noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+        let noise = CompositeNoiseModelBuilder::new()
+            .with_p1(p1)
+            .with_p2(p2)
+            .build();
         let mut state = SparseStab::new(2);
         let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
@@ -943,7 +952,10 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     });
 
     group.bench_function("composite_20q_shot", |b| {
-        let noise = CompositeNoiseModelBuilder::new().with_p1(p1).with_p2(p2).build();
+        let noise = CompositeNoiseModelBuilder::new()
+            .with_p1(p1)
+            .with_p2(p2)
+            .build();
         let mut state = SparseStab::new(20);
         let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
@@ -1170,22 +1182,9 @@ fn bench_batch_processor(c: &mut Criterion) {
         let composite_with_prob = CompositeChannel::new("composite_fast", pauli())
             .with_probability(1e-4)
             .with_filter(CompositeEventFilter::SingleQubitGate);
-        group.bench_function(BenchmarkId::new("composite_with_prob_p1e-4", num_qubits), |b| {
-            let mut ctx = NoiseContext::new();
-            let mut rng = PecosRng::seed_from_u64(42);
-            let event = NoiseEvent::AfterGate {
-                gate_type: GateType::H,
-                qubits: &qubits,
-                angles: &angles,
-                gate_id: None,
-            };
-            b.iter(|| black_box(composite_with_prob.apply(&event, &mut ctx, &mut rng)));
-        });
-
-        // CompositeChannel (linear, no probability) - skip for 1M (too slow)
-        if num_qubits <= 100_000 {
-            let composite_channel = CompositeChannelBuilder::single_qubit("composite", prob(1e-4, pauli()));
-            group.bench_function(BenchmarkId::new("composite_linear_p1e-4", num_qubits), |b| {
+        group.bench_function(
+            BenchmarkId::new("composite_with_prob_p1e-4", num_qubits),
+            |b| {
                 let mut ctx = NoiseContext::new();
                 let mut rng = PecosRng::seed_from_u64(42);
                 let event = NoiseEvent::AfterGate {
@@ -1194,8 +1193,28 @@ fn bench_batch_processor(c: &mut Criterion) {
                     angles: &angles,
                     gate_id: None,
                 };
-                b.iter(|| black_box(composite_channel.apply(&event, &mut ctx, &mut rng)));
-            });
+                b.iter(|| black_box(composite_with_prob.apply(&event, &mut ctx, &mut rng)));
+            },
+        );
+
+        // CompositeChannel (linear, no probability) - skip for 1M (too slow)
+        if num_qubits <= 100_000 {
+            let composite_channel =
+                CompositeChannelBuilder::single_qubit("composite", prob(1e-4, pauli()));
+            group.bench_function(
+                BenchmarkId::new("composite_linear_p1e-4", num_qubits),
+                |b| {
+                    let mut ctx = NoiseContext::new();
+                    let mut rng = PecosRng::seed_from_u64(42);
+                    let event = NoiseEvent::AfterGate {
+                        gate_type: GateType::H,
+                        qubits: &qubits,
+                        angles: &angles,
+                        gate_id: None,
+                    };
+                    b.iter(|| black_box(composite_channel.apply(&event, &mut ctx, &mut rng)));
+                },
+            );
         }
     }
 

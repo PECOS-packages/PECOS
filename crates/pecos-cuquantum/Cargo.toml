@@ -12,21 +12,17 @@ categories = ["science", "simulation"]
 readme = "README.md"
 
 [dependencies]
-pecos-cuquantum-sys = { path = "../pecos-cuquantum-sys" }
-pecos-build = { path = "../pecos-build" }
-pecos-core = { path = "../pecos-core" }
-pecos-qsim = { path = "../pecos-qsim" }
-thiserror = "2.0"
-fastrand = "2.3"
+pecos-cuquantum-sys.workspace = true
+pecos-build.workspace = true
+pecos-core.workspace = true
+pecos-qsim.workspace = true
+thiserror.workspace = true
+fastrand.workspace = true
 
 [build-dependencies]
-pecos-build = { path = "../pecos-build" }
+pecos-build.workspace = true
 log.workspace = true
 env_logger.workspace = true
-
-[dev-dependencies]
-# For testing, we don't actually need CUDA - tests use stub mode
-criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
 default = []
@@ -36,8 +32,3 @@ integration-tests = []
 [package.metadata.docs.rs]
 # Don't try to build docs on docs.rs (no CUDA/cuQuantum available)
 targets = []
-
-[[bench]]
-name = "cuquantum_benchmark"
-harness = false
-required-features = ["integration-tests"]

@@ -31,7 +31,7 @@
 //! For balanced workloads like surface code syndrome extraction, the dual representation
 //! in [`super::DenseStab`] is usually fastest.
 
-use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
+use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
@@ -545,9 +545,25 @@ impl<R: SeedableRng + Rng + Debug> DenseStabColOnly<R> {
         self.extract_pivot_positions(pivot_id);
 
         // Cache pivot sign and position
-        let pivot_sign = get_sign(&self.stab_signs_minus, pivot_id);
+        let pivot_sign_minus = get_sign(&self.stab_signs_minus, pivot_id);
+        let pivot_sign_i = get_sign(&self.stab_signs_i, pivot_id);
         let pivot_word = pivot_id / 64;
         let pivot_mask = 1u64 << (pivot_id % 64);
+
+        // Handle pivot's i-phase contribution (bulk operation before per-generator loop)
+        if pivot_sign_i {
+            clear_sign(&mut self.stab_signs_i, pivot_id);
+            for w in 0..words_per_col {
+                let mut anticom = self.stab_col_x[col_base + w];
+                if w == pivot_word {
+                    anticom &= !pivot_mask;
+                }
+                // Toggle minus for anticom stabs that have i (i * i = -1)
+                self.stab_signs_minus[w] ^= anticom & self.stab_signs_i[w];
+                // Toggle i for all anticom stabs
+                self.stab_signs_i[w] ^= anticom;
+            }
+        }
 
         // XOR pivot into other anti-commuting stabilizers
         for w in 0..words_per_col {
@@ -573,7 +589,7 @@ impl<R: SeedableRng + Rng + Debug> DenseStabColOnly<R> {
                     toggle_sign(&mut self.stab_signs_minus, g);
                 }
 
-                if pivot_sign {
+                if pivot_sign_minus {
                     toggle_sign(&mut self.stab_signs_minus, g);
                 }
 
@@ -588,6 +604,30 @@ impl<R: SeedableRng + Rng + Debug> DenseStabColOnly<R> {
                 }
 
                 mask &= mask - 1;
+            }
+        }
+
+        // Step 2b (Aaronson-Gottesman): XOR pivot stab into anti-commuting destabilizers
+        // Pre-compute anticom destab mask to avoid self-XOR when q == qubit
+        let anticom_destab_mask: Vec<u64> = (0..words_per_col)
+            .map(|w| {
+                let mut m = self.destab_col_x[col_base + w];
+                if w == pivot_word {
+                    m &= !pivot_mask;
+                }
+                m
+            })
+            .collect();
+        for &q in &self.scratch_pivot_x {
+            let base = q * words_per_col;
+            for (w, &mask) in anticom_destab_mask.iter().enumerate().take(words_per_col) {
+                self.destab_col_x[base + w] ^= mask;
+            }
+        }
+        for &q in &self.scratch_pivot_z {
+            let base = q * words_per_col;
+            for (w, &mask) in anticom_destab_mask.iter().enumerate().take(words_per_col) {
+                self.destab_col_z[base + w] ^= mask;
             }
         }
 
@@ -1078,7 +1118,24 @@ impl<R: SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
         }
 
         // Cache pivot sign
-        let pivot_sign = get_sign(&self.stab_signs_minus, pivot_id);
+        let pivot_sign_minus = get_sign(&self.stab_signs_minus, pivot_id);
+        let pivot_sign_i = get_sign(&self.stab_signs_i, pivot_id);
+
+        // Handle pivot's i-phase contribution
+        if pivot_sign_i {
+            clear_sign(&mut self.stab_signs_i, pivot_id);
+            for &g in &self.scratch_gens {
+                if g == pivot_id {
+                    continue;
+                }
+                // Toggle minus for anticom stabs that have i (i * i = -1)
+                if get_sign(&self.stab_signs_i, g) {
+                    toggle_sign(&mut self.stab_signs_minus, g);
+                }
+                // Toggle i for all anticom stabs
+                toggle_sign(&mut self.stab_signs_i, g);
+            }
+        }
 
         // XOR pivot into other anti-commuting stabilizers
         for &g in &self.scratch_gens {
@@ -1097,13 +1154,29 @@ impl<R: SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
                 toggle_sign(&mut self.stab_signs_minus, g);
             }
 
-            if pivot_sign {
+            if pivot_sign_minus {
                 toggle_sign(&mut self.stab_signs_minus, g);
             }
 
             // XOR rows
             xor_rows(&mut self.stab_row_x, words_per_row, pivot_id, g);
             xor_rows(&mut self.stab_row_z, words_per_row, pivot_id, g);
+        }
+
+        // Step 2b (Aaronson-Gottesman): XOR pivot stab into anti-commuting destabilizers
+        for g in 0..self.num_qubits {
+            if g == pivot_id {
+                continue;
+            }
+            // Check if destab[g] anti-commutes with Z_qubit (has X on measured qubit)
+            if self.destab_row_x[g * words_per_row + qubit_word] & qubit_mask != 0 {
+                let base_p = pivot_id * words_per_row;
+                let base_g = g * words_per_row;
+                for w in 0..words_per_row {
+                    self.destab_row_x[base_g + w] ^= self.stab_row_x[base_p + w];
+                    self.destab_row_z[base_g + w] ^= self.stab_row_z[base_p + w];
+                }
+            }
         }
 
         // Copy old stabilizer to destabilizer before replacing
@@ -1452,28 +1525,6 @@ impl SparseColOnly {
         })
     }
 
-    /// Compute phase when `XORing` generator `src` into `dst`.
-    /// Returns the number of Y-type interactions (mod 4 determines sign change).
-    fn compute_phase(&self, src: u16, dst: u16) -> usize {
-        let mut count = 0;
-        // For each qubit where src has X, check if dst has Z
-        for q in 0..self.num_qubits {
-            let src_x = Self::contains(&self.stab_col_x[q], src);
-            let src_z = Self::contains(&self.stab_col_z[q], src);
-            let dst_x = Self::contains(&self.stab_col_x[q], dst);
-            let dst_z = Self::contains(&self.stab_col_z[q], dst);
-
-            // Phase contribution from Pauli multiplication
-            if src_x && dst_z {
-                count += 1;
-            }
-            if src_z && dst_x {
-                count += 3; // -1 mod 4
-            }
-        }
-        count
-    }
-
     /// XOR generator `src` into generator `dst` in all columns.
     fn xor_generator(&mut self, src: u16, dst: u16) {
         for q in 0..self.num_qubits {
@@ -1486,57 +1537,68 @@ impl SparseColOnly {
         }
     }
 
-    fn xor_destab_generator(&mut self, src: u16, dst: u16) {
-        for q in 0..self.num_qubits {
-            if Self::contains(&self.destab_col_x[q], src) {
-                Self::toggle_in_col(&mut self.destab_col_x[q], dst);
-            }
-            if Self::contains(&self.destab_col_z[q], src) {
-                Self::toggle_in_col(&mut self.destab_col_z[q], dst);
-            }
-        }
-    }
-
     #[allow(clippy::too_many_lines)]
     fn nondeterministic_meas(&mut self, qubit: usize, outcome: bool) -> MeasurementResult {
         let pivot = self.stab_col_x[qubit][0];
         let pivot_id = pivot as usize;
 
+        let pivot_sign_minus = get_sign(&self.stab_signs_minus, pivot_id);
+        let pivot_sign_i = get_sign(&self.stab_signs_i, pivot_id);
+
+        // Handle pivot's i-phase contribution
+        if pivot_sign_i {
+            clear_sign(&mut self.stab_signs_i, pivot_id);
+            let gens_with_x: SmallVec<[u16; 8]> = self.stab_col_x[qubit].clone();
+            for &g in &gens_with_x {
+                if g == pivot {
+                    continue;
+                }
+                let g_id = g as usize;
+                // Toggle minus for anticom stabs that have i (i * i = -1)
+                if get_sign(&self.stab_signs_i, g_id) {
+                    toggle_sign(&mut self.stab_signs_minus, g_id);
+                }
+                // Toggle i for all anticom stabs
+                toggle_sign(&mut self.stab_signs_i, g_id);
+            }
+        }
+
         // XOR other stabilizers with X on this qubit into pivot
         let gens_with_x: SmallVec<[u16; 8]> = self.stab_col_x[qubit].clone();
         for &g in &gens_with_x {
             if g != pivot {
-                // Compute phase and XOR
-                let phase = self.compute_phase(pivot, g);
-                if phase % 4 >= 2 {
+                // Phase: count Z_pivot & X_g overlaps
+                let mut count = 0usize;
+                for q in 0..self.num_qubits {
+                    if Self::contains(&self.stab_col_z[q], pivot)
+                        && Self::contains(&self.stab_col_x[q], g)
+                    {
+                        count += 1;
+                    }
+                }
+                if count & 1 != 0 {
+                    toggle_sign(&mut self.stab_signs_minus, g as usize);
+                }
+                if pivot_sign_minus {
                     toggle_sign(&mut self.stab_signs_minus, g as usize);
                 }
                 self.xor_generator(pivot, g);
             }
         }
 
-        // XOR destabilizers with X on this qubit into pivot's destabilizer
-        let destab_gens: SmallVec<[u16; 8]> = self.destab_col_x[qubit].clone();
-        for &g in &destab_gens {
+        // Step 2b (Aaronson-Gottesman): XOR pivot stab into anti-commuting destabilizers
+        let anticom_destabs: SmallVec<[u16; 8]> = self.destab_col_x[qubit].clone();
+        for &g in &anticom_destabs {
             if g != pivot {
-                // For destabilizer XOR, compute phase differently
-                let mut phase = 0usize;
+                // XOR stab[pivot] into destab[g]
                 for q in 0..self.num_qubits {
-                    let src_x = Self::contains(&self.destab_col_x[q], pivot);
-                    let src_z = Self::contains(&self.destab_col_z[q], pivot);
-                    let dst_x = Self::contains(&self.destab_col_x[q], g);
-                    let dst_z = Self::contains(&self.destab_col_z[q], g);
-                    if src_x && dst_z {
-                        phase += 1;
+                    if Self::contains(&self.stab_col_x[q], pivot) {
+                        Self::toggle_in_col(&mut self.destab_col_x[q], g);
                     }
-                    if src_z && dst_x {
-                        phase += 3;
+                    if Self::contains(&self.stab_col_z[q], pivot) {
+                        Self::toggle_in_col(&mut self.destab_col_z[q], g);
                     }
                 }
-                if phase % 4 >= 2 {
-                    toggle_sign(&mut self.destab_signs_minus, g as usize);
-                }
-                self.xor_destab_generator(pivot, g);
             }
         }
 
@@ -1673,6 +1735,704 @@ impl CliffordGateable for SparseColOnly {
     }
 }
 
+// ========== SparseRowOnly: Sparse row-only representation ==========
+//
+// Uses sparse vectors instead of dense bitvectors for row storage.
+// Each row stores a sorted list of qubit indices that have X/Z in that generator.
+// This is efficient when stabilizers are sparse (few qubits per stabilizer).
+
+/// Sparse row-only stabilizer simulator.
+///
+/// Uses `SmallVec` to store which qubits have X/Z in each generator.
+/// More efficient than dense representation when:
+/// - Stabilizers are sparse (few qubits per stabilizer)
+/// - Row-based operations dominate (generator XORs, weight calculations)
+///
+/// Row weight in surface code is ~4-8 (bounded by locality), so sparse
+/// operations are O(8) instead of O(n/64) for dense.
+pub struct SparseRowOnly {
+    num_qubits: usize,
+    // For each generator, which qubits have X/Z (sorted)
+    stab_row_x: Vec<SmallVec<[u16; 8]>>,
+    stab_row_z: Vec<SmallVec<[u16; 8]>>,
+    destab_row_x: Vec<SmallVec<[u16; 8]>>,
+    destab_row_z: Vec<SmallVec<[u16; 8]>>,
+    // Signs as dense bitvector (always need O(n) signs)
+    stab_signs_minus: Vec<u64>,
+    stab_signs_i: Vec<u64>,
+    destab_signs_minus: Vec<u64>,
+    destab_signs_i: Vec<u64>,
+    rng: PecosRng,
+}
+
+impl Debug for SparseRowOnly {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SparseRowOnly")
+            .field("num_qubits", &self.num_qubits)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Clone for SparseRowOnly {
+    fn clone(&self) -> Self {
+        Self {
+            num_qubits: self.num_qubits,
+            stab_row_x: self.stab_row_x.clone(),
+            stab_row_z: self.stab_row_z.clone(),
+            destab_row_x: self.destab_row_x.clone(),
+            destab_row_z: self.destab_row_z.clone(),
+            stab_signs_minus: self.stab_signs_minus.clone(),
+            stab_signs_i: self.stab_signs_i.clone(),
+            destab_signs_minus: self.destab_signs_minus.clone(),
+            destab_signs_i: self.destab_signs_i.clone(),
+            rng: self.rng.clone(),
+        }
+    }
+}
+
+impl SparseRowOnly {
+    /// Create a new sparse row-only simulator with `n` qubits.
+    #[must_use]
+    pub fn new(num_qubits: usize) -> Self {
+        Self::with_seed(num_qubits, 0)
+    }
+
+    /// Create a new simulator with a specific RNG seed.
+    #[must_use]
+    pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        let sign_words = num_qubits.div_ceil(64);
+        let stab_row_x = vec![SmallVec::new(); num_qubits];
+        let mut stab_row_z = vec![SmallVec::new(); num_qubits];
+        let mut destab_row_x = vec![SmallVec::new(); num_qubits];
+        let destab_row_z = vec![SmallVec::new(); num_qubits];
+
+        // Initialize: stabilizer[i] = Z_i, destabilizer[i] = X_i
+        for i in 0..num_qubits {
+            stab_row_z[i].push(i as u16);
+            destab_row_x[i].push(i as u16);
+        }
+
+        Self {
+            num_qubits,
+            stab_row_x,
+            stab_row_z,
+            destab_row_x,
+            destab_row_z,
+            stab_signs_minus: vec![0; sign_words],
+            stab_signs_i: vec![0; sign_words],
+            destab_signs_minus: vec![0; sign_words],
+            destab_signs_i: vec![0; sign_words],
+            rng: PecosRng::seed_from_u64(seed),
+        }
+    }
+
+    /// Toggle qubit `q` in a sorted row.
+    #[inline(always)]
+    fn toggle_in_row(row: &mut SmallVec<[u16; 8]>, q: u16) {
+        match row.binary_search(&q) {
+            Ok(pos) => {
+                row.remove(pos);
+            }
+            Err(pos) => {
+                row.insert(pos, q);
+            }
+        }
+    }
+
+    /// Check if qubit `q` is in a sorted row.
+    #[inline(always)]
+    fn contains(row: &SmallVec<[u16; 8]>, q: u16) -> bool {
+        row.binary_search(&q).is_ok()
+    }
+
+    fn apply_h(&mut self, qubit: usize) {
+        let q = qubit as u16;
+        // H: X -> Z, Z -> X, Y -> -Y
+        for g in 0..self.num_qubits {
+            let has_x = Self::contains(&self.stab_row_x[g], q);
+            let has_z = Self::contains(&self.stab_row_z[g], q);
+            if has_x && has_z {
+                toggle_sign(&mut self.stab_signs_minus, g);
+            }
+            if has_x != has_z {
+                Self::toggle_in_row(&mut self.stab_row_x[g], q);
+                Self::toggle_in_row(&mut self.stab_row_z[g], q);
+            }
+        }
+        for g in 0..self.num_qubits {
+            let has_x = Self::contains(&self.destab_row_x[g], q);
+            let has_z = Self::contains(&self.destab_row_z[g], q);
+            if has_x && has_z {
+                toggle_sign(&mut self.destab_signs_minus, g);
+            }
+            if has_x != has_z {
+                Self::toggle_in_row(&mut self.destab_row_x[g], q);
+                Self::toggle_in_row(&mut self.destab_row_z[g], q);
+            }
+        }
+    }
+
+    fn apply_sz(&mut self, qubit: usize) {
+        let q = qubit as u16;
+        // S/SZ gate: X -> iXZ (Y), Y -> -X, Z -> Z
+        for g in 0..self.num_qubits {
+            if Self::contains(&self.stab_row_x[g], q) {
+                if get_sign(&self.stab_signs_i, g) {
+                    toggle_sign(&mut self.stab_signs_minus, g);
+                }
+                toggle_sign(&mut self.stab_signs_i, g);
+                Self::toggle_in_row(&mut self.stab_row_z[g], q);
+            }
+        }
+        for g in 0..self.num_qubits {
+            if Self::contains(&self.destab_row_x[g], q) {
+                if get_sign(&self.destab_signs_i, g) {
+                    toggle_sign(&mut self.destab_signs_minus, g);
+                }
+                toggle_sign(&mut self.destab_signs_i, g);
+                Self::toggle_in_row(&mut self.destab_row_z[g], q);
+            }
+        }
+    }
+
+    fn apply_cx(&mut self, control: usize, target: usize) {
+        let c = control as u16;
+        let t = target as u16;
+        // CX: X_c -> X_c X_t, Z_t -> Z_c Z_t
+        for g in 0..self.num_qubits {
+            if Self::contains(&self.stab_row_x[g], c) {
+                Self::toggle_in_row(&mut self.stab_row_x[g], t);
+            }
+            if Self::contains(&self.stab_row_z[g], t) {
+                Self::toggle_in_row(&mut self.stab_row_z[g], c);
+            }
+        }
+        for g in 0..self.num_qubits {
+            if Self::contains(&self.destab_row_x[g], c) {
+                Self::toggle_in_row(&mut self.destab_row_x[g], t);
+            }
+            if Self::contains(&self.destab_row_z[g], t) {
+                Self::toggle_in_row(&mut self.destab_row_z[g], c);
+            }
+        }
+    }
+
+    fn deterministic_meas(&self, qubit: usize) -> Option<MeasurementResult> {
+        let q = qubit as u16;
+
+        // Check if any stabilizer has X on this qubit
+        for g in 0..self.num_qubits {
+            if Self::contains(&self.stab_row_x[g], q) {
+                return None;
+            }
+        }
+
+        // Collect destabilizer indices with X on this qubit
+        let mut destab_ids: SmallVec<[usize; 8]> = SmallVec::new();
+        for g in 0..self.num_qubits {
+            if Self::contains(&self.destab_row_x[g], q) {
+                destab_ids.push(g);
+            }
+        }
+
+        if destab_ids.is_empty() {
+            return Some(MeasurementResult {
+                outcome: false,
+                is_deterministic: true,
+            });
+        }
+
+        // Count minus and i signs from the stabilizers at these indices
+        let mut num_minuses: usize = 0;
+        let mut num_is: usize = 0;
+        for &g in &destab_ids {
+            if get_sign(&self.stab_signs_minus, g) {
+                num_minuses += 1;
+            }
+            if get_sign(&self.stab_signs_i, g) {
+                num_is += 1;
+            }
+        }
+
+        // Compute phase from multiplying stabilizers
+        let mut cumulative_x = vec![false; self.num_qubits];
+
+        for &g in &destab_ids {
+            // Count overlap: where this stabilizer has Z and cumulative has X
+            for &zq in &self.stab_row_z[g] {
+                if cumulative_x[zq as usize] {
+                    num_minuses += 1;
+                }
+            }
+
+            // XOR this stabilizer's X into cumulative
+            for &xq in &self.stab_row_x[g] {
+                cumulative_x[xq as usize] = !cumulative_x[xq as usize];
+            }
+        }
+
+        // Add i phase contribution (i^2 = -1, i^3 = -i)
+        if num_is & 2 != 0 {
+            num_minuses += 1;
+        }
+
+        Some(MeasurementResult {
+            outcome: num_minuses & 1 != 0,
+            is_deterministic: true,
+        })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn nondeterministic_meas(&mut self, qubit: usize, outcome: bool) -> MeasurementResult {
+        let q = qubit as u16;
+
+        // Find anti-commuting stabilizers and minimum weight one
+        let mut anticom_stabs: SmallVec<[usize; 8]> = SmallVec::new();
+        let mut min_weight = usize::MAX;
+        let mut pivot_id = 0;
+
+        for g in 0..self.num_qubits {
+            if Self::contains(&self.stab_row_x[g], q) {
+                anticom_stabs.push(g);
+                let weight = self.stab_row_x[g].len() + self.stab_row_z[g].len();
+                if weight < min_weight {
+                    min_weight = weight;
+                    pivot_id = g;
+                }
+            }
+        }
+
+        let pivot_sign_minus = get_sign(&self.stab_signs_minus, pivot_id);
+        let pivot_sign_i = get_sign(&self.stab_signs_i, pivot_id);
+
+        // Handle pivot's i-phase contribution
+        if pivot_sign_i {
+            clear_sign(&mut self.stab_signs_i, pivot_id);
+            for &g in &anticom_stabs {
+                if g == pivot_id {
+                    continue;
+                }
+                if get_sign(&self.stab_signs_i, g) {
+                    toggle_sign(&mut self.stab_signs_minus, g);
+                }
+                toggle_sign(&mut self.stab_signs_i, g);
+            }
+        }
+
+        // Clone pivot rows for use in XOR operations
+        let pivot_row_x: SmallVec<[u16; 8]> = self.stab_row_x[pivot_id].clone();
+        let pivot_row_z: SmallVec<[u16; 8]> = self.stab_row_z[pivot_id].clone();
+
+        // XOR pivot into other anti-commuting stabilizers
+        for &g in &anticom_stabs {
+            if g == pivot_id {
+                continue;
+            }
+
+            // Phase calculation: count Z_pivot & X_g overlaps
+            let mut count = 0usize;
+            for &pz in &pivot_row_z {
+                if Self::contains(&self.stab_row_x[g], pz) {
+                    count += 1;
+                }
+            }
+            if count & 1 != 0 {
+                toggle_sign(&mut self.stab_signs_minus, g);
+            }
+            if pivot_sign_minus {
+                toggle_sign(&mut self.stab_signs_minus, g);
+            }
+
+            // XOR rows
+            for &pq in &pivot_row_x {
+                Self::toggle_in_row(&mut self.stab_row_x[g], pq);
+            }
+            for &pq in &pivot_row_z {
+                Self::toggle_in_row(&mut self.stab_row_z[g], pq);
+            }
+        }
+
+        // Step 2b (Aaronson-Gottesman): XOR pivot stab into anti-commuting destabilizers
+        for g in 0..self.num_qubits {
+            if g == pivot_id {
+                continue;
+            }
+            if Self::contains(&self.destab_row_x[g], q) {
+                for &pq in &pivot_row_x {
+                    Self::toggle_in_row(&mut self.destab_row_x[g], pq);
+                }
+                for &pq in &pivot_row_z {
+                    Self::toggle_in_row(&mut self.destab_row_z[g], pq);
+                }
+            }
+        }
+
+        // Copy old pivot stabilizer to destabilizer before replacing
+        self.destab_row_x[pivot_id].clone_from(&self.stab_row_x[pivot_id]);
+        self.destab_row_z[pivot_id].clone_from(&self.stab_row_z[pivot_id]);
+        if get_sign(&self.stab_signs_minus, pivot_id) {
+            set_sign(&mut self.destab_signs_minus, pivot_id);
+        } else {
+            clear_sign(&mut self.destab_signs_minus, pivot_id);
+        }
+        clear_sign(&mut self.destab_signs_i, pivot_id);
+
+        // Replace pivot stabilizer with Z_qubit
+        self.stab_row_x[pivot_id].clear();
+        self.stab_row_z[pivot_id].clear();
+        self.stab_row_z[pivot_id].push(q);
+
+        if outcome {
+            set_sign(&mut self.stab_signs_minus, pivot_id);
+        } else {
+            clear_sign(&mut self.stab_signs_minus, pivot_id);
+        }
+        clear_sign(&mut self.stab_signs_i, pivot_id);
+
+        MeasurementResult {
+            outcome,
+            is_deterministic: false,
+        }
+    }
+
+    fn mz_single(&mut self, qubit: usize) -> MeasurementResult {
+        if let Some(result) = self.deterministic_meas(qubit) {
+            return result;
+        }
+        let outcome = self.rng.random_bool(0.5);
+        self.nondeterministic_meas(qubit, outcome)
+    }
+
+    /// Measure qubit with forced outcome for non-deterministic cases.
+    pub fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
+        if let Some(result) = self.deterministic_meas(qubit) {
+            return result;
+        }
+        self.nondeterministic_meas(qubit, forced_outcome)
+    }
+}
+
+impl QuantumSimulator for SparseRowOnly {
+    fn reset(&mut self) -> &mut Self {
+        let n = self.num_qubits;
+        for g in 0..n {
+            self.stab_row_x[g].clear();
+            self.stab_row_z[g].clear();
+            self.stab_row_z[g].push(g as u16);
+            self.destab_row_x[g].clear();
+            self.destab_row_x[g].push(g as u16);
+            self.destab_row_z[g].clear();
+        }
+        self.stab_signs_minus.fill(0);
+        self.stab_signs_i.fill(0);
+        self.destab_signs_minus.fill(0);
+        self.destab_signs_i.fill(0);
+        self
+    }
+}
+
+impl RngManageable for SparseRowOnly {
+    type Rng = PecosRng;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.rng = rng;
+    }
+
+    fn rng(&self) -> &Self::Rng {
+        &self.rng
+    }
+
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        &mut self.rng
+    }
+}
+
+impl CliffordGateable for SparseRowOnly {
+    fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.apply_sz(q.index());
+        }
+        self
+    }
+
+    fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.apply_h(q.index());
+        }
+        self
+    }
+
+    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for pair in qubits.chunks_exact(2) {
+            self.apply_cx(pair[0].index(), pair[1].index());
+        }
+        self
+    }
+
+    fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits.iter().map(|q| self.mz_single(q.index())).collect()
+    }
+}
+
+// ========== StabilizerTableauSimulator implementations ==========
+
+/// Build a tableau string from column-only u64 storage.
+fn col_only_tableau_string(
+    num_qubits: usize,
+    words_per_col: usize,
+    col_x: &[u64],
+    col_z: &[u64],
+    signs_minus: &[u64],
+    signs_i: &[u64],
+) -> String {
+    let mut result = String::with_capacity(num_qubits * num_qubits + num_qubits + 2);
+    for g in 0..num_qubits {
+        if get_sign(signs_minus, g) {
+            result.push('-');
+        } else {
+            result.push('+');
+        }
+        if get_sign(signs_i, g) {
+            result.push('i');
+        }
+
+        for qubit in 0..num_qubits {
+            let word_idx = qubit * words_per_col + g / 64;
+            let bit_mask = 1u64 << (g % 64);
+            let in_x = col_x[word_idx] & bit_mask != 0;
+            let in_z = col_z[word_idx] & bit_mask != 0;
+            let ch = match (in_x, in_z) {
+                (false, false) => 'I',
+                (true, false) => 'X',
+                (false, true) => 'Z',
+                (true, true) => 'Y',
+            };
+            result.push(ch);
+        }
+        result.push('\n');
+    }
+    result
+}
+
+/// Build a tableau string from row-only u64 storage.
+fn row_only_tableau_string(
+    num_qubits: usize,
+    words_per_row: usize,
+    row_x: &[u64],
+    row_z: &[u64],
+    signs_minus: &[u64],
+    signs_i: &[u64],
+) -> String {
+    let mut result = String::with_capacity(num_qubits * num_qubits + num_qubits + 2);
+    for g in 0..num_qubits {
+        if get_sign(signs_minus, g) {
+            result.push('-');
+        } else {
+            result.push('+');
+        }
+        if get_sign(signs_i, g) {
+            result.push('i');
+        }
+
+        let base = g * words_per_row;
+        for qubit in 0..num_qubits {
+            let word_idx = base + qubit / 64;
+            let bit_mask = 1u64 << (qubit % 64);
+            let in_x = row_x[word_idx] & bit_mask != 0;
+            let in_z = row_z[word_idx] & bit_mask != 0;
+            let ch = match (in_x, in_z) {
+                (false, false) => 'I',
+                (true, false) => 'X',
+                (false, true) => 'Z',
+                (true, true) => 'Y',
+            };
+            result.push(ch);
+        }
+        result.push('\n');
+    }
+    result
+}
+
+impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseStabColOnly<R> {
+    fn stab_tableau(&self) -> String {
+        col_only_tableau_string(
+            self.num_qubits,
+            self.words_per_col,
+            &self.stab_col_x,
+            &self.stab_col_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        )
+    }
+
+    fn destab_tableau(&self) -> String {
+        col_only_tableau_string(
+            self.num_qubits,
+            self.words_per_col,
+            &self.destab_col_x,
+            &self.destab_col_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        )
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseStabRowOnly<R> {
+    fn stab_tableau(&self) -> String {
+        row_only_tableau_string(
+            self.num_qubits,
+            self.words_per_row,
+            &self.stab_row_x,
+            &self.stab_row_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        )
+    }
+
+    fn destab_tableau(&self) -> String {
+        row_only_tableau_string(
+            self.num_qubits,
+            self.words_per_row,
+            &self.destab_row_x,
+            &self.destab_row_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        )
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+impl StabilizerTableauSimulator for SparseColOnly {
+    fn stab_tableau(&self) -> String {
+        sparse_col_tableau_string(
+            self.num_qubits,
+            &self.stab_col_x,
+            &self.stab_col_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        )
+    }
+
+    fn destab_tableau(&self) -> String {
+        sparse_col_tableau_string(
+            self.num_qubits,
+            &self.destab_col_x,
+            &self.destab_col_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        )
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+/// Build a tableau string from sparse column storage (`SmallVec`<[u16; 8]>).
+fn sparse_col_tableau_string(
+    num_qubits: usize,
+    col_x: &[SmallVec<[u16; 8]>],
+    col_z: &[SmallVec<[u16; 8]>],
+    signs_minus: &[u64],
+    signs_i: &[u64],
+) -> String {
+    let mut result = String::with_capacity(num_qubits * num_qubits + num_qubits + 2);
+    for g in 0..num_qubits {
+        if get_sign(signs_minus, g) {
+            result.push('-');
+        } else {
+            result.push('+');
+        }
+        if get_sign(signs_i, g) {
+            result.push('i');
+        }
+
+        let g16 = g as u16;
+        for qubit in 0..num_qubits {
+            let in_x = col_x[qubit].binary_search(&g16).is_ok();
+            let in_z = col_z[qubit].binary_search(&g16).is_ok();
+            let ch = match (in_x, in_z) {
+                (false, false) => 'I',
+                (true, false) => 'X',
+                (false, true) => 'Z',
+                (true, true) => 'Y',
+            };
+            result.push(ch);
+        }
+        result.push('\n');
+    }
+    result
+}
+
+/// Build a tableau string from sparse row storage (`SmallVec`<[u16; 8]>).
+fn sparse_row_tableau_string(
+    num_qubits: usize,
+    row_x: &[SmallVec<[u16; 8]>],
+    row_z: &[SmallVec<[u16; 8]>],
+    signs_minus: &[u64],
+    signs_i: &[u64],
+) -> String {
+    let mut result = String::with_capacity(num_qubits * num_qubits + num_qubits + 2);
+    for g in 0..num_qubits {
+        if get_sign(signs_minus, g) {
+            result.push('-');
+        } else {
+            result.push('+');
+        }
+        if get_sign(signs_i, g) {
+            result.push('i');
+        }
+
+        for qubit in 0..num_qubits {
+            let q = qubit as u16;
+            let in_x = row_x[g].binary_search(&q).is_ok();
+            let in_z = row_z[g].binary_search(&q).is_ok();
+            let ch = match (in_x, in_z) {
+                (false, false) => 'I',
+                (true, false) => 'X',
+                (false, true) => 'Z',
+                (true, true) => 'Y',
+            };
+            result.push(ch);
+        }
+        result.push('\n');
+    }
+    result
+}
+
+impl StabilizerTableauSimulator for SparseRowOnly {
+    fn stab_tableau(&self) -> String {
+        sparse_row_tableau_string(
+            self.num_qubits,
+            &self.stab_row_x,
+            &self.stab_row_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        )
+    }
+
+    fn destab_tableau(&self) -> String {
+        sparse_row_tableau_string(
+            self.num_qubits,
+            &self.destab_row_x,
+            &self.destab_row_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        )
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
 // ========== ForcedMeasurement implementations ==========
 
 use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
@@ -1695,6 +2455,12 @@ impl ForcedMeasurement for SparseColOnly {
     }
 }
 
+impl ForcedMeasurement for SparseRowOnly {
+    fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
+        SparseRowOnly::mz_forced(self, qubit, forced_outcome)
+    }
+}
+
 // ========== StabilizerSimulator implementations ==========
 
 impl StabilizerSimulator for DenseStabColOnly<PecosRng> {
@@ -1710,6 +2476,12 @@ impl StabilizerSimulator for DenseStabRowOnly<PecosRng> {
 }
 
 impl StabilizerSimulator for SparseColOnly {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        Self::with_seed(num_qubits, seed)
+    }
+}
+
+impl StabilizerSimulator for SparseRowOnly {
     fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self::with_seed(num_qubits, seed)
     }
@@ -1853,6 +2625,55 @@ mod tests {
     #[test]
     fn test_sparse_col_only_reset() {
         let mut sim: SparseColOnly = SparseColOnly::with_seed(2, 42);
+        sim.h(&[QubitId(0)]);
+        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.reset();
+        // After reset, should be back to |00> state
+        let results = sim.mz(&[QubitId(0), QubitId(1)]);
+        assert!(results[0].is_deterministic);
+        assert!(!results[0].outcome);
+        assert!(results[1].is_deterministic);
+        assert!(!results[1].outcome);
+    }
+
+    // SparseRowOnly tests
+    #[test]
+    fn test_sparse_row_only_bell_state() {
+        let mut sim: SparseRowOnly = SparseRowOnly::with_seed(2, 42);
+        sim.h(&[QubitId(0)]);
+        sim.cx(&[QubitId(0), QubitId(1)]);
+        let results = sim.mz(&[QubitId(0), QubitId(1)]);
+        assert_eq!(results[0].outcome, results[1].outcome);
+    }
+
+    #[test]
+    fn test_sparse_row_only_ghz() {
+        let mut sim: SparseRowOnly = SparseRowOnly::with_seed(5, 123);
+        sim.h(&[QubitId(0)]);
+        for i in 0..4 {
+            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+        }
+        let results = sim.mz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
+        let first = results[0].outcome;
+        for r in &results {
+            assert_eq!(r.outcome, first);
+        }
+    }
+
+    #[test]
+    fn test_sparse_row_only_deterministic_z() {
+        let mut sim: SparseRowOnly = SparseRowOnly::new(3);
+        // In |0> state, Z measurement should be deterministic 0
+        let results = sim.mz(&[QubitId(0), QubitId(1), QubitId(2)]);
+        for r in &results {
+            assert!(r.is_deterministic);
+            assert!(!r.outcome);
+        }
+    }
+
+    #[test]
+    fn test_sparse_row_only_reset() {
+        let mut sim: SparseRowOnly = SparseRowOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
         sim.cx(&[QubitId(0), QubitId(1)]);
         sim.reset();
@@ -2362,5 +3183,144 @@ mod tests {
     fn test_sparse_col_only_full_stabilizer_suite() {
         let mut sim: SparseColOnly = SparseColOnly::with_seed(8, 42);
         run_full_stabilizer_test_suite(&mut sim, 8);
+    }
+
+    #[test]
+    fn test_sparse_row_only_full_stabilizer_suite() {
+        let mut sim: SparseRowOnly = SparseRowOnly::with_seed(8, 42);
+        run_full_stabilizer_test_suite(&mut sim, 8);
+    }
+
+    /// Generate a random Clifford circuit using only H, SZ, CX (the universal generators)
+    /// with mid-circuit forced measurements and init |0> operations, then compare
+    /// the variant simulator against `SparseStab` (reference).
+    fn mid_circuit_meas_test<S: CliffordGateable + ForcedMeasurement>(
+        variant: &mut S,
+        reference: &mut SparseStab,
+        num_qubits: usize,
+        num_gates: usize,
+        seed: u64,
+    ) {
+        use pecos_rng::{PecosRng, RngExt};
+        let mut rng = PecosRng::seed_from_u64(seed);
+
+        for gate_idx in 0..num_gates {
+            let gate_type: u8 = rng.random_range(0..10);
+            let q0 = rng.random_range(0..num_qubits);
+
+            match gate_type {
+                0 => {
+                    variant.h(&[QubitId(q0)]);
+                    reference.h(&[QubitId(q0)]);
+                }
+                1 => {
+                    variant.sz(&[QubitId(q0)]);
+                    reference.sz(&[QubitId(q0)]);
+                }
+                2..=4 if num_qubits >= 2 => {
+                    let mut q1 = rng.random_range(0..num_qubits);
+                    while q1 == q0 {
+                        q1 = rng.random_range(0..num_qubits);
+                    }
+                    variant.cx(&[QubitId(q0), QubitId(q1)]);
+                    reference.cx(&[QubitId(q0), QubitId(q1)]);
+                }
+                5..=7 => {
+                    // Forced measurement (mid-circuit)
+                    let forced: bool = rng.random();
+                    let rv = variant.mz_forced(q0, forced);
+                    let rr = reference.mz_forced(q0, forced);
+                    assert_eq!(
+                        rv.outcome, rr.outcome,
+                        "seed {seed} gate {gate_idx}: mz_forced({q0}, {forced}) outcome mismatch"
+                    );
+                    assert_eq!(
+                        rv.is_deterministic, rr.is_deterministic,
+                        "seed {seed} gate {gate_idx}: mz_forced({q0}, {forced}) determinism mismatch"
+                    );
+                }
+                8 => {
+                    // Init |0> = mz_forced(false) + conditional X
+                    let rv = variant.mz_forced(q0, false);
+                    let rr = reference.mz_forced(q0, false);
+                    assert_eq!(
+                        rv.outcome, rr.outcome,
+                        "seed {seed} gate {gate_idx}: init|0> mz_forced({q0}) outcome mismatch"
+                    );
+                    if rv.outcome {
+                        variant.x(&[QubitId(q0)]);
+                        reference.x(&[QubitId(q0)]);
+                    }
+                }
+                _ => {
+                    // SZ dagger = SZ^3
+                    variant.sz(&[QubitId(q0)]);
+                    variant.sz(&[QubitId(q0)]);
+                    variant.sz(&[QubitId(q0)]);
+                    reference.szdg(&[QubitId(q0)]);
+                }
+            }
+        }
+
+        // Final measurement of all qubits
+        for q in 0..num_qubits {
+            let forced: bool = PecosRng::seed_from_u64(seed + 1000 + q as u64).random();
+            let rv = variant.mz_forced(q, forced);
+            let rr = reference.mz_forced(q, forced);
+            assert_eq!(
+                rv.outcome, rr.outcome,
+                "seed {seed}: final mz_forced({q}, {forced}) outcome mismatch"
+            );
+            assert_eq!(
+                rv.is_deterministic, rr.is_deterministic,
+                "seed {seed}: final mz_forced({q}, {forced}) determinism mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn test_col_only_mid_circuit_meas() {
+        use pecos_rng::PecosRng;
+        let num_qubits = 10;
+        for i in 0..200 {
+            let seed = 50_000 + i;
+            let mut variant: DenseStabColOnly<PecosRng> = DenseStabColOnly::new(num_qubits);
+            let mut reference = SparseStab::new(num_qubits);
+            mid_circuit_meas_test(&mut variant, &mut reference, num_qubits, 50, seed);
+        }
+    }
+
+    #[test]
+    fn test_row_only_mid_circuit_meas() {
+        use pecos_rng::PecosRng;
+        let num_qubits = 10;
+        for i in 0..200 {
+            let seed = 60_000 + i;
+            let mut variant: DenseStabRowOnly<PecosRng> = DenseStabRowOnly::new(num_qubits);
+            let mut reference = SparseStab::new(num_qubits);
+            mid_circuit_meas_test(&mut variant, &mut reference, num_qubits, 50, seed);
+        }
+    }
+
+    #[test]
+    fn test_sparse_col_only_mid_circuit_meas() {
+        let num_qubits = 10;
+        for i in 0..200 {
+            let seed = 70_000 + i;
+            let mut variant = SparseColOnly::new(num_qubits);
+            let mut reference = SparseStab::new(num_qubits);
+            mid_circuit_meas_test(&mut variant, &mut reference, num_qubits, 50, seed);
+        }
+    }
+
+    #[test]
+    fn test_sparse_row_only_mid_circuit_meas() {
+        let num_qubits = 10;
+        for i in 0..200 {
+            let seed = 80_000 + i;
+            let mut variant = SparseRowOnly::new(num_qubits);
+            let mut reference = SparseStab::new(num_qubits);
+            mid_circuit_meas_test(&mut variant, &mut reference, num_qubits, 50, seed);
+        }
     }
 }

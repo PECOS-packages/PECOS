@@ -25,7 +25,7 @@ use pecos_neo::prelude::{
     CommandBuilder, ComposableNoiseModel, CorePlugin, MeasurementChannel, PreparationChannel,
     SingleQubitChannel, TwoQubitChannel,
 };
-use pecos_neo::runner::Runner;
+use pecos_neo::runner::CircuitRunner;
 use pecos_neo::sampling::{MonteCarloConfig, MonteCarloRunner};
 use pecos_qsim::SparseStab;
 use std::hint::black_box;
@@ -82,10 +82,11 @@ fn bench_noise_application<M: Measurement>(c: &mut Criterion<M>) {
                     let noise = ComposableNoiseModel::new()
                         .add_plugin(CorePlugin)
                         .add_channel(SingleQubitChannel::depolarizing(0.001));
-                    let mut runner = Runner::new(SparseStab::new(100))
+                    let mut runner = CircuitRunner::<SparseStab>::new()
                         .with_noise(noise)
                         .with_seed(42);
-                    let result = runner.run_shot(&commands).unwrap();
+                    let mut sim = SparseStab::new(100);
+                    let result = runner.apply_circuit(&mut sim, &commands).unwrap();
                     black_box(result)
                 });
             },
@@ -104,10 +105,11 @@ fn bench_noise_application<M: Measurement>(c: &mut Criterion<M>) {
 
                 b.iter(|| {
                     let noise = NeoNoiseModelBuilder::new().with_p1(0.001).build();
-                    let mut runner = Runner::new(SparseStab::new(100))
+                    let mut runner = CircuitRunner::<SparseStab>::new()
                         .with_noise(noise)
                         .with_seed(42);
-                    let result = runner.run_shot(&commands).unwrap();
+                    let mut sim = SparseStab::new(100);
+                    let result = runner.apply_circuit(&mut sim, &commands).unwrap();
                     black_box(result)
                 });
             },
@@ -149,7 +151,7 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
         });
     });
 
-    // pecos-neo with Runner
+    // pecos-neo with CircuitRunner
     group.bench_function("pecos-neo/bell_state", |b| {
         let commands = CommandBuilder::new()
             .pz(0)
@@ -165,12 +167,14 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
                 .add_plugin(CorePlugin)
                 .add_channel(SingleQubitChannel::depolarizing(0.001))
                 .add_channel(TwoQubitChannel::depolarizing(0.001));
-            let mut runner = Runner::new(SparseStab::new(2))
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(noise)
                 .with_seed(42);
+            let mut sim = SparseStab::new(2);
 
             for _ in 0..100 {
-                let result = runner.run_shot(&commands).unwrap();
+                sim.reset();
+                let result = runner.apply_circuit(&mut sim, &commands).unwrap();
                 black_box(result);
             }
         });
@@ -194,12 +198,14 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
                 .add_channel(SingleQubitChannel::depolarizing(0.001))
                 .add_channel(TwoQubitChannel::depolarizing(0.01))
                 .add_channel(MeasurementChannel::symmetric(0.005));
-            let mut runner = Runner::new(SparseStab::new(2))
+            let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(noise)
                 .with_seed(42);
+            let mut sim = SparseStab::new(2);
 
             for _ in 0..100 {
-                let result = runner.run_shot(&commands).unwrap();
+                sim.reset();
+                let result = runner.apply_circuit(&mut sim, &commands).unwrap();
                 black_box(result);
             }
         });
@@ -217,10 +223,12 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
             .build();
 
         b.iter(|| {
-            let mut runner = Runner::new(SparseStab::new(2)).with_seed(42);
+            let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+            let mut sim = SparseStab::new(2);
 
             for _ in 0..100 {
-                let result = runner.run_shot(&commands).unwrap();
+                sim.reset();
+                let result = runner.apply_circuit(&mut sim, &commands).unwrap();
                 black_box(result);
             }
         });
@@ -260,7 +268,7 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
                     let result = MonteCarloRunner::run(
                         &commands,
                         config,
-                        || Runner::new(SparseStab::new(2)),
+                        || (CircuitRunner::new(), SparseStab::new(2)),
                         |outcomes| {
                             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
                             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
@@ -304,9 +312,10 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
                                     let sim = world.simulators.get(entity).unwrap();
                                     let rng = world.rngs.get(entity).unwrap();
 
-                                    let mut runner = Runner::new(sim.simulator.clone())
-                                        .with_rng(rng.rng.clone());
-                                    let outcomes = runner.run_shot(&commands).unwrap();
+                                    let mut runner = CircuitRunner::new().with_rng(rng.rng.clone());
+                                    let mut sim_clone = sim.simulator.clone();
+                                    let outcomes =
+                                        runner.apply_circuit(&mut sim_clone, &commands).unwrap();
                                     let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
                                     let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
                                     (b0, b1)
@@ -352,7 +361,7 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
                         .with_p1(0.01)
                         .with_p2(0.01)
                         .build();
-                    Runner::new(SparseStab::new(2)).with_noise(noise)
+                    (CircuitRunner::new().with_noise(noise), SparseStab::new(2))
                 },
                 |outcomes| {
                     let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);

@@ -22,13 +22,19 @@ smallvec.workspace = true
 thiserror.workspace = true
 # Optional dependencies for error conversions
 anyhow = { workspace = true, optional = true }
+# Optional serde support
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand_xoshiro.workspace = true
+serde_json.workspace = true
 
 [features]
 default = []
 anyhow = ["dep:anyhow"]
+serde = ["dep:serde"]
+json = ["serde", "dep:serde_json"]
 
 [lints]
 workspace = true

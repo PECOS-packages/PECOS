@@ -10,13 +10,13 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Tests for EventHandlers passed through sim_neo().
+//! Tests for `EventHandlers` passed through `sim_neo()`.
 
 use pecos_core::impl_signal;
 use pecos_neo::prelude::*;
 use pecos_neo::tool::sim_neo;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Copy, Clone, Debug)]
 struct RoundMarker(pub u32);
@@ -87,7 +87,11 @@ fn event_handlers_empty_is_noop() {
     let results_without = sim_neo(circuit).shots(10).seed(42).run();
 
     assert_eq!(results_with.len(), results_without.len());
-    for (a, b) in results_with.outcomes.iter().zip(results_without.outcomes.iter()) {
+    for (a, b) in results_with
+        .outcomes
+        .iter()
+        .zip(results_without.outcomes.iter())
+    {
         assert_eq!(
             a.get_bit(QubitId(0)),
             b.get_bit(QubitId(0)),

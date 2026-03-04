@@ -64,8 +64,10 @@
 //! ```
 
 mod circuit;
+mod circuit_display;
 mod dag_circuit;
 pub mod operator_matrix;
+pub mod pass;
 mod tick_circuit;
 pub mod tick_circuit_soa;
 
@@ -77,7 +79,8 @@ pub use dag_circuit::{
     Attribute, DagCircuit, DagTraversalIndex, MeasureHandle, PrepHandle, TraversalWorkBuffers,
 };
 pub use tick_circuit::{
-    QubitConflictError, Tick, TickCircuit, TickHandle, TickMeasureHandle, TickPrepHandle,
+    CustomGateError, GateSignatureMismatchError, QubitConflictError, Tick, TickCircuit, TickHandle,
+    TickMeasureHandle, TickPrepHandle,
 };
 pub use tick_circuit_soa::{
     CircuitIndexes, GateBatch, GateId, GateStorage, MetadataStorage, TickBatches, TickCircuitSoA,

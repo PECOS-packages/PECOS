@@ -835,10 +835,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             &mut self.gate_handlers.after_preparation,
             handlers.gate_handlers.after_preparation,
         );
-        merge_vec(
-            &mut self.gate_handlers.idle,
-            handlers.gate_handlers.idle,
-        );
+        merge_vec(&mut self.gate_handlers.idle, handlers.gate_handlers.idle);
 
         // Merge signal handlers by TypeId
         for (type_id, src_handlers) in handlers.signal_handlers.handlers {
@@ -1157,11 +1154,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         qubits: &[QubitId],
         angles: &[Angle64],
     ) -> Result<(), ExecutionError> {
-        let command = GateCommand::with_angles(
-            gate_type,
-            qubits.to_vec(),
-            angles.to_vec(),
-        );
+        let command = GateCommand::with_angles(gate_type, qubits.to_vec(), angles.to_vec());
         self.execute_queue_command(state, &command)
     }
 
@@ -1580,7 +1573,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 
     /// Execute measurement in a given basis with result tracking.
-    fn execute_measure(&mut self, sim: &mut S, qubit: QubitId, basis: MeasBasis, result_id: ResultId) {
+    fn execute_measure(
+        &mut self,
+        sim: &mut S,
+        qubit: QubitId,
+        basis: MeasBasis,
+        result_id: ResultId,
+    ) {
         // Rotate to Z basis
         match basis {
             MeasBasis::Z => {}
@@ -2979,9 +2978,15 @@ mod tests {
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
-        runner.apply_gate(&mut state, GateType::PZ, &[QubitId(0)], &[]).unwrap();
-        runner.apply_gate(&mut state, GateType::H, &[QubitId(0)], &[]).unwrap();
-        runner.apply_gate(&mut state, GateType::MZ, &[QubitId(0)], &[]).unwrap();
+        runner
+            .apply_gate(&mut state, GateType::PZ, &[QubitId(0)], &[])
+            .unwrap();
+        runner
+            .apply_gate(&mut state, GateType::H, &[QubitId(0)], &[])
+            .unwrap();
+        runner
+            .apply_gate(&mut state, GateType::MZ, &[QubitId(0)], &[])
+            .unwrap();
 
         let outcomes = runner.take_outcomes();
         assert_eq!(outcomes.len(), 1);

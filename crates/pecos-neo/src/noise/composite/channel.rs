@@ -554,7 +554,10 @@ impl CompositeChannelBuilder {
     ///
     /// The primitive is applied before each measurement.
     #[must_use]
-    pub fn before_measurement<P: Primitive>(name: &'static str, primitive: P) -> CompositeChannel<P> {
+    pub fn before_measurement<P: Primitive>(
+        name: &'static str,
+        primitive: P,
+    ) -> CompositeChannel<P> {
         CompositeChannel::new(name, primitive).with_filter(CompositeEventFilter::BeforeMeasurement)
     }
 
@@ -562,7 +565,10 @@ impl CompositeChannelBuilder {
     ///
     /// The primitive is applied after each measurement.
     #[must_use]
-    pub fn after_measurement<P: Primitive>(name: &'static str, primitive: P) -> CompositeChannel<P> {
+    pub fn after_measurement<P: Primitive>(
+        name: &'static str,
+        primitive: P,
+    ) -> CompositeChannel<P> {
         CompositeChannel::new(name, primitive).with_filter(CompositeEventFilter::AfterMeasurement)
     }
 
@@ -940,7 +946,8 @@ impl CompositeChannelBuilder {
         probability: f64,
         primitive: P,
     ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive).with_filter(CompositeEventFilter::AnyGate)
+        BatchCompositeChannel::new(name, probability, primitive)
+            .with_filter(CompositeEventFilter::AnyGate)
     }
 
     /// Create a batch idle noise channel with geometric sampling.
@@ -950,7 +957,8 @@ impl CompositeChannelBuilder {
         probability: f64,
         primitive: P,
     ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive).with_filter(CompositeEventFilter::IdleTime)
+        BatchCompositeChannel::new(name, probability, primitive)
+            .with_filter(CompositeEventFilter::IdleTime)
     }
 
     /// Create a batch reset noise channel with geometric sampling.
@@ -960,7 +968,8 @@ impl CompositeChannelBuilder {
         probability: f64,
         primitive: P,
     ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive).with_filter(CompositeEventFilter::AfterReset)
+        BatchCompositeChannel::new(name, probability, primitive)
+            .with_filter(CompositeEventFilter::AfterReset)
     }
 
     /// Create a batch before-circuit noise channel with geometric sampling.
@@ -1157,7 +1166,10 @@ impl CompositeChannelBuilder {
     /// The primitive is applied to each other active qubit when the specified
     /// events occur.
     #[must_use]
-    pub fn crosstalk<P: Primitive>(name: &'static str, primitive: P) -> CompositeCrosstalkChannel<P> {
+    pub fn crosstalk<P: Primitive>(
+        name: &'static str,
+        primitive: P,
+    ) -> CompositeCrosstalkChannel<P> {
         CompositeCrosstalkChannel::new(name, primitive).global()
     }
 
@@ -1782,7 +1794,9 @@ mod tests {
     #[test]
     fn test_two_stage_fired_flags_integration() {
         use crate::noise::composite::action::SampleEmissionWithProb;
-        use crate::noise::composite::condition::{Condition, IFired, PartnerFired, PartnerOnlyFired};
+        use crate::noise::composite::condition::{
+            Condition, IFired, PartnerFired, PartnerOnlyFired,
+        };
 
         // Simulate two-stage processing manually
         let mut ctx = NoiseContext::new();
@@ -1796,14 +1810,22 @@ mod tests {
         // Qubit 0: fires
         ctx.set_current_qubit_index(0, &qubits);
         let action0 = SampleEmissionWithProb::new(1.0);
-        let _ =
-            crate::noise::composite::action::GateAction::apply(&action0, QubitId(0), &mut ctx, &mut rng);
+        let _ = crate::noise::composite::action::GateAction::apply(
+            &action0,
+            QubitId(0),
+            &mut ctx,
+            &mut rng,
+        );
 
         // Qubit 1: does not fire (0% probability)
         ctx.set_current_qubit_index(1, &qubits);
         let action1 = SampleEmissionWithProb::new(0.0);
-        let _ =
-            crate::noise::composite::action::GateAction::apply(&action1, QubitId(1), &mut ctx, &mut rng);
+        let _ = crate::noise::composite::action::GateAction::apply(
+            &action1,
+            QubitId(1),
+            &mut ctx,
+            &mut rng,
+        );
 
         // Stage 2: Check conditions
         // From qubit 0's perspective
@@ -1840,7 +1862,9 @@ mod tests {
     #[test]
     fn test_two_stage_partner_depolarize_scenario() {
         use crate::noise::composite::CompositeResponse;
-        use crate::noise::composite::action::{GateAction, IndependentEmissionWithPartnerDepolarize};
+        use crate::noise::composite::action::{
+            GateAction, IndependentEmissionWithPartnerDepolarize,
+        };
 
         // Test the full emission-with-partner-depolarize action
         let emission_prob = 0.5;
@@ -2055,7 +2079,8 @@ mod tests {
 
     #[test]
     fn test_between_layers_channel() {
-        let channel = CompositeChannelBuilder::between_layers("layer_dephasing", prob(0.5, inject_z()));
+        let channel =
+            CompositeChannelBuilder::between_layers("layer_dephasing", prob(0.5, inject_z()));
 
         let qubits = [QubitId(0), QubitId(1)];
         let layer_event = NoiseEvent::BetweenLayers {

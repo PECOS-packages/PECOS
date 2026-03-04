@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import pecos as pc
-from pecos.simulators import SparseSim, SparseSimCpp, SparseSimPy
+from pecos.simulators import SparseSim, SparseSimPy, Stab
 
 
 def test_random_circuits() -> None:
@@ -61,7 +61,7 @@ def test_random_circuits() -> None:
 
     state_sims.append(SparseSimPy)
     state_sims.append(SparseSim)
-    state_sims.append(SparseSimCpp)
+    state_sims.append(Stab)
 
     assert run_circuit_test(state_sims, num_qubits=10, circuit_depth=50)
 
@@ -137,28 +137,18 @@ def run_a_circuit(
     state = state_rep(num_qubits)
     measurements = []
 
-    if isinstance(state, SparseSim | SparseSimCpp):
+    if isinstance(state, SparseSim):
         state.bindings["measure Z"] = state.bindings["MZForced"]
         state.bindings["init |0>"] = state.bindings.get(
             "PZForced",
             state.bindings.get("init |0>"),
         )
-        # Don't set seed for C++ simulator - use numpy random for forced outcomes instead
-        # if isinstance(state, SparseSimCpp) and hasattr(state, 'set_seed') and test_seed is not None:
-        #     # Use the test seed directly for C++ RNG
-        #     state.set_seed(test_seed)
 
-    for i, (element, q) in enumerate(circuit):
+    for _i, (element, q) in enumerate(circuit):
         m = -1
         if element == "measure Z":
-            if verbose and isinstance(state, SparseSimCpp) and i == 26:  # Debug the 27th operation
-                pass
-                # print(f"\n[DEBUG] Op {i}: {element} on qubit {q}, forcing outcome to 0")
             m = state.run_gate(element, {q}, forced_outcome=0)
             m = m.get(q, 0)
-            if verbose and isinstance(state, SparseSimCpp) and i == 26:
-                pass
-                # print(f"[DEBUG] Result: {m}\n")
             measurements.append(m)
 
         elif element == "init |0>":

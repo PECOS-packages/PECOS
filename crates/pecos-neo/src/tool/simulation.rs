@@ -393,7 +393,12 @@ where
 #[must_use]
 pub fn custom_backend_with_rotations<S, F>(factory: F) -> CustomBackendBuilder
 where
-    S: CliffordGateable + ArbitraryRotationGateable + RngManageable<Rng = PecosRng> + Send + Sync + 'static,
+    S: CliffordGateable
+        + ArbitraryRotationGateable
+        + RngManageable<Rng = PecosRng>
+        + Send
+        + Sync
+        + 'static,
     F: Fn(usize) -> S + Send + Sync + 'static,
 {
     CustomBackendBuilder {
@@ -406,7 +411,12 @@ struct RotationSimulatorFactory<F>(F);
 
 impl<S, F> SimulatorFactory for RotationSimulatorFactory<F>
 where
-    S: CliffordGateable + ArbitraryRotationGateable + RngManageable<Rng = PecosRng> + Send + Sync + 'static,
+    S: CliffordGateable
+        + ArbitraryRotationGateable
+        + RngManageable<Rng = PecosRng>
+        + Send
+        + Sync
+        + 'static,
     F: Fn(usize) -> S + Send + Sync,
 {
     fn create_runner(
@@ -4012,11 +4022,7 @@ mod tests {
     fn test_sim_neo_gate_definitions_with_statevec() {
         use crate::extensible::GateDefinitions;
 
-        let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0)
-            .mz(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let defs = GateDefinitions::new();
 
@@ -4128,11 +4134,7 @@ mod tests {
     #[test]
     fn test_sim_neo_max_decomp_depth() {
         // Verify that max_decomp_depth builder method works without error
-        let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0)
-            .mz(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .max_decomp_depth(20)
@@ -4154,11 +4156,7 @@ mod tests {
     #[test]
     fn test_sim_neo_max_decomp_depth_parallel() {
         // Verify max_decomp_depth works with parallel workers
-        let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0)
-            .mz(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .max_decomp_depth(20)
@@ -4187,7 +4185,7 @@ mod tests {
             .build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend_with_rotations(|n| StateVec::new(n)))
+            .quantum(custom_backend_with_rotations(StateVec::new))
             .shots(10)
             .seed(42)
             .build()
@@ -4209,10 +4207,8 @@ mod tests {
         use crate::runner::GateOverrides;
 
         // Override X gate to be identity (do nothing) -- measurement should stay 0
-        let overrides = GateOverrides::<SparseStab>::new().register(
-            gates::X,
-            |_sim, _angles, _qubits| true,
-        );
+        let overrides =
+            GateOverrides::<SparseStab>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
         let circuit = CommandBuilder::new()
             .pz(0)
@@ -4244,16 +4240,10 @@ mod tests {
         use crate::runner::GateOverrides;
 
         // Override X to be identity -- verify it works with parallel workers
-        let overrides = GateOverrides::<SparseStab>::new().register(
-            gates::X,
-            |_sim, _angles, _qubits| true,
-        );
+        let overrides =
+            GateOverrides::<SparseStab>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
-        let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0)
-            .mz(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .gate_overrides(overrides)
@@ -4279,16 +4269,10 @@ mod tests {
         use crate::runner::GateOverrides;
 
         // Override X to be identity on StateVec backend
-        let overrides = GateOverrides::<StateVec>::new().register(
-            gates::X,
-            |_sim, _angles, _qubits| true,
-        );
+        let overrides =
+            GateOverrides::<StateVec>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
-        let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0)
-            .mz(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let results = sim_neo(circuit)
             .quantum(state_vector())
@@ -4314,10 +4298,8 @@ mod tests {
         use crate::extensible::gates;
         use crate::runner::GateOverrides;
 
-        let overrides = GateOverrides::<StateVec>::new().register(
-            gates::X,
-            |_sim, _angles, _qubits| true,
-        );
+        let overrides =
+            GateOverrides::<StateVec>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
         // SparseStab is the default backend -- StateVec overrides should panic
         sim_neo(CommandBuilder::new().pz(0).x(0).mz(0).build())
@@ -4334,10 +4316,8 @@ mod tests {
         use crate::extensible::gates;
         use crate::runner::GateOverrides;
 
-        let overrides = GateOverrides::<SparseStab>::new().register(
-            gates::X,
-            |_sim, _angles, _qubits| true,
-        );
+        let overrides =
+            GateOverrides::<SparseStab>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
         sim_neo(CommandBuilder::new().pz(0).x(0).mz(0).build())
             .quantum(state_vector())
@@ -4356,13 +4336,11 @@ mod tests {
 
         // Override X to apply Z instead. Z|0> = |0>, so measurement stays 0
         // (without override, X|0> = |1>)
-        let overrides = GateOverrides::<SparseStab>::new().register(
-            gates::X,
-            |sim, _angles, qubits| {
+        let overrides =
+            GateOverrides::<SparseStab>::new().register(gates::X, |sim, _angles, qubits| {
                 sim.z(qubits);
                 true
-            },
-        );
+            });
 
         let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
@@ -4386,11 +4364,7 @@ mod tests {
     fn test_sim_neo_gate_definitions_parallel() {
         use crate::extensible::GateDefinitions;
 
-        let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0)
-            .mz(0)
-            .build();
+        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
 
         let defs = GateDefinitions::new();
 

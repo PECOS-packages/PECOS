@@ -226,11 +226,15 @@ impl Engine for QuestStateVecEngine {
                             .u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
                     }
                 }
-                GateType::RXX | GateType::RYY => {
-                    return Err(PecosError::Processing(format!(
-                        "Gate type {:?} is not yet supported by QuestStateVecEngine",
-                        cmd.gate_type
-                    )));
+                GateType::RXX => {
+                    if !cmd.angles.is_empty() {
+                        self.simulator.rxx(cmd.angles[0], &cmd.qubits);
+                    }
+                }
+                GateType::RYY => {
+                    if !cmd.angles.is_empty() {
+                        self.simulator.ryy(cmd.angles[0], &cmd.qubits);
+                    }
                 }
             }
         }
@@ -471,11 +475,15 @@ impl Engine for QuestDensityMatrixEngine {
                             .u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
                     }
                 }
-                GateType::RXX | GateType::RYY => {
-                    return Err(PecosError::Processing(format!(
-                        "Gate type {:?} is not yet supported by QuestDensityMatrixEngine",
-                        cmd.gate_type
-                    )));
+                GateType::RXX => {
+                    if !cmd.angles.is_empty() {
+                        self.simulator.rxx(cmd.angles[0], &cmd.qubits);
+                    }
+                }
+                GateType::RYY => {
+                    if !cmd.angles.is_empty() {
+                        self.simulator.ryy(cmd.angles[0], &cmd.qubits);
+                    }
                 }
             }
         }
@@ -1205,6 +1213,129 @@ impl Engine for QuestCudaStateVecEngine {
                         }
                     }
                 }
+                GateType::F => {
+                    // F = SX · SZ = RX(pi/2) · RZ(pi/2)
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_rotation_z)(
+                                self.qureg_handle,
+                                qubit,
+                                std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_rotation_x)(
+                                self.qureg_handle,
+                                qubit,
+                                std::f64::consts::FRAC_PI_2,
+                            );
+                        }
+                    }
+                }
+                GateType::Fdg => {
+                    // Fdg = F† = SZ† · SX† = RZ(-pi/2) · RX(-pi/2)
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_rotation_x)(
+                                self.qureg_handle,
+                                qubit,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_rotation_z)(
+                                self.qureg_handle,
+                                qubit,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                        }
+                    }
+                }
+                GateType::SY => {
+                    // SY = RY(pi/2)
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_rotation_y)(
+                                self.qureg_handle,
+                                qubit,
+                                std::f64::consts::FRAC_PI_2,
+                            );
+                        }
+                    }
+                }
+                GateType::SYdg => {
+                    // SYdg = RY(-pi/2)
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_rotation_y)(
+                                self.qureg_handle,
+                                qubit,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                        }
+                    }
+                }
+                GateType::SXX => {
+                    // SXX = RXX(pi/2): decompose as H⊗H · SZZ · H⊗H
+                    // Or equivalently: CNOT(a,b) · RX(pi/2, b) · CNOT(a,b)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_x)(
+                                self.qureg_handle,
+                                b,
+                                std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                        }
+                    }
+                }
+                GateType::SXXdg => {
+                    // SXXdg = RXX(-pi/2)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_x)(
+                                self.qureg_handle,
+                                b,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                        }
+                    }
+                }
+                GateType::SYY => {
+                    // SYY = RYY(pi/2): decompose as CNOT(a,b) · RY(pi/2, b) · CNOT(a,b)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_y)(
+                                self.qureg_handle,
+                                b,
+                                std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                        }
+                    }
+                }
+                GateType::SYYdg => {
+                    // SYYdg = RYY(-pi/2)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_y)(
+                                self.qureg_handle,
+                                b,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                        }
+                    }
+                }
                 GateType::I
                 | GateType::Idle
                 | GateType::Custom
@@ -1213,11 +1344,35 @@ impl Engine for QuestCudaStateVecEngine {
                 | GateType::QFree => {
                     // No operation needed (Custom is a placeholder whose actual gate name is in metadata)
                 }
-                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
-                    return Err(PecosError::Processing(format!(
-                        "Gate type {:?} is not yet supported by QuestCudaStateVecEngine",
-                        cmd.gate_type
-                    )));
+                GateType::RXX => {
+                    // RXX(theta) = CNOT(a,b) · RX(theta, b) · CNOT(a,b)
+                    if !cmd.angles.is_empty() {
+                        let theta = cmd.angles[0].to_radians();
+                        for qubits in cmd.qubits.chunks_exact(2) {
+                            let (a, b) =
+                                (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                            unsafe {
+                                (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                                (self.backend.apply_rotation_x)(self.qureg_handle, b, theta);
+                                (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            }
+                        }
+                    }
+                }
+                GateType::RYY => {
+                    // RYY(theta) = CNOT(a,b) · RY(theta, b) · CNOT(a,b)
+                    if !cmd.angles.is_empty() {
+                        let theta = cmd.angles[0].to_radians();
+                        for qubits in cmd.qubits.chunks_exact(2) {
+                            let (a, b) =
+                                (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                            unsafe {
+                                (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                                (self.backend.apply_rotation_y)(self.qureg_handle, b, theta);
+                                (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            }
+                        }
+                    }
                 }
             }
         }

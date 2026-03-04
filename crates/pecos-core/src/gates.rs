@@ -395,7 +395,7 @@ impl Gate {
         Self::sxx_vec(&flat_qubits)
     }
 
-    /// Create SXXdg gate from flat qubit list
+    /// Create `SXXdg` gate from flat qubit list
     ///
     /// # Panics
     ///
@@ -412,7 +412,7 @@ impl Gate {
         )
     }
 
-    /// Create SXXdg gate on multiple qubit pairs
+    /// Create `SXXdg` gate on multiple qubit pairs
     #[must_use]
     pub fn sxxdg(qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
         let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
@@ -443,7 +443,7 @@ impl Gate {
         Self::syy_vec(&flat_qubits)
     }
 
-    /// Create SYYdg gate from flat qubit list
+    /// Create `SYYdg` gate from flat qubit list
     ///
     /// # Panics
     ///
@@ -460,7 +460,7 @@ impl Gate {
         )
     }
 
-    /// Create SYYdg gate on multiple qubit pairs
+    /// Create `SYYdg` gate on multiple qubit pairs
     #[must_use]
     pub fn syydg(qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
         let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);

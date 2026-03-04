@@ -251,16 +251,15 @@ impl NoiseUtils {
             }
 
             // Gates that are handled by the simulator directly (via CliffordGateable)
-            // but don't have byte message builder methods
+            // but don't have byte message builder methods.
+            // Custom is a placeholder (actual gate name is in metadata).
             GateType::F
             | GateType::Fdg
             | GateType::SXX
             | GateType::SXXdg
             | GateType::SYY
-            | GateType::SYYdg => {}
-
-            // Custom is a placeholder (actual gate name is in metadata); skip it
-            GateType::Custom => {}
+            | GateType::SYYdg
+            | GateType::Custom => {}
 
             // Invalid cases (not enough qubits, missing parameters, etc.)
             _ => panic!(

@@ -188,7 +188,14 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::SZZdg
         | GateType::CRZ => CellColor::ZAxis,
         GateType::SX | GateType::SXdg | GateType::SXX | GateType::SXXdg => CellColor::YZMix,
-        GateType::SY | GateType::SYdg | GateType::SYY | GateType::SYYdg | GateType::H | GateType::F | GateType::Fdg | GateType::CH => CellColor::XZMix,
+        GateType::SY
+        | GateType::SYdg
+        | GateType::SYY
+        | GateType::SYYdg
+        | GateType::H
+        | GateType::F
+        | GateType::Fdg
+        | GateType::CH => CellColor::XZMix,
         GateType::SZ | GateType::SZdg => CellColor::XYMix,
         // No clear single-axis color: idle, alloc/free, multi-qubit, custom
         GateType::Idle
@@ -414,7 +421,15 @@ fn decompose_gate(
                 }
                 // Symmetric two-qubit interactions: dots on both wires,
                 // label on the connector line between them.
-                GateType::RXX | GateType::RYY | GateType::RZZ | GateType::SXX | GateType::SXXdg | GateType::SYY | GateType::SYYdg | GateType::SZZ | GateType::SZZdg => {
+                GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ
+                | GateType::SXX
+                | GateType::SXXdg
+                | GateType::SYY
+                | GateType::SYYdg
+                | GateType::SZZ
+                | GateType::SZZdg => {
                     cells.push((row_a, DiagramCell::Control, color));
                     cells.push((row_b, DiagramCell::Control, color));
                     connector_label = Some(sym.clone());

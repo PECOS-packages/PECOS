@@ -2721,8 +2721,7 @@ impl PyTickHandle {
 
     /// Apply an F-dagger gate.
     fn fdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::fdg(&[q]))?;
+        slf.borrow_mut(py).add_gate_internal(py, Gate::fdg(&[q]))?;
         Ok(slf)
     }
 
@@ -2831,7 +2830,7 @@ impl PyTickHandle {
     // Generic gate dispatch (name-based)
     // =========================================================================
 
-    /// Add a gate by name, resolving to a native GateType if possible.
+    /// Add a gate by name, resolving to a native `GateType` if possible.
     ///
     /// If the name matches a known gate type (e.g., "H", "CX", "SZZ"), it is
     /// added as that native type. Otherwise, it falls through to `custom_gate`.
@@ -2868,11 +2867,7 @@ impl PyTickHandle {
                 if let Some(tick) = circuit.inner.get_tick_mut(tick_idx) {
                     match tick.try_add_gate(gate) {
                         Ok(idx) => {
-                            tick.set_gate_attr(
-                                idx,
-                                "_symbol",
-                                Attribute::String(name.to_string()),
-                            );
+                            tick.set_gate_attr(idx, "_symbol", Attribute::String(name.to_string()));
                             drop(circuit);
                             drop(handle);
                             slf.borrow_mut(py).last_gate_idx = Some(idx);

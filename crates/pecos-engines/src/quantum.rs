@@ -369,6 +369,62 @@ where
                     debug!("Processing SZZdg gate on qubits {:?}", cmd.qubits);
                     self.simulator.szzdg(&cmd.qubits);
                 }
+                GateType::F => {
+                    debug!("Processing F gate on qubits {:?}", cmd.qubits);
+                    self.simulator.f(&cmd.qubits);
+                }
+                GateType::Fdg => {
+                    debug!("Processing Fdg gate on qubits {:?}", cmd.qubits);
+                    self.simulator.fdg(&cmd.qubits);
+                }
+                GateType::SY => {
+                    debug!("Processing SY gate on qubits {:?}", cmd.qubits);
+                    self.simulator.sy(&cmd.qubits);
+                }
+                GateType::SYdg => {
+                    debug!("Processing SYdg gate on qubits {:?}", cmd.qubits);
+                    self.simulator.sydg(&cmd.qubits);
+                }
+                GateType::SXX => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SXX gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    debug!("Processing SXX gate on qubits {:?}", cmd.qubits);
+                    self.simulator.sxx(&cmd.qubits);
+                }
+                GateType::SXXdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SXXdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    debug!("Processing SXXdg gate on qubits {:?}", cmd.qubits);
+                    self.simulator.sxxdg(&cmd.qubits);
+                }
+                GateType::SYY => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SYY gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    debug!("Processing SYY gate on qubits {:?}", cmd.qubits);
+                    self.simulator.syy(&cmd.qubits);
+                }
+                GateType::SYYdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SYYdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    debug!("Processing SYYdg gate on qubits {:?}", cmd.qubits);
+                    self.simulator.syydg(&cmd.qubits);
+                }
                 GateType::SWAP => {
                     if cmd.qubits.len() % 2 != 0 {
                         return Err(quantum_error(format!(
@@ -503,11 +559,33 @@ where
                     // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)
                     // Custom is a no-op placeholder (actual gate name is in metadata)
                 }
-                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
-                    return Err(quantum_error(format!(
-                        "Gate type {:?} is not yet supported by StateVecEngine",
-                        cmd.gate_type
-                    )));
+                GateType::RXX => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RXX gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.is_empty() {
+                        return Err(quantum_error("RXX gate requires at least one angle"));
+                    }
+                    let angle = cmd.angles[0];
+                    debug!("Processing RXX gate on qubits {:?}", cmd.qubits);
+                    self.simulator.rxx(angle, &cmd.qubits);
+                }
+                GateType::RYY => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RYY gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.is_empty() {
+                        return Err(quantum_error("RYY gate requires at least one angle"));
+                    }
+                    let angle = cmd.angles[0];
+                    debug!("Processing RYY gate on qubits {:?}", cmd.qubits);
+                    self.simulator.ryy(angle, &cmd.qubits);
                 }
                 GateType::QAlloc => {
                     // Allocate qubits in |0⟩ state - for state vector sim, same as Prep

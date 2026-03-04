@@ -303,6 +303,12 @@ where
             | GateType::Tdg
             | GateType::U
             | GateType::R1XY
+            | GateType::F
+            | GateType::Fdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP

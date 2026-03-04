@@ -371,6 +371,100 @@ impl PyGateType {
     }
 
     #[classattr]
+    #[pyo3(name = "F")]
+    fn f() -> Self {
+        Self { inner: GateType::F }
+    }
+
+    #[classattr]
+    #[pyo3(name = "Fdg")]
+    fn fdg() -> Self {
+        Self {
+            inner: GateType::Fdg,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SXX")]
+    fn sxx() -> Self {
+        Self {
+            inner: GateType::SXX,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SXXdg")]
+    fn sxxdg() -> Self {
+        Self {
+            inner: GateType::SXXdg,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SYY")]
+    fn syy() -> Self {
+        Self {
+            inner: GateType::SYY,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SYYdg")]
+    fn syydg() -> Self {
+        Self {
+            inner: GateType::SYYdg,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SZZ")]
+    fn szz() -> Self {
+        Self {
+            inner: GateType::SZZ,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SZZdg")]
+    fn szzdg() -> Self {
+        Self {
+            inner: GateType::SZZdg,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "SWAP")]
+    fn swap() -> Self {
+        Self {
+            inner: GateType::SWAP,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "CH")]
+    fn ch() -> Self {
+        Self {
+            inner: GateType::CH,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "CRZ")]
+    fn crz() -> Self {
+        Self {
+            inner: GateType::CRZ,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "CCX")]
+    fn ccx() -> Self {
+        Self {
+            inner: GateType::CCX,
+        }
+    }
+
+    #[classattr]
     #[pyo3(name = "Measure")]
     fn measure() -> Self {
         Self {
@@ -1765,11 +1859,11 @@ impl PyTick {
     /// Get the set of qubits used in this tick.
     ///
     /// Returns a sorted list of qubit IDs that are acted upon by gates in this tick.
-    fn active_qubits(&self) -> Vec<PyQubitId> {
+    fn active_qubits(&self) -> Vec<usize> {
         self.inner
             .active_qubits()
             .into_iter()
-            .map(|q| PyQubitId { inner: q })
+            .map(|q| q.0)
             .collect()
     }
 
@@ -2619,6 +2713,80 @@ impl PyTickHandle {
         Ok(slf)
     }
 
+    /// Apply an F gate.
+    fn f(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::f(&[q]))?;
+        Ok(slf)
+    }
+
+    /// Apply an F-dagger gate.
+    fn fdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::fdg(&[q]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SXX gate (sqrt-XX).
+    fn sxx(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::sxx(&[(q1, q2)]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SXX-dagger gate.
+    fn sxxdg(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::sxxdg(&[(q1, q2)]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SYY gate (sqrt-YY).
+    fn syy(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::syy(&[(q1, q2)]))?;
+        Ok(slf)
+    }
+
+    /// Apply an SYY-dagger gate.
+    fn syydg(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::syydg(&[(q1, q2)]))?;
+        Ok(slf)
+    }
+
+    /// Apply a SWAP gate.
+    fn swap(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::swap(&[(q1, q2)]))?;
+        Ok(slf)
+    }
+
+    /// Apply a CH gate (controlled-Hadamard).
+    fn ch(slf: Py<Self>, py: Python<'_>, ctrl: usize, tgt: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::ch(&[(ctrl, tgt)]))?;
+        Ok(slf)
+    }
+
+    /// Apply a CRZ gate (controlled-RZ).
+    fn crz(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        ctrl: usize,
+        tgt: usize,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::crz(theta.0, &[(ctrl, tgt)]))?;
+        Ok(slf)
+    }
+
+    /// Apply a CCX gate (Toffoli).
+    fn ccx(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize, q3: usize) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::ccx(&[(q1, q2, q3)]))?;
+        Ok(slf)
+    }
+
     /// Apply an RXX rotation.
     fn rxx(
         slf: Py<Self>,
@@ -2656,6 +2824,136 @@ impl PyTickHandle {
         slf.borrow_mut(py)
             .add_gate_internal(py, Gate::rzz(theta.0, &[(q1, q2)]))?;
         Ok(slf)
+    }
+
+    // =========================================================================
+    // Generic gate dispatch (name-based)
+    // =========================================================================
+
+    /// Add a gate by name, resolving to a native `GateType` if possible.
+    ///
+    /// If the name matches a known gate type (e.g., "H", "CX", "SZZ"), it is
+    /// added as that native type. Otherwise, it falls through to `custom_gate`.
+    ///
+    /// Args:
+    ///     name: The gate name (case-insensitive for standard gates).
+    ///     qubits: List of qubit IDs.
+    ///     angles: Optional list of angle values (radians).
+    #[pyo3(signature = (name, qubits, angles=None))]
+    fn add_gate(
+        slf: Py<Self>,
+        py: Python<'_>,
+        name: &str,
+        qubits: Vec<usize>,
+        angles: Option<Vec<f64>>,
+    ) -> PyResult<Py<Self>> {
+        use std::str::FromStr;
+
+        match GateType::from_str(name) {
+            Ok(gate_type) => {
+                let arity = gate_type.quantum_arity();
+                let angle_arity = gate_type.angle_arity();
+
+                // Validate angle count for parameterized gates
+                let angle_vals: Vec<Angle64> = angles
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Angle64::from_radians)
+                    .collect();
+                if angle_arity > 0 && angle_vals.len() != angle_arity {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Gate '{name}' requires {angle_arity} angle(s), got {}",
+                        angle_vals.len()
+                    )));
+                }
+
+                // Determine if we need to broadcast (e.g. single-qubit gate on multiple qubits)
+                let needs_broadcast =
+                    arity > 0 && qubits.len() > arity && qubits.len().is_multiple_of(arity);
+
+                if arity > 0 && qubits.len() != arity && !needs_broadcast {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Gate '{name}' requires {} qubit(s), got {} (not a valid multiple)",
+                        arity,
+                        qubits.len()
+                    )));
+                }
+
+                let handle = slf.borrow_mut(py);
+                let tick_idx = handle.tick_idx;
+                let circuit_py = handle.circuit.clone_ref(py);
+
+                let mut circuit = circuit_py.borrow_mut(py);
+                let tick = circuit.inner.get_tick_mut(tick_idx).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "Tick {tick_idx} does not exist"
+                    ))
+                })?;
+
+                if needs_broadcast {
+                    // Broadcast: create one gate per arity-chunk of qubits
+                    let mut last_idx = None;
+                    for chunk in qubits.chunks(arity) {
+                        let qubit_ids: GateQubits =
+                            chunk.iter().copied().map(QubitId::from).collect();
+                        let gate = Gate::new(gate_type, angle_vals.clone(), vec![], qubit_ids);
+                        match tick.try_add_gate(gate) {
+                            Ok(idx) => {
+                                tick.set_gate_attr(
+                                    idx,
+                                    "_symbol",
+                                    Attribute::String(name.to_string()),
+                                );
+                                last_idx = Some(idx);
+                            }
+                            Err(err) => {
+                                let msg = format!(
+                                    "Qubit(s) {:?} already in use in tick {}",
+                                    err.conflicting_qubits
+                                        .iter()
+                                        .map(std::string::ToString::to_string)
+                                        .collect::<Vec<_>>(),
+                                    tick_idx
+                                );
+                                return Err(PyErr::new::<QubitConflictError, _>(msg));
+                            }
+                        }
+                    }
+                    drop(circuit);
+                    drop(handle);
+                    slf.borrow_mut(py).last_gate_idx = last_idx;
+                    Ok(slf)
+                } else {
+                    // Normal: create single gate
+                    let qubit_ids: GateQubits = qubits.into_iter().map(QubitId::from).collect();
+                    let gate = Gate::new(gate_type, angle_vals, vec![], qubit_ids);
+                    match tick.try_add_gate(gate) {
+                        Ok(idx) => {
+                            tick.set_gate_attr(idx, "_symbol", Attribute::String(name.to_string()));
+                            drop(circuit);
+                            drop(handle);
+                            slf.borrow_mut(py).last_gate_idx = Some(idx);
+                            Ok(slf)
+                        }
+                        Err(err) => {
+                            let msg = format!(
+                                "Qubit(s) {:?} already in use in tick {}",
+                                err.conflicting_qubits
+                                    .iter()
+                                    .map(std::string::ToString::to_string)
+                                    .collect::<Vec<_>>(),
+                                tick_idx
+                            );
+                            Err(PyErr::new::<QubitConflictError, _>(msg))
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // Unknown gate name - fall through to custom_gate
+                PyTickHandle::custom_gate(slf, py, name, qubits, angles)
+            }
+        }
     }
 
     // =========================================================================

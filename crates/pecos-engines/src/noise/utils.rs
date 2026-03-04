@@ -250,14 +250,13 @@ impl NoiseUtils {
                 builder.add_idle(gate.params[0], &qubits_usize);
             }
 
-            // Custom is a placeholder (actual gate name is in metadata); skip it
+            // Custom is a placeholder (actual gate name is in metadata) -- skip.
             GateType::Custom => {}
 
-            // Invalid cases (not enough qubits, missing parameters, etc.)
-            _ => panic!(
-                "Invalid gate type {:?} or insufficient parameters/qubits",
-                gate.gate_type
-            ),
+            // All other gates: use generic serialization (gate type + qubits + angles/params).
+            _ => {
+                builder.add_gate_command(gate);
+            }
         }
     }
 

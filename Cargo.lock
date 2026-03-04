@@ -3734,6 +3734,7 @@ dependencies = [
  "num-complex 0.4.6",
  "pecos-core",
  "pecos-num",
+ "pecos-qsim",
  "smallvec",
  "tket",
 ]

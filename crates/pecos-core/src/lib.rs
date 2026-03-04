@@ -15,6 +15,7 @@ pub mod bit;
 pub mod bit_int;
 pub mod bitset;
 pub mod bitvec;
+pub mod circuit_diagram;
 pub mod clifford_rep;
 pub mod duration;
 pub mod element;
@@ -67,6 +68,12 @@ pub use pauli::{Pauli, PauliOperator};
 pub use phase::Phase;
 pub use rng::choices::Choices;
 pub use value::Value;
+
+// Circuit diagram styling
+pub use circuit_diagram::{
+    AngleUnit, ColorPalette, ColorTriplet, CosetPatterns, DiagramRenderer, DiagramStyle,
+    DiagramStyleBuilder, FamilyPalette, FillPattern, GraphStyle, GraphStyleBuilder, blend_hex,
+};
 
 // Operator algebra
 pub use operator::{I, Is, Operator, X, Xs, Y, Ys, Z, Zs};

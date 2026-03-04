@@ -25,6 +25,8 @@ pub mod gens;
 pub mod gpu_stab;
 pub mod gpu_stab_opt;
 pub mod gpu_stab_parallel;
+pub mod graph_state;
+pub mod graph_state_repr;
 pub mod measurement_sampler;
 pub mod pauli_prop;
 // pub mod paulis;
@@ -69,6 +71,8 @@ pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClass
 pub use gpu_stab::GpuStab;
 pub use gpu_stab_opt::GpuStabOpt;
 pub use gpu_stab_parallel::GpuStabParallel;
+pub use graph_state::GraphStateSim;
+pub use graph_state_repr::{GraphState, GraphStateRenderer};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,

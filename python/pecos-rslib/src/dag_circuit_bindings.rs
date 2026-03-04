@@ -2851,20 +2851,82 @@ impl PyTickHandle {
 
         match GateType::from_str(name) {
             Ok(gate_type) => {
+                let arity = gate_type.quantum_arity();
+                let angle_arity = gate_type.angle_arity();
+
+                // Validate angle count for parameterized gates
                 let angle_vals: Vec<Angle64> = angles
                     .unwrap_or_default()
                     .into_iter()
                     .map(Angle64::from_radians)
                     .collect();
-                let qubit_ids: GateQubits = qubits.into_iter().map(QubitId::from).collect();
-                let gate = Gate::new(gate_type, angle_vals, vec![], qubit_ids);
+                if angle_arity > 0 && angle_vals.len() != angle_arity {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Gate '{name}' requires {angle_arity} angle(s), got {}",
+                        angle_vals.len()
+                    )));
+                }
+
+                // Determine if we need to broadcast (e.g. single-qubit gate on multiple qubits)
+                let needs_broadcast =
+                    arity > 0 && qubits.len() > arity && qubits.len().is_multiple_of(arity);
+
+                if arity > 0 && qubits.len() != arity && !needs_broadcast {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Gate '{name}' requires {} qubit(s), got {} (not a valid multiple)",
+                        arity,
+                        qubits.len()
+                    )));
+                }
 
                 let handle = slf.borrow_mut(py);
                 let tick_idx = handle.tick_idx;
                 let circuit_py = handle.circuit.clone_ref(py);
 
                 let mut circuit = circuit_py.borrow_mut(py);
-                if let Some(tick) = circuit.inner.get_tick_mut(tick_idx) {
+                let tick = circuit.inner.get_tick_mut(tick_idx).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "Tick {tick_idx} does not exist"
+                    ))
+                })?;
+
+                if needs_broadcast {
+                    // Broadcast: create one gate per arity-chunk of qubits
+                    let mut last_idx = None;
+                    for chunk in qubits.chunks(arity) {
+                        let qubit_ids: GateQubits =
+                            chunk.iter().copied().map(QubitId::from).collect();
+                        let gate = Gate::new(gate_type, angle_vals.clone(), vec![], qubit_ids);
+                        match tick.try_add_gate(gate) {
+                            Ok(idx) => {
+                                tick.set_gate_attr(
+                                    idx,
+                                    "_symbol",
+                                    Attribute::String(name.to_string()),
+                                );
+                                last_idx = Some(idx);
+                            }
+                            Err(err) => {
+                                let msg = format!(
+                                    "Qubit(s) {:?} already in use in tick {}",
+                                    err.conflicting_qubits
+                                        .iter()
+                                        .map(std::string::ToString::to_string)
+                                        .collect::<Vec<_>>(),
+                                    tick_idx
+                                );
+                                return Err(PyErr::new::<QubitConflictError, _>(msg));
+                            }
+                        }
+                    }
+                    drop(circuit);
+                    drop(handle);
+                    slf.borrow_mut(py).last_gate_idx = last_idx;
+                    Ok(slf)
+                } else {
+                    // Normal: create single gate
+                    let qubit_ids: GateQubits = qubits.into_iter().map(QubitId::from).collect();
+                    let gate = Gate::new(gate_type, angle_vals, vec![], qubit_ids);
                     match tick.try_add_gate(gate) {
                         Ok(idx) => {
                             tick.set_gate_attr(idx, "_symbol", Attribute::String(name.to_string()));
@@ -2885,10 +2947,6 @@ impl PyTickHandle {
                             Err(PyErr::new::<QubitConflictError, _>(msg))
                         }
                     }
-                } else {
-                    drop(circuit);
-                    drop(handle);
-                    Ok(slf)
                 }
             }
             Err(_) => {

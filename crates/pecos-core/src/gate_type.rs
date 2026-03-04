@@ -400,49 +400,57 @@ impl std::str::FromStr for GateType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Try exact match first for multi-word aliases with specific casing
         match s {
-            "I" | "i" => Ok(GateType::I),
-            "X" | "x" => Ok(GateType::X),
-            "Y" | "y" => Ok(GateType::Y),
-            "Z" | "z" => Ok(GateType::Z),
-            "H" | "h" => Ok(GateType::H),
-            "F" | "f" => Ok(GateType::F),
-            "FDG" | "Fdg" | "fdg" => Ok(GateType::Fdg),
-            "SX" | "sx" | "Q" | "q" => Ok(GateType::SX),
-            "SXDG" | "SXdg" | "sxdg" | "QD" | "qd" => Ok(GateType::SXdg),
-            "SY" | "sy" | "R" => Ok(GateType::SY),
-            "SYDG" | "SYdg" | "sydg" | "RD" | "rd" => Ok(GateType::SYdg),
-            "SZ" | "sz" | "S" | "s" => Ok(GateType::SZ),
-            "SZDG" | "SZdg" | "szdg" | "SD" | "sd" | "SDG" | "sdg" => Ok(GateType::SZdg),
-            "T" | "t" => Ok(GateType::T),
-            "TDG" | "Tdg" | "tdg" => Ok(GateType::Tdg),
-            "RX" | "rx" => Ok(GateType::RX),
-            "RY" | "ry" => Ok(GateType::RY),
-            "RZ" | "rz" => Ok(GateType::RZ),
-            "R1XY" | "r1xy" => Ok(GateType::R1XY),
-            "U" | "u" => Ok(GateType::U),
-            "CX" | "cx" | "CNOT" | "cnot" => Ok(GateType::CX),
-            "CY" | "cy" => Ok(GateType::CY),
-            "CZ" | "cz" => Ok(GateType::CZ),
-            "CH" | "ch" => Ok(GateType::CH),
-            "SXX" | "sxx" => Ok(GateType::SXX),
-            "SXXDG" | "SXXdg" | "sxxdg" => Ok(GateType::SXXdg),
-            "SYY" | "syy" => Ok(GateType::SYY),
-            "SYYDG" | "SYYdg" | "syydg" => Ok(GateType::SYYdg),
-            "SZZ" | "szz" => Ok(GateType::SZZ),
-            "SZZDG" | "SZZdg" | "szzdg" => Ok(GateType::SZZdg),
-            "RXX" | "rxx" => Ok(GateType::RXX),
-            "RYY" | "ryy" => Ok(GateType::RYY),
-            "RZZ" | "rzz" => Ok(GateType::RZZ),
-            "CRZ" | "crz" => Ok(GateType::CRZ),
-            "CCX" | "ccx" | "TOFFOLI" | "toffoli" => Ok(GateType::CCX),
-            "SWAP" | "swap" => Ok(GateType::SWAP),
-            "MEASURE" | "MZ" | "measure" | "measure Z" | "Measure" => Ok(GateType::Measure),
-            "PREP" | "prep" | "init" | "Init" | "init |0>" | "Init |0>" | "RESET" | "Reset"
-            | "reset" => Ok(GateType::Prep),
-            "QALLOC" | "QAlloc" | "qalloc" => Ok(GateType::QAlloc),
-            "QFREE" | "QFree" | "qfree" => Ok(GateType::QFree),
-            "IDLE" | "Idle" | "idle" => Ok(GateType::Idle),
+            "init |0>" | "Init |0>" => return Ok(GateType::Prep),
+            "measure Z" => return Ok(GateType::Measure),
+            _ => {}
+        }
+
+        // Case-insensitive match for all standard gate names
+        let upper = s.to_ascii_uppercase();
+        match upper.as_str() {
+            "I" => Ok(GateType::I),
+            "X" => Ok(GateType::X),
+            "Y" => Ok(GateType::Y),
+            "Z" => Ok(GateType::Z),
+            "H" => Ok(GateType::H),
+            "F" => Ok(GateType::F),
+            "FDG" => Ok(GateType::Fdg),
+            "SX" | "Q" => Ok(GateType::SX),
+            "SXDG" | "QD" => Ok(GateType::SXdg),
+            "SY" | "R" => Ok(GateType::SY),
+            "SYDG" | "RD" => Ok(GateType::SYdg),
+            "SZ" | "S" => Ok(GateType::SZ),
+            "SZDG" | "SD" | "SDG" => Ok(GateType::SZdg),
+            "T" => Ok(GateType::T),
+            "TDG" => Ok(GateType::Tdg),
+            "RX" => Ok(GateType::RX),
+            "RY" => Ok(GateType::RY),
+            "RZ" => Ok(GateType::RZ),
+            "R1XY" => Ok(GateType::R1XY),
+            "U" => Ok(GateType::U),
+            "CX" | "CNOT" => Ok(GateType::CX),
+            "CY" => Ok(GateType::CY),
+            "CZ" => Ok(GateType::CZ),
+            "CH" => Ok(GateType::CH),
+            "SXX" => Ok(GateType::SXX),
+            "SXXDG" => Ok(GateType::SXXdg),
+            "SYY" => Ok(GateType::SYY),
+            "SYYDG" => Ok(GateType::SYYdg),
+            "SZZ" => Ok(GateType::SZZ),
+            "SZZDG" => Ok(GateType::SZZdg),
+            "RXX" => Ok(GateType::RXX),
+            "RYY" => Ok(GateType::RYY),
+            "RZZ" => Ok(GateType::RZZ),
+            "CRZ" => Ok(GateType::CRZ),
+            "CCX" | "TOFFOLI" => Ok(GateType::CCX),
+            "SWAP" => Ok(GateType::SWAP),
+            "MEASURE" | "MZ" | "MEASURE Z" => Ok(GateType::Measure),
+            "PREP" | "INIT" | "INIT |0>" | "RESET" => Ok(GateType::Prep),
+            "QALLOC" => Ok(GateType::QAlloc),
+            "QFREE" => Ok(GateType::QFree),
+            "IDLE" => Ok(GateType::Idle),
             _ => Err(format!("Unknown gate type: {s}")),
         }
     }
@@ -530,6 +538,22 @@ mod tests {
         assert_eq!(GateType::from_str("S").unwrap(), GateType::SZ);
         assert_eq!(GateType::from_str("TOFFOLI").unwrap(), GateType::CCX);
         assert_eq!(GateType::from_str("init |0>").unwrap(), GateType::Prep);
+
+        // Case-insensitive matching
+        assert_eq!(GateType::from_str("h").unwrap(), GateType::H);
+        assert_eq!(GateType::from_str("cx").unwrap(), GateType::CX);
+        assert_eq!(GateType::from_str("Cx").unwrap(), GateType::CX);
+        assert_eq!(GateType::from_str("cX").unwrap(), GateType::CX);
+        assert_eq!(GateType::from_str("cnot").unwrap(), GateType::CX);
+        assert_eq!(GateType::from_str("Cnot").unwrap(), GateType::CX);
+        assert_eq!(GateType::from_str("fdg").unwrap(), GateType::Fdg);
+        assert_eq!(GateType::from_str("sxxdg").unwrap(), GateType::SXXdg);
+        assert_eq!(GateType::from_str("r").unwrap(), GateType::SY);
+        assert_eq!(GateType::from_str("R").unwrap(), GateType::SY);
+        assert_eq!(GateType::from_str("q").unwrap(), GateType::SX);
+        assert_eq!(GateType::from_str("s").unwrap(), GateType::SZ);
+        assert_eq!(GateType::from_str("toffoli").unwrap(), GateType::CCX);
+        assert_eq!(GateType::from_str("Toffoli").unwrap(), GateType::CCX);
 
         // Unknown
         assert!(GateType::from_str("FOOBAR").is_err());

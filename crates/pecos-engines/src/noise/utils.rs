@@ -250,22 +250,13 @@ impl NoiseUtils {
                 builder.add_idle(gate.params[0], &qubits_usize);
             }
 
-            // Gates that are handled by the simulator directly (via CliffordGateable)
-            // but don't have byte message builder methods.
-            // Custom is a placeholder (actual gate name is in metadata).
-            GateType::F
-            | GateType::Fdg
-            | GateType::SXX
-            | GateType::SXXdg
-            | GateType::SYY
-            | GateType::SYYdg
-            | GateType::Custom => {}
+            // Custom is a placeholder (actual gate name is in metadata) -- skip.
+            GateType::Custom => {}
 
-            // Invalid cases (not enough qubits, missing parameters, etc.)
-            _ => panic!(
-                "Invalid gate type {:?} or insufficient parameters/qubits",
-                gate.gate_type
-            ),
+            // All other gates: use generic serialization (gate type + qubits + angles/params).
+            _ => {
+                builder.add_gate_command(gate);
+            }
         }
     }
 

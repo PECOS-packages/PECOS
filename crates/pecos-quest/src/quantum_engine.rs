@@ -125,15 +125,39 @@ impl Engine for QuestStateVecEngine {
                     self.simulator.sydg(&cmd.qubits);
                 }
                 GateType::SXX => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(PecosError::Processing(format!(
+                            "SXX gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     self.simulator.sxx(&cmd.qubits);
                 }
                 GateType::SXXdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(PecosError::Processing(format!(
+                            "SXXdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     self.simulator.sxxdg(&cmd.qubits);
                 }
                 GateType::SYY => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(PecosError::Processing(format!(
+                            "SYY gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     self.simulator.syy(&cmd.qubits);
                 }
                 GateType::SYYdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(PecosError::Processing(format!(
+                            "SYYdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     self.simulator.syydg(&cmd.qubits);
                 }
                 GateType::SWAP => {
@@ -227,14 +251,20 @@ impl Engine for QuestStateVecEngine {
                     }
                 }
                 GateType::RXX => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rxx(cmd.angles[0], &cmd.qubits);
+                    if cmd.angles.is_empty() {
+                        return Err(PecosError::Processing(
+                            "RXX gate requires at least one angle".to_string(),
+                        ));
                     }
+                    self.simulator.rxx(cmd.angles[0], &cmd.qubits);
                 }
                 GateType::RYY => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.ryy(cmd.angles[0], &cmd.qubits);
+                    if cmd.angles.is_empty() {
+                        return Err(PecosError::Processing(
+                            "RYY gate requires at least one angle".to_string(),
+                        ));
                     }
+                    self.simulator.ryy(cmd.angles[0], &cmd.qubits);
                 }
             }
         }
@@ -374,15 +404,39 @@ impl Engine for QuestDensityMatrixEngine {
                     self.simulator.sydg(&cmd.qubits);
                 }
                 GateType::SXX => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(PecosError::Processing(format!(
+                            "SXX gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     self.simulator.sxx(&cmd.qubits);
                 }
                 GateType::SXXdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(PecosError::Processing(format!(
+                            "SXXdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     self.simulator.sxxdg(&cmd.qubits);
                 }
                 GateType::SYY => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(PecosError::Processing(format!(
+                            "SYY gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     self.simulator.syy(&cmd.qubits);
                 }
                 GateType::SYYdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(PecosError::Processing(format!(
+                            "SYYdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     self.simulator.syydg(&cmd.qubits);
                 }
                 GateType::SWAP => {
@@ -476,14 +530,20 @@ impl Engine for QuestDensityMatrixEngine {
                     }
                 }
                 GateType::RXX => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rxx(cmd.angles[0], &cmd.qubits);
+                    if cmd.angles.is_empty() {
+                        return Err(PecosError::Processing(
+                            "RXX gate requires at least one angle".to_string(),
+                        ));
                     }
+                    self.simulator.rxx(cmd.angles[0], &cmd.qubits);
                 }
                 GateType::RYY => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.ryy(cmd.angles[0], &cmd.qubits);
+                    if cmd.angles.is_empty() {
+                        return Err(PecosError::Processing(
+                            "RYY gate requires at least one angle".to_string(),
+                        ));
                     }
+                    self.simulator.ryy(cmd.angles[0], &cmd.qubits);
                 }
             }
         }
@@ -1346,31 +1406,35 @@ impl Engine for QuestCudaStateVecEngine {
                 }
                 GateType::RXX => {
                     // RXX(theta) = CNOT(a,b) · RX(theta, b) · CNOT(a,b)
-                    if !cmd.angles.is_empty() {
-                        let theta = cmd.angles[0].to_radians();
-                        for qubits in cmd.qubits.chunks_exact(2) {
-                            let (a, b) =
-                                (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
-                            unsafe {
-                                (self.backend.apply_cnot)(self.qureg_handle, a, b);
-                                (self.backend.apply_rotation_x)(self.qureg_handle, b, theta);
-                                (self.backend.apply_cnot)(self.qureg_handle, a, b);
-                            }
+                    if cmd.angles.is_empty() {
+                        return Err(PecosError::Processing(
+                            "RXX gate requires at least one angle".to_string(),
+                        ));
+                    }
+                    let theta = cmd.angles[0].to_radians();
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_x)(self.qureg_handle, b, theta);
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
                         }
                     }
                 }
                 GateType::RYY => {
                     // RYY(theta) = CNOT(a,b) · RY(theta, b) · CNOT(a,b)
-                    if !cmd.angles.is_empty() {
-                        let theta = cmd.angles[0].to_radians();
-                        for qubits in cmd.qubits.chunks_exact(2) {
-                            let (a, b) =
-                                (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
-                            unsafe {
-                                (self.backend.apply_cnot)(self.qureg_handle, a, b);
-                                (self.backend.apply_rotation_y)(self.qureg_handle, b, theta);
-                                (self.backend.apply_cnot)(self.qureg_handle, a, b);
-                            }
+                    if cmd.angles.is_empty() {
+                        return Err(PecosError::Processing(
+                            "RYY gate requires at least one angle".to_string(),
+                        ));
+                    }
+                    let theta = cmd.angles[0].to_radians();
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_y)(self.qureg_handle, b, theta);
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
                         }
                     }
                 }

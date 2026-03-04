@@ -56,7 +56,12 @@ fn extract_operand_value(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
         return Ok(bit_int.inner.to_u64().unwrap_or(0));
     }
 
-    // Try int
+    // Try u64 first (handles large unsigned values >= 2^63)
+    if let Ok(value) = obj.extract::<u64>() {
+        return Ok(value);
+    }
+
+    // Fall back to i64 (handles negative values)
     if let Ok(value) = obj.extract::<i64>() {
         #[allow(clippy::cast_sign_loss)]
         return Ok(value as u64);
@@ -96,7 +101,17 @@ impl PyBitInt {
             return Ok(bit_int.inner.clone());
         }
 
-        // For integers, respect signedness of self
+        // Try u64 first for unsigned values >= 2^63
+        if let Ok(value) = other.extract::<u64>() {
+            return Ok(if self.inner.is_signed() {
+                #[allow(clippy::cast_possible_wrap)]
+                BitInt::new_signed(self.inner.size(), value as i64)
+            } else {
+                BitInt::new_unsigned(self.inner.size(), value)
+            });
+        }
+
+        // Fall back to i64 for negative values
         if let Ok(value) = other.extract::<i64>() {
             return Ok(if self.inner.is_signed() {
                 BitInt::new_signed(self.inner.size(), value)
@@ -158,10 +173,10 @@ impl PyBitInt {
     /// Raises:
     ///     `ValueError`: If size is 0 or string contains non-binary characters
     #[new]
-    #[pyo3(signature = (size, value=0, *, signed=None, dtype=None))]
+    #[pyo3(signature = (size, value=None, *, signed=None, dtype=None))]
     pub fn new(
         size: &Bound<'_, PyAny>,
-        value: i64,
+        value: Option<&Bound<'_, PyAny>>,
         signed: Option<bool>,
         dtype: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
@@ -243,11 +258,34 @@ impl PyBitInt {
         // Determine signedness: signed param > dtype > default (true for BinArray compat)
         let is_signed = signed.or(dtype_is_signed).unwrap_or(true);
 
-        let inner = if is_signed {
-            BitInt::new_signed(size, value)
+        let inner = if let Some(val_obj) = value {
+            if is_signed {
+                let v = val_obj.extract::<i64>().map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
+                        "Value out of range for signed BitInt",
+                    )
+                })?;
+                BitInt::new_signed(size, v)
+            } else {
+                // Try u64 first for unsigned values >= 2^63
+                if let Ok(v) = val_obj.extract::<u64>() {
+                    BitInt::new_unsigned(size, v)
+                } else if let Ok(v) = val_obj.extract::<i64>() {
+                    #[allow(clippy::cast_sign_loss)]
+                    BitInt::new_unsigned(size, v as u64)
+                } else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
+                        "Value out of range for unsigned BitInt",
+                    ));
+                }
+            }
         } else {
-            #[allow(clippy::cast_sign_loss)]
-            BitInt::new_unsigned(size, value as u64)
+            // Default value of 0
+            if is_signed {
+                BitInt::new_signed(size, 0)
+            } else {
+                BitInt::new_unsigned(size, 0)
+            }
         };
 
         Ok(PyBitInt { inner })
@@ -629,19 +667,34 @@ impl PyBitInt {
     // ========================================================================
 
     /// Rich comparison (==, !=, <, <=, >, >=).
-    /// Compares raw values directly (like `BinArray`).
+    /// Respects signedness for ordering comparisons.
     pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
         let other_val = extract_operand_value(other)?;
         let self_val = self.inner.to_u64().unwrap_or(0);
 
-        Ok(match op {
-            CompareOp::Eq => self_val == other_val,
-            CompareOp::Ne => self_val != other_val,
-            CompareOp::Lt => self_val < other_val,
-            CompareOp::Le => self_val <= other_val,
-            CompareOp::Gt => self_val > other_val,
-            CompareOp::Ge => self_val >= other_val,
-        })
+        if self.inner.is_signed() {
+            #[allow(clippy::cast_possible_wrap)]
+            let self_signed = self_val as i64;
+            #[allow(clippy::cast_possible_wrap)]
+            let other_signed = other_val as i64;
+            Ok(match op {
+                CompareOp::Eq => self_signed == other_signed,
+                CompareOp::Ne => self_signed != other_signed,
+                CompareOp::Lt => self_signed < other_signed,
+                CompareOp::Le => self_signed <= other_signed,
+                CompareOp::Gt => self_signed > other_signed,
+                CompareOp::Ge => self_signed >= other_signed,
+            })
+        } else {
+            Ok(match op {
+                CompareOp::Eq => self_val == other_val,
+                CompareOp::Ne => self_val != other_val,
+                CompareOp::Lt => self_val < other_val,
+                CompareOp::Le => self_val <= other_val,
+                CompareOp::Gt => self_val > other_val,
+                CompareOp::Ge => self_val >= other_val,
+            })
+        }
     }
 
     /// Hash function for use in sets and dicts.
@@ -786,12 +839,27 @@ impl PyBitInt {
         !self.inner.is_zero()
     }
 
-    /// Integer conversion.
-    pub fn __int__(&self) -> PyResult<i64> {
-        self.to_int().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
-                "`BitInt` value too large to convert to Python int",
-            )
-        })
+    /// Integer conversion (respects signedness).
+    fn __int__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        if self.inner.is_signed() {
+            let val = self.inner.to_i64().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
+                    "BitInt value too large to convert to Python int",
+                )
+            })?;
+            Ok(val.into_pyobject(py).unwrap().into_any())
+        } else {
+            let val = self.inner.to_u64().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
+                    "BitInt value too large to convert to Python int",
+                )
+            })?;
+            Ok(val.into_pyobject(py).unwrap().into_any())
+        }
+    }
+
+    /// Index conversion (needed for `operator.index()` and indexing).
+    fn __index__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.__int__(py)
     }
 }

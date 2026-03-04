@@ -131,3 +131,92 @@ def test_signed_bitwise_not(x: int) -> None:
     ba = BitInt(DEFAULT_SIZE, x)
     result = ~ba
     assert int(result) == -x - 1  # (two's complement)
+
+
+# ============================================================================
+# Unsigned / signed boundary tests
+# ============================================================================
+
+UMAX: Final = 2**64 - 1  # 0xFFFFFFFF_FFFFFFFF
+
+
+def test_unsigned_int_conversion() -> None:
+    """Test that int() on unsigned BitInt returns a positive value, not negative."""
+    b = BitInt(64, UMAX, signed=False)
+    val = int(b)
+    assert val == UMAX
+    assert val > 0
+
+
+def test_unsigned_construction_large_value() -> None:
+    """Test constructing unsigned BitInt with values >= 2^63."""
+    b = BitInt(64, 2**63, signed=False)
+    assert int(b) == 2**63
+
+    b2 = BitInt(64, 2**64 - 1, signed=False)
+    assert int(b2) == 2**64 - 1
+
+
+def test_unsigned_set_upper_bits() -> None:
+    """Test setting upper bits on unsigned 64-bit BitInt and converting to int."""
+    b = BitInt(64, signed=False)
+    for i in range(32, 64):
+        b[i] = 1
+    val = int(b)
+    expected = 2**64 - 2**32  # 0xFFFFFFFF_00000000
+    assert val == expected
+    assert val > 0
+
+
+def test_index_protocol() -> None:
+    """Test that __index__ works and matches __int__."""
+    import operator
+
+    b_unsigned = BitInt(64, UMAX, signed=False)
+    assert operator.index(b_unsigned) == int(b_unsigned) == UMAX
+
+    b_signed = BitInt(64, -1)
+    assert operator.index(b_signed) == int(b_signed) == -1
+
+
+def test_signed_comparison_semantics() -> None:
+    """Test that signed BitInt with all bits set (= -1) compares less than 0."""
+    b = BitInt(64, -1)
+    assert b < 0
+    assert b <= 0
+    assert not (b > 0)
+    assert not (b >= 1)
+    assert b == -1
+
+
+def test_unsigned_comparison_semantics() -> None:
+    """Test that unsigned BitInt with all bits set compares greater than 0."""
+    b = BitInt(64, UMAX, signed=False)
+    assert b > 0
+    assert b >= 0
+    assert not (b < 0)
+    assert b == UMAX
+
+
+def test_unsigned_rng_seed() -> None:
+    """Test that unsigned BitInt value works as an RNG seed."""
+    from pecos_rslib import RngPcg
+
+    b = BitInt(64, signed=False)
+    for i in range(32, 64):
+        b[i] = 1
+
+    pcg = RngPcg()
+    pcg.srandom(int(b))  # should not raise
+
+
+def test_signed_int_still_works() -> None:
+    """Test that signed BitInt int() conversion still returns negative values correctly."""
+    b = BitInt(64, -1)
+    assert int(b) == -1
+
+    b2 = BitInt(64, -(2**63))
+    assert int(b2) == -(2**63)
+
+    b3 = BitInt(64, 0)
+    assert int(b3) == 0

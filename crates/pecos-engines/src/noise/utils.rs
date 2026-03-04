@@ -250,6 +250,15 @@ impl NoiseUtils {
                 builder.add_idle(gate.params[0], &qubits_usize);
             }
 
+            // Gates that are handled by the simulator directly (via CliffordGateable)
+            // but don't have byte message builder methods
+            GateType::F
+            | GateType::Fdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg => {}
+
             // Custom is a placeholder (actual gate name is in metadata); skip it
             GateType::Custom => {}
 

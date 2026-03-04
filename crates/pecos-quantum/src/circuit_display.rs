@@ -30,6 +30,8 @@ use std::collections::BTreeSet;
 fn gate_symbol(gate_type: GateType) -> &'static str {
     match gate_type {
         GateType::H => "H",
+        GateType::F => "F",
+        GateType::Fdg => "Fdg",
         GateType::X => "X",
         GateType::Y => "Y",
         GateType::Z => "Z",
@@ -50,6 +52,10 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::CY => "CY",
         GateType::CZ => "CZ",
         GateType::CH => "CH",
+        GateType::SXX => "SXX",
+        GateType::SXXdg => "SXXdg",
+        GateType::SYY => "SYY",
+        GateType::SYYdg => "SYYdg",
         GateType::SZZ => "SZZ",
         GateType::SZZdg => "SZZdg",
         GateType::SWAP => "SWAP",
@@ -181,8 +187,8 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::SZZ
         | GateType::SZZdg
         | GateType::CRZ => CellColor::ZAxis,
-        GateType::SX | GateType::SXdg => CellColor::YZMix,
-        GateType::SY | GateType::SYdg | GateType::H | GateType::CH => CellColor::XZMix,
+        GateType::SX | GateType::SXdg | GateType::SXX | GateType::SXXdg => CellColor::YZMix,
+        GateType::SY | GateType::SYdg | GateType::SYY | GateType::SYYdg | GateType::H | GateType::F | GateType::Fdg | GateType::CH => CellColor::XZMix,
         GateType::SZ | GateType::SZdg => CellColor::XYMix,
         // No clear single-axis color: idle, alloc/free, multi-qubit, custom
         GateType::Idle
@@ -408,7 +414,7 @@ fn decompose_gate(
                 }
                 // Symmetric two-qubit interactions: dots on both wires,
                 // label on the connector line between them.
-                GateType::RXX | GateType::RYY | GateType::RZZ | GateType::SZZ | GateType::SZZdg => {
+                GateType::RXX | GateType::RYY | GateType::RZZ | GateType::SXX | GateType::SXXdg | GateType::SYY | GateType::SYYdg | GateType::SZZ | GateType::SZZdg => {
                     cells.push((row_a, DiagramCell::Control, color));
                     cells.push((row_b, DiagramCell::Control, color));
                     connector_label = Some(sym.clone());

@@ -112,6 +112,30 @@ impl Engine for QuestStateVecEngine {
                 GateType::SZZdg => {
                     self.simulator.szzdg(&cmd.qubits);
                 }
+                GateType::F => {
+                    self.simulator.f(&cmd.qubits);
+                }
+                GateType::Fdg => {
+                    self.simulator.fdg(&cmd.qubits);
+                }
+                GateType::SY => {
+                    self.simulator.sy(&cmd.qubits);
+                }
+                GateType::SYdg => {
+                    self.simulator.sydg(&cmd.qubits);
+                }
+                GateType::SXX => {
+                    self.simulator.sxx(&cmd.qubits);
+                }
+                GateType::SXXdg => {
+                    self.simulator.sxxdg(&cmd.qubits);
+                }
+                GateType::SYY => {
+                    self.simulator.syy(&cmd.qubits);
+                }
+                GateType::SYYdg => {
+                    self.simulator.syydg(&cmd.qubits);
+                }
                 GateType::SWAP => {
                     self.simulator.swap(&cmd.qubits);
                 }
@@ -202,7 +226,7 @@ impl Engine for QuestStateVecEngine {
                             .u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
                     }
                 }
-                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                GateType::RXX | GateType::RYY => {
                     return Err(PecosError::Processing(format!(
                         "Gate type {:?} is not yet supported by QuestStateVecEngine",
                         cmd.gate_type
@@ -333,6 +357,30 @@ impl Engine for QuestDensityMatrixEngine {
                 GateType::SZZdg => {
                     self.simulator.szzdg(&cmd.qubits);
                 }
+                GateType::F => {
+                    self.simulator.f(&cmd.qubits);
+                }
+                GateType::Fdg => {
+                    self.simulator.fdg(&cmd.qubits);
+                }
+                GateType::SY => {
+                    self.simulator.sy(&cmd.qubits);
+                }
+                GateType::SYdg => {
+                    self.simulator.sydg(&cmd.qubits);
+                }
+                GateType::SXX => {
+                    self.simulator.sxx(&cmd.qubits);
+                }
+                GateType::SXXdg => {
+                    self.simulator.sxxdg(&cmd.qubits);
+                }
+                GateType::SYY => {
+                    self.simulator.syy(&cmd.qubits);
+                }
+                GateType::SYYdg => {
+                    self.simulator.syydg(&cmd.qubits);
+                }
                 GateType::SWAP => {
                     self.simulator.swap(&cmd.qubits);
                 }
@@ -423,7 +471,7 @@ impl Engine for QuestDensityMatrixEngine {
                             .u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
                     }
                 }
-                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
+                GateType::RXX | GateType::RYY => {
                     return Err(PecosError::Processing(format!(
                         "Gate type {:?} is not yet supported by QuestDensityMatrixEngine",
                         cmd.gate_type

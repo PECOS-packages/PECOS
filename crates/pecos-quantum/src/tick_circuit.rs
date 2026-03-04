@@ -1256,6 +1256,16 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::szdg(qubits))
     }
 
+    /// Apply F gate(s) to one or more qubits.
+    pub fn f(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::f(qubits))
+    }
+
+    /// Apply F-dagger gate(s) to one or more qubits.
+    pub fn fdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::fdg(qubits))
+    }
+
     /// Apply T gate(s) to one or more qubits.
     pub fn t(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
         self.add_gate(Gate::t(qubits))
@@ -1425,6 +1435,54 @@ impl<'a> TickHandle<'a> {
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
         self.add_gate(Gate::szzdg(pairs))
+    }
+
+    /// Apply SXX gate(s) (sqrt-XX) to one or more qubit pairs.
+    pub fn sxx(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::sxx(pairs))
+    }
+
+    /// Apply SXX-dagger gate(s) to one or more qubit pairs.
+    pub fn sxxdg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::sxxdg(pairs))
+    }
+
+    /// Apply SYY gate(s) (sqrt-YY) to one or more qubit pairs.
+    pub fn syy(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::syy(pairs))
+    }
+
+    /// Apply SYY-dagger gate(s) to one or more qubit pairs.
+    pub fn syydg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::syydg(pairs))
+    }
+
+    /// Apply SWAP gate(s) to one or more qubit pairs.
+    pub fn swap(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::swap(pairs))
+    }
+
+    /// Apply CH (controlled-Hadamard) gate(s) to one or more qubit pairs.
+    pub fn ch(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::ch(pairs))
     }
 
     /// Apply RXX rotation(s) to one or more qubit pairs.

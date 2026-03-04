@@ -639,13 +639,21 @@ impl QASMEngine {
             | GateType::SZ
             | GateType::SZdg
             | GateType::H
+            | GateType::F
+            | GateType::Fdg
             | GateType::T
             | GateType::Tdg
             | GateType::Prep
             | GateType::QAlloc => self.process_single_qubit_gate(gate.gate_type, &qubits),
-            GateType::CX | GateType::CY | GateType::CZ | GateType::SZZ | GateType::SZZdg => {
-                self.process_two_qubit_gate(gate.gate_type, &qubits)
-            }
+            GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg => self.process_two_qubit_gate(gate.gate_type, &qubits),
             // Gates not yet supported in QASM engine
             GateType::SWAP | GateType::CCX | GateType::CRZ | GateType::CH => {
                 Err(PecosError::Processing(format!(

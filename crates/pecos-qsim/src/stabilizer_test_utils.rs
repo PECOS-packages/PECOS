@@ -119,14 +119,14 @@ macro_rules! stabilizer_test_suite {
         paste::paste! {
             #[test]
             fn [<test_ $sim_type:snake _basic_suite>]() {
-                use $crate::stabilizer_test_utils::{run_basic_stabilizer_test_suite, StabilizerSimulator};
+                use $crate::stabilizer_test_utils::run_basic_stabilizer_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_basic_stabilizer_test_suite(&mut sim, $num_qubits);
             }
 
             #[test]
             fn [<test_ $sim_type:snake _full_suite>]() {
-                use $crate::stabilizer_test_utils::{run_full_stabilizer_test_suite, StabilizerSimulator};
+                use $crate::stabilizer_test_utils::run_full_stabilizer_test_suite;
                 let mut sim = <$sim_type>::with_seed($num_qubits, 42);
                 run_full_stabilizer_test_suite(&mut sim, $num_qubits);
             }

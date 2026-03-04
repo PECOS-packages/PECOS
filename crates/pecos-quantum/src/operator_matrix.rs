@@ -241,7 +241,14 @@ pub fn operators_equiv_with_tolerance(a: &Operator, b: &Operator, tol: f64) -> b
 }
 
 /// Checks if two matrices are equal up to a global phase factor.
-fn matrices_equiv_up_to_phase(a: &DMatrix<Complex64>, b: &DMatrix<Complex64>, tol: f64) -> bool {
+///
+/// Returns `true` if A = e^{i*phi} * B for some real phi, within the given tolerance.
+#[must_use]
+pub fn matrices_equiv_up_to_phase(
+    a: &DMatrix<Complex64>,
+    b: &DMatrix<Complex64>,
+    tol: f64,
+) -> bool {
     if a.nrows() != b.nrows() || a.ncols() != b.ncols() {
         return false;
     }

@@ -158,7 +158,10 @@ impl PauliOperator for PauliBitmap {
         };
 
         Self {
-            phase: self.phase.multiply(&other.phase).multiply(&phase_correction),
+            phase: self
+                .phase
+                .multiply(&other.phase)
+                .multiply(&phase_correction),
             x_bits: x_result,
             z_bits: z_result,
         }
@@ -356,7 +359,11 @@ mod tests {
         let result = y.multiply(&y);
         assert_eq!(result.x_bits, 0, "Y*Y result should be I");
         assert_eq!(result.z_bits, 0);
-        assert_eq!(result.phase, QuarterPhase::PlusOne, "Y*Y phase should be +1");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::PlusOne,
+            "Y*Y phase should be +1"
+        );
     }
 
     #[test]
@@ -428,7 +435,10 @@ mod tests {
     fn test_commutes_y_different_qubits() {
         let y0 = PauliBitmap::from_single(0, Pauli::Y);
         let z1 = PauliBitmap::from_single(1, Pauli::Z);
-        assert!(y0.commutes_with(&z1), "operators on different qubits commute");
+        assert!(
+            y0.commutes_with(&z1),
+            "operators on different qubits commute"
+        );
     }
 
     // ========================================================================
@@ -444,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Qubit index exceeds the limit of 64")]
     fn test_from_single_qubit_64_panics() {
         PauliBitmap::from_single(64, Pauli::X);
     }
@@ -459,7 +469,11 @@ mod tests {
         let p1 = PauliBitmap::with_operators(QuarterPhase::PlusOne, &[], &[0, 1], &[]).unwrap();
         let p2 = PauliBitmap::with_operators(QuarterPhase::PlusOne, &[0, 1], &[], &[]).unwrap();
         let result = p1.multiply(&p2);
-        assert_eq!(result.phase, QuarterPhase::MinusOne, "(YY)*(XX) phase should be -1");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::MinusOne,
+            "(YY)*(XX) phase should be -1"
+        );
         assert_eq!(result.x_bits, 0);
         assert_eq!(result.z_bits, 0b11, "result should be ZZ");
     }
@@ -471,7 +485,11 @@ mod tests {
         let p1 = PauliBitmap::with_operators(QuarterPhase::PlusOne, &[], &[0], &[1]).unwrap();
         let p2 = PauliBitmap::with_operators(QuarterPhase::PlusOne, &[1], &[0], &[]).unwrap();
         let result = p1.multiply(&p2);
-        assert_eq!(result.phase, QuarterPhase::PlusI, "(YZ)*(YX) phase should be +i");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::PlusI,
+            "(YZ)*(YX) phase should be +i"
+        );
         // q0: I, q1: Y (both bits set)
         assert_eq!(result.x_bits, 0b10);
         assert_eq!(result.z_bits, 0b10);

@@ -55,6 +55,9 @@ use std::str::FromStr;
 /// Each row is a 2n-bit vector representing a Pauli string in the binary
 /// symplectic representation: `(x_0, ..., x_{n-1} | z_0, ..., z_{n-1})`
 /// where `x_q = 1` if qubit q has X or Y, and `z_q = 1` if qubit q has Z or Y.
+///
+// TODO: Each bit is stored as a full `u8`. For large codes, consider packing
+// into `u64` words or using a bitvec for 8x memory reduction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct F2Matrix {
     pub(crate) rows: Vec<Vec<u8>>,
@@ -280,7 +283,7 @@ impl fmt::Display for F2Matrix {
 /// assert_eq!(gens.rank(), 2);
 /// assert!(gens.is_abelian());
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PauliSequence {
     paulis: Vec<PauliString>,
     num_qubits: usize,
@@ -292,10 +295,7 @@ impl PauliSequence {
     /// `num_qubits` specifies the total qubit count (defines the symplectic matrix width).
     #[must_use]
     pub fn new(paulis: Vec<PauliString>, num_qubits: usize) -> Self {
-        Self {
-            paulis,
-            num_qubits,
-        }
+        Self { paulis, num_qubits }
     }
 
     /// Creates a `PauliSequence` from string representations.
@@ -324,10 +324,7 @@ impl PauliSequence {
             .max()
             .map_or(0, |m| m + 1);
 
-        Ok(Self {
-            paulis,
-            num_qubits,
-        })
+        Ok(Self { paulis, num_qubits })
     }
 
     /// Returns a reference to the Pauli strings.
@@ -489,8 +486,8 @@ impl PauliSequence {
         for (row_idx, &pivot_col) in pivots.iter().enumerate() {
             if target[pivot_col] == 1 {
                 // XOR the reduced row into the target
-                for col in 0..2 * n {
-                    target[col] ^= reduced.rows[row_idx][col];
+                for (col, t) in target.iter_mut().enumerate() {
+                    *t ^= reduced.rows[row_idx][col];
                 }
             }
         }
@@ -548,8 +545,8 @@ impl PauliSequence {
         // Eliminate the target using the reduced rows
         for (row_idx, &pivot_col) in pivots.iter().enumerate() {
             if target[pivot_col] == 1 {
-                for col in 0..aug_cols {
-                    target[col] ^= reduced.rows[row_idx][col];
+                for (col, t) in target.iter_mut().enumerate() {
+                    *t ^= reduced.rows[row_idx][col];
                 }
             }
         }
@@ -603,6 +600,7 @@ impl PauliSequence {
     /// `result[i][j]` is `true` if entries `i` and `j` commute, `false` if they anticommute.
     /// The diagonal is always `true` (every operator commutes with itself).
     #[must_use]
+    #[allow(clippy::needless_range_loop)] // symmetric update requires indexing both [i][j] and [j][i]
     pub fn commutation_matrix(&self) -> Vec<Vec<bool>> {
         let k = self.paulis.len();
         let mut matrix = vec![vec![true; k]; k];
@@ -785,7 +783,7 @@ impl FromStr for PauliSequence {
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
-            .map(|line| line.parse())
+            .map(str::parse)
             .collect::<Result<_, _>>()?;
 
         let num_qubits = paulis
@@ -811,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_new() {
-        let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
         assert_eq!(gens.len(), 2);
         assert_eq!(gens.num_qubits(), 3);
     }
@@ -845,17 +843,14 @@ mod tests {
 
     #[test]
     fn test_rank_independent() {
-        let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
         assert_eq!(gens.rank(), 2);
     }
 
     #[test]
     fn test_rank_dependent() {
         // ZIZ = ZZI * IZZ (symplectic: 110 XOR 011 = 101), so rank should still be 2
-        let gens = PauliSequence::new(
-            vec![Zs(&[0, 1]), Zs(&[1, 2]), Zs(&[0, 2])],
-            3,
-        );
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])], 3);
         assert_eq!(gens.rank(), 2);
     }
 
@@ -873,35 +868,35 @@ mod tests {
 
     #[test]
     fn test_contains_generator() {
-        let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
-        assert!(gens.contains(&Zs(&[0, 1])));
-        assert!(gens.contains(&Zs(&[1, 2])));
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        assert!(gens.contains(&Zs([0, 1])));
+        assert!(gens.contains(&Zs([1, 2])));
     }
 
     #[test]
     fn test_contains_product() {
-        let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
         // ZIZ = ZZI * IZZ (symplectic: 110 XOR 011 = 101)
-        assert!(gens.contains(&Zs(&[0, 2])));
+        assert!(gens.contains(&Zs([0, 2])));
     }
 
     #[test]
     fn test_not_contains() {
-        let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
         assert!(!gens.contains(&X(0)));
         assert!(!gens.contains(&Z(0)));
     }
 
     #[test]
     fn test_contains_identity() {
-        let gens = PauliSequence::new(vec![Zs(&[0, 1])], 2);
+        let gens = PauliSequence::new(vec![Zs([0, 1])], 2);
         // Identity is always in the group (product of zero generators)
         assert!(gens.contains(&I()));
     }
 
     #[test]
     fn test_is_abelian_commuting() {
-        let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
         assert!(gens.is_abelian());
     }
 
@@ -931,10 +926,7 @@ mod tests {
     #[test]
     fn test_row_reduce() {
         // ZIZ = ZZI * IZZ, so one generator is redundant
-        let gens = PauliSequence::new(
-            vec![Zs(&[0, 1]), Zs(&[1, 2]), Zs(&[0, 2])],
-            3,
-        );
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])], 3);
         let reduced = gens.row_reduce();
         assert_eq!(reduced.len(), 2);
         assert_eq!(reduced.rank(), 2);
@@ -952,12 +944,12 @@ mod tests {
         // [[7,1,3]] Steane code
         let gens = PauliSequence::new(
             vec![
-                Xs(&[0, 2, 4, 6]),
-                Xs(&[1, 2, 5, 6]),
-                Xs(&[3, 4, 5, 6]),
-                Zs(&[0, 2, 4, 6]),
-                Zs(&[1, 2, 5, 6]),
-                Zs(&[3, 4, 5, 6]),
+                Xs([0, 2, 4, 6]),
+                Xs([1, 2, 5, 6]),
+                Xs([3, 4, 5, 6]),
+                Zs([0, 2, 4, 6]),
+                Zs([1, 2, 5, 6]),
+                Zs([3, 4, 5, 6]),
             ],
             7,
         );
@@ -965,19 +957,19 @@ mod tests {
         assert!(gens.is_abelian());
 
         // Logical operators should not be in the stabilizer group
-        assert!(!gens.contains(&Xs(&[0, 1, 2, 3, 4, 5, 6])));
-        assert!(!gens.contains(&Zs(&[0, 1, 2, 3, 4, 5, 6])));
+        assert!(!gens.contains(&Xs([0, 1, 2, 3, 4, 5, 6])));
+        assert!(!gens.contains(&Zs([0, 1, 2, 3, 4, 5, 6])));
     }
 
     #[test]
     fn test_contains_with_phase() {
-        let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
 
         // +ZZI is in the group with correct phase
-        assert!(gens.contains_with_phase(&Zs(&[0, 1])));
+        assert!(gens.contains_with_phase(&Zs([0, 1])));
 
         // -ZZI should not be in the group (wrong phase)
-        assert!(!gens.contains_with_phase(&(-Zs(&[0, 1]))));
+        assert!(!gens.contains_with_phase(&(-Zs([0, 1]))));
     }
 
     #[test]
@@ -1026,7 +1018,7 @@ mod tests {
 
     #[test]
     fn test_to_sparse_str() {
-        let seq = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+        let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
         assert_eq!(seq.to_sparse_str(), "+Z0 Z1\n+Z1 Z2");
     }
 
@@ -1065,7 +1057,7 @@ mod tests {
     #[test]
     fn test_extend() {
         let mut seq = PauliSequence::new(Vec::new(), 0);
-        seq.extend(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
+        seq.extend(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(seq.len(), 2);
         assert_eq!(seq.num_qubits(), 3);
     }
@@ -1073,7 +1065,7 @@ mod tests {
     #[test]
     fn test_centralizer_repetition_code() {
         // ZZI, IZZ on 3 qubits: centralizer dimension = 2*3 - 2 = 4
-        let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
         let cent = gens.centralizer();
         assert_eq!(cent.len(), 4);
     }
@@ -1139,12 +1131,12 @@ mod tests {
         // [[7,1]] Steane code: 6 generators, centralizer dimension = 14 - 6 = 8
         let gens = PauliSequence::new(
             vec![
-                Xs(&[0, 2, 4, 6]),
-                Xs(&[1, 2, 5, 6]),
-                Xs(&[3, 4, 5, 6]),
-                Zs(&[0, 2, 4, 6]),
-                Zs(&[1, 2, 5, 6]),
-                Zs(&[3, 4, 5, 6]),
+                Xs([0, 2, 4, 6]),
+                Xs([1, 2, 5, 6]),
+                Xs([3, 4, 5, 6]),
+                Zs([0, 2, 4, 6]),
+                Zs([1, 2, 5, 6]),
+                Zs([3, 4, 5, 6]),
             ],
             7,
         );
@@ -1228,7 +1220,10 @@ mod tests {
         mat.rows[2] = vec![1, 1]; // row 2 = row 0 + row 1 (redundant)
         // Full column rank => kernel is empty
         let kern = mat.kernel();
-        assert!(kern.is_empty(), "full column rank matrix should have trivial kernel");
+        assert!(
+            kern.is_empty(),
+            "full column rank matrix should have trivial kernel"
+        );
     }
 
     #[test]
@@ -1250,6 +1245,10 @@ mod tests {
         let cent = seq.centralizer();
         // For 1 qubit, the symplectic space is 2D.
         // Y has vector [1,1]. The centralizer kernel should have dimension 2 - 1 = 1.
-        assert_eq!(cent.len(), 1, "centralizer of single Y on 1 qubit should have dim 1");
+        assert_eq!(
+            cent.len(),
+            1,
+            "centralizer of single Y on 1 qubit should have dim 1"
+        );
     }
 }

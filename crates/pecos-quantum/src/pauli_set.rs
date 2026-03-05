@@ -47,7 +47,7 @@
 //! ```
 
 use crate::PauliSequence;
-use pecos_core::{Pauli, PauliOperator, ParsePauliStringError, PauliString, QuarterPhase, QubitId};
+use pecos_core::{ParsePauliStringError, Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
@@ -76,7 +76,13 @@ impl PauliKey {
             .map(|(p, q)| (*q, *p))
             .collect();
         ops.sort_by_key(|(q, _)| *q);
+        let len_before = ops.len();
         ops.dedup_by_key(|(q, _)| *q);
+        debug_assert_eq!(
+            len_before,
+            ops.len(),
+            "PauliString has duplicate qubit entries; this is a bug in the PauliString constructor"
+        );
         Self {
             phase: ps.phase(),
             ops,
@@ -506,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_to_collection() {
-        let set = PauliSet::from_iter([Zs(&[0, 1]), Zs(&[1, 2])]);
+        let set = PauliSet::from_iter([Zs([0, 1]), Zs([1, 2])]);
         let coll = set.to_collection(3);
         assert_eq!(coll.len(), 2);
         assert_eq!(coll.rank(), 2);
@@ -536,7 +542,7 @@ mod tests {
     fn test_multi_qubit() {
         let mut set = PauliSet::new();
         set.insert(X(0) & Z(1));
-        set.insert(Zs(&[0, 1, 2]));
+        set.insert(Zs([0, 1, 2]));
         set.insert(X(0) & Z(1)); // duplicate
         assert_eq!(set.len(), 2);
     }
@@ -638,7 +644,7 @@ mod tests {
 
     #[test]
     fn test_is_abelian_commuting() {
-        let set = PauliSet::from_iter([Zs(&[0, 1]), Zs(&[1, 2])]);
+        let set = PauliSet::from_iter([Zs([0, 1]), Zs([1, 2])]);
         assert!(set.is_abelian());
     }
 

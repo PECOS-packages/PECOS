@@ -25,8 +25,10 @@ pub mod pauli_string;
 use crate::QuarterPhase;
 use std::fmt::Debug;
 
-/// Single-qubit Pauli operator
-/// #[`allow(clippy::module_name_repetitions)`]
+/// Single-qubit Pauli operator.
+///
+/// The `Ord` implementation uses discriminant order (`I < X < Z < Y`) and is
+/// intended only for deterministic collection ordering, not mathematical significance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 #[derive(Default)]

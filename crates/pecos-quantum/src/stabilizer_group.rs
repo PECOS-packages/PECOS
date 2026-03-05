@@ -323,6 +323,10 @@ impl PauliStabilizerGroup {
     /// For large groups, prefer [`contains`](Self::contains) or
     /// [`contains_with_phase`](Self::contains_with_phase) for membership testing.
     ///
+    /// # Panics
+    ///
+    /// Panics if the group has more than 30 generators (2^30 > 10^9 elements).
+    ///
     /// # Examples
     ///
     /// ```
@@ -336,6 +340,10 @@ impl PauliStabilizerGroup {
     /// ```
     pub fn elements(&self) -> impl Iterator<Item = PauliString> + '_ {
         let r = self.inner.len();
+        assert!(
+            r <= 30,
+            "elements() would yield 2^{r} items; use contains() for membership testing instead"
+        );
         (0u64..(1u64 << r)).map(move |mask| self.element(mask))
     }
 
@@ -403,8 +411,8 @@ impl PauliStabilizerGroup {
             // Reduce using stabilizer RREF
             for (row_idx, &pivot_col) in stab_pivots.iter().enumerate() {
                 if v[pivot_col] == 1 {
-                    for col in 0..2 * n {
-                        v[col] ^= stab_rref.row(row_idx)[col];
+                    for (col, vi) in v.iter_mut().enumerate() {
+                        *vi ^= stab_rref.row(row_idx)[col];
                     }
                 }
             }
@@ -419,7 +427,7 @@ impl PauliStabilizerGroup {
         if logical_vecs.len() > 1 {
             let mut log_mat = F2Matrix::zeros(logical_vecs.len(), 2 * n);
             for (i, v) in logical_vecs.iter().enumerate() {
-                log_mat.rows[i] = v.clone();
+                log_mat.rows[i].clone_from(v);
             }
             let (reduced, _) = log_mat.row_reduce();
             logical_vecs = (0..reduced.num_rows())
@@ -441,8 +449,12 @@ impl PauliStabilizerGroup {
     ///
     /// Returns `None` if there are no logical qubits (k = 0).
     ///
-    /// **Complexity**: Exponential in `k` (number of logical qubits) and `rank`.
-    /// Suitable for codes with small `k` and moderate `n`.
+    /// **Complexity**: O(2^k * 2^r) where k = number of logical operators and
+    /// r = rank. Only suitable for small codes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `k + rank > 30` to prevent accidental exponential blowup.
     ///
     /// # Examples
     ///
@@ -468,6 +480,13 @@ impl PauliStabilizerGroup {
         let reduced = self.row_reduce();
         let stab_paulis: Vec<&PauliString> = reduced.paulis().iter().collect();
         let r = stab_paulis.len();
+
+        assert!(
+            k + r <= 30,
+            "distance() is O(2^(k+r)) and would enumerate 2^{} combinations; \
+             use a different algorithm for large codes",
+            k + r,
+        );
 
         let mut min_weight = n + 1; // upper bound
 
@@ -588,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_repetition_code() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         assert_eq!(stab.rank(), 2);
         assert_eq!(stab.num_logical_qubits(), 1);
         assert_eq!(stab.code_parameters(), "[[3, 1]]");
@@ -598,12 +617,12 @@ mod tests {
     fn test_steane_code() {
         let stab = PauliStabilizerGroup::new(
             vec![
-                Xs(&[0, 2, 4, 6]),
-                Xs(&[1, 2, 5, 6]),
-                Xs(&[3, 4, 5, 6]),
-                Zs(&[0, 2, 4, 6]),
-                Zs(&[1, 2, 5, 6]),
-                Zs(&[3, 4, 5, 6]),
+                Xs([0, 2, 4, 6]),
+                Xs([1, 2, 5, 6]),
+                Xs([3, 4, 5, 6]),
+                Zs([0, 2, 4, 6]),
+                Zs([1, 2, 5, 6]),
+                Zs([3, 4, 5, 6]),
             ],
             7,
         )
@@ -637,14 +656,14 @@ mod tests {
     #[test]
     fn test_accepts_negative_phase() {
         // -ZZ is a valid stabilizer (phase is -1, which is real)
-        let stab = PauliStabilizerGroup::new(vec![-Zs(&[0, 1])], 2);
+        let stab = PauliStabilizerGroup::new(vec![-Zs([0, 1])], 2);
         assert!(stab.is_ok());
     }
 
     #[test]
     fn test_contains() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
-        assert!(stab.contains(&Zs(&[0, 2])));
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        assert!(stab.contains(&Zs([0, 2])));
         assert!(!stab.contains(&X(0)));
     }
 
@@ -667,10 +686,10 @@ mod tests {
         // [[5,1,3]] code: XZZXI, IXZZX, XIXZZ, ZXIXZ
         let stab = PauliStabilizerGroup::new(
             vec![
-                X(0) & Z(1) & Z(2) & X(3),       // XZZXI
-                X(1) & Z(2) & Z(3) & X(4),       // IXZZX
-                X(0) & X(2) & Z(3) & Z(4),       // XIXZZ
-                Z(0) & X(1) & X(3) & Z(4),       // ZXIXZ
+                X(0) & Z(1) & Z(2) & X(3), // XZZXI
+                X(1) & Z(2) & Z(3) & X(4), // IXZZX
+                X(0) & X(2) & Z(3) & Z(4), // XIXZZ
+                Z(0) & X(1) & X(3) & Z(4), // ZXIXZ
             ],
             5,
         )
@@ -711,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_to_sparse_str() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         assert_eq!(stab.to_sparse_str(), "+Z0 Z1\n+Z1 Z2");
     }
 
@@ -730,21 +749,17 @@ mod tests {
 
     #[test]
     fn test_is_independent() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         assert!(stab.is_independent());
 
         // Add a redundant generator: ZIZ = ZZI * IZZ
-        let stab = PauliStabilizerGroup::new(
-            vec![Zs(&[0, 1]), Zs(&[1, 2]), Zs(&[0, 2])],
-            3,
-        )
-        .unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])], 3).unwrap();
         assert!(!stab.is_independent());
     }
 
     #[test]
     fn test_syndrome_repetition_code() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
 
         // X error on qubit 0: anticommutes with ZZI only
         assert_eq!(stab.syndrome(&X(0)), vec![true, false]);
@@ -762,7 +777,7 @@ mod tests {
 
     #[test]
     fn test_logical_operators_repetition_code() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         let logicals = stab.logical_operators();
         // [[3,1]] code: 2k = 2 independent logical operators
         assert_eq!(logicals.len(), 2);
@@ -772,12 +787,12 @@ mod tests {
     fn test_logical_operators_steane_code() {
         let stab = PauliStabilizerGroup::new(
             vec![
-                Xs(&[0, 2, 4, 6]),
-                Xs(&[1, 2, 5, 6]),
-                Xs(&[3, 4, 5, 6]),
-                Zs(&[0, 2, 4, 6]),
-                Zs(&[1, 2, 5, 6]),
-                Zs(&[3, 4, 5, 6]),
+                Xs([0, 2, 4, 6]),
+                Xs([1, 2, 5, 6]),
+                Xs([3, 4, 5, 6]),
+                Zs([0, 2, 4, 6]),
+                Zs([1, 2, 5, 6]),
+                Zs([3, 4, 5, 6]),
             ],
             7,
         )
@@ -789,7 +804,7 @@ mod tests {
 
     #[test]
     fn test_distance_repetition_code() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         // Minimum weight logical: single Z (weight 1)
         assert_eq!(stab.distance(), Some(1));
     }
@@ -798,12 +813,12 @@ mod tests {
     fn test_distance_steane_code() {
         let stab = PauliStabilizerGroup::new(
             vec![
-                Xs(&[0, 2, 4, 6]),
-                Xs(&[1, 2, 5, 6]),
-                Xs(&[3, 4, 5, 6]),
-                Zs(&[0, 2, 4, 6]),
-                Zs(&[1, 2, 5, 6]),
-                Zs(&[3, 4, 5, 6]),
+                Xs([0, 2, 4, 6]),
+                Xs([1, 2, 5, 6]),
+                Xs([3, 4, 5, 6]),
+                Zs([0, 2, 4, 6]),
+                Zs([1, 2, 5, 6]),
+                Zs([3, 4, 5, 6]),
             ],
             7,
         )
@@ -841,21 +856,21 @@ mod tests {
 
     #[test]
     fn test_element_identity() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         let id = stab.element(0b00);
         assert!(id.is_identity());
     }
 
     #[test]
     fn test_element_single_generator() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
-        assert_eq!(stab.element(0b01), Zs(&[0, 1]));
-        assert_eq!(stab.element(0b10), Zs(&[1, 2]));
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        assert_eq!(stab.element(0b01), Zs([0, 1]));
+        assert_eq!(stab.element(0b10), Zs([1, 2]));
     }
 
     #[test]
     fn test_element_product() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         // ZZI * IZZ = ZIZ
         let product = stab.element(0b11);
         assert_eq!(product.get(0), Pauli::Z);
@@ -865,7 +880,7 @@ mod tests {
 
     #[test]
     fn test_multiply_by() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         // generator[0] (ZZI) * Z(0) = IZI
         let result = stab.multiply_by(0, &Z(0));
         assert_eq!(result.get(0), Pauli::I);
@@ -875,22 +890,22 @@ mod tests {
 
     #[test]
     fn test_multiply_by_identity() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 2).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])], 2).unwrap();
         let id = PauliString::identity();
         let result = stab.multiply_by(0, &id);
-        assert_eq!(result, Zs(&[0, 1]));
+        assert_eq!(result, Zs([0, 1]));
     }
 
     #[test]
     fn test_elements_count() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         let elements: Vec<_> = stab.elements().collect();
         assert_eq!(elements.len(), 4); // 2^2
     }
 
     #[test]
     fn test_elements_all_in_group() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         for elem in stab.elements() {
             assert!(stab.contains_with_phase(&elem));
         }
@@ -898,9 +913,9 @@ mod tests {
 
     #[test]
     fn test_elements_contains_identity() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 2).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])], 2).unwrap();
         let elements: Vec<_> = stab.elements().collect();
-        assert!(elements.iter().any(|e| e.is_identity()));
+        assert!(elements.iter().any(pecos_core::PauliString::is_identity));
     }
 
     #[test]
@@ -908,14 +923,14 @@ mod tests {
         let stab = PauliStabilizerGroup::new(vec![Z(0)], 1).unwrap();
         let elements: Vec<_> = stab.elements().collect();
         assert_eq!(elements.len(), 2); // I, Z
-        assert!(elements.iter().any(|e| e.is_identity()));
+        assert!(elements.iter().any(pecos_core::PauliString::is_identity));
         assert!(elements.iter().any(|e| *e == Z(0)));
     }
 
     #[test]
     fn test_element_with_negative_phase() {
         // -ZZ is a valid stabilizer generator
-        let stab = PauliStabilizerGroup::new(vec![-Zs(&[0, 1])], 2).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![-Zs([0, 1])], 2).unwrap();
         let elem = stab.element(0b1);
         assert_eq!(elem.phase(), QuarterPhase::MinusOne);
         assert_eq!(elem.weight(), 2);
@@ -923,19 +938,19 @@ mod tests {
         // Product with itself: (-ZZ)(-ZZ) = +II = identity
         let elements: Vec<_> = stab.elements().collect();
         assert_eq!(elements.len(), 2);
-        assert!(elements.iter().any(|e| e.is_identity()));
+        assert!(elements.iter().any(pecos_core::PauliString::is_identity));
     }
 
     #[test]
     fn test_syndrome_steane_code() {
         let stab = PauliStabilizerGroup::new(
             vec![
-                Xs(&[0, 2, 4, 6]),
-                Xs(&[1, 2, 5, 6]),
-                Xs(&[3, 4, 5, 6]),
-                Zs(&[0, 2, 4, 6]),
-                Zs(&[1, 2, 5, 6]),
-                Zs(&[3, 4, 5, 6]),
+                Xs([0, 2, 4, 6]),
+                Xs([1, 2, 5, 6]),
+                Xs([3, 4, 5, 6]),
+                Zs([0, 2, 4, 6]),
+                Zs([1, 2, 5, 6]),
+                Zs([3, 4, 5, 6]),
             ],
             7,
         )
@@ -954,7 +969,7 @@ mod tests {
 
     #[test]
     fn test_syndrome_y_error() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         // Y error on qubit 1: Y anticommutes with Z, so triggers both Z-stabilizers
         let syn = stab.syndrome(&Y(1));
         assert_eq!(syn, vec![true, true]);
@@ -962,7 +977,7 @@ mod tests {
 
     #[test]
     fn test_syndrome_multi_qubit_error() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         // X error on qubits 0 and 2: triggers both stabilizers
         let error = X(0) & X(2);
         let syn = stab.syndrome(&error);
@@ -972,8 +987,8 @@ mod tests {
     #[test]
     fn test_syndrome_stabilizer_element() {
         // Applying a stabilizer element should give trivial syndrome
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
-        let syn = stab.syndrome(&Zs(&[0, 1]));
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let syn = stab.syndrome(&Zs([0, 1]));
         assert_eq!(syn, vec![false, false]);
     }
 
@@ -1009,19 +1024,24 @@ mod tests {
         // General property: every logical commutes with every stabilizer
         let stab = PauliStabilizerGroup::new(
             vec![
-                Xs(&[0, 2, 4, 6]),
-                Xs(&[1, 2, 5, 6]),
-                Xs(&[3, 4, 5, 6]),
-                Zs(&[0, 2, 4, 6]),
-                Zs(&[1, 2, 5, 6]),
-                Zs(&[3, 4, 5, 6]),
+                Xs([0, 2, 4, 6]),
+                Xs([1, 2, 5, 6]),
+                Xs([3, 4, 5, 6]),
+                Zs([0, 2, 4, 6]),
+                Zs([1, 2, 5, 6]),
+                Zs([3, 4, 5, 6]),
             ],
             7,
         )
         .unwrap();
         for l in stab.logical_operators() {
             for s in stab.iter() {
-                assert!(l.commutes_with(s), "logical {} anticommutes with stabilizer {}", l.to_sparse_str(), s.to_sparse_str());
+                assert!(
+                    l.commutes_with(s),
+                    "logical {} anticommutes with stabilizer {}",
+                    l.to_sparse_str(),
+                    s.to_sparse_str()
+                );
             }
         }
     }
@@ -1029,11 +1049,7 @@ mod tests {
     #[test]
     fn test_distance_with_redundant_generators() {
         // Same code, but with a redundant generator
-        let stab = PauliStabilizerGroup::new(
-            vec![Zs(&[0, 1]), Zs(&[1, 2]), Zs(&[0, 2])],
-            3,
-        )
-        .unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])], 3).unwrap();
         assert!(!stab.is_independent());
         assert_eq!(stab.distance(), Some(1));
     }
@@ -1042,7 +1058,7 @@ mod tests {
     fn test_elements_closure() {
         // For a valid stabilizer group, the product of any two elements
         // should also be an element
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         let elements: Vec<_> = stab.elements().collect();
         for a in &elements {
             for b in &elements {
@@ -1061,16 +1077,20 @@ mod tests {
     #[test]
     fn test_elements_self_inverse() {
         // Every stabilizer element squares to identity
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         for elem in stab.elements() {
             let squared = elem.clone() * elem;
-            assert!(squared.is_identity(), "{} does not square to I", squared.to_sparse_str());
+            assert!(
+                squared.is_identity(),
+                "{} does not square to I",
+                squared.to_sparse_str()
+            );
         }
     }
 
     #[test]
     fn test_multiply_by_non_group_element() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 2).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])], 2).unwrap();
         // Multiply X(0) by generator ZZ: ZZ * X(0) = -Y(0)Z(1) (different from stabilizer)
         let result = stab.multiply_by(0, &X(0));
         assert!(!stab.contains(&result));
@@ -1085,9 +1105,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "exceeds number of generators")]
     fn test_element_out_of_range_panics() {
-        let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 2).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])], 2).unwrap();
         // mask 0b11 = 3 but only 1 generator, so bit 1 is out of range
         let _ = stab.element(0b11);
     }
@@ -1102,10 +1122,7 @@ mod tests {
 
     #[test]
     fn test_syndrome_identity_error() {
-        let stab = PauliStabilizerGroup::new(vec![
-            Zs(&[0, 1]),
-            Zs(&[1, 2]),
-        ], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         // Identity error has zero syndrome
         let id = PauliString::identity();
         let s = stab.syndrome(&id);
@@ -1115,10 +1132,7 @@ mod tests {
     #[test]
     fn test_logical_operators_anticommute_with_each_other() {
         // For [[3,1]] repetition code, logical X and Z should anticommute
-        let stab = PauliStabilizerGroup::new(vec![
-            Zs(&[0, 1]),
-            Zs(&[1, 2]),
-        ], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
         let logicals = stab.logical_operators();
         // Should have 2 logicals (X_L and Z_L)
         assert_eq!(logicals.len(), 2);

@@ -20,6 +20,16 @@ use std::str::FromStr;
 /// It stores individual Pauli operators (I, X, Y, Z) for each qubit along with a
 /// global phase (+1, -1, +i, -i).
 ///
+/// # `Hash` and `Eq` caveats
+///
+/// `Hash` and `Eq` compare the internal `(Pauli, QubitId)` pairs in storage order.
+/// Two `PauliString`s that represent the same operator but were constructed with
+/// different qubit ordering may compare as unequal and hash differently.
+/// If you need order-independent equality and hashing (e.g., for a `HashSet`),
+/// use [`PauliSet`] which normalizes to a canonical sorted form.
+///
+/// [`PauliSet`]: https://docs.rs/pecos-quantum/latest/pecos_quantum/struct.PauliSet.html
+///
 /// # Examples
 ///
 /// ```
@@ -435,11 +445,8 @@ impl PauliString {
             QuarterPhase::MinusI => "-i",
         };
         let mut parts = Vec::new();
-        let mut sorted_paulis: Vec<_> = self
-            .paulis
-            .iter()
-            .filter(|(p, _)| *p != Pauli::I)
-            .collect();
+        let mut sorted_paulis: Vec<_> =
+            self.paulis.iter().filter(|(p, _)| *p != Pauli::I).collect();
         sorted_paulis.sort_by_key(|(_, q)| q.index());
         for (pauli, qubit) in &sorted_paulis {
             let c = match pauli {
@@ -1532,7 +1539,11 @@ mod tests {
         for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
             let p = PauliString::from_single(0, pauli);
             let result = p.multiply(&p);
-            assert_eq!(result.weight(), 0, "{pauli:?} * {pauli:?} should be identity");
+            assert_eq!(
+                result.weight(),
+                0,
+                "{pauli:?} * {pauli:?} should be identity"
+            );
             assert_eq!(result.phase(), QuarterPhase::PlusOne);
         }
     }
@@ -1607,40 +1618,52 @@ mod tests {
     #[test]
     fn test_multiply_vs_algebra_no_y_inputs() {
         // X * Z = -iY (no Y in inputs, both paths should agree)
-        use crate::pauli::algebra;
+
         let x = PauliString::x(0);
         let z = PauliString::z(0);
 
         let algebra_result = x.clone() * z.clone();
         let trait_result = x.multiply(&z);
 
-        assert_eq!(algebra_result.get(0), trait_result.get(0),
-            "X*Z Pauli result should agree");
-        assert_eq!(algebra_result.phase(), trait_result.phase(),
-            "X*Z phase should agree");
+        assert_eq!(
+            algebra_result.get(0),
+            trait_result.get(0),
+            "X*Z Pauli result should agree"
+        );
+        assert_eq!(
+            algebra_result.phase(),
+            trait_result.phase(),
+            "X*Z phase should agree"
+        );
     }
 
     #[test]
     fn test_multiply_vs_algebra_y_input() {
         // X * Y = iZ (Y in input: algebra * is correct, trait multiply may differ)
         // This test documents whether the two paths are consistent.
-        use crate::pauli::algebra;
+
         let x = PauliString::x(0);
         let y = PauliString::y(0);
 
         let algebra_result = x.clone() * y.clone();
         let trait_result = x.multiply(&y);
 
-        assert_eq!(algebra_result.get(0), trait_result.get(0),
-            "X*Y Pauli type should agree between algebra and trait");
-        assert_eq!(algebra_result.phase(), trait_result.phase(),
-            "X*Y phase should agree between algebra and trait multiply");
+        assert_eq!(
+            algebra_result.get(0),
+            trait_result.get(0),
+            "X*Y Pauli type should agree between algebra and trait"
+        );
+        assert_eq!(
+            algebra_result.phase(),
+            trait_result.phase(),
+            "X*Y phase should agree between algebra and trait multiply"
+        );
     }
 
     #[test]
     fn test_multiply_vs_algebra_all_single_qubit_products() {
         // Exhaustive check: every pair of single-qubit Paulis
-        use crate::pauli::algebra;
+
         for p1 in [Pauli::X, Pauli::Y, Pauli::Z] {
             for p2 in [Pauli::X, Pauli::Y, Pauli::Z] {
                 let a = PauliString::from_single(0, p1);
@@ -1650,13 +1673,16 @@ mod tests {
                 let trait_result = a.multiply(&b);
 
                 assert_eq!(
-                    algebra_result.get(0), trait_result.get(0),
+                    algebra_result.get(0),
+                    trait_result.get(0),
                     "{p1:?}*{p2:?}: Pauli type mismatch"
                 );
                 assert_eq!(
-                    algebra_result.phase(), trait_result.phase(),
+                    algebra_result.phase(),
+                    trait_result.phase(),
                     "{p1:?}*{p2:?}: phase mismatch (algebra={:?}, trait={:?})",
-                    algebra_result.phase(), trait_result.phase()
+                    algebra_result.phase(),
+                    trait_result.phase()
                 );
             }
         }
@@ -1750,10 +1776,8 @@ mod tests {
 
     #[test]
     fn test_roundtrip_dense_y_with_phase() {
-        let original = PauliString::from_paulis_with_phase(
-            QuarterPhase::MinusI,
-            &[Pauli::Y, Pauli::X],
-        );
+        let original =
+            PauliString::from_paulis_with_phase(QuarterPhase::MinusI, &[Pauli::Y, Pauli::X]);
         let s = original.to_dense_str(None);
         let roundtripped = PauliString::from_dense_str(&s).unwrap();
         assert_eq!(original.phase(), roundtripped.phase());

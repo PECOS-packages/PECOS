@@ -237,7 +237,10 @@ where
         };
 
         Self {
-            phase: self.phase.multiply(&other.phase).multiply(&phase_correction),
+            phase: self
+                .phase
+                .multiply(&other.phase)
+                .multiply(&phase_correction),
             x_positions: x_result,
             z_positions: z_result,
         }
@@ -432,85 +435,97 @@ mod tests {
     #[test]
     fn test_multiply_x_times_y() {
         // X * Y = iZ
-        let x = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[0], &[], &[],
-        ).unwrap();
-        let y = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
+        let x = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[0], &[], &[])
+            .unwrap();
+        let y = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+            .unwrap();
         let result = x.multiply(&y);
-        assert!(result.x_positions.is_empty(), "X*Y should give Z (no x-bit)");
+        assert!(
+            result.x_positions.is_empty(),
+            "X*Y should give Z (no x-bit)"
+        );
         assert_sets_equal(&result.z_positions, &VecSet::from_iter([0usize]));
-        assert_eq!(result.phase, QuarterPhase::PlusI, "X*Y = iZ, phase should be +i");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::PlusI,
+            "X*Y = iZ, phase should be +i"
+        );
     }
 
     #[test]
     fn test_multiply_y_times_x() {
         // Y * X = -iZ
-        let y = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
-        let x = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[0], &[], &[],
-        ).unwrap();
+        let y = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+            .unwrap();
+        let x = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[0], &[], &[])
+            .unwrap();
         let result = y.multiply(&x);
         assert!(result.x_positions.is_empty());
         assert_sets_equal(&result.z_positions, &VecSet::from_iter([0usize]));
-        assert_eq!(result.phase, QuarterPhase::MinusI, "Y*X = -iZ, phase should be -i");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::MinusI,
+            "Y*X = -iZ, phase should be -i"
+        );
     }
 
     #[test]
     fn test_multiply_y_times_z() {
         // Y * Z = iX
-        let y = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
-        let z = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[], &[0],
-        ).unwrap();
+        let y = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+            .unwrap();
+        let z = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[], &[0])
+            .unwrap();
         let result = y.multiply(&z);
         assert_sets_equal(&result.x_positions, &VecSet::from_iter([0usize]));
         assert!(result.z_positions.is_empty());
-        assert_eq!(result.phase, QuarterPhase::PlusI, "Y*Z = iX, phase should be +i");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::PlusI,
+            "Y*Z = iX, phase should be +i"
+        );
     }
 
     #[test]
     fn test_multiply_z_times_y() {
         // Z * Y = -iX
-        let z = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[], &[0],
-        ).unwrap();
-        let y = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
+        let z = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[], &[0])
+            .unwrap();
+        let y = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+            .unwrap();
         let result = z.multiply(&y);
         assert_sets_equal(&result.x_positions, &VecSet::from_iter([0usize]));
         assert!(result.z_positions.is_empty());
-        assert_eq!(result.phase, QuarterPhase::MinusI, "Z*Y = -iX, phase should be -i");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::MinusI,
+            "Z*Y = -iX, phase should be -i"
+        );
     }
 
     #[test]
     fn test_multiply_y_times_y() {
         // Y * Y = I
-        let y = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
+        let y = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+            .unwrap();
         let result = y.multiply(&y);
         assert!(result.x_positions.is_empty());
         assert!(result.z_positions.is_empty());
-        assert_eq!(result.phase, QuarterPhase::PlusOne, "Y*Y = I, phase should be +1");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::PlusOne,
+            "Y*Y = I, phase should be +1"
+        );
     }
 
     #[test]
     fn test_multiply_consistency_with_algebra() {
         // Cross-check: PauliSparse multiply vs the known-correct algebra
         // X * Z = -iY (no Y in inputs, should work)
-        let x = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[0], &[], &[],
-        ).unwrap();
-        let z = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[], &[0],
-        ).unwrap();
+        let x = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[0], &[], &[])
+            .unwrap();
+        let z = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[], &[0])
+            .unwrap();
         let result = x.multiply(&z);
         assert_sets_equal(&result.x_positions, &VecSet::from_iter([0usize]));
         assert_sets_equal(&result.z_positions, &VecSet::from_iter([0usize]));
@@ -523,34 +538,30 @@ mod tests {
 
     #[test]
     fn test_commutes_y_with_x() {
-        let y = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
-        let x = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[0], &[], &[],
-        ).unwrap();
+        let y = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+            .unwrap();
+        let x = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[0], &[], &[])
+            .unwrap();
         assert!(!y.commutes_with(&x), "Y and X anticommute on same qubit");
     }
 
     #[test]
     fn test_commutes_y_with_z() {
-        let y = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
-        let z = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[], &[0],
-        ).unwrap();
+        let y = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+            .unwrap();
+        let z = PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[], &[0])
+            .unwrap();
         assert!(!y.commutes_with(&z), "Y and Z anticommute on same qubit");
     }
 
     #[test]
     fn test_commutes_y_with_y() {
-        let y1 = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
-        let y2 = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0], &[],
-        ).unwrap();
+        let y1 =
+            PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+                .unwrap();
+        let y2 =
+            PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0], &[])
+                .unwrap();
         assert!(y1.commutes_with(&y2), "Y commutes with itself");
     }
 
@@ -561,14 +572,18 @@ mod tests {
     #[test]
     fn test_multiply_double_y_inputs() {
         // (Y0, Y1) * (X0, X1): q0: Y*X=-iZ, q1: Y*X=-iZ -> phase = (-i)^2 = -1
-        let p1 = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[], &[0, 1], &[],
-        ).unwrap();
-        let p2 = PauliSparse::<VecSet<usize>>::with_operators(
-            QuarterPhase::PlusOne, &[0, 1], &[], &[],
-        ).unwrap();
+        let p1 =
+            PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[], &[0, 1], &[])
+                .unwrap();
+        let p2 =
+            PauliSparse::<VecSet<usize>>::with_operators(QuarterPhase::PlusOne, &[0, 1], &[], &[])
+                .unwrap();
         let result = p1.multiply(&p2);
-        assert_eq!(result.phase, QuarterPhase::MinusOne, "(YY)*(XX) phase should be -1");
+        assert_eq!(
+            result.phase,
+            QuarterPhase::MinusOne,
+            "(YY)*(XX) phase should be -1"
+        );
         assert!(result.x_positions.is_empty());
         assert_sets_equal(&result.z_positions, &VecSet::from_iter([0usize, 1]));
     }

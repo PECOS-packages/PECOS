@@ -38,6 +38,7 @@
 //!
 //! All three types implement the [`Phase`] trait.
 //!
+//! [`Sign`]: sign::Sign
 //! [`PauliString`]: crate::PauliString
 //! [`Operator`]: crate::Operator
 //! [`PauliSequence`]: https://docs.rs/pecos-quantum/latest/pecos_quantum/struct.PauliSequence.html
@@ -55,7 +56,7 @@ pub use quarter_phase::QuarterPhase;
 /// A trait for phase factors that can be converted to complex numbers,
 /// conjugated, and multiplied.
 ///
-/// Implemented by [`Sign`], [`QuarterPhase`], and [`GlobalPhase`].
+/// Implemented by [`Sign`](sign::Sign), [`QuarterPhase`], and [`GlobalPhase`].
 pub trait Phase {
     #[must_use]
     fn phase(&self) -> &Self {

@@ -7,6 +7,9 @@ use num_complex::Complex64 as Complex;
 /// any two Pauli operators produces a result whose phase is one of these four values,
 /// so `QuarterPhase` is the natural closure of Pauli multiplication.
 ///
+/// The `Ord` implementation uses discriminant order and is intended only for
+/// deterministic collection ordering, not mathematical significance.
+///
 /// Widens to: [`GlobalPhase`](crate::GlobalPhase) (via `From`)
 /// Narrows to: [`Sign`](crate::Sign) (via `TryFrom`, fails on `+/-i`)
 #[allow(clippy::module_name_repetitions)]

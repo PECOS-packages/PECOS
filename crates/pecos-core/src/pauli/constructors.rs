@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_batch() {
-        let p = Xs(&[0, 1, 2]);
+        let p = Xs([0, 1, 2]);
         assert_eq!(p.get(0), Pauli::X);
         assert_eq!(p.get(1), Pauli::X);
         assert_eq!(p.get(2), Pauli::X);
@@ -302,13 +302,13 @@ mod tests {
     #[test]
     fn test_stabilizer_like_usage() {
         // Repetition code stabilizers
-        let s1 = Zs(&[0, 1]);
-        let s2 = Zs(&[1, 2]);
+        let s1 = Zs([0, 1]);
+        let s2 = Zs([1, 2]);
         // Stabilizers commute
         assert!(s1.commutes_with(&s2));
 
         // Logical X anticommutes with stabilizers? No, XXXXX commutes with ZZ checks.
-        let lx = Xs(&[0, 1, 2]);
+        let lx = Xs([0, 1, 2]);
         // X on all vs ZZ on 0,1: X0 anticommutes with Z0, X1 anticommutes with Z1 => 2 anticommutations => commutes
         assert!(lx.commutes_with(&s1));
     }

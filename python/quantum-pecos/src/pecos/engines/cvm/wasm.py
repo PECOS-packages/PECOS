@@ -107,6 +107,8 @@ class WasmCCOP:
 
         # Convert args from (type, value) tuples to just values
         args_list = [int(b) for _, b in args]
+        print(f"DEBUG WasmCCOP.exec: {func_name}({args_list}) "
+              f"[raw args: {[(type(b).__name__, b.size if hasattr(b, 'size') else '?', b.signed if hasattr(b, 'signed') else '?') for _, b in args]}]")
         try:
             return self._wasm.exec(func_name, args_list)
         except _RsWasmError as e:

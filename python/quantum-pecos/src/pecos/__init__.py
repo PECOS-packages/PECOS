@@ -41,7 +41,6 @@ from pecos_rslib import (
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
     TimeUnits,  # Abstract time duration in arbitrary units
-    WasmError,  # WASM execution error (div-by-zero, timeout, etc.)
     WasmForeignObject,  # WASM foreign object for classical coprocessor
     abs,  # Absolute value
     all,  # All elements true
@@ -207,6 +206,10 @@ from pecos import (
     testing,  # Testing utilities (like numpy.testing)
     tools,
 )
+
+# Import WasmError from pecos.exceptions (Python-defined, inherits from pecos_rslib.WasmError)
+# so that errors re-raised through the Python layer display as pecos.WasmError
+from pecos.exceptions import WasmError
 
 # Deprecated APIs
 from pecos._deprecated import BinArray

@@ -23,7 +23,10 @@ from typing import TYPE_CHECKING, Protocol
 
 from pecos import BitInt, WasmForeignObject
 from pecos.engines.cvm.sim_func import sim_exec, sim_funcs
-from pecos.exceptions import MissingCCOPError
+from pecos.exceptions import MissingCCOPError, WasmError
+
+# Import the Rust WasmError for catching, then re-raise as pecos WasmError
+from pecos_rslib import WasmError as _RsWasmError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,7 +71,10 @@ class WasmCCOP:
             path: Path to a WebAssembly file or raw WebAssembly bytes.
         """
         self._wasm = WasmForeignObject(path)
-        self._wasm.init()
+        try:
+            self._wasm.init()
+        except _RsWasmError as e:
+            raise WasmError(str(e)) from e
 
     def get_funcs(self) -> list[str]:
         """Get list of available function names from the WASM module.
@@ -101,11 +107,17 @@ class WasmCCOP:
 
         # Convert args from (type, value) tuples to just values
         args_list = [int(b) for _, b in args]
-        return self._wasm.exec(func_name, args_list)
+        try:
+            return self._wasm.exec(func_name, args_list)
+        except _RsWasmError as e:
+            raise WasmError(str(e)) from e
 
     def shot_reinit(self) -> None:
         """Reset variables before each shot."""
-        self._wasm.shot_reinit()
+        try:
+            self._wasm.shot_reinit()
+        except _RsWasmError as e:
+            raise WasmError(str(e)) from e
 
     def teardown(self) -> None:
         """Clean up wasmtime resources."""

@@ -76,4 +76,7 @@ pub use circuit_diagram::{
 };
 
 // Operator algebra
-pub use operator::{I, Is, Operator, X, Xs, Y, Ys, Z, Zs};
+pub use operator::{Is, Operator};
+
+// PauliString constructors (primary user-facing API for Pauli algebra)
+pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};

@@ -3,8 +3,16 @@ use crate::QuarterPhase;
 use num_complex::Complex64;
 use num_complex::Complex64 as Complex;
 
+/// Second roots of unity: `{+1, -1}`.
+///
+/// This is the phase constraint for stabilizer group generators. A stabilizer
+/// must square to +I, which requires its phase to be real (+1 or -1). A generator
+/// with phase +i would give `(iP)^2 = -I`, which stabilizes no quantum state.
+///
+/// Widens to: [`QuarterPhase`] (via `From`)
+/// Narrows from: [`QuarterPhase`] (via `TryFrom`, fails on `+/-i`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)] // Ensures same binary representation as Phase
+#[repr(u8)]
 pub enum Sign {
     PlusOne = 0b00,
     MinusOne = 0b01,

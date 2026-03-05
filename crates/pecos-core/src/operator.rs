@@ -55,6 +55,7 @@ use crate::phase::Phase;
 use crate::{Angle64, PauliString, QuarterPhase, QubitId};
 use smallvec::SmallVec;
 use std::ops::{BitAnd, Mul, Neg};
+use std::str::FromStr;
 
 // ============================================================================
 // Phase macros for exact arithmetic
@@ -435,6 +436,377 @@ pub enum Operator {
     },
 }
 
+impl From<PauliString> for Operator {
+    fn from(ps: PauliString) -> Self {
+        Operator::Pauli(ps)
+    }
+}
+
+/// Error type for parsing an [`Operator`] from a string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseOperatorError {
+    pub message: String,
+}
+
+impl std::fmt::Display for ParseOperatorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for ParseOperatorError {}
+
+/// Parses an angle expression like `pi`, `pi/4`, `2*pi/3`, `-pi/2`.
+///
+/// Returns the angle as an `Angle64`.
+fn parse_angle_expr(s: &str) -> Result<Angle64, ParseOperatorError> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(ParseOperatorError {
+            message: "Empty angle expression".to_string(),
+        });
+    }
+
+    // Handle negative sign
+    let (negative, s) = if let Some(rest) = s.strip_prefix('-') {
+        (true, rest.trim())
+    } else {
+        (false, s)
+    };
+
+    // Try to parse as a pi expression: [N*]pi[/M]
+    let angle = if let Some(rest) = s.strip_prefix("pi") {
+        // "pi", "pi/N"
+        let rest = rest.trim();
+        if rest.is_empty() {
+            Angle64::HALF_TURN
+        } else if let Some(denom_str) = rest.strip_prefix('/') {
+            let denom: u64 = denom_str.trim().parse().map_err(|_| ParseOperatorError {
+                message: format!("Invalid angle denominator: '{denom_str}'"),
+            })?;
+            if denom == 0 {
+                return Err(ParseOperatorError {
+                    message: "Division by zero in angle".to_string(),
+                });
+            }
+            Angle64::HALF_TURN / denom
+        } else {
+            return Err(ParseOperatorError {
+                message: format!("Invalid angle expression: '{s}'"),
+            });
+        }
+    } else if s.contains("pi") {
+        // "N*pi" or "N*pi/M"
+        let parts: Vec<&str> = s.splitn(2, '*').collect();
+        if parts.len() != 2 {
+            return Err(ParseOperatorError {
+                message: format!("Invalid angle expression: '{s}'"),
+            });
+        }
+        let numer: u64 = parts[0].trim().parse().map_err(|_| ParseOperatorError {
+            message: format!("Invalid angle numerator: '{}'", parts[0]),
+        })?;
+        let pi_part = parts[1].trim();
+        let pi_rest = pi_part.strip_prefix("pi").ok_or_else(|| ParseOperatorError {
+            message: format!("Expected 'pi' in angle expression: '{s}'"),
+        })?;
+        let pi_rest = pi_rest.trim();
+        if pi_rest.is_empty() {
+            Angle64::HALF_TURN * numer
+        } else if let Some(denom_str) = pi_rest.strip_prefix('/') {
+            let denom: u64 = denom_str.trim().parse().map_err(|_| ParseOperatorError {
+                message: format!("Invalid angle denominator: '{denom_str}'"),
+            })?;
+            if denom == 0 {
+                return Err(ParseOperatorError {
+                    message: "Division by zero in angle".to_string(),
+                });
+            }
+            Angle64::HALF_TURN * numer / denom
+        } else {
+            return Err(ParseOperatorError {
+                message: format!("Invalid angle expression: '{s}'"),
+            });
+        }
+    } else {
+        return Err(ParseOperatorError {
+            message: format!("Unsupported angle format: '{s}' (expected pi expression like 'pi/4' or '2*pi/3')"),
+        });
+    };
+
+    if negative {
+        Ok(Angle64::ZERO - angle)
+    } else {
+        Ok(angle)
+    }
+}
+
+/// Parses qubit indices from whitespace-separated tokens.
+fn parse_qubits(tokens: &[&str]) -> Result<Vec<usize>, ParseOperatorError> {
+    tokens
+        .iter()
+        .map(|t| {
+            t.parse::<usize>().map_err(|_| ParseOperatorError {
+                message: format!("Invalid qubit index: '{t}'"),
+            })
+        })
+        .collect()
+}
+
+impl FromStr for Operator {
+    type Err = ParseOperatorError;
+
+    /// Parses an `Operator` from a string, supporting both gate and Pauli syntax.
+    ///
+    /// # Gate syntax
+    ///
+    /// Fixed gates: `"H 0"`, `"CX 0 1"`, `"SWAP 0 1"`, `"CCX 0 1 2"`
+    ///
+    /// Rotation gates: `"RX(pi/4) 0"`, `"RZ(pi/2) 0"`, `"RZZ(pi) 0 1"`
+    ///
+    /// Named rotations: `"T 0"`, `"Tdg 0"`, `"S 0"`, `"Sdg 0"`
+    ///
+    /// # Pauli syntax
+    ///
+    /// Sparse: `"X0 Z4 Y7"`, `"-i X2 Z4"`
+    ///
+    /// Dense: `"XYZZ"`, `"+iXXZI"`
+    ///
+    /// Single Pauli with space: `"X 0"`, `"Z 3"` (treated same as `"X0"`, `"Z3"`)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_core::Operator;
+    /// use std::str::FromStr;
+    ///
+    /// // Gate syntax
+    /// let h: Operator = "H 0".parse().unwrap();
+    /// let cx: Operator = "CX 0 1".parse().unwrap();
+    /// let t: Operator = "T 0".parse().unwrap();
+    /// let rz: Operator = "RZ(pi/4) 0".parse().unwrap();
+    ///
+    /// // Pauli syntax (sparse)
+    /// let p: Operator = "X0 Z1".parse().unwrap();
+    ///
+    /// // Pauli syntax (dense)
+    /// let p: Operator = "XZI".parse().unwrap();
+    /// ```
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Ok(Operator::Pauli(PauliString::new()));
+        }
+
+        // Extract the first word (gate name candidate), stopping at whitespace or '('
+        let gate_end = s
+            .find(|c: char| c.is_whitespace() || c == '(')
+            .unwrap_or(s.len());
+        let gate_name = &s[..gate_end];
+
+        // Check for rotation gates with angle: GATE(angle) qubit...
+        if let Some(paren_start) = s.find('(') {
+            if let Some(paren_end) = s.find(')') {
+                let rot_name = s[..paren_start].trim();
+                let angle_str = &s[paren_start + 1..paren_end];
+                let after_paren = s[paren_end + 1..].trim();
+                let qubit_tokens: Vec<&str> = after_paren.split_whitespace().collect();
+
+                let rot_type = match rot_name.to_uppercase().as_str() {
+                    "RX" => Some(RotationType::RX),
+                    "RY" => Some(RotationType::RY),
+                    "RZ" => Some(RotationType::RZ),
+                    "RXX" => Some(RotationType::RXX),
+                    "RYY" => Some(RotationType::RYY),
+                    "RZZ" => Some(RotationType::RZZ),
+                    _ => None,
+                };
+
+                if let Some(rot_type) = rot_type {
+                    let angle = parse_angle_expr(angle_str)?;
+                    let qubits = parse_qubits(&qubit_tokens)?;
+                    let expected = rot_type.num_qubits();
+                    if qubits.len() != expected {
+                        return Err(ParseOperatorError {
+                            message: format!(
+                                "{rot_name} requires {expected} qubit(s), got {}",
+                                qubits.len()
+                            ),
+                        });
+                    }
+                    return Ok(Operator::rotation(
+                        rot_type,
+                        angle,
+                        SmallVec::from_vec(qubits),
+                    ));
+                }
+            }
+        }
+
+        // Try to match fixed/named gates (case-insensitive)
+        let upper = gate_name.to_uppercase();
+        let after_gate = s[gate_end..].trim();
+        let qubit_tokens: Vec<&str> = after_gate.split_whitespace().collect();
+
+        match upper.as_str() {
+            // Single-qubit fixed gates
+            "H" | "F" | "FDG" | "SX" | "SXDG" | "SY" | "SYDG" | "CH" => {
+                let gate_type = match upper.as_str() {
+                    "H" => GateType::H,
+                    "F" => GateType::F,
+                    "FDG" => GateType::Fdg,
+                    "SX" => GateType::SX,
+                    "SXDG" => GateType::SXdg,
+                    "SY" => GateType::SY,
+                    "SYDG" => GateType::SYdg,
+                    "CH" => GateType::CH,
+                    _ => unreachable!(),
+                };
+                let expected = if upper == "CH" { 2 } else { 1 };
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != expected {
+                    return Err(ParseOperatorError {
+                        message: format!(
+                            "{gate_name} requires {expected} qubit(s), got {}",
+                            qubits.len()
+                        ),
+                    });
+                }
+                Ok(Operator::gate(
+                    gate_type,
+                    SmallVec::from_vec(qubits),
+                ))
+            }
+
+            // Named rotations (these produce Rotation variants)
+            "T" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 1 {
+                    return Err(ParseOperatorError {
+                        message: format!("T requires 1 qubit, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::rotation(
+                    RotationType::RZ,
+                    Angle64::HALF_TURN / 4,
+                    smallvec::smallvec![qubits[0]],
+                ))
+            }
+            "TDG" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 1 {
+                    return Err(ParseOperatorError {
+                        message: format!("Tdg requires 1 qubit, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::rotation(
+                    RotationType::RZ,
+                    Angle64::ZERO - Angle64::HALF_TURN / 4,
+                    smallvec::smallvec![qubits[0]],
+                ))
+            }
+            "S" | "SZ" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 1 {
+                    return Err(ParseOperatorError {
+                        message: format!("{gate_name} requires 1 qubit, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::rotation(
+                    RotationType::RZ,
+                    Angle64::QUARTER_TURN,
+                    smallvec::smallvec![qubits[0]],
+                ))
+            }
+            "SDG" | "SZDG" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 1 {
+                    return Err(ParseOperatorError {
+                        message: format!("{gate_name} requires 1 qubit, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::rotation(
+                    RotationType::RZ,
+                    Angle64::ZERO - Angle64::QUARTER_TURN,
+                    smallvec::smallvec![qubits[0]],
+                ))
+            }
+
+            // Two-qubit fixed gates
+            "CX" | "CNOT" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 2 {
+                    return Err(ParseOperatorError {
+                        message: format!("{gate_name} requires 2 qubits, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::gate(
+                    GateType::CX,
+                    SmallVec::from_vec(qubits),
+                ))
+            }
+            "CY" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 2 {
+                    return Err(ParseOperatorError {
+                        message: format!("CY requires 2 qubits, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::gate(
+                    GateType::CY,
+                    SmallVec::from_vec(qubits),
+                ))
+            }
+            "CZ" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 2 {
+                    return Err(ParseOperatorError {
+                        message: format!("CZ requires 2 qubits, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::gate(
+                    GateType::CZ,
+                    SmallVec::from_vec(qubits),
+                ))
+            }
+            "SWAP" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 2 {
+                    return Err(ParseOperatorError {
+                        message: format!("SWAP requires 2 qubits, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::gate(
+                    GateType::SWAP,
+                    SmallVec::from_vec(qubits),
+                ))
+            }
+
+            // Three-qubit gates
+            "CCX" | "TOFFOLI" => {
+                let qubits = parse_qubits(&qubit_tokens)?;
+                if qubits.len() != 3 {
+                    return Err(ParseOperatorError {
+                        message: format!("{gate_name} requires 3 qubits, got {}", qubits.len()),
+                    });
+                }
+                Ok(Operator::gate(
+                    GateType::CCX,
+                    SmallVec::from_vec(qubits),
+                ))
+            }
+
+            // Not a recognized gate name -> try Pauli parsing.
+            // This handles: "X0 Z1", "XYZZ", "-i X2 Z4", "X 0", "Z 3", etc.
+            _ => PauliString::from_str(s)
+                .map(Operator::Pauli)
+                .map_err(|e| ParseOperatorError {
+                    message: e.message,
+                }),
+        }
+    }
+}
+
 impl Operator {
     /// Creates a rotation gate expression.
     #[must_use]
@@ -807,7 +1179,8 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::{Xs, Zs, PauliOperator};
+    /// use pecos_core::operator::{Xs, Zs};
+    /// use pecos_core::PauliOperator;
     ///
     /// // Tensor of Paulis on disjoint qubits
     /// let op = Xs(0..2) & Zs(2..4);
@@ -2737,6 +3110,7 @@ impl Operator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Pauli;
 
     #[test]
     fn test_single_qubit_gates() {
@@ -4064,5 +4438,333 @@ mod tests {
         let svg = op.to_svg(2);
         assert!(svg.contains("<circle")); // control dot
         assert!(svg.contains("<rect")); // gate box
+    }
+
+    // --- FromStr tests ---
+
+    #[test]
+    fn from_str_h_gate() {
+        let op: Operator = "H 0".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::H, .. }));
+    }
+
+    #[test]
+    fn from_str_cx_gate() {
+        let op: Operator = "CX 0 1".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::CX, .. }));
+    }
+
+    #[test]
+    fn from_str_cnot_alias() {
+        let op: Operator = "CNOT 0 1".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::CX, .. }));
+    }
+
+    #[test]
+    fn from_str_swap_gate() {
+        let op: Operator = "SWAP 2 3".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::SWAP, .. }));
+    }
+
+    #[test]
+    fn from_str_ccx_gate() {
+        let op: Operator = "CCX 0 1 2".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::CCX, .. }));
+    }
+
+    #[test]
+    fn from_str_t_gate() {
+        let op: Operator = "T 0".parse().unwrap();
+        assert!(matches!(op, Operator::Rotation { rotation_type: RotationType::RZ, .. }));
+    }
+
+    #[test]
+    fn from_str_s_gate() {
+        let op: Operator = "S 0".parse().unwrap();
+        assert!(matches!(op, Operator::Rotation { rotation_type: RotationType::RZ, .. }));
+    }
+
+    #[test]
+    fn from_str_rz_with_angle() {
+        let op: Operator = "RZ(pi/4) 0".parse().unwrap();
+        match op {
+            Operator::Rotation { rotation_type, angle, qubits } => {
+                assert_eq!(rotation_type, RotationType::RZ);
+                assert_eq!(angle, Angle64::HALF_TURN / 4);
+                assert_eq!(qubits[0], 0);
+            }
+            _ => panic!("Expected Rotation"),
+        }
+    }
+
+    #[test]
+    fn from_str_rx_with_angle() {
+        let op: Operator = "RX(pi/2) 3".parse().unwrap();
+        match op {
+            Operator::Rotation { rotation_type, angle, qubits } => {
+                assert_eq!(rotation_type, RotationType::RX);
+                assert_eq!(angle, Angle64::QUARTER_TURN);
+                assert_eq!(qubits[0], 3);
+            }
+            _ => panic!("Expected Rotation"),
+        }
+    }
+
+    #[test]
+    fn from_str_rzz_two_qubit() {
+        let op: Operator = "RZZ(pi) 0 1".parse().unwrap();
+        match op {
+            Operator::Rotation { rotation_type, angle, qubits } => {
+                assert_eq!(rotation_type, RotationType::RZZ);
+                assert_eq!(angle, Angle64::HALF_TURN);
+                assert_eq!(qubits.as_slice(), &[0, 1]);
+            }
+            _ => panic!("Expected Rotation"),
+        }
+    }
+
+    #[test]
+    fn from_str_pauli_sparse() {
+        let op: Operator = "X0 Z1".parse().unwrap();
+        match op {
+            Operator::Pauli(ps) => {
+                assert_eq!(ps.get(0), Pauli::X);
+                assert_eq!(ps.get(1), Pauli::Z);
+            }
+            _ => panic!("Expected Pauli"),
+        }
+    }
+
+    #[test]
+    fn from_str_pauli_dense() {
+        let op: Operator = "XZI".parse().unwrap();
+        match op {
+            Operator::Pauli(ps) => {
+                assert_eq!(ps.get(0), Pauli::X);
+                assert_eq!(ps.get(1), Pauli::Z);
+                assert_eq!(ps.get(2), Pauli::I);
+            }
+            _ => panic!("Expected Pauli"),
+        }
+    }
+
+    #[test]
+    fn from_str_x_space_qubit() {
+        // "X 0" and "X0" should produce the same result
+        let op1: Operator = "X 0".parse().unwrap();
+        let op2: Operator = "X0".parse().unwrap();
+        match (&op1, &op2) {
+            (Operator::Pauli(ps1), Operator::Pauli(ps2)) => {
+                assert_eq!(ps1.get(0), Pauli::X);
+                assert_eq!(ps2.get(0), Pauli::X);
+                assert_eq!(ps1.phase(), ps2.phase());
+            }
+            _ => panic!("Expected Pauli for both"),
+        }
+    }
+
+    #[test]
+    fn from_str_z_space_qubit() {
+        let op: Operator = "Z 3".parse().unwrap();
+        match op {
+            Operator::Pauli(ps) => {
+                assert_eq!(ps.get(3), Pauli::Z);
+            }
+            _ => panic!("Expected Pauli"),
+        }
+    }
+
+    #[test]
+    fn from_str_multi_pauli_spaced() {
+        // "X 0 Z 1" should work the same as "X0 Z1"
+        let op: Operator = "X 0 Z 1".parse().unwrap();
+        match op {
+            Operator::Pauli(ps) => {
+                assert_eq!(ps.get(0), Pauli::X);
+                assert_eq!(ps.get(1), Pauli::Z);
+            }
+            _ => panic!("Expected Pauli"),
+        }
+    }
+
+    #[test]
+    fn from_str_pauli_with_phase() {
+        let op: Operator = "-i X2 Z4".parse().unwrap();
+        match op {
+            Operator::Pauli(ps) => {
+                assert_eq!(ps.phase(), QuarterPhase::MinusI);
+                assert_eq!(ps.get(2), Pauli::X);
+                assert_eq!(ps.get(4), Pauli::Z);
+            }
+            _ => panic!("Expected Pauli"),
+        }
+    }
+
+    #[test]
+    fn from_str_wrong_qubit_count() {
+        assert!("H 0 1".parse::<Operator>().is_err());
+        assert!("CX 0".parse::<Operator>().is_err());
+        assert!("CCX 0 1".parse::<Operator>().is_err());
+    }
+
+    #[test]
+    fn from_str_case_insensitive() {
+        assert!("h 0".parse::<Operator>().is_ok());
+        assert!("cx 0 1".parse::<Operator>().is_ok());
+        assert!("swap 0 1".parse::<Operator>().is_ok());
+    }
+
+    #[test]
+    fn from_str_empty() {
+        let op: Operator = "".parse().unwrap();
+        assert!(matches!(op, Operator::Pauli(_)));
+    }
+
+    // --- parse_angle_expr tests ---
+
+    #[test]
+    fn parse_angle_pi() {
+        let angle = parse_angle_expr("pi").unwrap();
+        assert_eq!(angle, Angle64::HALF_TURN);
+    }
+
+    #[test]
+    fn parse_angle_pi_over_4() {
+        let angle = parse_angle_expr("pi/4").unwrap();
+        assert_eq!(angle, Angle64::HALF_TURN / 4);
+    }
+
+    #[test]
+    fn parse_angle_pi_over_2() {
+        let angle = parse_angle_expr("pi/2").unwrap();
+        assert_eq!(angle, Angle64::QUARTER_TURN);
+    }
+
+    #[test]
+    fn parse_angle_2_pi_over_3() {
+        let angle = parse_angle_expr("2*pi/3").unwrap();
+        assert_eq!(angle, Angle64::HALF_TURN * 2 / 3);
+    }
+
+    #[test]
+    fn parse_angle_negative_pi() {
+        let angle = parse_angle_expr("-pi").unwrap();
+        assert_eq!(angle, Angle64::ZERO - Angle64::HALF_TURN);
+    }
+
+    #[test]
+    fn parse_angle_negative_pi_over_4() {
+        let angle = parse_angle_expr("-pi/4").unwrap();
+        assert_eq!(angle, Angle64::ZERO - Angle64::HALF_TURN / 4);
+    }
+
+    #[test]
+    fn parse_angle_with_whitespace() {
+        let angle = parse_angle_expr("  pi / 4  ").unwrap();
+        assert_eq!(angle, Angle64::HALF_TURN / 4);
+    }
+
+    #[test]
+    fn parse_angle_empty_is_error() {
+        assert!(parse_angle_expr("").is_err());
+    }
+
+    #[test]
+    fn parse_angle_division_by_zero() {
+        assert!(parse_angle_expr("pi/0").is_err());
+    }
+
+    #[test]
+    fn parse_angle_invalid_format() {
+        assert!(parse_angle_expr("hello").is_err());
+    }
+
+    #[test]
+    fn parse_angle_n_pi_division_by_zero() {
+        assert!(parse_angle_expr("2*pi/0").is_err());
+    }
+
+    #[test]
+    fn parse_angle_invalid_numerator() {
+        assert!(parse_angle_expr("abc*pi/4").is_err());
+    }
+
+    #[test]
+    fn parse_angle_invalid_denominator() {
+        assert!(parse_angle_expr("pi/xyz").is_err());
+    }
+
+    #[test]
+    fn parse_angle_3_pi() {
+        let angle = parse_angle_expr("3*pi").unwrap();
+        assert_eq!(angle, Angle64::HALF_TURN * 3);
+    }
+
+    // --- from_str additional edge cases ---
+
+    #[test]
+    fn from_str_tdg_gate() {
+        let op: Operator = "Tdg 0".parse().unwrap();
+        assert!(matches!(op, Operator::Rotation { rotation_type: RotationType::RZ, .. }));
+    }
+
+    #[test]
+    fn from_str_sdg_gate() {
+        let op: Operator = "Sdg 0".parse().unwrap();
+        assert!(matches!(op, Operator::Rotation { rotation_type: RotationType::RZ, .. }));
+    }
+
+    #[test]
+    fn from_str_ry_with_angle() {
+        let op: Operator = "RY(pi/4) 0".parse().unwrap();
+        assert!(matches!(op, Operator::Rotation { rotation_type: RotationType::RY, .. }));
+    }
+
+    #[test]
+    fn from_str_rxx_two_qubit() {
+        let op: Operator = "RXX(pi/2) 0 1".parse().unwrap();
+        assert!(matches!(op, Operator::Rotation { rotation_type: RotationType::RXX, .. }));
+    }
+
+    #[test]
+    fn from_str_ryy_two_qubit() {
+        let op: Operator = "RYY(pi) 0 1".parse().unwrap();
+        assert!(matches!(op, Operator::Rotation { rotation_type: RotationType::RYY, .. }));
+    }
+
+    #[test]
+    fn from_str_rotation_wrong_qubit_count() {
+        assert!("RZ(pi/4) 0 1".parse::<Operator>().is_err());
+        assert!("RZZ(pi) 0".parse::<Operator>().is_err());
+    }
+
+    #[test]
+    fn from_str_cz_gate() {
+        let op: Operator = "CZ 0 1".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::CZ, .. }));
+    }
+
+    #[test]
+    fn from_str_cy_gate() {
+        let op: Operator = "CY 0 1".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::CY, .. }));
+    }
+
+    #[test]
+    fn from_str_toffoli_alias() {
+        let op: Operator = "TOFFOLI 0 1 2".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::CCX, .. }));
+    }
+
+    #[test]
+    fn from_str_sx_gate() {
+        let op: Operator = "SX 0".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::SX, .. }));
+    }
+
+    #[test]
+    fn from_str_f_gate() {
+        let op: Operator = "F 0".parse().unwrap();
+        assert!(matches!(op, Operator::Gate { gate_type: GateType::F, .. }));
     }
 }

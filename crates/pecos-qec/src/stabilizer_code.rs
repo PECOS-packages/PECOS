@@ -714,8 +714,8 @@ impl StabilizerCode {
     ///
     /// // Create code with just stabilizers (3-qubit bit flip code)
     /// let mut code = StabilizerCode::from_stabilizers(3, vec![
-    ///     Zs([0, 1]).try_to_pauli_string().unwrap(),  // ZZI
-    ///     Zs([1, 2]).try_to_pauli_string().unwrap(),  // IZZ
+    ///     Zs([0, 1]),  // ZZI
+    ///     Zs([1, 2]),  // IZZ
     /// ]);
     ///
     /// // Discover logical operators
@@ -856,12 +856,15 @@ impl StabilizerCodeBuilder {
     ///     .unwrap();
     /// ```
     ///
+    /// Accepts both `PauliString` and `Operator` (via `Into<Operator>`).
+    ///
     /// # Panics
     ///
     /// Panics if the operator cannot be converted to a `PauliString`.
     #[must_use]
-    pub fn check(mut self, op: pecos_core::Operator) -> Self {
+    pub fn check(mut self, op: impl Into<pecos_core::Operator>) -> Self {
         let ps = op
+            .into()
             .try_to_pauli_string()
             .expect("Operator must be convertible to PauliString");
         self.stabilizers.push(ps);
@@ -875,14 +878,17 @@ impl StabilizerCodeBuilder {
         self
     }
 
-    /// Adds a logical Z operator from an `Operator`.
+    /// Adds a logical Z operator.
+    ///
+    /// Accepts both `PauliString` and `Operator` (via `Into<Operator>`).
     ///
     /// # Panics
     ///
     /// Panics if the operator cannot be converted to a `PauliString`.
     #[must_use]
-    pub fn logical_z(mut self, op: pecos_core::Operator) -> Self {
+    pub fn logical_z(mut self, op: impl Into<pecos_core::Operator>) -> Self {
         let ps = op
+            .into()
             .try_to_pauli_string()
             .expect("Operator must be convertible to PauliString");
         self.logical_zs.push(ps);
@@ -896,14 +902,17 @@ impl StabilizerCodeBuilder {
         self
     }
 
-    /// Adds a logical X operator from an `Operator`.
+    /// Adds a logical X operator.
+    ///
+    /// Accepts both `PauliString` and `Operator` (via `Into<Operator>`).
     ///
     /// # Panics
     ///
     /// Panics if the operator cannot be converted to a `PauliString`.
     #[must_use]
-    pub fn logical_x(mut self, op: pecos_core::Operator) -> Self {
+    pub fn logical_x(mut self, op: impl Into<pecos_core::Operator>) -> Self {
         let ps = op
+            .into()
             .try_to_pauli_string()
             .expect("Operator must be convertible to PauliString");
         self.logical_xs.push(ps);
@@ -1485,8 +1494,8 @@ mod tests {
         let mut code = StabilizerCode::from_stabilizers(
             3,
             vec![
-                Zs([0, 1]).try_to_pauli_string().unwrap(), // ZZI
-                Zs([1, 2]).try_to_pauli_string().unwrap(), // IZZ
+                Zs([0, 1]), // ZZI
+                Zs([1, 2]), // IZZ
             ],
         );
 

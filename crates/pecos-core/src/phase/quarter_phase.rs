@@ -1,7 +1,16 @@
 use crate::Phase;
 use num_complex::Complex64 as Complex;
+
+/// Fourth roots of unity: `{+1, -1, +i, -i}`.
+///
+/// This is the phase type used by [`PauliString`](crate::PauliString). Multiplying
+/// any two Pauli operators produces a result whose phase is one of these four values,
+/// so `QuarterPhase` is the natural closure of Pauli multiplication.
+///
+/// Widens to: [`GlobalPhase`](crate::GlobalPhase) (via `From`)
+/// Narrows to: [`Sign`](crate::Sign) (via `TryFrom`, fails on `+/-i`)
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(u8)]
 pub enum QuarterPhase {
     #[default]

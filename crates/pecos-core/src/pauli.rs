@@ -11,6 +11,7 @@
 // the License.
 
 pub mod algebra;
+pub mod constructors;
 
 #[allow(clippy::module_name_repetitions)]
 pub mod pauli_bitmap;
@@ -26,7 +27,7 @@ use std::fmt::Debug;
 
 /// Single-qubit Pauli operator
 /// #[`allow(clippy::module_name_repetitions)`]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 #[derive(Default)]
 pub enum Pauli {
@@ -74,6 +75,14 @@ pub trait PauliOperator: Clone + Debug {
     /// # Returns
     /// `true` if the operators commute, `false` if they anti-commute.
     fn commutes_with(&self, other: &Self) -> bool;
+
+    /// Determines whether this Pauli operator anticommutes with another.
+    ///
+    /// This is the negation of [`commutes_with`](Self::commutes_with).
+    #[must_use]
+    fn anticommutes_with(&self, other: &Self) -> bool {
+        !self.commutes_with(other)
+    }
 
     fn from_single(qubit: usize, pauli: Pauli) -> Self;
 }

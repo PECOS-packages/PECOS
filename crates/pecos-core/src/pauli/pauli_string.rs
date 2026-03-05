@@ -36,7 +36,7 @@ use std::str::FromStr;
 /// assert_eq!(p.weight(), 3);  // X, X, Z (not counting I)
 /// ```
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PauliString {
     phase: QuarterPhase,
     paulis: Vec<(Pauli, QubitId)>,
@@ -130,6 +130,55 @@ impl PauliString {
     #[must_use]
     pub fn identity() -> Self {
         Self::new()
+    }
+
+    /// Creates a multi-qubit X operator: X on each of the given qubits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_core::{PauliString, Pauli, PauliOperator};
+    ///
+    /// let p = PauliString::xs(&[0, 2, 5]);
+    /// assert_eq!(p.get(0), Pauli::X);
+    /// assert_eq!(p.get(1), Pauli::I);
+    /// assert_eq!(p.get(2), Pauli::X);
+    /// assert_eq!(p.get(5), Pauli::X);
+    /// assert_eq!(p.weight(), 3);
+    /// ```
+    #[must_use]
+    pub fn xs(qubits: &[usize]) -> Self {
+        Self {
+            phase: QuarterPhase::PlusOne,
+            paulis: qubits
+                .iter()
+                .map(|&q| (Pauli::X, QubitId::new(q)))
+                .collect(),
+        }
+    }
+
+    /// Creates a multi-qubit Y operator: Y on each of the given qubits.
+    #[must_use]
+    pub fn ys(qubits: &[usize]) -> Self {
+        Self {
+            phase: QuarterPhase::PlusOne,
+            paulis: qubits
+                .iter()
+                .map(|&q| (Pauli::Y, QubitId::new(q)))
+                .collect(),
+        }
+    }
+
+    /// Creates a multi-qubit Z operator: Z on each of the given qubits.
+    #[must_use]
+    pub fn zs(qubits: &[usize]) -> Self {
+        Self {
+            phase: QuarterPhase::PlusOne,
+            paulis: qubits
+                .iter()
+                .map(|&q| (Pauli::Z, QubitId::new(q)))
+                .collect(),
+        }
     }
 
     /// Creates a `PauliString` from non-overlapping X, Y, Z qubit sets.
@@ -331,6 +380,80 @@ impl PauliString {
                 .max()
                 .unwrap_or(0);
             self.pauli_str(Some(max_qubit + 1))
+        }
+    }
+
+    /// Returns the dense string representation with phase prefix.
+    ///
+    /// Every qubit from 0 to the highest non-identity qubit gets a character.
+    /// If `num_qubits` is given, pads with `I` to that width.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_core::{PauliString, QuarterPhase};
+    /// use std::str::FromStr;
+    ///
+    /// let p: PauliString = "X0 Z2".parse().unwrap();
+    /// assert_eq!(p.to_dense_str(None), "+XIZ");
+    /// assert_eq!(p.to_dense_str(Some(5)), "+XIZII");
+    /// ```
+    #[must_use]
+    pub fn to_dense_str(&self, num_qubits: Option<usize>) -> String {
+        let phase_str = match self.phase {
+            QuarterPhase::PlusOne => "+",
+            QuarterPhase::MinusOne => "-",
+            QuarterPhase::PlusI => "+i",
+            QuarterPhase::MinusI => "-i",
+        };
+        format!("{phase_str}{}", self.pauli_str(num_qubits))
+    }
+
+    /// Returns the sparse string representation with phase prefix.
+    ///
+    /// Only non-identity entries are included, as `P<qubit>` tokens separated
+    /// by spaces. Qubit indices are sorted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_core::{PauliString, QuarterPhase};
+    /// use std::str::FromStr;
+    ///
+    /// let p: PauliString = "X0 Z2".parse().unwrap();
+    /// assert_eq!(p.to_sparse_str(), "+X0 Z2");
+    ///
+    /// let p: PauliString = "-i X0 Z2".parse().unwrap();
+    /// assert_eq!(p.to_sparse_str(), "-iX0 Z2");
+    /// ```
+    #[must_use]
+    pub fn to_sparse_str(&self) -> String {
+        let phase_str = match self.phase {
+            QuarterPhase::PlusOne => "+",
+            QuarterPhase::MinusOne => "-",
+            QuarterPhase::PlusI => "+i",
+            QuarterPhase::MinusI => "-i",
+        };
+        let mut parts = Vec::new();
+        let mut sorted_paulis: Vec<_> = self
+            .paulis
+            .iter()
+            .filter(|(p, _)| *p != Pauli::I)
+            .collect();
+        sorted_paulis.sort_by_key(|(_, q)| q.index());
+        for (pauli, qubit) in &sorted_paulis {
+            let c = match pauli {
+                Pauli::X => 'X',
+                Pauli::Y => 'Y',
+                Pauli::Z => 'Z',
+                Pauli::I => unreachable!(),
+            };
+            parts.push(format!("{c}{}", qubit.index()));
+        }
+        if parts.is_empty() {
+            format!("{phase_str}I")
+        } else {
+            format!("{phase_str}{}", parts.join(" "))
         }
     }
 
@@ -557,66 +680,73 @@ impl fmt::Display for ParsePauliStringError {
 
 impl std::error::Error for ParsePauliStringError {}
 
-impl FromStr for PauliString {
-    type Err = ParsePauliStringError;
+/// Parses a phase prefix from a char iterator, returning the phase and
+/// consuming the prefix characters.
+fn parse_phase_prefix(chars: &mut std::iter::Peekable<impl Iterator<Item = char>>) -> QuarterPhase {
+    match chars.peek() {
+        Some('+') => {
+            chars.next();
+            if chars.peek() == Some(&'i') {
+                chars.next();
+                QuarterPhase::PlusI
+            } else {
+                QuarterPhase::PlusOne
+            }
+        }
+        Some('-') => {
+            chars.next();
+            if chars.peek() == Some(&'i') {
+                chars.next();
+                QuarterPhase::MinusI
+            } else {
+                QuarterPhase::MinusOne
+            }
+        }
+        Some('i') => {
+            chars.next();
+            QuarterPhase::PlusI
+        }
+        _ => QuarterPhase::PlusOne,
+    }
+}
 
-    /// Parses a `PauliString` from a string like "+iXXZI" or "XXZI".
+impl PauliString {
+    /// Parses from dense format where character position = qubit index.
     ///
-    /// # Format
-    /// - Optional phase prefix: `+`, `-`, `+i`, `-i`, `i`
-    /// - Followed by Pauli operators: `I`, `X`, `Y`, `Z`
+    /// Format: `[phase]<I|X|Y|Z>...`
     ///
     /// # Examples
-    /// ```
-    /// use pecos_core::{PauliString, QuarterPhase};
-    /// use std::str::FromStr;
     ///
-    /// let p = PauliString::from_str("+iXXZI").unwrap();
+    /// ```
+    /// use pecos_core::{PauliString, Pauli, QuarterPhase, PauliOperator};
+    ///
+    /// let p = PauliString::from_dense_str("+iXIZI").unwrap();
     /// assert_eq!(p.phase(), QuarterPhase::PlusI);
+    /// assert_eq!(p.get(0), Pauli::X);
+    /// assert_eq!(p.get(1), Pauli::I);
+    /// assert_eq!(p.get(2), Pauli::Z);
     ///
-    /// let p = PauliString::from_str("XYZ").unwrap();
-    /// assert_eq!(p.phase(), QuarterPhase::PlusOne);
+    /// let p = PauliString::from_dense_str("XYZ").unwrap();
+    /// assert_eq!(p.weight(), 3);
     /// ```
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any character after the phase prefix is not a valid
+    /// Pauli operator (`I`, `X`, `Y`, `Z`).
+    pub fn from_dense_str(s: &str) -> Result<Self, ParsePauliStringError> {
         let s = s.trim();
         if s.is_empty() {
             return Ok(Self::new());
         }
 
         let mut chars = s.chars().peekable();
+        let phase = parse_phase_prefix(&mut chars);
 
-        // Parse phase prefix
-        let phase = match chars.peek() {
-            Some('+') => {
-                chars.next();
-                if chars.peek() == Some(&'i') {
-                    chars.next();
-                    QuarterPhase::PlusI
-                } else {
-                    QuarterPhase::PlusOne
-                }
-            }
-            Some('-') => {
-                chars.next();
-                if chars.peek() == Some(&'i') {
-                    chars.next();
-                    QuarterPhase::MinusI
-                } else {
-                    QuarterPhase::MinusOne
-                }
-            }
-            Some('i') => {
-                chars.next();
-                QuarterPhase::PlusI
-            }
-            _ => QuarterPhase::PlusOne,
-        };
-
-        // Parse Pauli operators
         let mut paulis = Vec::new();
         for (idx, c) in chars.enumerate() {
             let pauli = match c {
-                'I' | '1' => continue, // Skip identity
+                'I' | 'i' | '1' => continue,
                 'X' | 'x' => Pauli::X,
                 'Y' | 'y' => Pauli::Y,
                 'Z' | 'z' => Pauli::Z,
@@ -630,6 +760,138 @@ impl FromStr for PauliString {
         }
 
         Ok(Self { phase, paulis })
+    }
+
+    /// Parses from sparse format where each token is a Pauli operator followed
+    /// by a qubit index.
+    ///
+    /// Format: `[phase] <P><qubit> [<P><qubit> ...]`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_core::{PauliString, Pauli, QuarterPhase, PauliOperator};
+    ///
+    /// let p = PauliString::from_sparse_str("-i X2 Z4 Y7").unwrap();
+    /// assert_eq!(p.phase(), QuarterPhase::MinusI);
+    /// assert_eq!(p.get(2), Pauli::X);
+    /// assert_eq!(p.get(4), Pauli::Z);
+    /// assert_eq!(p.get(7), Pauli::Y);
+    /// assert_eq!(p.weight(), 3);
+    ///
+    /// let p = PauliString::from_sparse_str("X0 Z1").unwrap();
+    /// assert_eq!(p.get(0), Pauli::X);
+    /// assert_eq!(p.get(1), Pauli::Z);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a token doesn't start with a valid Pauli letter
+    /// or doesn't have a valid qubit index.
+    pub fn from_sparse_str(s: &str) -> Result<Self, ParsePauliStringError> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Ok(Self::new());
+        }
+
+        let mut chars = s.chars().peekable();
+        let phase = parse_phase_prefix(&mut chars);
+
+        let remainder: String = chars.collect();
+        let remainder = remainder.trim();
+        if remainder.is_empty() {
+            return Ok(Self::with_phase_and_paulis(phase, Vec::new()));
+        }
+
+        let mut paulis = Vec::new();
+        let tokens: Vec<&str> = remainder.split_whitespace().collect();
+        let mut i = 0;
+        while i < tokens.len() {
+            let token = tokens[i];
+            let mut token_chars = token.chars();
+            let pauli_char = token_chars.next().ok_or_else(|| ParsePauliStringError {
+                message: "Empty token".to_string(),
+            })?;
+
+            let pauli = match pauli_char {
+                'X' | 'x' => Pauli::X,
+                'Y' | 'y' => Pauli::Y,
+                'Z' | 'z' => Pauli::Z,
+                c => {
+                    return Err(ParsePauliStringError {
+                        message: format!("Invalid Pauli character: '{c}'"),
+                    });
+                }
+            };
+
+            let qubit_str: String = token_chars.collect();
+            let qubit: usize = if qubit_str.is_empty() {
+                // Qubit index may be the next token (e.g., "X 0" instead of "X0")
+                i += 1;
+                let next = tokens.get(i).ok_or_else(|| ParsePauliStringError {
+                    message: format!("Missing qubit index after '{pauli_char}'"),
+                })?;
+                next.parse().map_err(|_| ParsePauliStringError {
+                    message: format!("Invalid qubit index: '{next}'"),
+                })?
+            } else {
+                qubit_str.parse().map_err(|_| ParsePauliStringError {
+                    message: format!("Invalid qubit index in token: '{token}'"),
+                })?
+            };
+
+            paulis.push((pauli, QubitId::new(qubit)));
+            i += 1;
+        }
+
+        paulis.sort_by_key(|(_, q)| *q);
+
+        Ok(Self { phase, paulis })
+    }
+}
+
+impl FromStr for PauliString {
+    type Err = ParsePauliStringError;
+
+    /// Parses a `PauliString`, auto-detecting the format:
+    ///
+    /// - **Sparse** (if the body contains digits): `"X0 Z4 Y7"`, `"-i X2 Z4"`
+    /// - **Dense** (if the body is all Pauli letters): `"XIZIY"`, `"+iXXZI"`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_core::{PauliString, Pauli, QuarterPhase, PauliOperator};
+    /// use std::str::FromStr;
+    ///
+    /// // Dense format
+    /// let p: PauliString = "XYZ".parse().unwrap();
+    /// assert_eq!(p.weight(), 3);
+    ///
+    /// // Sparse format
+    /// let p: PauliString = "-i X2 Z4 Y7".parse().unwrap();
+    /// assert_eq!(p.phase(), QuarterPhase::MinusI);
+    /// assert_eq!(p.get(2), Pauli::X);
+    /// assert_eq!(p.get(4), Pauli::Z);
+    /// assert_eq!(p.get(7), Pauli::Y);
+    /// ```
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Ok(Self::new());
+        }
+
+        // After skipping a possible phase prefix, check if the body contains digits.
+        // If so, it's sparse format; otherwise, dense.
+        let body = s.trim_start_matches(['+', '-']);
+        let body = body.strip_prefix('i').unwrap_or(body);
+        let body = body.trim();
+
+        if body.chars().any(|c| c.is_ascii_digit()) {
+            Self::from_sparse_str(s)
+        } else {
+            Self::from_dense_str(s)
+        }
     }
 }
 
@@ -819,6 +1081,227 @@ mod tests {
     }
 
     // ========================================================================
+    // to_dense_str / to_sparse_str tests
+    // ========================================================================
+
+    #[test]
+    fn test_to_dense_str_basic() {
+        let p: PauliString = "X0 Z2".parse().unwrap();
+        assert_eq!(p.to_dense_str(None), "+XIZ");
+    }
+
+    #[test]
+    fn test_to_dense_str_with_num_qubits() {
+        let p: PauliString = "X0 Z2".parse().unwrap();
+        assert_eq!(p.to_dense_str(Some(5)), "+XIZII");
+    }
+
+    #[test]
+    fn test_to_dense_str_with_phase() {
+        let p: PauliString = "-i X0 Y1".parse().unwrap();
+        assert_eq!(p.to_dense_str(None), "-iXY");
+    }
+
+    #[test]
+    fn test_to_dense_str_identity() {
+        let p = PauliString::identity();
+        assert_eq!(p.to_dense_str(None), "+I");
+    }
+
+    #[test]
+    fn test_to_sparse_str_basic() {
+        let p: PauliString = "X0 Z2".parse().unwrap();
+        assert_eq!(p.to_sparse_str(), "+X0 Z2");
+    }
+
+    #[test]
+    fn test_to_sparse_str_with_phase() {
+        let p: PauliString = "-i X0 Z2".parse().unwrap();
+        assert_eq!(p.to_sparse_str(), "-iX0 Z2");
+    }
+
+    #[test]
+    fn test_to_sparse_str_identity() {
+        let p = PauliString::identity();
+        assert_eq!(p.to_sparse_str(), "+I");
+    }
+
+    #[test]
+    fn test_to_sparse_str_high_qubit() {
+        let p = PauliString::x(10000);
+        assert_eq!(p.to_sparse_str(), "+X10000");
+    }
+
+    #[test]
+    fn test_roundtrip_sparse() {
+        let original: PauliString = "-i X2 Z4 Y7".parse().unwrap();
+        let s = original.to_sparse_str();
+        let roundtripped: PauliString = s.parse().unwrap();
+        assert_eq!(original.phase(), roundtripped.phase());
+        assert_eq!(original.get(2), roundtripped.get(2));
+        assert_eq!(original.get(4), roundtripped.get(4));
+        assert_eq!(original.get(7), roundtripped.get(7));
+    }
+
+    #[test]
+    fn test_roundtrip_dense() {
+        let original: PauliString = "+iXYZI".parse().unwrap();
+        let s = original.to_dense_str(None);
+        let roundtripped = PauliString::from_dense_str(&s).unwrap();
+        assert_eq!(original.phase(), roundtripped.phase());
+        for q in 0..4 {
+            assert_eq!(original.get(q), roundtripped.get(q));
+        }
+    }
+
+    // ========================================================================
+    // from_str / from_sparse_str / from_dense_str tests
+    // ========================================================================
+
+    #[test]
+    fn test_from_str_dense_auto() {
+        // No digits -> auto-detects as dense
+        let p: PauliString = "XYZ".parse().unwrap();
+        assert_eq!(p.get(0), Pauli::X);
+        assert_eq!(p.get(1), Pauli::Y);
+        assert_eq!(p.get(2), Pauli::Z);
+        assert_eq!(p.phase(), QuarterPhase::PlusOne);
+    }
+
+    #[test]
+    fn test_from_str_dense_with_phase() {
+        let p: PauliString = "+iXXZI".parse().unwrap();
+        assert_eq!(p.phase(), QuarterPhase::PlusI);
+        assert_eq!(p.get(0), Pauli::X);
+        assert_eq!(p.get(2), Pauli::Z);
+    }
+
+    #[test]
+    fn test_from_str_sparse_auto() {
+        // Has digits -> auto-detects as sparse
+        let p: PauliString = "X0 Z4 Y7".parse().unwrap();
+        assert_eq!(p.get(0), Pauli::X);
+        assert_eq!(p.get(4), Pauli::Z);
+        assert_eq!(p.get(7), Pauli::Y);
+        assert_eq!(p.weight(), 3);
+    }
+
+    #[test]
+    fn test_from_str_sparse_with_phase() {
+        let p: PauliString = "-i X2 Z4 Y7".parse().unwrap();
+        assert_eq!(p.phase(), QuarterPhase::MinusI);
+        assert_eq!(p.get(2), Pauli::X);
+        assert_eq!(p.get(4), Pauli::Z);
+        assert_eq!(p.get(7), Pauli::Y);
+    }
+
+    #[test]
+    fn test_from_sparse_str_single() {
+        let p = PauliString::from_sparse_str("X0").unwrap();
+        assert_eq!(p.get(0), Pauli::X);
+        assert_eq!(p.weight(), 1);
+    }
+
+    #[test]
+    fn test_from_sparse_str_high_qubit() {
+        let p = PauliString::from_sparse_str("X10000").unwrap();
+        assert_eq!(p.get(10000), Pauli::X);
+        assert_eq!(p.weight(), 1);
+    }
+
+    #[test]
+    fn test_from_sparse_str_negative_phase() {
+        let p = PauliString::from_sparse_str("-X0 Z1").unwrap();
+        assert_eq!(p.phase(), QuarterPhase::MinusOne);
+        assert_eq!(p.get(0), Pauli::X);
+        assert_eq!(p.get(1), Pauli::Z);
+    }
+
+    #[test]
+    fn test_from_sparse_str_sorted() {
+        // Tokens out of order should still produce sorted output
+        let p = PauliString::from_sparse_str("Z5 X0 Y2").unwrap();
+        let qubits = p.qubits();
+        assert_eq!(qubits, vec![0, 2, 5]);
+    }
+
+    #[test]
+    fn test_from_sparse_str_empty() {
+        let p = PauliString::from_sparse_str("").unwrap();
+        assert!(p.is_identity());
+    }
+
+    #[test]
+    fn test_from_sparse_str_phase_only() {
+        let p = PauliString::from_sparse_str("-i").unwrap();
+        assert_eq!(p.phase(), QuarterPhase::MinusI);
+        assert!(p.is_identity());
+    }
+
+    #[test]
+    fn test_from_dense_str_explicit() {
+        let p = PauliString::from_dense_str("ZZI").unwrap();
+        assert_eq!(p.get(0), Pauli::Z);
+        assert_eq!(p.get(1), Pauli::Z);
+        assert_eq!(p.get(2), Pauli::I);
+    }
+
+    #[test]
+    fn test_from_str_empty() {
+        let p: PauliString = "".parse().unwrap();
+        assert!(p.is_identity());
+    }
+
+    #[test]
+    fn test_from_sparse_str_invalid_pauli() {
+        assert!(PauliString::from_sparse_str("Q0").is_err());
+    }
+
+    #[test]
+    fn test_from_sparse_str_invalid_qubit() {
+        assert!(PauliString::from_sparse_str("Xabc").is_err());
+    }
+
+    #[test]
+    fn test_from_sparse_str_spaced() {
+        // "X 0" should parse the same as "X0"
+        let p1 = PauliString::from_sparse_str("X 0").unwrap();
+        let p2 = PauliString::from_sparse_str("X0").unwrap();
+        assert_eq!(p1.get(0), p2.get(0));
+        assert_eq!(p1.phase(), p2.phase());
+    }
+
+    #[test]
+    fn test_from_sparse_str_multi_spaced() {
+        // "X 0 Z 1" should work
+        let p = PauliString::from_sparse_str("X 0 Z 1").unwrap();
+        assert_eq!(p.get(0), Pauli::X);
+        assert_eq!(p.get(1), Pauli::Z);
+    }
+
+    #[test]
+    fn test_from_sparse_str_mixed_spaced() {
+        // Mix of spaced and compact: "X0 Z 1"
+        let p = PauliString::from_sparse_str("X0 Z 1").unwrap();
+        assert_eq!(p.get(0), Pauli::X);
+        assert_eq!(p.get(1), Pauli::Z);
+    }
+
+    #[test]
+    fn test_from_sparse_str_trailing_pauli_error() {
+        // "X" alone with no qubit should error
+        assert!(PauliString::from_sparse_str("X").is_err());
+    }
+
+    #[test]
+    fn test_from_sparse_str_spaced_with_phase() {
+        let p = PauliString::from_sparse_str("-i X 2 Z 4").unwrap();
+        assert_eq!(p.phase(), QuarterPhase::MinusI);
+        assert_eq!(p.get(2), Pauli::X);
+        assert_eq!(p.get(4), Pauli::Z);
+    }
+
+    // ========================================================================
     // into_pauli_sparse tests
     // ========================================================================
 
@@ -879,5 +1362,402 @@ mod tests {
 
         // Weight should be 3 (X, Z, Y - not counting I)
         assert_eq!(bitmap.weight(), 3);
+    }
+
+    // ========================================================================
+    // set_phase tests
+    // ========================================================================
+
+    #[test]
+    fn test_set_phase() {
+        let mut p = PauliString::x(0);
+        assert_eq!(p.phase(), QuarterPhase::PlusOne);
+        p.set_phase(QuarterPhase::MinusI);
+        assert_eq!(p.phase(), QuarterPhase::MinusI);
+        // Paulis unchanged
+        assert_eq!(p.get(0), Pauli::X);
+    }
+
+    #[test]
+    fn test_set_phase_all_variants() {
+        let mut p = PauliString::z(2);
+        for phase in [
+            QuarterPhase::PlusOne,
+            QuarterPhase::MinusOne,
+            QuarterPhase::PlusI,
+            QuarterPhase::MinusI,
+        ] {
+            p.set_phase(phase);
+            assert_eq!(p.phase(), phase);
+        }
+    }
+
+    // ========================================================================
+    // get edge case tests
+    // ========================================================================
+
+    #[test]
+    fn test_get_returns_identity_for_missing_qubit() {
+        let p = PauliString::x(5);
+        assert_eq!(p.get(0), Pauli::I);
+        assert_eq!(p.get(3), Pauli::I);
+        assert_eq!(p.get(100), Pauli::I);
+    }
+
+    #[test]
+    fn test_get_identity_operator() {
+        let p = PauliString::identity();
+        assert_eq!(p.get(0), Pauli::I);
+        assert_eq!(p.get(999), Pauli::I);
+    }
+
+    // ========================================================================
+    // PauliOperator trait method tests (commutes_with, x_positions, z_positions)
+    // ========================================================================
+
+    #[test]
+    fn test_commutes_with_same_type() {
+        // X commutes with X on same qubit
+        let x0 = PauliString::x(0);
+        assert!(x0.commutes_with(&x0));
+
+        let z0 = PauliString::z(0);
+        assert!(z0.commutes_with(&z0));
+    }
+
+    #[test]
+    fn test_commutes_with_different_qubits() {
+        // Any Paulis on different qubits commute
+        let x0 = PauliString::x(0);
+        let z1 = PauliString::z(1);
+        assert!(x0.commutes_with(&z1));
+    }
+
+    #[test]
+    fn test_anticommutes_with_xz_same_qubit() {
+        let x0 = PauliString::x(0);
+        let z0 = PauliString::z(0);
+        assert!(!x0.commutes_with(&z0));
+        assert!(x0.anticommutes_with(&z0));
+    }
+
+    #[test]
+    fn test_commutes_with_multi_qubit_even_anticommuting() {
+        // XZ and ZX: anticommute on q0 (X-Z) and q1 (Z-X) -> even count -> commute
+        let xz = PauliString::from_paulis(&[Pauli::X, Pauli::Z]);
+        let zx = PauliString::from_paulis(&[Pauli::Z, Pauli::X]);
+        assert!(xz.commutes_with(&zx));
+    }
+
+    #[test]
+    fn test_commutes_with_multi_qubit_odd_anticommuting() {
+        // XX and ZI: anticommute only on q0 (X-Z) -> odd count -> anticommute
+        let xx = PauliString::from_paulis(&[Pauli::X, Pauli::X]);
+        let zi = PauliString::from_paulis(&[Pauli::Z, Pauli::I]);
+        assert!(!xx.commutes_with(&zi));
+    }
+
+    #[test]
+    fn test_commutes_with_identity() {
+        // Identity commutes with everything
+        let id = PauliString::identity();
+        let x0 = PauliString::x(0);
+        assert!(id.commutes_with(&x0));
+        assert!(x0.commutes_with(&id));
+    }
+
+    #[test]
+    fn test_x_positions_includes_y() {
+        // x_positions returns positions where x-bit is set (X and Y)
+        let p = PauliString::from_paulis(&[Pauli::X, Pauli::Y, Pauli::Z, Pauli::I]);
+        let x_pos = p.x_positions();
+        assert!(x_pos.contains(&0)); // X
+        assert!(x_pos.contains(&1)); // Y
+        assert!(!x_pos.contains(&2)); // Z - no x-bit
+        assert!(!x_pos.contains(&3)); // I
+    }
+
+    #[test]
+    fn test_z_positions_includes_y() {
+        // z_positions returns positions where z-bit is set (Z and Y)
+        let p = PauliString::from_paulis(&[Pauli::X, Pauli::Y, Pauli::Z, Pauli::I]);
+        let z_pos = p.z_positions();
+        assert!(!z_pos.contains(&0)); // X - no z-bit
+        assert!(z_pos.contains(&1)); // Y
+        assert!(z_pos.contains(&2)); // Z
+        assert!(!z_pos.contains(&3)); // I
+    }
+
+    #[test]
+    fn test_x_positions_empty_for_identity() {
+        let p = PauliString::identity();
+        assert!(p.x_positions().is_empty());
+    }
+
+    #[test]
+    fn test_z_positions_empty_for_identity() {
+        let p = PauliString::identity();
+        assert!(p.z_positions().is_empty());
+    }
+
+    // ========================================================================
+    // Algebraic property tests
+    // ========================================================================
+
+    #[test]
+    fn test_multiply_associativity() {
+        // (X * Y) * Z == X * (Y * Z) on same qubit
+        let x = PauliString::x(0);
+        let y = PauliString::y(0);
+        let z = PauliString::z(0);
+
+        let lhs = x.multiply(&y).multiply(&z);
+        let rhs = x.multiply(&y.multiply(&z));
+        assert_eq!(lhs.phase(), rhs.phase());
+        assert_eq!(lhs.get(0), rhs.get(0));
+    }
+
+    #[test]
+    fn test_multiply_identity_is_neutral() {
+        let x = PauliString::x(0);
+        let id = PauliString::identity();
+        let result = x.multiply(&id);
+        assert_eq!(result.phase(), QuarterPhase::PlusOne);
+        assert_eq!(result.get(0), Pauli::X);
+    }
+
+    #[test]
+    fn test_multiply_self_inverse() {
+        // P * P = I for any single-qubit Pauli
+        for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
+            let p = PauliString::from_single(0, pauli);
+            let result = p.multiply(&p);
+            assert_eq!(result.weight(), 0, "{pauli:?} * {pauli:?} should be identity");
+            assert_eq!(result.phase(), QuarterPhase::PlusOne);
+        }
+    }
+
+    #[test]
+    fn test_multiply_xx_is_identity() {
+        // X * X = I (self-inverse, no Y involvement)
+        let x = PauliString::x(0);
+        let result = x.multiply(&x);
+        assert_eq!(result.weight(), 0);
+        assert_eq!(result.phase(), QuarterPhase::PlusOne);
+    }
+
+    #[test]
+    fn test_multiply_zz_is_identity() {
+        // Z * Z = I
+        let z = PauliString::z(0);
+        let result = z.multiply(&z);
+        assert_eq!(result.weight(), 0);
+        assert_eq!(result.phase(), QuarterPhase::PlusOne);
+    }
+
+    #[test]
+    fn test_multiply_xz_result_type() {
+        // X * Z on same qubit should give Y (result Pauli is correct even if phase differs)
+        let x = PauliString::x(0);
+        let z = PauliString::z(0);
+        let result = x.multiply(&z);
+        assert_eq!(result.get(0), Pauli::Y);
+    }
+
+    #[test]
+    fn test_multiply_different_qubits() {
+        // X(0) * Z(1) should give X(0)Z(1) - no phase change
+        let x = PauliString::x(0);
+        let z = PauliString::z(1);
+        let result = x.multiply(&z);
+        assert_eq!(result.get(0), Pauli::X);
+        assert_eq!(result.get(1), Pauli::Z);
+        assert_eq!(result.phase(), QuarterPhase::PlusOne);
+    }
+
+    // ========================================================================
+    // from_decomposed edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_from_decomposed_empty_is_identity() {
+        let p = PauliString::from_decomposed(
+            QuarterPhase::PlusOne,
+            std::iter::empty::<usize>(),
+            std::iter::empty::<usize>(),
+            std::iter::empty::<usize>(),
+        );
+        assert!(p.is_identity());
+    }
+
+    // ========================================================================
+    // into_pauli_bitmap edge case
+    // ========================================================================
+
+    #[test]
+    fn test_into_pauli_bitmap_too_large() {
+        let p = PauliString::x(64);
+        assert!(p.into_pauli_bitmap().is_err());
+    }
+
+    // ========================================================================
+    // Cross-consistency: PauliOperator::multiply vs algebra * operator
+    // ========================================================================
+
+    #[test]
+    fn test_multiply_vs_algebra_no_y_inputs() {
+        // X * Z = -iY (no Y in inputs, both paths should agree)
+        use crate::pauli::algebra;
+        let x = PauliString::x(0);
+        let z = PauliString::z(0);
+
+        let algebra_result = x.clone() * z.clone();
+        let trait_result = x.multiply(&z);
+
+        assert_eq!(algebra_result.get(0), trait_result.get(0),
+            "X*Z Pauli result should agree");
+        assert_eq!(algebra_result.phase(), trait_result.phase(),
+            "X*Z phase should agree");
+    }
+
+    #[test]
+    fn test_multiply_vs_algebra_y_input() {
+        // X * Y = iZ (Y in input: algebra * is correct, trait multiply may differ)
+        // This test documents whether the two paths are consistent.
+        use crate::pauli::algebra;
+        let x = PauliString::x(0);
+        let y = PauliString::y(0);
+
+        let algebra_result = x.clone() * y.clone();
+        let trait_result = x.multiply(&y);
+
+        assert_eq!(algebra_result.get(0), trait_result.get(0),
+            "X*Y Pauli type should agree between algebra and trait");
+        assert_eq!(algebra_result.phase(), trait_result.phase(),
+            "X*Y phase should agree between algebra and trait multiply");
+    }
+
+    #[test]
+    fn test_multiply_vs_algebra_all_single_qubit_products() {
+        // Exhaustive check: every pair of single-qubit Paulis
+        use crate::pauli::algebra;
+        for p1 in [Pauli::X, Pauli::Y, Pauli::Z] {
+            for p2 in [Pauli::X, Pauli::Y, Pauli::Z] {
+                let a = PauliString::from_single(0, p1);
+                let b = PauliString::from_single(0, p2);
+
+                let algebra_result = a.clone() * b.clone();
+                let trait_result = a.multiply(&b);
+
+                assert_eq!(
+                    algebra_result.get(0), trait_result.get(0),
+                    "{p1:?}*{p2:?}: Pauli type mismatch"
+                );
+                assert_eq!(
+                    algebra_result.phase(), trait_result.phase(),
+                    "{p1:?}*{p2:?}: phase mismatch (algebra={:?}, trait={:?})",
+                    algebra_result.phase(), trait_result.phase()
+                );
+            }
+        }
+    }
+
+    // ========================================================================
+    // Roundtrip conversion tests with Y operators
+    // ========================================================================
+
+    #[test]
+    fn test_roundtrip_pauli_sparse_with_y() {
+        let original = PauliString::from_paulis_with_phase(
+            QuarterPhase::MinusI,
+            &[Pauli::Y, Pauli::X, Pauli::Z],
+        );
+        let sparse = original.clone().into_pauli_sparse().unwrap();
+        let roundtripped = PauliString::from(sparse);
+        assert_eq!(original.phase(), roundtripped.phase());
+        for q in 0..3 {
+            assert_eq!(original.get(q), roundtripped.get(q), "qubit {q} mismatch");
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_pauli_bitmap_with_y() {
+        let original = PauliString::from_paulis_with_phase(
+            QuarterPhase::PlusI,
+            &[Pauli::Y, Pauli::Y, Pauli::Z],
+        );
+        let bitmap = original.clone().into_pauli_bitmap().unwrap();
+        let roundtripped = PauliString::try_from(bitmap).unwrap();
+        assert_eq!(original.phase(), roundtripped.phase());
+        for q in 0..3 {
+            assert_eq!(original.get(q), roundtripped.get(q), "qubit {q} mismatch");
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_multiply_with_y_via_sparse() {
+        // Verify that roundtripping through PauliSparse gives correct multiply
+        let x = PauliString::x(0);
+        let y = PauliString::y(0);
+        // Use the trait multiply (goes through PauliSparse)
+        let result = x.multiply(&y);
+        // X * Y = iZ
+        assert_eq!(result.get(0), Pauli::Z);
+        assert_eq!(result.phase(), QuarterPhase::PlusI);
+    }
+
+    // ========================================================================
+    // into_pauli_bitmap boundary qubit
+    // ========================================================================
+
+    #[test]
+    fn test_into_pauli_bitmap_qubit_63() {
+        let p = PauliString::x(63);
+        let bitmap = p.into_pauli_bitmap().unwrap();
+        assert_eq!(bitmap.weight(), 1);
+        assert!(bitmap.x_positions().contains(&63));
+    }
+
+    // ========================================================================
+    // Y in parse/display
+    // ========================================================================
+
+    #[test]
+    fn test_parse_sparse_y_operators() {
+        let p: PauliString = "Y0 Y1".parse().unwrap();
+        assert_eq!(p.get(0), Pauli::Y);
+        assert_eq!(p.get(1), Pauli::Y);
+        assert_eq!(p.weight(), 2);
+    }
+
+    #[test]
+    fn test_parse_dense_y_operators() {
+        let p: PauliString = "YYZ".parse().unwrap();
+        assert_eq!(p.get(0), Pauli::Y);
+        assert_eq!(p.get(1), Pauli::Y);
+        assert_eq!(p.get(2), Pauli::Z);
+    }
+
+    #[test]
+    fn test_roundtrip_sparse_y_with_phase() {
+        let original: PauliString = "-Y0 Y1".parse().unwrap();
+        let s = original.to_sparse_str();
+        let roundtripped: PauliString = s.parse().unwrap();
+        assert_eq!(original.phase(), roundtripped.phase());
+        assert_eq!(original.get(0), roundtripped.get(0));
+        assert_eq!(original.get(1), roundtripped.get(1));
+    }
+
+    #[test]
+    fn test_roundtrip_dense_y_with_phase() {
+        let original = PauliString::from_paulis_with_phase(
+            QuarterPhase::MinusI,
+            &[Pauli::Y, Pauli::X],
+        );
+        let s = original.to_dense_str(None);
+        let roundtripped = PauliString::from_dense_str(&s).unwrap();
+        assert_eq!(original.phase(), roundtripped.phase());
+        assert_eq!(original.get(0), roundtripped.get(0));
+        assert_eq!(original.get(1), roundtripped.get(1));
     }
 }

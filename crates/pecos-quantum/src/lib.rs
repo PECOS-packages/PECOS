@@ -67,7 +67,10 @@ mod circuit;
 mod circuit_display;
 mod dag_circuit;
 pub mod operator_matrix;
+pub mod pauli_sequence;
+pub mod pauli_set;
 pub mod pass;
+pub mod stabilizer_group;
 mod tick_circuit;
 pub mod tick_circuit_soa;
 
@@ -94,6 +97,11 @@ pub use pecos_num::dag::DagWouldCycleError;
 
 // Re-export operator matrix trait for convenient method-style matrix conversion
 pub use operator_matrix::ToMatrix;
+
+// Pauli collection and stabilizer group types
+pub use pauli_sequence::{F2Matrix, PauliSequence};
+pub use pauli_set::PauliSet;
+pub use stabilizer_group::{PauliStabilizerGroup, PauliStabilizerGroupError};
 
 // Re-export HUGR types when the feature is enabled
 #[cfg(feature = "hugr")]

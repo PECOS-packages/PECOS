@@ -204,7 +204,10 @@ impl PyBitInt {
 
         let inner = if let Some(val_obj) = value {
             let v = val_obj.extract::<i64>().map_err(|_| {
-                PyErr::new::<pyo3::exceptions::PyOverflowError, _>("Value out of range for BitInt")
+                PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
+                    "Value {} out of range for BitInt({})",
+                    val_obj, size
+                ))
             })?;
             BitInt::new(size, v)
         } else {
@@ -273,7 +276,10 @@ impl PyBitInt {
 
     pub fn set(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let v = value.extract::<i64>().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyOverflowError, _>("Value out of range for BitInt")
+            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
+                "Value {} out of range for BitInt({})",
+                value, self.inner.size()
+            ))
         })?;
         self.inner = BitInt::new(self.inner.size(), v);
         Ok(())
@@ -341,7 +347,10 @@ impl PyBitInt {
 
     pub fn set_clip(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let v = value.extract::<i64>().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyOverflowError, _>("Value out of range for BitInt")
+            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
+                "Value {} out of range for BitInt({})",
+                value, self.inner.size()
+            ))
         })?;
         let size = self.inner.size();
         let mask: i64 = if size >= 63 {

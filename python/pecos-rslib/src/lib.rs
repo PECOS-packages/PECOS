@@ -18,6 +18,7 @@
 
 mod array_buffer;
 mod bit_int_bindings;
+mod bit_uint_bindings;
 mod byte_message_bindings;
 mod coin_toss_bindings;
 mod dag_circuit_bindings;
@@ -63,6 +64,7 @@ mod wasm_program_bindings;
 // Note: hugr_bindings module is currently disabled - conflicts with pecos-qis-interface due to duplicate symbols
 
 use bit_int_bindings::PyBitInt;
+use bit_uint_bindings::PyBitUInt;
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
 use coin_toss_bindings::PyCoinToss;
 use engine_builders::{PyHugr, PyPhirJson, PyQasm, PyQis};
@@ -217,6 +219,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QuestDensityMatrix>()?;
     m.add_class::<Array>()?;
     m.add_class::<PyBitInt>()?;
+    m.add_class::<PyBitUInt>()?;
 
     // Register simulator utilities (GateBindingsDict, TableauWrapper)
     simulator_utils::register_simulator_utils(m)?;

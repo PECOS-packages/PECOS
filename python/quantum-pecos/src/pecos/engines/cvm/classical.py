@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos import BitInt
+from pecos import BitInt, BitUInt
 
 if TYPE_CHECKING:
     from typing import Any
@@ -64,7 +64,7 @@ def set_output(
 
         if output_spec:
             for symbol, size in output_spec.items():
-                output[symbol] = BitInt(size)
+                output[symbol] = BitUInt(size)
 
     return output
 
@@ -175,7 +175,7 @@ def get_val(
     Raises:
         TypeError: If the input type is not supported.
     """
-    if isinstance(a, BitInt):
+    if isinstance(a, (BitInt, BitUInt)):
         return a
 
     if isinstance(a, tuple | list):

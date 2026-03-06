@@ -35,6 +35,7 @@ from pecos_rslib import (
     AngleSource,  # Angle source specification for gate decomposition
     Array,  # Array type with generic dtype support (Array[f64], etc.)
     BitInt,  # Fixed-width binary integer type
+    BitUInt,  # Unsigned fixed-width binary integer type
     GateRegistry,  # Gate registration system for custom gate decomposition
     GateSignatureMismatchError,  # Raised when custom gate arity mismatches
     Nanoseconds,  # Time duration in nanoseconds
@@ -261,6 +262,7 @@ __all__ = [
     # Deprecated
     "BinArray",  # Deprecated - use BitInt instead
     "BitInt",
+    "BitUInt",
     # Type categories
     "Complex",
     "Float",

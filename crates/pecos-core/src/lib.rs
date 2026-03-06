@@ -13,6 +13,7 @@
 pub mod angle;
 pub mod bit;
 pub mod bit_int;
+pub mod bit_uint;
 pub mod bitset;
 pub mod bitvec;
 pub mod circuit_diagram;
@@ -37,6 +38,7 @@ pub mod value;
 pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
 pub use bit::{Bit, Bits};
 pub use bit_int::BitInt;
+pub use bit_uint::BitUInt;
 pub use bitset::BitSet;
 pub use duration::{Nanoseconds, TimeUnits};
 pub use element::Element;

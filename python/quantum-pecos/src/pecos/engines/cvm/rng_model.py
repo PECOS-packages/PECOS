@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pecos_rslib import RngPcg
 
-from pecos import BitInt
+from pecos import BitUInt
 
 
 class RNGModel:
@@ -94,7 +94,7 @@ class RNGModel:
             creg_name = params.get("assign_vars")[0]
             creg = output[creg_name]
             rng = self.rng_random()
-            binary_val = BitInt(creg.size, rng)
+            binary_val = BitUInt(creg.size, rng)
             creg.set(binary_val)
         else:
             error_msg = f"RNG function not supported {func_name}"

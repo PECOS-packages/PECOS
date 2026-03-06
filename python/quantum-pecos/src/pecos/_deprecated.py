@@ -20,21 +20,21 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
-from pecos_rslib import BitInt
+from pecos_rslib import BitUInt
 
 
-def BinArray(*args: Any, **kwargs: Any) -> BitInt:
-    """Deprecated: Use BitInt instead.
+def BinArray(*args: Any, **kwargs: Any) -> BitUInt:
+    """Deprecated: Use BitUInt instead.
 
-    BinArray is a deprecated alias for BitInt. It will be removed in a future version.
-    Please update your code to use BitInt directly.
+    BinArray is a deprecated alias for BitUInt (classical registers are unsigned).
+    It will be removed in a future version.
     """
     warnings.warn(
-        "BinArray is deprecated and will be removed in a future version. Please use BitInt instead.",
+        "BinArray is deprecated and will be removed in a future version. Please use BitUInt instead.",
         DeprecationWarning,
         stacklevel=2,
     )
-    return BitInt(*args, **kwargs)
+    return BitUInt(*args, **kwargs)
 
 
 __all__ = [

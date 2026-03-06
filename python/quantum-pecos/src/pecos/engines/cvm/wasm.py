@@ -21,7 +21,7 @@ import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from pecos import BitInt, WasmForeignObject
+from pecos import BitInt, BitUInt, WasmForeignObject
 from pecos.engines.cvm.sim_func import sim_exec, sim_funcs
 from pecos.exceptions import MissingCCOPError, WasmError
 
@@ -105,10 +105,9 @@ class WasmCCOP:
         if debug and func_name.startswith("sim_") and func_name in sim_funcs:
             return sim_funcs[func_name](*args)
 
-        # Convert args from (type, value) tuples to just values
+        # Convert args from (type, value) tuples to unsigned bit patterns.
+        # Registers are BitUInt so int() already returns unsigned values.
         args_list = [int(b) for _, b in args]
-        print(f"DEBUG WasmCCOP.exec: {func_name}({args_list}) "
-              f"[raw args: {[(type(b).__name__, b.size if hasattr(b, 'size') else '?', b.signed if hasattr(b, 'signed') else '?') for _, b in args]}]")
         try:
             return self._wasm.exec(func_name, args_list)
         except _RsWasmError as e:
@@ -193,7 +192,7 @@ def get_ccop(circuit: QuantumCircuit) -> CCOPObject | None:
 def eval_cfunc(
     runner: EngineRunner,
     params: dict[str, Any],
-    output: dict[str, BitInt],
+    output: dict[str, BitInt | BitUInt],
 ) -> None:
     """Evaluate a classical function using the coprocessor.
 
@@ -240,7 +239,7 @@ def eval_cfunc(
             if runner.debug and func.startswith("sim_"):
                 output[assign_vars[0]] = vals
             else:
-                b = BitInt(a_obj.size, int(vals))
+                b = BitUInt(a_obj.size, int(vals))
                 a_obj.set(b)
 
         else:
@@ -250,7 +249,7 @@ def eval_cfunc(
                 if runner.debug and func.startswith("sim_"):
                     output[asym] = b
                 elif isinstance(b, int):
-                    bin_array = BitInt(
+                    bin_array = BitUInt(
                         a_obj.size,
                         int(b),
                     )

@@ -38,9 +38,7 @@
 //! let flips = prop.measure_z_flips(&[0, 1]);
 //! ```
 
-use rand::rngs::StdRng;
-use rand_core::{Rng, SeedableRng};
-use std::time::{SystemTime, UNIX_EPOCH};
+use pecos_rng::{PecosRng, time_seed};
 use wgpu::util::DeviceExt;
 
 // Gate type constants (matching shader)
@@ -99,7 +97,7 @@ pub struct GpuPauliProp {
     gate_queue: Vec<u32>,
 
     // RNG for fault injection
-    rng: StdRng,
+    rng: PecosRng,
 }
 
 /// Parameters passed to the shader
@@ -122,11 +120,7 @@ impl GpuPauliProp {
     /// # Returns
     /// A new `GpuPauliProp` instance or an error
     pub fn new(num_qubits: usize, num_shots: u32) -> Result<Self, String> {
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(42);
-        Self::with_seed(num_qubits, num_shots, seed)
+        Self::with_seed(num_qubits, num_shots, time_seed())
     }
 
     /// Create a new GPU Pauli propagator with a specific seed.
@@ -328,7 +322,7 @@ impl GpuPauliProp {
             pipeline,
             bind_group,
             gate_queue: Vec::with_capacity(MAX_GATE_QUEUE_SIZE),
-            rng: StdRng::seed_from_u64(seed),
+            rng: PecosRng::seed_from_u64(seed),
         })
     }
 

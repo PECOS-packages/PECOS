@@ -160,13 +160,13 @@ impl<'a> MemBuilder<'a> {
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::Prep | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc => {
                     // Prep errors: only "after" locations
                     if self.noise.p_init > 0.0 && !loc.before {
                         self.process_prep_fault(loc_idx, &mut mem);
                     }
                 }
-                GateType::Measure | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree => {
                     // Measurement errors: only "before" locations
                     if self.noise.p_meas > 0.0 && loc.before {
                         self.process_meas_fault(loc_idx, &mut mem);

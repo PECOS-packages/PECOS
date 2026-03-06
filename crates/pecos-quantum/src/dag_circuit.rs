@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, Nanoseconds, QubitId};
+use pecos_core::{Angle64, Gate, QubitId, TimeUnits};
 use pecos_num::dag::{DAG, DagWouldCycleError};
 
 use crate::circuit::{Circuit, CircuitMut, GateHandle, GateView};
@@ -1395,24 +1395,26 @@ impl DagCircuit {
 
     // -------------------- Idle --------------------
 
-    /// Apply an idle gate with a specified duration in nanoseconds.
+    /// Apply an idle gate with a specified duration in abstract time units.
     ///
     /// Idle gates represent waiting time on a qubit, useful for noise modeling.
-    /// Accepts `Nanoseconds` or `u64` (interpreted as nanoseconds).
+    /// The interpretation of time units (nanoseconds, clock cycles, etc.) is
+    /// defined by your noise model or timing configuration.
+    ///
+    /// Accepts `TimeUnits` or `u64`.
     ///
     /// # Example
     /// ```
     /// use pecos_quantum::DagCircuit;
-    /// use pecos_core::Nanoseconds;
+    /// use pecos_core::TimeUnits;
     ///
     /// let mut circuit = DagCircuit::new();
-    /// circuit.idle(Nanoseconds::from_ns(100), 0);
-    /// circuit.idle(Nanoseconds::from_us(1), 0);  // 1 microsecond
-    /// circuit.idle(100u64, 0);  // 100 nanoseconds
+    /// circuit.idle(TimeUnits::new(100), 0);
+    /// circuit.idle(100u64, 0);  // 100 time units
     /// ```
-    pub fn idle(&mut self, duration: impl Into<Nanoseconds>, q: impl Into<QubitId>) -> &mut Self {
-        let ns: Nanoseconds = duration.into();
-        self.add_gate_auto_wire(Gate::idle(ns.as_f64(), vec![q.into()]));
+    pub fn idle(&mut self, duration: impl Into<TimeUnits>, q: impl Into<QubitId>) -> &mut Self {
+        let units: TimeUnits = duration.into();
+        self.add_gate_auto_wire(Gate::idle(units.as_f64(), vec![q.into()]));
         self
     }
 
@@ -1460,7 +1462,7 @@ impl DagCircuit {
     ///
     /// Returns a `PrepHandle` for attaching metadata.
     pub fn pz(&mut self, q: impl Into<QubitId>) -> PrepHandle<'_> {
-        let node = self.add_gate_auto_wire(Gate::simple(GateType::Prep, vec![q.into()]));
+        let node = self.add_gate_auto_wire(Gate::simple(GateType::PZ, vec![q.into()]));
         PrepHandle {
             circuit: self,
             node,
@@ -2217,12 +2219,12 @@ mod tests {
 
     #[test]
     fn test_builder_idle() {
-        use pecos_core::Nanoseconds;
+        use pecos_core::TimeUnits;
 
         let mut circuit = DagCircuit::new();
 
-        // Idle gates represent waiting time in nanoseconds
-        circuit.h(0).idle(Nanoseconds::from_ns(100), 0).h(0);
+        // Idle gates represent waiting time in abstract time units
+        circuit.h(0).idle(TimeUnits::new(100), 0).h(0);
         circuit.mz(0);
 
         assert_eq!(circuit.gate_count(), 4);
@@ -2236,13 +2238,13 @@ mod tests {
             .1;
         assert!((idle_gate.idle_duration() - 100.0).abs() < 1e-10);
 
-        // Test with microseconds
+        // Test with different time units
         let mut circuit2 = DagCircuit::new();
-        circuit2.idle(Nanoseconds::from_us(1), 0); // 1 microsecond = 1000 ns
+        circuit2.idle(TimeUnits::new(1000), 0);
         let gate = circuit2.gate(0).unwrap();
         assert!((gate.idle_duration() - 1000.0).abs() < 1e-10);
 
-        // Test with u64 (interpreted as nanoseconds)
+        // Test with u64
         let mut circuit3 = DagCircuit::new();
         circuit3.idle(200u64, 0);
         let gate = circuit3.gate(0).unwrap();
@@ -2347,7 +2349,7 @@ mod tests {
         // Measure gate should have basis
         let mz_node = gates
             .iter()
-            .find(|(_, g)| g.gate_type == GateType::Measure)
+            .find(|(_, g)| g.gate_type == GateType::MZ)
             .unwrap()
             .0;
         assert_eq!(

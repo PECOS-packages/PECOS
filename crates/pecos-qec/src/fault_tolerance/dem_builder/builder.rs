@@ -221,7 +221,7 @@ impl<'a> DemBuilder<'a> {
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::Prep | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc => {
                     if self.noise.p_init > 0.0 && !loc.before {
                         self.process_prep_fault_source_tracked(
                             loc_idx,
@@ -231,7 +231,7 @@ impl<'a> DemBuilder<'a> {
                         );
                     }
                 }
-                GateType::Measure | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree => {
                     if self.noise.p_meas > 0.0 && loc.before {
                         self.process_meas_fault_source_tracked(
                             loc_idx,

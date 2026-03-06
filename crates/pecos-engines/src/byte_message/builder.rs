@@ -771,7 +771,7 @@ mod tests {
         assert_eq!(commands[0].qubits.as_slice(), &[QubitId(0)]);
         assert_eq!(commands[1].gate_type, GateType::CX);
         assert_eq!(commands[1].qubits.as_slice(), &[QubitId(0), QubitId(1)]);
-        assert_eq!(commands[2].gate_type, GateType::Measure);
+        assert_eq!(commands[2].gate_type, GateType::MZ);
         assert_eq!(commands[2].qubits.as_slice(), &[QubitId(2)]);
     }
 
@@ -829,7 +829,7 @@ mod tests {
         assert!((commands[5].angles[0].to_radians() - 0.1).abs() < 1e-10);
         assert!((commands[5].angles[1].to_radians() - 0.2).abs() < 1e-10);
         assert!(commands[5].params.is_empty());
-        assert_eq!(commands[6].gate_type, GateType::Measure);
+        assert_eq!(commands[6].gate_type, GateType::MZ);
     }
 
     #[test]
@@ -877,7 +877,7 @@ mod tests {
         // Verify the commands
         assert_eq!(commands.len(), 3);
         for i in 0..3 {
-            assert_eq!(commands[i].gate_type, GateType::Measure);
+            assert_eq!(commands[i].gate_type, GateType::MZ);
             assert_eq!(commands[i].qubits.as_slice(), &[QubitId(qubits[i])]);
         }
     }

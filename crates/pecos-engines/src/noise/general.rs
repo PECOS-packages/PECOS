@@ -520,7 +520,7 @@ impl GeneralNoiseModel {
 
         for gate in gates {
             // Track which qubits are being measured for leakage handling
-            if matches!(gate.gate_type, GateType::Measure | GateType::MeasureLeaked) {
+            if matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked) {
                 self.measured_qubits.extend(
                     gate.qubits
                         .iter()
@@ -548,14 +548,14 @@ impl GeneralNoiseModel {
                         &mut builder,
                     );
                 }
-                GateType::Prep => {
+                GateType::PZ => {
                     for &q in &gate.qubits {
                         self.prepared_qubits.insert(usize::from(q));
                     }
                     self.apply_prep_faults(&gate, &mut builder);
                     self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
                 }
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::MZ | GateType::MeasureLeaked => {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
@@ -708,7 +708,7 @@ impl GeneralNoiseModel {
                     }
                     outcomes.push(val);
                 }
-                GateType::Measure => {
+                GateType::MZ => {
                     // Apply biased measurement noise to each outcome
                     // Check if we have leaked qubits that were measured
                     let mut val = outcome as usize;
@@ -719,7 +719,7 @@ impl GeneralNoiseModel {
                     }
                     // NOTE: we still apply bit-flip noise to the outcome 1 of leaked
                     // qubits that measure as 1. This has been the approach since H1/H2.
-                    if !self.noiseless_gates.contains(&GateType::Measure) {
+                    if !self.noiseless_gates.contains(&GateType::MZ) {
                         if val == 1 {
                             if self.rng.occurs(self.p_meas_1) {
                                 trace!("Flipped measurement outcome 1->0");
@@ -732,7 +732,7 @@ impl GeneralNoiseModel {
                     }
                     outcomes.push(val);
                 }
-                GateType::Prep => {
+                GateType::PZ => {
                     // Just ignore the measurement.
                     // In the future we will want to do more advanced crosstalk
                     // on prep as well, but for now it uses apply_simple_crosstalk_faults
@@ -1555,7 +1555,7 @@ mod tests {
         let _ = request_builder.for_quantum_operations();
         for &qubit in qubits {
             request_builder.add_gate_command(&Gate {
-                gate_type: GateType::Measure,
+                gate_type: GateType::MZ,
                 angles: vec![].into(),
                 qubits: vec![QubitId(qubit)].into(),
                 params: vec![].into(),
@@ -1636,7 +1636,7 @@ mod tests {
 
         // Create a quantum gate operation (Prep on qubit 0)
         let gate = Gate {
-            gate_type: GateType::Prep,
+            gate_type: GateType::PZ,
             angles: vec![].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![].into(),
@@ -1825,7 +1825,7 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         let prep_gate = Gate {
-            gate_type: GateType::Prep,
+            gate_type: GateType::PZ,
             angles: vec![].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![].into(),
@@ -2435,13 +2435,13 @@ mod tests {
         let (q, gate_type) = noise.measured_qubits[0];
         assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
         assert!(
-            gate_type == GateType::Measure,
+            gate_type == GateType::MZ,
             "The first measurement should come from MCMR"
         );
 
         for (_, gate_type) in &noise.measured_qubits[1..] {
             assert!(
-                *gate_type == GateType::Prep,
+                *gate_type == GateType::PZ,
                 "The other measurements should come from crosstalk"
             );
         }

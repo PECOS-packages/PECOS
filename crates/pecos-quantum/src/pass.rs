@@ -838,12 +838,12 @@ impl CircuitPass for PeepholeOptimize {
 
 /// Returns `true` if the gate is a Z-basis preparation (produces |0>).
 fn is_z_prep(gt: GateType) -> bool {
-    matches!(gt, GateType::Prep | GateType::QAlloc)
+    matches!(gt, GateType::PZ | GateType::QAlloc)
 }
 
 /// Returns `true` if the gate is a Z-basis measurement.
 fn is_z_measure(gt: GateType) -> bool {
-    matches!(gt, GateType::Measure | GateType::MeasureFree)
+    matches!(gt, GateType::MZ | GateType::MeasureFree)
 }
 
 /// Returns `true` if the gate is Z-diagonal (single- or multi-qubit).
@@ -2833,7 +2833,7 @@ mod tests {
         AbsorbBasisGates.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 2); // PZ + H remain
         let topo = dag.topological_order();
-        assert_eq!(dag.gate(topo[0]).unwrap().gate_type, GateType::Prep);
+        assert_eq!(dag.gate(topo[0]).unwrap().gate_type, GateType::PZ);
         assert_eq!(dag.gate(topo[1]).unwrap().gate_type, GateType::H);
     }
 
@@ -2847,7 +2847,7 @@ mod tests {
         assert_eq!(dag.gate_count(), 2); // H + MZ remain
         let topo = dag.topological_order();
         assert_eq!(dag.gate(topo[0]).unwrap().gate_type, GateType::H);
-        assert_eq!(dag.gate(topo[1]).unwrap().gate_type, GateType::Measure);
+        assert_eq!(dag.gate(topo[1]).unwrap().gate_type, GateType::MZ);
     }
 
     // ==================== AbsorbBasisGates multi-qubit tests ====================

@@ -282,7 +282,7 @@ pub fn propagate_backward_from_tick(
 ///     tick: 2,
 ///     qubits: vec![QubitId(0)],
 ///     before: true,
-///     gate_type: GateType::Measure,
+///     gate_type: GateType::MZ,
 ///     gate_index: 0,
 /// };
 /// let fault = PauliFault::new(loc, vec![3]); // Z fault

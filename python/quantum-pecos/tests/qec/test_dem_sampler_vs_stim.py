@@ -41,7 +41,7 @@ def extract_measurement_order(tc: "TickCircuit") -> list[int]:
             continue
         for gate in tick.gates():
             gate_type = str(gate.gate_type)
-            if "Measure" in gate_type:
+            if "MZ" in gate_type:
                 for qubit in gate.qubits:
                     if hasattr(qubit, "index"):
                         measurement_order.append(qubit.index())

@@ -52,7 +52,7 @@ pub fn extract_spacetime_locations(
                 0, // Use tick 0 for initial, mark as "before" first gate
                 vec![qubit],
                 true, // Before any gates
-                GateType::Prep,
+                GateType::PZ,
                 idx,
             ));
         }
@@ -62,8 +62,7 @@ pub fn extract_spacetime_locations(
     for (tick_idx, tick) in circuit.iter_ticks() {
         for (gate_idx, gate) in tick.gates().iter().enumerate() {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-            let is_measurement =
-                matches!(gate.gate_type, GateType::Measure | GateType::MeasureFree);
+            let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
 
             locations.push(SpacetimeLocation::new(
                 tick_idx,
@@ -191,12 +190,12 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
         }
 
         // Measurements
-        GateType::Measure | GateType::MeasureFree => {
+        GateType::MZ | GateType::MeasureFree => {
             sim.mz(&qubits);
         }
 
         // Preparations
-        GateType::Prep => {
+        GateType::PZ => {
             sim.pz(&qubits);
         }
 
@@ -886,12 +885,12 @@ mod tests {
         assert_eq!(locations.len(), 6);
 
         // Verify gate types
-        assert_eq!(locations[0].gate_type, GateType::Prep);
+        assert_eq!(locations[0].gate_type, GateType::PZ);
         assert_eq!(locations[1].gate_type, GateType::CX);
         assert_eq!(locations[2].gate_type, GateType::CX);
         assert_eq!(locations[3].gate_type, GateType::CX);
         assert_eq!(locations[4].gate_type, GateType::CX);
-        assert_eq!(locations[5].gate_type, GateType::Measure);
+        assert_eq!(locations[5].gate_type, GateType::MZ);
     }
 
     #[test]
@@ -1063,7 +1062,7 @@ mod tests {
         // Count locations by type
         let preps = locations
             .iter()
-            .filter(|l| l.gate_type == GateType::Prep)
+            .filter(|l| l.gate_type == GateType::PZ)
             .count();
         let hadamards = locations
             .iter()
@@ -1075,7 +1074,7 @@ mod tests {
             .count();
         let measures = locations
             .iter()
-            .filter(|l| l.gate_type == GateType::Measure)
+            .filter(|l| l.gate_type == GateType::MZ)
             .count();
 
         assert_eq!(preps, 1); // One bulk prep

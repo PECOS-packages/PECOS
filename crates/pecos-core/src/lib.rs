@@ -31,6 +31,7 @@ pub mod prelude;
 pub mod qubit_id;
 pub mod rng;
 pub mod sets;
+pub mod signal;
 pub mod sorted_vec_set;
 pub mod value;
 
@@ -38,7 +39,7 @@ pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
 pub use bit::{Bit, Bits};
 pub use bit_int::BitInt;
 pub use bitset::BitSet;
-pub use duration::{Nanoseconds, TimeUnits};
+pub use duration::{TimeScale, TimeUnits};
 pub use element::Element;
 pub use index_set::IndexSet;
 pub use phase::GlobalPhase;
@@ -88,3 +89,6 @@ pub use clifford::Clifford;
 // Unified gate algebra with automatic type promotion
 pub mod op;
 pub use op::{Basis, ChannelExpr, Level, Op};
+
+// Signals
+pub use signal::Signal;

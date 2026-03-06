@@ -536,7 +536,7 @@ where
                 }
 
                 // TODO: Fix it so we have multiple result_ids or get rid of result ids...
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::MZ | GateType::MeasureLeaked => {
                     debug!("Processing measurement on qubits {:?}", cmd.qubits);
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
@@ -544,7 +544,7 @@ where
                         measurements.push(usize::from(meas_result.outcome));
                     }
                 }
-                GateType::Prep => {
+                GateType::PZ => {
                     debug!("Processing Prep gate on qubits {:?}", cmd.qubits);
                     self.simulator.pz(&cmd.qubits);
                 }
@@ -802,7 +802,7 @@ impl Engine for SparseStabEngine {
                     self.process_two_qubit_gate(cmd.gate_type, &cmd.qubits);
                 }
                 // Special operations
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::MZ | GateType::MeasureLeaked => {
                     debug!("Processing measurement on qubits {:?}", cmd.qubits);
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
@@ -810,7 +810,7 @@ impl Engine for SparseStabEngine {
                         measurements.push(usize::from(meas_result.outcome));
                     }
                 }
-                GateType::Prep => {
+                GateType::PZ => {
                     debug!("Processing Prep gate on qubits {:?}", cmd.qubits);
                     self.simulator.pz(&cmd.qubits);
                 }
@@ -940,7 +940,7 @@ impl Engine for CoinTossEngine {
         for cmd in &batch {
             match cmd.gate_type {
                 // All gates are no-ops for CoinToss - only measurements matter
-                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     for q in &cmd.qubits {
                         debug!("CoinToss: Processing measurement on qubit {q:?}");
                         let meas_results = self.simulator.mz(&[*q]);

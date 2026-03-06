@@ -24,7 +24,7 @@
 
 use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
-use pecos::core::{Angle64, GateQubits, GateSignature, Nanoseconds, TimeUnits};
+use pecos::core::{Angle64, GateQubits, GateSignature, TimeUnits};
 use pecos::quantum::{Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -468,7 +468,7 @@ impl PyGateType {
     #[pyo3(name = "Measure")]
     fn measure() -> Self {
         Self {
-            inner: GateType::Measure,
+            inner: GateType::MZ,
         }
     }
 
@@ -484,7 +484,7 @@ impl PyGateType {
     #[pyo3(name = "Prep")]
     fn prep() -> Self {
         Self {
-            inner: GateType::Prep,
+            inner: GateType::PZ,
         }
     }
 
@@ -1181,9 +1181,10 @@ impl PyDagCircuit {
     /// Apply an idle gate with a specified duration.
     ///
     /// Idle gates represent waiting time on a qubit, useful for noise modeling.
+    /// Duration is in abstract time units - interpretation depends on your noise model.
     ///
     /// Args:
-    ///     duration: Duration as Nanoseconds, `TimeUnits`, or integer (interpreted as nanoseconds).
+    ///     duration: Duration as `TimeUnits`, `Nanoseconds` (deprecated), or integer.
     ///     q: The qubit to idle.
     fn idle(
         slf: Py<Self>,
@@ -1191,19 +1192,20 @@ impl PyDagCircuit {
         duration: &Bound<'_, PyAny>,
         q: usize,
     ) -> PyResult<Py<Self>> {
-        // Try to extract as PyNanoseconds, PyTimeUnits, or u64
-        let ns = if let Ok(py_ns) = duration.extract::<PyNanoseconds>() {
-            py_ns.inner
-        } else if let Ok(py_tu) = duration.extract::<PyTimeUnits>() {
-            Nanoseconds::from_ns(py_tu.inner.as_u64())
-        } else if let Ok(raw_ns) = duration.extract::<u64>() {
-            Nanoseconds::from_ns(raw_ns)
+        // Try to extract as PyTimeUnits, PyNanoseconds (deprecated), or u64
+        let units = if let Ok(py_tu) = duration.extract::<PyTimeUnits>() {
+            py_tu.inner
+        } else if let Ok(py_ns) = duration.extract::<PyNanoseconds>() {
+            // Deprecated: treat nanoseconds value as time units directly
+            TimeUnits::new(py_ns.ns)
+        } else if let Ok(raw) = duration.extract::<u64>() {
+            TimeUnits::new(raw)
         } else {
             return Err(pyo3::exceptions::PyTypeError::new_err(
-                "duration must be Nanoseconds, TimeUnits, or an integer (nanoseconds)",
+                "duration must be TimeUnits, Nanoseconds, or an integer",
             ));
         };
-        slf.borrow_mut(py).inner.idle(ns, q);
+        slf.borrow_mut(py).inner.idle(units, q);
         Ok(slf)
     }
 
@@ -1543,13 +1545,15 @@ fn py_is_quantum_operation(op_name: &str) -> bool {
 
 // ==================== Time Unit Types ====================
 
-/// Python wrapper for `Nanoseconds`.
+/// Python wrapper for nanosecond durations.
 ///
-/// Represents a time duration in nanoseconds.
+/// Deprecated: Prefer using `TimeUnits` with `TimeScale` for new code.
+/// This type is kept for backwards compatibility.
 #[pyclass(name = "Nanoseconds", module = "pecos_rslib", from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PyNanoseconds {
-    inner: Nanoseconds,
+    /// Duration in nanoseconds.
+    ns: u64,
 }
 
 #[pymethods]
@@ -1557,127 +1561,105 @@ impl PyNanoseconds {
     /// Create from nanoseconds.
     #[new]
     fn new(ns: u64) -> Self {
-        Self {
-            inner: Nanoseconds::from_ns(ns),
-        }
+        Self { ns }
     }
 
     /// Create from nanoseconds.
     #[staticmethod]
     fn from_ns(ns: u64) -> Self {
-        Self {
-            inner: Nanoseconds::from_ns(ns),
-        }
+        Self { ns }
     }
 
     /// Create from microseconds.
     #[staticmethod]
     fn from_us(us: u64) -> Self {
-        Self {
-            inner: Nanoseconds::from_us(us),
-        }
+        Self { ns: us * 1_000 }
     }
 
     /// Create from milliseconds.
     #[staticmethod]
     fn from_ms(ms: u64) -> Self {
-        Self {
-            inner: Nanoseconds::from_ms(ms),
-        }
+        Self { ns: ms * 1_000_000 }
     }
 
     /// Create from seconds.
     #[staticmethod]
     fn from_secs(secs: u64) -> Self {
         Self {
-            inner: Nanoseconds::from_secs(secs),
+            ns: secs * 1_000_000_000,
         }
     }
 
     /// Get the duration in nanoseconds.
     fn as_ns(&self) -> u64 {
-        self.inner.as_ns()
+        self.ns
     }
 
     /// Get the duration in microseconds (truncated).
     fn as_us(&self) -> u64 {
-        self.inner.as_us()
+        self.ns / 1_000
     }
 
     /// Get the duration in milliseconds (truncated).
     fn as_ms(&self) -> u64 {
-        self.inner.as_ms()
+        self.ns / 1_000_000
     }
 
     /// Get the duration in seconds (truncated).
     fn as_secs(&self) -> u64 {
-        self.inner.as_secs()
+        self.ns / 1_000_000_000
     }
 
     fn __repr__(&self) -> String {
-        format!("Nanoseconds({})", self.inner.as_ns())
+        format!("Nanoseconds({})", self.ns)
     }
 
     fn __str__(&self) -> String {
-        format!("{}ns", self.inner.as_ns())
+        format!("{}ns", self.ns)
     }
 
     fn __int__(&self) -> u64 {
-        self.inner.as_ns()
+        self.ns
     }
 
     fn __eq__(&self, other: &Self) -> bool {
-        self.inner == other.inner
+        self.ns == other.ns
     }
 
     fn __lt__(&self, other: &Self) -> bool {
-        self.inner < other.inner
+        self.ns < other.ns
     }
 
     fn __le__(&self, other: &Self) -> bool {
-        self.inner <= other.inner
+        self.ns <= other.ns
     }
 
     fn __gt__(&self, other: &Self) -> bool {
-        self.inner > other.inner
+        self.ns > other.ns
     }
 
     fn __ge__(&self, other: &Self) -> bool {
-        self.inner >= other.inner
+        self.ns >= other.ns
     }
 
     fn __add__(&self, other: &Self) -> Self {
         Self {
-            inner: self.inner + other.inner,
+            ns: self.ns + other.ns,
         }
     }
 
     fn __sub__(&self, other: &Self) -> Self {
         Self {
-            inner: self.inner - other.inner,
+            ns: self.ns - other.ns,
         }
     }
 
     fn __mul__(&self, rhs: u64) -> Self {
-        Self {
-            inner: self.inner * rhs,
-        }
+        Self { ns: self.ns * rhs }
     }
 
     fn __hash__(&self) -> u64 {
-        self.inner.as_ns()
-    }
-}
-
-impl From<Nanoseconds> for PyNanoseconds {
-    fn from(inner: Nanoseconds) -> Self {
-        Self { inner }
-    }
-}
-
-impl From<PyNanoseconds> for Nanoseconds {
-    fn from(py_ns: PyNanoseconds) -> Self {
-        py_ns.inner
+        self.ns
     }
 }
 
@@ -3124,8 +3106,10 @@ impl PyTickHandle {
 
     /// Apply an idle gate with a specified duration.
     ///
+    /// Duration is in abstract time units - interpretation depends on your noise model.
+    ///
     /// Args:
-    ///     duration: Duration as Nanoseconds, `TimeUnits`, or integer (nanoseconds).
+    ///     duration: Duration as `TimeUnits`, `Nanoseconds` (deprecated), or integer.
     ///     q: The qubit to idle.
     fn idle(
         slf: Py<Self>,
@@ -3133,19 +3117,20 @@ impl PyTickHandle {
         duration: &Bound<'_, PyAny>,
         q: usize,
     ) -> PyResult<Py<Self>> {
-        let ns = if let Ok(py_ns) = duration.extract::<PyNanoseconds>() {
-            py_ns.inner
-        } else if let Ok(py_tu) = duration.extract::<PyTimeUnits>() {
-            Nanoseconds::from_ns(py_tu.inner.as_u64())
-        } else if let Ok(raw_ns) = duration.extract::<u64>() {
-            Nanoseconds::from_ns(raw_ns)
+        let units = if let Ok(py_tu) = duration.extract::<PyTimeUnits>() {
+            py_tu.inner
+        } else if let Ok(py_ns) = duration.extract::<PyNanoseconds>() {
+            // Deprecated: treat nanoseconds value as time units directly
+            TimeUnits::new(py_ns.ns)
+        } else if let Ok(raw) = duration.extract::<u64>() {
+            TimeUnits::new(raw)
         } else {
             return Err(pyo3::exceptions::PyTypeError::new_err(
-                "duration must be Nanoseconds, TimeUnits, or an integer (nanoseconds)",
+                "duration must be TimeUnits, Nanoseconds, or an integer",
             ));
         };
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::idle(ns.as_f64(), vec![QubitId::from(q)]))?;
+            .add_gate_internal(py, Gate::idle(units.as_f64(), vec![QubitId::from(q)]))?;
         Ok(slf)
     }
 

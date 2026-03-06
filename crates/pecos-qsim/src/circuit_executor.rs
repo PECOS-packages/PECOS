@@ -199,10 +199,10 @@ fn execute_single_batch<S: CliffordGateable>(
         GateType::SWAP => {
             sim.swap(qubits);
         }
-        GateType::Prep | GateType::QAlloc => {
+        GateType::PZ | GateType::QAlloc => {
             sim.pz(qubits);
         }
-        GateType::Measure | GateType::MeasureFree => {
+        GateType::MZ | GateType::MeasureFree => {
             measurements.extend(sim.mz(qubits));
         }
         GateType::Idle => {}

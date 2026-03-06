@@ -344,8 +344,8 @@ pub fn parse_gate_type_from_string(gate_str: &str) -> Option<GateType> {
         "SZZDAG" | "SZZDG" => Some(GateType::SZZdg),
         "U" => Some(GateType::U),
         "R1XY" => Some(GateType::R1XY),
-        "MEASURE" | "M" => Some(GateType::Measure),
-        "PREP" => Some(GateType::Prep),
+        "MEASURE" | "M" => Some(GateType::MZ),
+        "PREP" => Some(GateType::PZ),
         "IDLE" => Some(GateType::Idle),
         _ => None, // Ignore unknown gate types
     }

@@ -64,10 +64,10 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::RYY => "RYY",
         GateType::RZZ => "RZZ",
         GateType::CCX => "CCX",
-        GateType::Measure => "MZ",
+        GateType::MZ => "MZ",
         GateType::MeasureLeaked => "ML",
         GateType::MeasureFree => "MF",
-        GateType::Prep => "PZ",
+        GateType::PZ => "PZ",
         GateType::QAlloc => "QA",
         GateType::QFree => "QF",
         GateType::I | GateType::Idle => "I",
@@ -182,8 +182,8 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::T
         | GateType::Tdg
         | GateType::RZZ
-        | GateType::Measure
-        | GateType::Prep
+        | GateType::MZ
+        | GateType::PZ
         | GateType::SZZ
         | GateType::SZZdg
         | GateType::CRZ => CellColor::ZAxis,
@@ -225,10 +225,8 @@ fn gate_color(gate_type: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_family(gate_type: GateType) -> GateFamily {
     match gate_type {
-        GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
-            GateFamily::Measurement
-        }
-        GateType::Prep | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
+        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => GateFamily::Measurement,
+        GateType::PZ | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
         _ => GateFamily::Default,
     }
 }

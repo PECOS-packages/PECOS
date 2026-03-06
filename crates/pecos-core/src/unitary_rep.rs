@@ -2889,8 +2889,8 @@ fn gate_type_color(gt: GateType) -> CellColor {
         | GateType::T
         | GateType::Tdg
         | GateType::RZZ
-        | GateType::Measure
-        | GateType::Prep
+        | GateType::MZ
+        | GateType::PZ
         | GateType::SZZ
         | GateType::SZZdg
         | GateType::CRZ => CellColor::ZAxis,
@@ -2907,10 +2907,8 @@ fn gate_type_color(gt: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_type_family(gt: GateType) -> GateFamily {
     match gt {
-        GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
-            GateFamily::Measurement
-        }
-        GateType::Prep | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
+        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => GateFamily::Measurement,
+        GateType::PZ | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
         _ => GateFamily::Default,
     }
 }

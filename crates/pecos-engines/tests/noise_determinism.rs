@@ -93,7 +93,7 @@ fn apply_noise(model: &mut GeneralNoiseModel, msg: &ByteMessage) -> Vec<ByteMess
                 let mut response = ByteMessage::outcomes_builder();
                 for gate in &gates {
                     match &gate.gate_type {
-                        GateType::Measure | GateType::MeasureLeaked => {
+                        GateType::MZ | GateType::MeasureLeaked => {
                             for _ in &gate.qubits {
                                 let outcome = usize::from(measure_rng.coin_flip());
                                 response.add_outcomes(&[outcome]);

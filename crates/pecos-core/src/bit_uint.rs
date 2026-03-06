@@ -770,7 +770,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "BitUInt size must be at least 1")]
     fn test_reject_size_0() {
-        BitUInt::new(0, 0);
+        let _ = BitUInt::new(0, 0);
     }
 
     #[test]

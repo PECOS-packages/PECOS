@@ -130,7 +130,7 @@ impl PyBitInt {
         ))
     }
 
-    /// Get the signed integer value (for use by PyBitUInt bindings).
+    /// Get the signed integer value (for use by `PyBitUInt` bindings).
     pub fn to_int(&self) -> Option<i64> {
         self.inner.to_i64()
     }
@@ -145,10 +145,7 @@ impl PyBitInt {
     /// - `BitInt("1010")` - create from binary string (size = string length)
     #[new]
     #[pyo3(signature = (size, value=None))]
-    pub fn new(
-        size: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Self> {
+    pub fn new(size: &Bound<'_, PyAny>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         // Check if size is a string (binary string constructor)
         if let Ok(s) = size.extract::<String>() {
             let s = s.as_str();
@@ -207,9 +204,7 @@ impl PyBitInt {
 
         let inner = if let Some(val_obj) = value {
             let v = val_obj.extract::<i64>().map_err(|_| {
-                PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
-                    "Value out of range for BitInt",
-                )
+                PyErr::new::<pyo3::exceptions::PyOverflowError, _>("Value out of range for BitInt")
             })?;
             BitInt::new(size, v)
         } else {
@@ -278,9 +273,7 @@ impl PyBitInt {
 
     pub fn set(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let v = value.extract::<i64>().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
-                "Value out of range for BitInt",
-            )
+            PyErr::new::<pyo3::exceptions::PyOverflowError, _>("Value out of range for BitInt")
         })?;
         self.inner = BitInt::new(self.inner.size(), v);
         Ok(())
@@ -323,30 +316,32 @@ impl PyBitInt {
 
     pub fn num_bits(&self) -> u32 {
         if let Some(val) = self.inner.to_u64() {
-            if val == 0 { 1 } else { 64 - val.leading_zeros() }
+            if val == 0 {
+                1
+            } else {
+                64 - val.leading_zeros()
+            }
         } else {
             u32::from(self.inner.size())
         }
     }
 
     pub fn clamp(&mut self, size: u16) {
-        if size < self.inner.size() {
-            if let Some(v) = self.inner.to_i64() {
-                let mask: i64 = if size >= 63 {
-                    i64::MAX
-                } else {
-                    (1i64 << size) - 1
-                };
-                self.inner = BitInt::new(self.inner.size(), v & mask);
-            }
+        if size < self.inner.size()
+            && let Some(v) = self.inner.to_i64()
+        {
+            let mask: i64 = if size >= 63 {
+                i64::MAX
+            } else {
+                (1i64 << size) - 1
+            };
+            self.inner = BitInt::new(self.inner.size(), v & mask);
         }
     }
 
     pub fn set_clip(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let v = value.extract::<i64>().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
-                "Value out of range for BitInt",
-            )
+            PyErr::new::<pyo3::exceptions::PyOverflowError, _>("Value out of range for BitInt")
         })?;
         let size = self.inner.size();
         let mask: i64 = if size >= 63 {
@@ -523,11 +518,7 @@ impl PyBitInt {
     }
 
     pub fn __repr__(&self) -> String {
-        format!(
-            "BitInt({}, 0b{})",
-            self.inner.size(),
-            self.inner,
-        )
+        format!("BitInt({}, 0b{})", self.inner.size(), self.inner,)
     }
 
     #[pyo3(signature = (reverse_bits=false, separator=None))]

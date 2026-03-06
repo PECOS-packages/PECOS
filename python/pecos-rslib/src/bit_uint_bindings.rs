@@ -61,7 +61,7 @@ fn extract_uint_operand_value(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
     ))
 }
 
-/// Helper to convert an operand to a BitUInt with the given size.
+/// Helper to convert an operand to a `BitUInt` with the given size.
 fn operand_to_bituint(size: u16, other: &Bound<'_, PyAny>) -> PyResult<BitUInt> {
     if let Ok(bit_uint) = other.extract::<PyRef<PyBitUInt>>() {
         return Ok(bit_uint.inner.clone());
@@ -171,9 +171,7 @@ impl PyBitUInt {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("Binary string too long")
         })?;
         let val = u64::from_str_radix(s, 2).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid binary string: {e}"
-            ))
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid binary string: {e}"))
         })?;
         Ok(PyBitUInt {
             inner: BitUInt::new(size, val),
@@ -273,7 +271,11 @@ impl PyBitUInt {
     /// Returns the number of bits required to represent the current value.
     pub fn num_bits(&self) -> u32 {
         if let Some(val) = self.inner.to_u64() {
-            if val == 0 { 1 } else { 64 - val.leading_zeros() }
+            if val == 0 {
+                1
+            } else {
+                64 - val.leading_zeros()
+            }
         } else {
             u32::from(self.inner.size())
         }
@@ -281,15 +283,15 @@ impl PyBitUInt {
 
     /// Clamp the value to fit within the specified bit size.
     pub fn clamp(&mut self, size: u16) {
-        if size < self.inner.size() {
-            if let Some(v) = self.inner.to_u64() {
-                let mask = if size >= 64 {
-                    u64::MAX
-                } else {
-                    (1u64 << size) - 1
-                };
-                self.inner = BitUInt::new(self.inner.size(), v & mask);
-            }
+        if size < self.inner.size()
+            && let Some(v) = self.inner.to_u64()
+        {
+            let mask = if size >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << size) - 1
+            };
+            self.inner = BitUInt::new(self.inner.size(), v & mask);
         }
     }
 
@@ -465,11 +467,7 @@ impl PyBitUInt {
     }
 
     pub fn __repr__(&self) -> String {
-        format!(
-            "BitUInt({}, 0b{})",
-            self.inner.size(),
-            self.inner,
-        )
+        format!("BitUInt({}, 0b{})", self.inner.size(), self.inner,)
     }
 
     #[pyo3(signature = (reverse_bits=false, separator=None))]

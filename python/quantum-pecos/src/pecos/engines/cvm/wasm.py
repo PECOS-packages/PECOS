@@ -21,17 +21,18 @@ import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from pecos import BitInt, BitUInt, WasmForeignObject
-from pecos.engines.cvm.sim_func import sim_exec, sim_funcs
-from pecos.exceptions import MissingCCOPError, WasmError
-
 # Import the Rust WasmError for catching, then re-raise as pecos WasmError
 from pecos_rslib import WasmError as _RsWasmError
+
+from pecos import BitUInt, WasmForeignObject
+from pecos.engines.cvm.sim_func import sim_exec, sim_funcs
+from pecos.exceptions import MissingCCOPError, WasmError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Any
 
+    from pecos import BitInt
     from pecos.circuits import QuantumCircuit
 
 

@@ -208,10 +208,6 @@ from pecos import (
     tools,
 )
 
-# Import WasmError from pecos.exceptions (Python-defined, inherits from pecos_rslib.WasmError)
-# so that errors re-raised through the Python layer display as pecos.WasmError
-from pecos.exceptions import WasmError
-
 # Deprecated APIs
 from pecos._deprecated import BinArray
 
@@ -230,6 +226,10 @@ from pecos._sim import get_guppy_backends, sim
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
 from pecos.engines.hybrid_engine_old import HybridEngine
+
+# Import WasmError from pecos.exceptions (Python-defined, inherits from pecos_rslib.WasmError)
+# so that errors re-raised through the Python layer display as pecos.WasmError
+from pecos.exceptions import WasmError
 
 # Import program wrappers from programs submodule for convenience
 # These can also be accessed via pecos.programs.Qasm, etc.

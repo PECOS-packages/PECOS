@@ -49,7 +49,7 @@ use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
 pub struct BitInt {
     /// User-declared bit width (1 to 65534)
     user_size: u16,
-    /// Internal storage: BitUInt(user_size + 1), bit user_size is the sign bit
+    /// Internal storage: `BitUInt(user_size` + 1), bit `user_size` is the sign bit
     inner: BitUInt,
 }
 
@@ -129,10 +129,7 @@ impl BitInt {
     #[allow(clippy::cast_possible_truncation)]
     pub fn from_binary_str(s: &str) -> Self {
         assert!(!s.is_empty(), "Binary string must not be empty");
-        assert!(
-            s.len() <= 65534,
-            "Binary string too long (max 65534 chars)"
-        );
+        assert!(s.len() <= 65534, "Binary string too long (max 65534 chars)");
         let user_size = s.len() as u16;
 
         // Parse the value from the binary string
@@ -235,31 +232,25 @@ impl BitInt {
     }
 
     /// Get the value of a specific bit (0-indexed from LSB).
-    /// Bounds-checked against user_size (cannot access the sign bit by index).
+    /// Bounds-checked against `user_size` (cannot access the sign bit by index).
     ///
     /// # Panics
     ///
     /// Panics if `index >= user_size`.
     #[must_use]
     pub fn get_bit(&self, index: u16) -> bool {
-        assert!(
-            index < self.user_size,
-            "Bit index out of bounds"
-        );
+        assert!(index < self.user_size, "Bit index out of bounds");
         self.inner.get_bit(index)
     }
 
     /// Set the value of a specific bit (0-indexed from LSB).
-    /// Bounds-checked against user_size (cannot access the sign bit by index).
+    /// Bounds-checked against `user_size` (cannot access the sign bit by index).
     ///
     /// # Panics
     ///
     /// Panics if `index >= user_size`.
     pub fn set_bit(&mut self, index: u16, value: bool) {
-        assert!(
-            index < self.user_size,
-            "Bit index out of bounds"
-        );
+        assert!(index < self.user_size, "Bit index out of bounds");
         self.inner.set_bit(index, value);
     }
 
@@ -303,7 +294,7 @@ impl BitInt {
     // Internal helpers
     // ========================================================================
 
-    /// Create a new `BitInt` with the same user_size, wrapping the given inner `BitUInt`.
+    /// Create a new `BitInt` with the same `user_size`, wrapping the given inner `BitUInt`.
     fn wrap_result(&self, inner: BitUInt) -> Self {
         Self {
             user_size: self.user_size,
@@ -429,11 +420,7 @@ impl Shr<u16> for &BitInt {
         if self.is_negative() {
             // Fill the top `rhs` bits with 1s (arithmetic shift)
             let mut result = shifted;
-            let start = if internal_size > rhs {
-                internal_size - rhs
-            } else {
-                0
-            };
+            let start = internal_size.saturating_sub(rhs);
             for i in start..internal_size {
                 result.set_bit(i, true);
             }
@@ -655,7 +642,7 @@ mod tests {
     #[should_panic(expected = "Bit index out of bounds")]
     fn test_bit_access_sign_bit_blocked() {
         let a = BitInt::new(4, 5);
-        a.get_bit(4); // Should panic: can't access sign bit
+        let _ = a.get_bit(4); // Should panic: can't access sign bit
     }
 
     #[test]

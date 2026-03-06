@@ -2072,7 +2072,7 @@ fn apply_s(
     cliff: &crate::clifford_rep::CliffordRep,
     qubit: usize,
 ) -> crate::clifford_rep::CliffordRep {
-    let s_cliff = crate::clifford_rep::CliffordRep::s(qubit);
+    let s_cliff = crate::clifford_rep::CliffordRep::sz(qubit);
     extend_clifford(s_cliff, cliff.num_qubits()).compose(cliff)
 }
 
@@ -2080,7 +2080,7 @@ fn apply_sdg(
     cliff: &crate::clifford_rep::CliffordRep,
     qubit: usize,
 ) -> crate::clifford_rep::CliffordRep {
-    let sdg_cliff = crate::clifford_rep::CliffordRep::sdg(qubit);
+    let sdg_cliff = crate::clifford_rep::CliffordRep::szdg(qubit);
     extend_clifford(sdg_cliff, cliff.num_qubits()).compose(cliff)
 }
 

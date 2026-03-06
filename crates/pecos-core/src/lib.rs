@@ -80,3 +80,7 @@ pub use operator::{Is, Operator};
 
 // PauliString constructors (primary user-facing API for Pauli algebra)
 pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
+
+// Clifford base type (single-qubit Clifford group element)
+pub mod clifford;
+pub use clifford::Clifford;

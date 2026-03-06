@@ -745,6 +745,47 @@ impl StabilizerCode {
     pub fn has_logicals(&self) -> bool {
         !self.logical_zs.is_empty() && !self.logical_xs.is_empty()
     }
+
+    // ========================================================================
+    // Conversions
+    // ========================================================================
+
+    /// Converts the stabilizer generators into a [`PauliStabilizerGroup`].
+    ///
+    /// This enables access to the algebraic analysis methods available on
+    /// [`PauliStabilizerGroup`] (rank, GF(2) membership, group enumeration,
+    /// centralizer, Clifford conjugation, etc.).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stabilizers don't form a valid stabilizer group
+    /// (e.g., non-commuting generators or non-real phases). This should not
+    /// happen for properly constructed codes.
+    pub fn to_stabilizer_group(
+        &self,
+    ) -> std::result::Result<
+        pecos_quantum::PauliStabilizerGroup,
+        pecos_quantum::stabilizer_group::PauliStabilizerGroupError,
+    > {
+        pecos_quantum::PauliStabilizerGroup::new(self.stabilizers.clone(), self.num_qubits)
+    }
+
+    /// Creates a `StabilizerCode` from a [`PauliStabilizerGroup`].
+    ///
+    /// The resulting code has stabilizer generators but no logical operators
+    /// or destabilizers. Use [`discover_logicals`](Self::discover_logicals)
+    /// to compute them.
+    #[must_use]
+    pub fn from_stabilizer_group(group: &pecos_quantum::PauliStabilizerGroup) -> Self {
+        Self {
+            num_qubits: group.num_qubits(),
+            stabilizers: group.stabilizers().to_vec(),
+            destabilizers: Vec::new(),
+            logical_zs: Vec::new(),
+            logical_xs: Vec::new(),
+            distance: None,
+        }
+    }
 }
 
 /// Precomputed column index for stabilizer generators.
@@ -1534,5 +1575,80 @@ mod tests {
 
         // Verify the discovered logicals are valid
         assert!(code.verify().is_ok());
+    }
+
+    // ========================================================================
+    // Bridge conversion tests
+    // ========================================================================
+
+    #[test]
+    fn test_to_stabilizer_group() {
+        use pecos_core::Zs;
+
+        let code = StabilizerCode::builder(3)
+            .check(Zs([0, 1]))
+            .check(Zs([1, 2]))
+            .logical_z(Zs([0, 1, 2]))
+            .logical_x(pecos_core::Xs([0]))
+            .build()
+            .unwrap();
+
+        let group = code.to_stabilizer_group().unwrap();
+        assert_eq!(group.rank(), 2);
+        assert_eq!(group.num_logical_qubits(), 1);
+        assert_eq!(group.num_qubits(), 3);
+    }
+
+    #[test]
+    fn test_from_stabilizer_group() {
+        let group = pecos_quantum::PauliStabilizerGroup::steane();
+        let code = StabilizerCode::from_stabilizer_group(&group);
+
+        assert_eq!(code.num_qubits(), 7);
+        assert_eq!(code.num_stabilizers(), 6);
+        assert!(code.verify_stabilizers_commute().is_ok());
+        assert!(!code.has_logicals());
+    }
+
+    #[test]
+    fn test_roundtrip_stabilizer_group() {
+        use pecos_core::{Xs, Zs};
+
+        let original = StabilizerCode::builder(7)
+            .check(Xs([0, 2, 4, 6]))
+            .check(Xs([1, 2, 5, 6]))
+            .check(Xs([3, 4, 5, 6]))
+            .check(Zs([0, 2, 4, 6]))
+            .check(Zs([1, 2, 5, 6]))
+            .check(Zs([3, 4, 5, 6]))
+            .build()
+            .unwrap();
+
+        let group = original.to_stabilizer_group().unwrap();
+        let roundtripped = StabilizerCode::from_stabilizer_group(&group);
+
+        assert_eq!(roundtripped.num_qubits(), original.num_qubits());
+        assert_eq!(roundtripped.num_stabilizers(), original.num_stabilizers());
+        assert!(roundtripped.verify_stabilizers_commute().is_ok());
+    }
+
+    #[test]
+    fn test_stabilizer_group_algebraic_analysis() {
+        use pecos_core::PauliOperator;
+        use pecos_core::pauli::constructors::*;
+
+        // Use SurfaceCode and convert for algebraic analysis
+        let surface = crate::SurfaceCode::rotated(3).unwrap();
+        let stab_code = surface.to_stabilizer_code();
+        let group = stab_code.to_stabilizer_group().unwrap();
+
+        // Algebraic properties
+        assert_eq!(group.num_qubits(), 9);
+        assert_eq!(group.num_logical_qubits(), 1);
+        assert!(group.is_independent());
+
+        // Syndrome computation
+        let syndrome = group.syndrome(&X(0));
+        assert!(syndrome.iter().any(|&s| s), "X error should trigger at least one stabilizer");
     }
 }

@@ -101,6 +101,14 @@ impl Phase for QuarterPhase {
 //     unsafe { std::mem::transmute(result) }
 // }
 
+impl QuarterPhase {
+    /// Returns `true` if this phase is real (`+1` or `-1`), i.e. a valid [`Sign`](crate::Sign).
+    #[must_use]
+    pub fn is_real(self) -> bool {
+        matches!(self, Self::PlusOne | Self::MinusOne)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +174,13 @@ mod tests {
         assert_eq!(MinusOne.to_complex(), Complex::new(-1.0, 0.0));
         assert_eq!(PlusI.to_complex(), Complex::new(0.0, 1.0));
         assert_eq!(MinusI.to_complex(), Complex::new(0.0, -1.0));
+    }
+
+    #[test]
+    fn test_is_real() {
+        assert!(QuarterPhase::PlusOne.is_real());
+        assert!(QuarterPhase::MinusOne.is_real());
+        assert!(!QuarterPhase::PlusI.is_real());
+        assert!(!QuarterPhase::MinusI.is_real());
     }
 }

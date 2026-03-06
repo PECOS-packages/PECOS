@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::{Pauli, PauliBitmap, PauliOperator, PauliSparse, QuarterPhase, QubitId, VecSet};
+use crate::{Pauli, PauliBitmap, PauliOperator, PauliSparse, Phase, QuarterPhase, QubitId, VecSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -462,6 +462,95 @@ impl PauliString {
         } else {
             format!("{phase_str}{}", parts.join(" "))
         }
+    }
+
+    /// Returns the 2^n x 2^n complex matrix representation of this Pauli string.
+    ///
+    /// The matrix is the tensor product of single-qubit Pauli matrices (I, X, Y, Z)
+    /// multiplied by the global phase. Qubits are ordered from 0 to `num_qubits - 1`.
+    ///
+    /// Returns a row-major flat vector of length `4^num_qubits` and the dimension `2^num_qubits`.
+    ///
+    /// This is a lightweight version that returns a flat `Vec` (no nalgebra dependency).
+    /// For the `DMatrix` version, use `ToMatrix::to_matrix()` from pecos-quantum.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_qubits > 12` (matrix would be 4096 x 4096 = 16M entries).
+    #[must_use]
+    pub fn to_flat_matrix(&self, num_qubits: usize) -> (Vec<num_complex::Complex64>, usize) {
+        assert!(
+            num_qubits <= 12,
+            "to_matrix supports at most 12 qubits, got {num_qubits}"
+        );
+
+        let dim = 1usize << num_qubits;
+        let phase = self.phase.to_complex();
+
+        // Build the single-qubit matrices for each qubit position
+        let single_qubit_matrices: Vec<[num_complex::Complex64; 4]> = (0..num_qubits)
+            .map(|q| {
+                let c0 = num_complex::Complex64::new(0.0, 0.0);
+                let c1 = num_complex::Complex64::new(1.0, 0.0);
+                let cm1 = num_complex::Complex64::new(-1.0, 0.0);
+                let ci = num_complex::Complex64::new(0.0, 1.0);
+                let cmi = num_complex::Complex64::new(0.0, -1.0);
+
+                match self.get(q) {
+                    Pauli::I => [c1, c0, c0, c1],   // [[1,0],[0,1]]
+                    Pauli::X => [c0, c1, c1, c0],   // [[0,1],[1,0]]
+                    Pauli::Y => [c0, cmi, ci, c0],   // [[0,-i],[i,0]]
+                    Pauli::Z => [c1, c0, c0, cm1],   // [[1,0],[0,-1]]
+                }
+            })
+            .collect();
+
+        // Compute the tensor product via index decomposition:
+        // For row r and col c, decompose into per-qubit bits and multiply.
+        let mut matrix = vec![num_complex::Complex64::new(0.0, 0.0); dim * dim];
+        for r in 0..dim {
+            for c in 0..dim {
+                let mut val = phase;
+                for (q, sq_mat) in single_qubit_matrices.iter().enumerate() {
+                    let rbit = (r >> (num_qubits - 1 - q)) & 1;
+                    let cbit = (c >> (num_qubits - 1 - q)) & 1;
+                    val *= sq_mat[rbit * 2 + cbit];
+                }
+                matrix[r * dim + c] = val;
+            }
+        }
+
+        (matrix, dim)
+    }
+
+    /// Tensor product with another `PauliString` on disjoint qubits.
+    ///
+    /// Returns `Err` if the two strings share any qubit. For the unchecked
+    /// version, use the `&` operator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error message if the qubit sets overlap.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_core::PauliString;
+    ///
+    /// let a = PauliString::x(0) & PauliString::y(1);
+    /// let b = PauliString::z(2);
+    /// let ab = a.tensor(&b).unwrap();
+    /// assert_eq!(ab.weight(), 3);
+    /// ```
+    pub fn tensor(&self, other: &PauliString) -> Result<PauliString, String> {
+        let my_qubits: std::collections::HashSet<usize> =
+            self.qubits().into_iter().collect();
+        for q in other.qubits() {
+            if my_qubits.contains(&q) {
+                return Err(format!("qubit {q} appears in both operands"));
+            }
+        }
+        Ok(self & other)
     }
 
     // Conversion to efficient representations
@@ -1783,5 +1872,120 @@ mod tests {
         assert_eq!(original.phase(), roundtripped.phase());
         assert_eq!(original.get(0), roundtripped.get(0));
         assert_eq!(original.get(1), roundtripped.get(1));
+    }
+
+    // ========================================================================
+    // to_matrix tests
+    // ========================================================================
+
+    fn c(re: f64, im: f64) -> num_complex::Complex64 {
+        num_complex::Complex64::new(re, im)
+    }
+
+    #[test]
+    fn test_to_flat_matrix_identity() {
+        let id = PauliString::identity();
+        let (mat, dim) = id.to_flat_matrix(1);
+        assert_eq!(dim, 2);
+        assert_eq!(mat, vec![c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(1.0, 0.0)]);
+    }
+
+    #[test]
+    fn test_to_flat_matrix_x() {
+        let x = PauliString::x(0);
+        let (mat, dim) = x.to_flat_matrix(1);
+        assert_eq!(dim, 2);
+        // X = [[0,1],[1,0]]
+        assert_eq!(mat, vec![c(0.0, 0.0), c(1.0, 0.0), c(1.0, 0.0), c(0.0, 0.0)]);
+    }
+
+    #[test]
+    fn test_to_flat_matrix_y() {
+        let y = PauliString::y(0);
+        let (mat, dim) = y.to_flat_matrix(1);
+        assert_eq!(dim, 2);
+        // Y = [[0,-i],[i,0]]
+        assert_eq!(mat, vec![c(0.0, 0.0), c(0.0, -1.0), c(0.0, 1.0), c(0.0, 0.0)]);
+    }
+
+    #[test]
+    fn test_to_flat_matrix_z() {
+        let z = PauliString::z(0);
+        let (mat, dim) = z.to_flat_matrix(1);
+        assert_eq!(dim, 2);
+        // Z = [[1,0],[0,-1]]
+        assert_eq!(mat, vec![c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(-1.0, 0.0)]);
+    }
+
+    #[test]
+    fn test_to_flat_matrix_xz_tensor_product() {
+        // X tensor Z on 2 qubits
+        let xz = PauliString::x(0) & PauliString::z(1);
+        let (mat, dim) = xz.to_flat_matrix(2);
+        assert_eq!(dim, 4);
+        // X (x) Z = [[0,0,1,0],[0,0,0,-1],[1,0,0,0],[0,-1,0,0]]
+        let expected = vec![
+            c(0.0, 0.0), c(0.0, 0.0), c(1.0, 0.0), c(0.0, 0.0),
+            c(0.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(-1.0, 0.0),
+            c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(0.0, 0.0),
+            c(0.0, 0.0), c(-1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0),
+        ];
+        assert_eq!(mat, expected);
+    }
+
+    #[test]
+    fn test_to_flat_matrix_with_phase() {
+        // -X should be -1 times X
+        let mx = PauliString::from_paulis_with_phase(QuarterPhase::MinusOne, &[Pauli::X]);
+        let (mat, _) = mx.to_flat_matrix(1);
+        assert_eq!(mat, vec![c(0.0, 0.0), c(-1.0, 0.0), c(-1.0, 0.0), c(0.0, 0.0)]);
+    }
+
+    #[test]
+    fn test_to_flat_matrix_hermitian() {
+        // All real-phase Pauli strings are Hermitian: M = M†
+        for p in [PauliString::x(0), PauliString::y(0), PauliString::z(0)] {
+            let (mat, dim) = p.to_flat_matrix(1);
+            for r in 0..dim {
+                for col in 0..dim {
+                    let m_rc = mat[r * dim + col];
+                    let m_cr = mat[col * dim + r].conj();
+                    assert!(
+                        (m_rc - m_cr).norm() < 1e-14,
+                        "Not Hermitian at ({r},{col})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_to_flat_matrix_unitary() {
+        // All Pauli matrices square to identity: P^2 = I
+        let xz = PauliString::x(0) & PauliString::z(1);
+        let (mat, dim) = xz.to_flat_matrix(2);
+
+        // Compute M*M
+        let mut product = vec![c(0.0, 0.0); dim * dim];
+        for r in 0..dim {
+            for col in 0..dim {
+                let mut sum = c(0.0, 0.0);
+                for k in 0..dim {
+                    sum += mat[r * dim + k] * mat[k * dim + col];
+                }
+                product[r * dim + col] = sum;
+            }
+        }
+
+        // Should be identity
+        for r in 0..dim {
+            for col in 0..dim {
+                let expected = if r == col { c(1.0, 0.0) } else { c(0.0, 0.0) };
+                assert!(
+                    (product[r * dim + col] - expected).norm() < 1e-14,
+                    "P^2 != I at ({r},{col})"
+                );
+            }
+        }
     }
 }

@@ -923,6 +923,31 @@ where
         self
     }
 
+    /// Extracts the stabilizer generators as a [`PauliStabilizerGroup`].
+    ///
+    /// Converts the simulator's internal tableau into the algebraic
+    /// representation, enabling rank analysis, distance calculation,
+    /// logical operator computation, and other GF(2) operations.
+    ///
+    /// [`PauliStabilizerGroup`]: pecos_quantum::PauliStabilizerGroup
+    #[must_use]
+    pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
+        let generators = self.stabs.generators();
+        pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(
+            generators,
+            self.num_qubits,
+        )
+    }
+
+    /// Extracts the destabilizer generators as a [`PauliSequence`].
+    ///
+    /// [`PauliSequence`]: pecos_quantum::PauliSequence
+    #[must_use]
+    pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
+        let generators = self.destabs.generators();
+        pecos_quantum::PauliSequence::new(generators, self.num_qubits)
+    }
+
     /// Negate the sign of a stabilizer generator.
     #[inline]
     pub fn neg(&mut self, s: usize) {
@@ -3213,5 +3238,45 @@ mod tests {
     fn test_hybrid_full_stabilizer_suite() {
         let mut sim = SparseStabHybrid::new(3);
         stabilizer_test_utils::run_full_stabilizer_test_suite(&mut sim, 3);
+    }
+
+    // ========================================================================
+    // Stabilizer group bridge tests
+    // ========================================================================
+
+    #[test]
+    fn test_to_stabilizer_group_initial_state() {
+        // |000> state: stabilizers are Z0, Z1, Z2
+        let sim = SparseStabHybrid::new(3);
+        let group = sim.to_stabilizer_group();
+        assert_eq!(group.num_qubits(), 3);
+        assert_eq!(group.num_generators(), 3);
+        assert_eq!(group.rank(), 3);
+        assert_eq!(group.num_logical_qubits(), 0);
+    }
+
+    #[test]
+    fn test_to_stabilizer_group_after_gates() {
+        use crate::CliffordGateable;
+        use pecos_core::QubitId;
+        // Create Bell state: H(0), CX(0,1)
+        let mut sim = SparseStabHybrid::new(2);
+        sim.h(&[QubitId::new(0)]);
+        sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+
+        let group = sim.to_stabilizer_group();
+        assert_eq!(group.num_qubits(), 2);
+        assert_eq!(group.rank(), 2);
+        assert_eq!(group.num_logical_qubits(), 0);
+        // Bell state stabilizers: XX and ZZ (or -XX and -ZZ depending on convention)
+    }
+
+    #[test]
+    fn test_to_destabilizer_sequence() {
+        let sim = SparseStabHybrid::new(3);
+        let destabs = sim.to_destabilizer_sequence();
+        // Default state: destabilizers are X0, X1, X2
+        assert_eq!(destabs.len(), 3);
+        assert_eq!(destabs.num_qubits(), 3);
     }
 }

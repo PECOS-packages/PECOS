@@ -161,6 +161,23 @@ impl PauliStabilizerGroup {
         Ok(Self { inner })
     }
 
+    /// Creates a `PauliStabilizerGroup` without validation.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the generators mutually commute and have
+    /// real phases. This is intended for internal use where the generators
+    /// are known to be valid (e.g., extracted from a simulator tableau).
+    #[must_use]
+    pub fn from_generators_unchecked(
+        generators: Vec<PauliString>,
+        num_qubits: usize,
+    ) -> Self {
+        Self {
+            inner: PauliSequence::new(generators, num_qubits),
+        }
+    }
+
     /// Creates a `PauliStabilizerGroup` from string representations.
     ///
     /// # Errors
@@ -565,6 +582,382 @@ impl PauliStabilizerGroup {
     #[must_use]
     pub fn to_sparse_str(&self) -> String {
         self.inner.to_sparse_str()
+    }
+
+    /// Transforms all generators by a Clifford gate: each `g_i` -> `C g_i C†`.
+    ///
+    /// Returns a new `PauliStabilizerGroup` with the transformed generators.
+    /// Clifford gates preserve commutation relations and real phases, so the
+    /// result is always a valid stabilizer group.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::PauliStabilizerGroup;
+    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::clifford_rep::CliffordRep;
+    ///
+    /// // Repetition code stabilizers: ZZ_, _ZZ
+    /// let stab = PauliStabilizerGroup::new(vec![
+    ///     Zs([0, 1]),
+    ///     Zs([1, 2]),
+    /// ], 3).unwrap();
+    ///
+    /// // Apply Hadamard to all qubits: Z -> X
+    /// let h_all = CliffordRep::h(0)
+    ///     .compose(&CliffordRep::h(1))
+    ///     .compose(&CliffordRep::h(2));
+    /// let transformed = stab.apply_clifford(&h_all);
+    ///
+    /// // Now we should have XX_, _XX stabilizers
+    /// assert!(transformed.contains(&Xs([0, 1])));
+    /// assert!(transformed.contains(&Xs([1, 2])));
+    /// ```
+    #[must_use]
+    pub fn apply_clifford(
+        &self,
+        clifford: &pecos_core::clifford_rep::CliffordRep,
+    ) -> PauliStabilizerGroup {
+        let transformed: Vec<PauliString> = self
+            .inner
+            .paulis()
+            .iter()
+            .map(|g| clifford.apply(g))
+            .collect();
+
+        // Clifford conjugation preserves commutation and real phases,
+        // so we can skip validation.
+        PauliStabilizerGroup {
+            inner: PauliSequence::new(transformed, self.num_qubits()),
+        }
+    }
+
+    // ========================================================================
+    // Mutation methods
+    // ========================================================================
+
+    /// Adds a generator to the stabilizer group.
+    ///
+    /// The new generator must commute with all existing generators and have
+    /// a real phase (+1 or -1).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the generator has non-real phase or anticommutes
+    /// with any existing generator.
+    pub fn add_generator(
+        &mut self,
+        generator: PauliString,
+    ) -> Result<(), PauliStabilizerGroupError> {
+        match generator.phase() {
+            QuarterPhase::PlusOne | QuarterPhase::MinusOne => {}
+            _ => {
+                return Err(PauliStabilizerGroupError::NonRealPhase(
+                    self.num_generators(),
+                ))
+            }
+        }
+
+        for (idx, existing) in self.inner.paulis().iter().enumerate() {
+            if !generator.commutes_with(existing) {
+                return Err(PauliStabilizerGroupError::NonCommuting(
+                    self.num_generators(),
+                    idx,
+                ));
+            }
+        }
+
+        self.inner.push(generator);
+        Ok(())
+    }
+
+    /// Removes the generator at the given index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= num_generators()`.
+    pub fn remove_generator(&mut self, index: usize) -> PauliString {
+        assert!(
+            index < self.num_generators(),
+            "index {index} out of range for {} generators",
+            self.num_generators()
+        );
+        self.inner.remove(index)
+    }
+
+    /// Merges another stabilizer group into this one.
+    ///
+    /// All generators from `other` must commute with all generators in `self`.
+    /// The resulting group acts on `max(self.num_qubits(), other.num_qubits())` qubits.
+    ///
+    /// This is useful for lattice surgery: merging two code blocks by adding
+    /// joint stabilizers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any generator from `other` anticommutes with a
+    /// generator from `self`.
+    pub fn merge(
+        &mut self,
+        other: &PauliStabilizerGroup,
+    ) -> Result<(), PauliStabilizerGroupError> {
+        let base_len = self.num_generators();
+        for (new_idx, new_gen) in other.stabilizers().iter().enumerate() {
+            for (old_idx, old_gen) in self.inner.paulis().iter().enumerate() {
+                if !new_gen.commutes_with(old_gen) {
+                    return Err(PauliStabilizerGroupError::NonCommuting(
+                        base_len + new_idx,
+                        old_idx,
+                    ));
+                }
+            }
+        }
+
+        // Also check that the new generators commute with each other
+        // (they should, since they come from a valid group, but be safe)
+        self.inner.extend(other.stabilizers().iter().cloned());
+        Ok(())
+    }
+
+    // ========================================================================
+    // Standard code constructors
+    // ========================================================================
+
+    /// Creates the `[[n, 1, n]]` bit-flip repetition code on `n` qubits.
+    ///
+    /// Generators: `Z_i Z_{i+1}` for `i = 0..n-2`.
+    ///
+    /// This code detects (and corrects up to `(n-1)/2`) bit-flip (X) errors
+    /// but provides no protection against phase (Z) errors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `n < 2`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::PauliStabilizerGroup;
+    ///
+    /// let code = PauliStabilizerGroup::repetition(3);
+    /// assert_eq!(code.rank(), 2);
+    /// assert_eq!(code.num_logical_qubits(), 1);
+    /// assert_eq!(code.distance(), Some(1)); // Z-distance is 1
+    /// ```
+    #[must_use]
+    pub fn repetition(n: usize) -> Self {
+        assert!(n >= 2, "repetition code requires at least 2 qubits, got {n}");
+        use pecos_core::pauli::constructors::Zs;
+        let generators: Vec<PauliString> = (0..n - 1).map(|i| Zs([i, i + 1])).collect();
+        // All ZZ generators commute, so skip validation.
+        PauliStabilizerGroup {
+            inner: PauliSequence::new(generators, n),
+        }
+    }
+
+    /// Creates the `[[7, 1, 3]]` Steane code.
+    ///
+    /// The Steane code is a CSS code based on the classical `[7,4,3]` Hamming code.
+    /// It has 6 generators (3 X-type, 3 Z-type) and encodes 1 logical qubit
+    /// into 7 physical qubits with distance 3.
+    ///
+    /// Generators:
+    /// - X: `X_{0,2,4,6}`, `X_{1,2,5,6}`, `X_{3,4,5,6}`
+    /// - Z: `Z_{0,2,4,6}`, `Z_{1,2,5,6}`, `Z_{3,4,5,6}`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::PauliStabilizerGroup;
+    ///
+    /// let code = PauliStabilizerGroup::steane();
+    /// assert_eq!(code.rank(), 6);
+    /// assert_eq!(code.num_logical_qubits(), 1);
+    /// assert_eq!(code.distance(), Some(3));
+    /// ```
+    #[must_use]
+    pub fn steane() -> Self {
+        use pecos_core::pauli::constructors::{Xs, Zs};
+        let generators = vec![
+            Xs([0, 2, 4, 6]),
+            Xs([1, 2, 5, 6]),
+            Xs([3, 4, 5, 6]),
+            Zs([0, 2, 4, 6]),
+            Zs([1, 2, 5, 6]),
+            Zs([3, 4, 5, 6]),
+        ];
+        PauliStabilizerGroup {
+            inner: PauliSequence::new(generators, 7),
+        }
+    }
+
+    /// Creates the `[[5, 1, 3]]` perfect code.
+    ///
+    /// The smallest code that can correct an arbitrary single-qubit error.
+    /// It saturates the quantum Hamming bound and is not a CSS code.
+    ///
+    /// Generators: `XZZXI`, `IXZZX`, `XIXZZ`, `ZXIXZ`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::PauliStabilizerGroup;
+    ///
+    /// let code = PauliStabilizerGroup::five_qubit();
+    /// assert_eq!(code.rank(), 4);
+    /// assert_eq!(code.num_logical_qubits(), 1);
+    /// assert_eq!(code.distance(), Some(3));
+    /// ```
+    #[must_use]
+    pub fn five_qubit() -> Self {
+        use pecos_core::pauli::constructors::{X, Z};
+        let generators = vec![
+            X(0) & Z(1) & Z(2) & X(3), // XZZXI
+            X(1) & Z(2) & Z(3) & X(4), // IXZZX
+            X(0) & X(2) & Z(3) & Z(4), // XIXZZ
+            Z(0) & X(1) & X(3) & Z(4), // ZXIXZ
+        ];
+        PauliStabilizerGroup {
+            inner: PauliSequence::new(generators, 5),
+        }
+    }
+
+    /// Creates the `[[9, 1, 3]]` Shor code.
+    ///
+    /// The first quantum error correcting code, using a concatenation of
+    /// the 3-qubit bit-flip and phase-flip codes. It is a CSS code with
+    /// 8 generators (6 X-type, 2 Z-type).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::PauliStabilizerGroup;
+    ///
+    /// let code = PauliStabilizerGroup::shor();
+    /// assert_eq!(code.rank(), 8);
+    /// assert_eq!(code.num_logical_qubits(), 1);
+    /// assert_eq!(code.distance(), Some(3));
+    /// ```
+    #[must_use]
+    pub fn shor() -> Self {
+        use pecos_core::pauli::constructors::{Xs, Zs};
+        // Inner bit-flip code: XX pairs within each block of 3
+        // Blocks: [0,1,2], [3,4,5], [6,7,8]
+        // Outer phase-flip code: ZZZZZZ across block boundaries
+        let generators = vec![
+            Xs([0, 1]),
+            Xs([1, 2]),
+            Xs([3, 4]),
+            Xs([4, 5]),
+            Xs([6, 7]),
+            Xs([7, 8]),
+            Zs([0, 1, 2, 3, 4, 5]),
+            Zs([3, 4, 5, 6, 7, 8]),
+        ];
+        PauliStabilizerGroup {
+            inner: PauliSequence::new(generators, 9),
+        }
+    }
+
+    /// Creates the `[[4, 2, 2]]` detection code.
+    ///
+    /// The smallest code that can detect a single arbitrary error but cannot
+    /// correct it. Encodes 2 logical qubits into 4 physical qubits.
+    /// Also known as the `C_4` code.
+    ///
+    /// Generators: `XXXX`, `ZZZZ`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::PauliStabilizerGroup;
+    ///
+    /// let code = PauliStabilizerGroup::four_two_two();
+    /// assert_eq!(code.rank(), 2);
+    /// assert_eq!(code.num_logical_qubits(), 2);
+    /// assert_eq!(code.distance(), Some(2));
+    /// ```
+    #[must_use]
+    pub fn four_two_two() -> Self {
+        use pecos_core::pauli::constructors::{Xs, Zs};
+        let generators = vec![Xs([0, 1, 2, 3]), Zs([0, 1, 2, 3])];
+        PauliStabilizerGroup {
+            inner: PauliSequence::new(generators, 4),
+        }
+    }
+
+    /// Creates the toric code on an `L x L` torus with distance `L`.
+    ///
+    /// The toric code is a CSS code on a periodic square lattice with
+    /// `2 * L^2` physical qubits encoding 2 logical qubits. Qubits live on
+    /// edges; X-stabilizers are vertices (weight-4) and Z-stabilizers are
+    /// plaquettes (weight-4).
+    ///
+    /// Qubit layout: horizontal edge `(r, c)` = qubit `r * L + c`,
+    /// vertical edge `(r, c)` = qubit `L^2 + r * L + c`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `L < 2`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::PauliStabilizerGroup;
+    ///
+    /// let code = PauliStabilizerGroup::toric(3);
+    /// assert_eq!(code.num_qubits(), 18);      // 2 * 3^2
+    /// assert_eq!(code.num_logical_qubits(), 2); // torus encodes 2 logicals
+    /// assert_eq!(code.distance(), Some(3));
+    /// ```
+    #[must_use]
+    pub fn toric(l: usize) -> Self {
+        assert!(l >= 2, "toric code requires L >= 2, got {l}");
+        use pecos_core::pauli::constructors::{Xs, Zs};
+
+        let n = 2 * l * l; // total qubits (horizontal + vertical edges)
+        let horiz = |r: usize, c: usize| r * l + c; // horizontal edge index
+        let vert = |r: usize, c: usize| l * l + r * l + c; // vertical edge index
+
+        let mut generators = Vec::new();
+
+        // Vertex (star) stabilizers: X on the 4 edges touching vertex (r, c)
+        // Leave out one vertex (last one) since product of all vertex stabs = I
+        for r in 0..l {
+            for c in 0..l {
+                if r == l - 1 && c == l - 1 {
+                    continue; // skip last vertex (redundant)
+                }
+                let qubits = [
+                    horiz(r, c),              // right edge
+                    horiz(r, (c + l - 1) % l), // left edge
+                    vert(r, c),               // down edge
+                    vert((r + l - 1) % l, c), // up edge
+                ];
+                generators.push(Xs(qubits));
+            }
+        }
+
+        // Plaquette (face) stabilizers: Z on the 4 edges around face (r, c)
+        // Leave out one plaquette (last one) since product of all plaquette stabs = I
+        for r in 0..l {
+            for c in 0..l {
+                if r == l - 1 && c == l - 1 {
+                    continue; // skip last plaquette (redundant)
+                }
+                let qubits = [
+                    horiz(r, c),          // top edge
+                    horiz((r + 1) % l, c), // bottom edge
+                    vert(r, c),           // left edge
+                    vert(r, (c + 1) % l), // right edge
+                ];
+                generators.push(Zs(qubits));
+            }
+        }
+
+        PauliStabilizerGroup {
+            inner: PauliSequence::new(generators, n),
+        }
     }
 }
 
@@ -1146,5 +1539,329 @@ mod tests {
             }
         }
         assert!(found_anticommuting, "logical X and Z should anticommute");
+    }
+
+    // ========================================================================
+    // apply_clifford tests
+    // ========================================================================
+
+    #[test]
+    fn test_apply_clifford_hadamard_all() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        // Repetition code: +ZZ_, +_ZZ
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+
+        // Apply H to all qubits: Z -> X (phase preserved)
+        let h_all = CliffordRep::h(0)
+            .compose(&CliffordRep::h(1))
+            .compose(&CliffordRep::h(2));
+        let transformed = stab.apply_clifford(&h_all);
+
+        // Verify body AND phase
+        assert!(transformed.contains_with_phase(&Xs([0, 1])));
+        assert!(transformed.contains_with_phase(&Xs([1, 2])));
+        assert_eq!(transformed.rank(), 2);
+        assert_eq!(transformed.num_logical_qubits(), 1);
+    }
+
+    #[test]
+    fn test_apply_clifford_identity() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let id = CliffordRep::identity(3);
+        let transformed = stab.apply_clifford(&id);
+
+        assert!(transformed.contains_with_phase(&Zs([0, 1])));
+        assert!(transformed.contains_with_phase(&Zs([1, 2])));
+    }
+
+    #[test]
+    fn test_apply_clifford_cx() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        // Single stabilizer: +ZZ
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])], 2).unwrap();
+
+        // CX(0,1): Z_0 stays, Z_1 -> Z_0 Z_1
+        // So ZZ = Z_0 * Z_1 -> Z_0 * (Z_0 * Z_1) = Z_1
+        let cx = CliffordRep::cx(0, 1);
+        let transformed = stab.apply_clifford(&cx);
+
+        assert!(transformed.contains_with_phase(&Z(1)));
+    }
+
+    #[test]
+    fn test_apply_clifford_preserves_code_parameters() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        // Steane code: [[7,1,3]]
+        let stab = PauliStabilizerGroup::new(
+            vec![
+                Xs([0, 2, 4, 6]),
+                Xs([1, 2, 5, 6]),
+                Xs([3, 4, 5, 6]),
+                Zs([0, 2, 4, 6]),
+                Zs([1, 2, 5, 6]),
+                Zs([3, 4, 5, 6]),
+            ],
+            7,
+        )
+        .unwrap();
+
+        // Apply H to qubit 0
+        let h0 = CliffordRep::h(0).extended_to(7);
+        let transformed = stab.apply_clifford(&h0);
+
+        // Clifford preserves [[n,k]]
+        assert_eq!(transformed.num_qubits(), 7);
+        assert_eq!(transformed.num_logical_qubits(), 1);
+        assert_eq!(transformed.rank(), 6);
+    }
+
+    #[test]
+    fn test_apply_clifford_z_gate_flips_x_phase() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        // Stabilizer: +XX
+        let stab = PauliStabilizerGroup::new(vec![Xs([0, 1])], 2).unwrap();
+
+        // Z on qubit 0: X -> -X, so XX -> -XX (phase flip)
+        let z0 = CliffordRep::z(0).extended_to(2);
+        let transformed = stab.apply_clifford(&z0);
+
+        // Phase should be -1 now
+        assert!(transformed.contains_with_phase(&(-Xs([0, 1]))));
+    }
+
+    #[test]
+    fn test_apply_clifford_s_gate() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        // Stabilizer: +XZ (on qubits 0,1)
+        let stab = PauliStabilizerGroup::new(vec![X(0) & Z(1)], 2).unwrap();
+
+        // SZ on qubit 0: X -> Y, Z -> Z
+        let s0 = CliffordRep::sz(0).extended_to(2);
+        let transformed = stab.apply_clifford(&s0);
+
+        // XZ -> YZ with phase +1
+        assert!(transformed.contains_with_phase(&(Y(0) & Z(1))));
+    }
+
+    #[test]
+    fn test_apply_clifford_swap() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        // Stabilizer: +XZ (X on qubit 0, Z on qubit 1)
+        let stab = PauliStabilizerGroup::new(vec![X(0) & Z(1)], 2).unwrap();
+
+        let swap = CliffordRep::swap(0, 1);
+        let transformed = stab.apply_clifford(&swap);
+
+        // SWAP exchanges qubits: XZ -> ZX
+        assert!(transformed.contains_with_phase(&(Z(0) & X(1))));
+    }
+
+    #[test]
+    fn test_apply_clifford_cz() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        // Stabilizer: +XI (X on qubit 0 only)
+        let stab = PauliStabilizerGroup::new(vec![X(0)], 2).unwrap();
+
+        // CZ: X_0 -> X_0 Z_1
+        let cz = CliffordRep::cz(0, 1);
+        let transformed = stab.apply_clifford(&cz);
+
+        assert!(transformed.contains_with_phase(&(X(0) & Z(1))));
+    }
+
+    // ========================================================================
+    // Standard code constructor tests
+    // ========================================================================
+
+    #[test]
+    fn test_repetition_code_constructor() {
+        let code = PauliStabilizerGroup::repetition(3);
+        assert_eq!(code.rank(), 2);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(code.num_qubits(), 3);
+        assert!(code.contains(&Zs([0, 1])));
+        assert!(code.contains(&Zs([1, 2])));
+        assert!(code.contains(&Zs([0, 2])));
+    }
+
+    #[test]
+    fn test_repetition_code_distance() {
+        // [[3,1,1]]: Z-distance is 1 (single Z is a logical)
+        let code = PauliStabilizerGroup::repetition(3);
+        assert_eq!(code.distance(), Some(1));
+
+        // [[5,1,1]]: still Z-distance 1
+        let code5 = PauliStabilizerGroup::repetition(5);
+        assert_eq!(code5.rank(), 4);
+        assert_eq!(code5.num_logical_qubits(), 1);
+        assert_eq!(code5.distance(), Some(1));
+    }
+
+    #[test]
+    fn test_repetition_code_n2() {
+        let code = PauliStabilizerGroup::repetition(2);
+        assert_eq!(code.rank(), 1);
+        assert_eq!(code.num_logical_qubits(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "at least 2 qubits")]
+    fn test_repetition_code_n1_panics() {
+        PauliStabilizerGroup::repetition(1);
+    }
+
+    #[test]
+    fn test_steane_code_constructor() {
+        let code = PauliStabilizerGroup::steane();
+        assert_eq!(code.rank(), 6);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(code.num_qubits(), 7);
+        assert_eq!(code.distance(), Some(3));
+    }
+
+    #[test]
+    fn test_five_qubit_code_constructor() {
+        let code = PauliStabilizerGroup::five_qubit();
+        assert_eq!(code.rank(), 4);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(code.num_qubits(), 5);
+        assert_eq!(code.distance(), Some(3));
+    }
+
+    #[test]
+    fn test_shor_code_constructor() {
+        let code = PauliStabilizerGroup::shor();
+        assert_eq!(code.rank(), 8);
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(code.num_qubits(), 9);
+        assert_eq!(code.distance(), Some(3));
+    }
+
+    #[test]
+    fn test_four_two_two_code_constructor() {
+        let code = PauliStabilizerGroup::four_two_two();
+        assert_eq!(code.num_qubits(), 4);
+        assert_eq!(code.rank(), 2);
+        assert_eq!(code.num_logical_qubits(), 2);
+        assert_eq!(code.distance(), Some(2));
+    }
+
+    #[test]
+    fn test_toric_code_l2() {
+        let code = PauliStabilizerGroup::toric(2);
+        assert_eq!(code.num_qubits(), 8); // 2 * 2^2
+        assert_eq!(code.num_logical_qubits(), 2);
+        assert_eq!(code.distance(), Some(2));
+    }
+
+    #[test]
+    fn test_toric_code_l3() {
+        let code = PauliStabilizerGroup::toric(3);
+        assert_eq!(code.num_qubits(), 18); // 2 * 3^2
+        assert_eq!(code.num_logical_qubits(), 2);
+        assert_eq!(code.distance(), Some(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "toric code requires L >= 2")]
+    fn test_toric_code_l1_panics() {
+        PauliStabilizerGroup::toric(1);
+    }
+
+    // ========================================================================
+    // Mutation method tests
+    // ========================================================================
+
+    #[test]
+    fn test_add_generator() {
+        let mut group = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 3).unwrap();
+        assert_eq!(group.num_generators(), 1);
+
+        // Add a commuting generator
+        group.add_generator(Zs(&[1, 2])).unwrap();
+        assert_eq!(group.num_generators(), 2);
+        assert_eq!(group.rank(), 2);
+    }
+
+    #[test]
+    fn test_add_generator_rejects_anticommuting() {
+        let mut group = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 2).unwrap();
+        let result = group.add_generator(X(0));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_add_generator_rejects_imaginary_phase() {
+        let mut group = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 2).unwrap();
+        let bad = PauliString::from_paulis_with_phase(QuarterPhase::PlusI, &[Pauli::Z]);
+        let result = group.add_generator(bad);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_generator() {
+        let mut group = PauliStabilizerGroup::new(
+            vec![Zs(&[0, 1]), Zs(&[1, 2])],
+            3,
+        )
+        .unwrap();
+        assert_eq!(group.num_generators(), 2);
+
+        let removed = group.remove_generator(0);
+        assert_eq!(group.num_generators(), 1);
+        assert_eq!(removed.weight(), 2);
+    }
+
+    #[test]
+    fn test_merge_compatible_groups() {
+        // Two groups on disjoint qubits
+        let mut group_a = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 4).unwrap();
+        let group_b = PauliStabilizerGroup::new(vec![Zs(&[2, 3])], 4).unwrap();
+
+        group_a.merge(&group_b).unwrap();
+        assert_eq!(group_a.num_generators(), 2);
+        assert_eq!(group_a.rank(), 2);
+    }
+
+    #[test]
+    fn test_merge_rejects_anticommuting() {
+        let mut group_a = PauliStabilizerGroup::new(vec![Zs(&[0, 1])], 2).unwrap();
+        // X(0) anticommutes with Z(0)Z(1) (odd overlap on qubit 0)
+        let group_b = PauliStabilizerGroup::new(vec![X(0)], 2).unwrap();
+
+        let result = group_a.merge(&group_b);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_standard_codes_are_valid() {
+        // All constructors should produce valid stabilizer groups
+        // (mutual commutativity and real phases)
+        for code in [
+            PauliStabilizerGroup::repetition(5),
+            PauliStabilizerGroup::steane(),
+            PauliStabilizerGroup::five_qubit(),
+            PauliStabilizerGroup::shor(),
+            PauliStabilizerGroup::four_two_two(),
+            PauliStabilizerGroup::toric(2),
+            PauliStabilizerGroup::toric(3),
+        ] {
+            assert!(code.is_independent());
+            // Re-validate through the checked constructor
+            let result = PauliStabilizerGroup::new(
+                code.stabilizers().to_vec(),
+                code.num_qubits(),
+            );
+            assert!(result.is_ok(), "code with {} qubits failed validation", code.num_qubits());
+        }
     }
 }

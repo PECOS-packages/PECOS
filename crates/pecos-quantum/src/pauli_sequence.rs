@@ -159,6 +159,105 @@ impl F2Matrix {
         (mat, pivots)
     }
 
+    /// Creates an identity matrix of the given size.
+    #[must_use]
+    pub fn identity(n: usize) -> Self {
+        let mut mat = Self::zeros(n, n);
+        for i in 0..n {
+            mat.rows[i][i] = 1;
+        }
+        mat
+    }
+
+    /// Inverts a square matrix over GF(2), if it is invertible.
+    ///
+    /// Returns `None` if the matrix is not square or not invertible.
+    #[must_use]
+    pub fn invert(&self) -> Option<Self> {
+        let n = self.num_rows();
+        if n != self.num_cols {
+            return None;
+        }
+
+        // Augment [A | I]
+        let mut aug = Self::zeros(n, 2 * n);
+        for i in 0..n {
+            for j in 0..n {
+                aug.rows[i][j] = self.rows[i][j];
+            }
+            aug.rows[i][n + i] = 1;
+        }
+
+        // Row-reduce the augmented matrix.
+        // For an invertible matrix, every column has a pivot, so pivot_row == col.
+        for col in 0..n {
+            // Find pivot in this column at or below the diagonal
+            let mut found = None;
+            for row in col..n {
+                if aug.rows[row][col] == 1 {
+                    found = Some(row);
+                    break;
+                }
+            }
+            let Some(found_row) = found else {
+                return None; // Not invertible
+            };
+
+            aug.swap_rows(col, found_row);
+
+            // Eliminate all other rows
+            for row in 0..n {
+                if row != col && aug.rows[row][col] == 1 {
+                    aug.xor_row(row, col);
+                }
+            }
+        }
+
+        // Extract the inverse from the right half
+        let mut inv = Self::zeros(n, n);
+        for i in 0..n {
+            inv.rows[i] = aug.rows[i][n..2 * n].to_vec();
+        }
+        Some(inv)
+    }
+
+    /// Multiplies two matrices over GF(2).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self.num_cols() != other.num_rows()`.
+    #[must_use]
+    pub fn mul(&self, other: &Self) -> Self {
+        assert_eq!(self.num_cols, other.num_rows());
+        let m = self.num_rows();
+        let p = other.num_cols;
+        let mut result = Self::zeros(m, p);
+        for i in 0..m {
+            for j in 0..p {
+                let mut sum = 0u8;
+                for k in 0..self.num_cols {
+                    sum ^= self.rows[i][k] & other.rows[k][j];
+                }
+                result.rows[i][j] = sum;
+            }
+        }
+        result
+    }
+
+    /// Transposes the matrix.
+    #[must_use]
+    pub fn transpose(&self) -> Self {
+        let m = self.num_rows();
+        let n = self.num_cols;
+        let mut result = Self::zeros(n, m);
+        for i in 0..m {
+            for j in 0..n {
+                result.rows[j][i] = self.rows[i][j];
+            }
+        }
+        result
+    }
+
     /// Computes the (right) null space of this matrix over GF(2).
     ///
     /// Returns a set of column vectors `v` such that `self * v = 0` (mod 2).
@@ -358,6 +457,15 @@ impl PauliSequence {
         let max_q = pauli.qubits().into_iter().max().map_or(0, |m| m + 1);
         self.num_qubits = self.num_qubits.max(max_q);
         self.paulis.push(pauli);
+    }
+
+    /// Removes and returns the Pauli string at the given index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= len()`.
+    pub fn remove(&mut self, index: usize) -> PauliString {
+        self.paulis.remove(index)
     }
 
     /// Extends the sequence with an iterator of Pauli strings.
@@ -752,6 +860,22 @@ impl PauliSequence {
             .map(PauliString::to_sparse_str)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Transforms all Pauli strings by a Clifford gate: each `P_i` -> `C P_i C†`.
+    ///
+    /// Returns a new `PauliSequence` with the transformed Pauli strings.
+    #[must_use]
+    pub fn apply_clifford(
+        &self,
+        clifford: &pecos_core::clifford_rep::CliffordRep,
+    ) -> PauliSequence {
+        let transformed: Vec<PauliString> = self
+            .paulis
+            .iter()
+            .map(|p| clifford.apply(p))
+            .collect();
+        PauliSequence::new(transformed, self.num_qubits)
     }
 }
 
@@ -1250,5 +1374,251 @@ mod tests {
             1,
             "centralizer of single Y on 1 qubit should have dim 1"
         );
+    }
+
+    // ========================================================================
+    // F2Matrix tests
+    // ========================================================================
+
+    #[test]
+    fn test_f2_identity() {
+        let id = F2Matrix::identity(3);
+        assert_eq!(id.num_rows(), 3);
+        assert_eq!(id.num_cols(), 3);
+        for i in 0..3 {
+            for j in 0..3 {
+                assert_eq!(
+                    id.row(i)[j],
+                    u8::from(i == j),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_f2_invert_identity() {
+        let id = F2Matrix::identity(4);
+        let inv = id.invert().unwrap();
+        assert_eq!(inv, id);
+    }
+
+    #[test]
+    fn test_f2_invert_swap_matrix() {
+        // Swap rows 0 and 1: [[0,1],[1,0]]
+        let mut m = F2Matrix::zeros(2, 2);
+        m.rows[0][1] = 1;
+        m.rows[1][0] = 1;
+        let inv = m.invert().unwrap();
+        // Swap is self-inverse
+        assert_eq!(inv, m);
+    }
+
+    #[test]
+    fn test_f2_invert_upper_triangular() {
+        // [[1,1],[0,1]] over GF(2) is self-inverse
+        let mut m = F2Matrix::zeros(2, 2);
+        m.rows[0][0] = 1;
+        m.rows[0][1] = 1;
+        m.rows[1][1] = 1;
+        let inv = m.invert().unwrap();
+        assert_eq!(inv, m);
+    }
+
+    #[test]
+    fn test_f2_invert_singular() {
+        // [[1,1],[1,1]] is singular
+        let mut m = F2Matrix::zeros(2, 2);
+        m.rows[0] = vec![1, 1];
+        m.rows[1] = vec![1, 1];
+        assert!(m.invert().is_none());
+    }
+
+    #[test]
+    fn test_f2_invert_nonsquare() {
+        let m = F2Matrix::zeros(2, 3);
+        assert!(m.invert().is_none());
+    }
+
+    #[test]
+    fn test_f2_mul() {
+        // [[1,1],[0,1]] * [[1,0],[1,1]] = [[0,1],[1,1]] over GF(2)
+        let mut a = F2Matrix::zeros(2, 2);
+        a.rows[0] = vec![1, 1];
+        a.rows[1] = vec![0, 1];
+
+        let mut b = F2Matrix::zeros(2, 2);
+        b.rows[0] = vec![1, 0];
+        b.rows[1] = vec![1, 1];
+
+        let c = a.mul(&b);
+        assert_eq!(c.rows[0], vec![0, 1]);
+        assert_eq!(c.rows[1], vec![1, 1]);
+    }
+
+    #[test]
+    fn test_f2_mul_inverse_gives_identity() {
+        // Invertible 3x3 matrix over GF(2)
+        let mut m = F2Matrix::zeros(3, 3);
+        m.rows[0] = vec![1, 1, 0];
+        m.rows[1] = vec![0, 1, 1];
+        m.rows[2] = vec![1, 1, 1];
+
+        let inv = m.invert().unwrap();
+        let product = m.mul(&inv);
+        assert_eq!(product, F2Matrix::identity(3));
+
+        // Also check the other direction
+        let product2 = inv.mul(&m);
+        assert_eq!(product2, F2Matrix::identity(3));
+    }
+
+    #[test]
+    fn test_f2_transpose() {
+        let mut m = F2Matrix::zeros(2, 3);
+        m.rows[0] = vec![1, 0, 1];
+        m.rows[1] = vec![0, 1, 0];
+        let t = m.transpose();
+        assert_eq!(t.num_rows(), 3);
+        assert_eq!(t.num_cols(), 2);
+        assert_eq!(t.rows[0], vec![1, 0]);
+        assert_eq!(t.rows[1], vec![0, 1]);
+        assert_eq!(t.rows[2], vec![1, 0]);
+    }
+
+    // ========================================================================
+    // apply_clifford test
+    // ========================================================================
+
+    #[test]
+    fn test_apply_clifford() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        let seq = PauliSequence::new(vec![Z(0), Z(1)], 2);
+        let h_all = CliffordRep::h(0).compose(&CliffordRep::h(1));
+        let transformed = seq.apply_clifford(&h_all);
+
+        // H: Z -> X on both qubits
+        assert!(transformed.contains(&X(0)));
+        assert!(transformed.contains(&X(1)));
+    }
+
+    #[test]
+    fn test_apply_clifford_identity() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        let seq = PauliSequence::new(vec![X(0) & Z(1), Y(0)], 2);
+        let id = CliffordRep::identity(2);
+        let transformed = seq.apply_clifford(&id);
+
+        assert!(transformed.contains(&(X(0) & Z(1))));
+        assert!(transformed.contains(&Y(0)));
+    }
+
+    #[test]
+    fn test_apply_clifford_phase_preservation() {
+        use pecos_core::clifford_rep::CliffordRep;
+        use pecos_core::QuarterPhase;
+
+        // Z gate: X -> -X
+        let seq = PauliSequence::new(vec![X(0)], 1);
+        let z_gate = CliffordRep::z(0);
+        let transformed = seq.apply_clifford(&z_gate);
+
+        let p = &transformed.paulis()[0];
+        assert_eq!(p.get(0), pecos_core::Pauli::X);
+        assert_eq!(p.phase(), QuarterPhase::MinusOne);
+    }
+
+    #[test]
+    fn test_apply_clifford_multi_qubit_pauli() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        // CX on ZZ -> Z_0 * (Z_0 Z_1) = Z_1
+        let seq = PauliSequence::new(vec![Zs([0, 1])], 2);
+        let cx = CliffordRep::cx(0, 1);
+        let transformed = seq.apply_clifford(&cx);
+
+        assert!(transformed.contains(&Z(1)));
+    }
+
+    #[test]
+    fn test_apply_clifford_empty_sequence() {
+        use pecos_core::clifford_rep::CliffordRep;
+
+        let seq = PauliSequence::new(vec![], 2);
+        let h = CliffordRep::h(0).extended_to(2);
+        let transformed = seq.apply_clifford(&h);
+
+        assert!(transformed.is_empty());
+    }
+
+    // ========================================================================
+    // Additional F2Matrix tests
+    // ========================================================================
+
+    #[test]
+    fn test_f2_identity_1x1() {
+        let id = F2Matrix::identity(1);
+        assert_eq!(id.rows[0], vec![1]);
+    }
+
+    #[test]
+    fn test_f2_invert_1x1() {
+        // [[1]] is invertible
+        let mut m = F2Matrix::zeros(1, 1);
+        m.rows[0] = vec![1];
+        let inv = m.invert().unwrap();
+        assert_eq!(inv.rows[0], vec![1]);
+
+        // [[0]] is not invertible
+        let z = F2Matrix::zeros(1, 1);
+        assert!(z.invert().is_none());
+    }
+
+    #[test]
+    fn test_f2_mul_identity() {
+        let id = F2Matrix::identity(3);
+        let mut m = F2Matrix::zeros(3, 3);
+        m.rows[0] = vec![1, 1, 0];
+        m.rows[1] = vec![0, 1, 1];
+        m.rows[2] = vec![1, 1, 1];
+
+        // I * A = A
+        assert_eq!(id.mul(&m), m);
+        // A * I = A
+        assert_eq!(m.mul(&id), m);
+    }
+
+    #[test]
+    fn test_f2_transpose_square() {
+        let mut m = F2Matrix::zeros(2, 2);
+        m.rows[0] = vec![1, 1];
+        m.rows[1] = vec![0, 1];
+        let t = m.transpose();
+        assert_eq!(t.rows[0], vec![1, 0]);
+        assert_eq!(t.rows[1], vec![1, 1]);
+    }
+
+    #[test]
+    fn test_f2_double_transpose() {
+        let mut m = F2Matrix::zeros(2, 3);
+        m.rows[0] = vec![1, 0, 1];
+        m.rows[1] = vec![0, 1, 0];
+        let tt = m.transpose().transpose();
+        assert_eq!(tt, m);
+    }
+
+    #[test]
+    fn test_f2_invert_4x4() {
+        // A larger invertible matrix over GF(2)
+        let mut m = F2Matrix::zeros(4, 4);
+        m.rows[0] = vec![1, 0, 0, 1];
+        m.rows[1] = vec![0, 1, 0, 1];
+        m.rows[2] = vec![0, 0, 1, 1];
+        m.rows[3] = vec![1, 1, 1, 0];
+
+        let inv = m.invert().unwrap();
+        assert_eq!(m.mul(&inv), F2Matrix::identity(4));
+        assert_eq!(inv.mul(&m), F2Matrix::identity(4));
     }
 }

@@ -30,8 +30,11 @@ mod fault_tolerance_bindings;
 mod graph_bindings;
 mod noise_helpers;
 mod num_bindings;
+mod clifford_rep_bindings;
 mod pauli_bindings;
 mod pauli_prop_bindings;
+mod pauli_sequence_bindings;
+mod stabilizer_group_bindings;
 // mod pcg_bindings;
 mod hugr_compilation_bindings;
 mod namespace_modules;
@@ -259,6 +262,11 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register Pauli types (quantum operators)
     pauli_bindings::register_pauli_types(m)?;
+
+    // Register stabilizer group, Pauli sequence, and Clifford types
+    stabilizer_group_bindings::register_stabilizer_group_types(m)?;
+    pauli_sequence_bindings::register_pauli_sequence_types(m)?;
+    clifford_rep_bindings::register_clifford_types(m)?;
 
     // Register graph module (graph algorithms for MWPM)
     graph_bindings::register_graph_module(m)?;

@@ -195,6 +195,9 @@ pub mod quantum {
         GateHandle, GateType, GateView, QubitId, Tick, TickCircuit,
     };
 
+    // Pauli algebra and stabilizer types from pecos-quantum
+    pub use pecos_quantum::{F2Matrix, PauliSequence, PauliSet, PauliStabilizerGroup};
+
     // HUGR conversion (requires hugr feature)
     #[cfg(feature = "hugr")]
     pub use pecos_quantum::hugr_convert::{

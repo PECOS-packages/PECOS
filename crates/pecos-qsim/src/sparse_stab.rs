@@ -933,10 +933,7 @@ where
     #[must_use]
     pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
         let generators = self.stabs.generators();
-        pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(
-            generators,
-            self.num_qubits,
-        )
+        pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(generators)
     }
 
     /// Extracts the destabilizer generators as a [`PauliSequence`].
@@ -945,7 +942,7 @@ where
     #[must_use]
     pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
         let generators = self.destabs.generators();
-        pecos_quantum::PauliSequence::new(generators, self.num_qubits)
+        pecos_quantum::PauliSequence::new(generators)
     }
 
     /// Negate the sign of a stabilizer generator.
@@ -3252,7 +3249,6 @@ mod tests {
         assert_eq!(group.num_qubits(), 3);
         assert_eq!(group.num_generators(), 3);
         assert_eq!(group.rank(), 3);
-        assert_eq!(group.num_logical_qubits(), 0);
     }
 
     #[test]
@@ -3267,7 +3263,6 @@ mod tests {
         let group = sim.to_stabilizer_group();
         assert_eq!(group.num_qubits(), 2);
         assert_eq!(group.rank(), 2);
-        assert_eq!(group.num_logical_qubits(), 0);
         // Bell state stabilizers: XX and ZZ (or -XX and -ZZ depending on convention)
     }
 

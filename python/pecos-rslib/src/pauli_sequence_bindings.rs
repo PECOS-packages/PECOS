@@ -47,13 +47,12 @@ impl PyPauliSequence {
     ///
     /// Args:
     ///     paulis: List of PauliString objects
-    ///     num_qubits: Number of physical qubits
     #[new]
-    #[pyo3(signature = (paulis, num_qubits))]
-    fn new(paulis: Vec<PauliString>, num_qubits: usize) -> Self {
+    #[pyo3(signature = (paulis))]
+    fn new(paulis: Vec<PauliString>) -> Self {
         let rust_paulis = paulis.into_iter().map(|p| p.to_rust()).collect();
         Self {
-            inner: RustPauliSequence::new(rust_paulis, num_qubits),
+            inner: RustPauliSequence::new(rust_paulis),
         }
     }
 

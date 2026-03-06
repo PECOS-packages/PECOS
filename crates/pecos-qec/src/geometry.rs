@@ -16,7 +16,7 @@
 //! that can be used across different QEC codes (surface codes, color codes, etc.).
 //!
 //! The framework bridges the abstract stabilizer algebra level and the circuit level:
-//! - Abstract level: Stabilizer definitions feed into `StabilizerCode` for verification
+//! - Abstract level: Stabilizer definitions feed into `StabilizerCodeSpec` for verification
 //! - Circuit level: Check schedules define measurement order for syndrome extraction
 
 use pecos_core::{Pauli, PauliString, QuarterPhase, QubitId};
@@ -231,7 +231,7 @@ impl StabilizerCheck {
         non_identity.iter().all(|p| p.pauli == first)
     }
 
-    /// Convert this check to a [`PauliString`] for use with [`StabilizerCode`].
+    /// Convert this check to a [`PauliString`] for use with [`StabilizerCodeSpec`].
     #[must_use]
     pub fn to_pauli_string(&self) -> PauliString {
         let paulis: Vec<(Pauli, QubitId)> = self
@@ -366,7 +366,7 @@ impl CheckSchedule {
         self.rounds.iter().flatten().collect()
     }
 
-    /// Convert all checks to [`PauliString`] for use with [`StabilizerCode`].
+    /// Convert all checks to [`PauliString`] for use with [`StabilizerCodeSpec`].
     #[must_use]
     pub fn to_pauli_strings(&self) -> Vec<PauliString> {
         self.all_checks()

@@ -46,7 +46,7 @@
 //! let group = PauliGroup::new(vec![
 //!     i * X(0) & Y(1),
 //!     Z(2),
-//! ], 3).unwrap();
+//! ]).unwrap();
 //!
 //! assert_eq!(group.rank(), 2);
 //! assert!(group.contains_minus_identity());
@@ -109,7 +109,7 @@ fn generator_order(phase: QuarterPhase) -> u32 {
 /// use pecos_core::pauli::algebra::i;
 ///
 /// // A group with an imaginary-phase generator
-/// let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+/// let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
 /// assert_eq!(group.num_generators(), 2);
 ///
 /// // The generator iX has order 4 (not 2), so the group contains -I
@@ -132,7 +132,6 @@ impl PauliGroup {
     /// Returns [`PauliGroupError::NonCommuting`] if any pair of generators anticommute.
     pub fn new(
         generators: Vec<PauliString>,
-        num_qubits: usize,
     ) -> Result<Self, PauliGroupError> {
         for idx_a in 0..generators.len() {
             for idx_b in (idx_a + 1)..generators.len() {
@@ -142,7 +141,7 @@ impl PauliGroup {
             }
         }
 
-        let inner = PauliSequence::new(generators, num_qubits);
+        let inner = PauliSequence::new(generators);
         Ok(Self { inner })
     }
 
@@ -154,10 +153,9 @@ impl PauliGroup {
     #[must_use]
     pub fn from_generators_unchecked(
         generators: Vec<PauliString>,
-        num_qubits: usize,
     ) -> Self {
         Self {
-            inner: PauliSequence::new(generators, num_qubits),
+            inner: PauliSequence::new(generators),
         }
     }
 
@@ -170,9 +168,8 @@ impl PauliGroup {
     /// Returns [`PauliGroupError::NonCommuting`] if any pair of elements anticommute.
     pub fn try_from_set(
         set: &PauliSet,
-        num_qubits: usize,
     ) -> Result<Self, PauliGroupError> {
-        Self::try_from(set.to_collection(num_qubits))
+        Self::try_from(set.to_sequence())
     }
 
     /// Creates a `PauliGroup` from string representations.
@@ -183,9 +180,8 @@ impl PauliGroup {
     /// generators don't form a valid abelian group.
     pub fn from_strs(strings: &[&str]) -> Result<Self, Box<dyn std::error::Error>> {
         let coll = PauliSequence::from_strs(strings)?;
-        let num_qubits = coll.num_qubits();
         let generators = coll.paulis().to_vec();
-        Ok(Self::new(generators, num_qubits)?)
+        Ok(Self::new(generators)?)
     }
 
     /// Returns a reference to the underlying [`PauliSequence`].
@@ -507,7 +503,7 @@ impl PauliGroup {
             .collect();
 
         PauliGroup {
-            inner: PauliSequence::new(transformed, self.num_qubits()),
+            inner: PauliSequence::new(transformed),
         }
     }
 
@@ -698,9 +694,8 @@ impl FromStr for PauliGroup {
     /// Parses a `PauliGroup` from newline-delimited Pauli strings.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let seq: PauliSequence = s.parse()?;
-        let num_qubits = seq.num_qubits();
         let generators = seq.paulis().to_vec();
-        Ok(Self::new(generators, num_qubits)?)
+        Ok(Self::new(generators)?)
     }
 }
 
@@ -722,7 +717,7 @@ mod tests {
 
     #[test]
     fn real_phase_generators() {
-        let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         assert_eq!(group.rank(), 2);
         assert!(group.has_real_phases());
         assert!(!group.contains_minus_identity());
@@ -730,27 +725,27 @@ mod tests {
 
     #[test]
     fn imaginary_phase_generator() {
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert!(!group.has_real_phases());
     }
 
     #[test]
     fn rejects_non_commuting() {
-        let result = PauliGroup::new(vec![X(0), Z(0)], 1);
+        let result = PauliGroup::new(vec![X(0), Z(0)]);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), PauliGroupError::NonCommuting(0, 1));
     }
 
     #[test]
     fn accepts_imaginary_phase() {
-        let result = PauliGroup::new(vec![i * X(0)], 1);
+        let result = PauliGroup::new(vec![i * X(0)]);
         assert!(result.is_ok());
     }
 
     #[test]
     fn generator_orders() {
-        let group = PauliGroup::new(vec![X(0), i * Z(1), -Z(2), -i * X(3)], 4).unwrap();
+        let group = PauliGroup::new(vec![X(0), i * Z(1), -Z(2), -i * X(3)]).unwrap();
         assert_eq!(group.generator_order(0), 2); // +X: order 2
         assert_eq!(group.generator_order(1), 4); // iZ: order 4
         assert_eq!(group.generator_order(2), 2); // -Z: order 2
@@ -759,13 +754,13 @@ mod tests {
 
     #[test]
     fn group_order_all_real() {
-        let group = PauliGroup::new(vec![X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![X(0), Z(1)]).unwrap();
         assert_eq!(group.group_order(), 4); // 2 * 2
     }
 
     #[test]
     fn group_order_mixed() {
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
         assert_eq!(group.group_order(), 8); // 4 * 2
     }
 
@@ -775,27 +770,27 @@ mod tests {
 
     #[test]
     fn contains_minus_identity_with_imaginary() {
-        let group = PauliGroup::new(vec![i * X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![i * X(0)]).unwrap();
         assert!(group.contains_minus_identity());
     }
 
     #[test]
     fn no_minus_identity_with_real() {
-        let group = PauliGroup::new(vec![X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![X(0)]).unwrap();
         assert!(!group.contains_minus_identity());
     }
 
     #[test]
     fn no_minus_identity_with_neg_real() {
         // (-X)^2 = X^2 = +I
-        let group = PauliGroup::new(vec![-X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![-X(0)]).unwrap();
         assert!(!group.contains_minus_identity());
     }
 
     #[test]
     fn neg_imaginary_also_gives_minus_identity() {
         // (-iX)^2 = (-i)^2 * X^2 = -I
-        let group = PauliGroup::new(vec![-i * X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![-i * X(0)]).unwrap();
         assert!(group.contains_minus_identity());
     }
 
@@ -805,7 +800,7 @@ mod tests {
 
     #[test]
     fn elements_real_generators() {
-        let group = PauliGroup::new(vec![Z(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![Z(0), Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
         assert_eq!(elements.len(), 4); // 2 * 2
     }
@@ -813,7 +808,7 @@ mod tests {
     #[test]
     fn elements_imaginary_generator() {
         // iX has order 4: {I, iX, -I, -iX}
-        let group = PauliGroup::new(vec![i * X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![i * X(0)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
         assert_eq!(elements.len(), 4);
 
@@ -826,7 +821,7 @@ mod tests {
 
     #[test]
     fn elements_mixed_orders() {
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
         assert_eq!(elements.len(), 8); // 4 * 2
     }
@@ -834,7 +829,7 @@ mod tests {
     #[test]
     fn elements_closure() {
         // Product of any two elements should be in the group
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
         for a in &elements {
             for b in &elements {
@@ -852,7 +847,7 @@ mod tests {
 
     #[test]
     fn element_by_exponents() {
-        let group = PauliGroup::new(vec![i * X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![i * X(0)]).unwrap();
         let e0 = group.element(&[0]);
         let e1 = group.element(&[1]);
         let e2 = group.element(&[2]);
@@ -867,7 +862,7 @@ mod tests {
 
     #[test]
     fn element_exponents_wrap() {
-        let group = PauliGroup::new(vec![i * X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![i * X(0)]).unwrap();
         // exponent 4 wraps to 0 (identity)
         assert_eq!(group.element(&[4]), group.element(&[0]));
         // exponent 5 wraps to 1
@@ -880,7 +875,7 @@ mod tests {
 
     #[test]
     fn contains_body() {
-        let group = PauliGroup::new(vec![i * X(0) & Y(1), Z(2)], 3).unwrap();
+        let group = PauliGroup::new(vec![i * X(0) & Y(1), Z(2)]).unwrap();
         assert!(group.contains(&(X(0) & Y(1))));
         assert!(group.contains(&Z(2)));
         assert!(!group.contains(&X(2)));
@@ -888,7 +883,7 @@ mod tests {
 
     #[test]
     fn contains_with_phase_real_group() {
-        let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         assert!(group.contains_with_phase(&Zs([0, 1])));
         assert!(group.contains_with_phase(&Zs([0, 2]))); // product of generators
         assert!(!group.contains_with_phase(&(-Zs([0, 1])))); // wrong phase
@@ -896,7 +891,7 @@ mod tests {
 
     #[test]
     fn contains_with_phase_imaginary_group() {
-        let group = PauliGroup::new(vec![i * X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![i * X(0)]).unwrap();
         // All four elements should be found
         assert!(group.contains_with_phase(&PauliString::identity()));
         assert!(group.contains_with_phase(&(i * X(0))));
@@ -907,14 +902,14 @@ mod tests {
 
     #[test]
     fn contains_with_phase_minus_identity() {
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
         let minus_id = PauliString::with_phase_and_paulis(QuarterPhase::MinusOne, vec![]);
         assert!(group.contains_with_phase(&minus_id));
     }
 
     #[test]
     fn contains_with_phase_not_in_group() {
-        let group = PauliGroup::new(vec![Z(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![Z(0)]).unwrap();
         assert!(!group.contains_with_phase(&(i * Z(0)))); // iZ not in group of {I, Z}
     }
 
@@ -924,7 +919,7 @@ mod tests {
 
     #[test]
     fn from_stabilizer_group() {
-        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         let group = PauliGroup::from(stab);
         assert_eq!(group.rank(), 2);
         assert!(group.has_real_phases());
@@ -932,17 +927,16 @@ mod tests {
 
     #[test]
     fn try_to_stabilizer_real_phases() {
-        let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         let stab = PauliStabilizerGroup::try_from(group);
         assert!(stab.is_ok());
         let stab = stab.unwrap();
         assert_eq!(stab.rank(), 2);
-        assert_eq!(stab.num_logical_qubits(), 1);
     }
 
     #[test]
     fn try_to_stabilizer_imaginary_fails() {
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
         let result = PauliStabilizerGroup::try_from(group);
         assert!(result.is_err());
         assert_eq!(
@@ -953,7 +947,7 @@ mod tests {
 
     #[test]
     fn roundtrip_stabilizer_to_group_to_stabilizer() {
-        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         let group = PauliGroup::from(stab.clone());
         let stab2 = PauliStabilizerGroup::try_from(group).unwrap();
         assert_eq!(stab.rank(), stab2.rank());
@@ -966,20 +960,20 @@ mod tests {
 
     #[test]
     fn add_generator_commuting() {
-        let mut group = PauliGroup::new(vec![Z(0)], 2).unwrap();
+        let mut group = PauliGroup::new(vec![Z(0)]).unwrap();
         assert!(group.add_generator(Z(1)).is_ok());
         assert_eq!(group.num_generators(), 2);
     }
 
     #[test]
     fn add_generator_anticommuting() {
-        let mut group = PauliGroup::new(vec![Z(0)], 1).unwrap();
+        let mut group = PauliGroup::new(vec![Z(0)]).unwrap();
         assert!(group.add_generator(X(0)).is_err());
     }
 
     #[test]
     fn add_imaginary_generator() {
-        let mut group = PauliGroup::new(vec![Z(0)], 2).unwrap();
+        let mut group = PauliGroup::new(vec![Z(0)]).unwrap();
         assert!(!group.contains_minus_identity());
         assert!(group.add_generator(i * Z(1)).is_ok());
         assert!(group.contains_minus_identity());
@@ -987,7 +981,7 @@ mod tests {
 
     #[test]
     fn remove_generator() {
-        let mut group = PauliGroup::new(vec![Z(0), Z(1)], 2).unwrap();
+        let mut group = PauliGroup::new(vec![Z(0), Z(1)]).unwrap();
         let removed = group.remove_generator(0);
         assert_eq!(removed, Z(0));
         assert_eq!(group.num_generators(), 1);
@@ -995,16 +989,16 @@ mod tests {
 
     #[test]
     fn merge_groups() {
-        let mut g1 = PauliGroup::new(vec![Z(0)], 2).unwrap();
-        let g2 = PauliGroup::new(vec![Z(1)], 2).unwrap();
+        let mut g1 = PauliGroup::new(vec![Z(0)]).unwrap();
+        let g2 = PauliGroup::new(vec![Z(1)]).unwrap();
         assert!(g1.merge(&g2).is_ok());
         assert_eq!(g1.num_generators(), 2);
     }
 
     #[test]
     fn merge_anticommuting_fails() {
-        let mut g1 = PauliGroup::new(vec![Z(0)], 1).unwrap();
-        let g2 = PauliGroup::new(vec![X(0)], 1).unwrap();
+        let mut g1 = PauliGroup::new(vec![Z(0)]).unwrap();
+        let g2 = PauliGroup::new(vec![X(0)]).unwrap();
         assert!(g1.merge(&g2).is_err());
     }
 
@@ -1014,7 +1008,7 @@ mod tests {
 
     #[test]
     fn display() {
-        let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         let s = format!("{group}");
         assert_eq!(s, "ZZI\nIZZ");
     }
@@ -1029,7 +1023,7 @@ mod tests {
     fn apply_clifford_preserves_group() {
         use pecos_core::clifford_rep::CliffordRep;
 
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
 
         // H on qubit 0: X -> Z, Z -> X
         let h0 = CliffordRep::h(0).extended_to(2);
@@ -1041,7 +1035,7 @@ mod tests {
 
     #[test]
     fn empty_group() {
-        let group = PauliGroup::new(vec![], 3).unwrap();
+        let group = PauliGroup::new(vec![]).unwrap();
         assert_eq!(group.rank(), 0);
         assert_eq!(group.num_generators(), 0);
         assert_eq!(group.group_order(), 1);
@@ -1052,7 +1046,7 @@ mod tests {
     #[test]
     fn multi_qubit_imaginary_generator() {
         let generator = i * X(0) & Y(1) & Z(2);
-        let group = PauliGroup::new(vec![generator], 3).unwrap();
+        let group = PauliGroup::new(vec![generator]).unwrap();
         assert_eq!(group.rank(), 1);
         assert!(group.contains_minus_identity());
         assert!(PauliStabilizerGroup::try_from(group).is_err());
@@ -1060,23 +1054,23 @@ mod tests {
 
     #[test]
     fn multiply_by() {
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
         let result = group.multiply_by(0, &PauliString::identity());
         assert_eq!(result.phase(), QuarterPhase::PlusI);
     }
 
     #[test]
     fn independent_check() {
-        let group = PauliGroup::new(vec![Z(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![Z(0), Z(1)]).unwrap();
         assert!(group.is_independent());
 
-        let group = PauliGroup::new(vec![Z(0), Z(1), Zs([0, 1])], 2).unwrap();
+        let group = PauliGroup::new(vec![Z(0), Z(1), Zs([0, 1])]).unwrap();
         assert!(!group.is_independent());
     }
 
     #[test]
     fn has_real_phases_mixed() {
-        let group = PauliGroup::new(vec![Z(0), i * Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![Z(0), i * Z(1)]).unwrap();
         assert!(!group.has_real_phases());
     }
 
@@ -1087,7 +1081,7 @@ mod tests {
     #[test]
     fn contains_with_phase_two_imaginary_generators() {
         // Both generators have imaginary phase
-        let group = PauliGroup::new(vec![i * X(0), i * Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), i * Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
         // 4 * 4 = 16 elements
         assert_eq!(elements.len(), 16);
@@ -1105,7 +1099,7 @@ mod tests {
     #[test]
     fn contains_with_phase_mixed_imaginary_signs() {
         // -i * X(0) and i * Z(1)
-        let group = PauliGroup::new(vec![-i * X(0), i * Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![-i * X(0), i * Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
         assert_eq!(elements.len(), 16);
 
@@ -1120,7 +1114,7 @@ mod tests {
 
     #[test]
     fn closure_two_imaginary_generators() {
-        let group = PauliGroup::new(vec![i * X(0), i * Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), i * Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
         for a in &elements {
             for b in &elements {
@@ -1142,7 +1136,7 @@ mod tests {
 
     #[test]
     fn contains_with_phase_implies_contains() {
-        let group = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
         for elem in &elements {
             if group.contains_with_phase(elem) {
@@ -1162,7 +1156,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "expected 1 exponents, got 2")]
     fn element_wrong_exponent_count_panics() {
-        let group = PauliGroup::new(vec![X(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![X(0)]).unwrap();
         let _ = group.element(&[0, 1]);
     }
 
@@ -1172,7 +1166,7 @@ mod tests {
 
     #[test]
     fn to_dense_str_format() {
-        let group = PauliGroup::new(vec![X(0) & Z(1), Y(2)], 3).unwrap();
+        let group = PauliGroup::new(vec![X(0) & Z(1), Y(2)]).unwrap();
         let dense = group.to_dense_str();
         assert!(dense.contains('X'));
         assert!(dense.contains('Z'));
@@ -1181,7 +1175,7 @@ mod tests {
 
     #[test]
     fn to_sparse_str_format() {
-        let group = PauliGroup::new(vec![Zs([0, 1])], 2).unwrap();
+        let group = PauliGroup::new(vec![Zs([0, 1])]).unwrap();
         let sparse = group.to_sparse_str();
         assert!(sparse.contains("Z0"));
         assert!(sparse.contains("Z1"));
@@ -1195,7 +1189,7 @@ mod tests {
     fn dependent_generators_imaginary() {
         // Z(0), i*Z(0) are linearly dependent (same body, different phase)
         // But they commute, so the group is valid
-        let group = PauliGroup::new(vec![Z(0), i * Z(0)], 1).unwrap();
+        let group = PauliGroup::new(vec![Z(0), i * Z(0)]).unwrap();
         assert!(!group.is_independent()); // bodies are linearly dependent over GF(2)
         assert!(group.contains_minus_identity());
     }
@@ -1206,8 +1200,8 @@ mod tests {
 
     #[test]
     fn generator_order_invariant() {
-        let g1 = PauliGroup::new(vec![i * X(0), Z(1)], 2).unwrap();
-        let g2 = PauliGroup::new(vec![Z(1), i * X(0)], 2).unwrap();
+        let g1 = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
+        let g2 = PauliGroup::new(vec![Z(1), i * X(0)]).unwrap();
 
         // Same elements in both
         let e1: Vec<_> = g1.elements().collect();
@@ -1226,7 +1220,7 @@ mod tests {
 
     #[test]
     fn commutation_matrix_all_true() {
-        let group = PauliGroup::new(vec![X(0), Z(1), X(2)], 3).unwrap();
+        let group = PauliGroup::new(vec![X(0), Z(1), X(2)]).unwrap();
         let mat = group.commutation_matrix();
         for row in &mat {
             for &val in row {
@@ -1241,7 +1235,7 @@ mod tests {
 
     #[test]
     fn try_from_sequence_independent() {
-        let seq = PauliSequence::new(vec![Z(0), Z(1)], 2);
+        let seq = PauliSequence::new(vec![Z(0), Z(1)]);
         let group = PauliGroup::try_from(seq).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert!(group.is_independent());
@@ -1250,7 +1244,7 @@ mod tests {
     #[test]
     fn try_from_sequence_reduces_redundant() {
         // Z(0)*Z(1) is a product of Z(0) and Z(1), so it's redundant
-        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])], 2);
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]);
         let group = PauliGroup::try_from(seq).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert!(group.is_independent());
@@ -1258,14 +1252,14 @@ mod tests {
 
     #[test]
     fn try_from_sequence_non_commuting_fails() {
-        let seq = PauliSequence::new(vec![X(0), Z(0)], 1);
+        let seq = PauliSequence::new(vec![X(0), Z(0)]);
         let result = PauliGroup::try_from(seq);
         assert_eq!(result.unwrap_err(), PauliGroupError::NonCommuting(0, 1));
     }
 
     #[test]
     fn try_from_sequence_imaginary_phases() {
-        let seq = PauliSequence::new(vec![i * X(0), Z(1)], 2);
+        let seq = PauliSequence::new(vec![i * X(0), Z(1)]);
         let group = PauliGroup::try_from(seq).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert!(!group.has_real_phases());
@@ -1273,16 +1267,16 @@ mod tests {
 
     #[test]
     fn try_from_sequence_empty() {
-        let seq = PauliSequence::new(vec![], 3);
+        let seq = PauliSequence::new(vec![]);
         let group = PauliGroup::try_from(seq).unwrap();
         assert_eq!(group.num_generators(), 0);
-        assert_eq!(group.num_qubits(), 3);
+        assert_eq!(group.num_qubits(), 0);
     }
 
     #[test]
     fn try_from_sequence_generates_same_group() {
         // Three generators where one is redundant
-        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])], 2);
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]);
         let group = PauliGroup::try_from(seq).unwrap();
 
         // The reduced group should contain all original elements
@@ -1294,7 +1288,7 @@ mod tests {
     #[test]
     fn try_from_set() {
         let set = PauliSet::from_iter([Z(0), Z(1), Zs([0, 1])]);
-        let group = PauliGroup::try_from_set(&set, 2).unwrap();
+        let group = PauliGroup::try_from_set(&set).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert!(group.contains_with_phase(&Z(0)));
         assert!(group.contains_with_phase(&Z(1)));
@@ -1304,27 +1298,27 @@ mod tests {
     #[test]
     fn try_from_set_non_commuting_fails() {
         let set = PauliSet::from_iter([X(0), Z(0)]);
-        let result = PauliGroup::try_from_set(&set, 1);
+        let result = PauliGroup::try_from_set(&set);
         assert!(result.is_err());
     }
 
     #[test]
     fn try_from_sequence_to_stabilizer() {
-        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])], 2);
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]);
         let stab = PauliStabilizerGroup::try_from(seq).unwrap();
         assert_eq!(stab.rank(), 2);
     }
 
     #[test]
     fn try_from_sequence_to_stabilizer_imaginary_fails() {
-        let seq = PauliSequence::new(vec![i * X(0), Z(1)], 2);
+        let seq = PauliSequence::new(vec![i * X(0), Z(1)]);
         let result = PauliStabilizerGroup::try_from(seq);
         assert!(result.is_err());
     }
 
     #[test]
     fn try_from_sequence_to_stabilizer_non_commuting_fails() {
-        let seq = PauliSequence::new(vec![X(0), Z(0)], 1);
+        let seq = PauliSequence::new(vec![X(0), Z(0)]);
         let result = PauliStabilizerGroup::try_from(seq);
         assert!(matches!(
             result.unwrap_err(),
@@ -1338,7 +1332,7 @@ mod tests {
 
     #[test]
     fn group_into_sequence() {
-        let group = PauliGroup::new(vec![Z(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![Z(0), Z(1)]).unwrap();
         let seq = PauliSequence::from(group);
         assert_eq!(seq.len(), 2);
         assert_eq!(seq.num_qubits(), 2);
@@ -1346,7 +1340,7 @@ mod tests {
 
     #[test]
     fn stabilizer_into_sequence() {
-        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         let seq = PauliSequence::from(stab);
         assert_eq!(seq.len(), 2);
         assert_eq!(seq.num_qubits(), 3);
@@ -1354,7 +1348,7 @@ mod tests {
 
     #[test]
     fn group_into_set() {
-        let group = PauliGroup::new(vec![Z(0), Z(1)], 2).unwrap();
+        let group = PauliGroup::new(vec![Z(0), Z(1)]).unwrap();
         let set = PauliSet::from(group);
         assert_eq!(set.len(), 2);
         assert!(set.contains(&Z(0)));
@@ -1363,7 +1357,7 @@ mod tests {
 
     #[test]
     fn stabilizer_into_set() {
-        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])], 3).unwrap();
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         let set = PauliSet::from(stab);
         assert_eq!(set.len(), 2);
         assert!(set.contains(&Zs([0, 1])));
@@ -1372,7 +1366,7 @@ mod tests {
 
     #[test]
     fn roundtrip_sequence_to_group_to_sequence() {
-        let original = PauliSequence::new(vec![Z(0), Z(1)], 2);
+        let original = PauliSequence::new(vec![Z(0), Z(1)]);
         let group = PauliGroup::try_from(original.clone()).unwrap();
         let recovered = PauliSequence::from(group);
         assert_eq!(recovered.len(), original.len());
@@ -1382,7 +1376,7 @@ mod tests {
     #[test]
     fn roundtrip_set_to_group_to_set() {
         let original = PauliSet::from_iter([Z(0), Z(1)]);
-        let group = PauliGroup::try_from_set(&original, 2).unwrap();
+        let group = PauliGroup::try_from_set(&original).unwrap();
         let recovered = PauliSet::from(group);
         assert_eq!(recovered.len(), original.len());
         assert!(recovered.contains(&Z(0)));

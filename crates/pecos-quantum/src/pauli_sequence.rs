@@ -35,7 +35,7 @@
 //! let paulis = PauliSequence::new(vec![
 //!     Zs(&[0, 1]),
 //!     Zs(&[1, 2]),
-//! ], 3);
+//! ]);
 //!
 //! assert_eq!(paulis.rank(), 2);
 //! assert!(paulis.is_abelian());
@@ -96,6 +96,11 @@ impl F2Matrix {
     #[must_use]
     pub fn row(&self, i: usize) -> &[u8] {
         &self.rows[i]
+    }
+
+    /// Returns a mutable reference to a specific row.
+    pub fn row_mut(&mut self, i: usize) -> &mut Vec<u8> {
+        &mut self.rows[i]
     }
 
     /// Checks if a row is all zeros.
@@ -375,7 +380,7 @@ impl fmt::Display for F2Matrix {
 /// let gens = PauliSequence::new(vec![
 ///     Zs(&[0, 1]),
 ///     Zs(&[1, 2]),
-/// ], 3);
+/// ]);
 ///
 /// assert_eq!(gens.len(), 2);
 /// assert_eq!(gens.num_qubits(), 3);
@@ -385,16 +390,13 @@ impl fmt::Display for F2Matrix {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PauliSequence {
     paulis: Vec<PauliString>,
-    num_qubits: usize,
 }
 
 impl PauliSequence {
     /// Creates a new `PauliSequence` from a sequence of Pauli strings.
-    ///
-    /// `num_qubits` specifies the total qubit count (defines the symplectic matrix width).
     #[must_use]
-    pub fn new(paulis: Vec<PauliString>, num_qubits: usize) -> Self {
-        Self { paulis, num_qubits }
+    pub fn new(paulis: Vec<PauliString>) -> Self {
+        Self { paulis }
     }
 
     /// Creates a `PauliSequence` from string representations.
@@ -417,13 +419,7 @@ impl PauliSequence {
             .map(|s| s.parse())
             .collect::<Result<_, _>>()?;
 
-        let num_qubits = paulis
-            .iter()
-            .flat_map(PauliString::qubits)
-            .max()
-            .map_or(0, |m| m + 1);
-
-        Ok(Self { paulis, num_qubits })
+        Ok(Self { paulis })
     }
 
     /// Returns a reference to the Pauli strings.
@@ -444,18 +440,18 @@ impl PauliSequence {
         self.paulis.is_empty()
     }
 
-    /// Returns the number of qubits.
+    /// Returns the number of qubits (inferred as max qubit index + 1).
     #[must_use]
     pub fn num_qubits(&self) -> usize {
-        self.num_qubits
+        self.paulis
+            .iter()
+            .flat_map(PauliString::qubits)
+            .max()
+            .map_or(0, |m| m + 1)
     }
 
     /// Appends a Pauli string to the sequence.
-    ///
-    /// Updates `num_qubits` if the new string acts on higher-indexed qubits.
     pub fn push(&mut self, pauli: PauliString) {
-        let max_q = pauli.qubits().into_iter().max().map_or(0, |m| m + 1);
-        self.num_qubits = self.num_qubits.max(max_q);
         self.paulis.push(pauli);
     }
 
@@ -469,12 +465,8 @@ impl PauliSequence {
     }
 
     /// Extends the sequence with an iterator of Pauli strings.
-    ///
-    /// Updates `num_qubits` if any new string acts on higher-indexed qubits.
     pub fn extend(&mut self, paulis: impl IntoIterator<Item = PauliString>) {
-        for pauli in paulis {
-            self.push(pauli);
-        }
+        self.paulis.extend(paulis);
     }
 
     /// Iterates over the Pauli strings.
@@ -504,19 +496,15 @@ impl PauliSequence {
     /// ```
     #[must_use]
     pub fn to_symplectic_matrix(&self) -> F2Matrix {
-        let n = self.num_qubits;
+        let n = self.num_qubits();
         let mut mat = F2Matrix::zeros(self.paulis.len(), 2 * n);
 
         for (row_idx, generator) in self.paulis.iter().enumerate() {
             for q in generator.x_positions() {
-                if q < n {
-                    mat.rows[row_idx][q] = 1;
-                }
+                mat.rows[row_idx][q] = 1;
             }
             for q in generator.z_positions() {
-                if q < n {
-                    mat.rows[row_idx][n + q] = 1;
-                }
+                mat.rows[row_idx][n + q] = 1;
             }
         }
 
@@ -534,11 +522,11 @@ impl PauliSequence {
     /// use pecos_core::pauli::constructors::*;
     ///
     /// // Two independent generators
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
     /// assert_eq!(gens.rank(), 2);
     ///
     /// // Adding a dependent generator (ZIZ = ZZI * IZZ in GF(2))
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2]), Zs(&[0, 2])], 3);
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2]), Zs(&[0, 2])]);
     /// assert_eq!(gens.rank(), 2);
     /// ```
     #[must_use]
@@ -559,7 +547,7 @@ impl PauliSequence {
     /// use pecos_quantum::PauliSequence;
     /// use pecos_core::pauli::constructors::*;
     ///
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
     ///
     /// // ZIZ = ZZI * IZZ (symplectic addition), so it's in the group
     /// assert!(gens.contains(&Zs(&[0, 2])));
@@ -572,35 +560,35 @@ impl PauliSequence {
     /// ```
     #[must_use]
     pub fn contains(&self, pauli: &PauliString) -> bool {
-        // Row-reduce the generators, then try to reduce the target using the pivots
-        let n = self.num_qubits;
+        let n = self.num_qubits();
+
+        // If the target touches qubits beyond our generators, it can't be in the span
+        let target_max = pauli.qubits().into_iter().max().map_or(0, |m| m + 1);
+        if target_max > n {
+            return false;
+        }
+
         let mat = self.to_symplectic_matrix();
         let (reduced, pivots) = mat.row_reduce();
 
         // Build the target's symplectic vector
         let mut target = vec![0u8; 2 * n];
         for q in pauli.x_positions() {
-            if q < n {
-                target[q] = 1;
-            }
+            target[q] = 1;
         }
         for q in pauli.z_positions() {
-            if q < n {
-                target[n + q] = 1;
-            }
+            target[n + q] = 1;
         }
 
         // Eliminate the target using the reduced generators' pivots
         for (row_idx, &pivot_col) in pivots.iter().enumerate() {
             if target[pivot_col] == 1 {
-                // XOR the reduced row into the target
                 for (col, t) in target.iter_mut().enumerate() {
                     *t ^= reduced.rows[row_idx][col];
                 }
             }
         }
 
-        // If target is all zeros, the pauli is in the group
         target.iter().all(|&b| b == 0)
     }
 
@@ -611,43 +599,38 @@ impl PauliSequence {
     /// the target yields the same phase).
     #[must_use]
     pub fn contains_with_phase(&self, pauli: &PauliString) -> bool {
-        // Row-reduce an augmented matrix [symplectic | identity] to track which
-        // generators are used
-        let n = self.num_qubits;
+        let n = self.num_qubits();
         let k = self.paulis.len();
 
-        // Build augmented matrix for the generators
+        // If the target touches qubits beyond our generators, it can't be in the span
+        let target_max = pauli.qubits().into_iter().max().map_or(0, |m| m + 1);
+        if target_max > n {
+            return false;
+        }
+
+        // Build augmented matrix [symplectic | identity] to track which generators are used
         let aug_cols = 2 * n + k;
         let mut mat = F2Matrix::zeros(k, aug_cols);
 
         for (row_idx, generator) in self.paulis.iter().enumerate() {
             for q in generator.x_positions() {
-                if q < n {
-                    mat.rows[row_idx][q] = 1;
-                }
+                mat.rows[row_idx][q] = 1;
             }
             for q in generator.z_positions() {
-                if q < n {
-                    mat.rows[row_idx][n + q] = 1;
-                }
+                mat.rows[row_idx][n + q] = 1;
             }
             mat.rows[row_idx][2 * n + row_idx] = 1;
         }
 
-        // Row-reduce the augmented matrix
         let (reduced, pivots) = mat.row_reduce();
 
-        // Build the target vector (augmented with zeros in the tracking part)
+        // Build the target vector
         let mut target = vec![0u8; aug_cols];
         for q in pauli.x_positions() {
-            if q < n {
-                target[q] = 1;
-            }
+            target[q] = 1;
         }
         for q in pauli.z_positions() {
-            if q < n {
-                target[n + q] = 1;
-            }
+            target[n + q] = 1;
         }
 
         // Eliminate the target using the reduced rows
@@ -659,7 +642,6 @@ impl PauliSequence {
             }
         }
 
-        // Check if the symplectic part is zero
         if !target[..2 * n].iter().all(|&b| b == 0) {
             return false;
         }
@@ -684,11 +666,11 @@ impl PauliSequence {
     /// use pecos_core::pauli::constructors::*;
     ///
     /// // Commuting generators
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
     /// assert!(gens.is_abelian());
     ///
     /// // Non-commuting generators
-    /// let gens = PauliSequence::new(vec![X(0), Z(0)], 1);
+    /// let gens = PauliSequence::new(vec![X(0), Z(0)]);
     /// assert!(!gens.is_abelian());
     /// ```
     #[must_use]
@@ -731,10 +713,8 @@ impl PauliSequence {
     /// alongside the GF(2) row operations.
     #[must_use]
     pub fn row_reduce(&self) -> Self {
-        let n = self.num_qubits;
         let k = self.paulis.len();
         let mut mat = self.to_symplectic_matrix();
-        // Track phases by maintaining actual PauliStrings in parallel
         let mut paulis: Vec<PauliString> = self.paulis.clone();
 
         let mut pivot_row = 0;
@@ -766,21 +746,15 @@ impl PauliSequence {
             pivot_row += 1;
         }
 
-        // Keep only the non-zero rows
         let reduced: Vec<PauliString> = paulis.into_iter().take(pivot_row).collect();
-
-        Self {
-            paulis: reduced,
-            num_qubits: n,
-        }
+        Self { paulis: reduced }
     }
 
     /// Computes the centralizer: all `n`-qubit Pauli strings (ignoring phase) that
     /// commute with every element in this sequence.
     ///
     /// Returns a basis for the centralizer as symplectic vectors (each of length `2n`).
-    /// The centralizer always contains the stabilizer group itself, plus any
-    /// logical operators for a stabilizer code.
+    /// Uses the inferred qubit count (max qubit index + 1).
     ///
     /// # Examples
     ///
@@ -790,25 +764,43 @@ impl PauliSequence {
     ///
     /// // Repetition code: ZZI, IZZ on 3 qubits
     /// // Centralizer dimension = 2n - rank = 6 - 2 = 4
-    /// // (2 stabilizer directions + 2 logical directions: X_L and Z_L)
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])], 3);
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
     /// let cent = gens.centralizer();
     /// assert_eq!(cent.len(), 4);
     /// ```
     #[must_use]
     pub fn centralizer(&self) -> Vec<Vec<u8>> {
-        let n = self.num_qubits;
-        let s = self.to_symplectic_matrix();
+        self.centralizer_in(self.num_qubits())
+    }
 
-        // Build S * Omega where Omega swaps X and Z blocks:
-        // If S row is (x_0..x_{n-1} | z_0..z_{n-1}), then
-        // (S * Omega) row is (z_0..z_{n-1} | x_0..x_{n-1}).
-        // A vector v commutes with all of S iff (S * Omega) * v^T = 0 (mod 2).
-        let mut s_omega = F2Matrix::zeros(s.num_rows(), 2 * n);
-        for i in 0..s.num_rows() {
+    /// Computes the centralizer with an explicit qubit count.
+    ///
+    /// Use this when the system has more qubits than the generators touch
+    /// (e.g., a stabilizer code embedded in a larger system).
+    #[must_use]
+    pub fn centralizer_in(&self, num_qubits: usize) -> Vec<Vec<u8>> {
+        let n = num_qubits;
+        let mut mat = F2Matrix::zeros(self.paulis.len(), 2 * n);
+
+        for (row_idx, generator) in self.paulis.iter().enumerate() {
+            for q in generator.x_positions() {
+                if q < n {
+                    mat.rows[row_idx][q] = 1;
+                }
+            }
+            for q in generator.z_positions() {
+                if q < n {
+                    mat.rows[row_idx][n + q] = 1;
+                }
+            }
+        }
+
+        // Build S * Omega where Omega swaps X and Z blocks
+        let mut s_omega = F2Matrix::zeros(mat.num_rows(), 2 * n);
+        for i in 0..mat.num_rows() {
             for j in 0..n {
-                s_omega.rows[i][j] = s.rows[i][n + j]; // Z block -> first half
-                s_omega.rows[i][n + j] = s.rows[i][j]; // X block -> second half
+                s_omega.rows[i][j] = mat.rows[i][n + j]; // Z block -> first half
+                s_omega.rows[i][n + j] = mat.rows[i][j]; // X block -> second half
             }
         }
 
@@ -832,7 +824,7 @@ impl PauliSequence {
     /// ```
     #[must_use]
     pub fn to_dense_str(&self) -> String {
-        let n = self.num_qubits;
+        let n = self.num_qubits();
         self.paulis
             .iter()
             .map(|p| p.pauli_str(Some(n)))
@@ -850,7 +842,7 @@ impl PauliSequence {
     /// use pecos_quantum::PauliSequence;
     /// use pecos_core::pauli::constructors::*;
     ///
-    /// let seq = PauliSequence::new(vec![X(0) & Z(2), Z(1)], 3);
+    /// let seq = PauliSequence::new(vec![X(0) & Z(2), Z(1)]);
     /// assert_eq!(seq.to_sparse_str(), "+X0 Z2\n+Z1");
     /// ```
     #[must_use]
@@ -875,7 +867,7 @@ impl PauliSequence {
             .iter()
             .map(|p| clifford.apply(p))
             .collect();
-        PauliSequence::new(transformed, self.num_qubits)
+        PauliSequence::new(transformed)
     }
 }
 
@@ -910,13 +902,7 @@ impl FromStr for PauliSequence {
             .map(str::parse)
             .collect::<Result<_, _>>()?;
 
-        let num_qubits = paulis
-            .iter()
-            .flat_map(PauliString::qubits)
-            .max()
-            .map_or(0, |m| m + 1);
-
-        Ok(Self { paulis, num_qubits })
+        Ok(Self { paulis })
     }
 }
 
@@ -933,7 +919,7 @@ mod tests {
 
     #[test]
     fn test_new() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(gens.len(), 2);
         assert_eq!(gens.num_qubits(), 3);
     }
@@ -960,79 +946,79 @@ mod tests {
     #[test]
     fn test_symplectic_matrix_y() {
         // Y has both X and Z bits set
-        let gens = PauliSequence::new(vec![Y(0)], 1);
+        let gens = PauliSequence::new(vec![Y(0)]);
         let mat = gens.to_symplectic_matrix();
         assert_eq!(mat.row(0), &[1, 1]); // x=1, z=1
     }
 
     #[test]
     fn test_rank_independent() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(gens.rank(), 2);
     }
 
     #[test]
     fn test_rank_dependent() {
         // ZIZ = ZZI * IZZ (symplectic: 110 XOR 011 = 101), so rank should still be 2
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]);
         assert_eq!(gens.rank(), 2);
     }
 
     #[test]
     fn test_rank_single() {
-        let gens = PauliSequence::new(vec![X(0)], 1);
+        let gens = PauliSequence::new(vec![X(0)]);
         assert_eq!(gens.rank(), 1);
     }
 
     #[test]
     fn test_rank_empty() {
-        let gens = PauliSequence::new(vec![], 3);
+        let gens = PauliSequence::new(vec![]);
         assert_eq!(gens.rank(), 0);
     }
 
     #[test]
     fn test_contains_generator() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert!(gens.contains(&Zs([0, 1])));
         assert!(gens.contains(&Zs([1, 2])));
     }
 
     #[test]
     fn test_contains_product() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         // ZIZ = ZZI * IZZ (symplectic: 110 XOR 011 = 101)
         assert!(gens.contains(&Zs([0, 2])));
     }
 
     #[test]
     fn test_not_contains() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert!(!gens.contains(&X(0)));
         assert!(!gens.contains(&Z(0)));
     }
 
     #[test]
     fn test_contains_identity() {
-        let gens = PauliSequence::new(vec![Zs([0, 1])], 2);
+        let gens = PauliSequence::new(vec![Zs([0, 1])]);
         // Identity is always in the group (product of zero generators)
         assert!(gens.contains(&I()));
     }
 
     #[test]
     fn test_is_abelian_commuting() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert!(gens.is_abelian());
     }
 
     #[test]
     fn test_is_abelian_anticommuting() {
-        let gens = PauliSequence::new(vec![X(0), Z(0)], 1);
+        let gens = PauliSequence::new(vec![X(0), Z(0)]);
         assert!(!gens.is_abelian());
     }
 
     #[test]
     fn test_commutation_matrix() {
-        let gens = PauliSequence::new(vec![X(0), Z(0), Y(0)], 1);
+        let gens = PauliSequence::new(vec![X(0), Z(0), Y(0)]);
         let cm = gens.commutation_matrix();
         // X,Z anticommute
         assert!(!cm[0][1]);
@@ -1050,7 +1036,7 @@ mod tests {
     #[test]
     fn test_row_reduce() {
         // ZIZ = ZZI * IZZ, so one generator is redundant
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]);
         let reduced = gens.row_reduce();
         assert_eq!(reduced.len(), 2);
         assert_eq!(reduced.rank(), 2);
@@ -1075,7 +1061,6 @@ mod tests {
                 Zs([1, 2, 5, 6]),
                 Zs([3, 4, 5, 6]),
             ],
-            7,
         );
         assert_eq!(gens.rank(), 6);
         assert!(gens.is_abelian());
@@ -1087,7 +1072,7 @@ mod tests {
 
     #[test]
     fn test_contains_with_phase() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
 
         // +ZZI is in the group with correct phase
         assert!(gens.contains_with_phase(&Zs([0, 1])));
@@ -1142,7 +1127,7 @@ mod tests {
 
     #[test]
     fn test_to_sparse_str() {
-        let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(seq.to_sparse_str(), "+Z0 Z1\n+Z1 Z2");
     }
 
@@ -1157,7 +1142,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_sparse() {
-        let original = PauliSequence::new(vec![X(0) & Z(2), Z(1)], 3);
+        let original = PauliSequence::new(vec![X(0) & Z(2), Z(1)]);
         let s = original.to_sparse_str();
         let roundtripped: PauliSequence = s.parse().unwrap();
         assert_eq!(roundtripped.len(), original.len());
@@ -1169,18 +1154,18 @@ mod tests {
 
     #[test]
     fn test_push() {
-        let mut seq = PauliSequence::new(vec![X(0)], 1);
+        let mut seq = PauliSequence::new(vec![X(0)]);
         assert_eq!(seq.len(), 1);
         assert_eq!(seq.num_qubits(), 1);
 
         seq.push(Z(2));
         assert_eq!(seq.len(), 2);
-        assert_eq!(seq.num_qubits(), 3); // auto-expanded
+        assert_eq!(seq.num_qubits(), 3);
     }
 
     #[test]
     fn test_extend() {
-        let mut seq = PauliSequence::new(Vec::new(), 0);
+        let mut seq = PauliSequence::new(Vec::new());
         seq.extend(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(seq.len(), 2);
         assert_eq!(seq.num_qubits(), 3);
@@ -1189,7 +1174,7 @@ mod tests {
     #[test]
     fn test_centralizer_repetition_code() {
         // ZZI, IZZ on 3 qubits: centralizer dimension = 2*3 - 2 = 4
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])], 3);
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         let cent = gens.centralizer();
         assert_eq!(cent.len(), 4);
     }
@@ -1197,16 +1182,24 @@ mod tests {
     #[test]
     fn test_centralizer_single_qubit() {
         // Z on 1 qubit: centralizer = {Z, I} = dimension 1
-        let gens = PauliSequence::new(vec![Z(0)], 1);
+        let gens = PauliSequence::new(vec![Z(0)]);
         let cent = gens.centralizer();
         assert_eq!(cent.len(), 1);
     }
 
     #[test]
     fn test_centralizer_empty() {
-        // No generators on 2 qubits: everything commutes, dimension = 2*2 = 4
-        let gens = PauliSequence::new(Vec::new(), 2);
+        // No generators, inferred n=0: centralizer is trivially empty
+        let gens = PauliSequence::new(Vec::new());
         let cent = gens.centralizer();
+        assert_eq!(cent.len(), 0);
+    }
+
+    #[test]
+    fn test_centralizer_in_explicit_qubits() {
+        // No generators on 2 qubits: everything commutes, dimension = 2*2 = 4
+        let gens = PauliSequence::new(Vec::new());
+        let cent = gens.centralizer_in(2);
         assert_eq!(cent.len(), 4);
     }
 
@@ -1262,7 +1255,6 @@ mod tests {
                 Zs([1, 2, 5, 6]),
                 Zs([3, 4, 5, 6]),
             ],
-            7,
         );
         let cent = gens.centralizer();
         assert_eq!(cent.len(), 8); // 6 stabilizer directions + 2 logical
@@ -1278,7 +1270,6 @@ mod tests {
                 X(0) & X(2) & Z(3) & Z(4),
                 Z(0) & X(1) & X(3) & Z(4),
             ],
-            5,
         );
         let cent = gens.centralizer();
         assert_eq!(cent.len(), 6);
@@ -1286,7 +1277,7 @@ mod tests {
 
     #[test]
     fn test_push_identity_doesnt_change_num_qubits() {
-        let mut seq = PauliSequence::new(vec![X(5)], 6);
+        let mut seq = PauliSequence::new(vec![X(5)]);
         seq.push(PauliString::identity());
         assert_eq!(seq.num_qubits(), 6);
         assert_eq!(seq.len(), 2);
@@ -1294,25 +1285,24 @@ mod tests {
 
     #[test]
     fn test_push_smaller_qubit() {
-        let mut seq = PauliSequence::new(vec![X(5)], 6);
+        let mut seq = PauliSequence::new(vec![X(5)]);
         seq.push(Z(0));
-        assert_eq!(seq.num_qubits(), 6); // unchanged, 6 > 1
+        assert_eq!(seq.num_qubits(), 6);
         assert_eq!(seq.len(), 2);
     }
 
     #[test]
     fn test_push_with_phase() {
-        let mut seq = PauliSequence::new(vec![], 0);
+        let mut seq = PauliSequence::new(vec![]);
         seq.push(-X(0));
         assert_eq!(seq.len(), 1);
-        // Phase preserved through PauliString storage
         let ps = &seq.paulis()[0];
         assert_eq!(ps.phase(), pecos_core::QuarterPhase::MinusOne);
     }
 
     #[test]
     fn test_extend_empty() {
-        let mut seq = PauliSequence::new(vec![X(0)], 1);
+        let mut seq = PauliSequence::new(vec![X(0)]);
         let before = seq.len();
         seq.extend(Vec::<PauliString>::new());
         assert_eq!(seq.len(), before, "extend with empty should be a no-op");
@@ -1321,7 +1311,7 @@ mod tests {
     #[test]
     fn test_symplectic_matrix_y_operator_both_bits() {
         // Y has both x and z bits set
-        let seq = PauliSequence::new(vec![Y(0)], 1);
+        let seq = PauliSequence::new(vec![Y(0)]);
         let mat = seq.to_symplectic_matrix();
         // For 1 qubit, symplectic vector is [x0, z0]
         assert_eq!(mat.rows[0], vec![1, 1], "Y should set both x and z bits");
@@ -1365,7 +1355,7 @@ mod tests {
     fn test_centralizer_with_y_generators() {
         // Single Y generator on 1 qubit: Y commutes with Y and I
         // Centralizer of Y in 1-qubit Paulis should be dimension 1 (just Y itself plus I)
-        let seq = PauliSequence::new(vec![Y(0)], 1);
+        let seq = PauliSequence::new(vec![Y(0)]);
         let cent = seq.centralizer();
         // For 1 qubit, the symplectic space is 2D.
         // Y has vector [1,1]. The centralizer kernel should have dimension 2 - 1 = 1.
@@ -1493,7 +1483,7 @@ mod tests {
     fn test_apply_clifford() {
         use pecos_core::clifford_rep::CliffordRep;
 
-        let seq = PauliSequence::new(vec![Z(0), Z(1)], 2);
+        let seq = PauliSequence::new(vec![Z(0), Z(1)]);
         let h_all = CliffordRep::h(0).compose(&CliffordRep::h(1));
         let transformed = seq.apply_clifford(&h_all);
 
@@ -1506,7 +1496,7 @@ mod tests {
     fn test_apply_clifford_identity() {
         use pecos_core::clifford_rep::CliffordRep;
 
-        let seq = PauliSequence::new(vec![X(0) & Z(1), Y(0)], 2);
+        let seq = PauliSequence::new(vec![X(0) & Z(1), Y(0)]);
         let id = CliffordRep::identity(2);
         let transformed = seq.apply_clifford(&id);
 
@@ -1520,7 +1510,7 @@ mod tests {
         use pecos_core::QuarterPhase;
 
         // Z gate: X -> -X
-        let seq = PauliSequence::new(vec![X(0)], 1);
+        let seq = PauliSequence::new(vec![X(0)]);
         let z_gate = CliffordRep::z(0);
         let transformed = seq.apply_clifford(&z_gate);
 
@@ -1534,7 +1524,7 @@ mod tests {
         use pecos_core::clifford_rep::CliffordRep;
 
         // CX on ZZ -> Z_0 * (Z_0 Z_1) = Z_1
-        let seq = PauliSequence::new(vec![Zs([0, 1])], 2);
+        let seq = PauliSequence::new(vec![Zs([0, 1])]);
         let cx = CliffordRep::cx(0, 1);
         let transformed = seq.apply_clifford(&cx);
 
@@ -1545,7 +1535,7 @@ mod tests {
     fn test_apply_clifford_empty_sequence() {
         use pecos_core::clifford_rep::CliffordRep;
 
-        let seq = PauliSequence::new(vec![], 2);
+        let seq = PauliSequence::new(vec![]);
         let h = CliffordRep::h(0).extended_to(2);
         let transformed = seq.apply_clifford(&h);
 

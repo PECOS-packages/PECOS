@@ -221,10 +221,10 @@ impl PauliSet {
 
     /// Converts to a [`PauliSequence`] for symplectic analysis.
     ///
-    /// The resulting collection's order matches this set's deterministic iteration order.
+    /// The resulting sequence's order matches this set's deterministic iteration order.
     #[must_use]
-    pub fn to_collection(&self, num_qubits: usize) -> PauliSequence {
-        PauliSequence::new(self.iter().collect(), num_qubits)
+    pub fn to_sequence(&self) -> PauliSequence {
+        PauliSequence::new(self.iter().collect())
     }
 
     /// Returns `true` if all elements mutually commute.
@@ -518,9 +518,9 @@ mod tests {
     }
 
     #[test]
-    fn test_to_collection() {
+    fn test_to_sequence() {
         let set = PauliSet::from_iter([Zs([0, 1]), Zs([1, 2])]);
-        let coll = set.to_collection(3);
+        let coll = set.to_sequence();
         assert_eq!(coll.len(), 2);
         assert_eq!(coll.rank(), 2);
     }
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_from_sequence() {
-        let seq = PauliSequence::new(vec![Z(0), Z(1), Z(0)], 2);
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Z(0)]);
         let set = PauliSet::from(seq);
         // Z(0) appears twice in the sequence but is deduplicated in the set
         assert_eq!(set.len(), 2);
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn test_roundtrip_set_to_sequence_to_set() {
         let original = PauliSet::from_iter([Zs([0, 1]), Zs([1, 2])]);
-        let seq = original.to_collection(3);
+        let seq = original.to_sequence();
         let recovered = PauliSet::from(seq);
         assert_eq!(recovered, original);
     }

@@ -21,22 +21,15 @@ use crate::pauli_bindings::PauliString;
 /// A validated Pauli stabilizer group.
 ///
 /// All generators mutually commute and have real phases (+1 or -1).
-/// Provides algebraic analysis: rank, logical qubits, distance,
-/// syndrome computation, group membership, and logical operators.
+/// Provides algebraic analysis: rank, group membership, element
+/// enumeration, and Clifford conjugation.
 ///
 /// Examples:
 ///     >>> from pecos_rslib import PauliStabilizerGroup
-///     >>> # 3-qubit repetition code
+///     >>> # 3-qubit repetition code stabilizers
 ///     >>> code = PauliStabilizerGroup.from_str("ZZI\nIZZ")
 ///     >>> code.rank()
 ///     2
-///     >>> code.num_logical_qubits()
-///     1
-///
-///     >>> # Standard codes
-///     >>> steane = PauliStabilizerGroup.steane()
-///     >>> steane.distance()
-///     3
 #[allow(clippy::doc_markdown)]
 #[pyclass(name = "PauliStabilizerGroup", module = "pecos_rslib", from_py_object)]
 #[derive(Debug, Clone)]
@@ -54,15 +47,14 @@ impl PyPauliStabilizerGroup {
     ///
     /// Args:
     ///     generators: List of PauliString stabilizer generators
-    ///     num_qubits: Number of physical qubits
     ///
     /// Raises:
     ///     ValueError: If generators don't commute or have non-real phases
     #[new]
-    #[pyo3(signature = (generators, num_qubits))]
-    fn new(generators: Vec<PauliString>, num_qubits: usize) -> PyResult<Self> {
+    #[pyo3(signature = (generators))]
+    fn new(generators: Vec<PauliString>) -> PyResult<Self> {
         let rust_gens: Vec<RustPauliString> = generators.into_iter().map(|g| g.to_rust()).collect();
-        let group = RustGroup::new(rust_gens, num_qubits).map_err(|e| {
+        let group = RustGroup::new(rust_gens).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid stabilizer group: {e}"))
         })?;
         Ok(Self { inner: group })
@@ -90,78 +82,7 @@ impl PyPauliStabilizerGroup {
     }
 
     // ========================================================================
-    // Standard code constructors
-    // ========================================================================
-
-    /// Create the [[n, 1, n]] bit-flip repetition code.
-    ///
-    /// Args:
-    ///     n: Number of qubits (>= 2)
-    #[staticmethod]
-    fn repetition(n: usize) -> PyResult<Self> {
-        if n < 2 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "repetition code requires at least 2 qubits",
-            ));
-        }
-        Ok(Self {
-            inner: RustGroup::repetition(n),
-        })
-    }
-
-    /// Create the [[7, 1, 3]] Steane code.
-    #[staticmethod]
-    fn steane() -> Self {
-        Self {
-            inner: RustGroup::steane(),
-        }
-    }
-
-    /// Create the [[5, 1, 3]] perfect code.
-    #[staticmethod]
-    fn five_qubit() -> Self {
-        Self {
-            inner: RustGroup::five_qubit(),
-        }
-    }
-
-    /// Create the [[9, 1, 3]] Shor code.
-    #[staticmethod]
-    fn shor() -> Self {
-        Self {
-            inner: RustGroup::shor(),
-        }
-    }
-
-    /// Create the [[4, 2, 2]] error-detecting code.
-    #[staticmethod]
-    fn four_two_two() -> Self {
-        Self {
-            inner: RustGroup::four_two_two(),
-        }
-    }
-
-    /// Create the toric code on an L x L torus.
-    ///
-    /// The toric code has 2*L^2 physical qubits and encodes 2 logical qubits
-    /// with distance L.
-    ///
-    /// Args:
-    ///     l: Lattice dimension (>= 2)
-    #[staticmethod]
-    fn toric(l: usize) -> PyResult<Self> {
-        if l < 2 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "toric code requires L >= 2",
-            ));
-        }
-        Ok(Self {
-            inner: RustGroup::toric(l),
-        })
-    }
-
-    // ========================================================================
-    // Code parameter methods
+    // Algebraic analysis methods
     // ========================================================================
 
     /// Number of independent generators (rank of the symplectic matrix).
@@ -179,39 +100,9 @@ impl PyPauliStabilizerGroup {
         self.inner.num_generators()
     }
 
-    /// Number of encoded logical qubits (n - rank).
-    fn num_logical_qubits(&self) -> usize {
-        self.inner.num_logical_qubits()
-    }
-
-    /// Code parameters as "[[n, k]]" string.
-    fn code_parameters(&self) -> String {
-        self.inner.code_parameters()
-    }
-
     /// Whether all generators are linearly independent.
     fn is_independent(&self) -> bool {
         self.inner.is_independent()
-    }
-
-    // ========================================================================
-    // Analysis methods
-    // ========================================================================
-
-    /// Compute the code distance (minimum weight non-trivial logical).
-    ///
-    /// Returns None if there are no logical qubits.
-    /// Only suitable for small codes (k + rank <= 30).
-    fn distance(&self) -> Option<usize> {
-        self.inner.distance()
-    }
-
-    /// Compute the syndrome of an error against the generators.
-    ///
-    /// Returns a list of booleans where True means the error
-    /// anticommutes with that generator.
-    fn syndrome(&self, error: &PauliString) -> Vec<bool> {
-        self.inner.syndrome(&error.to_rust())
     }
 
     /// Check if a Pauli string is in the stabilizer group (ignoring phase).
@@ -222,18 +113,6 @@ impl PyPauliStabilizerGroup {
     /// Check if a Pauli string is in the stabilizer group (exact phase match).
     fn contains_with_phase(&self, pauli: &PauliString) -> bool {
         self.inner.contains_with_phase(&pauli.to_rust())
-    }
-
-    /// Get a basis for the logical operators of this code.
-    ///
-    /// Returns a list of PauliStrings that commute with all stabilizers
-    /// but are not in the stabilizer group.
-    fn logical_operators(&self) -> Vec<PauliString> {
-        self.inner
-            .logical_operators()
-            .into_iter()
-            .map(PauliString::from_rust)
-            .collect()
     }
 
     /// Get the list of stabilizer generators.
@@ -316,8 +195,8 @@ impl PyPauliStabilizerGroup {
     }
 
     fn __repr__(&self) -> String {
-        let params = self.inner.code_parameters();
-        format!("PauliStabilizerGroup({params})")
+        let n = self.inner.num_generators();
+        format!("PauliStabilizerGroup({n} generators)")
     }
 
     fn __len__(&self) -> usize {

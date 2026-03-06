@@ -555,7 +555,7 @@ impl FollowUpConfig {
 
     /// Adds multiple stabilizers from a code definition.
     ///
-    /// Convenient for adding all stabilizers from a `StabilizerCode`.
+    /// Convenient for adding all stabilizers from a `StabilizerCodeSpec`.
     #[must_use]
     pub fn with_stabilizers(mut self, stabilizers: Vec<(Vec<usize>, Vec<usize>)>) -> Self {
         self.follow_up_stabilizers.extend(stabilizers);

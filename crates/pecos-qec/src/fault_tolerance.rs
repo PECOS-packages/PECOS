@@ -29,14 +29,14 @@
 //!
 //! ## Level 1: Stabilizer Flip Analysis ([`StabilizerFlipChecker`])
 //!
-//! Works directly from a [`StabilizerCode`](crate::StabilizerCode) definition using
+//! Works directly from a [`StabilizerCodeSpec`](crate::StabilizerCodeSpec) definition using
 //! anti-commutation checks. No circuit needed.
 //!
 //! ```
-//! use pecos_qec::{StabilizerCode, StabilizerFlipChecker};
+//! use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
 //! use pecos_core::{Xs, Zs};
 //!
-//! let code = StabilizerCode::builder(3)
+//! let code = StabilizerCodeSpec::builder(3)
 //!     .check(Zs([0, 1]))
 //!     .check(Zs([1, 2]))
 //!     .logical_z(Zs([0, 1, 2]))

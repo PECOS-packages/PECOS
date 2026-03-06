@@ -356,6 +356,13 @@ impl FromIterator<PauliString> for PauliSet {
     }
 }
 
+impl From<PauliSequence> for PauliSet {
+    /// Collects all elements of the sequence into a set, deduplicating.
+    fn from(seq: PauliSequence) -> Self {
+        seq.paulis().iter().cloned().collect()
+    }
+}
+
 impl IntoIterator for PauliSet {
     type Item = PauliString;
     type IntoIter = std::vec::IntoIter<PauliString>;
@@ -702,5 +709,23 @@ mod tests {
         assert_eq!(roundtripped.len(), 2);
         assert!(roundtripped.contains(&(-Y(0))));
         assert!(roundtripped.contains(&X(1)));
+    }
+
+    #[test]
+    fn test_from_sequence() {
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Z(0)], 2);
+        let set = PauliSet::from(seq);
+        // Z(0) appears twice in the sequence but is deduplicated in the set
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&Z(0)));
+        assert!(set.contains(&Z(1)));
+    }
+
+    #[test]
+    fn test_roundtrip_set_to_sequence_to_set() {
+        let original = PauliSet::from_iter([Zs([0, 1]), Zs([1, 2])]);
+        let seq = original.to_collection(3);
+        let recovered = PauliSet::from(seq);
+        assert_eq!(recovered, original);
     }
 }

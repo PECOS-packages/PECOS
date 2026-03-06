@@ -2237,4 +2237,200 @@ mod tests {
         let d = &a & b.clone();
         assert!(d.is_clifford());
     }
+
+    // --- Pauli composition algebra ---
+
+    #[test]
+    fn x_times_y_is_iz() {
+        let op = X(0) * Y(0);
+        let ps = op.as_pauli().unwrap();
+        assert_eq!(ps.phase(), crate::phase::quarter_phase::QuarterPhase::PlusI);
+        assert_eq!(ps.weight(), 1);
+        // The non-identity Pauli should be Z
+        let (pauli, _) = ps.iter_pairs().next().unwrap();
+        assert_eq!(pauli, crate::Pauli::Z);
+    }
+
+    #[test]
+    fn y_times_z_is_ix() {
+        let op = Y(0) * Z(0);
+        let ps = op.as_pauli().unwrap();
+        assert_eq!(ps.phase(), crate::phase::quarter_phase::QuarterPhase::PlusI);
+        let (pauli, _) = ps.iter_pairs().next().unwrap();
+        assert_eq!(pauli, crate::Pauli::X);
+    }
+
+    #[test]
+    fn x_squared_is_identity() {
+        let op = X(0) * X(0);
+        let ps = op.as_pauli().unwrap();
+        assert_eq!(ps.phase(), crate::phase::quarter_phase::QuarterPhase::PlusOne);
+        assert_eq!(ps.weight(), 0);
+    }
+
+    // --- Identity algebra ---
+
+    #[test]
+    fn identity_compose_is_noop() {
+        let op = I(0) * X(0);
+        let ps = op.as_pauli().unwrap();
+        assert_eq!(ps.weight(), 1);
+        let (pauli, _) = ps.iter_pairs().next().unwrap();
+        assert_eq!(pauli, crate::Pauli::X);
+    }
+
+    #[test]
+    fn identity_tensor() {
+        let op = I(0) & X(1);
+        let ps = op.as_pauli().unwrap();
+        assert_eq!(ps.weight(), 1);
+    }
+
+    #[test]
+    fn identity_dagger_is_identity() {
+        let op = I(0).dg();
+        assert!(op.is_pauli());
+        assert_eq!(op.as_pauli().unwrap().weight(), 0);
+    }
+
+    // --- Phase survival through promotion ---
+
+    #[test]
+    fn phased_pauli_promotes_to_clifford() {
+        let phased = i * X(0);
+        let promoted = phased.to_clifford_level();
+        assert!(promoted.is_clifford());
+        // Promote both to unitary and check they give the same matrix
+        let ur = promoted.into_unitary().unwrap();
+        let ur_direct = i * crate::unitary_rep::X(0);
+        assert_eq!(ur, ur_direct);
+    }
+
+    #[test]
+    fn phased_pauli_tensor_clifford_preserves_phase() {
+        // (i*X(0)) & H(1) should promote to Clifford with phase retained
+        let op = i * X(0) & H(1);
+        assert!(op.is_clifford());
+    }
+
+    #[test]
+    fn phased_pauli_promotes_to_unitary() {
+        let op = -i * X(0) & T(1);
+        assert!(op.is_unitary());
+    }
+
+    // --- Dagger of composed/tensored ops ---
+
+    #[test]
+    fn dagger_of_tensor() {
+        let op = H(0) & SZ(1);
+        let dg = op.dg();
+        assert!(dg.is_clifford());
+    }
+
+    #[test]
+    fn dagger_of_compose() {
+        let op = H(0) * SZ(0);
+        let dg = op.dg();
+        assert!(dg.is_clifford());
+    }
+
+    #[test]
+    fn dagger_of_unitary_compose() {
+        let op = T(0) * H(0);
+        let dg = op.dg();
+        assert!(dg.is_unitary());
+    }
+
+    // --- Phase + Channel panics ---
+
+    #[test]
+    #[should_panic(expected = "not defined for Channel")]
+    fn i_times_channel_panics() {
+        let _ = i * MZ(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "not defined for Channel")]
+    fn neg_channel_panics() {
+        let _ = -MZ(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "not defined for Channel")]
+    fn generic_phase_channel_panics() {
+        let _ = phase(Angle64::QUARTER_TURN) * MZ(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "negation is not defined for Channel")]
+    fn minus_one_channel_panics() {
+        let _ = -1 * MZ(0);
+    }
+
+    // --- Noise boundary values ---
+
+    #[test]
+    fn noise_boundary_zero() {
+        // p=0 should create valid channels (essentially identity)
+        assert!(Depolarizing(0.0, 0).is_channel());
+        assert!(Dephasing(0.0, 0).is_channel());
+        assert!(BitFlip(0.0, 0).is_channel());
+        assert!(BitPhaseFlip(0.0, 0).is_channel());
+        assert!(Depolarizing2(0.0, 0, 1).is_channel());
+        assert!(AmplitudeDamping(0.0, 0).is_channel());
+        assert!(PhaseDamping(0.0, 0).is_channel());
+        assert!(Erasure(0.0, 0).is_channel());
+        assert!(Leakage(0.0, 0).is_channel());
+    }
+
+    #[test]
+    fn noise_boundary_one() {
+        // p=1 should create valid channels (maximal noise)
+        assert!(Depolarizing(1.0, 0).is_channel());
+        assert!(Dephasing(1.0, 0).is_channel());
+        assert!(BitFlip(1.0, 0).is_channel());
+        assert!(BitPhaseFlip(1.0, 0).is_channel());
+        assert!(Depolarizing2(1.0, 0, 1).is_channel());
+        assert!(AmplitudeDamping(1.0, 0).is_channel());
+        assert!(PhaseDamping(1.0, 0).is_channel());
+        assert!(Erasure(1.0, 0).is_channel());
+        assert!(Leakage(1.0, 0).is_channel());
+    }
+
+    // --- MixedUnitary composition ---
+
+    #[test]
+    fn mixed_unitary_compose() {
+        let op = Depolarizing(0.1, 0) * Dephasing(0.05, 0);
+        assert!(op.is_channel());
+        if let Op::Channel(ChannelExpr::Compose(parts)) = op {
+            assert_eq!(parts.len(), 2);
+        } else {
+            panic!("expected Compose");
+        }
+    }
+
+    #[test]
+    fn mixed_unitary_tensor() {
+        let op = Depolarizing(0.1, 0) & BitFlip(0.05, 1);
+        assert!(op.is_channel());
+        if let Op::Channel(ChannelExpr::Tensor(parts)) = op {
+            assert_eq!(parts.len(), 2);
+        } else {
+            panic!("expected Tensor");
+        }
+    }
+
+    // --- to_channel_level variant check ---
+
+    #[test]
+    fn to_channel_level_wraps_in_unitary_variant() {
+        let op = H(0).to_channel_level();
+        if let Op::Channel(ChannelExpr::Unitary(_)) = op {
+            // correct
+        } else {
+            panic!("expected ChannelExpr::Unitary");
+        }
+    }
 }

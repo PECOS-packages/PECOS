@@ -50,10 +50,14 @@
 //! ```
 
 use crate::clifford_rep::CliffordRep;
-use crate::unitary_rep::UnitaryRep;
+use crate::unitary_rep::{PhaseValue, UnitaryRep};
 use crate::{Angle64, PauliString, QubitId};
 use std::fmt;
-use std::ops::{BitAnd, Mul};
+use std::ops::{BitAnd, Mul, Neg};
+
+// Re-export phase types so `use pecos_core::op::*` gives the full algebra vocabulary.
+pub use crate::pauli::algebra::{ImaginaryUnit, NegImaginaryUnit};
+pub use crate::unitary_rep::phase;
 
 /// Unified quantum operation with automatic level promotion.
 ///
@@ -573,6 +577,131 @@ impl Mul<&Op> for &Op {
     type Output = Op;
     fn mul(self, rhs: &Op) -> Op {
         self.clone() * rhs.clone()
+    }
+}
+
+// ============================================================================
+// Negation and phase multiplication
+// ============================================================================
+
+impl Neg for Op {
+    type Output = Op;
+
+    fn neg(self) -> Op {
+        match self {
+            Op::Pauli(ps) => Op::Pauli(-ps),
+            Op::Clifford(cr, ur) => cliff(cr, -ur),
+            Op::Unitary(ur) => Op::Unitary(-ur),
+            Op::Channel(_) => panic!("negation is not defined for Channel-level operations"),
+        }
+    }
+}
+
+impl Neg for &Op {
+    type Output = Op;
+
+    fn neg(self) -> Op {
+        -self.clone()
+    }
+}
+
+impl Mul<Op> for ImaginaryUnit {
+    type Output = Op;
+
+    fn mul(self, rhs: Op) -> Op {
+        match rhs {
+            Op::Pauli(ps) => Op::Pauli(self * ps),
+            Op::Clifford(cr, ur) => cliff(cr, self * ur),
+            Op::Unitary(ur) => Op::Unitary(self * ur),
+            Op::Channel(_) => {
+                panic!("phase multiplication is not defined for Channel-level operations")
+            }
+        }
+    }
+}
+
+impl Mul<&Op> for ImaginaryUnit {
+    type Output = Op;
+
+    fn mul(self, rhs: &Op) -> Op {
+        self * rhs.clone()
+    }
+}
+
+impl Mul<Op> for NegImaginaryUnit {
+    type Output = Op;
+
+    fn mul(self, rhs: Op) -> Op {
+        match rhs {
+            Op::Pauli(ps) => Op::Pauli(self * ps),
+            Op::Clifford(cr, ur) => cliff(cr, self * ur),
+            Op::Unitary(ur) => Op::Unitary(self * ur),
+            Op::Channel(_) => {
+                panic!("phase multiplication is not defined for Channel-level operations")
+            }
+        }
+    }
+}
+
+impl Mul<&Op> for NegImaginaryUnit {
+    type Output = Op;
+
+    fn mul(self, rhs: &Op) -> Op {
+        self * rhs.clone()
+    }
+}
+
+/// Generic phase multiplication: `phase(angle) * op` promotes to Unitary.
+///
+/// Applies the global phase e^{i*angle} to the operation.
+///
+/// # Panics
+/// Panics if applied to a Channel-level operation.
+impl Mul<Op> for PhaseValue {
+    type Output = Op;
+
+    fn mul(self, rhs: Op) -> Op {
+        match rhs {
+            Op::Channel(_) => {
+                panic!("phase multiplication is not defined for Channel-level operations")
+            }
+            other => {
+                let ur = other.into_unitary().unwrap();
+                Op::Unitary(self * ur)
+            }
+        }
+    }
+}
+
+impl Mul<&Op> for PhaseValue {
+    type Output = Op;
+
+    fn mul(self, rhs: &Op) -> Op {
+        self * rhs.clone()
+    }
+}
+
+/// Scalar multiplication: `1 * op` is identity, `-1 * op` is negation.
+///
+/// # Panics
+/// Panics if the scalar is not `1` or `-1`.
+impl Mul<Op> for i32 {
+    type Output = Op;
+
+    fn mul(self, rhs: Op) -> Op {
+        match self {
+            1 => rhs,
+            -1 => -rhs,
+            _ => panic!("only 1 and -1 are valid scalar multipliers for Op"),
+        }
+    }
+}
+
+impl Mul<&Op> for i32 {
+    type Output = Op;
+
+    fn mul(self, rhs: &Op) -> Op {
+        self * rhs.clone()
     }
 }
 
@@ -1261,9 +1390,9 @@ pub fn Depolarizing2(
     use crate::unitary_rep;
     let paulis_1q = [unitary_rep::I, unitary_rep::X, unitary_rep::Y, unitary_rep::Z];
     let mut ops = Vec::with_capacity(16);
-    for (i, pi) in paulis_1q.iter().enumerate() {
-        for (j, pj) in paulis_1q.iter().enumerate() {
-            let prob = if i == 0 && j == 0 { 1.0 - p } else { p15 };
+    for (idx_a, pi) in paulis_1q.iter().enumerate() {
+        for (idx_b, pj) in paulis_1q.iter().enumerate() {
+            let prob = if idx_a == 0 && idx_b == 0 { 1.0 - p } else { p15 };
             ops.push((prob, pi(a) & pj(b)));
         }
     }
@@ -1352,6 +1481,7 @@ pub fn Leakage(rate: f64, qubit: impl Into<QubitId>) -> Op {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pauli::algebra::i;
     use crate::PauliOperator;
 
     // --- Level detection ---
@@ -1544,6 +1674,125 @@ mod tests {
         assert!(X(0).dg().is_pauli());
         assert!(H(0).dg().is_clifford());
         assert!(T(0).dg().is_unitary());
+    }
+
+    // --- Phase and negation ---
+
+    #[test]
+    fn neg_pauli_preserves_level() {
+        let op = -X(0);
+        assert!(op.is_pauli());
+    }
+
+    #[test]
+    fn i_times_pauli() {
+        let op = i * X(2) & Y(5) & Z(3);
+        assert!(op.is_pauli());
+    }
+
+    #[test]
+    fn neg_i_times_pauli() {
+        let op = -i * (X(0) & Y(1));
+        assert!(op.is_pauli());
+    }
+
+    #[test]
+    fn neg_clifford() {
+        let op = -H(0);
+        assert!(op.is_clifford());
+    }
+
+    #[test]
+    fn i_times_unitary() {
+        let op = i * T(0);
+        assert!(op.is_unitary());
+    }
+
+    #[test]
+    fn phase_then_promote() {
+        // -i * X(2) & Y(5) & Z(3) is Pauli, then promote to Clifford
+        let op = -i * (X(2) & Y(5) & Z(3));
+        assert!(op.is_pauli());
+        let promoted = op.to_clifford_level();
+        assert!(promoted.is_clifford());
+    }
+
+    #[test]
+    fn ref_neg() {
+        let a = X(0);
+        let b = -&a;
+        assert!(b.is_pauli());
+        // original still usable
+        assert!(a.is_pauli());
+    }
+
+    #[test]
+    fn ref_i_mul() {
+        let a = X(0);
+        let b = i * &a;
+        assert!(b.is_pauli());
+        assert!(a.is_pauli());
+    }
+
+    #[test]
+    fn minus_one_times_op() {
+        let op = -1 * X(9) & Y(4);
+        assert!(op.is_pauli());
+    }
+
+    #[test]
+    fn plus_one_times_op() {
+        let op = 1 * X(0);
+        assert!(op.is_pauli());
+    }
+
+    #[test]
+    #[should_panic(expected = "only 1 and -1")]
+    fn invalid_scalar_panics() {
+        let _ = 2 * X(0);
+    }
+
+    #[test]
+    fn generic_phase_promotes_to_unitary() {
+        // e^{iπ/8} * X(0) — not a quarter-turn phase, must promote
+        let op = phase(Angle64::HALF_TURN / 4) * X(0);
+        assert!(op.is_unitary());
+    }
+
+    #[test]
+    fn generic_phase_on_clifford() {
+        let op = phase(Angle64::HALF_TURN / 4) * H(0);
+        assert!(op.is_unitary());
+    }
+
+    #[test]
+    fn generic_phase_on_unitary() {
+        let op = phase(Angle64::HALF_TURN / 3) * T(0);
+        assert!(op.is_unitary());
+    }
+
+    #[test]
+    fn phases_at_different_points() {
+        // -Y(1) contributes phase -1, rest are +1
+        let a = X(0) & -Y(1) & Z(2);
+        assert!(a.is_pauli());
+        let ps_a = a.as_pauli().unwrap();
+        assert_eq!(ps_a.phase(), crate::phase::quarter_phase::QuarterPhase::MinusOne);
+
+        // Two negations cancel: (-X) & (-Y) has phase (-1)*(-1) = +1
+        let b = -X(0) & -Y(1);
+        let ps_b = b.as_pauli().unwrap();
+        assert_eq!(ps_b.phase(), crate::phase::quarter_phase::QuarterPhase::PlusOne);
+
+        // i and -1 combine: i * (-1) = -i
+        let c = i * X(0) & -Y(1);
+        let ps_c = c.as_pauli().unwrap();
+        assert_eq!(ps_c.phase(), crate::phase::quarter_phase::QuarterPhase::MinusI);
+
+        // -i at one point, -1 at another: (-i)*(-1) = +i
+        let d = -i * X(0) & -Z(1);
+        let ps_d = d.as_pauli().unwrap();
+        assert_eq!(ps_d.phase(), crate::phase::quarter_phase::QuarterPhase::PlusI);
     }
 
     // --- Level ordering ---

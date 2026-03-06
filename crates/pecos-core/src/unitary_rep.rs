@@ -964,25 +964,8 @@ impl Neg for &UnitaryRep {
 // Imaginary unit for phase multiplication
 // ============================================================================
 
-/// Imaginary unit for phase multiplication: i * op
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImaginaryUnit;
-
-/// The imaginary unit `i`.
-#[allow(non_upper_case_globals)]
-pub const i: ImaginaryUnit = ImaginaryUnit;
-
-impl Neg for ImaginaryUnit {
-    type Output = NegImaginaryUnit;
-
-    fn neg(self) -> NegImaginaryUnit {
-        NegImaginaryUnit
-    }
-}
-
-/// Negative imaginary unit (-i).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NegImaginaryUnit;
+// Re-use the canonical types from pauli::algebra.
+pub use crate::pauli::algebra::{ImaginaryUnit, NegImaginaryUnit, i};
 
 impl Mul<UnitaryRep> for ImaginaryUnit {
     type Output = UnitaryRep;

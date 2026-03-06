@@ -64,6 +64,7 @@ from pecos_rslib import (
     i64,
     isclose,  # Approximate equality (element-wise)
     isnan,  # Check for NaN
+    kron,  # Kronecker product
     ln,  # Natural logarithm
     log,  # Logarithm with base
     max,  # Maximum value
@@ -353,6 +354,7 @@ __all__ = [
     "i64",
     "isclose",
     "isnan",
+    "kron",
     "linalg",
     "linspace",
     "ln",

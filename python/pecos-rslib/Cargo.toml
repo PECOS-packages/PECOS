@@ -16,8 +16,6 @@ name = "pecos_rslib"
 crate-type = ["cdylib", "rlib"]
 # Skip doc tests as they won't work properly in this setup
 doctest = false
-# Skip unit tests as well - all testing should be done through Python
-test = false
 
 [features]
 default = ["wasm"]

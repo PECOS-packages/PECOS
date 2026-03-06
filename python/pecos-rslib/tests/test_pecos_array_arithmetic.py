@@ -209,15 +209,15 @@ class TestPecosArrayMultiplication:
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
 
-    def test_array_times_array(self):
-        """Test: array * array (element-wise)."""
+    def test_array_times_array_elemwise(self):
+        """Test: array.elemwise_mul(array) (element-wise)."""
         np_arr1 = np.array([1.0, 2.0, 3.0])
         np_arr2 = np.array([10.0, 20.0, 30.0])
         pa_arr1 = Array(np_arr1)
         pa_arr2 = Array(np_arr2)
 
         np_result = np_arr1 * np_arr2
-        pa_result = pa_arr1 * pa_arr2
+        pa_result = pa_arr1.elemwise_mul(pa_arr2)
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)

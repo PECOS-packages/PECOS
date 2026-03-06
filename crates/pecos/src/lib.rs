@@ -392,6 +392,12 @@ pub mod linalg {
     pub use pecos_num::linalg::*;
 }
 
+/// Array operations (numpy replacements).
+#[cfg(feature = "num")]
+pub mod array {
+    pub use pecos_num::array::*;
+}
+
 /// Random number generation
 ///
 /// This module provides NumPy-compatible random number generation functions.

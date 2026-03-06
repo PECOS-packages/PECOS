@@ -115,7 +115,7 @@ class TestBroadcastingAllOperations:
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
     def test_broadcast_multiplication(self):
-        """Test broadcasting with multiplication."""
+        """Test broadcasting with elemwise_mul."""
         np_a = np.array([[2.0], [3.0], [4.0]])  # (3, 1)
         np_b = np.array([10.0, 20.0, 30.0])  # (3,)
 
@@ -123,7 +123,7 @@ class TestBroadcastingAllOperations:
         pa_b = Array(np_b)
 
         np_result = np_a * np_b
-        pa_result = pa_a * pa_b
+        pa_result = pa_a.elemwise_mul(pa_b)
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 

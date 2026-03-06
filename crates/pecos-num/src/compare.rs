@@ -17,7 +17,7 @@
 //! This module provides trait-based comparison operations that work
 //! across scalars, complex numbers, and arrays.
 
-use ndarray::{Array, ArrayBase, Data, Dimension};
+use ndarray::{Array, ArrayBase, Axis, Data, Dimension, RemoveAxis};
 use num_complex::Complex64;
 
 /// Trait for checking if values are NaN (Not a Number).
@@ -504,6 +504,54 @@ where
         }
         a_val == b_val
     })
+}
+
+/// Reduce a boolean array along an axis with `all`.
+///
+/// Returns an array with one fewer dimension, where each element is `true`
+/// if all values along the given axis are `true`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::compare::all_axis;
+/// use ndarray::{array, Axis};
+///
+/// let arr = array![[true, false], [true, true]];
+/// assert_eq!(all_axis(&arr, Axis(0)), array![true, false]);
+/// assert_eq!(all_axis(&arr, Axis(1)), array![false, true]);
+/// ```
+#[must_use]
+pub fn all_axis<S, D>(arr: &ArrayBase<S, D>, axis: Axis) -> Array<bool, D::Smaller>
+where
+    S: Data<Elem = bool>,
+    D: Dimension + RemoveAxis,
+{
+    arr.map_axis(axis, |lane| lane.iter().all(|&x| x))
+}
+
+/// Reduce a boolean array along an axis with `any`.
+///
+/// Returns an array with one fewer dimension, where each element is `true`
+/// if any value along the given axis is `true`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::compare::any_axis;
+/// use ndarray::{array, Axis};
+///
+/// let arr = array![[true, false], [false, false]];
+/// assert_eq!(any_axis(&arr, Axis(0)), array![true, false]);
+/// assert_eq!(any_axis(&arr, Axis(1)), array![true, false]);
+/// ```
+#[must_use]
+pub fn any_axis<S, D>(arr: &ArrayBase<S, D>, axis: Axis) -> Array<bool, D::Smaller>
+where
+    S: Data<Elem = bool>,
+    D: Dimension + RemoveAxis,
+{
+    arr.map_axis(axis, |lane| lane.iter().any(|&x| x))
 }
 
 /// Conditional selection based on a boolean condition (scalar version).
@@ -1217,5 +1265,66 @@ mod tests {
     #[should_panic(expected = "assertion failed")]
     fn test_assert_relative_eq_macro_fails() {
         crate::assert_relative_eq!(1.0, 2.0, epsilon = 1e-6);
+    }
+
+    // Tests for all_axis / any_axis
+    #[test]
+    fn test_all_axis_0() {
+        use crate::prelude::array;
+        let arr = array![[true, false], [true, true]];
+        assert_eq!(all_axis(&arr, Axis(0)), array![true, false]);
+    }
+
+    #[test]
+    fn test_all_axis_1() {
+        use crate::prelude::array;
+        let arr = array![[true, false], [true, true]];
+        assert_eq!(all_axis(&arr, Axis(1)), array![false, true]);
+    }
+
+    #[test]
+    fn test_any_axis_0() {
+        use crate::prelude::array;
+        let arr = array![[true, false], [false, false]];
+        assert_eq!(any_axis(&arr, Axis(0)), array![true, false]);
+    }
+
+    #[test]
+    fn test_any_axis_1() {
+        use crate::prelude::array;
+        let arr = array![[true, false], [false, false]];
+        assert_eq!(any_axis(&arr, Axis(1)), array![true, false]);
+    }
+
+    #[test]
+    fn test_all_axis_all_true() {
+        use crate::prelude::array;
+        let arr = array![[true, true], [true, true]];
+        assert_eq!(all_axis(&arr, Axis(0)), array![true, true]);
+        assert_eq!(all_axis(&arr, Axis(1)), array![true, true]);
+    }
+
+    #[test]
+    fn test_all_axis_all_false() {
+        use crate::prelude::array;
+        let arr = array![[false, false], [false, false]];
+        assert_eq!(all_axis(&arr, Axis(0)), array![false, false]);
+        assert_eq!(all_axis(&arr, Axis(1)), array![false, false]);
+    }
+
+    #[test]
+    fn test_any_axis_all_true() {
+        use crate::prelude::array;
+        let arr = array![[true, true], [true, true]];
+        assert_eq!(any_axis(&arr, Axis(0)), array![true, true]);
+        assert_eq!(any_axis(&arr, Axis(1)), array![true, true]);
+    }
+
+    #[test]
+    fn test_any_axis_all_false() {
+        use crate::prelude::array;
+        let arr = array![[false, false], [false, false]];
+        assert_eq!(any_axis(&arr, Axis(0)), array![false, false]);
+        assert_eq!(any_axis(&arr, Axis(1)), array![false, false]);
     }
 }

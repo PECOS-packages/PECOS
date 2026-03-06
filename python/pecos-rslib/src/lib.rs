@@ -407,6 +407,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("zeros", num.getattr("zeros")?)?;
     m.add("ones", num.getattr("ones")?)?;
     m.add("delete", num.getattr("delete")?)?;
+    m.add("kron", num.getattr("kron")?)?;
 
     // Constants
     m.add("inf", num.getattr("inf")?)?;

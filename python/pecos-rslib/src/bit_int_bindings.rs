@@ -205,8 +205,8 @@ impl PyBitInt {
         let inner = if let Some(val_obj) = value {
             let v = val_obj.extract::<i64>().map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
-                    "Value {} out of range for BitInt({})",
-                    val_obj, size
+                    "Value {} does not fit in i64 (backed by i64 internally)",
+                    val_obj
                 ))
             })?;
             BitInt::new(size, v)
@@ -277,8 +277,8 @@ impl PyBitInt {
     pub fn set(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let v = value.extract::<i64>().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
-                "Value {} out of range for BitInt({})",
-                value, self.inner.size()
+                "Value {} does not fit in i64 (backed by i64 internally)",
+                value
             ))
         })?;
         self.inner = BitInt::new(self.inner.size(), v);
@@ -348,8 +348,8 @@ impl PyBitInt {
     pub fn set_clip(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let v = value.extract::<i64>().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
-                "Value {} out of range for BitInt({})",
-                value, self.inner.size()
+                "Value {} does not fit in i64 (backed by i64 internally)",
+                value
             ))
         })?;
         let size = self.inner.size();

@@ -535,7 +535,7 @@ impl PauliString {
     /// # Examples
     ///
     /// ```
-    /// use pecos_core::PauliString;
+    /// use pecos_core::{PauliString, PauliOperator};
     ///
     /// let a = PauliString::x(0) & PauliString::y(1);
     /// let b = PauliString::z(2);

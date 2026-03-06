@@ -13,7 +13,7 @@
 //! Shared circuit diagram rendering engine.
 //!
 //! Produces horizontal qubit-wire diagrams with gate columns, used by
-//! [`Operator`](crate::Operator), [`TickCircuit`], and [`DagCircuit`].
+//! [`UnitaryRep`](crate::UnitaryRep), [`TickCircuit`], and [`DagCircuit`].
 
 use std::fmt::Write;
 
@@ -557,7 +557,7 @@ impl Default for DiagramStyleBuilder {
 
 /// A prepared diagram bound to a style, ready to render in any output format.
 ///
-/// Obtained from `render_with` on [`crate::Operator`], `TickCircuit`, or `DagCircuit`.
+/// Obtained from `render_with` on [`crate::UnitaryRep`], `TickCircuit`, or `DagCircuit`.
 pub struct DiagramRenderer<'a> {
     diagram: CircuitDiagram,
     header: String,

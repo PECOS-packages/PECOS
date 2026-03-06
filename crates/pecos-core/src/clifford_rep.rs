@@ -19,7 +19,7 @@
 //!
 //! ```
 //! use pecos_core::clifford_rep::CliffordRep;
-//! use pecos_core::operator::{X, Z};
+//! use pecos_core::unitary_rep::{X, Z};
 //!
 //! // Hadamard swaps X <-> Z
 //! let h = CliffordRep::h(0);
@@ -28,7 +28,7 @@
 //! // H transforms X(0) -> Z(0), Z(1) unchanged
 //! ```
 
-use crate::operator::Operator;
+use crate::unitary_rep::UnitaryRep;
 use crate::pauli::algebra::i;
 use crate::{Pauli, Phase, PauliString, QuarterPhase};
 use rand::RngExt;
@@ -177,7 +177,7 @@ impl CliffordRep {
         result
     }
 
-    /// Applies this Clifford transformation to an Operator.
+    /// Applies this Clifford transformation to an UnitaryRep.
     ///
     /// This works seamlessly with Pauli operators created via `X(n)`, `Y(n)`, `Z(n)`.
     /// Returns `None` for non-Pauli operators.
@@ -186,16 +186,16 @@ impl CliffordRep {
     ///
     /// ```
     /// use pecos_core::clifford_rep::CliffordRep;
-    /// use pecos_core::operator::{X, Z};
+    /// use pecos_core::unitary_rep::{X, Z};
     ///
     /// let h = CliffordRep::h(0);
     /// let stabilizer = X(0) & Z(1);
     /// let transformed = h.apply_to(&stabilizer).unwrap();
     /// ```
     #[must_use]
-    pub fn apply_to(&self, op: &Operator) -> Option<Operator> {
+    pub fn apply_to(&self, op: &UnitaryRep) -> Option<UnitaryRep> {
         match op {
-            Operator::Pauli(ps) => Some(Operator::Pauli(self.apply(ps))),
+            UnitaryRep::Pauli(ps) => Some(UnitaryRep::Pauli(self.apply(ps))),
             _ => None,
         }
     }

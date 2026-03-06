@@ -7,7 +7,7 @@
 //! |------|--------|----------------|---------|
 //! | [`Sign`] | `{+1, -1}` | 2nd | [`PauliStabilizerGroup`] generators |
 //! | [`QuarterPhase`] | `{+1, -1, +i, -i}` | 4th | [`PauliString`], [`PauliSequence`] |
-//! | [`GlobalPhase`] | any `e^{i theta}` | continuous | [`Operator`] |
+//! | [`GlobalPhase`] | any `e^{i theta}` | continuous | [`UnitaryRep`] |
 //!
 //! The hierarchy forms a subtype chain: `Sign` < `QuarterPhase` < `GlobalPhase`,
 //! with lossless widening conversions (`From`) going up and fallible narrowing
@@ -40,7 +40,7 @@
 //!
 //! [`Sign`]: sign::Sign
 //! [`PauliString`]: crate::PauliString
-//! [`Operator`]: crate::Operator
+//! [`UnitaryRep`]: crate::UnitaryRep
 //! [`PauliSequence`]: https://docs.rs/pecos-quantum/latest/pecos_quantum/struct.PauliSequence.html
 //! [`PauliStabilizerGroup`]: https://docs.rs/pecos-quantum/latest/pecos_quantum/struct.PauliStabilizerGroup.html
 
@@ -72,7 +72,7 @@ pub trait Phase {
     fn multiply(&self, other: &Self) -> Self;
 }
 
-/// A general phase factor `e^{i theta}`, used by [`Operator`](crate::Operator).
+/// A general phase factor `e^{i theta}`, used by [`UnitaryRep`](crate::UnitaryRep).
 ///
 /// This is the most general phase type. When the phase happens to be a fourth
 /// root of unity it is stored as a [`QuarterPhase`] for efficiency; otherwise

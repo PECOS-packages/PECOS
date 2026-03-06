@@ -1404,161 +1404,161 @@ mod tests {
         assert_eq!(gate.angles.len(), 1);
     }
 
-    // ==================== Matrix equivalence tests (Operator level) ====================
+    // ==================== Matrix equivalence tests (UnitaryRep level) ====================
     //
     // These verify that each simplification mapping preserves the unitary
-    // (up to global phase) by comparing the rotation Operator against the
-    // named-gate Operator using dense matrix comparison.
+    // (up to global phase) by comparing the rotation UnitaryRep against the
+    // named-gate UnitaryRep using dense matrix comparison.
 
-    use crate::operator_matrix::{
+    use crate::unitary_matrix::{
         matrices_equiv_up_to_phase, operators_equiv, to_matrix_with_size,
     };
 
-    use pecos_core::operator::{self, Operator};
+    use pecos_core::unitary_rep::{self, UnitaryRep};
 
     #[test]
     fn matrix_rz_half_equiv_z() {
         assert!(operators_equiv(
-            &operator::RZ(Angle64::HALF_TURN, 0),
-            &operator::Z(0),
+            &unitary_rep::RZ(Angle64::HALF_TURN, 0),
+            &unitary_rep::Z(0),
         ));
     }
 
     #[test]
     fn matrix_rz_quarter_equiv_sz() {
         assert!(operators_equiv(
-            &operator::RZ(Angle64::QUARTER_TURN, 0),
-            &operator::SZ(0),
+            &unitary_rep::RZ(Angle64::QUARTER_TURN, 0),
+            &unitary_rep::SZ(0),
         ));
     }
 
     #[test]
     fn matrix_rz_three_quarters_equiv_szdg() {
         assert!(operators_equiv(
-            &operator::RZ(Angle64::THREE_QUARTERS_TURN, 0),
-            &operator::SZ(0).dg(),
+            &unitary_rep::RZ(Angle64::THREE_QUARTERS_TURN, 0),
+            &unitary_rep::SZ(0).dg(),
         ));
     }
 
     #[test]
     fn matrix_rz_eighth_equiv_t() {
         assert!(operators_equiv(
-            &operator::RZ(Angle64::from_turn_ratio(1, 8), 0),
-            &operator::T(0),
+            &unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0),
+            &unitary_rep::T(0),
         ));
     }
 
     #[test]
     fn matrix_rz_seven_eighths_equiv_tdg() {
         assert!(operators_equiv(
-            &operator::RZ(Angle64::from_turn_ratio(7, 8), 0),
-            &operator::T(0).dg(),
+            &unitary_rep::RZ(Angle64::from_turn_ratio(7, 8), 0),
+            &unitary_rep::T(0).dg(),
         ));
     }
 
     #[test]
     fn matrix_rx_half_equiv_x() {
         assert!(operators_equiv(
-            &operator::RX(Angle64::HALF_TURN, 0),
-            &operator::X(0),
+            &unitary_rep::RX(Angle64::HALF_TURN, 0),
+            &unitary_rep::X(0),
         ));
     }
 
     #[test]
     fn matrix_rx_quarter_equiv_sx() {
         assert!(operators_equiv(
-            &operator::RX(Angle64::QUARTER_TURN, 0),
-            &operator::SX(0),
+            &unitary_rep::RX(Angle64::QUARTER_TURN, 0),
+            &unitary_rep::SX(0),
         ));
     }
 
     #[test]
     fn matrix_rx_three_quarters_equiv_sxdg() {
         assert!(operators_equiv(
-            &operator::RX(Angle64::THREE_QUARTERS_TURN, 0),
-            &operator::SX(0).dg(),
+            &unitary_rep::RX(Angle64::THREE_QUARTERS_TURN, 0),
+            &unitary_rep::SX(0).dg(),
         ));
     }
 
     #[test]
     fn matrix_ry_half_equiv_y() {
         assert!(operators_equiv(
-            &operator::RY(Angle64::HALF_TURN, 0),
-            &operator::Y(0),
+            &unitary_rep::RY(Angle64::HALF_TURN, 0),
+            &unitary_rep::Y(0),
         ));
     }
 
     #[test]
     fn matrix_ry_quarter_equiv_sy() {
         assert!(operators_equiv(
-            &operator::RY(Angle64::QUARTER_TURN, 0),
-            &operator::SY(0),
+            &unitary_rep::RY(Angle64::QUARTER_TURN, 0),
+            &unitary_rep::SY(0),
         ));
     }
 
     #[test]
     fn matrix_ry_three_quarters_equiv_sydg() {
         assert!(operators_equiv(
-            &operator::RY(Angle64::THREE_QUARTERS_TURN, 0),
-            &operator::SY(0).dg(),
+            &unitary_rep::RY(Angle64::THREE_QUARTERS_TURN, 0),
+            &unitary_rep::SY(0).dg(),
         ));
     }
 
     #[test]
     fn matrix_rzz_quarter_equiv_szz() {
         assert!(operators_equiv(
-            &operator::RZZ(Angle64::QUARTER_TURN, 0, 1),
-            &operator::SZZ(0, 1),
+            &unitary_rep::RZZ(Angle64::QUARTER_TURN, 0, 1),
+            &unitary_rep::SZZ(0, 1),
         ));
     }
 
     #[test]
     fn matrix_rzz_three_quarters_equiv_szzdg() {
         assert!(operators_equiv(
-            &operator::RZZ(Angle64::THREE_QUARTERS_TURN, 0, 1),
-            &operator::SZZ(0, 1).dg(),
+            &unitary_rep::RZZ(Angle64::THREE_QUARTERS_TURN, 0, 1),
+            &unitary_rep::SZZ(0, 1).dg(),
         ));
     }
 
     #[test]
     fn matrix_rzz_half_equiv_z_tensor_z() {
-        let rzz_pi = operator::RZZ(Angle64::HALF_TURN, 0, 1);
-        let z_z = operator::Z(0) & operator::Z(1);
+        let rzz_pi = unitary_rep::RZZ(Angle64::HALF_TURN, 0, 1);
+        let z_z = unitary_rep::Z(0) & unitary_rep::Z(1);
         assert!(operators_equiv(&rzz_pi, &z_z));
     }
 
     #[test]
     fn matrix_rxx_half_equiv_x_tensor_x() {
-        let rxx_pi = operator::RXX(Angle64::HALF_TURN, 0, 1);
-        let x_x = operator::X(0) & operator::X(1);
+        let rxx_pi = unitary_rep::RXX(Angle64::HALF_TURN, 0, 1);
+        let x_x = unitary_rep::X(0) & unitary_rep::X(1);
         assert!(operators_equiv(&rxx_pi, &x_x));
     }
 
     #[test]
     fn matrix_ryy_half_equiv_y_tensor_y() {
-        let ryy_pi = operator::RYY(Angle64::HALF_TURN, 0, 1);
-        let y_y = operator::Y(0) & operator::Y(1);
+        let ryy_pi = unitary_rep::RYY(Angle64::HALF_TURN, 0, 1);
+        let y_y = unitary_rep::Y(0) & unitary_rep::Y(1);
         assert!(operators_equiv(&ryy_pi, &y_y));
     }
 
     // ==================== Full-circuit matrix equivalence tests ====================
     //
-    // Convert a TickCircuit to an Operator chain, compute its unitary,
+    // Convert a TickCircuit to an UnitaryRep chain, compute its unitary,
     // apply SimplifyRotations, compute the new unitary, and compare.
 
-    /// Convert a `TickCircuit` to an `Operator` by composing gates in order.
+    /// Convert a `TickCircuit` to an `UnitaryRep` by composing gates in order.
     ///
     /// Each tick's gates are tensored (parallel), then ticks are composed
     /// (sequential). Returns `None` for an empty circuit.
-    fn tick_circuit_to_operator(tc: &TickCircuit) -> Option<Operator> {
-        let mut tick_ops: Vec<Operator> = Vec::new();
+    fn tick_circuit_to_operator(tc: &TickCircuit) -> Option<UnitaryRep> {
+        let mut tick_ops: Vec<UnitaryRep> = Vec::new();
 
         for tick in tc.ticks() {
             let gates = tick.gates();
             if gates.is_empty() {
                 continue;
             }
-            let mut gate_ops: Vec<Operator> = Vec::new();
+            let mut gate_ops: Vec<UnitaryRep> = Vec::new();
             for gate in gates {
                 let op = gate_to_operator(gate)?;
                 gate_ops.push(op);
@@ -1573,76 +1573,76 @@ mod tests {
         }
 
         // Compose ticks: last tick is outermost in matrix multiplication.
-        // Operator::Compose applies in reverse (like matrix multiplication),
+        // UnitaryRep::Compose applies in reverse (like matrix multiplication),
         // so we reverse to get time-ordering right.
         tick_ops.reverse();
         Some(tick_ops.into_iter().reduce(|a, b| a * b).unwrap())
     }
 
-    /// Convert a single `Gate` to an `Operator`.
-    fn gate_to_operator(gate: &pecos_core::Gate) -> Option<Operator> {
+    /// Convert a single `Gate` to an `UnitaryRep`.
+    fn gate_to_operator(gate: &pecos_core::Gate) -> Option<UnitaryRep> {
         let q0 = gate.qubits.first().copied()?;
         match gate.gate_type {
-            GateType::H => Some(operator::H(q0)),
-            GateType::X => Some(operator::X(q0)),
-            GateType::Y => Some(operator::Y(q0)),
-            GateType::Z => Some(operator::Z(q0)),
-            GateType::SX => Some(operator::SX(q0)),
-            GateType::SXdg => Some(operator::SX(q0).dg()),
-            GateType::SY => Some(operator::SY(q0)),
-            GateType::SYdg => Some(operator::SY(q0).dg()),
-            GateType::SZ => Some(operator::SZ(q0)),
-            GateType::SZdg => Some(operator::SZ(q0).dg()),
-            GateType::T => Some(operator::T(q0)),
-            GateType::Tdg => Some(operator::T(q0).dg()),
+            GateType::H => Some(unitary_rep::H(q0)),
+            GateType::X => Some(unitary_rep::X(q0)),
+            GateType::Y => Some(unitary_rep::Y(q0)),
+            GateType::Z => Some(unitary_rep::Z(q0)),
+            GateType::SX => Some(unitary_rep::SX(q0)),
+            GateType::SXdg => Some(unitary_rep::SX(q0).dg()),
+            GateType::SY => Some(unitary_rep::SY(q0)),
+            GateType::SYdg => Some(unitary_rep::SY(q0).dg()),
+            GateType::SZ => Some(unitary_rep::SZ(q0)),
+            GateType::SZdg => Some(unitary_rep::SZ(q0).dg()),
+            GateType::T => Some(unitary_rep::T(q0)),
+            GateType::Tdg => Some(unitary_rep::T(q0).dg()),
             GateType::RX => {
                 let angle = *gate.angles.first()?;
-                Some(operator::RX(angle, q0))
+                Some(unitary_rep::RX(angle, q0))
             }
             GateType::RY => {
                 let angle = *gate.angles.first()?;
-                Some(operator::RY(angle, q0))
+                Some(unitary_rep::RY(angle, q0))
             }
             GateType::RZ => {
                 let angle = *gate.angles.first()?;
-                Some(operator::RZ(angle, q0))
+                Some(unitary_rep::RZ(angle, q0))
             }
             GateType::CX => {
                 let q1 = gate.qubits.get(1).copied()?;
-                Some(operator::CX(q0, q1))
+                Some(unitary_rep::CX(q0, q1))
             }
             GateType::CY => {
                 let q1 = gate.qubits.get(1).copied()?;
-                Some(operator::CY(q0, q1))
+                Some(unitary_rep::CY(q0, q1))
             }
             GateType::CZ => {
                 let q1 = gate.qubits.get(1).copied()?;
-                Some(operator::CZ(q0, q1))
+                Some(unitary_rep::CZ(q0, q1))
             }
             GateType::RXX => {
                 let q1 = gate.qubits.get(1).copied()?;
                 let angle = *gate.angles.first()?;
-                Some(operator::RXX(angle, q0, q1))
+                Some(unitary_rep::RXX(angle, q0, q1))
             }
             GateType::RYY => {
                 let q1 = gate.qubits.get(1).copied()?;
                 let angle = *gate.angles.first()?;
-                Some(operator::RYY(angle, q0, q1))
+                Some(unitary_rep::RYY(angle, q0, q1))
             }
             GateType::RZZ => {
                 let q1 = gate.qubits.get(1).copied()?;
                 let angle = *gate.angles.first()?;
-                Some(operator::RZZ(angle, q0, q1))
+                Some(unitary_rep::RZZ(angle, q0, q1))
             }
             GateType::SZZ => {
                 let q1 = gate.qubits.get(1).copied()?;
-                Some(operator::SZZ(q0, q1))
+                Some(unitary_rep::SZZ(q0, q1))
             }
             GateType::SZZdg => {
                 let q1 = gate.qubits.get(1).copied()?;
-                Some(operator::SZZ(q0, q1).dg())
+                Some(unitary_rep::SZZ(q0, q1).dg())
             }
-            GateType::I | GateType::Idle => Some(operator::I(q0)),
+            GateType::I | GateType::Idle => Some(unitary_rep::I(q0)),
             _ => None,
         }
     }

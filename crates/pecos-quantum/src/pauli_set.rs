@@ -369,7 +369,7 @@ impl IntoIterator for PauliSet {
     }
 }
 
-// Operator overloads for set operations
+// UnitaryRep overloads for set operations
 
 impl std::ops::BitOr for &PauliSet {
     type Output = PauliSet;

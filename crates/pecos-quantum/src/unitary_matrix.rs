@@ -22,8 +22,8 @@
 //! The [`ToMatrix`] trait provides a method-style API for converting operators:
 //!
 //! ```
-//! use pecos_quantum::operator_matrix::ToMatrix;
-//! use pecos_core::operator::X;
+//! use pecos_quantum::unitary_matrix::ToMatrix;
+//! use pecos_core::unitary_rep::X;
 //!
 //! let x = X(0);
 //! let matrix = x.to_matrix();  // Method style
@@ -32,19 +32,19 @@
 use nalgebra::DMatrix;
 use num_complex::Complex64;
 use pecos_core::gate_type::GateType;
-use pecos_core::operator::{Operator, RotationType};
+use pecos_core::unitary_rep::{UnitaryRep, RotationType};
 use pecos_core::{Pauli, PauliString, Phase};
 
 /// Extension trait for converting quantum operators to matrix representations.
 ///
-/// This trait is implemented for [`Operator`] and [`PauliString`], providing
+/// This trait is implemented for [`UnitaryRep`] and [`PauliString`], providing
 /// a method-style API for matrix conversion.
 ///
 /// # Example
 ///
 /// ```
-/// use pecos_quantum::operator_matrix::ToMatrix;
-/// use pecos_core::operator::{X, H, CX, Is};
+/// use pecos_quantum::unitary_matrix::ToMatrix;
+/// use pecos_core::unitary_rep::{X, H, CX, Is};
 ///
 /// // Single qubit gate
 /// let x_matrix = X(0).to_matrix();
@@ -66,7 +66,7 @@ pub trait ToMatrix {
     fn to_matrix(&self) -> DMatrix<Complex64>;
 }
 
-impl ToMatrix for Operator {
+impl ToMatrix for UnitaryRep {
     fn to_matrix(&self) -> DMatrix<Complex64> {
         to_matrix(self)
     }
@@ -79,7 +79,7 @@ impl ToMatrix for PauliString {
     }
 }
 
-/// Converts an `Operator` to its dense matrix representation.
+/// Converts an `UnitaryRep` to its dense matrix representation.
 ///
 /// The matrix size is 2^n where n is the number of qubits (determined by
 /// the maximum qubit index + 1).
@@ -87,8 +87,8 @@ impl ToMatrix for PauliString {
 /// # Example
 ///
 /// ```
-/// use pecos_quantum::operator_matrix::to_matrix;
-/// use pecos_core::operator::X;
+/// use pecos_quantum::unitary_matrix::to_matrix;
+/// use pecos_core::unitary_rep::X;
 /// use num_complex::Complex64;
 ///
 /// let x = X(0);
@@ -99,32 +99,32 @@ impl ToMatrix for PauliString {
 /// assert!((matrix[(0, 1)] - Complex64::new(1.0, 0.0)).norm() < 1e-10);
 /// ```
 #[must_use]
-pub fn to_matrix(op: &Operator) -> DMatrix<Complex64> {
+pub fn to_matrix(op: &UnitaryRep) -> DMatrix<Complex64> {
     let num_qubits = op.qubits().into_iter().max().map_or(1, |q| q + 1);
     to_matrix_with_size(op, num_qubits)
 }
 
-/// Converts an `Operator` to its dense matrix representation with a specified size.
+/// Converts an `UnitaryRep` to its dense matrix representation with a specified size.
 ///
 /// # Arguments
 /// * `op` - The operator to convert
 /// * `num_qubits` - The number of qubits (matrix will be `2^num_qubits` x `2^num_qubits`)
 #[must_use]
-pub fn to_matrix_with_size(op: &Operator, num_qubits: usize) -> DMatrix<Complex64> {
+pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Complex64> {
     let dim = 1 << num_qubits; // 2^num_qubits
 
     match op {
-        Operator::Pauli(ps) => pauli_string_to_matrix_impl(ps, num_qubits),
+        UnitaryRep::Pauli(ps) => pauli_string_to_matrix_impl(ps, num_qubits),
 
-        Operator::Rotation {
+        UnitaryRep::Rotation {
             rotation_type,
             angle,
             qubits,
         } => rotation_to_matrix(*rotation_type, angle.to_radians(), qubits, num_qubits),
 
-        Operator::Gate { gate_type, qubits } => gate_to_matrix(*gate_type, qubits, num_qubits),
+        UnitaryRep::Gate { gate_type, qubits } => gate_to_matrix(*gate_type, qubits, num_qubits),
 
-        Operator::Tensor(parts) => {
+        UnitaryRep::Tensor(parts) => {
             // Start with identity, combine each part
             let mut result = DMatrix::identity(dim, dim);
             for part in parts {
@@ -134,7 +134,7 @@ pub fn to_matrix_with_size(op: &Operator, num_qubits: usize) -> DMatrix<Complex6
             result
         }
 
-        Operator::Compose(parts) => {
+        UnitaryRep::Compose(parts) => {
             // Matrix multiplication in reverse order (last part applied first)
             let mut result = DMatrix::identity(dim, dim);
             for part in parts {
@@ -144,12 +144,12 @@ pub fn to_matrix_with_size(op: &Operator, num_qubits: usize) -> DMatrix<Complex6
             result
         }
 
-        Operator::Adjoint(inner) => {
+        UnitaryRep::Adjoint(inner) => {
             let inner_matrix = to_matrix_with_size(inner, num_qubits);
             inner_matrix.adjoint()
         }
 
-        Operator::Phase { phase, inner } => {
+        UnitaryRep::Phase { phase, inner } => {
             let inner_matrix = to_matrix_with_size(inner, num_qubits);
             let phase_factor = Complex64::new(0.0, phase.to_radians()).exp();
             inner_matrix * phase_factor
@@ -164,8 +164,8 @@ pub fn to_matrix_with_size(op: &Operator, num_qubits: usize) -> DMatrix<Complex6
 /// # Example
 ///
 /// ```
-/// use pecos_quantum::operator_matrix::operator_exp;
-/// use pecos_core::operator::Z;
+/// use pecos_quantum::unitary_matrix::operator_exp;
+/// use pecos_core::unitary_rep::Z;
 /// use num_complex::Complex64;
 /// use std::f64::consts::PI;
 ///
@@ -175,7 +175,7 @@ pub fn to_matrix_with_size(op: &Operator, num_qubits: usize) -> DMatrix<Complex6
 /// // Result should be approximately -I
 /// ```
 #[must_use]
-pub fn operator_exp(op: &Operator, theta: f64) -> DMatrix<Complex64> {
+pub fn operator_exp(op: &UnitaryRep, theta: f64) -> DMatrix<Complex64> {
     let matrix = to_matrix(op);
     let scaled = matrix * Complex64::new(0.0, theta);
     pecos_num::matrix_exp(&scaled)
@@ -189,8 +189,8 @@ pub fn operator_exp(op: &Operator, theta: f64) -> DMatrix<Complex64> {
 /// # Example
 ///
 /// ```
-/// use pecos_quantum::operator_matrix::{operator_log, to_matrix};
-/// use pecos_core::operator::X;
+/// use pecos_quantum::unitary_matrix::{operator_log, to_matrix};
+/// use pecos_core::unitary_rep::X;
 ///
 /// let x = X(0);
 /// if let Some(log_x) = operator_log(&x) {
@@ -198,7 +198,7 @@ pub fn operator_exp(op: &Operator, theta: f64) -> DMatrix<Complex64> {
 /// }
 /// ```
 #[must_use]
-pub fn operator_log(op: &Operator) -> Option<DMatrix<Complex64>> {
+pub fn operator_log(op: &UnitaryRep) -> Option<DMatrix<Complex64>> {
     let matrix = to_matrix(op);
     let log_matrix = pecos_num::matrix_log(&matrix)?;
     // Divide by i to get the Hermitian generator
@@ -212,8 +212,8 @@ pub fn operator_log(op: &Operator) -> Option<DMatrix<Complex64>> {
 /// # Example
 ///
 /// ```
-/// use pecos_quantum::operator_matrix::operators_equiv;
-/// use pecos_core::operator::{X, Y, Z};
+/// use pecos_quantum::unitary_matrix::operators_equiv;
+/// use pecos_core::unitary_rep::{X, Y, Z};
 ///
 /// let x = X(0);
 /// let x2 = X(0);
@@ -223,13 +223,13 @@ pub fn operator_log(op: &Operator) -> Option<DMatrix<Complex64>> {
 /// assert!(!operators_equiv(&x, &y));
 /// ```
 #[must_use]
-pub fn operators_equiv(a: &Operator, b: &Operator) -> bool {
+pub fn operators_equiv(a: &UnitaryRep, b: &UnitaryRep) -> bool {
     operators_equiv_with_tolerance(a, b, 1e-10)
 }
 
 /// Checks if two operators are equivalent up to a global phase, with custom tolerance.
 #[must_use]
-pub fn operators_equiv_with_tolerance(a: &Operator, b: &Operator, tol: f64) -> bool {
+pub fn operators_equiv_with_tolerance(a: &UnitaryRep, b: &UnitaryRep, tol: f64) -> bool {
     let num_qubits_a = a.qubits().into_iter().max().map_or(1, |q| q + 1);
     let num_qubits_b = b.qubits().into_iter().max().map_or(1, |q| q + 1);
     let num_qubits = num_qubits_a.max(num_qubits_b);
@@ -524,7 +524,7 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         GateType::SWAP => swap_matrix(qubits[0], qubits[1], num_qubits),
         _ => {
             // Gates not yet implemented: SY, SYdg, U, R1XY, SZZ, SZZdg, CRZ, CCX
-            // Rotation gates (RX, RY, RZ, RXX, RYY, RZZ) should use Operator::Rotation
+            // Rotation gates (RX, RY, RZ, RXX, RYY, RZZ) should use UnitaryRep::Rotation
             // Prep/Measure gates are not unitary and shouldn't be converted to matrices
             log::warn!("Gate type {gate_type:?} not implemented in to_matrix, returning identity");
             let dim = 1 << num_qubits;
@@ -608,7 +608,7 @@ fn combine_disjoint_operators(
 mod tests {
     use super::*;
     use pecos_core::Angle64;
-    use pecos_core::operator::{CX, H, I, Is, RX, RZ, SWAP, SZ, T, X, Y, Z};
+    use pecos_core::unitary_rep::{CX, H, I, Is, RX, RZ, SWAP, SZ, T, X, Y, Z};
     use std::f64::consts::PI;
 
     // ========================================================================
@@ -800,7 +800,7 @@ mod tests {
     fn test_operators_equiv_global_phase() {
         // X and -X differ by global phase -1
         let x = X(0);
-        let neg_x = pecos_core::operator::phase(Angle64::HALF_TURN) * X(0);
+        let neg_x = pecos_core::unitary_rep::phase(Angle64::HALF_TURN) * X(0);
         assert!(operators_equiv(&x, &neg_x));
     }
 
@@ -808,7 +808,7 @@ mod tests {
     fn test_operators_equiv_i_phase() {
         // X and iX differ by global phase i
         let x = X(0);
-        let i_x = pecos_core::operator::i * X(0);
+        let i_x = pecos_core::unitary_rep::i * X(0);
         assert!(operators_equiv(&x, &i_x));
     }
 
@@ -1025,7 +1025,7 @@ mod tests {
     #[test]
     fn test_cz_gate() {
         // CZ = |0><0| ⊗ I + |1><1| ⊗ Z
-        use pecos_core::operator::CZ;
+        use pecos_core::unitary_rep::CZ;
         let cz = CZ(0, 1);
         let mat = to_matrix(&cz);
 
@@ -1043,7 +1043,7 @@ mod tests {
     #[test]
     fn test_cz_symmetric() {
         // CZ(0,1) should equal CZ(1,0)
-        use pecos_core::operator::CZ;
+        use pecos_core::unitary_rep::CZ;
         let cz_01 = CZ(0, 1);
         let cz_10 = CZ(1, 0);
 
@@ -1276,11 +1276,11 @@ mod tests {
     fn test_pauli_string_matches_operator_pauli() {
         use pecos_core::{Pauli, PauliString};
 
-        // Verify PauliString.to_matrix() matches Operator::Pauli.to_matrix()
+        // Verify PauliString.to_matrix() matches UnitaryRep::Pauli.to_matrix()
         let ps = PauliString::from_paulis(&[Pauli::Y, Pauli::Z]);
 
-        // Convert to Operator::Pauli
-        let op = pecos_core::operator::Operator::Pauli(ps.clone());
+        // Convert to UnitaryRep::Pauli
+        let op = pecos_core::unitary_rep::UnitaryRep::Pauli(ps.clone());
 
         let ps_mat = ps.to_matrix();
         let op_mat = op.to_matrix();

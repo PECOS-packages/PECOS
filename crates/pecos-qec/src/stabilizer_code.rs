@@ -879,7 +879,7 @@ impl StabilizerCodeBuilder {
         self
     }
 
-    /// Adds a stabilizer from an `Operator`.
+    /// Adds a stabilizer from an `UnitaryRep`.
     ///
     /// The operator must be convertible to a `PauliString` (i.e., a Pauli operator
     /// or tensor product of Pauli operators).
@@ -897,17 +897,17 @@ impl StabilizerCodeBuilder {
     ///     .unwrap();
     /// ```
     ///
-    /// Accepts both `PauliString` and `Operator` (via `Into<Operator>`).
+    /// Accepts both `PauliString` and `UnitaryRep` (via `Into<UnitaryRep>`).
     ///
     /// # Panics
     ///
     /// Panics if the operator cannot be converted to a `PauliString`.
     #[must_use]
-    pub fn check(mut self, op: impl Into<pecos_core::Operator>) -> Self {
+    pub fn check(mut self, op: impl Into<pecos_core::UnitaryRep>) -> Self {
         let ps = op
             .into()
             .try_to_pauli_string()
-            .expect("Operator must be convertible to PauliString");
+            .expect("UnitaryRep must be convertible to PauliString");
         self.stabilizers.push(ps);
         self
     }
@@ -921,17 +921,17 @@ impl StabilizerCodeBuilder {
 
     /// Adds a logical Z operator.
     ///
-    /// Accepts both `PauliString` and `Operator` (via `Into<Operator>`).
+    /// Accepts both `PauliString` and `UnitaryRep` (via `Into<UnitaryRep>`).
     ///
     /// # Panics
     ///
     /// Panics if the operator cannot be converted to a `PauliString`.
     #[must_use]
-    pub fn logical_z(mut self, op: impl Into<pecos_core::Operator>) -> Self {
+    pub fn logical_z(mut self, op: impl Into<pecos_core::UnitaryRep>) -> Self {
         let ps = op
             .into()
             .try_to_pauli_string()
-            .expect("Operator must be convertible to PauliString");
+            .expect("UnitaryRep must be convertible to PauliString");
         self.logical_zs.push(ps);
         self
     }
@@ -945,17 +945,17 @@ impl StabilizerCodeBuilder {
 
     /// Adds a logical X operator.
     ///
-    /// Accepts both `PauliString` and `Operator` (via `Into<Operator>`).
+    /// Accepts both `PauliString` and `UnitaryRep` (via `Into<UnitaryRep>`).
     ///
     /// # Panics
     ///
     /// Panics if the operator cannot be converted to a `PauliString`.
     #[must_use]
-    pub fn logical_x(mut self, op: impl Into<pecos_core::Operator>) -> Self {
+    pub fn logical_x(mut self, op: impl Into<pecos_core::UnitaryRep>) -> Self {
         let ps = op
             .into()
             .try_to_pauli_string()
-            .expect("Operator must be convertible to PauliString");
+            .expect("UnitaryRep must be convertible to PauliString");
         self.logical_xs.push(ps);
         self
     }

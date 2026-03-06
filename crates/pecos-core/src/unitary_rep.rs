@@ -29,7 +29,7 @@
 //! # Examples
 //!
 //! ```
-//! use pecos_core::operator::*;
+//! use pecos_core::unitary_rep::*;
 //! use pecos_core::Angle64;
 //!
 //! // Build a circuit: H on q0, then CX(0,1), then T on q1
@@ -70,7 +70,7 @@ use std::str::FromStr;
 ///
 /// ```
 /// use pecos_core::{phase, Angle64};
-/// use pecos_core::operator::X;
+/// use pecos_core::unitary_rep::X;
 ///
 /// // e^{iπ/4} * X - exact, no floating point
 /// let op = phase!(pi / 4) * X(0);
@@ -84,7 +84,7 @@ use std::str::FromStr;
 #[macro_export]
 macro_rules! phase {
     ($($tokens:tt)*) => {
-        $crate::operator::PhaseValue($crate::angle!($($tokens)*))
+        $crate::unitary_rep::PhaseValue($crate::angle!($($tokens)*))
     };
 }
 
@@ -97,7 +97,7 @@ macro_rules! phase {
 ///
 /// ```
 /// use pecos_core::phase_turn;
-/// use pecos_core::operator::X;
+/// use pecos_core::unitary_rep::X;
 ///
 /// // T gate phase: e^{i * 2π/8} = e^{iπ/4}
 /// let op = phase_turn!(1 / 8) * X(0);
@@ -111,7 +111,7 @@ macro_rules! phase {
 #[macro_export]
 macro_rules! phase_turn {
     ($($tokens:tt)*) => {
-        $crate::operator::PhaseValue($crate::turn!($($tokens)*))
+        $crate::unitary_rep::PhaseValue($crate::turn!($($tokens)*))
     };
 }
 
@@ -179,7 +179,7 @@ pub enum Commutativity {
 ///
 /// Enables pluralized gate functions to accept various qubit collections:
 /// ```
-/// use pecos_core::operator::*;
+/// use pecos_core::unitary_rep::*;
 /// use pecos_core::QubitId;
 ///
 /// // Multiple qubits via Xs - equivalent to X(0) & X(2) & X(5)
@@ -276,14 +276,14 @@ impl Qubits {
     /// For a single qubit, returns the gate directly.
     /// For multiple qubits, returns a Tensor of the gates.
     #[must_use]
-    pub fn apply<F>(self, gate_fn: F) -> Operator
+    pub fn apply<F>(self, gate_fn: F) -> UnitaryRep
     where
-        F: Fn(usize) -> Operator,
+        F: Fn(usize) -> UnitaryRep,
     {
         match self.0.len() {
-            0 => Operator::Pauli(PauliString::default()), // Identity
+            0 => UnitaryRep::Pauli(PauliString::default()), // Identity
             1 => gate_fn(self.0[0].0),
-            _ => Operator::Tensor(self.0.iter().map(|q| gate_fn(q.0)).collect()),
+            _ => UnitaryRep::Tensor(self.0.iter().map(|q| gate_fn(q.0)).collect()),
         }
     }
 }
@@ -291,7 +291,7 @@ impl Qubits {
 /// Wrapper for qubit pairs used by pluralized two-qubit gates.
 ///
 /// ```
-/// use pecos_core::operator::*;
+/// use pecos_core::unitary_rep::*;
 /// use pecos_core::QubitId;
 ///
 /// // Multiple CX gates via CXs
@@ -383,14 +383,14 @@ impl QubitPairs {
     /// For a single pair, returns the gate directly.
     /// For multiple pairs, returns a Tensor of the gates.
     #[must_use]
-    pub fn apply<F>(self, gate_fn: F) -> Operator
+    pub fn apply<F>(self, gate_fn: F) -> UnitaryRep
     where
-        F: Fn(usize, usize) -> Operator,
+        F: Fn(usize, usize) -> UnitaryRep,
     {
         match self.0.len() {
-            0 => Operator::Pauli(PauliString::default()), // Identity
+            0 => UnitaryRep::Pauli(PauliString::default()), // Identity
             1 => gate_fn(self.0[0].0.0, self.0[0].1.0),
-            _ => Operator::Tensor(self.0.iter().map(|(q0, q1)| gate_fn(q0.0, q1.0)).collect()),
+            _ => UnitaryRep::Tensor(self.0.iter().map(|(q0, q1)| gate_fn(q0.0, q1.0)).collect()),
         }
     }
 }
@@ -400,7 +400,7 @@ impl QubitPairs {
 /// This is the unified type for all quantum operators including Pauli operators,
 /// Clifford gates, and general unitaries.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Operator {
+pub enum UnitaryRep {
     /// Pauli operator (single or multi-qubit)
     /// Wraps `PauliString` for exact Pauli algebra
     Pauli(PauliString),
@@ -419,50 +419,50 @@ pub enum Operator {
     },
 
     /// Tensor product of expressions (operators on different qubits)
-    Tensor(Vec<Operator>),
+    Tensor(Vec<UnitaryRep>),
 
     /// Sequential composition (matrix multiplication order)
     /// Compose([A, B, C]) means apply A, then B, then C
-    Compose(Vec<Operator>),
+    Compose(Vec<UnitaryRep>),
 
     /// Adjoint (Hermitian conjugate)
-    Adjoint(Box<Operator>),
+    Adjoint(Box<UnitaryRep>),
 
     /// Global phase: e^{i*phase} * inner
     /// Phase is represented as Angle64 for exact arithmetic
     Phase {
         phase: Angle64,
-        inner: Box<Operator>,
+        inner: Box<UnitaryRep>,
     },
 }
 
-impl From<PauliString> for Operator {
+impl From<PauliString> for UnitaryRep {
     fn from(ps: PauliString) -> Self {
-        Operator::Pauli(ps)
+        UnitaryRep::Pauli(ps)
     }
 }
 
-/// Error type for parsing an [`Operator`] from a string.
+/// Error type for parsing an [`UnitaryRep`] from a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseOperatorError {
+pub struct ParseUnitaryRepError {
     pub message: String,
 }
 
-impl std::fmt::Display for ParseOperatorError {
+impl std::fmt::Display for ParseUnitaryRepError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
     }
 }
 
-impl std::error::Error for ParseOperatorError {}
+impl std::error::Error for ParseUnitaryRepError {}
 
 /// Parses an angle expression like `pi`, `pi/4`, `2*pi/3`, `-pi/2`.
 ///
 /// Returns the angle as an `Angle64`.
-fn parse_angle_expr(s: &str) -> Result<Angle64, ParseOperatorError> {
+fn parse_angle_expr(s: &str) -> Result<Angle64, ParseUnitaryRepError> {
     let s = s.trim();
     if s.is_empty() {
-        return Err(ParseOperatorError {
+        return Err(ParseUnitaryRepError {
             message: "Empty angle expression".to_string(),
         });
     }
@@ -481,17 +481,17 @@ fn parse_angle_expr(s: &str) -> Result<Angle64, ParseOperatorError> {
         if rest.is_empty() {
             Angle64::HALF_TURN
         } else if let Some(denom_str) = rest.strip_prefix('/') {
-            let denom: u64 = denom_str.trim().parse().map_err(|_| ParseOperatorError {
+            let denom: u64 = denom_str.trim().parse().map_err(|_| ParseUnitaryRepError {
                 message: format!("Invalid angle denominator: '{denom_str}'"),
             })?;
             if denom == 0 {
-                return Err(ParseOperatorError {
+                return Err(ParseUnitaryRepError {
                     message: "Division by zero in angle".to_string(),
                 });
             }
             Angle64::HALF_TURN / denom
         } else {
-            return Err(ParseOperatorError {
+            return Err(ParseUnitaryRepError {
                 message: format!("Invalid angle expression: '{s}'"),
             });
         }
@@ -499,39 +499,39 @@ fn parse_angle_expr(s: &str) -> Result<Angle64, ParseOperatorError> {
         // "N*pi" or "N*pi/M"
         let parts: Vec<&str> = s.splitn(2, '*').collect();
         if parts.len() != 2 {
-            return Err(ParseOperatorError {
+            return Err(ParseUnitaryRepError {
                 message: format!("Invalid angle expression: '{s}'"),
             });
         }
-        let numer: u64 = parts[0].trim().parse().map_err(|_| ParseOperatorError {
+        let numer: u64 = parts[0].trim().parse().map_err(|_| ParseUnitaryRepError {
             message: format!("Invalid angle numerator: '{}'", parts[0]),
         })?;
         let pi_part = parts[1].trim();
         let pi_rest = pi_part
             .strip_prefix("pi")
-            .ok_or_else(|| ParseOperatorError {
+            .ok_or_else(|| ParseUnitaryRepError {
                 message: format!("Expected 'pi' in angle expression: '{s}'"),
             })?;
         let pi_rest = pi_rest.trim();
         if pi_rest.is_empty() {
             Angle64::HALF_TURN * numer
         } else if let Some(denom_str) = pi_rest.strip_prefix('/') {
-            let denom: u64 = denom_str.trim().parse().map_err(|_| ParseOperatorError {
+            let denom: u64 = denom_str.trim().parse().map_err(|_| ParseUnitaryRepError {
                 message: format!("Invalid angle denominator: '{denom_str}'"),
             })?;
             if denom == 0 {
-                return Err(ParseOperatorError {
+                return Err(ParseUnitaryRepError {
                     message: "Division by zero in angle".to_string(),
                 });
             }
             Angle64::HALF_TURN * numer / denom
         } else {
-            return Err(ParseOperatorError {
+            return Err(ParseUnitaryRepError {
                 message: format!("Invalid angle expression: '{s}'"),
             });
         }
     } else {
-        return Err(ParseOperatorError {
+        return Err(ParseUnitaryRepError {
             message: format!(
                 "Unsupported angle format: '{s}' (expected pi expression like 'pi/4' or '2*pi/3')"
             ),
@@ -546,21 +546,21 @@ fn parse_angle_expr(s: &str) -> Result<Angle64, ParseOperatorError> {
 }
 
 /// Parses qubit indices from whitespace-separated tokens.
-fn parse_qubits(tokens: &[&str]) -> Result<Vec<usize>, ParseOperatorError> {
+fn parse_qubits(tokens: &[&str]) -> Result<Vec<usize>, ParseUnitaryRepError> {
     tokens
         .iter()
         .map(|t| {
-            t.parse::<usize>().map_err(|_| ParseOperatorError {
+            t.parse::<usize>().map_err(|_| ParseUnitaryRepError {
                 message: format!("Invalid qubit index: '{t}'"),
             })
         })
         .collect()
 }
 
-impl FromStr for Operator {
-    type Err = ParseOperatorError;
+impl FromStr for UnitaryRep {
+    type Err = ParseUnitaryRepError;
 
-    /// Parses an `Operator` from a string, supporting both gate and Pauli syntax.
+    /// Parses an `UnitaryRep` from a string, supporting both gate and Pauli syntax.
     ///
     /// # Gate syntax
     ///
@@ -585,25 +585,25 @@ impl FromStr for Operator {
     /// # Examples
     ///
     /// ```
-    /// use pecos_core::Operator;
+    /// use pecos_core::UnitaryRep;
     /// use std::str::FromStr;
     ///
     /// // Gate syntax
-    /// let h: Operator = "H 0".parse().unwrap();
-    /// let cx: Operator = "CX 0 1".parse().unwrap();
-    /// let t: Operator = "T 0".parse().unwrap();
-    /// let rz: Operator = "RZ(pi/4) 0".parse().unwrap();
+    /// let h: UnitaryRep = "H 0".parse().unwrap();
+    /// let cx: UnitaryRep = "CX 0 1".parse().unwrap();
+    /// let t: UnitaryRep = "T 0".parse().unwrap();
+    /// let rz: UnitaryRep = "RZ(pi/4) 0".parse().unwrap();
     ///
     /// // Pauli syntax (sparse)
-    /// let p: Operator = "X0 Z1".parse().unwrap();
+    /// let p: UnitaryRep = "X0 Z1".parse().unwrap();
     ///
     /// // Pauli syntax (dense)
-    /// let p: Operator = "XZI".parse().unwrap();
+    /// let p: UnitaryRep = "XZI".parse().unwrap();
     /// ```
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
         if s.is_empty() {
-            return Ok(Operator::Pauli(PauliString::new()));
+            return Ok(UnitaryRep::Pauli(PauliString::new()));
         }
 
         // Extract the first word (gate name candidate), stopping at whitespace or '('
@@ -634,14 +634,14 @@ impl FromStr for Operator {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 let expected = rot_type.num_qubits();
                 if qubits.len() != expected {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!(
                             "{rot_name} requires {expected} qubit(s), got {}",
                             qubits.len()
                         ),
                     });
                 }
-                return Ok(Operator::rotation(
+                return Ok(UnitaryRep::rotation(
                     rot_type,
                     angle,
                     SmallVec::from_vec(qubits),
@@ -671,25 +671,25 @@ impl FromStr for Operator {
                 let expected = if upper == "CH" { 2 } else { 1 };
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != expected {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!(
                             "{gate_name} requires {expected} qubit(s), got {}",
                             qubits.len()
                         ),
                     });
                 }
-                Ok(Operator::gate(gate_type, SmallVec::from_vec(qubits)))
+                Ok(UnitaryRep::gate(gate_type, SmallVec::from_vec(qubits)))
             }
 
             // Named rotations (these produce Rotation variants)
             "T" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 1 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("T requires 1 qubit, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::rotation(
+                Ok(UnitaryRep::rotation(
                     RotationType::RZ,
                     Angle64::HALF_TURN / 4,
                     smallvec::smallvec![qubits[0]],
@@ -698,11 +698,11 @@ impl FromStr for Operator {
             "TDG" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 1 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("Tdg requires 1 qubit, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::rotation(
+                Ok(UnitaryRep::rotation(
                     RotationType::RZ,
                     Angle64::ZERO - Angle64::HALF_TURN / 4,
                     smallvec::smallvec![qubits[0]],
@@ -711,11 +711,11 @@ impl FromStr for Operator {
             "S" | "SZ" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 1 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("{gate_name} requires 1 qubit, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::rotation(
+                Ok(UnitaryRep::rotation(
                     RotationType::RZ,
                     Angle64::QUARTER_TURN,
                     smallvec::smallvec![qubits[0]],
@@ -724,11 +724,11 @@ impl FromStr for Operator {
             "SDG" | "SZDG" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 1 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("{gate_name} requires 1 qubit, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::rotation(
+                Ok(UnitaryRep::rotation(
                     RotationType::RZ,
                     Angle64::ZERO - Angle64::QUARTER_TURN,
                     smallvec::smallvec![qubits[0]],
@@ -739,61 +739,61 @@ impl FromStr for Operator {
             "CX" | "CNOT" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 2 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("{gate_name} requires 2 qubits, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::gate(GateType::CX, SmallVec::from_vec(qubits)))
+                Ok(UnitaryRep::gate(GateType::CX, SmallVec::from_vec(qubits)))
             }
             "CY" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 2 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("CY requires 2 qubits, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::gate(GateType::CY, SmallVec::from_vec(qubits)))
+                Ok(UnitaryRep::gate(GateType::CY, SmallVec::from_vec(qubits)))
             }
             "CZ" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 2 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("CZ requires 2 qubits, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::gate(GateType::CZ, SmallVec::from_vec(qubits)))
+                Ok(UnitaryRep::gate(GateType::CZ, SmallVec::from_vec(qubits)))
             }
             "SWAP" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 2 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("SWAP requires 2 qubits, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::gate(GateType::SWAP, SmallVec::from_vec(qubits)))
+                Ok(UnitaryRep::gate(GateType::SWAP, SmallVec::from_vec(qubits)))
             }
 
             // Three-qubit gates
             "CCX" | "TOFFOLI" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 3 {
-                    return Err(ParseOperatorError {
+                    return Err(ParseUnitaryRepError {
                         message: format!("{gate_name} requires 3 qubits, got {}", qubits.len()),
                     });
                 }
-                Ok(Operator::gate(GateType::CCX, SmallVec::from_vec(qubits)))
+                Ok(UnitaryRep::gate(GateType::CCX, SmallVec::from_vec(qubits)))
             }
 
             // Not a recognized gate name -> try Pauli parsing.
             // This handles: "X0 Z1", "XYZZ", "-i X2 Z4", "X 0", "Z 3", etc.
             _ => PauliString::from_str(s)
-                .map(Operator::Pauli)
-                .map_err(|e| ParseOperatorError { message: e.message }),
+                .map(UnitaryRep::Pauli)
+                .map_err(|e| ParseUnitaryRepError { message: e.message }),
         }
     }
 }
 
-impl Operator {
+impl UnitaryRep {
     /// Creates a rotation gate expression.
     #[must_use]
     pub fn rotation(
@@ -851,9 +851,9 @@ impl Operator {
                 }
             }
             // Tensor adjoint: adjoint of each part
-            Self::Tensor(parts) => Self::Tensor(parts.iter().map(Operator::dg).collect()),
+            Self::Tensor(parts) => Self::Tensor(parts.iter().map(UnitaryRep::dg).collect()),
             // Compose adjoint: reverse order and adjoint each
-            Self::Compose(parts) => Self::Compose(parts.iter().rev().map(Operator::dg).collect()),
+            Self::Compose(parts) => Self::Compose(parts.iter().rev().map(UnitaryRep::dg).collect()),
             // Double adjoint: unwrap
             Self::Adjoint(inner) => (**inner).clone(),
             // Phase adjoint: conjugate phase (negate), adjoint inner
@@ -907,7 +907,7 @@ impl Operator {
                 is_multiple_of_quarter_turn(*angle)
             }
             Self::Gate { gate_type, .. } => gate_type.is_clifford(),
-            Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(Operator::is_clifford),
+            Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(UnitaryRep::is_clifford),
             // Phase doesn't affect Clifford-ness (global phase)
             Self::Adjoint(inner) | Self::Phase { inner, .. } => inner.is_clifford(),
         }
@@ -944,18 +944,18 @@ impl Operator {
 // Negation operator: -op (phase by π)
 // ============================================================================
 
-impl Neg for Operator {
-    type Output = Operator;
+impl Neg for UnitaryRep {
+    type Output = UnitaryRep;
 
-    fn neg(self) -> Operator {
+    fn neg(self) -> UnitaryRep {
         self.with_phase(Angle64::HALF_TURN)
     }
 }
 
-impl Neg for &Operator {
-    type Output = Operator;
+impl Neg for &UnitaryRep {
+    type Output = UnitaryRep;
 
-    fn neg(self) -> Operator {
+    fn neg(self) -> UnitaryRep {
         self.clone().with_phase(Angle64::HALF_TURN)
     }
 }
@@ -984,36 +984,36 @@ impl Neg for ImaginaryUnit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NegImaginaryUnit;
 
-impl Mul<Operator> for ImaginaryUnit {
-    type Output = Operator;
+impl Mul<UnitaryRep> for ImaginaryUnit {
+    type Output = UnitaryRep;
 
-    fn mul(self, rhs: Operator) -> Operator {
+    fn mul(self, rhs: UnitaryRep) -> UnitaryRep {
         rhs.with_phase(Angle64::QUARTER_TURN) // i = e^{iπ/2}
     }
 }
 
-impl Mul<&Operator> for ImaginaryUnit {
-    type Output = Operator;
+impl Mul<&UnitaryRep> for ImaginaryUnit {
+    type Output = UnitaryRep;
 
-    fn mul(self, rhs: &Operator) -> Operator {
+    fn mul(self, rhs: &UnitaryRep) -> UnitaryRep {
         rhs.clone().with_phase(Angle64::QUARTER_TURN)
     }
 }
 
-impl Mul<Operator> for NegImaginaryUnit {
-    type Output = Operator;
+impl Mul<UnitaryRep> for NegImaginaryUnit {
+    type Output = UnitaryRep;
 
     #[allow(clippy::suspicious_arithmetic_impl)] // Adding angles for phase computation
-    fn mul(self, rhs: Operator) -> Operator {
+    fn mul(self, rhs: UnitaryRep) -> UnitaryRep {
         rhs.with_phase(Angle64::QUARTER_TURN + Angle64::HALF_TURN) // -i = e^{i3π/2}
     }
 }
 
-impl Mul<&Operator> for NegImaginaryUnit {
-    type Output = Operator;
+impl Mul<&UnitaryRep> for NegImaginaryUnit {
+    type Output = UnitaryRep;
 
     #[allow(clippy::suspicious_arithmetic_impl)] // Adding angles for phase computation
-    fn mul(self, rhs: &Operator) -> Operator {
+    fn mul(self, rhs: &UnitaryRep) -> UnitaryRep {
         rhs.clone()
             .with_phase(Angle64::QUARTER_TURN + Angle64::HALF_TURN)
     }
@@ -1027,7 +1027,7 @@ impl Mul<&Operator> for NegImaginaryUnit {
 ///
 /// # Example
 /// ```
-/// use pecos_core::operator::{phase, X};
+/// use pecos_core::unitary_rep::{phase, X};
 /// use pecos_core::Angle64;
 ///
 /// // Create a phase of e^{iπ/4}
@@ -1043,7 +1043,7 @@ pub struct PhaseValue(pub Angle64);
 ///
 /// # Example
 /// ```
-/// use pecos_core::operator::{phase, X, Z};
+/// use pecos_core::unitary_rep::{phase, X, Z};
 /// use pecos_core::Angle64;
 ///
 /// // e^{iπ/4} * X
@@ -1086,23 +1086,23 @@ impl Mul<PhaseValue> for NegImaginaryUnit {
     }
 }
 
-impl Mul<Operator> for PhaseValue {
-    type Output = Operator;
+impl Mul<UnitaryRep> for PhaseValue {
+    type Output = UnitaryRep;
 
-    fn mul(self, rhs: Operator) -> Operator {
+    fn mul(self, rhs: UnitaryRep) -> UnitaryRep {
         rhs.with_phase(self.0)
     }
 }
 
-impl Mul<&Operator> for PhaseValue {
-    type Output = Operator;
+impl Mul<&UnitaryRep> for PhaseValue {
+    type Output = UnitaryRep;
 
-    fn mul(self, rhs: &Operator) -> Operator {
+    fn mul(self, rhs: &UnitaryRep) -> UnitaryRep {
         rhs.clone().with_phase(self.0)
     }
 }
 
-impl Operator {
+impl UnitaryRep {
     /// Attempts to convert a rotation to its named `GateType` equivalent.
     #[must_use]
     pub fn to_named_gate(&self) -> Option<GateType> {
@@ -1141,7 +1141,7 @@ impl Operator {
         }
     }
 
-    /// Consumes this `Operator` and returns the inner `PauliString` if this is a `Pauli` variant.
+    /// Consumes this `UnitaryRep` and returns the inner `PauliString` if this is a `Pauli` variant.
     #[must_use]
     pub fn into_pauli_string(self) -> Option<PauliString> {
         if let Self::Pauli(ps) = self {
@@ -1165,7 +1165,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{Xs, Zs};
+    /// use pecos_core::unitary_rep::{Xs, Zs};
     /// use pecos_core::PauliOperator;
     ///
     /// // Tensor of Paulis on disjoint qubits
@@ -1357,7 +1357,7 @@ impl Operator {
 
             Self::Tensor(parts) => {
                 // Simplify each part but preserve identities (they define the Hilbert space dimension)
-                let simplified: Vec<_> = parts.iter().map(Operator::simplify).collect();
+                let simplified: Vec<_> = parts.iter().map(UnitaryRep::simplify).collect();
 
                 match simplified.len() {
                     0 => Self::Pauli(PauliString::default()), // Empty tensor = identity
@@ -1368,7 +1368,7 @@ impl Operator {
 
             Self::Compose(parts) => {
                 // First simplify each part
-                let simplified: Vec<_> = parts.iter().map(Operator::simplify).collect();
+                let simplified: Vec<_> = parts.iter().map(UnitaryRep::simplify).collect();
 
                 // Flatten nested Compose nodes
                 let flattened = flatten_compose(simplified);
@@ -1417,7 +1417,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{X, Z, H, T};
+    /// use pecos_core::unitary_rep::{X, Z, H, T};
     ///
     /// // Stabilizer update: applying H to qubit 0
     /// let stabilizer = X(0) & Z(1);
@@ -1429,7 +1429,7 @@ impl Operator {
     /// let conjugated = b.conj(&a);  // T X T†
     /// ```
     #[must_use]
-    pub fn conj(&self, gate: &Operator) -> Self {
+    pub fn conj(&self, gate: &UnitaryRep) -> Self {
         gate.clone() * self.clone() * gate.dg()
     }
 
@@ -1442,13 +1442,13 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{X, H};
+    /// use pecos_core::unitary_rep::{X, H};
     ///
     /// // Heisenberg evolution: how X evolves under H
     /// let evolved = X(0).conjdg(&H(0));  // H† X H
     /// ```
     #[must_use]
-    pub fn conjdg(&self, gate: &Operator) -> Self {
+    pub fn conjdg(&self, gate: &UnitaryRep) -> Self {
         gate.dg() * self.clone() * gate.clone()
     }
 
@@ -1457,7 +1457,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{X, Y};
+    /// use pecos_core::unitary_rep::{X, Y};
     /// use pecos_core::{GlobalPhase, QuarterPhase};
     ///
     /// let op = X(0);
@@ -1482,7 +1482,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{X, Z, CX};
+    /// use pecos_core::unitary_rep::{X, Z, CX};
     ///
     /// assert_eq!(X(0).weight(), 1);
     /// assert_eq!((X(0) & Z(2)).weight(), 2);
@@ -1498,7 +1498,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::I;
+    /// use pecos_core::unitary_rep::I;
     ///
     /// assert!(I(0).is_identity());
     /// ```
@@ -1508,7 +1508,7 @@ impl Operator {
             Self::Pauli(ps) => ps.weight() == 0 && ps.phase() == crate::QuarterPhase::PlusOne,
             Self::Gate { gate_type, .. } => *gate_type == GateType::I,
             Self::Rotation { angle, .. } => *angle == Angle64::ZERO,
-            Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(Operator::is_identity),
+            Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(UnitaryRep::is_identity),
             Self::Adjoint(inner) => inner.is_identity(),
             Self::Phase { phase, inner } => *phase == Angle64::ZERO && inner.is_identity(),
         }
@@ -1519,7 +1519,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{X, Y, Z, H, T};
+    /// use pecos_core::unitary_rep::{X, Y, Z, H, T};
     ///
     /// // Paulis are Hermitian
     /// assert!(X(0).is_hermitian());
@@ -1554,7 +1554,7 @@ impl Operator {
                 // Rotations are Hermitian only at angle 0 or π
                 *angle == Angle64::ZERO || *angle == Angle64::HALF_TURN
             }
-            Self::Tensor(parts) => parts.iter().all(Operator::is_hermitian),
+            Self::Tensor(parts) => parts.iter().all(UnitaryRep::is_hermitian),
             // Composition of Hermitians isn't generally Hermitian; phase factors break Hermiticity
             Self::Compose(_) | Self::Phase { .. } => false,
             Self::Adjoint(inner) => inner.is_hermitian(), // (A†)† = A, so same as inner
@@ -1566,7 +1566,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{X, H};
+    /// use pecos_core::unitary_rep::{X, H};
     ///
     /// let x = X(0);
     /// let x2 = x.pow(2);  // X * X = I
@@ -1604,7 +1604,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{X, Z, Commutativity};
+    /// use pecos_core::unitary_rep::{X, Z, Commutativity};
     ///
     /// let a = X(0);
     /// let b = Z(0);
@@ -1615,7 +1615,7 @@ impl Operator {
     /// assert_eq!(c.commutes(&d), Commutativity::Commutes);
     /// ```
     #[must_use]
-    pub fn commutes(&self, other: &Operator) -> Commutativity {
+    pub fn commutes(&self, other: &UnitaryRep) -> Commutativity {
         use crate::PauliOperator;
 
         match (self, other) {
@@ -1637,7 +1637,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{X, H, RZ};
+    /// use pecos_core::unitary_rep::{X, H, RZ};
     /// use pecos_core::Angle64;
     ///
     /// assert!(X(0).is_unitary());
@@ -1646,7 +1646,7 @@ impl Operator {
     /// ```
     #[must_use]
     pub fn is_unitary(&self) -> bool {
-        true // All Operator variants are unitary by construction
+        true // All UnitaryRep variants are unitary by construction
     }
 
     /// Decomposes this operator into a sequence of primitive gates.
@@ -1657,7 +1657,7 @@ impl Operator {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::operator::{H, CX};
+    /// use pecos_core::unitary_rep::{H, CX};
     ///
     /// let circuit = CX(0, 1) * H(0);  // H then CX
     /// let gates = circuit.decompose();
@@ -1715,12 +1715,12 @@ impl Operator {
 
             Self::Tensor(parts) => {
                 // Decompose each part and concatenate
-                parts.iter().flat_map(Operator::decompose).collect()
+                parts.iter().flat_map(UnitaryRep::decompose).collect()
             }
 
             Self::Compose(parts) => {
                 // Decompose each part in application order
-                parts.iter().flat_map(Operator::decompose).collect()
+                parts.iter().flat_map(UnitaryRep::decompose).collect()
             }
 
             Self::Adjoint(inner) => {
@@ -2127,11 +2127,11 @@ fn apply_sydg(
 }
 
 /// Flatten nested Compose nodes into a single level.
-fn flatten_compose(parts: Vec<Operator>) -> Vec<Operator> {
+fn flatten_compose(parts: Vec<UnitaryRep>) -> Vec<UnitaryRep> {
     let mut result = Vec::new();
     for part in parts {
         match part {
-            Operator::Compose(inner_parts) => {
+            UnitaryRep::Compose(inner_parts) => {
                 result.extend(flatten_compose(inner_parts));
             }
             other => result.push(other),
@@ -2141,7 +2141,7 @@ fn flatten_compose(parts: Vec<Operator>) -> Vec<Operator> {
 }
 
 /// Merge adjacent rotations of the same type on the same qubits.
-fn merge_adjacent_rotations(parts: Vec<Operator>) -> Vec<Operator> {
+fn merge_adjacent_rotations(parts: Vec<UnitaryRep>) -> Vec<UnitaryRep> {
     if parts.len() < 2 {
         return parts;
     }
@@ -2181,15 +2181,15 @@ fn merge_adjacent_rotations(parts: Vec<Operator>) -> Vec<Operator> {
 
 /// Try to merge two rotations if they are compatible.
 /// Returns None if they cannot be merged.
-fn try_merge_rotations(a: &Operator, b: &Operator) -> Option<Operator> {
+fn try_merge_rotations(a: &UnitaryRep, b: &UnitaryRep) -> Option<UnitaryRep> {
     match (a, b) {
         (
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: rt_a,
                 angle: angle_a,
                 qubits: qubits_a,
             },
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: rt_b,
                 angle: angle_b,
                 qubits: qubits_b,
@@ -2198,7 +2198,7 @@ fn try_merge_rotations(a: &Operator, b: &Operator) -> Option<Operator> {
             // Can only merge if same rotation type and same qubits
             if rt_a == rt_b && qubits_a == qubits_b {
                 let combined_angle = *angle_a + *angle_b;
-                Some(Operator::Rotation {
+                Some(UnitaryRep::Rotation {
                     rotation_type: *rt_a,
                     angle: combined_angle,
                     qubits: qubits_a.clone(),
@@ -2361,8 +2361,8 @@ fn angle_to_quarter_phase(angle: Angle64) -> Option<QuarterPhase> {
 /// For multiple qubits, use `RXs(angle, [0, 1, 2])`.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RX(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
-    Operator::rotation(RotationType::RX, angle, smallvec::smallvec![qubit.into().0])
+pub fn RX(angle: Angle64, qubit: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::rotation(RotationType::RX, angle, smallvec::smallvec![qubit.into().0])
 }
 
 /// RX rotations on multiple qubits.
@@ -2370,10 +2370,10 @@ pub fn RX(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
 /// `RXs(angle, [0, 1, 2])` is equivalent to `RX(angle, 0) & RX(angle, 1) & RX(angle, 2)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RXs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
+pub fn RXs(angle: Angle64, qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits
         .into()
-        .apply(|q| Operator::rotation(RotationType::RX, angle, smallvec::smallvec![q]))
+        .apply(|q| UnitaryRep::rotation(RotationType::RX, angle, smallvec::smallvec![q]))
 }
 
 /// Rotation around Y axis by the given angle.
@@ -2381,8 +2381,8 @@ pub fn RXs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
 /// For multiple qubits, use `RYs(angle, [0, 1, 2])`.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RY(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
-    Operator::rotation(RotationType::RY, angle, smallvec::smallvec![qubit.into().0])
+pub fn RY(angle: Angle64, qubit: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::rotation(RotationType::RY, angle, smallvec::smallvec![qubit.into().0])
 }
 
 /// RY rotations on multiple qubits.
@@ -2390,10 +2390,10 @@ pub fn RY(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
 /// `RYs(angle, [0, 1, 2])` is equivalent to `RY(angle, 0) & RY(angle, 1) & RY(angle, 2)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RYs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
+pub fn RYs(angle: Angle64, qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits
         .into()
-        .apply(|q| Operator::rotation(RotationType::RY, angle, smallvec::smallvec![q]))
+        .apply(|q| UnitaryRep::rotation(RotationType::RY, angle, smallvec::smallvec![q]))
 }
 
 /// Rotation around Z axis by the given angle.
@@ -2401,8 +2401,8 @@ pub fn RYs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
 /// For multiple qubits, use `RZs(angle, [0, 1, 2])`.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RZ(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
-    Operator::rotation(RotationType::RZ, angle, smallvec::smallvec![qubit.into().0])
+pub fn RZ(angle: Angle64, qubit: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::rotation(RotationType::RZ, angle, smallvec::smallvec![qubit.into().0])
 }
 
 /// RZ rotations on multiple qubits.
@@ -2410,10 +2410,10 @@ pub fn RZ(angle: Angle64, qubit: impl Into<QubitId>) -> Operator {
 /// `RZs(angle, [0, 1, 2])` is equivalent to `RZ(angle, 0) & RZ(angle, 1) & RZ(angle, 2)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RZs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
+pub fn RZs(angle: Angle64, qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits
         .into()
-        .apply(|q| Operator::rotation(RotationType::RZ, angle, smallvec::smallvec![q]))
+        .apply(|q| UnitaryRep::rotation(RotationType::RZ, angle, smallvec::smallvec![q]))
 }
 
 // ============================================================================
@@ -2425,8 +2425,8 @@ pub fn RZs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
 /// For multiple pairs, use `RXXs(angle, [(0, 1), (2, 3)])` or tensor.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RXX(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::rotation(
+pub fn RXX(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::rotation(
         RotationType::RXX,
         angle,
         smallvec::smallvec![q0.into().0, q1.into().0],
@@ -2438,10 +2438,10 @@ pub fn RXX(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op
 /// `RXXs(angle, [(0, 1), (2, 3)])` is equivalent to `RXX(angle, 0, 1) & RXX(angle, 2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RXXs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
+pub fn RXXs(angle: Angle64, pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs
         .into()
-        .apply(|q0, q1| Operator::rotation(RotationType::RXX, angle, smallvec::smallvec![q0, q1]))
+        .apply(|q0, q1| UnitaryRep::rotation(RotationType::RXX, angle, smallvec::smallvec![q0, q1]))
 }
 
 /// Two-qubit YY rotation by the given angle.
@@ -2449,8 +2449,8 @@ pub fn RXXs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
 /// For multiple pairs, use `RYYs(angle, [(0, 1), (2, 3)])` or tensor.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RYY(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::rotation(
+pub fn RYY(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::rotation(
         RotationType::RYY,
         angle,
         smallvec::smallvec![q0.into().0, q1.into().0],
@@ -2462,10 +2462,10 @@ pub fn RYY(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op
 /// `RYYs(angle, [(0, 1), (2, 3)])` is equivalent to `RYY(angle, 0, 1) & RYY(angle, 2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RYYs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
+pub fn RYYs(angle: Angle64, pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs
         .into()
-        .apply(|q0, q1| Operator::rotation(RotationType::RYY, angle, smallvec::smallvec![q0, q1]))
+        .apply(|q0, q1| UnitaryRep::rotation(RotationType::RYY, angle, smallvec::smallvec![q0, q1]))
 }
 
 /// Two-qubit ZZ rotation by the given angle.
@@ -2473,8 +2473,8 @@ pub fn RYYs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
 /// For multiple pairs, use `RZZs(angle, [(0, 1), (2, 3)])` or tensor.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RZZ(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::rotation(
+pub fn RZZ(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::rotation(
         RotationType::RZZ,
         angle,
         smallvec::smallvec![q0.into().0, q1.into().0],
@@ -2486,10 +2486,10 @@ pub fn RZZ(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op
 /// `RZZs(angle, [(0, 1), (2, 3)])` is equivalent to `RZZ(angle, 0, 1) & RZZ(angle, 2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn RZZs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
+pub fn RZZs(angle: Angle64, pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs
         .into()
-        .apply(|q0, q1| Operator::rotation(RotationType::RZZ, angle, smallvec::smallvec![q0, q1]))
+        .apply(|q0, q1| UnitaryRep::rotation(RotationType::RZZ, angle, smallvec::smallvec![q0, q1]))
 }
 
 // ============================================================================
@@ -2499,14 +2499,14 @@ pub fn RZZs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
 /// Identity gate on a single qubit.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn I(qubit: impl Into<QubitId>) -> Operator {
+pub fn I(qubit: impl Into<QubitId>) -> UnitaryRep {
     RZ(Angle64::ZERO, qubit.into().0)
 }
 
 /// Identity gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Is(qubits: impl Into<Qubits>) -> Operator {
+pub fn Is(qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits.into().apply(|q| RZ(Angle64::ZERO, q))
 }
 
@@ -2515,8 +2515,8 @@ pub fn Is(qubits: impl Into<Qubits>) -> Operator {
 /// For multiple qubits, use `Xs([0, 2, 5])` or tensor: `X(0) & X(2) & X(5)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn X(qubit: impl Into<QubitId>) -> Operator {
-    Operator::Pauli(PauliString::x(qubit.into().0))
+pub fn X(qubit: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::Pauli(PauliString::x(qubit.into().0))
 }
 
 /// Pauli X operators on multiple qubits.
@@ -2524,16 +2524,16 @@ pub fn X(qubit: impl Into<QubitId>) -> Operator {
 /// `Xs([0, 2, 5])` is equivalent to `X(0) & X(2) & X(5)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Xs(qubits: impl Into<Qubits>) -> Operator {
+pub fn Xs(qubits: impl Into<Qubits>) -> UnitaryRep {
     let qs = qubits.into();
     if qs.0.is_empty() {
-        Operator::Pauli(PauliString::default())
+        UnitaryRep::Pauli(PauliString::default())
     } else {
         let mut ps = PauliString::x(qs.0[0].0);
         for q in &qs.0[1..] {
             ps = ps & PauliString::x(q.0);
         }
-        Operator::Pauli(ps)
+        UnitaryRep::Pauli(ps)
     }
 }
 
@@ -2542,8 +2542,8 @@ pub fn Xs(qubits: impl Into<Qubits>) -> Operator {
 /// For multiple qubits, use `Ys([0, 2, 5])` or tensor: `Y(0) & Y(2) & Y(5)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Y(qubit: impl Into<QubitId>) -> Operator {
-    Operator::Pauli(PauliString::y(qubit.into().0))
+pub fn Y(qubit: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::Pauli(PauliString::y(qubit.into().0))
 }
 
 /// Pauli Y operators on multiple qubits.
@@ -2551,16 +2551,16 @@ pub fn Y(qubit: impl Into<QubitId>) -> Operator {
 /// `Ys([0, 2, 5])` is equivalent to `Y(0) & Y(2) & Y(5)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Ys(qubits: impl Into<Qubits>) -> Operator {
+pub fn Ys(qubits: impl Into<Qubits>) -> UnitaryRep {
     let qs = qubits.into();
     if qs.0.is_empty() {
-        Operator::Pauli(PauliString::default())
+        UnitaryRep::Pauli(PauliString::default())
     } else {
         let mut ps = PauliString::y(qs.0[0].0);
         for q in &qs.0[1..] {
             ps = ps & PauliString::y(q.0);
         }
-        Operator::Pauli(ps)
+        UnitaryRep::Pauli(ps)
     }
 }
 
@@ -2569,8 +2569,8 @@ pub fn Ys(qubits: impl Into<Qubits>) -> Operator {
 /// For multiple qubits, use `Zs([0, 2, 5])` or tensor: `Z(0) & Z(2) & Z(5)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Z(qubit: impl Into<QubitId>) -> Operator {
-    Operator::Pauli(PauliString::z(qubit.into().0))
+pub fn Z(qubit: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::Pauli(PauliString::z(qubit.into().0))
 }
 
 /// Pauli Z operators on multiple qubits.
@@ -2578,81 +2578,81 @@ pub fn Z(qubit: impl Into<QubitId>) -> Operator {
 /// `Zs([0, 2, 5])` is equivalent to `Z(0) & Z(2) & Z(5)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Zs(qubits: impl Into<Qubits>) -> Operator {
+pub fn Zs(qubits: impl Into<Qubits>) -> UnitaryRep {
     let qs = qubits.into();
     if qs.0.is_empty() {
-        Operator::Pauli(PauliString::default())
+        UnitaryRep::Pauli(PauliString::default())
     } else {
         let mut ps = PauliString::z(qs.0[0].0);
         for q in &qs.0[1..] {
             ps = ps & PauliString::z(q.0);
         }
-        Operator::Pauli(ps)
+        UnitaryRep::Pauli(ps)
     }
 }
 
 /// SX gate (sqrt X): RX(π/2)
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SX(qubit: impl Into<QubitId>) -> Operator {
+pub fn SX(qubit: impl Into<QubitId>) -> UnitaryRep {
     RX(Angle64::QUARTER_TURN, qubit.into().0)
 }
 
 /// SX gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SXs(qubits: impl Into<Qubits>) -> Operator {
+pub fn SXs(qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits.into().apply(|q| RX(Angle64::QUARTER_TURN, q))
 }
 
 /// SY gate (sqrt Y): RY(π/2)
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SY(qubit: impl Into<QubitId>) -> Operator {
+pub fn SY(qubit: impl Into<QubitId>) -> UnitaryRep {
     RY(Angle64::QUARTER_TURN, qubit.into().0)
 }
 
 /// SY gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SYs(qubits: impl Into<Qubits>) -> Operator {
+pub fn SYs(qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits.into().apply(|q| RY(Angle64::QUARTER_TURN, q))
 }
 
 /// SZ gate (sqrt Z): RZ(π/2)
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SZ(qubit: impl Into<QubitId>) -> Operator {
+pub fn SZ(qubit: impl Into<QubitId>) -> UnitaryRep {
     RZ(Angle64::QUARTER_TURN, qubit.into().0)
 }
 
 /// SZ gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SZs(qubits: impl Into<Qubits>) -> Operator {
+pub fn SZs(qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits.into().apply(|q| RZ(Angle64::QUARTER_TURN, q))
 }
 
 /// T gate: RZ(π/4)
 #[must_use]
 #[allow(non_snake_case)]
-pub fn T(qubit: impl Into<QubitId>) -> Operator {
+pub fn T(qubit: impl Into<QubitId>) -> UnitaryRep {
     RZ(Angle64::HALF_TURN / 4, qubit.into().0)
 }
 
 /// T gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Ts(qubits: impl Into<Qubits>) -> Operator {
+pub fn Ts(qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits.into().apply(|q| RZ(Angle64::HALF_TURN / 4, q))
 }
 
 /// Hadamard gate: RZ(π) * RY(π/2) (up to global phase)
 #[must_use]
 #[allow(non_snake_case)]
-pub fn H(qubit: impl Into<QubitId>) -> Operator {
+pub fn H(qubit: impl Into<QubitId>) -> UnitaryRep {
     let q = qubit.into().0;
-    Operator::Gate {
+    UnitaryRep::Gate {
         gate_type: GateType::H,
         qubits: smallvec::smallvec![q],
     }
@@ -2661,9 +2661,9 @@ pub fn H(qubit: impl Into<QubitId>) -> Operator {
 /// Hadamard gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn Hs(qubits: impl Into<Qubits>) -> Operator {
+pub fn Hs(qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits.into().apply(|q| {
-        Operator::Compose(vec![
+        UnitaryRep::Compose(vec![
             RZ(Angle64::HALF_TURN, q),
             RY(Angle64::QUARTER_TURN, q),
         ])
@@ -2679,8 +2679,8 @@ pub fn Hs(qubits: impl Into<Qubits>) -> Operator {
 /// For multiple pairs, use `CXs([(0, 1), (2, 3)])` or tensor: `CX(0, 1) & CX(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn CX(control: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
-    Operator::gate(
+pub fn CX(control: impl Into<QubitId>, target: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::gate(
         GateType::CX,
         smallvec::smallvec![control.into().0, target.into().0],
     )
@@ -2691,10 +2691,10 @@ pub fn CX(control: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
 /// `CXs([(0, 1), (2, 3)])` is equivalent to `CX(0, 1) & CX(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn CXs(pairs: impl Into<QubitPairs>) -> Operator {
+pub fn CXs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs
         .into()
-        .apply(|ctrl, tgt| Operator::gate(GateType::CX, smallvec::smallvec![ctrl, tgt]))
+        .apply(|ctrl, tgt| UnitaryRep::gate(GateType::CX, smallvec::smallvec![ctrl, tgt]))
 }
 
 /// Controlled-Y gate.
@@ -2702,8 +2702,8 @@ pub fn CXs(pairs: impl Into<QubitPairs>) -> Operator {
 /// For multiple pairs, use `CYs([(0, 1), (2, 3)])` or tensor: `CY(0, 1) & CY(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn CY(control: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
-    Operator::gate(
+pub fn CY(control: impl Into<QubitId>, target: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::gate(
         GateType::CY,
         smallvec::smallvec![control.into().0, target.into().0],
     )
@@ -2714,10 +2714,10 @@ pub fn CY(control: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
 /// `CYs([(0, 1), (2, 3)])` is equivalent to `CY(0, 1) & CY(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn CYs(pairs: impl Into<QubitPairs>) -> Operator {
+pub fn CYs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs
         .into()
-        .apply(|ctrl, tgt| Operator::gate(GateType::CY, smallvec::smallvec![ctrl, tgt]))
+        .apply(|ctrl, tgt| UnitaryRep::gate(GateType::CY, smallvec::smallvec![ctrl, tgt]))
 }
 
 /// Controlled-Z gate.
@@ -2725,8 +2725,8 @@ pub fn CYs(pairs: impl Into<QubitPairs>) -> Operator {
 /// For multiple pairs, use `CZs([(0, 1), (2, 3)])` or tensor: `CZ(0, 1) & CZ(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn CZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::gate(GateType::CZ, smallvec::smallvec![q0.into().0, q1.into().0])
+pub fn CZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::gate(GateType::CZ, smallvec::smallvec![q0.into().0, q1.into().0])
 }
 
 /// CZ gates on multiple qubit pairs.
@@ -2734,10 +2734,10 @@ pub fn CZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
 /// `CZs([(0, 1), (2, 3)])` is equivalent to `CZ(0, 1) & CZ(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn CZs(pairs: impl Into<QubitPairs>) -> Operator {
+pub fn CZs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs
         .into()
-        .apply(|q0, q1| Operator::gate(GateType::CZ, smallvec::smallvec![q0, q1]))
+        .apply(|q0, q1| UnitaryRep::gate(GateType::CZ, smallvec::smallvec![q0, q1]))
 }
 
 /// SWAP gate.
@@ -2745,8 +2745,8 @@ pub fn CZs(pairs: impl Into<QubitPairs>) -> Operator {
 /// For multiple pairs, use `SWAPs([(0, 1), (2, 3)])` or tensor: `SWAP(0, 1) & SWAP(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::gate(
+pub fn SWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::gate(
         GateType::SWAP,
         smallvec::smallvec![q0.into().0, q1.into().0],
     )
@@ -2757,10 +2757,10 @@ pub fn SWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
 /// `SWAPs([(0, 1), (2, 3)])` is equivalent to `SWAP(0, 1) & SWAP(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SWAPs(pairs: impl Into<QubitPairs>) -> Operator {
+pub fn SWAPs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs
         .into()
-        .apply(|q0, q1| Operator::gate(GateType::SWAP, smallvec::smallvec![q0, q1]))
+        .apply(|q0, q1| UnitaryRep::gate(GateType::SWAP, smallvec::smallvec![q0, q1]))
 }
 
 /// SZZ gate: RZZ(π/2)
@@ -2768,8 +2768,8 @@ pub fn SWAPs(pairs: impl Into<QubitPairs>) -> Operator {
 /// For multiple pairs, use `SZZs([(0, 1), (2, 3)])` or tensor: `SZZ(0, 1) & SZZ(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SZZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
-    Operator::rotation(
+pub fn SZZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::rotation(
         RotationType::RZZ,
         Angle64::QUARTER_TURN,
         smallvec::smallvec![q0.into().0, q1.into().0],
@@ -2781,9 +2781,9 @@ pub fn SZZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Operator {
 /// `SZZs([(0, 1), (2, 3)])` is equivalent to `SZZ(0, 1) & SZZ(2, 3)`
 #[must_use]
 #[allow(non_snake_case)]
-pub fn SZZs(pairs: impl Into<QubitPairs>) -> Operator {
+pub fn SZZs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs.into().apply(|q0, q1| {
-        Operator::rotation(
+        UnitaryRep::rotation(
             RotationType::RZZ,
             Angle64::QUARTER_TURN,
             smallvec::smallvec![q0, q1],
@@ -2798,74 +2798,74 @@ pub fn SZZs(pairs: impl Into<QubitPairs>) -> Operator {
 /// Toffoli (CCX) gate.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn CCX(c0: impl Into<QubitId>, c1: impl Into<QubitId>, target: impl Into<QubitId>) -> Operator {
-    Operator::gate(
+pub fn CCX(c0: impl Into<QubitId>, c1: impl Into<QubitId>, target: impl Into<QubitId>) -> UnitaryRep {
+    UnitaryRep::gate(
         GateType::CCX,
         smallvec::smallvec![c0.into().0, c1.into().0, target.into().0],
     )
 }
 
 // ============================================================================
-// Operator implementations
+// UnitaryRep implementations
 // ============================================================================
 
 // Tensor product: &
-impl BitAnd for Operator {
-    type Output = Operator;
+impl BitAnd for UnitaryRep {
+    type Output = UnitaryRep;
 
-    fn bitand(self, rhs: Operator) -> Operator {
+    fn bitand(self, rhs: UnitaryRep) -> UnitaryRep {
         match (self, rhs) {
             // Pauli & Pauli: use PauliString tensor product
-            (Operator::Pauli(a), Operator::Pauli(b)) => Operator::Pauli(a & b),
+            (UnitaryRep::Pauli(a), UnitaryRep::Pauli(b)) => UnitaryRep::Pauli(a & b),
             // Flatten nested tensors
-            (Operator::Tensor(mut parts), Operator::Tensor(rhs_parts)) => {
+            (UnitaryRep::Tensor(mut parts), UnitaryRep::Tensor(rhs_parts)) => {
                 parts.extend(rhs_parts);
-                Operator::Tensor(parts)
+                UnitaryRep::Tensor(parts)
             }
-            (Operator::Tensor(mut parts), rhs) => {
+            (UnitaryRep::Tensor(mut parts), rhs) => {
                 parts.push(rhs);
-                Operator::Tensor(parts)
+                UnitaryRep::Tensor(parts)
             }
-            (lhs, Operator::Tensor(mut parts)) => {
+            (lhs, UnitaryRep::Tensor(mut parts)) => {
                 parts.insert(0, lhs);
-                Operator::Tensor(parts)
+                UnitaryRep::Tensor(parts)
             }
-            (lhs, rhs) => Operator::Tensor(vec![lhs, rhs]),
+            (lhs, rhs) => UnitaryRep::Tensor(vec![lhs, rhs]),
         }
     }
 }
 
 // Composition: *
-impl Mul for Operator {
-    type Output = Operator;
+impl Mul for UnitaryRep {
+    type Output = UnitaryRep;
 
-    fn mul(self, rhs: Operator) -> Operator {
+    fn mul(self, rhs: UnitaryRep) -> UnitaryRep {
         // A * B means apply B first, then A (matrix multiplication order)
         // So we store as [B, A] in the Compose vec (application order)
         match (self, rhs) {
             // Pauli * Pauli: use PauliString algebra
-            (Operator::Pauli(a), Operator::Pauli(b)) => Operator::Pauli(a * b),
+            (UnitaryRep::Pauli(a), UnitaryRep::Pauli(b)) => UnitaryRep::Pauli(a * b),
             // Flatten nested compositions
-            (Operator::Compose(lhs_parts), Operator::Compose(rhs_parts)) => {
+            (UnitaryRep::Compose(lhs_parts), UnitaryRep::Compose(rhs_parts)) => {
                 // rhs applied first, then lhs
                 let mut result = rhs_parts;
                 result.extend(lhs_parts);
-                Operator::Compose(result)
+                UnitaryRep::Compose(result)
             }
-            (Operator::Compose(lhs_parts), rhs) => {
+            (UnitaryRep::Compose(lhs_parts), rhs) => {
                 // rhs applied first
                 let mut result = vec![rhs];
                 result.extend(lhs_parts);
-                Operator::Compose(result)
+                UnitaryRep::Compose(result)
             }
-            (lhs, Operator::Compose(mut rhs_parts)) => {
+            (lhs, UnitaryRep::Compose(mut rhs_parts)) => {
                 // rhs_parts applied first, then lhs
                 rhs_parts.push(lhs);
-                Operator::Compose(rhs_parts)
+                UnitaryRep::Compose(rhs_parts)
             }
             (lhs, rhs) => {
                 // rhs applied first, then lhs
-                Operator::Compose(vec![rhs, lhs])
+                UnitaryRep::Compose(vec![rhs, lhs])
             }
         }
     }
@@ -2915,7 +2915,7 @@ fn gate_type_family(gt: GateType) -> GateFamily {
     }
 }
 
-impl Operator {
+impl UnitaryRep {
     /// Generates a Unicode circuit diagram for this expression.
     ///
     /// This is an alias for [`to_unicode`](Self::to_unicode).
@@ -3121,7 +3121,7 @@ mod tests {
         assert!(op.is_clifford());
 
         // Pauli & Pauli now produces a single Pauli variant
-        if let Operator::Pauli(ps) = &op {
+        if let UnitaryRep::Pauli(ps) = &op {
             assert_eq!(ps.get(0), crate::Pauli::X);
             assert_eq!(ps.get(1), crate::Pauli::Z);
         } else {
@@ -3130,7 +3130,7 @@ mod tests {
 
         // Mixed tensor (Pauli with non-Pauli) produces Tensor
         let mixed = X(0) & H(1);
-        assert!(matches!(mixed, Operator::Tensor(_)));
+        assert!(matches!(mixed, UnitaryRep::Tensor(_)));
     }
 
     #[test]
@@ -3157,7 +3157,7 @@ mod tests {
         let t_dg = t.dg();
 
         // T† should have negated angle
-        if let Operator::Rotation { angle, .. } = t_dg {
+        if let UnitaryRep::Rotation { angle, .. } = t_dg {
             let t_angle = Angle64::HALF_TURN / 4;
             let expected = negate_angle(t_angle);
             assert_eq!(angle, expected);
@@ -3228,12 +3228,12 @@ mod tests {
         // Test composition with rotations
         let circuit = SZ(0) * SY(0) * SX(0); // Apply SX, then SY, then SZ
 
-        if let Operator::Compose(parts) = circuit {
+        if let UnitaryRep::Compose(parts) = circuit {
             assert_eq!(parts.len(), 3);
             // All should be rotations
-            assert!(matches!(&parts[0], Operator::Rotation { .. }));
-            assert!(matches!(&parts[1], Operator::Rotation { .. }));
-            assert!(matches!(&parts[2], Operator::Rotation { .. }));
+            assert!(matches!(&parts[0], UnitaryRep::Rotation { .. }));
+            assert!(matches!(&parts[1], UnitaryRep::Rotation { .. }));
+            assert!(matches!(&parts[2], UnitaryRep::Rotation { .. }));
         } else {
             panic!("Expected Compose");
         }
@@ -3268,7 +3268,7 @@ mod tests {
         let simplified = circuit.simplify();
 
         // Should merge into a single rotation
-        if let Operator::Rotation {
+        if let UnitaryRep::Rotation {
             angle,
             rotation_type,
             ..
@@ -3288,7 +3288,7 @@ mod tests {
         let simplified = circuit.simplify();
 
         // Should remain a Compose with 2 parts
-        if let Operator::Compose(parts) = simplified {
+        if let UnitaryRep::Compose(parts) = simplified {
             assert_eq!(parts.len(), 2);
         } else {
             panic!("Expected Compose");
@@ -3302,7 +3302,7 @@ mod tests {
         let simplified = circuit.simplify();
 
         // Should remain a Compose with 2 parts
-        if let Operator::Compose(parts) = simplified {
+        if let UnitaryRep::Compose(parts) = simplified {
             assert_eq!(parts.len(), 2);
         } else {
             panic!("Expected Compose");
@@ -3315,7 +3315,7 @@ mod tests {
         let circuit = T(0) * T(0) * T(0) * T(0);
         let simplified = circuit.simplify();
 
-        if let Operator::Rotation { angle, .. } = simplified {
+        if let UnitaryRep::Rotation { angle, .. } = simplified {
             assert_eq!(angle, Angle64::HALF_TURN);
         } else {
             panic!("Expected single Rotation");
@@ -3341,7 +3341,7 @@ mod tests {
         let simplified = circuit.simplify();
 
         // Should have 3 parts (S, CX, S)
-        if let Operator::Compose(parts) = simplified {
+        if let UnitaryRep::Compose(parts) = simplified {
             assert_eq!(parts.len(), 3);
         } else {
             panic!("Expected Compose");
@@ -3432,10 +3432,10 @@ mod tests {
         let eighth_turn = Angle64::HALF_TURN / 4;
         let op = phase(eighth_turn) * X(0);
 
-        if let Operator::Phase { phase: p, inner } = op {
+        if let UnitaryRep::Phase { phase: p, inner } = op {
             assert_eq!(p, eighth_turn);
             // Inner should be Pauli(X)
-            assert!(matches!(*inner, Operator::Pauli(_)));
+            assert!(matches!(*inner, UnitaryRep::Pauli(_)));
         } else {
             panic!("Expected Phase variant, got {op:?}");
         }
@@ -3479,7 +3479,7 @@ mod tests {
         let op2 = i * X(0);
 
         // Both should be Pauli with phase +i
-        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&op1, &op2) {
+        if let (UnitaryRep::Pauli(ps1), UnitaryRep::Pauli(ps2)) = (&op1, &op2) {
             assert_eq!(ps1.phase(), QuarterPhase::PlusI);
             assert_eq!(ps2.phase(), QuarterPhase::PlusI);
         } else {
@@ -3493,8 +3493,8 @@ mod tests {
         let op = phase(Angle64::ZERO) * X(0);
 
         // with_phase returns self when phase is zero
-        assert!(matches!(op, Operator::Pauli(_)));
-        if let Operator::Pauli(ps) = op {
+        assert!(matches!(op, UnitaryRep::Pauli(_)));
+        if let UnitaryRep::Pauli(ps) = op {
             assert_eq!(ps.phase(), QuarterPhase::PlusOne);
         }
     }
@@ -3554,7 +3554,7 @@ mod tests {
         let op2 = i * X(0);
 
         // Both should be Pauli with phase +i
-        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&op1, &op2) {
+        if let (UnitaryRep::Pauli(ps1), UnitaryRep::Pauli(ps2)) = (&op1, &op2) {
             assert_eq!(ps1.phase(), QuarterPhase::PlusI);
             assert_eq!(ps2.phase(), QuarterPhase::PlusI);
         } else {
@@ -3628,7 +3628,7 @@ mod tests {
         let op2 = i * X(0);
 
         // Both should be Pauli with phase +i
-        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&op1, &op2) {
+        if let (UnitaryRep::Pauli(ps1), UnitaryRep::Pauli(ps2)) = (&op1, &op2) {
             assert_eq!(ps1.phase(), QuarterPhase::PlusI);
             assert_eq!(ps2.phase(), QuarterPhase::PlusI);
         } else {
@@ -3674,7 +3674,7 @@ mod tests {
         // RX(π) = X
         let rx_pi = RX(Angle64::HALF_TURN, 0);
         let converted = rx_pi.try_to_pauli().expect("Should convert");
-        if let Operator::Pauli(ps) = converted {
+        if let UnitaryRep::Pauli(ps) = converted {
             assert_eq!(ps.get(0), crate::Pauli::X);
         } else {
             panic!("Expected Pauli variant");
@@ -3683,7 +3683,7 @@ mod tests {
         // RY(π) = Y
         let ry_pi = RY(Angle64::HALF_TURN, 1);
         let converted = ry_pi.try_to_pauli().expect("Should convert");
-        if let Operator::Pauli(ps) = converted {
+        if let UnitaryRep::Pauli(ps) = converted {
             assert_eq!(ps.get(1), crate::Pauli::Y);
         } else {
             panic!("Expected Pauli variant");
@@ -3692,7 +3692,7 @@ mod tests {
         // RZ(π) = Z
         let rz_pi = RZ(Angle64::HALF_TURN, 2);
         let converted = rz_pi.try_to_pauli().expect("Should convert");
-        if let Operator::Pauli(ps) = converted {
+        if let UnitaryRep::Pauli(ps) = converted {
             assert_eq!(ps.get(2), crate::Pauli::Z);
         } else {
             panic!("Expected Pauli variant");
@@ -3717,7 +3717,7 @@ mod tests {
         let tensor = X(0) & X(2) & X(5);
 
         // Both should be Pauli variants with the same content
-        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&multi, &tensor) {
+        if let (UnitaryRep::Pauli(ps1), UnitaryRep::Pauli(ps2)) = (&multi, &tensor) {
             assert_eq!(ps1.get(0), crate::Pauli::X);
             assert_eq!(ps1.get(2), crate::Pauli::X);
             assert_eq!(ps1.get(5), crate::Pauli::X);
@@ -3732,12 +3732,12 @@ mod tests {
         // Ts([0, 1, 2]) should be a tensor of T gates
         let multi = Ts([0, 1, 2]);
 
-        if let Operator::Tensor(parts) = multi {
+        if let UnitaryRep::Tensor(parts) = multi {
             assert_eq!(parts.len(), 3);
             // Each should be a rotation
-            assert!(matches!(&parts[0], Operator::Rotation { .. }));
-            assert!(matches!(&parts[1], Operator::Rotation { .. }));
-            assert!(matches!(&parts[2], Operator::Rotation { .. }));
+            assert!(matches!(&parts[0], UnitaryRep::Rotation { .. }));
+            assert!(matches!(&parts[1], UnitaryRep::Rotation { .. }));
+            assert!(matches!(&parts[2], UnitaryRep::Rotation { .. }));
         } else {
             panic!("Expected Tensor variant, got {multi:?}");
         }
@@ -3748,11 +3748,11 @@ mod tests {
         // Hs([0, 1]) should be a tensor of H gates
         let multi = Hs([0, 1]);
 
-        if let Operator::Tensor(parts) = multi {
+        if let UnitaryRep::Tensor(parts) = multi {
             assert_eq!(parts.len(), 2);
             // Each should be a Compose (H = RZ * RY)
-            assert!(matches!(&parts[0], Operator::Compose(_)));
-            assert!(matches!(&parts[1], Operator::Compose(_)));
+            assert!(matches!(&parts[0], UnitaryRep::Compose(_)));
+            assert!(matches!(&parts[1], UnitaryRep::Compose(_)));
         } else {
             panic!("Expected Tensor variant, got {multi:?}");
         }
@@ -3765,11 +3765,11 @@ mod tests {
         let t = T(1);
         let h = H(2);
 
-        assert!(matches!(x, Operator::Pauli(_)));
-        assert!(matches!(t, Operator::Rotation { .. }));
+        assert!(matches!(x, UnitaryRep::Pauli(_)));
+        assert!(matches!(t, UnitaryRep::Rotation { .. }));
         assert!(matches!(
             h,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::H,
                 ..
             }
@@ -3782,7 +3782,7 @@ mod tests {
         let multi_range = Xs(0..3);
         let tensor = X(0) & X(1) & X(2);
 
-        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&multi_range, &tensor) {
+        if let (UnitaryRep::Pauli(ps1), UnitaryRep::Pauli(ps2)) = (&multi_range, &tensor) {
             assert_eq!(ps1, ps2);
         } else {
             panic!("Expected Pauli variants");
@@ -3795,7 +3795,7 @@ mod tests {
         let multi_range = Zs(1..=3);
         let tensor = Z(1) & Z(2) & Z(3);
 
-        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&multi_range, &tensor) {
+        if let (UnitaryRep::Pauli(ps1), UnitaryRep::Pauli(ps2)) = (&multi_range, &tensor) {
             assert_eq!(ps1, ps2);
         } else {
             panic!("Expected Pauli variants");
@@ -3807,7 +3807,7 @@ mod tests {
         // Is(0..=2) should create identity operators on qubits 0, 1, 2
         let identities = Is(0..=2);
 
-        if let Operator::Tensor(parts) = identities {
+        if let UnitaryRep::Tensor(parts) = identities {
             assert_eq!(parts.len(), 3);
             for part in &parts {
                 assert!(part.is_identity());
@@ -3837,7 +3837,7 @@ mod tests {
         let from_range = Xs(0..1);
         let direct = X(0);
 
-        if let (Operator::Pauli(ps1), Operator::Pauli(ps2)) = (&from_range, &direct) {
+        if let (UnitaryRep::Pauli(ps1), UnitaryRep::Pauli(ps2)) = (&from_range, &direct) {
             assert_eq!(ps1, ps2);
         } else {
             panic!("Expected Pauli variants");
@@ -3852,12 +3852,12 @@ mod tests {
 
         // Both should be Rotation variants
         if let (
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 angle: a1,
                 rotation_type: r1,
                 ..
             },
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 angle: a2,
                 rotation_type: r2,
                 ..
@@ -3888,7 +3888,7 @@ mod tests {
 
         // conj returns a Compose, simplify to get the Pauli
         let simplified = result.simplify();
-        if let Operator::Pauli(ps) = simplified {
+        if let UnitaryRep::Pauli(ps) = simplified {
             assert_eq!(ps.get(0), crate::Pauli::X);
             assert_eq!(ps.phase(), QuarterPhase::MinusOne);
         } else {
@@ -3905,7 +3905,7 @@ mod tests {
         let result = x.conjdg(&z);
 
         let simplified = result.simplify();
-        if let Operator::Pauli(ps) = simplified {
+        if let UnitaryRep::Pauli(ps) = simplified {
             assert_eq!(ps.get(0), crate::Pauli::X);
             assert_eq!(ps.phase(), QuarterPhase::MinusOne);
         } else {
@@ -3921,7 +3921,7 @@ mod tests {
         let result = x.conj(&h);
 
         // Result is Compose(H, X, H†)
-        assert!(matches!(result, Operator::Compose(_)));
+        assert!(matches!(result, UnitaryRep::Compose(_)));
     }
 
     #[test]
@@ -3931,7 +3931,7 @@ mod tests {
         let result = z.conj(&z);
 
         let simplified = result.simplify();
-        if let Operator::Pauli(ps) = simplified {
+        if let UnitaryRep::Pauli(ps) = simplified {
             assert_eq!(ps.get(0), crate::Pauli::Z);
             assert_eq!(ps.phase(), QuarterPhase::PlusOne);
         } else {
@@ -3947,22 +3947,22 @@ mod tests {
         let result = x.conj(&sz);
 
         // Verify structure: Compose([SZ, X, SZ†])
-        if let Operator::Compose(parts) = result {
+        if let UnitaryRep::Compose(parts) = result {
             assert_eq!(parts.len(), 3);
             // First element is SZ (positive angle)
             assert!(matches!(
                 &parts[0],
-                Operator::Rotation {
+                UnitaryRep::Rotation {
                     rotation_type: RotationType::RZ,
                     ..
                 }
             ));
             // Middle element is X
-            assert!(matches!(&parts[1], Operator::Pauli(_)));
+            assert!(matches!(&parts[1], UnitaryRep::Pauli(_)));
             // Last element is SZ† (negative angle)
             assert!(matches!(
                 &parts[2],
-                Operator::Rotation {
+                UnitaryRep::Rotation {
                     rotation_type: RotationType::RZ,
                     ..
                 }
@@ -3980,22 +3980,22 @@ mod tests {
         let result = x.conjdg(&sz);
 
         // Verify structure: Compose([SZ†, X, SZ])
-        if let Operator::Compose(parts) = result {
+        if let UnitaryRep::Compose(parts) = result {
             assert_eq!(parts.len(), 3);
             // First element is SZ† (negative angle)
             assert!(matches!(
                 &parts[0],
-                Operator::Rotation {
+                UnitaryRep::Rotation {
                     rotation_type: RotationType::RZ,
                     ..
                 }
             ));
             // Middle element is X
-            assert!(matches!(&parts[1], Operator::Pauli(_)));
+            assert!(matches!(&parts[1], UnitaryRep::Pauli(_)));
             // Last element is SZ (positive angle)
             assert!(matches!(
                 &parts[2],
-                Operator::Rotation {
+                UnitaryRep::Rotation {
                     rotation_type: RotationType::RZ,
                     ..
                 }
@@ -4017,7 +4017,7 @@ mod tests {
         let back = forward.conjdg(&sz); // SZ† (SZ X SZ†) SZ = X
 
         let simplified = back.simplify();
-        if let Operator::Pauli(ps) = simplified {
+        if let UnitaryRep::Pauli(ps) = simplified {
             assert_eq!(ps.get(0), crate::Pauli::X);
             assert_eq!(ps.phase(), QuarterPhase::PlusOne);
         } else {
@@ -4130,7 +4130,7 @@ mod tests {
         // X^1 = X
         let x = X(0);
         let result = x.pow(1);
-        if let Operator::Pauli(ps) = result {
+        if let UnitaryRep::Pauli(ps) = result {
             assert_eq!(ps.get(0), crate::Pauli::X);
         } else {
             panic!("Expected Pauli");
@@ -4150,7 +4150,7 @@ mod tests {
         // pow(n) creates a Compose of n copies without simplification
         let t = T(0);
         let result = t.pow(3);
-        assert!(matches!(result, Operator::Compose(_)));
+        assert!(matches!(result, UnitaryRep::Compose(_)));
     }
 
     #[test]
@@ -4159,7 +4159,7 @@ mod tests {
         let t = T(0);
         let result = t.pow(2).simplify();
 
-        if let Operator::Rotation {
+        if let UnitaryRep::Rotation {
             angle,
             rotation_type,
             ..
@@ -4178,7 +4178,7 @@ mod tests {
         let t = T(0);
         let result = t.pow(4).simplify();
 
-        if let Operator::Rotation { angle, .. } = result {
+        if let UnitaryRep::Rotation { angle, .. } = result {
             assert_eq!(angle, Angle64::HALF_TURN);
         } else {
             panic!("Expected Rotation, got {result:?}");
@@ -4295,7 +4295,7 @@ mod tests {
     fn test_decompose_pauli_identity_empty() {
         // A true Pauli identity (from PauliString) decomposes to empty
         let ps = PauliString::identity();
-        let op = Operator::Pauli(ps);
+        let op = UnitaryRep::Pauli(ps);
         let gates = op.decompose();
         assert!(gates.is_empty());
     }
@@ -4430,10 +4430,10 @@ mod tests {
 
     #[test]
     fn from_str_h_gate() {
-        let op: Operator = "H 0".parse().unwrap();
+        let op: UnitaryRep = "H 0".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::H,
                 ..
             }
@@ -4442,10 +4442,10 @@ mod tests {
 
     #[test]
     fn from_str_cx_gate() {
-        let op: Operator = "CX 0 1".parse().unwrap();
+        let op: UnitaryRep = "CX 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::CX,
                 ..
             }
@@ -4454,10 +4454,10 @@ mod tests {
 
     #[test]
     fn from_str_cnot_alias() {
-        let op: Operator = "CNOT 0 1".parse().unwrap();
+        let op: UnitaryRep = "CNOT 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::CX,
                 ..
             }
@@ -4466,10 +4466,10 @@ mod tests {
 
     #[test]
     fn from_str_swap_gate() {
-        let op: Operator = "SWAP 2 3".parse().unwrap();
+        let op: UnitaryRep = "SWAP 2 3".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::SWAP,
                 ..
             }
@@ -4478,10 +4478,10 @@ mod tests {
 
     #[test]
     fn from_str_ccx_gate() {
-        let op: Operator = "CCX 0 1 2".parse().unwrap();
+        let op: UnitaryRep = "CCX 0 1 2".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::CCX,
                 ..
             }
@@ -4490,10 +4490,10 @@ mod tests {
 
     #[test]
     fn from_str_t_gate() {
-        let op: Operator = "T 0".parse().unwrap();
+        let op: UnitaryRep = "T 0".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: RotationType::RZ,
                 ..
             }
@@ -4502,10 +4502,10 @@ mod tests {
 
     #[test]
     fn from_str_s_gate() {
-        let op: Operator = "S 0".parse().unwrap();
+        let op: UnitaryRep = "S 0".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: RotationType::RZ,
                 ..
             }
@@ -4514,9 +4514,9 @@ mod tests {
 
     #[test]
     fn from_str_rz_with_angle() {
-        let op: Operator = "RZ(pi/4) 0".parse().unwrap();
+        let op: UnitaryRep = "RZ(pi/4) 0".parse().unwrap();
         match op {
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type,
                 angle,
                 qubits,
@@ -4531,9 +4531,9 @@ mod tests {
 
     #[test]
     fn from_str_rx_with_angle() {
-        let op: Operator = "RX(pi/2) 3".parse().unwrap();
+        let op: UnitaryRep = "RX(pi/2) 3".parse().unwrap();
         match op {
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type,
                 angle,
                 qubits,
@@ -4548,9 +4548,9 @@ mod tests {
 
     #[test]
     fn from_str_rzz_two_qubit() {
-        let op: Operator = "RZZ(pi) 0 1".parse().unwrap();
+        let op: UnitaryRep = "RZZ(pi) 0 1".parse().unwrap();
         match op {
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type,
                 angle,
                 qubits,
@@ -4565,9 +4565,9 @@ mod tests {
 
     #[test]
     fn from_str_pauli_sparse() {
-        let op: Operator = "X0 Z1".parse().unwrap();
+        let op: UnitaryRep = "X0 Z1".parse().unwrap();
         match op {
-            Operator::Pauli(ps) => {
+            UnitaryRep::Pauli(ps) => {
                 assert_eq!(ps.get(0), Pauli::X);
                 assert_eq!(ps.get(1), Pauli::Z);
             }
@@ -4577,9 +4577,9 @@ mod tests {
 
     #[test]
     fn from_str_pauli_dense() {
-        let op: Operator = "XZI".parse().unwrap();
+        let op: UnitaryRep = "XZI".parse().unwrap();
         match op {
-            Operator::Pauli(ps) => {
+            UnitaryRep::Pauli(ps) => {
                 assert_eq!(ps.get(0), Pauli::X);
                 assert_eq!(ps.get(1), Pauli::Z);
                 assert_eq!(ps.get(2), Pauli::I);
@@ -4591,10 +4591,10 @@ mod tests {
     #[test]
     fn from_str_x_space_qubit() {
         // "X 0" and "X0" should produce the same result
-        let op1: Operator = "X 0".parse().unwrap();
-        let op2: Operator = "X0".parse().unwrap();
+        let op1: UnitaryRep = "X 0".parse().unwrap();
+        let op2: UnitaryRep = "X0".parse().unwrap();
         match (&op1, &op2) {
-            (Operator::Pauli(ps1), Operator::Pauli(ps2)) => {
+            (UnitaryRep::Pauli(ps1), UnitaryRep::Pauli(ps2)) => {
                 assert_eq!(ps1.get(0), Pauli::X);
                 assert_eq!(ps2.get(0), Pauli::X);
                 assert_eq!(ps1.phase(), ps2.phase());
@@ -4605,9 +4605,9 @@ mod tests {
 
     #[test]
     fn from_str_z_space_qubit() {
-        let op: Operator = "Z 3".parse().unwrap();
+        let op: UnitaryRep = "Z 3".parse().unwrap();
         match op {
-            Operator::Pauli(ps) => {
+            UnitaryRep::Pauli(ps) => {
                 assert_eq!(ps.get(3), Pauli::Z);
             }
             _ => panic!("Expected Pauli"),
@@ -4617,9 +4617,9 @@ mod tests {
     #[test]
     fn from_str_multi_pauli_spaced() {
         // "X 0 Z 1" should work the same as "X0 Z1"
-        let op: Operator = "X 0 Z 1".parse().unwrap();
+        let op: UnitaryRep = "X 0 Z 1".parse().unwrap();
         match op {
-            Operator::Pauli(ps) => {
+            UnitaryRep::Pauli(ps) => {
                 assert_eq!(ps.get(0), Pauli::X);
                 assert_eq!(ps.get(1), Pauli::Z);
             }
@@ -4629,9 +4629,9 @@ mod tests {
 
     #[test]
     fn from_str_pauli_with_phase() {
-        let op: Operator = "-i X2 Z4".parse().unwrap();
+        let op: UnitaryRep = "-i X2 Z4".parse().unwrap();
         match op {
-            Operator::Pauli(ps) => {
+            UnitaryRep::Pauli(ps) => {
                 assert_eq!(ps.phase(), QuarterPhase::MinusI);
                 assert_eq!(ps.get(2), Pauli::X);
                 assert_eq!(ps.get(4), Pauli::Z);
@@ -4642,22 +4642,22 @@ mod tests {
 
     #[test]
     fn from_str_wrong_qubit_count() {
-        assert!("H 0 1".parse::<Operator>().is_err());
-        assert!("CX 0".parse::<Operator>().is_err());
-        assert!("CCX 0 1".parse::<Operator>().is_err());
+        assert!("H 0 1".parse::<UnitaryRep>().is_err());
+        assert!("CX 0".parse::<UnitaryRep>().is_err());
+        assert!("CCX 0 1".parse::<UnitaryRep>().is_err());
     }
 
     #[test]
     fn from_str_case_insensitive() {
-        assert!("h 0".parse::<Operator>().is_ok());
-        assert!("cx 0 1".parse::<Operator>().is_ok());
-        assert!("swap 0 1".parse::<Operator>().is_ok());
+        assert!("h 0".parse::<UnitaryRep>().is_ok());
+        assert!("cx 0 1".parse::<UnitaryRep>().is_ok());
+        assert!("swap 0 1".parse::<UnitaryRep>().is_ok());
     }
 
     #[test]
     fn from_str_empty() {
-        let op: Operator = "".parse().unwrap();
-        assert!(matches!(op, Operator::Pauli(_)));
+        let op: UnitaryRep = "".parse().unwrap();
+        assert!(matches!(op, UnitaryRep::Pauli(_)));
     }
 
     // --- parse_angle_expr tests ---
@@ -4744,10 +4744,10 @@ mod tests {
 
     #[test]
     fn from_str_tdg_gate() {
-        let op: Operator = "Tdg 0".parse().unwrap();
+        let op: UnitaryRep = "Tdg 0".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: RotationType::RZ,
                 ..
             }
@@ -4756,10 +4756,10 @@ mod tests {
 
     #[test]
     fn from_str_sdg_gate() {
-        let op: Operator = "Sdg 0".parse().unwrap();
+        let op: UnitaryRep = "Sdg 0".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: RotationType::RZ,
                 ..
             }
@@ -4768,10 +4768,10 @@ mod tests {
 
     #[test]
     fn from_str_ry_with_angle() {
-        let op: Operator = "RY(pi/4) 0".parse().unwrap();
+        let op: UnitaryRep = "RY(pi/4) 0".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: RotationType::RY,
                 ..
             }
@@ -4780,10 +4780,10 @@ mod tests {
 
     #[test]
     fn from_str_rxx_two_qubit() {
-        let op: Operator = "RXX(pi/2) 0 1".parse().unwrap();
+        let op: UnitaryRep = "RXX(pi/2) 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: RotationType::RXX,
                 ..
             }
@@ -4792,10 +4792,10 @@ mod tests {
 
     #[test]
     fn from_str_ryy_two_qubit() {
-        let op: Operator = "RYY(pi) 0 1".parse().unwrap();
+        let op: UnitaryRep = "RYY(pi) 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Rotation {
+            UnitaryRep::Rotation {
                 rotation_type: RotationType::RYY,
                 ..
             }
@@ -4804,16 +4804,16 @@ mod tests {
 
     #[test]
     fn from_str_rotation_wrong_qubit_count() {
-        assert!("RZ(pi/4) 0 1".parse::<Operator>().is_err());
-        assert!("RZZ(pi) 0".parse::<Operator>().is_err());
+        assert!("RZ(pi/4) 0 1".parse::<UnitaryRep>().is_err());
+        assert!("RZZ(pi) 0".parse::<UnitaryRep>().is_err());
     }
 
     #[test]
     fn from_str_cz_gate() {
-        let op: Operator = "CZ 0 1".parse().unwrap();
+        let op: UnitaryRep = "CZ 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::CZ,
                 ..
             }
@@ -4822,10 +4822,10 @@ mod tests {
 
     #[test]
     fn from_str_cy_gate() {
-        let op: Operator = "CY 0 1".parse().unwrap();
+        let op: UnitaryRep = "CY 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::CY,
                 ..
             }
@@ -4834,10 +4834,10 @@ mod tests {
 
     #[test]
     fn from_str_toffoli_alias() {
-        let op: Operator = "TOFFOLI 0 1 2".parse().unwrap();
+        let op: UnitaryRep = "TOFFOLI 0 1 2".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::CCX,
                 ..
             }
@@ -4846,10 +4846,10 @@ mod tests {
 
     #[test]
     fn from_str_sx_gate() {
-        let op: Operator = "SX 0".parse().unwrap();
+        let op: UnitaryRep = "SX 0".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::SX,
                 ..
             }
@@ -4858,10 +4858,10 @@ mod tests {
 
     #[test]
     fn from_str_f_gate() {
-        let op: Operator = "F 0".parse().unwrap();
+        let op: UnitaryRep = "F 0".parse().unwrap();
         assert!(matches!(
             op,
-            Operator::Gate {
+            UnitaryRep::Gate {
                 gate_type: GateType::F,
                 ..
             }

@@ -24,7 +24,7 @@ pub mod gate_registry;
 pub mod gate_type;
 pub mod gates;
 pub mod index_set;
-pub mod operator;
+pub mod unitary_rep;
 pub mod pauli;
 pub mod phase;
 pub mod prelude;
@@ -75,8 +75,8 @@ pub use circuit_diagram::{
     DiagramStyleBuilder, FamilyPalette, FillPattern, GraphStyle, GraphStyleBuilder, blend_hex,
 };
 
-// Operator algebra
-pub use operator::{Is, Operator};
+// UnitaryRep algebra
+pub use unitary_rep::{Is, UnitaryRep};
 
 // PauliString constructors (primary user-facing API for Pauli algebra)
 pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
@@ -84,3 +84,7 @@ pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
 // Clifford base type (single-qubit Clifford group element)
 pub mod clifford;
 pub use clifford::Clifford;
+
+// Unified gate algebra with automatic type promotion
+pub mod op;
+pub use op::{Basis, ChannelExpr, Level, Op};

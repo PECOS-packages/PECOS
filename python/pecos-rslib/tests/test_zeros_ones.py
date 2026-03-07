@@ -12,7 +12,7 @@ import pecos as pc
 class TestZeros:
     """Test zeros() function against numpy.zeros()."""
 
-    def test_zeros_1d_float(self):
+    def test_zeros_1d_float(self) -> None:
         """Test 1D float array creation."""
         # Rust implementation
         rust_result = pc.zeros(5)
@@ -27,7 +27,7 @@ class TestZeros:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_zeros_2d_float(self):
+    def test_zeros_2d_float(self) -> None:
         """Test 2D float array creation."""
         # Rust implementation
         rust_result = pc.zeros((3, 4))
@@ -42,7 +42,7 @@ class TestZeros:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_zeros_3d_float(self):
+    def test_zeros_3d_float(self) -> None:
         """Test 3D float array creation."""
         # Rust implementation
         rust_result = pc.zeros((2, 3, 4))
@@ -57,7 +57,7 @@ class TestZeros:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_zeros_1d_complex(self):
+    def test_zeros_1d_complex(self) -> None:
         """Test 1D complex array creation."""
         # Rust implementation
         rust_result = pc.zeros(5, dtype="complex128")
@@ -72,7 +72,7 @@ class TestZeros:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_zeros_2d_complex(self):
+    def test_zeros_2d_complex(self) -> None:
         """Test 2D complex array creation."""
         # Rust implementation
         rust_result = pc.zeros((3, 4), dtype="complex128")
@@ -87,7 +87,7 @@ class TestZeros:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_zeros_1d_int(self):
+    def test_zeros_1d_int(self) -> None:
         """Test 1D integer array creation."""
         # Rust implementation
         rust_result = pc.zeros(5, dtype="int64")
@@ -102,7 +102,7 @@ class TestZeros:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_zeros_2d_int(self):
+    def test_zeros_2d_int(self) -> None:
         """Test 2D integer array creation."""
         # Rust implementation
         rust_result = pc.zeros((3, 4), dtype="int64")
@@ -117,7 +117,7 @@ class TestZeros:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_zeros_dtype_aliases(self):
+    def test_zeros_dtype_aliases(self) -> None:
         """Test that dtype aliases work (float, complex, int)."""
         # float alias
         result_float = pc.zeros(3, dtype="float")
@@ -131,7 +131,7 @@ class TestZeros:
         result_int = pc.zeros(3, dtype="int")
         assert result_int.dtype == pc.dtypes.i64
 
-    def test_zeros_shape_as_list(self):
+    def test_zeros_shape_as_list(self) -> None:
         """Test that shape can be provided as a list."""
         # Shape as list
         rust_result = pc.zeros([3, 4])
@@ -143,7 +143,7 @@ class TestZeros:
         assert rust_result.shape == numpy_result.shape
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_zeros_edge_cases(self):
+    def test_zeros_edge_cases(self) -> None:
         """Test edge cases like empty arrays."""
         # Empty 1D array
         result = pc.zeros(0)
@@ -159,7 +159,7 @@ class TestZeros:
 class TestOnes:
     """Test ones() function against numpy.ones()."""
 
-    def test_ones_1d_float(self):
+    def test_ones_1d_float(self) -> None:
         """Test 1D float array creation."""
         # Rust implementation
         rust_result = pc.ones(5)
@@ -174,7 +174,7 @@ class TestOnes:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_ones_2d_float(self):
+    def test_ones_2d_float(self) -> None:
         """Test 2D float array creation."""
         # Rust implementation
         rust_result = pc.ones((3, 4))
@@ -189,7 +189,7 @@ class TestOnes:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_ones_3d_float(self):
+    def test_ones_3d_float(self) -> None:
         """Test 3D float array creation."""
         # Rust implementation
         rust_result = pc.ones((2, 3, 4))
@@ -204,7 +204,7 @@ class TestOnes:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_ones_1d_complex(self):
+    def test_ones_1d_complex(self) -> None:
         """Test 1D complex array creation."""
         # Rust implementation
         rust_result = pc.ones(5, dtype="complex128")
@@ -219,7 +219,7 @@ class TestOnes:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_ones_2d_complex(self):
+    def test_ones_2d_complex(self) -> None:
         """Test 2D complex array creation."""
         # Rust implementation
         rust_result = pc.ones((3, 4), dtype="complex128")
@@ -234,7 +234,7 @@ class TestOnes:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_ones_1d_int(self):
+    def test_ones_1d_int(self) -> None:
         """Test 1D integer array creation."""
         # Rust implementation
         rust_result = pc.ones(5, dtype="int64")
@@ -249,7 +249,7 @@ class TestOnes:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_ones_2d_int(self):
+    def test_ones_2d_int(self) -> None:
         """Test 2D integer array creation."""
         # Rust implementation
         rust_result = pc.ones((3, 4), dtype="int64")
@@ -264,7 +264,7 @@ class TestOnes:
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_ones_dtype_aliases(self):
+    def test_ones_dtype_aliases(self) -> None:
         """Test that dtype aliases work (float, complex, int)."""
         # float alias
         result_float = pc.ones(3, dtype="float")
@@ -278,7 +278,7 @@ class TestOnes:
         result_int = pc.ones(3, dtype="int")
         assert result_int.dtype == pc.dtypes.i64
 
-    def test_ones_shape_as_list(self):
+    def test_ones_shape_as_list(self) -> None:
         """Test that shape can be provided as a list."""
         # Shape as list
         rust_result = pc.ones([3, 4])
@@ -290,7 +290,7 @@ class TestOnes:
         assert rust_result.shape == numpy_result.shape
         np.testing.assert_array_equal(rust_result, numpy_result)
 
-    def test_ones_edge_cases(self):
+    def test_ones_edge_cases(self) -> None:
         """Test edge cases like empty arrays."""
         # Empty 1D array
         result = pc.ones(0)
@@ -306,7 +306,7 @@ class TestOnes:
 class TestZerosOnesInteraction:
     """Test that zeros() and ones() work well with other NumPy operations."""
 
-    def test_zeros_plus_ones(self):
+    def test_zeros_plus_ones(self) -> None:
         """Test that zeros + ones = ones."""
         z = pc.zeros(5)
         o = pc.ones(5)
@@ -315,7 +315,7 @@ class TestZerosOnesInteraction:
         expected = np.ones(5)
         np.testing.assert_array_equal(result, expected)
 
-    def test_zeros_complex_arithmetic(self):
+    def test_zeros_complex_arithmetic(self) -> None:
         """Test complex number arithmetic with zeros."""
         z = pc.zeros(3, dtype="complex128")
         o = pc.ones(3, dtype="complex128")
@@ -328,7 +328,7 @@ class TestZerosOnesInteraction:
         result = z * (1 + 2j)
         np.testing.assert_array_equal(result, np.zeros(3, dtype=np.complex128))
 
-    def test_zeros_ones_matrix_operations(self):
+    def test_zeros_ones_matrix_operations(self) -> None:
         """Test matrix operations with zeros and ones."""
         z = pc.zeros((3, 3))
         o = pc.ones((3, 3))
@@ -341,7 +341,7 @@ class TestZerosOnesInteraction:
         result = z + o
         np.testing.assert_array_equal(result, np.ones((3, 3)))
 
-    def test_import_from_pecos(self):
+    def test_import_from_pecos(self) -> None:
         """Test that zeros/ones can be imported from pecos."""
         # Already imported at top: import pecos as pc
 

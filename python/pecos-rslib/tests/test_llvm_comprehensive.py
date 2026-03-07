@@ -4,7 +4,7 @@ import pytest
 
 
 @pytest.fixture
-def qir_module():
+def qir_module() -> tuple:
     """Create a QIR-like module for testing."""
     from pecos_rslib import ir
 
@@ -13,7 +13,7 @@ def qir_module():
     return module, ctx
 
 
-def test_all_basic_types(qir_module):
+def test_all_basic_types(qir_module) -> None:
     """Test creation of all basic types used in QIR."""
     _, ctx = qir_module
 
@@ -32,7 +32,7 @@ def test_all_basic_types(qir_module):
     assert void is not None
 
 
-def test_pointer_types(qir_module):
+def test_pointer_types(qir_module) -> None:
     """Test creation of pointer types."""
     _, ctx = qir_module
 
@@ -44,7 +44,7 @@ def test_pointer_types(qir_module):
     assert result_ptr is not None
 
 
-def test_array_types(qir_module):
+def test_array_types(qir_module) -> None:
     """Test creation of array types."""
     _, ctx = qir_module
 
@@ -54,7 +54,7 @@ def test_array_types(qir_module):
     assert array_type is not None
 
 
-def test_function_creation(qir_module):
+def test_function_creation(qir_module) -> None:
     """Test creating various function types."""
     module, ctx = qir_module
 
@@ -78,7 +78,7 @@ def test_function_creation(qir_module):
     assert mz_func is not None
 
 
-def test_global_variables(qir_module):
+def test_global_variables(qir_module) -> None:
     """Test creating global variables with initializers."""
     from pecos_rslib import ir
 
@@ -100,7 +100,7 @@ def test_global_variables(qir_module):
     # Note: initializer is write-only, no getter implemented
 
 
-def test_arithmetic_operations(qir_module):
+def test_arithmetic_operations(qir_module) -> None:
     """Test all arithmetic operations."""
     from pecos_rslib import ir
 
@@ -130,7 +130,7 @@ def test_arithmetic_operations(qir_module):
     assert div_val is not None
 
 
-def test_bitwise_operations(qir_module):
+def test_bitwise_operations(qir_module) -> None:
     """Test all bitwise operations."""
     from pecos_rslib import ir
 
@@ -165,7 +165,7 @@ def test_bitwise_operations(qir_module):
     assert not_val is not None
 
 
-def test_comparison_operations(qir_module):
+def test_comparison_operations(qir_module) -> None:
     """Test comparison operations."""
     from pecos_rslib import ir
 
@@ -195,7 +195,7 @@ def test_comparison_operations(qir_module):
     assert cmp_lt is not None
 
 
-def test_control_flow(qir_module):
+def test_control_flow(qir_module) -> None:
     """Test if_then and if_else control flow."""
     from pecos_rslib import ir
 
@@ -235,7 +235,7 @@ def test_control_flow(qir_module):
     assert "br i1" in llvm_ir
 
 
-def test_gep_operations(qir_module):
+def test_gep_operations(qir_module) -> None:
     """Test GEP (Get Element Pointer) operations."""
     from pecos_rslib import ir
 
@@ -263,7 +263,7 @@ def test_gep_operations(qir_module):
     assert gep_result is not None
 
 
-def test_comments(qir_module):
+def test_comments(qir_module) -> None:
     """Test adding comments to IR."""
     from pecos_rslib import ir
 
@@ -284,7 +284,7 @@ def test_comments(qir_module):
     assert "Multiple comments" in llvm_ir
 
 
-def test_end_to_end_ir_to_bitcode(qir_module):
+def test_end_to_end_ir_to_bitcode(qir_module) -> None:
     """Test complete workflow from IR creation to bitcode generation."""
     from pecos_rslib import binding, ir
 

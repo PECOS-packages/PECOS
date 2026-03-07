@@ -1,10 +1,12 @@
 """Basic tests for pecos_rslib_cuda Python bindings."""
 
+import types
+
 import pytest
 
 
 @pytest.fixture
-def pecos_rslib_cuda():
+def pecos_rslib_cuda() -> types.ModuleType:
     """Import the module, skip if not available."""
     try:
         import pecos_rslib_cuda
@@ -14,20 +16,20 @@ def pecos_rslib_cuda():
         pytest.skip("pecos_rslib_cuda not installed")
 
 
-def test_version(pecos_rslib_cuda):
+def test_version(pecos_rslib_cuda) -> None:
     """Test that version is accessible."""
     assert hasattr(pecos_rslib_cuda, "__version__")
     assert isinstance(pecos_rslib_cuda.__version__, str)
 
 
-def test_is_cuquantum_available(pecos_rslib_cuda):
+def test_is_cuquantum_available(pecos_rslib_cuda) -> None:
     """Test availability check function."""
     result = pecos_rslib_cuda.is_cuquantum_available()
     assert isinstance(result, bool)
 
 
 @pytest.mark.cuda
-def test_custatevec_creation(pecos_rslib_cuda):
+def test_custatevec_creation(pecos_rslib_cuda) -> None:
     """Test CuStateVec creation (requires CUDA)."""
     if not pecos_rslib_cuda.is_cuquantum_available():
         pytest.skip("cuQuantum not available")
@@ -37,7 +39,7 @@ def test_custatevec_creation(pecos_rslib_cuda):
 
 
 @pytest.mark.cuda
-def test_custatevec_bell_state(pecos_rslib_cuda):
+def test_custatevec_bell_state(pecos_rslib_cuda) -> None:
     """Test creating a Bell state (requires CUDA)."""
     if not pecos_rslib_cuda.is_cuquantum_available():
         pytest.skip("cuQuantum not available")
@@ -63,7 +65,7 @@ def test_custatevec_bell_state(pecos_rslib_cuda):
 
 
 @pytest.mark.cuda
-def test_custabilizer_creation(pecos_rslib_cuda):
+def test_custabilizer_creation(pecos_rslib_cuda) -> None:
     """Test CuStabilizer creation (requires CUDA)."""
     if not pecos_rslib_cuda.is_cuquantum_available():
         pytest.skip("cuQuantum not available")
@@ -78,7 +80,7 @@ def test_custabilizer_creation(pecos_rslib_cuda):
 
 
 @pytest.mark.cuda
-def test_custabilizer_ghz_state(pecos_rslib_cuda):
+def test_custabilizer_ghz_state(pecos_rslib_cuda) -> None:
     """Test creating a GHZ state with stabilizer (requires CUDA)."""
     if not pecos_rslib_cuda.is_cuquantum_available():
         pytest.skip("cuQuantum not available")

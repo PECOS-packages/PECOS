@@ -12,22 +12,22 @@ from pecos_rslib import (
 class TestQisInterfaceBuilder:
     """Test the QisInterfaceBuilder pattern."""
 
-    def test_builder_functions_exist(self):
+    def test_builder_functions_exist(self) -> None:
         """Test that the interface builder functions exist."""
         assert callable(qis_helios_interface)
         assert callable(qis_selene_helios_interface)
 
-    def test_helios_interface_creation(self):
+    def test_helios_interface_creation(self) -> None:
         """Test that Helios interface can be created."""
         interface = qis_helios_interface()
         assert interface is not None
 
-    def test_selene_helios_interface_creation(self):
+    def test_selene_helios_interface_creation(self) -> None:
         """Test that Selene Helios interface can be created."""
         interface = qis_selene_helios_interface()
         assert interface is not None
 
-    def test_bell_state_with_helios(self):
+    def test_bell_state_with_helios(self) -> None:
         """Test Bell state simulation with Helios interface."""
         bell_qis = """
             define void @main() {
@@ -59,7 +59,7 @@ class TestQisInterfaceBuilder:
         assert 20 < count_11 < 80, f"11 count out of expected range: {count_11}"
         assert count_00 + count_11 == 100, f"Total should be 100, got {count_00 + count_11}"
 
-    def test_bell_state_with_selene_helios(self):
+    def test_bell_state_with_selene_helios(self) -> None:
         """Test Bell state simulation with Selene Helios interface."""
         bell_qis = """
             define void @main() {
@@ -91,7 +91,7 @@ class TestQisInterfaceBuilder:
         assert 20 < count_11 < 80, f"11 count out of expected range: {count_11}"
         assert count_00 + count_11 == 100, f"Total should be 100, got {count_00 + count_11}"
 
-    def test_ghz_state_with_helios(self):
+    def test_ghz_state_with_helios(self) -> None:
         """Test 3-qubit GHZ state with Helios interface."""
         ghz_qis = """
             define void @main() {
@@ -124,7 +124,7 @@ class TestQisInterfaceBuilder:
         assert count_000 + count_111 == 100, f"Total should be 100, got {count_000 + count_111}"
         assert count_000 > 0 or count_111 > 0, "Should have some valid measurements"
 
-    def test_ghz_state_with_selene_helios(self):
+    def test_ghz_state_with_selene_helios(self) -> None:
         """Test 3-qubit GHZ state with Selene Helios interface."""
         ghz_qis = """
             define void @main() {
@@ -157,7 +157,7 @@ class TestQisInterfaceBuilder:
         assert count_000 + count_111 == 100, f"Total should be 100, got {count_000 + count_111}"
         assert count_000 > 0 or count_111 > 0, "Should have some valid measurements"
 
-    def test_missing_interface_gives_helpful_error(self):
+    def test_missing_interface_gives_helpful_error(self) -> None:
         """Test that missing interface gives a helpful error message."""
         simple_qis = """
             define void @main() {
@@ -177,7 +177,7 @@ class TestQisInterfaceBuilder:
         assert "interface" in error_msg.lower()
         assert "runtime" in error_msg.lower() or "helios" in error_msg.lower()
 
-    def test_explicit_helios_selection(self):
+    def test_explicit_helios_selection(self) -> None:
         """Test explicit Helios interface selection works."""
         simple_qis = """
             define void @main() {
@@ -195,7 +195,7 @@ class TestQisInterfaceBuilder:
 
         assert results is not None
 
-    def test_explicit_selene_helios_selection(self):
+    def test_explicit_selene_helios_selection(self) -> None:
         """Test explicit Selene Helios interface selection works."""
         simple_qis = """
             define void @main() {

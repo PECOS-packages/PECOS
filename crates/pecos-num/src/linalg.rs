@@ -194,6 +194,7 @@ where
 /// let result = kron(&a, &b);
 /// assert_eq!(result.shape(), &[4, 4]);
 /// ```
+#[must_use]
 pub fn kron<T: LinalgScalar>(a: &Array2<T>, b: &Array2<T>) -> Array2<T> {
     let (m, n) = (a.nrows(), a.ncols());
     let (p, q) = (b.nrows(), b.ncols());
@@ -458,9 +459,7 @@ pub fn matrix_log(m: &DMatrix<Complex64>) -> Option<DMatrix<Complex64>> {
 pub fn expm(m: &Array2<Complex64>) -> Result<Array2<Complex64>, String> {
     let (rows, cols) = (m.nrows(), m.ncols());
     if rows != cols {
-        return Err(format!(
-            "expm requires a square matrix, got {rows}x{cols}"
-        ));
+        return Err(format!("expm requires a square matrix, got {rows}x{cols}"));
     }
     let dmat = DMatrix::from_fn(rows, cols, |i, j| m[(i, j)]);
     let result_dmat = matrix_exp(&dmat);
@@ -507,9 +506,7 @@ pub fn expm(m: &Array2<Complex64>) -> Result<Array2<Complex64>, String> {
 pub fn logm(m: &Array2<Complex64>) -> Result<Array2<Complex64>, String> {
     let (rows, cols) = (m.nrows(), m.ncols());
     if rows != cols {
-        return Err(format!(
-            "logm requires a square matrix, got {rows}x{cols}"
-        ));
+        return Err(format!("logm requires a square matrix, got {rows}x{cols}"));
     }
     let dmat = DMatrix::from_fn(rows, cols, |i, j| m[(i, j)]);
     let result_dmat =

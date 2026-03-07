@@ -12,28 +12,28 @@ if importlib.util.find_spec("pecos_rslib") is None:
 class TestComplexScalars:
     """Test complex number operations on scalars."""
 
-    def test_abs_pure_real(self):
+    def test_abs_pure_real(self) -> None:
         """Test abs on purely real complex number."""
         z = 3.0 + 0j
         np_result = np.abs(z)
         # TODO: Add pecos equivalent when available
         assert np_result == 3.0
 
-    def test_abs_pure_imaginary(self):
+    def test_abs_pure_imaginary(self) -> None:
         """Test abs on purely imaginary complex number."""
         z = 0 + 4.0j
         np_result = np.abs(z)
         # TODO: Add pecos equivalent when available
         assert np_result == 4.0
 
-    def test_abs_general_complex(self):
+    def test_abs_general_complex(self) -> None:
         """Test abs on general complex number."""
         z = 3.0 + 4.0j
         np_result = np.abs(z)
         # |3+4i| = sqrt(9+16) = 5
         assert np_result == 5.0
 
-    def test_abs_squared_vs_magnitude_squared(self):
+    def test_abs_squared_vs_magnitude_squared(self) -> None:
         """Test that |z|² = z * z*."""
         z = 3.0 + 4.0j
         mag_squared = np.abs(z) ** 2
@@ -44,40 +44,40 @@ class TestComplexScalars:
 class TestComplexArrays:
     """Test complex number operations on arrays."""
 
-    def test_abs_array_pure_real(self):
+    def test_abs_array_pure_real(self) -> None:
         """Test abs on array of purely real complex numbers."""
         arr = np.array([1.0 + 0j, 2.0 + 0j, 3.0 + 0j], dtype=np.complex64)
         np_result = np.abs(arr)
         np.testing.assert_allclose(np_result, [1.0, 2.0, 3.0])
 
-    def test_abs_array_pure_imaginary(self):
+    def test_abs_array_pure_imaginary(self) -> None:
         """Test abs on array of purely imaginary complex numbers."""
         arr = np.array([0 + 1.0j, 0 + 2.0j, 0 + 3.0j], dtype=np.complex64)
         np_result = np.abs(arr)
         np.testing.assert_allclose(np_result, [1.0, 2.0, 3.0])
 
-    def test_abs_array_mixed(self):
+    def test_abs_array_mixed(self) -> None:
         """Test abs on array of mixed complex numbers."""
         arr = np.array([3.0 + 4.0j, 5.0 + 12.0j, 0 + 1.0j], dtype=np.complex64)
         np_result = np.abs(arr)
         # |3+4i| = 5, |5+12i| = 13, |i| = 1
         np.testing.assert_allclose(np_result, [5.0, 13.0, 1.0])
 
-    def test_norm_squared_quantum_state(self):
+    def test_norm_squared_quantum_state(self) -> None:
         """Test normalization of quantum state vector."""
         # Normalized state: (|0⟩ + |1⟩)/√2
         state = np.array([1 / np.sqrt(2), 1 / np.sqrt(2)], dtype=np.complex64)
         norm_squared = np.sum(np.abs(state) ** 2)
         assert np.isclose(norm_squared, 1.0, atol=1e-7)
 
-    def test_norm_squared_with_phase(self):
+    def test_norm_squared_with_phase(self) -> None:
         """Test normalization with complex phases."""
         # State with phase: (|0⟩ + i|1⟩)/√2
         state = np.array([1 / np.sqrt(2) + 0j, 0 + 1j / np.sqrt(2)], dtype=np.complex64)
         norm_squared = np.sum(np.abs(state) ** 2)
         assert np.isclose(norm_squared, 1.0, atol=1e-7)
 
-    def test_abs_squared_vs_conj_product(self):
+    def test_abs_squared_vs_conj_product(self) -> None:
         """Test that |z|² = z * z* element-wise for arrays."""
         arr = np.array([3.0 + 4.0j, 1.0 + 1.0j, 0 + 2.0j], dtype=np.complex64)
         mag_squared = np.abs(arr) ** 2
@@ -88,14 +88,14 @@ class TestComplexArrays:
 class TestComplexArithmetic:
     """Test complex arithmetic operations."""
 
-    def test_power_operation(self):
+    def test_power_operation(self) -> None:
         """Test power operation on complex numbers."""
         z = 3.0 + 4.0j
         result = z**2
         expected = (3.0 + 4.0j) * (3.0 + 4.0j)
         assert np.isclose(result, expected)
 
-    def test_abs_squared_formula(self):
+    def test_abs_squared_formula(self) -> None:
         """Test that |z|² = a² + b² for z = a + bi."""
         arr = np.array([3.0 + 4.0j, 1.0 + 1.0j, 0 + 2.0j], dtype=np.complex64)
         abs_squared = np.abs(arr) ** 2

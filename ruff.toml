@@ -225,7 +225,19 @@ ignore = [
     "S311",     # Standard pseudo-random generators - OK for tests
     "S301",     # Pickle - OK for test data
 ]
-"python/pecos-rslib/tests/*.py" = ["INP001"]  # Test files don't need __init__.py
+"python/pecos-rslib/tests/*.py" = [
+    "INP001",   # Test files don't need __init__.py
+]
+# Gate matrix definitions use standard quantum notation (I, X, Y, Z for Pauli matrices)
+"python/quantum-pecos/tests/pecos/integration/state_sim_tests/gate_matrix_def.py" = [
+    "E741",     # Ambiguous variable name - I, X, Y, Z are standard Pauli matrix names
+    "N806",     # Variable in function should be lowercase - quantum gate naming conventions
+]
+# Linear algebra tests use standard quantum/math notation (I, X, Z for matrices)
+"python/quantum-pecos/tests/pecos/test_array_linalg.py" = [
+    "E741",     # Ambiguous variable name - I, X, Z are standard matrix names
+    "N806",     # Variable in function should be lowercase - quantum gate naming conventions
+]
 
 # Scripts and examples - not packages
 "scripts/**/*.py" = ["INP001", "S603", "PLC0415", "S301", "BLE001"]  # Script files: no __init__.py, subprocess calls, lazy imports, pickle, broad except

@@ -1,6 +1,6 @@
 """This file builds up the matrix definitions of unitary gates based on the definitions defined in hqslib1.inc.
 
-The intention is to verify simulator definitions (withing epsilon).
+The intention is to verify simulator definitions (within epsilon).
 """
 
 import pecos as pc
@@ -77,8 +77,8 @@ cnot_def_rev = pc.kron(I, project_zero) + pc.kron(X, project_one)
 # ==================================
 
 
-def eqv2phase(ma, mb) -> bool:
-    """Show two matrices are equivalent update to a phase."""
+def eqv2phase(ma: pc.Array, mb: pc.Array) -> bool:
+    """Show two matrices are equivalent up to a phase."""
     if ma.shape != mb.shape:
         return False
     if len(ma.shape) != 2:
@@ -111,8 +111,8 @@ def eqv2phase(ma, mb) -> bool:
     return pc.isclose(ma / phase, mb).all()
 
 
-def oporder_multiply(args):
-    """Multiply matrices in order of operations. (Opposite of matrix multiplication order.)."""
+def oporder_multiply(args: list) -> pc.Array:
+    """Multiply matrices in order of operations (opposite of matrix multiplication order)."""
     matrices = reversed(args)
 
     m_total = None
@@ -124,12 +124,11 @@ def oporder_multiply(args):
             k_total = None
             for mk in ms:
                 k_total = mk if k_total is None else pc.kron(k_total, mk)
-            ms = k_total
-
-        if m_total is None:
-            m_total = ms
+            term = k_total
         else:
-            m_total = m_total.dot(ms)
+            term = ms
+
+        m_total = term if m_total is None else m_total.dot(term)
 
     return m_total
 
@@ -138,9 +137,11 @@ def oporder_multiply(args):
 # ==================================
 
 
-def U(theta: float, phi: float, lamb: float):
-    """As defined in OpenQASM arXiv:1707.03429."""
-    return pc.linalg.expm(-i * Z * phi / 2).dot(pc.linalg.expm(-i * Y * theta / 2)).dot(pc.linalg.expm(-i * Z * lamb / 2))
+def U(theta: float, phi: float, lamb: float) -> pc.Array:
+    """Unitary gate as defined in OpenQASM arXiv:1707.03429."""
+    return (
+        pc.linalg.expm(-i * Z * phi / 2).dot(pc.linalg.expm(-i * Y * theta / 2)).dot(pc.linalg.expm(-i * Z * lamb / 2))
+    )
 
 
 assert pc.isclose(U(0.0, 0.0, 0.0), I).all()
@@ -150,8 +151,10 @@ assert eqv2phase(U(0.0, 0.0, pi), Z)
 assert eqv2phase(U(pi, pi / 2, -pi / 2), X)
 
 
-def RZ(theta: float):
-    """Opaque Rz(lambda) q;
+def RZ(theta: float) -> pc.Array:
+    """Rotation around Z-axis.
+
+    Opaque Rz(lambda) q;
     //gate Rz(lambda) q
     //{
     //   U(0,0,lambda) q;
@@ -171,8 +174,10 @@ for _ in range(5):
     assert eqv2phase(RZ(lamb), U(0, 0, lamb))
 
 
-def U1q(theta: float, phi: float):
-    """Opaque U1q(theta, phi) q;
+def U1q(theta: float, phi: float) -> pc.Array:
+    """Single-qubit unitary U1q.
+
+    Opaque U1q(theta, phi) q;
     //gate U1q(theta, phi) q
     //{
     //   U(theta, phi-pi/2, pi/2-phi) q;
@@ -190,8 +195,10 @@ for _ in range(5):
 
 # TWO-QUBIT UNITARY PRIMITIVES
 # ==================================
-def SqrtZZ():
-    """Opaque ZZ() q1,q2;
+def SqrtZZ() -> pc.Array:
+    """Square root of ZZ gate.
+
+    Opaque ZZ() q1,q2;
     //gate ZZ() q1,q2
     //{
     //	U1q(pi/2, pi/2) q2;
@@ -221,11 +228,8 @@ assert eqv2phase(sqrtzz_circ, sqrtzz_def)
 assert eqv2phase(SqrtZZ(), sqrtzz_def)
 
 
-def RZZ(theta: float):
-    """Opaque RZZ(theta) q1,q2;
-
-    # Not defined in header, but defined as:
-    """
+def RZZ(theta: float) -> pc.Array:
+    """Rotation around ZZ axis."""
     return pc.exp(i * theta / 2) * pc.linalg.expm(-i * pc.kron(Z, Z) * theta / 2)
 
 
@@ -238,8 +242,9 @@ assert pc.isclose(RZZ(pi / 2), SqrtZZ()).all()
 # ==================================
 
 
-def CX():
-    """// Clifford gate: CNOT
+def CX() -> pc.Array:
+    """Clifford gate: CNOT.
+
     gate CX() c,t
     {
        U1q(-pi/2, pi/2) t;
@@ -263,8 +268,9 @@ def CX():
 assert eqv2phase(CX(), cnot_def)
 
 
-def H():
-    """// Clifford gate: Hadamard
+def H() -> pc.Array:
+    """Clifford gate: Hadamard.
+
     gate h() a
     {
        U1q(pi/2, -pi/2) a;
@@ -286,8 +292,9 @@ h_def = pc.array(
 assert eqv2phase(H(), h_def)
 
 
-def S():
-    """// Clifford gate: sqrt(Z) phase gate
+def S() -> pc.Array:
+    """Clifford gate: sqrt(Z) phase gate.
+
     gate s() a
     {
        Rz(pi/2) a;
@@ -300,8 +307,9 @@ assert eqv2phase(pc.linalg.matrix_power(S(), 2), Z)
 assert eqv2phase(pc.linalg.matrix_power(S(), 4), I)
 
 
-def Sdg():
-    """// Clifford gate: conjugate of sqrt(Z)
+def Sdg() -> pc.Array:
+    """Clifford gate: conjugate of sqrt(Z).
+
     gate sdg() a
     {
        Rz(-pi/2) a;
@@ -316,8 +324,9 @@ assert pc.isclose(Sdg().conj().T, S()).all()
 assert eqv2phase(pc.linalg.matrix_power(Sdg(), 4), I)
 
 
-def T():
-    """// C3 gate: sqrt(S) phase gate
+def T() -> pc.Array:
+    """C3 gate: sqrt(S) phase gate.
+
     gate t() a
     {
        Rz(pi/4) a;
@@ -329,8 +338,9 @@ def T():
 assert eqv2phase(T(), RZ(pi / 4))
 
 
-def Tdg():
-    """// C3 gate: conjugate of sqrt(S)
+def Tdg() -> pc.Array:
+    """C3 gate: conjugate of sqrt(S).
+
     gate tdg() a
     {
        Rz(-pi/4) a;
@@ -345,8 +355,9 @@ assert not eqv2phase(Tdg(), T())
 # // --- Standard rotations ---
 
 
-def RX(theta):
-    """// Rotation around X-axis
+def RX(theta: float) -> pc.Array:
+    """Rotation around X-axis.
+
     gate rx(theta) a
     {
        U1q(theta, 0) a;
@@ -361,8 +372,9 @@ for _ in range(5):
     assert eqv2phase(U1q(theta, 0), RX(theta))
 
 
-def RY(theta):
-    """// Rotation around Y-axis
+def RY(theta: float) -> pc.Array:
+    """Rotation around Y-axis.
+
     gate ry(theta) a
     {
        U1q(theta, pi/2) a;
@@ -378,19 +390,18 @@ for _ in range(5):
 
 
 # Already defined:
-"""
-// Rotation around Z-axis
-gate rz(phi) a
-{
-   Rz(phi) a;
-}
-"""
+# // Rotation around Z-axis
+# gate rz(phi) a
+# {
+#    Rz(phi) a;
+# }
 
 # // --- QE Standard User-Defined Gates  ---
 
 
-def CZ():
-    """// controlled-Phase
+def CZ() -> pc.Array:
+    """Controlled-Phase gate.
+
     gate cz() a,b
     {
        h b;
@@ -412,8 +423,9 @@ cz_def = pc.kron(project_zero, I) + pc.kron(project_one, Z)
 assert eqv2phase(CZ(), cz_def)
 
 
-def CY():
-    """// controlled-Y
+def CY() -> pc.Array:
+    """Controlled-Y gate.
+
     gate cy() a,b
     {
        sdg b;
@@ -435,8 +447,9 @@ cy_def = pc.kron(project_zero, I) + pc.kron(project_one, Y)
 assert eqv2phase(CY(), cy_def)
 
 
-def CH():
-    """// controlled-H
+def CH() -> pc.Array:
+    """Controlled-H gate.
+
     gate ch() a,b
     {
        h b; sdg b;
@@ -446,9 +459,8 @@ def CH():
        t b; h b; s b; x b; s a;
     }.
     """
-    ch = oporder_multiply(
+    return oporder_multiply(
         [
-            # Why is this so long? Simplify?
             (I, H()),
             (I, Sdg()),
             cnot_def,
@@ -463,31 +475,6 @@ def CH():
         ],
     )
 
-    """
-    ch = oporder_multiply([
-        (I, RY(pi / 4)),
-
-        # CX,
-        (RZ(pi / 2), RZ(-pi / 2)),  # SZ, SZd
-        (I, U1q(pi / 2, 0)),  # I, SX
-        SqrtZZ(),  # SZZ
-        (I, U1q(pi / 2, -pi / 2)),
-
-        (I, RY(-pi / 4)),
-
-    ])
-    """
-
-    """
-    ch = oporder_multiply([
-        (I, RY(pi / 4)),
-        cnot_def,
-        (I, RY(-pi / 4)),
-    ])
-    """
-
-    return ch
-
 
 # Note: !!! Can not use H() in definition due to phase
 ch_def = pc.kron(project_zero, I) + pc.kron(project_one, h_def)
@@ -495,8 +482,9 @@ ch_def = pc.kron(project_zero, I) + pc.kron(project_one, h_def)
 assert eqv2phase(CH(), ch_def)
 
 
-def Toffoli():
-    """// C3 gate: Toffoli
+def Toffoli() -> pc.Array:
+    """C3 gate: Toffoli.
+
     gate ccx() a,b,c
     {
        h c;
@@ -549,8 +537,9 @@ tof_def = pc.array(
 assert eqv2phase(Toffoli(), tof_def)
 
 
-def CU1(lamb):
-    """// controlled phase rotation
+def CU1(lamb: float) -> pc.Array:
+    """Controlled phase rotation.
+
     gate cu1(lambda) a,b
     {
        Rz(lambda/2) a;
@@ -571,11 +560,11 @@ def CU1(lamb):
     )
 
 
-def cu1_def(lamb):
-    """Controlled U1 by def."""
+def cu1_def(lamb: float) -> pc.Array:
+    """Controlled U1 by definition."""
 
-    def U1(lamb):
-        """As defined in OpenQASM arXiv:1707.03429."""
+    def U1(lamb: float) -> pc.Array:
+        """U1 gate as defined in OpenQASM arXiv:1707.03429."""
         return pc.exp(i * lamb / 2) * U(0, 0, lamb)
 
     return pc.kron(project_zero, I) + pc.kron(project_one, U1(lamb))
@@ -586,8 +575,9 @@ for _ in range(5):
     assert eqv2phase(CU1(lamb), cu1_def(lamb))
 
 
-def CU3(theta, phi, lamb):
-    """// controlled-U
+def CU3(theta: float, phi: float, lamb: float) -> pc.Array:
+    """Controlled-U gate.
+
     gate cu3(theta, phi, lambda) c, t
     {
        Rz((lambda-phi)/2) t;
@@ -612,11 +602,11 @@ def CU3(theta, phi, lamb):
     )
 
 
-def cu3_def(theta, phi, lamb):
-    """Controlled U3 by def."""
+def cu3_def(theta: float, phi: float, lamb: float) -> pc.Array:
+    """Controlled U3 by definition."""
 
-    def U3(theta, phi, lamb):
-        """As defined in OpenQASM arXiv:1707.03429."""
+    def U3(theta: float, phi: float, lamb: float) -> pc.Array:
+        """U3 gate as defined in OpenQASM arXiv:1707.03429."""
         return U(theta, phi, lamb)
 
     return pc.kron(project_zero, I) + pc.kron(project_one, U3(theta, phi, lamb))

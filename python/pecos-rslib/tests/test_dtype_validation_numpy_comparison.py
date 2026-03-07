@@ -44,7 +44,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize(("value_name", "value"), REAL_VALUES.items())
-    def test_abs_real_scalars(self, dtype_name, dtype_np, dtype_pc, value_name, value):
+    def test_abs_real_scalars(self, dtype_name, dtype_np, dtype_pc, value_name, value) -> None:
         """Test abs() on real scalar values."""
         pc_result = pc.abs(dtype_np(value))
         np_result = np.abs(dtype_np(value))
@@ -60,7 +60,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize(("value_name", "value"), REAL_VALUES.items())
-    def test_abs_real_arrays(self, dtype_name, dtype_np, dtype_pc, value_name, value):
+    def test_abs_real_arrays(self, dtype_name, dtype_np, dtype_pc, value_name, value) -> None:
         """Test abs() on real array values."""
         pc_arr = pc.array([value], dtype=dtype_pc)
         np_arr = np.array([value], dtype=dtype_np)
@@ -80,7 +80,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize(("value_name", "value"), COMPLEX_VALUES.items())
-    def test_abs_complex_scalars(self, dtype_name, dtype_np, dtype_pc, value_name, value):
+    def test_abs_complex_scalars(self, dtype_name, dtype_np, dtype_pc, value_name, value) -> None:
         """Test abs() on complex scalar values."""
         pc_result = pc.abs(dtype_np(value))
         np_result = np.abs(dtype_np(value))
@@ -96,7 +96,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize(("value_name", "value"), COMPLEX_VALUES.items())
-    def test_abs_complex_arrays(self, dtype_name, dtype_np, dtype_pc, value_name, value):
+    def test_abs_complex_arrays(self, dtype_name, dtype_np, dtype_pc, value_name, value) -> None:
         """Test abs() on complex array values.
 
         This is the critical test that would have caught the original bug
@@ -120,7 +120,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [2.0, 4.0, 0.25])
-    def test_sqrt_scalars(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_sqrt_scalars(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test sqrt() on scalar values."""
         pc_result = pc.sqrt(dtype_np(value))
         np_result = np.sqrt(dtype_np(value))
@@ -136,7 +136,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [2.0, 4.0, 0.25])
-    def test_sqrt_arrays(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_sqrt_arrays(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test sqrt() on array values."""
         pc_arr = pc.array([value], dtype=dtype_pc)
         np_arr = np.array([value], dtype=dtype_np)
@@ -156,7 +156,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, 1.0, -1.0, 2.0])
-    def test_exp_scalars(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_exp_scalars(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test exp() on scalar values."""
         pc_result = pc.exp(dtype_np(value))
         np_result = np.exp(dtype_np(value))
@@ -172,7 +172,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, 1.0, -1.0, 2.0])
-    def test_exp_arrays(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_exp_arrays(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test exp() on array values."""
         pc_arr = pc.array([value], dtype=dtype_pc)
         np_arr = np.array([value], dtype=dtype_np)
@@ -192,7 +192,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, np.pi / 4, np.pi / 2, np.pi])
-    def test_sin_scalars(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_sin_scalars(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test sin() on scalar values."""
         pc_result = pc.sin(dtype_np(value))
         np_result = np.sin(dtype_np(value))
@@ -208,7 +208,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, np.pi / 4, np.pi / 2, np.pi])
-    def test_sin_arrays(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_sin_arrays(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test sin() on array values."""
         pc_arr = pc.array([value], dtype=dtype_pc)
         np_arr = np.array([value], dtype=dtype_np)
@@ -228,7 +228,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, np.pi / 4, np.pi / 2, np.pi])
-    def test_cos_scalars(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_cos_scalars(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test cos() on scalar values."""
         pc_result = pc.cos(dtype_np(value))
         np_result = np.cos(dtype_np(value))
@@ -244,7 +244,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, np.pi / 4, np.pi / 2, np.pi])
-    def test_cos_arrays(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_cos_arrays(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test cos() on array values."""
         pc_arr = pc.array([value], dtype=dtype_pc)
         np_arr = np.array([value], dtype=dtype_np)
@@ -264,7 +264,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, 1.0, -1.0, 2.0])
-    def test_sinh_scalars(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_sinh_scalars(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test sinh() on scalar values."""
         pc_result = pc.sinh(dtype_np(value))
         np_result = np.sinh(dtype_np(value))
@@ -280,7 +280,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, 1.0, -1.0, 2.0])
-    def test_sinh_arrays(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_sinh_arrays(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test sinh() on array values."""
         pc_arr = pc.array([value], dtype=dtype_pc)
         np_arr = np.array([value], dtype=dtype_np)
@@ -300,7 +300,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, 1.0, -1.0, 2.0])
-    def test_cosh_scalars(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_cosh_scalars(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test cosh() on scalar values."""
         pc_result = pc.cosh(dtype_np(value))
         np_result = np.cosh(dtype_np(value))
@@ -316,7 +316,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, 1.0, -1.0, 2.0])
-    def test_cosh_arrays(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_cosh_arrays(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test cosh() on array values."""
         pc_arr = pc.array([value], dtype=dtype_pc)
         np_arr = np.array([value], dtype=dtype_np)
@@ -336,7 +336,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, 0.5, -0.5])
-    def test_tanh_scalars(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_tanh_scalars(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test tanh() on scalar values."""
         pc_result = pc.tanh(dtype_np(value))
         np_result = np.tanh(dtype_np(value))
@@ -352,7 +352,7 @@ class TestUnaryOperationsDtypeValidation:
         ],
     )
     @pytest.mark.parametrize("value", [0.0, 0.5, -0.5])
-    def test_tanh_arrays(self, dtype_name, dtype_np, dtype_pc, value):
+    def test_tanh_arrays(self, dtype_name, dtype_np, dtype_pc, value) -> None:
         """Test tanh() on array values."""
         pc_arr = pc.array([value], dtype=dtype_pc)
         np_arr = np.array([value], dtype=dtype_np)
@@ -368,7 +368,7 @@ class TestUnaryOperationsDtypeValidation:
 class TestRegressionOriginalBug:
     """Specific regression tests for the original abs([0+1j]) bug."""
 
-    def test_abs_purely_imaginary_complex64_array(self):
+    def test_abs_purely_imaginary_complex64_array(self) -> None:
         """
         Regression test for the bug where pc.abs([0+1j]) returned [0.0].
 
@@ -387,7 +387,7 @@ class TestRegressionOriginalBug:
         ), f"REGRESSION: abs([0+1j]) bug has returned! Expected [1.0], got {pc_result}"
         assert np.isclose(pc_result[0], 1.0), f"REGRESSION: abs([0+1j]) should be [1.0], got {pc_result}"
 
-    def test_abs_various_complex_arrays(self):
+    def test_abs_various_complex_arrays(self) -> None:
         """Test abs() on various complex arrays to ensure dtype validation works."""
         test_cases = [
             ([0 + 1j], "purely imaginary"),
@@ -408,7 +408,7 @@ class TestRegressionOriginalBug:
                 pc_result, np_result
             ), f"abs({description}) failed: expected {np_result}, got {pc_result}"
 
-    def test_dtype_mismatch_detection(self):
+    def test_dtype_mismatch_detection(self) -> None:
         """
         Verify that dtype mismatches are properly detected.
 
@@ -432,7 +432,7 @@ class TestMultiElementArrays:
     """Test that dtype validation works with multi-element arrays."""
 
     @pytest.mark.parametrize("size", [2, 5, 10])
-    def test_abs_complex_multi_element(self, size):
+    def test_abs_complex_multi_element(self, size) -> None:
         """Test abs() on multi-element complex arrays."""
         values = [complex(i, i + 1) for i in range(size)]
 
@@ -445,7 +445,7 @@ class TestMultiElementArrays:
         assert np.allclose(pc_result, np_result), f"abs() failed for {size}-element complex array"
 
     @pytest.mark.parametrize("size", [2, 5, 10])
-    def test_sqrt_complex_multi_element(self, size):
+    def test_sqrt_complex_multi_element(self, size) -> None:
         """Test sqrt() on multi-element complex arrays."""
         values = [complex(i + 1, i + 2) for i in range(size)]
 

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import pecos as pc
 from pecos.simulators import StateVec
-
 
 # Load gate_matrix_def from the same directory (importlib mode doesn't auto-add it to sys.path)
 _gate_matrix_def_path = Path(__file__).parent / "gate_matrix_def.py"
@@ -45,10 +46,11 @@ def Udg(state: StateVec, qubit: int, angles: list[float]) -> None:
 
 def compare_gates(
     pecos_sym: str | Callable,
-    gate_matrix: Any,
+    gate_matrix: pc.Array,
     angles: list[float] | float | None = None,
     test_angles: list[float] | None = None,
     num_qubits: int = 1,
+    *,
     verbose: bool = True,
 ) -> float:
     """Test that a gate applied via PECOS gives the same expectation value as the reference matrix definition."""
@@ -92,16 +94,16 @@ def compare_gates(
         ref_state = zero.copy() if ref_state is None else pc.kron(ref_state, zero)
 
     if test_angles is not None:
-        mU = None
+        ref_unitary = None
         for i in range(num_qubits):
             inc = 3 * i
-            mU = (
+            ref_unitary = (
                 g.U(*test_angles[0 + inc : 3 + inc])
-                if mU is None
-                else pc.kron(mU, g.U(*test_angles[0 + inc : 3 + inc]))
+                if ref_unitary is None
+                else pc.kron(ref_unitary, g.U(*test_angles[0 + inc : 3 + inc]))
             )
 
-        ref_state = mU.dot(ref_state)
+        ref_state = ref_unitary.dot(ref_state)
 
     if angles is not None:
         gate_matrix = gate_matrix(*angles)
@@ -179,17 +181,16 @@ def test_tq_gates() -> None:
         )
 
     # Show the SqrtZZ gate is not CNOT/CX
-    not_cnot = []
-    for _ in range(30):
-        not_cnot.append(
-            compare_gates(
-                "SqrtZZ",
-                g.CX(),
-                test_angles=pc.random.random(2 * 3),
-                num_qubits=2,
-                verbose=False,
-            ),
+    not_cnot = [
+        compare_gates(
+            "SqrtZZ",
+            g.CX(),
+            test_angles=pc.random.random(2 * 3),
+            num_qubits=2,
+            verbose=False,
         )
+        for _ in range(30)
+    ]
     assert any(not i for i in not_cnot)
 
     for _ in range(30):

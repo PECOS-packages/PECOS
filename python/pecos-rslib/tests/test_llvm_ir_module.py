@@ -1,14 +1,14 @@
 """Test llvmlite-compatible ir module API."""
 
 
-def test_import_ir_module():
+def test_import_ir_module() -> None:
     """Test that the ir module can be imported."""
     from pecos_rslib import ir
 
     assert ir is not None
 
 
-def test_create_module():
+def test_create_module() -> None:
     """Test creating an LLVM module."""
     from pecos_rslib import ir
 
@@ -17,7 +17,7 @@ def test_create_module():
     assert repr(module) == "<LLVM Module>"
 
 
-def test_module_context_and_types():
+def test_module_context_and_types() -> None:
     """Test accessing module context and creating types."""
     from pecos_rslib import ir
 
@@ -36,7 +36,7 @@ def test_module_context_and_types():
     assert double is not None
 
 
-def test_create_function():
+def test_create_function() -> None:
     """Test creating a function."""
     from pecos_rslib import ir
 
@@ -53,7 +53,7 @@ def test_create_function():
     assert add_func is not None
 
 
-def test_create_basic_block_and_builder():
+def test_create_basic_block_and_builder() -> None:
     """Test creating basic blocks and IRBuilder."""
     from pecos_rslib import ir
 
@@ -73,7 +73,7 @@ def test_create_basic_block_and_builder():
     assert builder is not None
 
 
-def test_build_add_instruction():
+def test_build_add_instruction() -> None:
     """Test building arithmetic instructions."""
     from pecos_rslib import ir
 
@@ -95,7 +95,7 @@ def test_build_add_instruction():
     assert result is not None
 
 
-def test_generate_llvm_ir():
+def test_generate_llvm_ir() -> None:
     """Test generating LLVM IR as a string."""
     from pecos_rslib import ir
 

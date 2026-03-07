@@ -114,7 +114,7 @@ pub fn diag_matrix<T: LinalgScalar>(v: ArrayView1<T>) -> Array2<T> {
 
 /// Compute the broadcast shape for a set of array shapes.
 ///
-/// Follows NumPy broadcasting rules: dimensions are compared from right to left,
+/// Follows `NumPy` broadcasting rules: dimensions are compared from right to left,
 /// and each dimension must be either equal or one of them must be 1.
 ///
 /// # Arguments
@@ -990,7 +990,9 @@ mod tests {
     fn test_broadcast_to_vector_to_matrix() {
         use ndarray::array;
 
-        let arr = array![1.0, 2.0, 3.0].into_shape_with_order(ndarray::IxDyn(&[1, 3])).unwrap();
+        let arr = array![1.0, 2.0, 3.0]
+            .into_shape_with_order(ndarray::IxDyn(&[1, 3]))
+            .unwrap();
         let result = broadcast_to(arr.view(), &[2, 3]).unwrap();
         assert_eq!(result.shape(), &[2, 3]);
         #[allow(clippy::float_cmp)]

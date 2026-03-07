@@ -2380,40 +2380,49 @@ fn jackknife_weighted(data: Vec<(f64, f64)>) -> (f64, f64) {
 /// - 1D input: creates a 2D diagonal matrix with the input as diagonal elements.
 /// - 2D input: extracts the diagonal elements as a 1D array.
 ///
-/// Supports F64 and Complex128 arrays. Also accepts legacy F64ArrayView inputs.
+/// Supports F64 and Complex128 arrays. Also accepts legacy `F64ArrayView` inputs.
 #[pyfunction]
-fn diag(
-    py: Python<'_>,
-    v: Bound<'_, PyAny>,
-) -> PyResult<Py<PyAny>> {
+fn diag(py: Python<'_>, v: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     // Try extracting as new Array type first
     if let Ok(arr) = v.extract::<pyo3::PyRef<'_, Array>>() {
         return match &arr.data {
             ArrayData::F64(a) if a.ndim() == 1 => {
-                let arr1 = a.view().into_dimensionality::<ndarray::Ix1>().map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
-                })?;
+                let arr1 = a
+                    .view()
+                    .into_dimensionality::<ndarray::Ix1>()
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
+                    })?;
                 let result = pecos::array::diag_matrix(arr1);
                 Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
             }
             ArrayData::Complex128(a) if a.ndim() == 1 => {
-                let arr1 = a.view().into_dimensionality::<ndarray::Ix1>().map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
-                })?;
+                let arr1 = a
+                    .view()
+                    .into_dimensionality::<ndarray::Ix1>()
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
+                    })?;
                 let result = pecos::array::diag_matrix(arr1);
                 Ok(Py::new(py, Array::new(ArrayData::Complex128(result.into_dyn())))?.into_any())
             }
             ArrayData::F64(a) if a.ndim() == 2 => {
-                let arr2 = a.view().into_dimensionality::<ndarray::Ix2>().map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
-                })?;
+                let arr2 = a
+                    .view()
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
+                    })?;
                 let result = pecos::array::diag(arr2);
                 Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
             }
             ArrayData::Complex128(a) if a.ndim() == 2 => {
-                let arr2 = a.view().into_dimensionality::<ndarray::Ix2>().map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
-                })?;
+                let arr2 = a
+                    .view()
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
+                    })?;
                 let result = pecos::array::diag(arr2);
                 Ok(Py::new(py, Array::new(ArrayData::Complex128(result.into_dyn())))?.into_any())
             }
@@ -2426,15 +2435,17 @@ fn diag(
     // Fall back to legacy F64ArrayView / raw numpy extraction
     let f64_arr = array_buffer::extract_f64_array(&v)?;
     if f64_arr.ndim() == 1 {
-        let arr1 = f64_arr.view().into_dimensionality::<ndarray::Ix1>().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
-        })?;
+        let arr1 = f64_arr
+            .view()
+            .into_dimensionality::<ndarray::Ix1>()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}")))?;
         let result = pecos::array::diag_matrix(arr1);
         Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
     } else if f64_arr.ndim() == 2 {
-        let arr2 = f64_arr.view().into_dimensionality::<ndarray::Ix2>().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
-        })?;
+        let arr2 = f64_arr
+            .view()
+            .into_dimensionality::<ndarray::Ix2>()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}")))?;
         let result = pecos::array::diag(arr2);
         Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
     } else {
@@ -5132,8 +5143,7 @@ fn broadcast_to<T: Clone>(
     arr: ndarray::ArrayViewD<'_, T>,
     target_shape: &[usize],
 ) -> PyResult<ArrayD<T>> {
-    pecos::array::broadcast_to(arr, target_shape)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
+    pecos::array::broadcast_to(arr, target_shape).map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// Kronecker product of two 2D arrays.
@@ -5145,9 +5155,9 @@ fn kron(a: &Array, b: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
 
     macro_rules! to_2d {
         ($arr:expr) => {
-            $arr.clone().into_dimensionality::<Ix2>().map_err(|_| {
-                pyo3::exceptions::PyValueError::new_err("kron requires 2D arrays")
-            })?
+            $arr.clone()
+                .into_dimensionality::<Ix2>()
+                .map_err(|_| pyo3::exceptions::PyValueError::new_err("kron requires 2D arrays"))?
         };
     }
 
@@ -5195,12 +5205,11 @@ fn expm(a: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
         }
     };
 
-    let arr2 = c_arr.into_dimensionality::<Ix2>().map_err(|_| {
-        pyo3::exceptions::PyValueError::new_err("expm requires a 2D matrix")
-    })?;
+    let arr2 = c_arr
+        .into_dimensionality::<Ix2>()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("expm requires a 2D matrix"))?;
 
-    let result_arr = pecos::linalg::expm(&arr2)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result_arr = pecos::linalg::expm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let result = ArrayData::Complex128(result_arr.into_dyn());
 
     Ok(Py::new(py, Array::new(result))?.into_any())
@@ -5224,12 +5233,11 @@ fn logm(a: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
         }
     };
 
-    let arr2 = c_arr.into_dimensionality::<Ix2>().map_err(|_| {
-        pyo3::exceptions::PyValueError::new_err("logm requires a 2D matrix")
-    })?;
+    let arr2 = c_arr
+        .into_dimensionality::<Ix2>()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("logm requires a 2D matrix"))?;
 
-    let result_arr = pecos::linalg::logm(&arr2)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result_arr = pecos::linalg::logm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let result = ArrayData::Complex128(result_arr.into_dyn());
 
     Ok(Py::new(py, Array::new(result))?.into_any())

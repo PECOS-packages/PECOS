@@ -18,19 +18,19 @@ import pecos_rslib as pc
 class TestGraphCreation:
     """Test Graph creation and basic operations."""
 
-    def test_graph_new(self):
+    def test_graph_new(self) -> None:
         """Test creating a new empty graph."""
         graph = pc.graph.Graph()
         assert graph.node_count() == 0
         assert graph.edge_count() == 0
 
-    def test_graph_with_capacity(self):
+    def test_graph_with_capacity(self) -> None:
         """Test creating a graph with pre-allocated capacity."""
         graph = pc.graph.Graph.with_capacity(10, 20)
         assert graph.node_count() == 0
         assert graph.edge_count() == 0
 
-    def test_graph_repr(self):
+    def test_graph_repr(self) -> None:
         """Test graph string representation."""
         graph = pc.graph.Graph()
         assert str(graph) == "Graph(nodes=0, edges=0)"
@@ -43,7 +43,7 @@ class TestGraphCreation:
 class TestGraphNodes:
     """Test node operations."""
 
-    def test_add_single_node(self):
+    def test_add_single_node(self) -> None:
         """Test adding a single node."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -51,7 +51,7 @@ class TestGraphNodes:
         assert n0 == 0
         assert graph.node_count() == 1
 
-    def test_add_multiple_nodes(self):
+    def test_add_multiple_nodes(self) -> None:
         """Test adding multiple nodes."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -63,7 +63,7 @@ class TestGraphNodes:
         assert n2 == 2
         assert graph.node_count() == 3
 
-    def test_add_many_nodes(self):
+    def test_add_many_nodes(self) -> None:
         """Test adding many nodes."""
         graph = pc.graph.Graph()
         nodes = [graph.add_node() for _ in range(100)]
@@ -72,12 +72,12 @@ class TestGraphNodes:
         assert nodes == list(range(100))
         assert graph.node_count() == 100
 
-    def test_nodes_empty_graph(self):
+    def test_nodes_empty_graph(self) -> None:
         """Test nodes() on empty graph."""
         graph = pc.graph.Graph()
         assert graph.nodes() == []
 
-    def test_nodes_with_nodes(self):
+    def test_nodes_with_nodes(self) -> None:
         """Test nodes() returns correct node indices."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -94,7 +94,7 @@ class TestGraphNodes:
 class TestGraphEdges:
     """Test edge operations."""
 
-    def test_add_single_edge(self):
+    def test_add_single_edge(self) -> None:
         """Test adding a single edge."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -105,7 +105,7 @@ class TestGraphEdges:
         graph.set_edge_weight(edge_id, 1.0)
         assert graph.edge_count() == 1
 
-    def test_add_multiple_edges(self):
+    def test_add_multiple_edges(self) -> None:
         """Test adding multiple edges."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -126,7 +126,7 @@ class TestGraphEdges:
 
         assert graph.edge_count() == 3
 
-    def test_edge_weights(self):
+    def test_edge_weights(self) -> None:
         """Test edges with different weights."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -140,7 +140,7 @@ class TestGraphEdges:
         assert len(edges) == 1
         assert edges[0] == (n0, n1, 5.5)
 
-    def test_edges_list(self):
+    def test_edges_list(self) -> None:
         """Test retrieving list of all edges."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -167,7 +167,7 @@ class TestGraphEdges:
 class TestMaxWeightMatching:
     """Test maximum weight matching algorithm."""
 
-    def test_matching_simple_pair(self):
+    def test_matching_simple_pair(self) -> None:
         """Test matching with a single pair of nodes."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -183,7 +183,7 @@ class TestMaxWeightMatching:
         assert matching[n0] == n1
         assert matching[n1] == n0
 
-    def test_matching_two_pairs(self):
+    def test_matching_two_pairs(self) -> None:
         """Test matching with two separate pairs."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -208,7 +208,7 @@ class TestMaxWeightMatching:
         assert matching[n2] == n3
         assert matching[n3] == n2
 
-    def test_matching_chooses_heaviest_edge(self):
+    def test_matching_chooses_heaviest_edge(self) -> None:
         """Test that matching chooses the heaviest edge."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -236,7 +236,7 @@ class TestMaxWeightMatching:
         assert matching[n2] == n1
         assert n0 not in matching
 
-    def test_matching_complex_graph(self):
+    def test_matching_complex_graph(self) -> None:
         """Test matching with a more complex graph."""
         graph = pc.graph.Graph()
         nodes = [graph.add_node() for _ in range(6)]
@@ -273,7 +273,7 @@ class TestMaxWeightMatching:
             matched_node = matching[node]
             assert matching[matched_node] == node
 
-    def test_matching_with_odd_nodes(self):
+    def test_matching_with_odd_nodes(self) -> None:
         """Test matching with odd number of nodes (one node unmatched)."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -293,14 +293,14 @@ class TestMaxWeightMatching:
         assert matching[n1] == n0
         assert n2 not in matching
 
-    def test_matching_empty_graph(self):
+    def test_matching_empty_graph(self) -> None:
         """Test matching on an empty graph."""
         graph = pc.graph.Graph()
         matching = graph.max_weight_matching(False)
 
         assert len(matching) == 0
 
-    def test_matching_nodes_no_edges(self):
+    def test_matching_nodes_no_edges(self) -> None:
         """Test matching on graph with nodes but no edges."""
         graph = pc.graph.Graph()
         graph.add_node()
@@ -312,7 +312,7 @@ class TestMaxWeightMatching:
         # No edges means no matching
         assert len(matching) == 0
 
-    def test_matching_max_cardinality_false(self):
+    def test_matching_max_cardinality_false(self) -> None:
         """Test matching with max_cardinality=False (default)."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -344,7 +344,7 @@ class TestMaxWeightMatching:
         assert matching[n0] == n1
         assert matching[n2] == n3
 
-    def test_matching_deterministic(self):
+    def test_matching_deterministic(self) -> None:
         """Test that matching is deterministic (uses BTreeMap)."""
         # Run the same matching multiple times and verify results are identical
         results = []
@@ -374,7 +374,7 @@ class TestMaxWeightMatching:
 class TestGraphUseCases:
     """Test graph usage for MWPM decoder scenarios."""
 
-    def test_mwpm_decoder_scenario(self):
+    def test_mwpm_decoder_scenario(self) -> None:
         """Test a typical MWPM decoder scenario.
 
         In quantum error correction, detection events (syndrome measurements)
@@ -416,7 +416,7 @@ class TestGraphUseCases:
         assert matching[d0] == d1
         assert matching[d2] == d3
 
-    def test_empty_matching_use_case(self):
+    def test_empty_matching_use_case(self) -> None:
         """Test when no detection events occur (empty graph)."""
         graph = pc.graph.Graph()
         matching = graph.max_weight_matching(False)
@@ -428,7 +428,7 @@ class TestGraphUseCases:
 class TestEdgeData:
     """Test edge data/attributes functionality."""
 
-    def test_get_edge_data_simple(self):
+    def test_get_edge_data_simple(self) -> None:
         """Test retrieving edge data for a simple edge."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -443,7 +443,7 @@ class TestEdgeData:
         assert data is not None
         assert data["weight"] == 5.5
 
-    def test_edge_endpoints(self):
+    def test_edge_endpoints(self) -> None:
         """Test getting edge endpoints from edge ID."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -458,7 +458,7 @@ class TestEdgeData:
         a, b = endpoints
         assert (a, b) == (n0, n1)
 
-    def test_edge_endpoints_nonexistent(self):
+    def test_edge_endpoints_nonexistent(self) -> None:
         """Test edge_endpoints with invalid edge ID."""
         graph = pc.graph.Graph()
 
@@ -466,7 +466,7 @@ class TestEdgeData:
         endpoints = graph.edge_endpoints(9999)
         assert endpoints is None
 
-    def test_add_edge_weight_kwarg(self):
+    def test_add_edge_weight_kwarg(self) -> None:
         """Test add_edge with weight set via method."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -481,7 +481,7 @@ class TestEdgeData:
         assert data is not None
         assert data["weight"] == 7.5
 
-    def test_get_edge_data_nonexistent(self):
+    def test_get_edge_data_nonexistent(self) -> None:
         """Test getting edge data for non-existent edge."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -491,7 +491,7 @@ class TestEdgeData:
         data = graph.get_edge_data(n0, n1)
         assert data is None
 
-    def test_get_edge_data_undirected(self):
+    def test_get_edge_data_undirected(self) -> None:
         """Test that edge data works in both directions (undirected graph)."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -514,7 +514,7 @@ class TestEdgeData:
 class TestSubgraph:
     """Test subgraph extraction functionality."""
 
-    def test_subgraph_simple(self):
+    def test_subgraph_simple(self) -> None:
         """Test creating a simple subgraph."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -545,7 +545,7 @@ class TestSubgraph:
         assert len(edges) == 1
         assert edges[0][2] == 1.0  # weight
 
-    def test_subgraph_disconnected(self):
+    def test_subgraph_disconnected(self) -> None:
         """Test subgraph with disconnected nodes."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -567,7 +567,7 @@ class TestSubgraph:
         assert sub.node_count() == 2
         assert sub.edge_count() == 0  # No edge between n0 and n2
 
-    def test_subgraph_empty(self):
+    def test_subgraph_empty(self) -> None:
         """Test creating an empty subgraph."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -586,7 +586,7 @@ class TestSubgraph:
 class TestShortestPath:
     """Test shortest path functionality."""
 
-    def test_single_source_shortest_path_simple(self):
+    def test_single_source_shortest_path_simple(self) -> None:
         """Test shortest paths in a simple graph."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -608,7 +608,7 @@ class TestShortestPath:
         assert paths[n1] == [n0, n1]
         assert paths[n2] == [n0, n1, n2]
 
-    def test_single_source_shortest_path_disconnected(self):
+    def test_single_source_shortest_path_disconnected(self) -> None:
         """Test shortest paths with disconnected components."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -633,7 +633,7 @@ class TestShortestPath:
         assert n2 not in paths
         assert n3 not in paths
 
-    def test_single_source_shortest_path_weighted(self):
+    def test_single_source_shortest_path_weighted(self) -> None:
         """Test that shortest path considers weights."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -663,7 +663,7 @@ class TestShortestPath:
 class TestAttrsBuilder:
     """Test mutable attribute views and dict-like access."""
 
-    def test_edge_attrs_view_chainable_insert(self):
+    def test_edge_attrs_view_chainable_insert(self) -> None:
         """Test EdgeAttrsView chainable insert method."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -679,7 +679,7 @@ class TestAttrsBuilder:
         assert attrs["label"] == "boundary"
         assert attrs["path"] == [1, 2, 3]
 
-    def test_edge_attrs_view_mixed_access(self):
+    def test_edge_attrs_view_mixed_access(self) -> None:
         """Test mixing dict-like and chainable access."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -698,7 +698,7 @@ class TestAttrsBuilder:
         assert attrs["z"] == 3.0
         assert attrs["w"] == 4.0
 
-    def test_edge_attrs_view_update_from_dict(self):
+    def test_edge_attrs_view_update_from_dict(self) -> None:
         """Test EdgeAttrsView.update() with a dict."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -714,7 +714,7 @@ class TestAttrsBuilder:
         assert attrs["label"] == "boundary"
         assert attrs["path"] == [1, 2, 3]
 
-    def test_edge_attrs_view_update_multiple_times(self):
+    def test_edge_attrs_view_update_multiple_times(self) -> None:
         """Test multiple updates to EdgeAttrsView."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -733,7 +733,7 @@ class TestAttrsBuilder:
         assert attrs["b"] == 20  # overwritten
         assert attrs["c"] == 3
 
-    def test_node_attrs_view_dict_like(self):
+    def test_node_attrs_view_dict_like(self) -> None:
         """Test NodeAttrsView dict-like interface."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -748,7 +748,7 @@ class TestAttrsBuilder:
         assert attrs["position"] == [1.0, 2.0, 3.0]
         assert attrs["active"] is True
 
-    def test_node_attrs_view_insert(self):
+    def test_node_attrs_view_insert(self) -> None:
         """Test NodeAttrsView.insert() chainable method."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -761,7 +761,7 @@ class TestAttrsBuilder:
         assert attrs["y"] == 2.0
         assert attrs["z"] == 3.0
 
-    def test_node_attrs_view_update(self):
+    def test_node_attrs_view_update(self) -> None:
         """Test NodeAttrsView.update() with a dict."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -775,7 +775,7 @@ class TestAttrsBuilder:
         assert attrs["index"] == 5
         assert attrs["coords"] == [1.0, 2.0]
 
-    def test_node_attrs_view_get(self):
+    def test_node_attrs_view_get(self) -> None:
         """Test NodeAttrsView.get() with default values."""
         graph = pc.graph.Graph()
         n0 = graph.add_node()
@@ -792,7 +792,7 @@ class TestAttrsBuilder:
         # Test get with custom default
         assert attrs.get("nonexistent", "default") == "default"
 
-    def test_graph_attrs_view_dict_like(self):
+    def test_graph_attrs_view_dict_like(self) -> None:
         """Test GraphAttrsView dict-like interface."""
         graph = pc.graph.Graph()
 
@@ -806,7 +806,7 @@ class TestAttrsBuilder:
         assert attrs["version"] == 1
         assert attrs["metadata"] == ["tag1", "tag2"]
 
-    def test_graph_attrs_view_insert(self):
+    def test_graph_attrs_view_insert(self) -> None:
         """Test GraphAttrsView.insert() chainable method."""
         graph = pc.graph.Graph()
 
@@ -818,7 +818,7 @@ class TestAttrsBuilder:
         assert attrs["date"] == "2025-01-01"
         assert attrs["version"] == 2
 
-    def test_graph_attrs_view_update(self):
+    def test_graph_attrs_view_update(self) -> None:
         """Test GraphAttrsView.update() with a dict."""
         graph = pc.graph.Graph()
 
@@ -831,7 +831,7 @@ class TestAttrsBuilder:
         assert attrs["size"] == 100
         assert attrs["tags"] == ["important"]
 
-    def test_graph_attrs_view_get(self):
+    def test_graph_attrs_view_get(self) -> None:
         """Test GraphAttrsView.get() with default values."""
         graph = pc.graph.Graph()
 
@@ -847,7 +847,7 @@ class TestAttrsBuilder:
         # Test get with custom default
         assert attrs.get("nonexistent", "default") == "default"
 
-    def test_all_three_attr_levels(self):
+    def test_all_three_attr_levels(self) -> None:
         """Test that graph, node, and edge attributes all work together."""
         graph = pc.graph.Graph()
 

@@ -13,7 +13,7 @@ from pecos_rslib import Array
 class TestNonUnitStepSlicing1D:
     """Test non-unit step slicing for 1D arrays."""
 
-    def test_every_other_element(self):
+    def test_every_other_element(self) -> None:
         """Test arr[::2] - every other element."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         pa_arr = Array(np_arr.copy())
@@ -25,7 +25,7 @@ class TestNonUnitStepSlicing1D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_every_other_element_with_start(self):
+    def test_every_other_element_with_start(self) -> None:
         """Test arr[1::2] - every other element starting at index 1."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         pa_arr = Array(np_arr.copy())
@@ -37,7 +37,7 @@ class TestNonUnitStepSlicing1D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_step_with_start_and_stop(self):
+    def test_step_with_start_and_stop(self) -> None:
         """Test arr[1:10:3] - step by 3 from index 1 to 10."""
         np_arr = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
         pa_arr = Array(np_arr.copy())
@@ -49,7 +49,7 @@ class TestNonUnitStepSlicing1D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_reverse_order(self):
+    def test_reverse_order(self) -> None:
         """Test arr[::-1] - reverse order."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         pa_arr = Array(np_arr.copy())
@@ -61,7 +61,7 @@ class TestNonUnitStepSlicing1D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_every_other_element_reverse(self):
+    def test_every_other_element_reverse(self) -> None:
         """Test arr[::-2] - every other element in reverse."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         pa_arr = Array(np_arr.copy())
@@ -73,7 +73,7 @@ class TestNonUnitStepSlicing1D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_negative_step_with_explicit_bounds(self):
+    def test_negative_step_with_explicit_bounds(self) -> None:
         """Test arr[10:0:-2] - reverse with step -2 from 10 to 0."""
         np_arr = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
         pa_arr = Array(np_arr.copy())
@@ -89,7 +89,7 @@ class TestNonUnitStepSlicing1D:
 class TestNonUnitStepArrayAssignment:
     """Test array assignment with non-unit step slicing."""
 
-    def test_array_assignment_with_step(self):
+    def test_array_assignment_with_step(self) -> None:
         """Test assigning an array to a non-unit step slice."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         pa_arr = Array(np_arr.copy())
@@ -103,7 +103,7 @@ class TestNonUnitStepArrayAssignment:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_array_assignment_reverse_step(self):
+    def test_array_assignment_reverse_step(self) -> None:
         """Test assigning an array to a reverse non-unit step slice."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         pa_arr = Array(np_arr.copy())
@@ -121,7 +121,7 @@ class TestNonUnitStepArrayAssignment:
 class TestNonUnitStepDifferentDtypes:
     """Test non-unit step slicing with different data types."""
 
-    def test_int64_non_unit_step(self):
+    def test_int64_non_unit_step(self) -> None:
         """Test non-unit step slicing with int64 array."""
         np_arr = np.array([10, 20, 30, 40, 50, 60])
         pa_arr = Array(np_arr.copy())
@@ -134,7 +134,7 @@ class TestNonUnitStepDifferentDtypes:
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
         assert np.asarray(pa_arr).dtype == np.int64
 
-    def test_complex128_non_unit_step(self):
+    def test_complex128_non_unit_step(self) -> None:
         """Test non-unit step slicing with complex128 array."""
         np_arr = np.array([1 + 2j, 3 + 4j, 5 + 6j, 7 + 8j, 9 + 10j, 11 + 12j])
         pa_arr = Array(np_arr.copy())
@@ -147,7 +147,7 @@ class TestNonUnitStepDifferentDtypes:
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
         assert np.asarray(pa_arr).dtype == np.complex128
 
-    def test_int32_non_unit_step(self):
+    def test_int32_non_unit_step(self) -> None:
         """Test non-unit step slicing with int32 array."""
         np_arr = np.array([10, 20, 30, 40, 50, 60], dtype=np.int32)
         pa_arr = Array(np_arr.copy())
@@ -160,7 +160,7 @@ class TestNonUnitStepDifferentDtypes:
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
         assert np.asarray(pa_arr).dtype == np.int32
 
-    def test_float32_non_unit_step(self):
+    def test_float32_non_unit_step(self) -> None:
         """Test non-unit step slicing with float32 array."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32)
         pa_arr = Array(np_arr.copy())
@@ -177,7 +177,7 @@ class TestNonUnitStepDifferentDtypes:
 class TestNonUnitStepEdgeCases:
     """Test edge cases for non-unit step slicing."""
 
-    def test_step_larger_than_array(self):
+    def test_step_larger_than_array(self) -> None:
         """Test edge case - step larger than array size."""
         np_arr = np.array([1.0, 2.0, 3.0])
         pa_arr = Array(np_arr.copy())
@@ -189,7 +189,7 @@ class TestNonUnitStepEdgeCases:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_empty_slice_result(self):
+    def test_empty_slice_result(self) -> None:
         """Test when slice produces empty result."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         pa_arr = Array(np_arr.copy())
@@ -201,7 +201,7 @@ class TestNonUnitStepEdgeCases:
         # Verify results match (should be unchanged)
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_single_element_step(self):
+    def test_single_element_step(self) -> None:
         """Test when step results in single element."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         pa_arr = Array(np_arr.copy())
@@ -213,7 +213,7 @@ class TestNonUnitStepEdgeCases:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_negative_indices_with_step(self):
+    def test_negative_indices_with_step(self) -> None:
         """Test negative indices combined with non-unit step."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         pa_arr = Array(np_arr.copy())
@@ -229,7 +229,7 @@ class TestNonUnitStepEdgeCases:
 class TestNonUnitStepReproducibility:
     """Test that non-unit step operations are reproducible and consistent."""
 
-    def test_multiple_operations(self):
+    def test_multiple_operations(self) -> None:
         """Test multiple non-unit step operations on same array."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
         pa_arr = Array(np_arr.copy())
@@ -249,7 +249,7 @@ class TestNonUnitStepReproducibility:
         np_arr[::-2] = 30.0
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_unit_step_still_works(self):
+    def test_unit_step_still_works(self) -> None:
         """Verify that unit-step slicing still works after non-unit implementation."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         pa_arr = Array(np_arr.copy())
@@ -261,7 +261,7 @@ class TestNonUnitStepReproducibility:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_conversion_to_numpy_preserves_values(self):
+    def test_conversion_to_numpy_preserves_values(self) -> None:
         """Test that conversion to NumPy preserves values after non-unit step operations."""
         np_arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         pa_arr = Array(np_arr.copy())
@@ -279,7 +279,7 @@ class TestNonUnitStepReproducibility:
 class TestNonUnitStepWithUnitStep:
     """Test interaction between non-unit step and unit-step slicing."""
 
-    def test_alternating_unit_nonunit_steps(self):
+    def test_alternating_unit_nonunit_steps(self) -> None:
         """Test alternating between unit and non-unit step operations."""
         np_arr = np.arange(20, dtype=np.float64)
         pa_arr = Array(np_arr.copy())

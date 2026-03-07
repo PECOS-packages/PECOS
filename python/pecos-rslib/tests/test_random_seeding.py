@@ -14,7 +14,7 @@ from pecos_rslib import array_equal, random as pecos_random
 class TestSeedReproducibility:
     """Test that seeding produces reproducible sequences."""
 
-    def test_seed_random_reproducibility(self):
+    def test_seed_random_reproducibility(self) -> None:
         """Test that same seed produces same random() sequence."""
         pecos_random.seed(42)
         values1 = pecos_random.random(10)
@@ -24,7 +24,7 @@ class TestSeedReproducibility:
 
         np.testing.assert_array_equal(values1, values2)
 
-    def test_seed_randint_reproducibility(self):
+    def test_seed_randint_reproducibility(self) -> None:
         """Test that same seed produces same randint() sequence."""
         pecos_random.seed(123)
         values1 = pecos_random.randint(0, 100, 10)
@@ -34,7 +34,7 @@ class TestSeedReproducibility:
 
         np.testing.assert_array_equal(values1, values2)
 
-    def test_seed_choice_reproducibility(self):
+    def test_seed_choice_reproducibility(self) -> None:
         """Test that same seed produces same choice() sequence."""
         items = [1, 2, 3, 4, 5]
 
@@ -46,7 +46,7 @@ class TestSeedReproducibility:
 
         assert samples1 == samples2
 
-    def test_different_seeds_different_sequences(self):
+    def test_different_seeds_different_sequences(self) -> None:
         """Test that different seeds produce different sequences."""
         pecos_random.seed(42)
         values1 = pecos_random.random(100)
@@ -57,7 +57,7 @@ class TestSeedReproducibility:
         # With 100 random floats, sequences should be different
         assert not array_equal(values1, values2)
 
-    def test_seed_advances_state(self):
+    def test_seed_advances_state(self) -> None:
         """Test that RNG state advances between calls."""
         pecos_random.seed(789)
         val1 = pecos_random.random(1)
@@ -75,7 +75,7 @@ class TestSeedReproducibility:
 class TestSeedIntegration:
     """Test seeding with multiple functions."""
 
-    def test_seed_affects_all_functions(self):
+    def test_seed_affects_all_functions(self) -> None:
         """Test that seed() affects random(), randint(), and choice()."""
         # Set seed and generate values
         pecos_random.seed(999)
@@ -94,7 +94,7 @@ class TestSeedIntegration:
         np.testing.assert_array_equal(i1, i2)
         assert c1 == c2
 
-    def test_seed_sequence_order_matters(self):
+    def test_seed_sequence_order_matters(self) -> None:
         """Test that the order of operations affects the sequence."""
         # Sequence 1: random then randint
         pecos_random.seed(111)
@@ -115,7 +115,7 @@ class TestSeedIntegration:
 class TestSeedLargeScale:
     """Test seeding with large datasets."""
 
-    def test_seed_large_array_reproducibility(self):
+    def test_seed_large_array_reproducibility(self) -> None:
         """Test reproducibility with large arrays."""
         size = 100_000
 
@@ -127,7 +127,7 @@ class TestSeedLargeScale:
 
         np.testing.assert_array_equal(large1, large2)
 
-    def test_seed_multiple_large_generations(self):
+    def test_seed_multiple_large_generations(self) -> None:
         """Test that state persists correctly across multiple large generations."""
         pecos_random.seed(888)
 
@@ -145,7 +145,7 @@ class TestSeedLargeScale:
 class TestSeedNumericRange:
     """Test seeding with different seed values."""
 
-    def test_seed_zero(self):
+    def test_seed_zero(self) -> None:
         """Test that seed(0) works."""
         pecos_random.seed(0)
         values1 = pecos_random.random(10)
@@ -155,7 +155,7 @@ class TestSeedNumericRange:
 
         np.testing.assert_array_equal(values1, values2)
 
-    def test_seed_large_value(self):
+    def test_seed_large_value(self) -> None:
         """Test that large seed values work."""
         large_seed = 2**63 - 1  # Max u64
 
@@ -167,7 +167,7 @@ class TestSeedNumericRange:
 
         np.testing.assert_array_equal(values1, values2)
 
-    def test_different_small_seeds(self):
+    def test_different_small_seeds(self) -> None:
         """Test that consecutive small seeds produce different sequences."""
         pecos_random.seed(1)
         seq1 = pecos_random.random(10)

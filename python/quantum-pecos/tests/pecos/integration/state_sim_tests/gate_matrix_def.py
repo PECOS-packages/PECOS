@@ -65,13 +65,13 @@ project_one = pc.array([[0, 0], [0, 1]], dtype=pc.dtypes.complex128)
 assert (project_zero + project_one == I).all(), "Something up with identity or the projectors"
 
 # We will use the tensor/Kronecker. It verify that it is of the right type:
-cnot_def = pc.kron(project_zero, I) + pc.kron(project_one, X)
+cnot_def = (project_zero & I) + (project_one & X)
 cnot_verify = pc.array(
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
     dtype=pc.dtypes.complex128,
 )
 assert (cnot_verify == cnot_def).all(), "There is something wrong with the CNOT!"
-cnot_def_rev = pc.kron(I, project_zero) + pc.kron(X, project_one)
+cnot_def_rev = (I & project_zero) + (X & project_one)
 
 # Helper functions
 # ==================================
@@ -123,7 +123,7 @@ def oporder_multiply(args: list) -> pc.Array:
         if isinstance(ms, tuple):
             k_total = None
             for mk in ms:
-                k_total = mk if k_total is None else pc.kron(k_total, mk)
+                k_total = mk if k_total is None else k_total & mk
             term = k_total
         else:
             term = ms
@@ -208,12 +208,12 @@ def SqrtZZ() -> pc.Array:
     //	U1q(pi/2, -pi/2) q2;
     //}.
     """
-    return pc.exp(i * pi / 4) * pc.linalg.expm(-i * pc.kron(Z, Z) * pi / 4)
+    return pc.exp(i * pi / 4) * pc.linalg.expm(-i * (Z & Z) * pi / 4)
 
 
 assert pc.isclose(SqrtZZ(), pc.diag(pc.array([1, i, i, 1], dtype=pc.dtypes.complex128))).all()
-assert pc.isclose(pc.linalg.matrix_power(SqrtZZ(), 2), pc.kron(Z, Z)).all()
-assert pc.isclose(pc.linalg.matrix_power(SqrtZZ(), 4), pc.kron(I, I)).all()
+assert pc.isclose(pc.linalg.matrix_power(SqrtZZ(), 2), Z & Z).all()
+assert pc.isclose(pc.linalg.matrix_power(SqrtZZ(), 4), I & I).all()
 sqrtzz_circ = oporder_multiply(
     [
         (I, U1q(pi / 2, pi / 2)),
@@ -230,11 +230,11 @@ assert eqv2phase(SqrtZZ(), sqrtzz_def)
 
 def RZZ(theta: float) -> pc.Array:
     """Rotation around ZZ axis."""
-    return pc.exp(i * theta / 2) * pc.linalg.expm(-i * pc.kron(Z, Z) * theta / 2)
+    return pc.exp(i * theta / 2) * pc.linalg.expm(-i * (Z & Z) * theta / 2)
 
 
-assert pc.isclose(RZZ(0.0), pc.kron(I, I)).all()
-assert pc.isclose(RZZ(pi), pc.kron(Z, Z)).all()
+assert pc.isclose(RZZ(0.0), I & I).all()
+assert pc.isclose(RZZ(pi), Z & Z).all()
 assert pc.isclose(RZZ(pi / 2), SqrtZZ()).all()
 
 
@@ -418,7 +418,7 @@ def CZ() -> pc.Array:
     )
 
 
-cz_def = pc.kron(project_zero, I) + pc.kron(project_one, Z)
+cz_def = (project_zero & I) + (project_one & Z)
 
 assert eqv2phase(CZ(), cz_def)
 
@@ -442,7 +442,7 @@ def CY() -> pc.Array:
     )
 
 
-cy_def = pc.kron(project_zero, I) + pc.kron(project_one, Y)
+cy_def = (project_zero & I) + (project_one & Y)
 
 assert eqv2phase(CY(), cy_def)
 
@@ -477,7 +477,7 @@ def CH() -> pc.Array:
 
 
 # Note: !!! Can not use H() in definition due to phase
-ch_def = pc.kron(project_zero, I) + pc.kron(project_one, h_def)
+ch_def = (project_zero & I) + (project_one & h_def)
 
 assert eqv2phase(CH(), ch_def)
 
@@ -496,10 +496,7 @@ def Toffoli() -> pc.Array:
        cx a,b;
     }.
     """
-    cnot_def_a_c = pc.kron(pc.kron(project_zero, I), I) + pc.kron(
-        pc.kron(project_one, I),
-        X,
-    )
+    cnot_def_a_c = (project_zero & I & I) + (project_one & I & X)
 
     return oporder_multiply(
         [
@@ -567,7 +564,7 @@ def cu1_def(lamb: float) -> pc.Array:
         """U1 gate as defined in OpenQASM arXiv:1707.03429."""
         return pc.exp(i * lamb / 2) * U(0, 0, lamb)
 
-    return pc.kron(project_zero, I) + pc.kron(project_one, U1(lamb))
+    return (project_zero & I) + (project_one & U1(lamb))
 
 
 for _ in range(5):
@@ -609,7 +606,7 @@ def cu3_def(theta: float, phi: float, lamb: float) -> pc.Array:
         """U3 gate as defined in OpenQASM arXiv:1707.03429."""
         return U(theta, phi, lamb)
 
-    return pc.kron(project_zero, I) + pc.kron(project_one, U3(theta, phi, lamb))
+    return (project_zero & I) + (project_one & U3(theta, phi, lamb))
 
 
 for _ in range(10):

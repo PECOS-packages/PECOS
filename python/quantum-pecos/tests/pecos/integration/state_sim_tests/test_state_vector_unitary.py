@@ -91,7 +91,7 @@ def compare_gates(
 
     ref_state = None
     for _ in range(num_qubits):
-        ref_state = zero.copy() if ref_state is None else pc.kron(ref_state, zero)
+        ref_state = zero.copy() if ref_state is None else ref_state & zero
 
     if test_angles is not None:
         ref_unitary = None
@@ -100,7 +100,7 @@ def compare_gates(
             ref_unitary = (
                 g.U(*test_angles[0 + inc : 3 + inc])
                 if ref_unitary is None
-                else pc.kron(ref_unitary, g.U(*test_angles[0 + inc : 3 + inc]))
+                else ref_unitary & g.U(*test_angles[0 + inc : 3 + inc])
             )
 
         ref_state = ref_unitary.dot(ref_state)

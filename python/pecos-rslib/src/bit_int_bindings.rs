@@ -205,7 +205,7 @@ impl PyBitInt {
         let inner = if let Some(val_obj) = value {
             let v = val_obj.extract::<i64>().map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
-                    "Value {val_obj} does not fit in i64 (backed by i64 internally)"
+                    "BitInt({size}, {val_obj}): value exceeds the supported 64-bit integer range"
                 ))
             })?;
             BitInt::new(size, v)
@@ -276,7 +276,8 @@ impl PyBitInt {
     pub fn set(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let v = value.extract::<i64>().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
-                "Value {value} does not fit in i64 (backed by i64 internally)"
+                "BitInt({}).set({value}): value exceeds the supported 64-bit integer range",
+                self.inner.size()
             ))
         })?;
         self.inner = BitInt::new(self.inner.size(), v);
@@ -346,7 +347,8 @@ impl PyBitInt {
     pub fn set_clip(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let v = value.extract::<i64>().map_err(|_| {
             PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
-                "Value {value} does not fit in i64 (backed by i64 internally)"
+                "BitInt({}).set_clip({value}): value exceeds the supported 64-bit integer range",
+                self.inner.size()
             ))
         })?;
         let size = self.inner.size();
@@ -614,9 +616,10 @@ impl PyBitInt {
     /// Always returns signed i64 value.
     fn __int__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let val = self.inner.to_i64().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
-                "BitInt value too large to convert to Python int",
-            )
+            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
+                "BitInt(width={}) value too large to convert to Python int",
+                self.inner.size()
+            ))
         })?;
         Ok(val.into_pyobject(py).unwrap().into_any())
     }

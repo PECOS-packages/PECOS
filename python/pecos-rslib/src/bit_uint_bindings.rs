@@ -556,9 +556,10 @@ impl PyBitUInt {
 
     fn __int__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let val = self.inner.to_u64().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(
-                "BitUInt value too large to convert to Python int",
-            )
+            PyErr::new::<pyo3::exceptions::PyOverflowError, _>(format!(
+                "BitUInt(width={}) value too large to convert to Python int",
+                self.inner.size()
+            ))
         })?;
         Ok(val.into_pyobject(py).unwrap().into_any())
     }

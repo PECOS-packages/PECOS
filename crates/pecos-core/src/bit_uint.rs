@@ -82,9 +82,16 @@ impl BitUInt {
         result
     }
 
-    /// Create a `BitUInt` from raw word data (LSB first). Used internally by `BitInt`.
+    /// Create a `BitUInt` from raw word data (LSB first).
+    ///
+    /// Words are in little-endian order (least significant word first).
+    /// The value is masked to fit within the specified bit width.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `size` is 0.
     #[must_use]
-    pub(crate) fn from_raw_words(size: u16, words: Box<[u64]>) -> Self {
+    pub fn from_raw_words(size: u16, words: Box<[u64]>) -> Self {
         assert!(size > 0, "BitUInt size must be at least 1");
         let mut result = Self {
             size,
@@ -277,6 +284,15 @@ impl BitUInt {
     #[must_use]
     pub fn count_zeros(&self) -> u32 {
         u32::from(self.size) - self.count_ones()
+    }
+
+    /// Returns the value as a vector of u64 words in little-endian order (LSB first).
+    #[must_use]
+    pub fn to_words(&self) -> Vec<u64> {
+        match &self.value {
+            BitUIntValue::Small(v) => vec![*v],
+            BitUIntValue::Large(words) => words.to_vec(),
+        }
     }
 
     /// Returns true if the value is zero.

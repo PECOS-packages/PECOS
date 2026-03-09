@@ -17,6 +17,7 @@
 // the License.
 
 mod array_buffer;
+mod bit_conversion;
 mod bit_int_bindings;
 mod bit_uint_bindings;
 mod byte_message_bindings;

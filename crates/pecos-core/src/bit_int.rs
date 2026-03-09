@@ -118,6 +118,25 @@ impl BitInt {
         }
     }
 
+    /// Create a `BitInt` from raw inner words representing the `BitUInt(size+1)` value.
+    ///
+    /// The words represent the internal two's complement value in little-endian order.
+    /// The value is masked to fit within `size+1` bits by `BitUInt::from_raw_words`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `size` is 0 or greater than 65534.
+    #[must_use]
+    pub fn new_from_raw_inner(size: u16, inner_words: Box<[u64]>) -> Self {
+        assert!(size > 0, "BitInt size must be at least 1");
+        assert!(size <= 65534, "BitInt size must be at most 65534");
+        let internal_size = size + 1;
+        Self {
+            user_size: size,
+            inner: BitUInt::from_raw_words(internal_size, inner_words),
+        }
+    }
+
     /// Create a `BitInt` from a binary string.
     ///
     /// The size is determined by the string length. The sign bit is implicitly 0.
@@ -288,6 +307,12 @@ impl BitInt {
     #[must_use]
     pub fn inner(&self) -> &BitUInt {
         &self.inner
+    }
+
+    /// Returns the internal `BitUInt(size+1)` value as u64 words (little-endian, LSB first).
+    #[must_use]
+    pub fn inner_words(&self) -> Vec<u64> {
+        self.inner.to_words()
     }
 
     // ========================================================================

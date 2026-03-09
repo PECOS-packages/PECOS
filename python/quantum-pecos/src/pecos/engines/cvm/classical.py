@@ -96,7 +96,7 @@ def eval_op(
         a = BitInt(width, a)
 
     if op == "=":
-        if b:
+        if b is not None:
             msg = "Assignment can only have one argument (only `a`)."
             raise Exception(msg)
 
@@ -138,7 +138,7 @@ def eval_op(
     elif op == "~":
         expr_eval = ~a
 
-        if b:
+        if b is not None:
             msg = "Unary operation but got another argument!!!."
             raise Exception(msg)
 
@@ -223,7 +223,7 @@ def recur_eval_op(
     if isinstance(a, dict):
         a = recur_eval_op(a, output, width, shot_id=shot_id)
 
-    elif c:  # c => unary operation
+    elif c is not None:  # c => unary operation
         c = (
             recur_eval_op(c, output, width, shot_id=shot_id)
             if isinstance(c, dict)
@@ -235,7 +235,7 @@ def recur_eval_op(
     else:
         a = get_val(a, output, width, shot_id)
 
-    if b:
+    if b is not None:
         b = (
             recur_eval_op(b, output, width, shot_id=shot_id)
             if isinstance(b, dict)

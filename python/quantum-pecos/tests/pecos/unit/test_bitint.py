@@ -348,10 +348,71 @@ def test_set_negative() -> None:
 
 
 def test_set_clip() -> None:
-    """Verify set_clip() masks the value to the register width."""
+    """Verify set_clip() wraps values via two's complement truncation.
+
+    BitInt(N) has internal_size = N+1 bits. set_clip truncates to
+    internal_size bits using mask_to_width, giving standard two's
+    complement wrapping for out-of-range values.
+    """
     a = BitInt(4, 0)
+    # 0xFF = 255. BitInt(4) internal_size = 5 bits.
+    # 255 in 5 bits: 255 & 31 = 31 = 0b11111. Sign bit = 1. Value = 31 - 32 = -1.
     a.set_clip(0xFF)
-    assert int(a) == 0x0F
+    assert int(a) == -1
+
+    # Value in range is stored as-is
+    a.set_clip(10)
+    assert int(a) == 10
+
+    # Negative value in range is preserved
+    a.set_clip(-3)
+    assert int(a) == -3
+
+
+def test_set_clip_large_positive_into_bitint64() -> None:
+    """Verify set_clip handles values exceeding i64::MAX in BitInt(64).
+
+    BitInt(64) has range [-2^64, 2^64-1]. Values in [2^63, 2^64-1]
+    exceed i64::MAX and go through the slow path in set_clip.
+    """
+    a = BitInt(64, 0)
+    # 2^63 exceeds i64::MAX (2^63 - 1) but fits in BitInt(64)
+    a.set_clip(2**63)
+    assert int(a) == 2**63
+
+    # 2^64 - 1 is BitInt(64) max value
+    a.set_clip(2**64 - 1)
+    assert int(a) == 2**64 - 1
+
+
+def test_set_clip_large_negative_into_bitint64() -> None:
+    """Verify set_clip preserves sign for negative values below i64::MIN.
+
+    BitInt(64) min value is -2^64. Values like -2^64 don't fit in i64
+    (i64::MIN = -2^63) and go through the slow path.
+    Without the fix, the slow path masked to 64 user bits, which cleared
+    the sign bit and corrupted negative values.
+    """
+    a = BitInt(64, 0)
+    # -2^64 is the minimum value for BitInt(64)
+    a.set_clip(-(2**64))
+    assert int(a) == -(2**64)
+
+    # -(2^63 + 1) is just below i64::MIN, triggers slow path
+    a.set_clip(-(2**63 + 1))
+    assert int(a) == -(2**63 + 1)
+
+
+def test_set_clip_wrapping_outside_bitint64_range() -> None:
+    """Verify set_clip wraps values outside BitInt(64) range.
+
+    Values outside [-2^64, 2^64-1] should wrap via two's complement
+    truncation to 65 internal bits.
+    """
+    a = BitInt(64, 0)
+    # 2^64 is one past the max; should wrap to -2^64
+    a.set_clip(2**64)
+    assert int(a) == -(2**64)
 
 
 def test_count_ones() -> None:

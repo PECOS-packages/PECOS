@@ -64,7 +64,7 @@ def set_output(
 
         if output_spec:
             for symbol, size in output_spec.items():
-                output[symbol] = BitUInt(size)
+                output[symbol] = BitInt(size)
 
     return output
 

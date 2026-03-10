@@ -270,7 +270,9 @@ class HybridEngine:
                         if isinstance(val, str):
                             output_export[sym] = val
                         elif isinstance(val, (BitInt, BitUInt)):
-                            output_export[sym] = BitUInt(str(val)) if isinstance(val, BitUInt) else BitInt(str(val))
+                            output_export[sym] = (
+                                BitInt(val.size, int(val)) if isinstance(val, BitInt) else BitUInt(val.size, int(val))
+                            )
                         else:
                             msg = f"This output type `{type(val)}` not handled at export!"
                             raise Exception(msg)

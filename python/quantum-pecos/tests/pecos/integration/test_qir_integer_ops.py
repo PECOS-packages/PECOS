@@ -22,16 +22,8 @@ through BitUInt storage, and the signed arithmetic pipeline.
 from __future__ import annotations
 
 import pecos as pc
-from pecos.engines.cvm.classical import eval_cop, eval_op, get_val, set_output
+from pecos.engines.cvm.classical import eval_cop, eval_op, get_val
 from pecos.simulators import SparseSim
-
-
-def to_signed_32(val: int) -> int:
-    """Interpret an unsigned value as a signed 32-bit two's complement integer."""
-    val = val & 0xFFFFFFFF
-    if val >= 0x80000000:
-        val -= 0x100000000
-    return val
 
 
 def test_arithmetic_ops() -> None:
@@ -137,13 +129,9 @@ def test_integer_support() -> None:
     # sum = 3 (count of 1-results)
     assert int(output["sum"]) == 3
 
-    # sub = -6 (stored as two's complement in BitUInt(64))
-    assert to_signed_32(int(output["sub"])) == -6
-
-    # negMul = -18
-    assert to_signed_32(int(output["negMul"])) == -18
-
-    # dblNegMul = 18 (positive)
+    # Signed values are directly available from BitInt(64) storage
+    assert int(output["sub"]) == -6
+    assert int(output["negMul"]) == -18
     assert int(output["dblNegMul"]) == 18
 
 
@@ -205,14 +193,13 @@ def test_bitwise_and_with_zero() -> None:
     assert int(output["x"]) == 0
 
 
-def test_negative_value_roundtrip_through_bituint_storage() -> None:
-    """Verify negative values survive the BitInt -> BitUInt -> BitInt round-trip.
+def test_negative_value_roundtrip_through_bitint_storage() -> None:
+    """Verify negative values survive round-trips through BitInt(64) storage.
 
-    The CVM stores all classical variables as BitUInt but does signed
-    arithmetic via BitInt(regwidth). With regwidth=32 (default) and
-    BitUInt(64) storage, negative values are stored as 64-bit two's
-    complement. When read back, BitInt(32, large_unsigned) masks to
-    33 internal bits, correctly recovering the sign.
+    The CVM stores classical variables as BitInt(cvar_size) and does
+    signed arithmetic via BitInt(regwidth). With regwidth=32 (default)
+    and BitInt(64) storage, negative values are stored directly as
+    signed 64-bit values and read back without conversion.
     """
     qc = pc.QuantumCircuit(
         cvar_spec={"a": 64, "b": 64, "c": 64},
@@ -229,9 +216,9 @@ def test_negative_value_roundtrip_through_bituint_storage() -> None:
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
-    assert to_signed_32(int(output["a"])) == -1
-    assert to_signed_32(int(output["b"])) == -100
-    assert to_signed_32(int(output["c"])) == -50
+    assert int(output["a"]) == -1
+    assert int(output["b"]) == -100
+    assert int(output["c"]) == -50
 
 
 def test_negative_roundtrip_requires_storage_wider_than_regwidth() -> None:
@@ -297,7 +284,7 @@ def test_eval_op_modulo_with_zero_dividend() -> None:
 def test_chained_negative_arithmetic() -> None:
     """Test a chain of signed operations that stay negative throughout.
 
-    Exercises repeated round-trips through BitUInt(64) storage where
+    Exercises repeated round-trips through BitInt(64) storage where
     intermediate values are negative.
     """
     qc = pc.QuantumCircuit(
@@ -317,7 +304,7 @@ def test_chained_negative_arithmetic() -> None:
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
-    assert to_signed_32(int(output["x"])) == -20
+    assert int(output["x"]) == -20
 
 
 def test_condition_on_zero_valued_variable() -> None:
@@ -365,10 +352,10 @@ def test_bitwise_not_of_zero() -> None:
     skipped entirely. The code would fall through to `get_val(a, ...)`
     where `a` is None (unary ops don't set `a`), causing a crash.
     """
-    output = {"x": pc.BitUInt(64)}
+    output = {"x": pc.BitInt(64)}
     eval_cop({"t": "x", "op": "~", "c": 0}, output, width=32, shot_id=0)
     # ~BitInt(32, 0) = all bits set = -1 in signed 32-bit
-    assert to_signed_32(int(output["x"])) == -1
+    assert int(output["x"]) == -1
 
 
 def test_comparison_with_zero_operand() -> None:
@@ -378,7 +365,7 @@ def test_comparison_with_zero_operand() -> None:
     and return `a` (the BitInt value) instead of the comparison result.
     So `5 == 0` would return 5 instead of False/0.
     """
-    output = {"x": pc.BitUInt(64), "eq_result": pc.BitUInt(64), "ne_result": pc.BitUInt(64)}
+    output = {"x": pc.BitInt(64), "eq_result": pc.BitInt(64), "ne_result": pc.BitInt(64)}
 
     # x = 5
     eval_cop({"t": "x", "op": "=", "a": 5}, output, width=32, shot_id=0)
@@ -394,7 +381,7 @@ def test_comparison_with_zero_operand() -> None:
 
 def test_comparison_zero_equals_zero() -> None:
     """Test that 0 == 0 produces True (1), not 0."""
-    output = {"x": pc.BitUInt(64), "result": pc.BitUInt(64)}
+    output = {"x": pc.BitInt(64), "result": pc.BitInt(64)}
 
     # x stays at default 0
     # result = (x == 0) should be 1 (True)
@@ -409,7 +396,7 @@ def test_shift_by_zero() -> None:
     With the old code, the shift would be skipped (correct result by
     accident for shifts, but for the wrong reason).
     """
-    output = {"x": pc.BitUInt(64), "lsh": pc.BitUInt(64), "rsh": pc.BitUInt(64)}
+    output = {"x": pc.BitInt(64), "lsh": pc.BitInt(64), "rsh": pc.BitInt(64)}
 
     eval_cop({"t": "x", "op": "=", "a": 42}, output, width=32, shot_id=0)
     eval_cop({"t": "lsh", "op": "<<", "a": "x", "b": 0}, output, width=32, shot_id=0)
@@ -420,41 +407,45 @@ def test_shift_by_zero() -> None:
 
 
 def test_signed_boundary_values() -> None:
-    """Test INT32_MIN and INT32_MAX round-trip through BitUInt(64) storage."""
+    """Test INT32_MIN and INT32_MAX round-trip through BitInt(64) storage."""
     int32_max = 2**31 - 1  # 2147483647
     int32_min = -(2**31)  # -2147483648
 
-    output = {"max_val": pc.BitUInt(64), "min_val": pc.BitUInt(64)}
+    output = {"max_val": pc.BitInt(64), "min_val": pc.BitInt(64)}
 
     # Store INT32_MAX
     eval_cop({"t": "max_val", "op": "=", "a": int32_max}, output, width=32, shot_id=0)
-    assert to_signed_32(int(output["max_val"])) == int32_max
+    assert int(output["max_val"]) == int32_max
 
     # Store INT32_MIN (0 - 2147483648)
     eval_cop({"t": "min_val", "op": "-", "a": 0, "b": int32_max}, output, width=32, shot_id=0)
     eval_cop({"t": "min_val", "op": "-", "a": "min_val", "b": 1}, output, width=32, shot_id=0)
-    assert to_signed_32(int(output["min_val"])) == int32_min
+    assert int(output["min_val"]) == int32_min
 
 
 def test_signed_overflow_wrapping() -> None:
-    """Test that INT32_MAX + 1 wraps to INT32_MIN in 32-bit signed arithmetic.
+    """Test overflow wrapping in BitInt(32) arithmetic.
 
-    This tests the modular arithmetic behavior of BitInt(32).
+    BitInt(N) uses N+1 internal bits (extra sign bit), so BitInt(32) has
+    range -2^32 to 2^32-1, NOT the standard i32 range of -2^31 to 2^31-1.
+
+    Overflow occurs at 2^32: (2^32-1) + 1 wraps to -2^32.
     """
-    int32_max = 2**31 - 1
-    int32_min = -(2**31)
+    bitint32_max = 2**32 - 1
+    bitint32_min = -(2**32)
 
-    output = {"x": pc.BitUInt(64)}
+    output = {"x": pc.BitInt(64)}
 
-    eval_cop({"t": "x", "op": "=", "a": int32_max}, output, width=32, shot_id=0)
+    eval_cop({"t": "x", "op": "=", "a": bitint32_max}, output, width=32, shot_id=0)
+    assert int(output["x"]) == bitint32_max
+
     eval_cop({"t": "x", "op": "+", "a": "x", "b": 1}, output, width=32, shot_id=0)
-
-    assert to_signed_32(int(output["x"])) == int32_min
+    assert int(output["x"]) == bitint32_min
 
 
 def test_subtract_zero() -> None:
     """Test subtraction by zero (b=0 for `-` operator)."""
-    output = {"x": pc.BitUInt(64)}
+    output = {"x": pc.BitInt(64)}
 
     eval_cop({"t": "x", "op": "=", "a": 99}, output, width=32, shot_id=0)
     eval_cop({"t": "x", "op": "-", "a": "x", "b": 0}, output, width=32, shot_id=0)
@@ -465,10 +456,10 @@ def test_subtract_zero() -> None:
 def test_less_than_zero() -> None:
     """Test less-than comparison with b=0."""
     output = {
-        "neg": pc.BitUInt(64),
-        "pos": pc.BitUInt(64),
-        "r_neg": pc.BitUInt(64),
-        "r_pos": pc.BitUInt(64),
+        "neg": pc.BitInt(64),
+        "pos": pc.BitInt(64),
+        "r_neg": pc.BitInt(64),
+        "r_pos": pc.BitInt(64),
     }
 
     # neg = -5
@@ -483,3 +474,148 @@ def test_less_than_zero() -> None:
 
     assert int(output["r_neg"]) == 1
     assert int(output["r_pos"]) == 0
+
+
+def test_export_cvar_preserves_negative_sign() -> None:
+    """Test that ExportCVar correctly copies negative BitInt values.
+
+    The ExportCVar path creates a copy of the variable for export.
+    The old code used BitInt(str(val)) which parsed the binary user bits,
+    losing the sign. The fix uses BitInt(val.size, int(val)).
+    """
+    qc = pc.QuantumCircuit(
+        cvar_spec={"x": 64},
+        num_qubits=1,
+    )
+    # x = 0 - 42 = -42
+    qc.append("cop", set(), expr={"t": "x", "op": "-", "a": 0, "b": 42})
+    # Export x
+    qc.append("cop", set(), cop_type="ExportCVar", export="x")
+
+    state = SparseSim(1)
+    eng = pc.HybridEngine()
+    output, _ = eng.run(state, qc, shot_id=0)
+
+    # When ExportCVar fires, output is replaced by output_export.
+    # The exported value should preserve sign.
+    assert int(output["x"]) == -42
+
+
+def test_export_cvar_preserves_positive_value() -> None:
+    """Test that ExportCVar also works correctly for positive values."""
+    qc = pc.QuantumCircuit(
+        cvar_spec={"x": 64},
+        num_qubits=1,
+    )
+    qc.append("cop", set(), expr={"t": "x", "op": "=", "a": 123})
+    qc.append("cop", set(), cop_type="ExportCVar", export="x")
+
+    state = SparseSim(1)
+    eng = pc.HybridEngine()
+    output, _ = eng.run(state, qc, shot_id=0)
+
+    assert int(output["x"]) == 123
+
+
+def test_division_by_zero_raises() -> None:
+    """Test that division by zero raises ZeroDivisionError.
+
+    Before the truthiness fix, b=0 would skip the operation entirely
+    (silently returning a instead of raising). Now it correctly raises.
+    """
+    import pytest
+
+    with pytest.raises(ZeroDivisionError):
+        eval_op("/", pc.BitInt(32, 10), 0, width=32)
+
+
+def test_modulo_by_zero_raises() -> None:
+    """Test that modulo by zero raises ZeroDivisionError."""
+    import pytest
+
+    with pytest.raises(ZeroDivisionError):
+        eval_op("%", pc.BitInt(32, 10), 0, width=32)
+
+
+def test_bitwise_or_with_zero() -> None:
+    """Test that bitwise OR with zero returns the original value."""
+    output = {"x": pc.BitInt(64)}
+    eval_cop({"t": "x", "op": "=", "a": 0xFF}, output, width=32, shot_id=0)
+    eval_cop({"t": "x", "op": "|", "a": "x", "b": 0}, output, width=32, shot_id=0)
+    assert int(output["x"]) == 0xFF
+
+
+def test_bitwise_xor_with_zero() -> None:
+    """Test that bitwise XOR with zero returns the original value."""
+    output = {"x": pc.BitInt(64)}
+    eval_cop({"t": "x", "op": "=", "a": 42}, output, width=32, shot_id=0)
+    eval_cop({"t": "x", "op": "^", "a": "x", "b": 0}, output, width=32, shot_id=0)
+    assert int(output["x"]) == 42
+
+
+def test_two_negative_variables_subtraction() -> None:
+    """Test subtracting two negative variables: (-10) - (-5) = -5."""
+    qc = pc.QuantumCircuit(
+        cvar_spec={"x": 64, "y": 64, "result": 64},
+        num_qubits=1,
+    )
+    qc.append("cop", set(), expr={"t": "x", "op": "-", "a": 0, "b": 10})
+    qc.append("cop", set(), expr={"t": "y", "op": "-", "a": 0, "b": 5})
+    qc.append("cop", set(), expr={"t": "result", "op": "-", "a": "x", "b": "y"})
+
+    state = SparseSim(1)
+    eng = pc.HybridEngine()
+    output, _ = eng.run(state, qc, shot_id=0)
+
+    assert int(output["x"]) == -10
+    assert int(output["y"]) == -5
+    assert int(output["result"]) == -5
+
+
+def test_two_negative_variables_multiplication() -> None:
+    """Test multiplying two negative variables: (-4) * (-3) = 12."""
+    qc = pc.QuantumCircuit(
+        cvar_spec={"x": 64, "y": 64, "result": 64},
+        num_qubits=1,
+    )
+    qc.append("cop", set(), expr={"t": "x", "op": "-", "a": 0, "b": 4})
+    qc.append("cop", set(), expr={"t": "y", "op": "-", "a": 0, "b": 3})
+    qc.append("cop", set(), expr={"t": "result", "op": "*", "a": "x", "b": "y"})
+
+    state = SparseSim(1)
+    eng = pc.HybridEngine()
+    output, _ = eng.run(state, qc, shot_id=0)
+
+    assert int(output["x"]) == -4
+    assert int(output["y"]) == -3
+    assert int(output["result"]) == 12
+
+
+def test_two_negative_variables_division() -> None:
+    """Test dividing two negative variables: (-20) / (-4) = 5."""
+    output = {"x": pc.BitInt(64), "y": pc.BitInt(64), "result": pc.BitInt(64)}
+    eval_cop({"t": "x", "op": "-", "a": 0, "b": 20}, output, width=32, shot_id=0)
+    eval_cop({"t": "y", "op": "-", "a": 0, "b": 4}, output, width=32, shot_id=0)
+    eval_cop({"t": "result", "op": "/", "a": "x", "b": "y"}, output, width=32, shot_id=0)
+
+    assert int(output["x"]) == -20
+    assert int(output["y"]) == -4
+    assert int(output["result"]) == 5
+
+
+def test_negative_variable_comparison() -> None:
+    """Test comparing two negative variables: (-100) < (-10) is True."""
+    output = {
+        "x": pc.BitInt(64),
+        "y": pc.BitInt(64),
+        "lt": pc.BitInt(64),
+        "gt": pc.BitInt(64),
+    }
+    eval_cop({"t": "x", "op": "-", "a": 0, "b": 100}, output, width=32, shot_id=0)
+    eval_cop({"t": "y", "op": "-", "a": 0, "b": 10}, output, width=32, shot_id=0)
+
+    eval_cop({"t": "lt", "op": "<", "a": "x", "b": "y"}, output, width=32, shot_id=0)
+    eval_cop({"t": "gt", "op": ">", "a": "x", "b": "y"}, output, width=32, shot_id=0)
+
+    assert int(output["lt"]) == 1  # -100 < -10
+    assert int(output["gt"]) == 0  # -100 > -10 is false

@@ -368,27 +368,7 @@ impl PyBitInt {
     }
 
     pub fn set_clip(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let size = self.inner.size();
-        if let Ok(v) = value.extract::<i64>() {
-            let mask: i64 = if size >= 63 {
-                i64::MAX
-            } else {
-                (1i64 << size) - 1
-            };
-            self.inner = BitInt::new(size, v & mask);
-        } else {
-            // Large value: mask in Python to user_size bits, then extract
-            let py = value.py();
-            let one = 1u32.into_pyobject(py).unwrap().into_any();
-            let mask = one.call_method1("__lshift__", (size,))?;
-            let mask = mask.call_method1("__sub__", (1u32,))?;
-            let masked = value.call_method1("__and__", (&mask,))?;
-            let internal_size = size + 1;
-            let n_words = (internal_size as usize).div_ceil(64);
-            let words = bit_conversion::pyint_to_u64_words(&masked, n_words)?;
-            self.inner = BitInt::new_from_raw_inner(size, words.into_boxed_slice());
-        }
-        Ok(())
+        self.set(value)
     }
 
     // Bitwise operations

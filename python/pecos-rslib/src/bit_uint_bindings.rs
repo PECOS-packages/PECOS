@@ -342,35 +342,7 @@ impl PyBitUInt {
 
     /// Set value with clipping to fit within the allocated size.
     pub fn set_clip(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let size = self.inner.size();
-        if let Ok(v) = value.extract::<u64>() {
-            let mask = if size >= 64 {
-                u64::MAX
-            } else {
-                (1u64 << size) - 1
-            };
-            self.inner = BitUInt::new(size, v & mask);
-        } else if let Ok(v) = value.extract::<i64>() {
-            #[allow(clippy::cast_sign_loss)]
-            let raw = v as u64;
-            let mask = if size >= 64 {
-                u64::MAX
-            } else {
-                (1u64 << size) - 1
-            };
-            self.inner = BitUInt::new(size, raw & mask);
-        } else {
-            // Large value: mask in Python, then extract
-            let py = value.py();
-            let one = 1u32.into_pyobject(py).unwrap().into_any();
-            let mask = one.call_method1("__lshift__", (size,))?;
-            let mask = mask.call_method1("__sub__", (1u32,))?;
-            let masked = value.call_method1("__and__", (&mask,))?;
-            let n_words = (size as usize).div_ceil(64);
-            let words = bit_conversion::pyint_to_u64_words(&masked, n_words)?;
-            self.inner = BitUInt::from_raw_words(size, words.into_boxed_slice());
-        }
-        Ok(())
+        self.set(value)
     }
 
     // ========================================================================

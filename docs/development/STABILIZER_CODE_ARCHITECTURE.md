@@ -1,6 +1,6 @@
 # Stabilizer Code Architecture
 
-This document describes the architecture of the stabilizer code types in `pecos-qec` and how they relate to the Pauli algebra types in `pecos-core` and `pecos-quantum`.
+This document describes the architecture of the stabilizer code types in `pecos-qec` and how they relate to the Pauli algebra types in `pecos-core` and `pecos-quantum`. For the broader operator type system (Cliffords, unitaries, channels, `Op`), see [Operator Type System Architecture](OPERATOR_TYPE_SYSTEM.md).
 
 ## Type Hierarchy
 
@@ -139,9 +139,11 @@ The fault tolerance module in `pecos-qec` consumes `StabilizerCodeSpec`:
 
 - **`StabilizerFlipChecker`**: Code-level analysis. Takes a `StabilizerCodeSpec` and checks whether faults of a given weight can cause undetectable logical errors. Works without a circuit.
 
-- **`PauliPropChecker`**: Circuit-level analysis. Takes a `StabilizerCodeSpec` and a syndrome extraction circuit, then propagates Pauli faults through the circuit to verify fault tolerance of a specific implementation.
+- **`PauliPropChecker`**: Circuit-level analysis. Takes a syndrome extraction circuit, then propagates Pauli faults through it to verify fault tolerance of a specific implementation.
 
-Both checkers use the column-indexed anticommutation structure provided by `StabilizerCodeSpec` for efficient syndrome computation.
+- **`GadgetChecker`**: Gadget-level analysis. Extends `PauliPropChecker` with explicit input/output qubit tracking for analyzing gadgets in composed QEC protocols. Enforces the s + r <= t constraint (input fault weight + internal fault weight).
+
+`StabilizerFlipChecker` uses the column-indexed anticommutation structure provided by `StabilizerCodeSpec` for efficient syndrome computation.
 
 ## Module Organization
 
@@ -158,6 +160,7 @@ crates/pecos-qec/src/
     mod.rs
     stabilizer_flip_checker.rs
     pauli_prop_checker.rs
+    gadget_checker.rs        -- gadget-level fault tolerance (input/output tracking)
     dem_builder.rs           -- detector error model construction
     ...
 ```

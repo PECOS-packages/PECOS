@@ -24,7 +24,12 @@
 //! cargo bench -p benchmarks --features all-sims        # All simulators
 //! ```
 
-use criterion::{BenchmarkId, Criterion, measurement::Measurement};
+use criterion::{Criterion, measurement::Measurement};
+
+#[cfg(any(feature = "gpu-sims", feature = "cuquantum"))]
+use criterion::BenchmarkId;
+
+#[cfg(any(feature = "gpu-sims", feature = "cuquantum"))]
 use std::hint::black_box;
 
 #[cfg(feature = "gpu-sims")]
@@ -60,15 +65,10 @@ fn bench_stabilizer_circuit_execution<M: Measurement>(c: &mut Criterion<M>) {
     ];
 
     for (num_qubits, num_shots, depth) in configs {
-        let label = format!("{num_qubits}q_{num_shots}s_{depth}d");
-
-        // Build a Stim-format circuit string for CuFrameSimulator
-        let circuit_string = build_benchmark_circuit_string(num_qubits, depth);
-        let num_measurements = num_qubits; // One measurement per qubit at the end
-
         // Benchmark GpuStabMulti (wgpu)
         #[cfg(feature = "gpu-sims")]
         {
+            let label = format!("{num_qubits}q_{num_shots}s_{depth}d");
             if let Ok(mut sim) = GpuStabMulti::new(num_qubits, num_shots) {
                 group.bench_with_input(
                     BenchmarkId::new("GpuStabMulti_wgpu", &label),
@@ -87,6 +87,9 @@ fn bench_stabilizer_circuit_execution<M: Measurement>(c: &mut Criterion<M>) {
         // Benchmark CuFrameSimulator (NVIDIA cuQuantum/CUDA)
         #[cfg(feature = "cuquantum")]
         {
+            let label = format!("{num_qubits}q_{num_shots}s_{depth}d");
+            let circuit_string = build_benchmark_circuit_string(num_qubits, depth);
+            let num_measurements = num_qubits;
             if let Ok(mut sim) = CuFrameSimulator::new(num_qubits, num_shots, num_measurements) {
                 let circuit = circuit_string.clone();
                 group.bench_with_input(
@@ -100,6 +103,12 @@ fn bench_stabilizer_circuit_execution<M: Measurement>(c: &mut Criterion<M>) {
                     },
                 );
             }
+        }
+
+        // Suppress unused variable warnings when neither feature is enabled
+        #[cfg(not(any(feature = "gpu-sims", feature = "cuquantum")))]
+        {
+            let _ = (num_qubits, num_shots, depth);
         }
     }
 
@@ -111,24 +120,23 @@ fn bench_stabilizer_scaling<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Stabilizer Qubit Scaling");
     group.sample_size(20);
 
-    let num_shots = 1000;
-    let depth = 20;
+    #[cfg(any(feature = "gpu-sims", feature = "cuquantum"))]
+    const NUM_SHOTS: usize = 1000;
+    #[cfg(any(feature = "gpu-sims", feature = "cuquantum"))]
+    const DEPTH: usize = 20;
 
     // Test scaling from small to large qubit counts
     let qubit_counts = [10, 25, 50, 100, 200, 500, 1000];
 
     for num_qubits in qubit_counts {
-        let label = format!("{num_qubits}q");
-        let circuit_string = build_benchmark_circuit_string(num_qubits, depth);
-        let num_measurements = num_qubits;
-
         // Benchmark GpuStabMulti (wgpu)
         #[cfg(feature = "gpu-sims")]
         {
-            if let Ok(mut sim) = GpuStabMulti::new(num_qubits, num_shots) {
+            let label = format!("{num_qubits}q");
+            if let Ok(mut sim) = GpuStabMulti::new(num_qubits, NUM_SHOTS) {
                 group.bench_with_input(
                     BenchmarkId::new("GpuStabMulti_wgpu", &label),
-                    &(num_qubits, depth),
+                    &(num_qubits, DEPTH),
                     |b, &(nq, d)| {
                         b.iter(|| {
                             sim.reset();
@@ -143,7 +151,10 @@ fn bench_stabilizer_scaling<M: Measurement>(c: &mut Criterion<M>) {
         // Benchmark CuFrameSimulator (NVIDIA cuQuantum/CUDA)
         #[cfg(feature = "cuquantum")]
         {
-            if let Ok(mut sim) = CuFrameSimulator::new(num_qubits, num_shots, num_measurements) {
+            let label = format!("{num_qubits}q");
+            let circuit_string = build_benchmark_circuit_string(num_qubits, DEPTH);
+            let num_measurements = num_qubits;
+            if let Ok(mut sim) = CuFrameSimulator::new(num_qubits, NUM_SHOTS, num_measurements) {
                 let circuit = circuit_string.clone();
                 group.bench_with_input(
                     BenchmarkId::new("CuFrameSimulator_CUDA", &label),
@@ -157,6 +168,10 @@ fn bench_stabilizer_scaling<M: Measurement>(c: &mut Criterion<M>) {
                 );
             }
         }
+
+        // Suppress unused variable warnings when neither feature is enabled
+        #[cfg(not(any(feature = "gpu-sims", feature = "cuquantum")))]
+        let _ = num_qubits;
     }
 
     group.finish();
@@ -168,6 +183,7 @@ fn bench_stabilizer_scaling<M: Measurement>(c: &mut Criterion<M>) {
 /// - Layers of H gates on all qubits
 /// - Layers of CNOT gates between adjacent qubits
 /// - Final measurement of all qubits
+#[cfg(feature = "cuquantum")]
 fn build_benchmark_circuit_string(num_qubits: usize, depth: usize) -> String {
     let mut lines = Vec::new();
 

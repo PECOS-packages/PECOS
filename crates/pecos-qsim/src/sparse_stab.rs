@@ -741,7 +741,7 @@ where
                     for i in col_x_q1.iter() {
                         g.row_x.get_unchecked_mut(i).toggle(q2);
                     }
-                    let col_x_q1 = g.col_x.get_unchecked(q1) as *const S;
+                    let col_x_q1 = std::ptr::from_ref::<S>(g.col_x.get_unchecked(q1));
                     let col_x_q2 = g.col_x.get_unchecked_mut(q2);
                     col_x_q2.xor_assign(&*col_x_q1);
 
@@ -750,7 +750,7 @@ where
                     for i in col_z_q2.iter() {
                         g.row_z.get_unchecked_mut(i).toggle(q1);
                     }
-                    let col_z_q2 = g.col_z.get_unchecked(q2) as *const S;
+                    let col_z_q2 = std::ptr::from_ref::<S>(g.col_z.get_unchecked(q2));
                     let col_z_q1 = g.col_z.get_unchecked_mut(q1);
                     col_z_q1.xor_assign(&*col_z_q2);
                 }

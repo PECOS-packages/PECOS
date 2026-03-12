@@ -29,6 +29,9 @@ serde_json.workspace = true
 # HUGR support
 tket.workspace = true
 tket-qsystem.workspace = true
+# Pin hugr-core to 0.25.6 to avoid strum 0.27/0.28 conflict with tket 0.17.
+# See workspace Cargo.toml for details. Remove once tket supports strum 0.28+.
+hugr-core.workspace = true
 
 # Workspace dependencies
 pecos-core.workspace = true

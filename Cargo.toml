@@ -51,6 +51,11 @@ wat = "1"
 ron = "0.12"
 tket = { version = "0.17", default-features = false }
 tket-qsystem = { version = "0.23", default-features = false }
+# Pin hugr-core to 0.25.6: hugr-core 0.25.7 widened strum to >=0.27.2,<0.29 which lets the
+# resolver pick strum 0.28, conflicting with tket 0.17 (requires strum ^0.27).
+# hugr-core 0.25.6 uses strum ^0.27.2 so there's no conflict.
+# Remove this pin once tket updates to strum 0.28+.
+hugr-core = "=0.25.6"
 bindgen = "0.72"
 cc = "1"
 cxx = "1"

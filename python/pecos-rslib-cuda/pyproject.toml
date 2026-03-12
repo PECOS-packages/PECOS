@@ -1,6 +1,6 @@
 [project]
 name = "pecos-rslib-cuda"
-version = "0.8.0.dev6"
+version = "0.8.0.dev7"
 description = "CUDA/cuQuantum Python bindings for PECOS quantum simulators (Rust implementation)."
 authors = [
     {name = "The PECOS Developers"},

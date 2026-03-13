@@ -140,8 +140,9 @@ assert_cmd.workspace = true
 pecos-core.workspace = true
 pecos-qsim.workspace = true
 pecos-engines.workspace = true
-pecos-qasm.workspace = true
+pecos-qasm = { workspace = true, features = ["phir"] }
 pecos-phir = { workspace = true, features = ["hugr"] }
+pecos-phir-json.workspace = true
 pecos-rng.workspace = true
 log.workspace = true
 serde_json.workspace = true

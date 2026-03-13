@@ -3638,6 +3638,7 @@ dependencies = [
  "log",
  "pecos-core",
  "pecos-engines",
+ "pecos-phir",
  "pecos-programs",
  "pecos-rng",
  "pecos-wasm",

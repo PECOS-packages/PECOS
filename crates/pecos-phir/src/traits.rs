@@ -86,9 +86,12 @@ fn get_quantum_traits(q_op: &QuantumOp) -> BTreeSet<OpTrait> {
         | QuantumOp::RX(_)
         | QuantumOp::RY(_)
         | QuantumOp::RZ(_)
+        | QuantumOp::R1XY(_, _)
         | QuantumOp::U3(_, _, _)
         | QuantumOp::CX
+        | QuantumOp::CY
         | QuantumOp::CZ
+        | QuantumOp::CH
         | QuantumOp::SWAP
         | QuantumOp::CPhase(_)
         | QuantumOp::RZZ(_) => {
@@ -153,7 +156,8 @@ fn get_classical_traits(c_op: &crate::ops::ClassicalOp) -> BTreeSet<OpTrait> {
         | ClassicalOp::Sqrt
         | ClassicalOp::Sin
         | ClassicalOp::Cos
-        | ClassicalOp::Tan => {
+        | ClassicalOp::Tan
+        | ClassicalOp::Select => {
             traits.insert(NoSideEffect);
             traits.insert(Speculatable);
         }

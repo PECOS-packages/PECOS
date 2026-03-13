@@ -29,6 +29,8 @@ pub enum DataType {
     U32,
     /// Unsigned 64-bit integer
     U64,
+    /// 64-bit floating point
+    F64,
     /// Boolean value
     Bool,
     /// Quantum bits (qubits)
@@ -48,6 +50,7 @@ impl FromStr for DataType {
             "u16" => Ok(DataType::U16),
             "u32" => Ok(DataType::U32),
             "u64" => Ok(DataType::U64),
+            "f64" => Ok(DataType::F64),
             "bool" => Ok(DataType::Bool),
             "qubits" => Ok(DataType::Qubits),
             _ => Err(PhirError::internal(format!("Unsupported data type: {s}"))),
@@ -63,7 +66,7 @@ impl DataType {
             DataType::I8 | DataType::U8 => 8,
             DataType::I16 | DataType::U16 => 16,
             DataType::I32 | DataType::U32 => 32,
-            DataType::I64 | DataType::U64 => 64,
+            DataType::I64 | DataType::U64 | DataType::F64 => 64,
             DataType::Bool => 1,
             DataType::Qubits => 0, // Qubits don't have a fixed bit width
         }
@@ -74,7 +77,7 @@ impl DataType {
     pub fn is_signed(&self) -> bool {
         matches!(
             self,
-            DataType::I8 | DataType::I16 | DataType::I32 | DataType::I64
+            DataType::I8 | DataType::I16 | DataType::I32 | DataType::I64 | DataType::F64
         )
     }
 }
@@ -90,6 +93,7 @@ pub enum TypedValue {
     U16(u16),
     U32(u32),
     U64(u64),
+    F64(f64),
     Bool(bool),
     BitVec(Vec<bool>),
 }
@@ -110,6 +114,8 @@ impl TypedValue {
             TypedValue::U16(v) => Ok(u64::from(*v)),
             TypedValue::U32(v) => Ok(u64::from(*v)),
             TypedValue::U64(v) => Ok(*v),
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            TypedValue::F64(v) => Ok(*v as u64),
             TypedValue::Bool(v) => Ok(u64::from(*v)),
             TypedValue::BitVec(_) => Err(PhirError::internal("Cannot convert BitVec to u64")),
         }
@@ -127,6 +133,7 @@ impl TypedValue {
             TypedValue::U16(_) => DataType::U16,
             TypedValue::U32(_) => DataType::U32,
             TypedValue::U64(_) => DataType::U64,
+            TypedValue::F64(_) => DataType::F64,
             TypedValue::Bool(_) => DataType::Bool,
             TypedValue::BitVec(_) => DataType::Qubits, // BitVec represents qubit measurements
         }
@@ -144,6 +151,7 @@ impl fmt::Display for TypedValue {
             TypedValue::U16(v) => write!(f, "{v}"),
             TypedValue::U32(v) => write!(f, "{v}"),
             TypedValue::U64(v) => write!(f, "{v}"),
+            TypedValue::F64(v) => write!(f, "{v}"),
             TypedValue::Bool(v) => write!(f, "{v}"),
             TypedValue::BitVec(v) => {
                 let bits: String = v.iter().map(|b| if *b { '1' } else { '0' }).collect();
@@ -261,6 +269,7 @@ impl Environment {
                 DataType::U16 => TypedValue::U16(0),
                 DataType::U32 => TypedValue::U32(0),
                 DataType::U64 => TypedValue::U64(0),
+                DataType::F64 => TypedValue::F64(0.0),
                 DataType::Bool => TypedValue::Bool(false),
                 DataType::Qubits => {
                     // For qubit arrays, create a bit vector of all false

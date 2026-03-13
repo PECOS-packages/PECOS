@@ -67,11 +67,13 @@ pub fn register_engines_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
         "PhirJsonEngineBuilder",
         parent.getattr("PhirJsonEngineBuilder")?,
     )?;
+    engines.add("PhirEngineBuilder", parent.getattr("PhirEngineBuilder")?)?;
 
     // Factory functions
     engines.add_function(parent.getattr("qasm_engine")?.extract()?)?;
     engines.add_function(parent.getattr("qis_engine")?.extract()?)?;
     engines.add_function(parent.getattr("phir_json_engine")?.extract()?)?;
+    engines.add_function(parent.getattr("phir_engine")?.extract()?)?;
 
     // Register in sys.modules for import statement support
     // This allows: `from pecos_rslib.engines import StateVecEngine`

@@ -86,6 +86,7 @@ impl ExpressionEvaluator {
             (TypedValue::I64(a), TypedValue::I64(b)) => Ok(TypedValue::I64(a + b)),
             (TypedValue::U32(a), TypedValue::U32(b)) => Ok(TypedValue::U32(a + b)),
             (TypedValue::U64(a), TypedValue::U64(b)) => Ok(TypedValue::U64(a + b)),
+            (TypedValue::F64(a), TypedValue::F64(b)) => Ok(TypedValue::F64(a + b)),
             _ => Err(PhirError::internal("Type mismatch in addition")),
         }
     }
@@ -97,6 +98,7 @@ impl ExpressionEvaluator {
             (TypedValue::I64(a), TypedValue::I64(b)) => Ok(TypedValue::I64(a - b)),
             (TypedValue::U32(a), TypedValue::U32(b)) => Ok(TypedValue::U32(a - b)),
             (TypedValue::U64(a), TypedValue::U64(b)) => Ok(TypedValue::U64(a - b)),
+            (TypedValue::F64(a), TypedValue::F64(b)) => Ok(TypedValue::F64(a - b)),
             _ => Err(PhirError::internal("Type mismatch in subtraction")),
         }
     }
@@ -108,6 +110,7 @@ impl ExpressionEvaluator {
             (TypedValue::I64(a), TypedValue::I64(b)) => Ok(TypedValue::I64(a * b)),
             (TypedValue::U32(a), TypedValue::U32(b)) => Ok(TypedValue::U32(a * b)),
             (TypedValue::U64(a), TypedValue::U64(b)) => Ok(TypedValue::U64(a * b)),
+            (TypedValue::F64(a), TypedValue::F64(b)) => Ok(TypedValue::F64(a * b)),
             _ => Err(PhirError::internal("Type mismatch in multiplication")),
         }
     }
@@ -141,6 +144,13 @@ impl ExpressionEvaluator {
                     Err(PhirError::internal("Division by zero"))
                 } else {
                     Ok(TypedValue::U64(a / b))
+                }
+            }
+            (TypedValue::F64(a), TypedValue::F64(b)) => {
+                if *b == 0.0 {
+                    Err(PhirError::internal("Division by zero"))
+                } else {
+                    Ok(TypedValue::F64(a / b))
                 }
             }
             _ => Err(PhirError::internal("Type mismatch in division")),

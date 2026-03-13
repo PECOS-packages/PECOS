@@ -150,6 +150,8 @@ pub mod engines {
     pub use pecos_qis::{QisEngine, QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
 
     #[cfg(feature = "phir")]
+    pub use pecos_phir::{PhirEngine, PhirEngineBuilder, phir_engine};
+    #[cfg(feature = "phir")]
     pub use pecos_phir_json::{PhirJsonEngine, PhirJsonEngineBuilder, phir_json_engine};
 
     #[cfg(feature = "hugr")]
@@ -752,7 +754,7 @@ pub use pecos_qasm::{QasmEngineBuilder, qasm_engine, run_qasm};
 pub use pecos_qis::{QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
 
 #[cfg(feature = "phir")]
-pub use pecos_phir::PhirConfig;
+pub use pecos_phir::{PhirConfig, PhirEngineBuilder, phir_engine};
 #[cfg(feature = "phir")]
 pub use pecos_phir_json::{PhirJsonEngineBuilder, phir_json_engine};
 

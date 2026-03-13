@@ -15,9 +15,9 @@ use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
 
 use crate::engine_builders::{
-    PyGuppyHugrEngineBuilder, PyGuppyHugrSimBuilder, PyHugr, PyPhirJson, PyPhirJsonEngineBuilder,
-    PyPhirJsonSimBuilder, PyQasm, PyQasmEngineBuilder, PyQasmSimBuilder, PyQis,
-    PyQisControlSimBuilder, PyQisEngineBuilder,
+    PyGuppyHugrEngineBuilder, PyGuppyHugrSimBuilder, PyHugr, PyPhirEngineBuilder, PyPhirJson,
+    PyPhirJsonEngineBuilder, PyPhirJsonSimBuilder, PyPhirSimBuilder, PyQasm, PyQasmEngineBuilder,
+    PyQasmSimBuilder, PyQis, PyQisControlSimBuilder, PyQisEngineBuilder,
 };
 use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
 
@@ -207,6 +207,7 @@ pub(crate) enum SimBuilderInner {
     QisControl(PyQisControlSimBuilder), // Unified QIS/HUGR engine via LLVM
     Hugr(PyGuppyHugrSimBuilder),        // Direct HUGR interpreter
     PhirJson(PyPhirJsonSimBuilder),
+    Phir(PyPhirSimBuilder),
     Empty, // For creating SimBuilder without a program
 }
 
@@ -281,6 +282,18 @@ impl PySimBuilder {
                         ))
                     }
                 }
+                SimBuilderInner::Phir(sim_builder) => {
+                    if let Ok(phir_eng) = engine_builder.extract::<PyPhirEngineBuilder>(py) {
+                        sim_builder.engine_builder = Arc::new(Mutex::new(Some(phir_eng.inner)));
+                        Ok(PySimBuilder {
+                            inner: self.inner.clone(),
+                        })
+                    } else {
+                        Err(PyTypeError::new_err(
+                            "For PHIR programs, classical() requires a PhirEngineBuilder",
+                        ))
+                    }
+                }
                 SimBuilderInner::Empty => {
                     // Handle custom engines being set on empty builder
                     Err(PyTypeError::new_err(
@@ -298,6 +311,7 @@ impl PySimBuilder {
             SimBuilderInner::QisControl(builder) => builder.seed = Some(seed),
             SimBuilderInner::Hugr(builder) => builder.seed = Some(seed),
             SimBuilderInner::PhirJson(builder) => builder.seed = Some(seed),
+            SimBuilderInner::Phir(builder) => builder.seed = Some(seed),
             SimBuilderInner::Empty => {} // No-op for empty builder
         }
         Ok(PySimBuilder {
@@ -312,6 +326,7 @@ impl PySimBuilder {
             SimBuilderInner::QisControl(builder) => builder.workers = Some(workers),
             SimBuilderInner::Hugr(builder) => builder.workers = Some(workers),
             SimBuilderInner::PhirJson(builder) => builder.workers = Some(workers),
+            SimBuilderInner::Phir(builder) => builder.workers = Some(workers),
             SimBuilderInner::Empty => {} // No-op for empty builder
         }
         Ok(PySimBuilder {
@@ -334,6 +349,7 @@ impl PySimBuilder {
             SimBuilderInner::QisControl(builder) => builder.quantum_engine_builder = Some(engine),
             SimBuilderInner::Hugr(builder) => builder.quantum_engine_builder = Some(engine),
             SimBuilderInner::PhirJson(builder) => builder.quantum_engine_builder = Some(engine),
+            SimBuilderInner::Phir(builder) => builder.quantum_engine_builder = Some(engine),
             SimBuilderInner::Empty => {} // No-op for empty builder
         }
         Ok(PySimBuilder {
@@ -348,6 +364,7 @@ impl PySimBuilder {
             SimBuilderInner::QisControl(builder) => builder.explicit_num_qubits = Some(num_qubits),
             SimBuilderInner::Hugr(builder) => builder.explicit_num_qubits = Some(num_qubits),
             SimBuilderInner::PhirJson(builder) => builder.explicit_num_qubits = Some(num_qubits),
+            SimBuilderInner::Phir(builder) => builder.explicit_num_qubits = Some(num_qubits),
             SimBuilderInner::Empty => {} // No-op for empty builder
         }
         Ok(PySimBuilder {
@@ -362,6 +379,7 @@ impl PySimBuilder {
             SimBuilderInner::QisControl(builder) => builder.noise_builder = Some(noise_builder),
             SimBuilderInner::Hugr(builder) => builder.noise_builder = Some(noise_builder),
             SimBuilderInner::PhirJson(builder) => builder.noise_builder = Some(noise_builder),
+            SimBuilderInner::Phir(builder) => builder.noise_builder = Some(noise_builder),
             SimBuilderInner::Empty => {} // No-op for empty builder
         }
         Ok(PySimBuilder {
@@ -383,6 +401,7 @@ impl PySimBuilder {
             }
             SimBuilderInner::QisControl(_)
             | SimBuilderInner::PhirJson(_)
+            | SimBuilderInner::Phir(_)
             | SimBuilderInner::Empty => {
                 return Err(pyo3::exceptions::PyTypeError::new_err(
                     "foreign_object() is only supported for HUGR and QASM programs",
@@ -432,7 +451,10 @@ impl PySimBuilder {
             SimBuilderInner::Hugr(builder) => {
                 builder.keep_intermediate_files = keep;
             }
-            SimBuilderInner::Qasm(_) | SimBuilderInner::PhirJson(_) | SimBuilderInner::Empty => {
+            SimBuilderInner::Qasm(_)
+            | SimBuilderInner::PhirJson(_)
+            | SimBuilderInner::Phir(_)
+            | SimBuilderInner::Empty => {
                 // These engine types don't support keep_intermediate_files yet
                 // Just ignore silently for now
             }
@@ -650,6 +672,29 @@ impl PySimBuilder {
                     Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
                 }
             }
+            SimBuilderInner::Phir(builder) => {
+                let mut builder_lock = builder.engine_builder.lock().unwrap();
+                let engine_builder = builder_lock
+                    .take()
+                    .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+
+                let mut sim_builder = engine_builder.to_sim();
+
+                if let Some(seed) = builder.seed {
+                    sim_builder = sim_builder.seed(seed);
+                }
+                if let Some(workers) = builder.workers {
+                    sim_builder = sim_builder.workers(workers);
+                }
+                if let Some(n) = builder.explicit_num_qubits {
+                    sim_builder = sim_builder.qubits(n);
+                }
+
+                match sim_builder.run(shots) {
+                    Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
+                    Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+                }
+            }
             SimBuilderInner::Hugr(builder) => {
                 // Direct HUGR interpreter
                 let mut builder_lock = builder.engine_builder.lock().unwrap();
@@ -745,7 +790,7 @@ impl PySimBuilder {
             PyBiasedDepolarizingNoiseModelBuilder, PyDepolarizingNoiseModelBuilder,
             PyGeneralNoiseModelBuilder,
         };
-        use crate::engine_builders::{PyPhirJsonSimulation, PyQasmSimulation};
+        use crate::engine_builders::{PyPhirJsonSimulation, PyPhirSimulation, PyQasmSimulation};
         use crate::engine_builders::{PySparseStabilizerEngineBuilder, PyStateVectorEngineBuilder};
         use pyo3::exceptions::PyRuntimeError;
 
@@ -874,6 +919,36 @@ impl PySimBuilder {
                     Ok(Py::new(
                         py,
                         PyPhirJsonSimulation {
+                            inner: Arc::new(Mutex::new(engine)),
+                        },
+                    )?
+                    .into_any())
+                }
+                SimBuilderInner::Phir(builder) => {
+                    let mut builder_lock = builder.engine_builder.lock().unwrap();
+                    let engine_builder = builder_lock
+                        .take()
+                        .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+
+                    let mut sim_builder = engine_builder.to_sim();
+
+                    if let Some(seed) = builder.seed {
+                        sim_builder = sim_builder.seed(seed);
+                    }
+                    if let Some(workers) = builder.workers {
+                        sim_builder = sim_builder.workers(workers);
+                    }
+                    if let Some(n) = builder.explicit_num_qubits {
+                        sim_builder = sim_builder.qubits(n);
+                    }
+
+                    let engine = sim_builder.build().map_err(|e| {
+                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                    })?;
+
+                    Ok(Py::new(
+                        py,
+                        PyPhirSimulation {
                             inner: Arc::new(Mutex::new(engine)),
                         },
                     )?
@@ -1209,6 +1284,17 @@ impl Clone for SimBuilderInner {
                 foreign_object: builder.foreign_object.as_ref().map(|obj| obj.clone_ref(py)),
                 keep_intermediate_files: builder.keep_intermediate_files,
                 hugr_bytes: builder.hugr_bytes.clone(),
+            }),
+            SimBuilderInner::Phir(builder) => SimBuilderInner::Phir(PyPhirSimBuilder {
+                engine_builder: builder.engine_builder.clone(),
+                seed: builder.seed,
+                workers: builder.workers,
+                quantum_engine_builder: builder
+                    .quantum_engine_builder
+                    .as_ref()
+                    .map(|obj| obj.clone_ref(py)),
+                noise_builder: builder.noise_builder.as_ref().map(|obj| obj.clone_ref(py)),
+                explicit_num_qubits: builder.explicit_num_qubits,
             }),
             SimBuilderInner::Empty => SimBuilderInner::Empty,
         })

@@ -12,6 +12,7 @@ The `PhirEngine` handles:
 - Integration with PECOS quantum simulation infrastructure
 */
 
+pub mod builder;
 pub mod engine;
 pub mod environment;
 pub mod expression;
@@ -21,6 +22,7 @@ pub mod processor;
 mod tests;
 
 // Re-exports for convenience
+pub use builder::{PhirEngineBuilder, phir_engine};
 pub use engine::PhirEngine;
 pub use environment::{DataType, Environment, TypedValue};
 pub use expression::ExpressionEvaluator;

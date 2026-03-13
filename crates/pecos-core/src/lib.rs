@@ -18,6 +18,7 @@ pub mod bitset;
 pub mod bitvec;
 pub mod circuit_diagram;
 pub mod clifford_rep;
+pub mod clifford_simplify;
 pub mod duration;
 pub mod element;
 pub mod errors;
@@ -58,6 +59,7 @@ pub use rng::{choose_weighted, coin_flip, gen_bools};
 // Random utilities struct for improved RNG API
 pub use rng::RandomUtils;
 
+pub use clifford_simplify::{is_rzz_z_tensor_z, try_simplify_r1xy, try_simplify_rotation};
 pub use gate_registry::{
     AngleSource, ConcreteStep, DecompStep, GateDefinition, GateDefinitionBuilder, GateRegistry,
     GateSignature,

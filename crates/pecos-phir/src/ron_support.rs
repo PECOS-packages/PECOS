@@ -307,14 +307,18 @@ entry:
 ";
         let module = crate::parse_qis_to_quantum(ir).unwrap();
 
-        // Helper to extract angle values from a module
+        // Helper to extract angle values from a module (as radians for comparison)
         let extract_angles = |m: &crate::Module| -> Vec<f64> {
             m.body.blocks[0]
                 .operations
                 .iter()
                 .filter_map(|i| match &i.operation {
-                    Operation::Quantum(QuantumOp::R1XY(theta, phi)) => Some(*theta + *phi),
-                    Operation::Quantum(QuantumOp::RZ(angle) | QuantumOp::RZZ(angle)) => Some(*angle),
+                    Operation::Quantum(QuantumOp::R1XY(theta, phi)) => {
+                        Some(theta.to_radians() + phi.to_radians())
+                    }
+                    Operation::Quantum(QuantumOp::RZ(angle) | QuantumOp::RZZ(angle)) => {
+                        Some(angle.to_radians())
+                    }
                     _ => None,
                 })
                 .collect()

@@ -13,6 +13,7 @@ This module defines the complete operation set for PHIR, including:
 All operations follow MLIR's design where operations can contain nested regions.
 */
 
+use pecos_core::Angle64;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -58,15 +59,15 @@ pub enum QuantumOp {
 
     // Parameterized single-qubit rotations
     /// X-axis rotation
-    RX(f64),
+    RX(Angle64),
     /// Y-axis rotation
-    RY(f64),
+    RY(Angle64),
     /// Z-axis rotation
-    RZ(f64),
+    RZ(Angle64),
     /// R1XY rotation (theta, phi) - hardware-native single-qubit gate
-    R1XY(f64, f64),
+    R1XY(Angle64, Angle64),
     /// Arbitrary single-qubit rotation
-    U3(f64, f64, f64), // theta, phi, lambda
+    U3(Angle64, Angle64, Angle64), // theta, phi, lambda
 
     // Two-qubit gates
     /// CNOT/CX gate
@@ -80,9 +81,9 @@ pub enum QuantumOp {
     /// SWAP gate
     SWAP,
     /// Controlled phase
-    CPhase(f64),
+    CPhase(Angle64),
     /// ZZ rotation
-    RZZ(f64),
+    RZZ(Angle64),
 
     // Multi-qubit gates
     /// Multi-controlled NOT

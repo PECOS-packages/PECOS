@@ -3,6 +3,7 @@
 //! Converts a parsed QASM `Program` into a PHIR `Module` that can be executed
 //! by the `PhirEngine` or serialized to RON for debugging.
 
+use pecos_core::Angle64;
 use pecos_core::prelude::GateType;
 use pecos_phir::builtin_ops::{BuiltinOp, FuncOp, VarDefineOp};
 use pecos_phir::ops::{ClassicalOp, Operation, QuantumOp, SSAValue};
@@ -337,18 +338,15 @@ fn gate_name_to_quantum_op(name: &str, params: &[f64]) -> Result<QuantumOp> {
         "cx" | "cnot" => Ok(QuantumOp::CX),
         "cz" => Ok(QuantumOp::CZ),
         "swap" => Ok(QuantumOp::SWAP),
-        "rx" => Ok(QuantumOp::RX(params.first().copied().unwrap_or(0.0))),
-        "ry" => Ok(QuantumOp::RY(params.first().copied().unwrap_or(0.0))),
-        "rz" => Ok(QuantumOp::RZ(params.first().copied().unwrap_or(0.0))),
-        "rzz" => Ok(QuantumOp::RZZ(params.first().copied().unwrap_or(0.0))),
-        "r1xy" => Ok(QuantumOp::R1XY(
-            params.first().copied().unwrap_or(0.0),
-            params.get(1).copied().unwrap_or(0.0),
-        )),
+        "rx" => Ok(QuantumOp::RX(angle_param(params, 0))),
+        "ry" => Ok(QuantumOp::RY(angle_param(params, 0))),
+        "rz" => Ok(QuantumOp::RZ(angle_param(params, 0))),
+        "rzz" => Ok(QuantumOp::RZZ(angle_param(params, 0))),
+        "r1xy" => Ok(QuantumOp::R1XY(angle_param(params, 0), angle_param(params, 1))),
         "u" | "u3" => Ok(QuantumOp::U3(
-            params.first().copied().unwrap_or(0.0),
-            params.get(1).copied().unwrap_or(0.0),
-            params.get(2).copied().unwrap_or(0.0),
+            angle_param(params, 0),
+            angle_param(params, 1),
+            angle_param(params, 2),
         )),
         "reset" => Ok(QuantumOp::Reset),
         _ => Err(pecos_phir::PhirError::internal(format!(
@@ -370,14 +368,11 @@ fn gate_type_to_quantum_op(gate_type: GateType, params: &[f64]) -> Result<Quantu
         GateType::Tdg => Ok(QuantumOp::Tdg),
         GateType::CX => Ok(QuantumOp::CX),
         GateType::CZ => Ok(QuantumOp::CZ),
-        GateType::RX => Ok(QuantumOp::RX(params.first().copied().unwrap_or(0.0))),
-        GateType::RY => Ok(QuantumOp::RY(params.first().copied().unwrap_or(0.0))),
-        GateType::RZ => Ok(QuantumOp::RZ(params.first().copied().unwrap_or(0.0))),
-        GateType::RZZ => Ok(QuantumOp::RZZ(params.first().copied().unwrap_or(0.0))),
-        GateType::R1XY => Ok(QuantumOp::R1XY(
-            params.first().copied().unwrap_or(0.0),
-            params.get(1).copied().unwrap_or(0.0),
-        )),
+        GateType::RX => Ok(QuantumOp::RX(angle_param(params, 0))),
+        GateType::RY => Ok(QuantumOp::RY(angle_param(params, 0))),
+        GateType::RZ => Ok(QuantumOp::RZ(angle_param(params, 0))),
+        GateType::RZZ => Ok(QuantumOp::RZZ(angle_param(params, 0))),
+        GateType::R1XY => Ok(QuantumOp::R1XY(angle_param(params, 0), angle_param(params, 1))),
         GateType::Measure => Ok(QuantumOp::Measure),
         GateType::Prep => Ok(QuantumOp::Reset),
         _ => Err(pecos_phir::PhirError::internal(format!(
@@ -389,6 +384,11 @@ fn gate_type_to_quantum_op(gate_type: GateType, params: &[f64]) -> Result<Quantu
 // Stub -- RegMeasure is expected to be expanded by the parser.
 fn program_qreg_ids(_name: &str) -> Option<Vec<usize>> {
     None
+}
+
+/// Extract a radians parameter from a slice and convert to `Angle64`.
+fn angle_param(params: &[f64], index: usize) -> Angle64 {
+    Angle64::from_radians(params.get(index).copied().unwrap_or(0.0))
 }
 
 #[cfg(test)]

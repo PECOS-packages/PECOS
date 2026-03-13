@@ -178,7 +178,7 @@ jobs:
           python -m build --wheel --outdir dist
 
       - name: Upload wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.plugin.name }}-${{ matrix.os }}
           path: python/selene-plugins/${{ matrix.plugin.name }}/dist/*.whl
@@ -189,7 +189,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: wheels/
           pattern: wheel-*
@@ -204,7 +204,7 @@ jobs:
           echo "Total wheels: $(ls -1 wheels/*.whl 2>/dev/null | wc -l)"
 
       - name: Upload combined wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: selene-plugin-wheels
           path: wheels/*.whl

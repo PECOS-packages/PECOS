@@ -10,6 +10,7 @@ use crate::ops::{AllocType, ClassicalOp, MemoryOp, Operation, QuantumOp};
 use crate::phir::{Block, Instruction, Module, Region, SSAValue};
 use crate::region_kinds::RegionKind;
 use crate::types::Type;
+use pecos_core::Angle64;
 use pecos_engines::ClassicalEngine;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::BTreeMap;
@@ -290,7 +291,7 @@ fn test_processor_rz_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let rz_instr = instr(
-        Operation::Quantum(QuantumOp::RZ(std::f64::consts::FRAC_PI_2)),
+        Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(std::f64::consts::FRAC_PI_2))),
         vec![0],
         vec![1],
         vec![Type::Qubit],
@@ -309,8 +310,8 @@ fn test_processor_r1xy_gate() {
 
     let r1xy_instr = instr(
         Operation::Quantum(QuantumOp::R1XY(
-            std::f64::consts::FRAC_PI_2,
-            0.0,
+            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+            Angle64::ZERO,
         )),
         vec![0],
         vec![1],
@@ -328,13 +329,13 @@ fn test_processor_rx_ry_gates() {
     let mut builder = ByteMessageBuilder::new();
 
     let rx_instr = instr(
-        Operation::Quantum(QuantumOp::RX(std::f64::consts::PI)),
+        Operation::Quantum(QuantumOp::RX(Angle64::from_radians(std::f64::consts::PI))),
         vec![0],
         vec![1],
         vec![Type::Qubit],
     );
     let ry_instr = instr(
-        Operation::Quantum(QuantumOp::RY(std::f64::consts::FRAC_PI_4)),
+        Operation::Quantum(QuantumOp::RY(Angle64::from_radians(std::f64::consts::FRAC_PI_4))),
         vec![0],
         vec![2],
         vec![Type::Qubit],
@@ -351,9 +352,9 @@ fn test_processor_u3_gate() {
 
     let u3_instr = instr(
         Operation::Quantum(QuantumOp::U3(
-            std::f64::consts::FRAC_PI_2,
-            0.0,
-            std::f64::consts::PI,
+            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+            Angle64::ZERO,
+            Angle64::from_radians(std::f64::consts::PI),
         )),
         vec![0],
         vec![1],
@@ -389,7 +390,7 @@ fn test_processor_rzz_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let rzz_instr = instr(
-        Operation::Quantum(QuantumOp::RZZ(std::f64::consts::FRAC_PI_4)),
+        Operation::Quantum(QuantumOp::RZZ(Angle64::from_radians(std::f64::consts::FRAC_PI_4))),
         vec![0, 1],
         vec![2],
         vec![Type::Qubit],
@@ -405,7 +406,7 @@ fn test_processor_cphase_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let cp_instr = instr(
-        Operation::Quantum(QuantumOp::CPhase(std::f64::consts::PI)),
+        Operation::Quantum(QuantumOp::CPhase(Angle64::from_radians(std::f64::consts::PI))),
         vec![0, 1],
         vec![2],
         vec![Type::Qubit],
@@ -1061,15 +1062,15 @@ fn test_engine_rz_rxy_module() -> Result<(), Box<dyn std::error::Error>> {
     let instructions = vec![
         instr(Operation::Quantum(QuantumOp::Alloc), vec![], vec![0], vec![Type::Qubit]),
         instr(
-            Operation::Quantum(QuantumOp::RZ(std::f64::consts::FRAC_PI_2)),
+            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(std::f64::consts::FRAC_PI_2))),
             vec![0], vec![1], vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::R1XY(std::f64::consts::FRAC_PI_2, 0.0)),
+            Operation::Quantum(QuantumOp::R1XY(Angle64::from_radians(std::f64::consts::FRAC_PI_2), Angle64::ZERO)),
             vec![0], vec![2], vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::RZ(std::f64::consts::FRAC_PI_2)),
+            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(std::f64::consts::FRAC_PI_2))),
             vec![0], vec![3], vec![Type::Qubit],
         ),
         instr(Operation::Quantum(QuantumOp::Measure), vec![0], vec![4], vec![Type::Bit]),

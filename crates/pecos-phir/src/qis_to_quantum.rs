@@ -18,6 +18,7 @@ SSA constant map built in a preliminary scan.
 use crate::error::{PhirError, Result};
 use crate::ops::{ClassicalOp, CustomOp, Operation, QuantumOp};
 use crate::phir::{Block, Instruction, Module, Region, SSAValue};
+use pecos_core::Angle64;
 use std::collections::BTreeMap;
 
 /// Convert QIS dialect `CustomOps` in `module` to standard `QuantumOps` in-place.
@@ -241,17 +242,18 @@ fn resolve_angle(
     index: usize,
     const_map: &BTreeMap<SSAValue, f64>,
     context: &str,
-) -> Result<f64> {
+) -> Result<Angle64> {
     let ssa = operands.get(index).ok_or_else(|| {
         PhirError::internal(format!(
             "qis_to_quantum: missing operand {index} for {context}"
         ))
     })?;
-    const_map.get(ssa).copied().ok_or_else(|| {
+    let radians = const_map.get(ssa).copied().ok_or_else(|| {
         PhirError::internal(format!(
             "qis_to_quantum: cannot resolve {context} (SSA {ssa}) to a constant"
         ))
-    })
+    })?;
+    Ok(Angle64::from_radians(radians))
 }
 
 #[cfg(test)]
@@ -357,7 +359,7 @@ mod tests {
         assert_eq!(quantum_ops.len(), 1);
         assert!(matches!(
             quantum_ops[0].operation,
-            Operation::Quantum(QuantumOp::RZ(v)) if (v - FRAC_PI_2).abs() < 1e-12
+            Operation::Quantum(QuantumOp::RZ(v)) if v == Angle64::from_radians(FRAC_PI_2)
         ));
     }
 
@@ -396,7 +398,7 @@ mod tests {
         assert!(matches!(
             quantum_ops[0].operation,
             Operation::Quantum(QuantumOp::R1XY(theta, phi))
-                if (theta - FRAC_PI_2).abs() < 1e-12 && phi.abs() < 1e-12
+                if theta == Angle64::from_radians(FRAC_PI_2) && phi == Angle64::ZERO
         ));
     }
 
@@ -518,7 +520,7 @@ entry:
         assert_eq!(quantum_ops.len(), 1);
         assert!(matches!(
             quantum_ops[0].operation,
-            Operation::Quantum(QuantumOp::RZZ(v)) if (v - FRAC_PI_2).abs() < 1e-12
+            Operation::Quantum(QuantumOp::RZZ(v)) if v == Angle64::from_radians(FRAC_PI_2)
         ));
         assert_eq!(quantum_ops[0].operands.len(), 2);
     }
@@ -622,7 +624,7 @@ entry:
         assert_eq!(quantum_ops.len(), 1);
         assert!(matches!(
             quantum_ops[0].operation,
-            Operation::Quantum(QuantumOp::CPhase(v)) if (v - std::f64::consts::PI).abs() < 1e-12
+            Operation::Quantum(QuantumOp::CPhase(v)) if v == Angle64::from_radians(std::f64::consts::PI)
         ));
         assert_eq!(quantum_ops[0].operands.len(), 2);
     }

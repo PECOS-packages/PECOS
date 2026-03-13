@@ -44,6 +44,19 @@ impl PhirEngineBuilder {
         })
     }
 
+    /// Set the module from HUGR bytes (envelope format from Guppy)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if HUGR parsing or conversion fails
+    #[cfg(feature = "hugr")]
+    pub fn from_hugr_bytes(self, hugr_bytes: &[u8]) -> Result<Self> {
+        let module = crate::hugr_parser::parse_hugr_bytes_to_phir(hugr_bytes)?;
+        Ok(Self {
+            module: Some(module),
+        })
+    }
+
     /// Set the module from a RON string
     ///
     /// # Errors

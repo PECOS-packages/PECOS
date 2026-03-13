@@ -155,6 +155,33 @@ fn parse_ghz_state_hugr() {
     );
 }
 
+#[test]
+fn parse_rz_x_hugr() {
+    let bytes = include_bytes!("../../../crates/pecos/tests/test_data/hugr/rz_x.hugr");
+    let module = parse_hugr_bytes_to_phir(bytes).expect("rz_x.hugr should parse");
+
+    let block = get_main_block(&module);
+    let names = op_names(block);
+
+    // Rz(pi) should be simplified to Z (Clifford gate)
+    assert!(
+        names.iter().any(|n| n == "quantum.z"),
+        "Rz(pi) should simplify to Z: {names:?}"
+    );
+
+    // Should contain an X gate
+    assert!(
+        count_quantum_ops(block, |q| matches!(q, QuantumOp::X)) >= 1,
+        "should contain X gate: {names:?}"
+    );
+
+    // Should have measurements
+    assert!(
+        count_quantum_ops(block, |q| matches!(q, QuantumOp::Measure)) >= 2,
+        "should measure 2 qubits: {names:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Error handling tests
 // ---------------------------------------------------------------------------

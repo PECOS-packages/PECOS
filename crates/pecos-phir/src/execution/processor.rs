@@ -11,7 +11,6 @@ use crate::builtin_ops::BuiltinOp;
 use crate::error::{PhirError, Result};
 use crate::ops::{ClassicalOp, MemoryOp, Operation, QuantumOp};
 use crate::phir::{Block, Module};
-use pecos_core::Angle64;
 use pecos_core::Gate;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::BTreeMap;
@@ -208,36 +207,27 @@ impl PhirProcessor {
             // Parameterized single-qubit gates
             QuantumOp::RX(angle) => {
                 let qubit_id = self.extract_single_qubit(instruction, "RX")?;
-                message_builder.add_rx(Angle64::from_radians(*angle), &[qubit_id]);
+                message_builder.add_rx(*angle, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::RY(angle) => {
                 let qubit_id = self.extract_single_qubit(instruction, "RY")?;
-                message_builder.add_ry(Angle64::from_radians(*angle), &[qubit_id]);
+                message_builder.add_ry(*angle, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::RZ(angle) => {
                 let qubit_id = self.extract_single_qubit(instruction, "RZ")?;
-                message_builder.add_rz(Angle64::from_radians(*angle), &[qubit_id]);
+                message_builder.add_rz(*angle, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::R1XY(theta, phi) => {
                 let qubit_id = self.extract_single_qubit(instruction, "R1XY")?;
-                message_builder.add_r1xy(
-                    Angle64::from_radians(*theta),
-                    Angle64::from_radians(*phi),
-                    &[qubit_id],
-                );
+                message_builder.add_r1xy(*theta, *phi, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::U3(theta, phi, lambda) => {
                 let qubit_id = self.extract_single_qubit(instruction, "U3")?;
-                message_builder.add_u(
-                    Angle64::from_radians(*theta),
-                    Angle64::from_radians(*phi),
-                    Angle64::from_radians(*lambda),
-                    &[qubit_id],
-                );
+                message_builder.add_u(*theta, *phi, *lambda, &[qubit_id]);
                 Ok(true)
             }
 
@@ -252,12 +242,12 @@ impl PhirProcessor {
             }
             QuantumOp::RZZ(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "RZZ")?;
-                message_builder.add_rzz(Angle64::from_radians(*angle), &[q1], &[q2]);
+                message_builder.add_rzz(*angle, &[q1], &[q2]);
                 Ok(true)
             }
             QuantumOp::CPhase(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "CPhase")?;
-                let gate = Gate::crz(Angle64::from_radians(*angle), &[(q1, q2)]);
+                let gate = Gate::crz(*angle, &[(q1, q2)]);
                 message_builder.add_gate_command(&gate);
                 Ok(true)
             }

@@ -83,6 +83,7 @@ pub type Angle128 = Angle<u128>;
 /// assert!((radians - std::f64::consts::PI).abs() < 1e-6);
 /// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Angle<T: Unsigned + Copy> {
     fraction: T, // Fixed-point fractional representation in [0, 2^n) turns
 }
@@ -201,6 +202,109 @@ where
     #[must_use]
     pub fn normalize(&self) -> Self {
         *self
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Approximate-equality (circular distance)
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Circular distance between two angles in raw fraction units.
+    ///
+    /// Returns the shorter of the two arcs separating `self` and `other`,
+    /// measured in the underlying fixed-point units (i.e. `1` unit =
+    /// one `2^{-n}` of a turn for an `n`-bit type).
+    ///
+    /// The result is always in `[0, T::MAX / 2 + 1]` (at most a half-turn).
+    #[must_use]
+    pub fn distance(&self, other: &Self) -> T
+    where
+        T: Ord,
+    {
+        let d1 = self.fraction.wrapping_sub(&other.fraction);
+        let d2 = other.fraction.wrapping_sub(&self.fraction);
+        if d1 < d2 { d1 } else { d2 }
+    }
+
+    /// Check whether two angles are within `tol` **fraction units** of each
+    /// other on the circle.
+    ///
+    /// One fraction unit is `1 / 2^n` of a full turn, where `n` is the bit
+    /// width of `T`. For `Angle64`, one unit ≈ 3.4 × 10⁻²⁰ turns.
+    ///
+    /// # Example
+    /// ```
+    /// use pecos_core::Angle64;
+    /// let a = Angle64::QUARTER_TURN;
+    /// let b = Angle64::QUARTER_TURN + Angle64::new(5);
+    /// assert!(a.is_close(&b, 10));   // within 10 fraction units
+    /// assert!(!a.is_close(&b, 2));   // NOT within 2 fraction units
+    /// ```
+    #[must_use]
+    pub fn is_close(&self, other: &Self, tol: T) -> bool
+    where
+        T: Ord,
+    {
+        self.distance(other) <= tol
+    }
+
+    /// Check whether two angles are within `tol_radians` of each other.
+    ///
+    /// The tolerance is converted to fixed-point units internally, so the
+    /// comparison is exact once the conversion is done (no floating-point
+    /// comparison).
+    ///
+    /// # Example
+    /// ```
+    /// use pecos_core::Angle64;
+    /// let a = Angle64::from_radians(1.0);
+    /// let b = Angle64::from_radians(1.0 + 1e-12);
+    /// assert!(a.is_close_radians(&b, 1e-9));
+    /// ```
+    #[must_use]
+    pub fn is_close_radians(&self, other: &Self, tol_radians: f64) -> bool
+    where
+        T: Ord,
+    {
+        let tol_fraction = Self::radians_to_fraction(tol_radians.abs());
+        self.distance(other) <= tol_fraction
+    }
+
+    /// Check whether two angles are within `tol_turns` **turns** of each other.
+    ///
+    /// One turn = 2π radians = 360°.
+    ///
+    /// # Example
+    /// ```
+    /// use pecos_core::Angle64;
+    /// let a = Angle64::QUARTER_TURN;
+    /// let b = Angle64::from_turns(0.250_000_001);
+    /// assert!(a.is_close_turns(&b, 1e-6));
+    /// ```
+    #[must_use]
+    pub fn is_close_turns(&self, other: &Self, tol_turns: f64) -> bool
+    where
+        T: Ord,
+    {
+        let tol_fraction = Self::turns_to_fraction(tol_turns.abs());
+        self.distance(other) <= tol_fraction
+    }
+
+    /// Convert a radians value to the raw fraction representation.
+    fn radians_to_fraction(radians: f64) -> T {
+        let max = T::max_value()
+            .to_f64()
+            .expect("Failed to convert max_value to f64");
+        let frac = (radians / std::f64::consts::TAU * max).round();
+        T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
+    }
+
+    /// Convert a turns value to the raw fraction representation.
+    fn turns_to_fraction(turns: f64) -> T {
+        let max = T::max_value()
+            .to_f64()
+            .expect("Failed to convert max_value to f64");
+        let frac = (turns * max).round();
+        T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
     }
 }
 
@@ -1508,5 +1612,131 @@ mod tests {
         };
         let smaller_angle: Angle<u16> = large_angle.lossy_into();
         assert_eq!(smaller_angle.fraction, 0xBA98);
+    }
+
+    // ─── Distance and is_close tests ───────────────────────────────────
+
+    #[test]
+    fn test_distance_same_angle() {
+        let a = Angle64::QUARTER_TURN;
+        assert_eq!(a.distance(&a), 0);
+    }
+
+    #[test]
+    fn test_distance_symmetric() {
+        let a = Angle64::QUARTER_TURN;
+        let b = Angle64::HALF_TURN;
+        assert_eq!(a.distance(&b), b.distance(&a));
+    }
+
+    #[test]
+    fn test_distance_opposite_angles() {
+        // 0 and pi are half a turn apart
+        let a = Angle64::ZERO;
+        let b = Angle64::HALF_TURN;
+        assert_eq!(a.distance(&b), Angle64::HALF_TURN.fraction());
+    }
+
+    #[test]
+    fn test_distance_wraparound() {
+        // An angle just below 2pi should be close to 0
+        let a = Angle64::ZERO;
+        let b = Angle64::new(u64::MAX); // one tick below a full turn
+        assert_eq!(a.distance(&b), 1);
+    }
+
+    #[test]
+    fn test_distance_quarter_turns() {
+        let a = Angle64::QUARTER_TURN;
+        let b = Angle64::THREE_QUARTERS_TURN;
+        // They are half a turn apart
+        assert_eq!(a.distance(&b), Angle64::HALF_TURN.fraction());
+    }
+
+    #[test]
+    fn test_distance_small_offset() {
+        let a = Angle64::QUARTER_TURN;
+        let b = Angle64::QUARTER_TURN + Angle64::new(42);
+        assert_eq!(a.distance(&b), 42);
+    }
+
+    #[test]
+    fn test_is_close_exact() {
+        let a = Angle64::HALF_TURN;
+        assert!(a.is_close(&a, 0));
+    }
+
+    #[test]
+    fn test_is_close_within_tolerance() {
+        let a = Angle64::QUARTER_TURN;
+        let b = Angle64::QUARTER_TURN + Angle64::new(5);
+        assert!(a.is_close(&b, 10));
+        assert!(a.is_close(&b, 5));
+        assert!(!a.is_close(&b, 4));
+    }
+
+    #[test]
+    fn test_is_close_wraparound() {
+        // Angle near 0 vs angle near 2pi
+        let a = Angle64::new(3);
+        let b = Angle64::new(u64::MAX - 2); // wraps to -3 in fraction space
+        assert!(a.is_close(&b, 6));
+        assert!(!a.is_close(&b, 4));
+    }
+
+    #[test]
+    fn test_is_close_radians_basic() {
+        let a = Angle64::from_radians(1.0);
+        let b = Angle64::from_radians(1.0 + 1e-12);
+        assert!(a.is_close_radians(&b, 1e-9));
+        assert!(a.is_close_radians(&b, 1e-11));
+    }
+
+    #[test]
+    fn test_is_close_radians_not_close() {
+        let a = Angle64::from_radians(0.0);
+        let b = Angle64::from_radians(0.1);
+        assert!(!a.is_close_radians(&b, 0.01));
+        assert!(a.is_close_radians(&b, 0.2));
+    }
+
+    #[test]
+    fn test_is_close_radians_wraparound() {
+        // Small positive vs just below 2pi
+        let a = Angle64::from_radians(0.001);
+        let b = Angle64::from_radians(TAU - 0.001);
+        assert!(a.is_close_radians(&b, 0.01));
+        assert!(!a.is_close_radians(&b, 0.001));
+    }
+
+    #[test]
+    fn test_is_close_turns_basic() {
+        let a = Angle64::QUARTER_TURN;
+        let b = Angle64::from_turns(0.250_000_001);
+        assert!(a.is_close_turns(&b, 1e-6));
+    }
+
+    #[test]
+    fn test_is_close_turns_not_close() {
+        let a = Angle64::QUARTER_TURN;
+        let b = Angle64::HALF_TURN;
+        assert!(!a.is_close_turns(&b, 0.1));
+        assert!(a.is_close_turns(&b, 0.3));
+    }
+
+    #[test]
+    fn test_is_close_turns_wraparound() {
+        let a = Angle64::from_turns(0.001);
+        let b = Angle64::from_turns(0.999);
+        assert!(a.is_close_turns(&b, 0.01));
+        assert!(!a.is_close_turns(&b, 0.001));
+    }
+
+    #[test]
+    fn test_distance_u32() {
+        // Verify distance works for other integer widths
+        let a = Angle32::QUARTER_TURN;
+        let b = Angle32::QUARTER_TURN + Angle32::new(10);
+        assert_eq!(a.distance(&b), 10);
     }
 }

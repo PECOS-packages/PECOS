@@ -20,13 +20,13 @@ use nalgebra::DMatrix;
 use num_complex::Complex64;
 use pecos_core::op;
 use pecos_core::Angle64;
-use pecos_quantum::unitary_matrix::{operators_equiv, ToMatrix};
+use pecos_quantum::unitary_matrix::{unitaries_equiv, ToMatrix};
 
 /// Verify a 1-qubit Clifford Op's UnitaryRep matches a reference UnitaryRep.
 fn check_1q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, name: &str) {
     let ur = gate.into_unitary().unwrap();
     assert!(
-        operators_equiv(&ur, &reference),
+        unitaries_equiv(&ur, &reference),
         "{name}: UnitaryRep decomposition does not match reference"
     );
 }
@@ -36,7 +36,7 @@ fn check_1q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, na
 fn check_2q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, name: &str) {
     let ur = gate.into_unitary().unwrap();
     assert!(
-        operators_equiv(&ur, &reference),
+        unitaries_equiv(&ur, &reference),
         "{name}: UnitaryRep decomposition does not match reference"
     );
 }

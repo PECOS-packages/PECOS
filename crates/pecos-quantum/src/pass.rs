@@ -1356,14 +1356,14 @@ mod tests {
     // named-gate UnitaryRep using dense matrix comparison.
 
     use crate::unitary_matrix::{
-        matrices_equiv_up_to_phase, operators_equiv, to_matrix_with_size,
+        matrices_equiv_up_to_phase, unitaries_equiv, to_matrix_with_size,
     };
 
     use pecos_core::unitary_rep::{self, UnitaryRep};
 
     #[test]
     fn matrix_rz_half_equiv_z() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RZ(Angle64::HALF_TURN, 0),
             &unitary_rep::Z(0),
         ));
@@ -1371,7 +1371,7 @@ mod tests {
 
     #[test]
     fn matrix_rz_quarter_equiv_sz() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RZ(Angle64::QUARTER_TURN, 0),
             &unitary_rep::SZ(0),
         ));
@@ -1379,7 +1379,7 @@ mod tests {
 
     #[test]
     fn matrix_rz_three_quarters_equiv_szdg() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RZ(Angle64::THREE_QUARTERS_TURN, 0),
             &unitary_rep::SZ(0).dg(),
         ));
@@ -1387,7 +1387,7 @@ mod tests {
 
     #[test]
     fn matrix_rz_eighth_equiv_t() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0),
             &unitary_rep::T(0),
         ));
@@ -1395,7 +1395,7 @@ mod tests {
 
     #[test]
     fn matrix_rz_seven_eighths_equiv_tdg() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RZ(Angle64::from_turn_ratio(7, 8), 0),
             &unitary_rep::T(0).dg(),
         ));
@@ -1403,7 +1403,7 @@ mod tests {
 
     #[test]
     fn matrix_rx_half_equiv_x() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RX(Angle64::HALF_TURN, 0),
             &unitary_rep::X(0),
         ));
@@ -1411,7 +1411,7 @@ mod tests {
 
     #[test]
     fn matrix_rx_quarter_equiv_sx() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RX(Angle64::QUARTER_TURN, 0),
             &unitary_rep::SX(0),
         ));
@@ -1419,7 +1419,7 @@ mod tests {
 
     #[test]
     fn matrix_rx_three_quarters_equiv_sxdg() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RX(Angle64::THREE_QUARTERS_TURN, 0),
             &unitary_rep::SX(0).dg(),
         ));
@@ -1427,7 +1427,7 @@ mod tests {
 
     #[test]
     fn matrix_ry_half_equiv_y() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RY(Angle64::HALF_TURN, 0),
             &unitary_rep::Y(0),
         ));
@@ -1435,7 +1435,7 @@ mod tests {
 
     #[test]
     fn matrix_ry_quarter_equiv_sy() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RY(Angle64::QUARTER_TURN, 0),
             &unitary_rep::SY(0),
         ));
@@ -1443,7 +1443,7 @@ mod tests {
 
     #[test]
     fn matrix_ry_three_quarters_equiv_sydg() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RY(Angle64::THREE_QUARTERS_TURN, 0),
             &unitary_rep::SY(0).dg(),
         ));
@@ -1451,7 +1451,7 @@ mod tests {
 
     #[test]
     fn matrix_rzz_quarter_equiv_szz() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RZZ(Angle64::QUARTER_TURN, 0, 1),
             &unitary_rep::SZZ(0, 1),
         ));
@@ -1459,7 +1459,7 @@ mod tests {
 
     #[test]
     fn matrix_rzz_three_quarters_equiv_szzdg() {
-        assert!(operators_equiv(
+        assert!(unitaries_equiv(
             &unitary_rep::RZZ(Angle64::THREE_QUARTERS_TURN, 0, 1),
             &unitary_rep::SZZ(0, 1).dg(),
         ));
@@ -1469,21 +1469,21 @@ mod tests {
     fn matrix_rzz_half_equiv_z_tensor_z() {
         let rzz_pi = unitary_rep::RZZ(Angle64::HALF_TURN, 0, 1);
         let z_z = unitary_rep::Z(0) & unitary_rep::Z(1);
-        assert!(operators_equiv(&rzz_pi, &z_z));
+        assert!(unitaries_equiv(&rzz_pi, &z_z));
     }
 
     #[test]
     fn matrix_rxx_half_equiv_x_tensor_x() {
         let rxx_pi = unitary_rep::RXX(Angle64::HALF_TURN, 0, 1);
         let x_x = unitary_rep::X(0) & unitary_rep::X(1);
-        assert!(operators_equiv(&rxx_pi, &x_x));
+        assert!(unitaries_equiv(&rxx_pi, &x_x));
     }
 
     #[test]
     fn matrix_ryy_half_equiv_y_tensor_y() {
         let ryy_pi = unitary_rep::RYY(Angle64::HALF_TURN, 0, 1);
         let y_y = unitary_rep::Y(0) & unitary_rep::Y(1);
-        assert!(operators_equiv(&ryy_pi, &y_y));
+        assert!(unitaries_equiv(&ryy_pi, &y_y));
     }
 
     // ==================== Full-circuit matrix equivalence tests ====================
@@ -1495,7 +1495,7 @@ mod tests {
     ///
     /// Each tick's gates are tensored (parallel), then ticks are composed
     /// (sequential). Returns `None` for an empty circuit.
-    fn tick_circuit_to_operator(tc: &TickCircuit) -> Option<UnitaryRep> {
+    fn tick_circuit_to_unitary(tc: &TickCircuit) -> Option<UnitaryRep> {
         let mut tick_ops: Vec<UnitaryRep> = Vec::new();
 
         for tick in tc.ticks() {
@@ -1505,7 +1505,7 @@ mod tests {
             }
             let mut gate_ops: Vec<UnitaryRep> = Vec::new();
             for gate in gates {
-                let op = gate_to_operator(gate)?;
+                let op = gate_to_unitary(gate)?;
                 gate_ops.push(op);
             }
             // Tensor all gates in this tick (they act on disjoint qubits).
@@ -1525,7 +1525,7 @@ mod tests {
     }
 
     /// Convert a single `Gate` to an `UnitaryRep`.
-    fn gate_to_operator(gate: &pecos_core::Gate) -> Option<UnitaryRep> {
+    fn gate_to_unitary(gate: &pecos_core::Gate) -> Option<UnitaryRep> {
         let q0 = gate.qubits.first().copied()?;
         match gate.gate_type {
             GateType::H => Some(unitary_rep::H(q0)),
@@ -1594,8 +1594,8 @@ mod tests {
 
     /// Assert that two `TickCircuit`s produce the same unitary (up to global phase).
     fn assert_circuits_equiv(a: &TickCircuit, b: &TickCircuit) {
-        let op_a = tick_circuit_to_operator(a).expect("circuit A should be non-empty");
-        let op_b = tick_circuit_to_operator(b).expect("circuit B should be non-empty");
+        let op_a = tick_circuit_to_unitary(a).expect("circuit A should be non-empty");
+        let op_b = tick_circuit_to_unitary(b).expect("circuit B should be non-empty");
 
         // Determine qubit count from both operators.
         let nq_a = op_a.qubits().into_iter().max().map_or(1, |q| q + 1);

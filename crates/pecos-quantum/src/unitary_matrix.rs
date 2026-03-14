@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Matrix representations and operations for quantum operators.
+//! Matrix representations and operations for quantum unitaries.
 //!
-//! This module provides functions to convert operators to dense matrices
+//! This module provides functions to convert unitaries to dense matrices
 //! and perform matrix-level operations like exponential and logarithm.
 //!
 //! # Extension Trait
@@ -35,7 +35,7 @@ use pecos_core::gate_type::GateType;
 use pecos_core::unitary_rep::{UnitaryRep, RotationType};
 use pecos_core::{Pauli, PauliString, Phase};
 
-/// Extension trait for converting quantum operators to matrix representations.
+/// Extension trait for converting quantum unitaries to matrix representations.
 ///
 /// This trait is implemented for [`UnitaryRep`] and [`PauliString`], providing
 /// a method-style API for matrix conversion.
@@ -116,20 +116,24 @@ pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Comple
     match op {
         UnitaryRep::Pauli(ps) => pauli_string_to_matrix_impl(ps, num_qubits),
 
-        UnitaryRep::Rotation {
-            rotation_type,
-            angle,
+        UnitaryRep::Gate(
+            pecos_core::Unitary::Rotation {
+                rotation_type,
+                angle,
+            },
             qubits,
-        } => rotation_to_matrix(*rotation_type, angle.to_radians(), qubits, num_qubits),
+        ) => rotation_to_matrix(*rotation_type, angle.to_radians(), qubits, num_qubits),
 
-        UnitaryRep::Gate { gate_type, qubits } => gate_to_matrix(*gate_type, qubits, num_qubits),
+        UnitaryRep::Gate(pecos_core::Unitary::Named(gate_type), qubits) => {
+            gate_to_matrix(*gate_type, qubits, num_qubits)
+        }
 
         UnitaryRep::Tensor(parts) => {
             // Start with identity, combine each part
             let mut result = DMatrix::identity(dim, dim);
             for part in parts {
                 let part_matrix = to_matrix_with_size(part, num_qubits);
-                result = combine_disjoint_operators(&result, &part_matrix);
+                result = combine_disjoint_unitaries(&result, &part_matrix);
             }
             result
         }
@@ -157,31 +161,31 @@ pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Comple
     }
 }
 
-/// Computes the matrix exponential of an operator: exp(i * op).
+/// Computes the matrix exponential of a unitary: exp(i * op).
 ///
 /// This is useful for generating unitaries from Hermitian generators.
 ///
 /// # Example
 ///
 /// ```
-/// use pecos_quantum::unitary_matrix::operator_exp;
+/// use pecos_quantum::unitary_matrix::unitary_exp;
 /// use pecos_core::unitary_rep::Z;
 /// use num_complex::Complex64;
 /// use std::f64::consts::PI;
 ///
 /// // exp(i * pi * Z) = -I
 /// let z = Z(0);
-/// let result = operator_exp(&z, PI);
+/// let result = unitary_exp(&z, PI);
 /// // Result should be approximately -I
 /// ```
 #[must_use]
-pub fn operator_exp(op: &UnitaryRep, theta: f64) -> DMatrix<Complex64> {
+pub fn unitary_exp(op: &UnitaryRep, theta: f64) -> DMatrix<Complex64> {
     let matrix = to_matrix(op);
     let scaled = matrix * Complex64::new(0.0, theta);
     pecos_num::matrix_exp(&scaled)
 }
 
-/// Computes the matrix logarithm of an operator.
+/// Computes the matrix logarithm of a unitary.
 ///
 /// Returns `Some(generator)` where `exp(i * generator) = op`, or `None` if
 /// the computation fails (e.g., for singular matrices).
@@ -189,47 +193,47 @@ pub fn operator_exp(op: &UnitaryRep, theta: f64) -> DMatrix<Complex64> {
 /// # Example
 ///
 /// ```
-/// use pecos_quantum::unitary_matrix::{operator_log, to_matrix};
+/// use pecos_quantum::unitary_matrix::{unitary_log, to_matrix};
 /// use pecos_core::unitary_rep::X;
 ///
 /// let x = X(0);
-/// if let Some(log_x) = operator_log(&x) {
+/// if let Some(log_x) = unitary_log(&x) {
 ///     // log_x is the generator such that exp(i * log_x) = X
 /// }
 /// ```
 #[must_use]
-pub fn operator_log(op: &UnitaryRep) -> Option<DMatrix<Complex64>> {
+pub fn unitary_log(op: &UnitaryRep) -> Option<DMatrix<Complex64>> {
     let matrix = to_matrix(op);
     let log_matrix = pecos_num::matrix_log(&matrix)?;
     // Divide by i to get the Hermitian generator
     Some(log_matrix / Complex64::new(0.0, 1.0))
 }
 
-/// Checks if two operators are equivalent up to a global phase.
+/// Checks if two unitaries are equivalent up to a global phase.
 ///
 /// Returns `true` if A = e^{i*phi} * B for some real phi.
 ///
 /// # Example
 ///
 /// ```
-/// use pecos_quantum::unitary_matrix::operators_equiv;
+/// use pecos_quantum::unitary_matrix::unitaries_equiv;
 /// use pecos_core::unitary_rep::{X, Y, Z};
 ///
 /// let x = X(0);
 /// let x2 = X(0);
-/// assert!(operators_equiv(&x, &x2));
+/// assert!(unitaries_equiv(&x, &x2));
 ///
 /// let y = Y(0);
-/// assert!(!operators_equiv(&x, &y));
+/// assert!(!unitaries_equiv(&x, &y));
 /// ```
 #[must_use]
-pub fn operators_equiv(a: &UnitaryRep, b: &UnitaryRep) -> bool {
-    operators_equiv_with_tolerance(a, b, 1e-10)
+pub fn unitaries_equiv(a: &UnitaryRep, b: &UnitaryRep) -> bool {
+    unitaries_equiv_with_tolerance(a, b, 1e-10)
 }
 
-/// Checks if two operators are equivalent up to a global phase, with custom tolerance.
+/// Checks if two unitaries are equivalent up to a global phase, with custom tolerance.
 #[must_use]
-pub fn operators_equiv_with_tolerance(a: &UnitaryRep, b: &UnitaryRep, tol: f64) -> bool {
+pub fn unitaries_equiv_with_tolerance(a: &UnitaryRep, b: &UnitaryRep, tol: f64) -> bool {
     let num_qubits_a = a.qubits().into_iter().max().map_or(1, |q| q + 1);
     let num_qubits_b = b.qubits().into_iter().max().map_or(1, |q| q + 1);
     let num_qubits = num_qubits_a.max(num_qubits_b);
@@ -593,11 +597,11 @@ fn swap_matrix(q1: usize, q2: usize, num_qubits: usize) -> DMatrix<Complex64> {
     result
 }
 
-/// Combines two matrices representing operators on disjoint qubits.
+/// Combines two matrices representing unitaries on disjoint qubits.
 ///
-/// When operators act on disjoint qubits, the tensor product in the full Hilbert space
-/// is equivalent to matrix multiplication (since disjoint operators commute).
-fn combine_disjoint_operators(
+/// When unitaries act on disjoint qubits, the tensor product in the full Hilbert space
+/// is equivalent to matrix multiplication (since disjoint unitaries commute).
+fn combine_disjoint_unitaries(
     a: &DMatrix<Complex64>,
     b: &DMatrix<Complex64>,
 ) -> DMatrix<Complex64> {
@@ -779,80 +783,80 @@ mod tests {
     }
 
     // ========================================================================
-    // operators_equiv tests
+    // unitaries_equiv tests
     // ========================================================================
 
     #[test]
-    fn test_operators_equiv_same() {
+    fn test_unitaries_equiv_same() {
         let x1 = X(0);
         let x2 = X(0);
-        assert!(operators_equiv(&x1, &x2));
+        assert!(unitaries_equiv(&x1, &x2));
     }
 
     #[test]
-    fn test_operators_equiv_different() {
+    fn test_unitaries_equiv_different() {
         let x = X(0);
         let y = Y(0);
-        assert!(!operators_equiv(&x, &y));
+        assert!(!unitaries_equiv(&x, &y));
     }
 
     #[test]
-    fn test_operators_equiv_global_phase() {
+    fn test_unitaries_equiv_global_phase() {
         // X and -X differ by global phase -1
         let x = X(0);
         let neg_x = pecos_core::unitary_rep::phase(Angle64::HALF_TURN) * X(0);
-        assert!(operators_equiv(&x, &neg_x));
+        assert!(unitaries_equiv(&x, &neg_x));
     }
 
     #[test]
-    fn test_operators_equiv_i_phase() {
+    fn test_unitaries_equiv_i_phase() {
         // X and iX differ by global phase i
         let x = X(0);
         let i_x = pecos_core::unitary_rep::i * X(0);
-        assert!(operators_equiv(&x, &i_x));
+        assert!(unitaries_equiv(&x, &i_x));
     }
 
     // ========================================================================
-    // operator_exp tests
+    // unitary_exp tests
     // ========================================================================
 
     #[test]
-    fn test_operator_exp_identity() {
+    fn test_unitary_exp_identity() {
         // exp(i * 0 * X) = I
         let x = X(0);
-        let result = operator_exp(&x, 0.0);
+        let result = unitary_exp(&x, 0.0);
         let identity = DMatrix::identity(2, 2);
         assert!(matrices_equiv_up_to_phase(&result, &identity, 1e-10));
     }
 
     #[test]
-    fn test_operator_exp_pauli_pi() {
+    fn test_unitary_exp_pauli_pi() {
         // exp(i * π * Z) = -I
         let z = Z(0);
-        let result = operator_exp(&z, PI);
+        let result = unitary_exp(&z, PI);
         let neg_identity: DMatrix<Complex64> = DMatrix::identity(2, 2) * Complex64::new(-1.0, 0.0);
         assert!(matrices_equiv_up_to_phase(&result, &neg_identity, 1e-10));
     }
 
     #[test]
-    fn test_operator_exp_pauli_half_pi() {
+    fn test_unitary_exp_pauli_half_pi() {
         // exp(i * π/2 * X) = i*X = [[0, i], [i, 0]]
         let x = X(0);
-        let result = operator_exp(&x, PI / 2.0);
+        let result = unitary_exp(&x, PI / 2.0);
         let i = Complex64::new(0.0, 1.0);
         let expected = to_matrix(&x) * i;
         assert!(matrices_equiv_up_to_phase(&result, &expected, 1e-10));
     }
 
     // ========================================================================
-    // operator_log tests
+    // unitary_log tests
     // ========================================================================
 
     #[test]
-    fn test_operator_log_identity() {
+    fn test_unitary_log_identity() {
         // log(I) = 0
         let id = I(0);
-        let result = operator_log(&id);
+        let result = unitary_log(&id);
         assert!(result.is_some());
         let log_mat = result.unwrap();
         // All elements should be near zero
@@ -864,15 +868,15 @@ mod tests {
     }
 
     #[test]
-    fn test_operator_log_returns_matrix() {
+    fn test_unitary_log_returns_matrix() {
         // log(T) should exist (T is close to identity)
         let t = T(0);
-        let result = operator_log(&t);
+        let result = unitary_log(&t);
         assert!(result.is_some());
 
         // log(S) should exist
         let s = SZ(0);
-        let result = operator_log(&s);
+        let result = unitary_log(&s);
         assert!(result.is_some());
     }
 

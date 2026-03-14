@@ -82,7 +82,7 @@ pub type Angle128 = Angle<u128>;
 /// let radians = half.to_radians();
 /// assert!((radians - std::f64::consts::PI).abs() < 1e-6);
 /// ```
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Angle<T: Unsigned + Copy> {
     fraction: T, // Fixed-point fractional representation in [0, 2^n) turns

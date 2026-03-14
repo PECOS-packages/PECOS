@@ -34,6 +34,7 @@
 //! ```
 
 use crate::clifford_rep::CliffordRep;
+use crate::gate_type::GateType;
 use crate::Pauli;
 use crate::Sign;
 use std::fmt;
@@ -259,6 +260,45 @@ impl Clifford {
     #[must_use]
     pub fn is_2q(self) -> bool {
         self.num_qubits() == 2
+    }
+
+    /// Returns the corresponding `GateType` for this Clifford gate, if one exists.
+    ///
+    /// Returns `None` for Clifford variants that don't have a matching `GateType`
+    /// (H2-H6, F2-F4 and daggers, ISWAP, G).
+    #[must_use]
+    pub fn to_gate_type(self) -> Option<GateType> {
+        match self {
+            Self::I => Some(GateType::I),
+            Self::X => Some(GateType::X),
+            Self::Y => Some(GateType::Y),
+            Self::Z => Some(GateType::Z),
+            Self::H => Some(GateType::H),
+            Self::SX => Some(GateType::SX),
+            Self::SXdg => Some(GateType::SXdg),
+            Self::SY => Some(GateType::SY),
+            Self::SYdg => Some(GateType::SYdg),
+            Self::SZ => Some(GateType::SZ),
+            Self::SZdg => Some(GateType::SZdg),
+            Self::F => Some(GateType::F),
+            Self::Fdg => Some(GateType::Fdg),
+            Self::CX => Some(GateType::CX),
+            Self::CY => Some(GateType::CY),
+            Self::CZ => Some(GateType::CZ),
+            Self::SWAP => Some(GateType::SWAP),
+            Self::SXX => Some(GateType::SXX),
+            Self::SXXdg => Some(GateType::SXXdg),
+            Self::SYY => Some(GateType::SYY),
+            Self::SYYdg => Some(GateType::SYYdg),
+            Self::SZZ => Some(GateType::SZZ),
+            Self::SZZdg => Some(GateType::SZZdg),
+            // These Clifford variants don't have matching GateType entries yet
+            Self::H2 | Self::H3 | Self::H4 | Self::H5 | Self::H6
+            | Self::F2 | Self::F2dg | Self::F3 | Self::F3dg
+            | Self::F4 | Self::F4dg
+            | Self::ISWAP | Self::ISWAPdg
+            | Self::G | Self::Gdg => None,
+        }
     }
 
     // ========================================================================

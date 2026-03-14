@@ -83,7 +83,7 @@ pub use circuit_diagram::{
 };
 
 // UnitaryRep algebra
-pub use unitary_rep::{Is, UnitaryRep};
+pub use unitary_rep::{Is, Unitary, UnitaryRep};
 
 // PauliString constructors (primary user-facing API for Pauli algebra)
 pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
@@ -91,6 +91,9 @@ pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
 // Clifford base type (single-qubit Clifford group element)
 pub mod clifford;
 pub use clifford::Clifford;
+
+// Cross-type algebraic operators (Pauli * Clifford -> CliffordRep, etc.)
+pub mod gate_algebra;
 
 // Unified gate algebra with automatic type promotion
 pub mod op;

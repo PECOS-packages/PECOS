@@ -33,7 +33,7 @@ use crate::pauli::algebra::i;
 use crate::{Pauli, Phase, PauliString, QuarterPhase};
 use rand::RngExt;
 use std::fmt;
-use std::ops::Mul;
+use std::ops::{BitAnd, Mul};
 
 /// Clifford gate representation via generator propagation (Heisenberg picture).
 ///
@@ -887,6 +887,45 @@ impl Mul<&CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
     fn mul(self, rhs: &CliffordRep) -> CliffordRep {
+        self.compose(rhs)
+    }
+}
+
+// ============================================================================
+// BitAnd trait: & operator for tensor product
+// ============================================================================
+
+impl BitAnd for CliffordRep {
+    type Output = CliffordRep;
+
+    /// Tensor product of two CliffordReps acting on disjoint qubits.
+    fn bitand(self, rhs: CliffordRep) -> CliffordRep {
+        // Since compose auto-extends with identity on extra qubits,
+        // and these CliffordReps act on disjoint qubits, composing gives the tensor.
+        self.compose(&rhs)
+    }
+}
+
+impl BitAnd<&CliffordRep> for CliffordRep {
+    type Output = CliffordRep;
+
+    fn bitand(self, rhs: &CliffordRep) -> CliffordRep {
+        self.compose(rhs)
+    }
+}
+
+impl BitAnd<CliffordRep> for &CliffordRep {
+    type Output = CliffordRep;
+
+    fn bitand(self, rhs: CliffordRep) -> CliffordRep {
+        self.compose(&rhs)
+    }
+}
+
+impl BitAnd<&CliffordRep> for &CliffordRep {
+    type Output = CliffordRep;
+
+    fn bitand(self, rhs: &CliffordRep) -> CliffordRep {
         self.compose(rhs)
     }
 }

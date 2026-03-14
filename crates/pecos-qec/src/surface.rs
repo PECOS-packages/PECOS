@@ -38,7 +38,7 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 
-use crate::StabilizerCode;
+use crate::StabilizerCodeSpec;
 use crate::geometry::{CheckSchedule, LogicalOperator, StabilizerCheck};
 
 /// Orientation of surface code patch boundaries.
@@ -217,10 +217,10 @@ impl SurfaceCode {
         schedule
     }
 
-    /// Convert to a [`StabilizerCode`] for verification and analysis.
+    /// Convert to a [`StabilizerCodeSpec`] for verification and analysis.
     #[must_use]
     #[allow(clippy::missing_panics_doc)] // Panic unreachable for valid surface codes
-    pub fn to_stabilizer_code(&self) -> StabilizerCode {
+    pub fn to_stabilizer_code(&self) -> StabilizerCodeSpec {
         let stabilizers: Vec<_> = self
             .x_stabilizers
             .iter()
@@ -231,7 +231,7 @@ impl SurfaceCode {
         let logical_zs = vec![self.logical_z.to_pauli_string()];
         let logical_xs = vec![self.logical_x.to_pauli_string()];
 
-        let mut code = StabilizerCode::new(self.num_data, stabilizers, logical_zs, logical_xs)
+        let mut code = StabilizerCodeSpec::new(self.num_data, stabilizers, logical_zs, logical_xs)
             .expect("Surface code should always produce valid stabilizer code");
 
         code.set_distance(self.distance());

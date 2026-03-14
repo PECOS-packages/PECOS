@@ -122,7 +122,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
             });
 
             // After location for most gates (except prep which resets)
-            if !matches!(gate_type, GateType::Prep | GateType::QAlloc) {
+            if !matches!(gate_type, GateType::PZ | GateType::QAlloc) {
                 locations.push(SpacetimeLocation {
                     tick,
                     qubits,
@@ -222,7 +222,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
 
             let gate_type = storage.type_unchecked(idx);
             let basis = match gate_type {
-                GateType::Measure | GateType::MeasureFree => 0, // Z-basis
+                GateType::MZ | GateType::MeasureFree => 0, // Z-basis
                 _ => continue,
             };
 
@@ -419,7 +419,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 }
             }
 
-            GateType::Prep | GateType::QAlloc => {
+            GateType::PZ | GateType::QAlloc => {
                 // Preparation resets - kill the Pauli
                 for qid in qubits {
                     let q = qid.index();

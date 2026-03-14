@@ -34,8 +34,8 @@
 //!
 //! // Define stabilizers for the 3-qubit bit flip code
 //! let stabilizers = vec![
-//!     Zs(0..2).try_to_pauli_string().unwrap(),  // ZZI
-//!     Zs(1..3).try_to_pauli_string().unwrap(),  // IZZ
+//!     Zs(0..2),  // ZZI
+//!     Zs(1..3),  // IZZ
 //! ];
 //!
 //! // Discover logical operators

@@ -4,9 +4,7 @@
 //! This eliminates atomic contention since each shot has its own output region.
 
 use bytemuck::{Pod, Zeroable};
-use rand::rngs::StdRng;
-use rand_core::{Rng, SeedableRng};
-use std::time::{SystemTime, UNIX_EPOCH};
+use pecos_rng::{PecosRng, time_seed};
 use wgpu::util::DeviceExt;
 
 /// Influence map data for GPU sampling.
@@ -158,7 +156,7 @@ pub struct GpuInfluenceSampler {
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 
-    rng: StdRng,
+    rng: PecosRng,
 }
 
 impl GpuInfluenceSampler {
@@ -169,11 +167,7 @@ impl GpuInfluenceSampler {
 
     /// Create with a random seed.
     pub fn new_random(influence_map: &GpuInfluenceMapData) -> Result<Self, String> {
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(42);
-        Self::new(influence_map, seed)
+        Self::new(influence_map, time_seed())
     }
 
     fn create_internal(map: &GpuInfluenceMapData, seed: u64) -> Result<Self, String> {
@@ -454,7 +448,7 @@ impl GpuInfluenceSampler {
             logical_data_z_buffer,
             bind_group_layout,
             pipeline,
-            rng: StdRng::seed_from_u64(seed),
+            rng: PecosRng::seed_from_u64(seed),
         })
     }
 

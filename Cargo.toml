@@ -152,6 +152,7 @@ pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
 pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
 pecos-cuquantum = { version = "0.1.1", path = "crates/pecos-cuquantum" }
+pecos-neo = { version = "0.1.1", path = "crates/pecos-neo" }
 pecos-cuquantum-sys = { version = "0.1.1", path = "crates/pecos-cuquantum-sys" }
 
 # Decoder crates

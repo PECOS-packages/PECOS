@@ -82,7 +82,7 @@ pub fn detect_input_qubits(circuit: &TickCircuit) -> Vec<usize> {
                 all_qubits.insert(q);
 
                 // Check if this is a preparation gate
-                if gate.gate_type == GateType::Prep {
+                if gate.gate_type == GateType::PZ {
                     prepared_qubits.insert(q);
                 }
             }
@@ -109,7 +109,7 @@ pub fn detect_ancilla_qubits(circuit: &TickCircuit) -> Vec<usize> {
 
     for (_tick_idx, tick) in circuit.iter_ticks() {
         for gate in tick.gates() {
-            if gate.gate_type == GateType::Prep {
+            if gate.gate_type == GateType::PZ {
                 for &qubit in &gate.qubits {
                     prepared_qubits.insert(qubit.index());
                 }
@@ -150,7 +150,7 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
                 // Check if this is a measurement gate
                 if matches!(
                     gate.gate_type,
-                    GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree
+                    GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
                 ) {
                     measured_qubits.insert(q);
                 }
@@ -196,12 +196,12 @@ impl CircuitIO {
                     let q = qubit.index();
                     all_qubits.insert(q);
 
-                    if gate.gate_type == GateType::Prep {
+                    if gate.gate_type == GateType::PZ {
                         prepared_qubits.insert(q);
                     }
                     if matches!(
                         gate.gate_type,
-                        GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree
+                        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
                     ) {
                         measured_qubits.insert(q);
                     }
@@ -555,7 +555,7 @@ impl FollowUpConfig {
 
     /// Adds multiple stabilizers from a code definition.
     ///
-    /// Convenient for adding all stabilizers from a `StabilizerCode`.
+    /// Convenient for adding all stabilizers from a `StabilizerCodeSpec`.
     #[must_use]
     pub fn with_stabilizers(mut self, stabilizers: Vec<(Vec<usize>, Vec<usize>)>) -> Self {
         self.follow_up_stabilizers.extend(stabilizers);
@@ -1004,7 +1004,7 @@ pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound
 
         for gate in tick.gates() {
             match gate.gate_type {
-                GateType::Measure | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree => {
                     // Z-basis measurement
                     for q in &gate.qubits {
                         z_qubits.push(q.0);

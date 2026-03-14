@@ -3770,7 +3770,7 @@ impl HugrEngine {
                     self.message_builder
                         .add_rz(Angle64::from_radians(angle), &[qubits[0].0]);
                 }
-                GateType::Prep => {
+                GateType::PZ => {
                     self.message_builder.add_prep(&[qubits[0].0]);
                 }
                 // SX = sqrt(X) = Rx(π/2)
@@ -3858,7 +3858,7 @@ impl HugrEngine {
                 }
 
                 // Measurement operations
-                GateType::Measure | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree => {
                     let qubit_id = qubits[0];
                     debug!(" Measure: qubit {qubit_id:?} at node {current_node:?}");
                     self.message_builder.add_measurements(&[qubit_id.0]);
@@ -3867,7 +3867,7 @@ impl HugrEngine {
                     // Track where the classical output (bool) goes
                     // For Measure: output 0 = qubit, output 1 = bool
                     // For MeasureFree: output 0 = bool
-                    let bool_output_port = usize::from(op.gate_type == GateType::Measure);
+                    let bool_output_port = usize::from(op.gate_type == GateType::MZ);
                     self.measurement_output_wires
                         .insert(current_node, (current_node, bool_output_port));
 

@@ -95,9 +95,9 @@ pub fn hugr_op_to_gate_type(op_name: &str) -> Option<GateType> {
         // Lifecycle operations
         "QAlloc" => Some(GateType::QAlloc),
         "QFree" => Some(GateType::QFree),
-        "Measure" => Some(GateType::Measure),
+        "Measure" => Some(GateType::MZ),
         "MeasureFree" => Some(GateType::MeasureFree),
-        "Reset" => Some(GateType::Prep),
+        "Reset" => Some(GateType::PZ),
         _ => None,
     }
 }
@@ -133,9 +133,9 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
         // Lifecycle operations
         GateType::QAlloc => Some("QAlloc"),
         GateType::QFree => Some("QFree"),
-        GateType::Measure => Some("Measure"),
+        GateType::MZ => Some("Measure"),
         GateType::MeasureFree => Some("MeasureFree"),
-        GateType::Prep => Some("Reset"),
+        GateType::PZ => Some("Reset"),
         // Unsupported
         _ => None,
     }
@@ -166,9 +166,9 @@ fn gate_type_to_tket_op(gate_type: GateType) -> Option<TketOp> {
         GateType::CZ => Some(TketOp::CZ),
         GateType::QAlloc => Some(TketOp::QAlloc),
         GateType::QFree => Some(TketOp::QFree),
-        GateType::Measure => Some(TketOp::Measure),
+        GateType::MZ => Some(TketOp::Measure),
         GateType::MeasureFree => Some(TketOp::MeasureFree),
-        GateType::Prep => Some(TketOp::Reset),
+        GateType::PZ => Some(TketOp::Reset),
         _ => None,
     }
 }
@@ -1172,7 +1172,7 @@ pub fn dag_circuit_to_hugr(dag: &DagCircuit) -> Result<Hugr, HugrConvertError> {
                     qubit_wires.remove(&q);
                 }
             }
-            GateType::Measure => {
+            GateType::MZ => {
                 // Measure outputs qubit + classical bit
                 if let Some(&q) = gate.qubits.first()
                     && let Some(&wire) = output_wires.first()
@@ -1719,12 +1719,12 @@ mod tests {
         assert_eq!(hugr_op_to_gate_type("CX"), Some(GateType::CX));
         assert_eq!(hugr_op_to_gate_type("QAlloc"), Some(GateType::QAlloc));
         assert_eq!(hugr_op_to_gate_type("QFree"), Some(GateType::QFree));
-        assert_eq!(hugr_op_to_gate_type("Measure"), Some(GateType::Measure));
+        assert_eq!(hugr_op_to_gate_type("Measure"), Some(GateType::MZ));
         assert_eq!(
             hugr_op_to_gate_type("MeasureFree"),
             Some(GateType::MeasureFree)
         );
-        assert_eq!(hugr_op_to_gate_type("Reset"), Some(GateType::Prep));
+        assert_eq!(hugr_op_to_gate_type("Reset"), Some(GateType::PZ));
         assert_eq!(hugr_op_to_gate_type("Unknown"), None);
     }
 
@@ -1734,12 +1734,12 @@ mod tests {
         assert_eq!(gate_type_to_hugr_op(GateType::CX), Some("CX"));
         assert_eq!(gate_type_to_hugr_op(GateType::QAlloc), Some("QAlloc"));
         assert_eq!(gate_type_to_hugr_op(GateType::QFree), Some("QFree"));
-        assert_eq!(gate_type_to_hugr_op(GateType::Measure), Some("Measure"));
+        assert_eq!(gate_type_to_hugr_op(GateType::MZ), Some("Measure"));
         assert_eq!(
             gate_type_to_hugr_op(GateType::MeasureFree),
             Some("MeasureFree")
         );
-        assert_eq!(gate_type_to_hugr_op(GateType::Prep), Some("Reset"));
+        assert_eq!(gate_type_to_hugr_op(GateType::PZ), Some("Reset"));
     }
 
     #[test]
@@ -1762,9 +1762,9 @@ mod tests {
             GateType::CX,
             GateType::QAlloc,
             GateType::QFree,
-            GateType::Measure,
+            GateType::MZ,
             GateType::MeasureFree,
-            GateType::Prep,
+            GateType::PZ,
         ];
 
         for gt in gate_types {

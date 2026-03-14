@@ -191,7 +191,7 @@ impl NoiseUtils {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
                 builder.add_h(&qubits_usize);
             }
-            GateType::Prep => {
+            GateType::PZ => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
                 builder.add_prep(&qubits_usize);
             }
@@ -238,7 +238,7 @@ impl NoiseUtils {
             }
 
             // Measurement gates
-            GateType::Measure if !gate.qubits.is_empty() => {
+            GateType::MZ if !gate.qubits.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
                 builder.add_measurements(&qubits_usize);
             }
@@ -435,7 +435,7 @@ mod tests {
 
         // Should have one Prep gate
         assert_eq!(parsed_gates.len(), 1);
-        assert_eq!(parsed_gates[0].gate_type, GateType::Prep);
+        assert_eq!(parsed_gates[0].gate_type, GateType::PZ);
         assert_eq!(parsed_gates[0].qubits.as_slice(), &[QubitId(0)]);
 
         // Test preparation to |1⟩
@@ -446,7 +446,7 @@ mod tests {
 
         // Should have two gates: Prep followed by X
         assert_eq!(parsed_gates.len(), 2);
-        assert_eq!(parsed_gates[0].gate_type, GateType::Prep);
+        assert_eq!(parsed_gates[0].gate_type, GateType::PZ);
         assert_eq!(parsed_gates[0].qubits.as_slice(), &[QubitId(1)]);
         assert_eq!(parsed_gates[1].gate_type, GateType::X);
         assert_eq!(parsed_gates[1].qubits.as_slice(), &[QubitId(1)]);

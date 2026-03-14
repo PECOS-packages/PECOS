@@ -1340,8 +1340,8 @@ impl PyNoisySampler {
             .map(|loc| {
                 #[allow(clippy::match_same_arms)] // Explicitly list known single-qubit gates
                 match loc.gate_type {
-                    GateType::Prep | GateType::QAlloc => p_init,
-                    GateType::Measure | GateType::MeasureFree => p_meas,
+                    GateType::PZ | GateType::QAlloc => p_init,
+                    GateType::MZ | GateType::MeasureFree => p_meas,
                     GateType::CX | GateType::CZ | GateType::CY | GateType::SWAP => p2,
                     GateType::H
                     | GateType::SZ

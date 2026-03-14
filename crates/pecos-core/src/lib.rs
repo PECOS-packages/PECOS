@@ -26,13 +26,14 @@ pub mod gate_registry;
 pub mod gate_type;
 pub mod gates;
 pub mod index_set;
-pub mod operator;
+pub mod unitary_rep;
 pub mod pauli;
 pub mod phase;
 pub mod prelude;
 pub mod qubit_id;
 pub mod rng;
 pub mod sets;
+pub mod signal;
 pub mod sorted_vec_set;
 pub mod value;
 
@@ -41,7 +42,7 @@ pub use bit::{Bit, Bits};
 pub use bit_int::BitInt;
 pub use bit_uint::BitUInt;
 pub use bitset::BitSet;
-pub use duration::{Nanoseconds, TimeUnits};
+pub use duration::{TimeScale, TimeUnits};
 pub use element::Element;
 pub use index_set::IndexSet;
 pub use phase::GlobalPhase;
@@ -81,5 +82,19 @@ pub use circuit_diagram::{
     DiagramStyleBuilder, FamilyPalette, FillPattern, GraphStyle, GraphStyleBuilder, blend_hex,
 };
 
-// Operator algebra
-pub use operator::{I, Is, Operator, X, Xs, Y, Ys, Z, Zs};
+// UnitaryRep algebra
+pub use unitary_rep::{Is, UnitaryRep};
+
+// PauliString constructors (primary user-facing API for Pauli algebra)
+pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
+
+// Clifford base type (single-qubit Clifford group element)
+pub mod clifford;
+pub use clifford::Clifford;
+
+// Unified gate algebra with automatic type promotion
+pub mod op;
+pub use op::{Basis, ChannelExpr, Level, Op};
+
+// Signals
+pub use signal::Signal;

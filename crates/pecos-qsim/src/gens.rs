@@ -134,6 +134,60 @@ impl GensHybrid {
         }
     }
 
+    // ========================================================================
+    // Generator extraction methods
+    // ========================================================================
+
+    /// Returns the number of generators stored.
+    #[inline]
+    #[must_use]
+    pub fn num_generators(&self) -> usize {
+        self.row_x.len()
+    }
+
+    /// Computes the phase of generator `i` from the sign bits.
+    #[inline]
+    #[must_use]
+    pub fn generator_phase(&self, i: usize) -> QuarterPhase {
+        match (self.signs_minus.contains(i), self.signs_i.contains(i)) {
+            (false, false) => QuarterPhase::PlusOne,
+            (true, false) => QuarterPhase::MinusOne,
+            (false, true) => QuarterPhase::PlusI,
+            (true, true) => QuarterPhase::MinusI,
+        }
+    }
+
+    /// Extracts generator `i` as a [`PauliString`].
+    ///
+    /// # Panics
+    /// Panics if `i >= num_generators()`.
+    #[must_use]
+    pub fn generator(&self, i: usize) -> PauliString {
+        assert!(i < self.num_generators(), "generator index out of bounds");
+        let phase = self.generator_phase(i);
+        let mut paulis = Vec::new();
+        for q in 0..self.num_qubits {
+            let has_x = self.row_x[i].contains(q);
+            let has_z = self.row_z[i].contains(q);
+            let pauli = match (has_x, has_z) {
+                (false, false) => continue,
+                (true, false) => Pauli::X,
+                (false, true) => Pauli::Z,
+                (true, true) => Pauli::Y,
+            };
+            paulis.push((pauli, QubitId::new(q)));
+        }
+        PauliString::with_phase_and_paulis(phase, paulis)
+    }
+
+    /// Extracts all generators as a `Vec<PauliString>`.
+    #[must_use]
+    pub fn generators(&self) -> Vec<PauliString> {
+        (0..self.num_generators())
+            .map(|i| self.generator(i))
+            .collect()
+    }
+
     #[inline]
     pub fn init_all_z(&mut self) {
         let n = self.get_num_qubits();

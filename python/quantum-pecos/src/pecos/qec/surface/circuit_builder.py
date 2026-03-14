@@ -985,8 +985,8 @@ def tick_circuit_to_stim(
         "CX": "CX",
         "CY": "CY",
         "CZ": "CZ",
-        "Measure": "M",
-        "Prep": "R",
+        "MZ": "M",
+        "PZ": "R",
         "QAlloc": "R",  # QAlloc treated as reset
     }
 
@@ -1174,7 +1174,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
             gate_name = gate.gate_type.name
             qubits = list(gate.qubits)
             meas_idx = None
-            if gate_name == "Measure":
+            if gate_name == "MZ":
                 meas_idx = meas_counter
                 meas_counter += 1
             circuit_ops.append((tick_idx, gate_name, qubits, meas_idx))
@@ -1198,7 +1198,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         for op_idx in range(start_op_idx, len(circuit_ops)):
             _, gate_name, qubits, meas_idx = circuit_ops[op_idx]
 
-            if gate_name in ("QAlloc", "Prep"):
+            if gate_name in ("QAlloc", "PZ"):
                 # Reset clears any error on this qubit
                 q = qubits[0]
                 frame.pop(q, None)
@@ -1261,7 +1261,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
                 else:
                     frame[targ] = new_targ
 
-            elif gate_name == "Measure":
+            elif gate_name == "MZ":
                 q = qubits[0]
                 # Z-basis measurement: X or Y errors flip the result
                 if q in frame and frame[q] in ("X", "Y"):
@@ -1304,7 +1304,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     # Process each gate as a potential error location
     for op_idx, (_tick_idx, gate_name, qubits, meas_idx) in enumerate(circuit_ops):
 
-        if gate_name in ("QAlloc", "Prep") and p_init > 0:
+        if gate_name in ("QAlloc", "PZ") and p_init > 0:
             # Initialization error: X error after prep
             q = qubits[0]
             dets, obs = simulate_error(op_idx + 1, {q: "X"})
@@ -1335,7 +1335,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
                     key = (frozenset(dets), frozenset(obs))
                     error_mechanisms[key] += p2 / 15
 
-        elif gate_name == "Measure" and p_meas > 0:
+        elif gate_name == "MZ" and p_meas > 0:
             # Measurement error: bit flip (affects this measurement directly)
             # This is before the measurement is taken, so we track it as X error
             # that is immediately measured
@@ -1437,7 +1437,7 @@ def _extract_measurement_order(tc: TickCircuit) -> list[int]:
         gates = tick.gates()
         for gate in gates:
             gate_type = str(gate.gate_type)
-            if "Measure" in gate_type:
+            if "MZ" in gate_type:
                 # Add each measured qubit to the order
                 for qubit in gate.qubits:
                     # Qubit might be an int or a QubitId object
@@ -1593,7 +1593,7 @@ def generate_dem_from_tick_circuit_via_autodetection(
     for loc_idx, loc in enumerate(locations):
         gate_type = loc.gate_type
 
-        if "Prep" in gate_type or "QAlloc" in gate_type:
+        if "PZ" in gate_type or "QAlloc" in gate_type:
             if p_init <= 0:
                 continue
             for pauli in [PAULI_X]:
@@ -1603,7 +1603,7 @@ def generate_dem_from_tick_circuit_via_autodetection(
                     key = (frozenset(dets), frozenset(logs))
                     error_mechanisms[key] += p_init
 
-        elif "Measure" in gate_type:
+        elif "MZ" in gate_type:
             if p_meas <= 0:
                 continue
             for pauli in [PAULI_X]:

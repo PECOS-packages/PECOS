@@ -1323,7 +1323,7 @@ impl GuppyHugrEngine {
                 self.message_builder
                     .add_rz(Angle64::from_radians(angle), &[qubits[0].0]);
             }
-            GateType::Prep => {
+            GateType::PZ => {
                 self.message_builder.add_prep(&[qubits[0].0]);
             }
             GateType::SX => {
@@ -1418,13 +1418,13 @@ impl GuppyHugrEngine {
             }
 
             // Measurement operations
-            GateType::Measure | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureFree => {
                 let qubit_id = qubits[0];
                 debug!(" Measure: qubit {qubit_id:?} at node {node:?}");
                 self.message_builder.add_measurements(&[qubit_id.0]);
                 self.measurement_state.mappings.push((node, qubit_id));
 
-                let bool_output_port = usize::from(op.gate_type == GateType::Measure);
+                let bool_output_port = usize::from(op.gate_type == GateType::MZ);
                 self.measurement_state
                     .output_wires
                     .insert(node, (node, bool_output_port));

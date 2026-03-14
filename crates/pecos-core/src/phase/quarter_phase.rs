@@ -1,7 +1,19 @@
 use crate::Phase;
 use num_complex::Complex64 as Complex;
+
+/// Fourth roots of unity: `{+1, -1, +i, -i}`.
+///
+/// This is the phase type used by [`PauliString`](crate::PauliString). Multiplying
+/// any two Pauli operators produces a result whose phase is one of these four values,
+/// so `QuarterPhase` is the natural closure of Pauli multiplication.
+///
+/// The `Ord` implementation uses discriminant order and is intended only for
+/// deterministic collection ordering, not mathematical significance.
+///
+/// Widens to: [`GlobalPhase`](crate::GlobalPhase) (via `From`)
+/// Narrows to: [`Sign`](crate::Sign) (via `TryFrom`, fails on `+/-i`)
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(u8)]
 pub enum QuarterPhase {
     #[default]
@@ -89,6 +101,14 @@ impl Phase for QuarterPhase {
 //     unsafe { std::mem::transmute(result) }
 // }
 
+impl QuarterPhase {
+    /// Returns `true` if this phase is real (`+1` or `-1`), i.e. a valid [`Sign`](crate::Sign).
+    #[must_use]
+    pub fn is_real(self) -> bool {
+        matches!(self, Self::PlusOne | Self::MinusOne)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +174,13 @@ mod tests {
         assert_eq!(MinusOne.to_complex(), Complex::new(-1.0, 0.0));
         assert_eq!(PlusI.to_complex(), Complex::new(0.0, 1.0));
         assert_eq!(MinusI.to_complex(), Complex::new(0.0, -1.0));
+    }
+
+    #[test]
+    fn test_is_real() {
+        assert!(QuarterPhase::PlusOne.is_real());
+        assert!(QuarterPhase::MinusOne.is_real());
+        assert!(!QuarterPhase::PlusI.is_real());
+        assert!(!QuarterPhase::MinusI.is_real());
     }
 }

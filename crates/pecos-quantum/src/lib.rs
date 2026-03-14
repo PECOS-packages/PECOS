@@ -66,8 +66,12 @@
 mod circuit;
 mod circuit_display;
 mod dag_circuit;
-pub mod operator_matrix;
+pub mod unitary_matrix;
 pub mod pass;
+pub mod pauli_sequence;
+pub mod pauli_set;
+pub mod pauli_group;
+pub mod stabilizer_group;
 mod tick_circuit;
 pub mod tick_circuit_soa;
 
@@ -89,11 +93,17 @@ pub use tick_circuit_soa::{
 
 // Re-export commonly used types from dependencies
 pub use pecos_core::gate_type::GateType;
-pub use pecos_core::{Gate, Nanoseconds, QubitId};
+pub use pecos_core::{Gate, QubitId, TimeScale, TimeUnits};
 pub use pecos_num::dag::DagWouldCycleError;
 
 // Re-export operator matrix trait for convenient method-style matrix conversion
-pub use operator_matrix::ToMatrix;
+pub use unitary_matrix::ToMatrix;
+
+// Pauli collection and stabilizer group types
+pub use pauli_sequence::{F2Matrix, PauliSequence};
+pub use pauli_set::PauliSet;
+pub use pauli_group::{PauliGroup, PauliGroupError};
+pub use stabilizer_group::{PauliStabilizerGroup, PauliStabilizerGroupError};
 
 // Re-export HUGR types when the feature is enabled
 #[cfg(feature = "hugr")]

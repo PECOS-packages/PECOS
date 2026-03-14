@@ -154,7 +154,7 @@ impl<'a> TickFaultAnalyzer<'a> {
             for gate in tick.gates() {
                 // Currently only Z-basis measurements are supported
                 let basis = match gate.gate_type {
-                    GateType::Measure | GateType::MeasureFree => 0, // Z-basis
+                    GateType::MZ | GateType::MeasureFree => 0, // Z-basis
                     _ => continue,
                 };
 
@@ -570,7 +570,7 @@ impl<'a> TickFaultAnalyzer<'a> {
                 }
             }
 
-            GateType::Prep | GateType::QAlloc => {
+            GateType::PZ | GateType::QAlloc => {
                 // Preparation resets the qubit - backward propagation stops here
                 // Any Pauli on a prepared qubit doesn't propagate further back
                 // Toggle off both X and Z if present

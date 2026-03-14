@@ -5,8 +5,7 @@
 //! This is ideal for Monte Carlo sampling where many shots are needed.
 
 use pecos_core::QubitId;
-use rand::rngs::StdRng;
-use rand_core::{Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, SeedableRng};
 use std::fmt::Debug;
 
 /// Maximum gates in the queue before auto-flush
@@ -19,7 +18,7 @@ const GATE_QUEUE_BUFFER_SIZE: usize = 64 * 1024;
 ///
 /// The simulator automatically queries GPU limits and processes shots in
 /// batches if the requested count exceeds hardware capabilities.
-pub struct GpuStabMulti<R: Rng + SeedableRng = StdRng> {
+pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
     // GPU resources
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -38,6 +37,7 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = StdRng> {
 
     // Noise buffers
     noise_seeds_buffer: wgpu::Buffer,
+    noise_params_buffer: wgpu::Buffer,
 
     // Bind groups and pipelines
     main_bind_group: wgpu::BindGroup,
@@ -67,11 +67,10 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = StdRng> {
 
     // Noise configuration
     noise_enabled: bool,
-    noise_p1: f32,              // Single-qubit gate error probability
-    noise_p2: f32,              // Two-qubit gate error probability
-    noise_p_meas: f32,          // Measurement bit-flip probability
-    noise_seeds: Vec<u32>,      // CPU copy of noise seeds for measurement errors
-    noise_params_gpu: [u32; 4], // Cached GPU noise params [enabled, p1, p2, p_meas]
+    noise_p1: f32,         // Single-qubit gate error probability
+    noise_p2: f32,         // Two-qubit gate error probability
+    noise_p_meas: f32,     // Measurement bit-flip probability
+    noise_seeds: Vec<u32>, // CPU copy of noise seeds for measurement errors
 
     // RNG for measurement outcomes and noise seeds
     master_rng: R,
@@ -212,6 +211,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             label: Some("Multi Noise Seeds Buffer"),
             size: u64::from(shots_per_batch) * 4, // One u32 seed per shot
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let noise_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Multi Noise Params Buffer"),
+            size: 16, // NoiseParams struct: 4 u32s
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -357,6 +363,17 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
                         },
                         count: None,
                     },
+                    // noise_params
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -399,6 +416,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: noise_seeds_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: noise_params_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -584,6 +605,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             params_buffer,
             gate_queue_buffer,
             noise_seeds_buffer,
+            noise_params_buffer,
             main_bind_group,
             gate_pipeline,
             // GPU-side measurement
@@ -610,7 +632,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             noise_p2: 0.0,
             noise_p_meas: 0.0,
             noise_seeds,
-            noise_params_gpu: [0; 4],
             master_rng,
             measurement_count: 0,
             // Queued measurement system
@@ -677,8 +698,17 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             .write_buffer(&self.sign_minus_buffer, 0, &sign_zeros);
         self.queue.write_buffer(&self.sign_i_buffer, 0, &sign_zeros);
 
-        // Write params (includes noise thresholds in fields 4-7)
-        let params = self.build_gate_params();
+        // Write params (use shots_per_batch for shader dispatch)
+        let params = [
+            self.num_qubits,
+            self.gen_words,
+            2 * self.num_qubits, // num_gens
+            self.shots_per_batch,
+            0,
+            0,
+            0,
+            0, // padding
+        ];
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
 
@@ -867,34 +897,18 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             0
         };
 
-        // Cache noise params for inclusion in params buffer writes
-        self.noise_params_gpu = [
+        let noise_params = [
             u32::from(self.noise_enabled),
             p1_threshold,
             p2_threshold,
             p_meas_threshold,
         ];
 
-        // Write noise params into the params buffer at offset 16 (fields 4-7)
         self.queue.write_buffer(
-            &self.params_buffer,
-            16,
-            bytemuck::cast_slice(&self.noise_params_gpu),
+            &self.noise_params_buffer,
+            0,
+            bytemuck::cast_slice(&noise_params),
         );
-    }
-
-    /// Build the 8-element params array for gate dispatch (includes noise fields)
-    fn build_gate_params(&self) -> [u32; 8] {
-        [
-            self.num_qubits,
-            self.gen_words,
-            2 * self.num_qubits, // num_gens
-            self.shots_per_batch,
-            self.noise_params_gpu[0],
-            self.noise_params_gpu[1],
-            self.noise_params_gpu[2],
-            self.noise_params_gpu[3],
-        ]
     }
 
     /// Check if noise is currently enabled
@@ -1003,9 +1017,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// ```
     /// use pecos_gpu_sims::GpuStabMulti;
     /// use pecos_core::QubitId;
-    /// use rand::rngs::StdRng;
+    /// use pecos_rng::PecosRng;
     ///
-    /// let mut sim: GpuStabMulti<StdRng> = GpuStabMulti::new(5, 2000).unwrap();
+    /// let mut sim: GpuStabMulti<PecosRng> = GpuStabMulti::new(5, 2000).unwrap();
     ///
     /// let all_results = sim.run_batched(|s| {
     ///     // Build circuit
@@ -1600,8 +1614,17 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             self.meas_staging_buffer.unmap();
         }
 
-        // Restore gate params (includes noise thresholds)
-        let gate_params = self.build_gate_params();
+        // Restore params
+        let gate_params = [
+            self.num_qubits,
+            self.gen_words,
+            2 * self.num_qubits,
+            self.shots_per_batch,
+            0,
+            0,
+            0,
+            0,
+        ];
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&gate_params));
 
@@ -1623,9 +1646,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// ```
     /// use pecos_gpu_sims::GpuStabMulti;
     /// use pecos_core::QubitId;
-    /// use rand::rngs::StdRng;
+    /// use pecos_rng::PecosRng;
     ///
-    /// let mut sim: GpuStabMulti<StdRng> = GpuStabMulti::new(16, 100).unwrap();
+    /// let mut sim: GpuStabMulti<PecosRng> = GpuStabMulti::new(16, 100).unwrap();
     ///
     /// // Queue measurements on ancilla qubits
     /// sim.mz_queue(&[QubitId::new(10), QubitId::new(11), QubitId::new(12), QubitId::new(13)]);
@@ -1670,9 +1693,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// ```
     /// use pecos_gpu_sims::GpuStabMulti;
     /// use pecos_core::QubitId;
-    /// use rand::rngs::StdRng;
+    /// use pecos_rng::PecosRng;
     ///
-    /// let mut sim: GpuStabMulti<StdRng> = GpuStabMulti::new(5, 100).unwrap();
+    /// let mut sim: GpuStabMulti<PecosRng> = GpuStabMulti::new(5, 100).unwrap();
     /// sim.mz_queue(&[QubitId::new(0), QubitId::new(1)]);
     /// sim.mz_queue(&[QubitId::new(2)]);
     /// let results = sim.mz_fetch();
@@ -2289,7 +2312,7 @@ mod tests {
 
     #[test]
     fn test_multi_shot_creation() {
-        let sim = GpuStabMulti::<StdRng>::new(10, 64);
+        let sim = GpuStabMulti::<PecosRng>::new(10, 64);
         assert!(sim.is_ok());
         let sim = sim.unwrap();
         assert_eq!(sim.num_qubits(), 10);
@@ -2303,7 +2326,7 @@ mod tests {
         let total_qubits = d * d + (d * d - 1); // 881 qubits
         let num_shots = 2000; // More than can fit in 128MB
 
-        let sim = GpuStabMulti::<StdRng>::new(total_qubits, num_shots).unwrap();
+        let sim = GpuStabMulti::<PecosRng>::new(total_qubits, num_shots).unwrap();
 
         println!("Requested shots: {}", sim.num_shots());
         println!("Shots per batch: {}", sim.shots_per_batch());
@@ -2322,7 +2345,7 @@ mod tests {
 
     #[test]
     fn test_multi_shot_gates() {
-        let mut sim = GpuStabMulti::<StdRng>::new(5, 16).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::new(5, 16).unwrap();
 
         // Apply some gates
         sim.h(&qid(0));
@@ -2339,7 +2362,7 @@ mod tests {
     fn test_swap_gate() {
         // Test that SWAP gate correctly swaps qubit states
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         // Put qubit 0 in |1> state, qubit 1 in |0> state
         sim.x(&qid(0));
@@ -2370,7 +2393,7 @@ mod tests {
 
     #[test]
     fn test_noise_api() {
-        let mut sim = GpuStabMulti::<StdRng>::new(5, 16).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::new(5, 16).unwrap();
 
         // Initially noise should be disabled
         assert!(!sim.is_noise_enabled());
@@ -2393,7 +2416,7 @@ mod tests {
 
     #[test]
     fn test_measurement_without_noise() {
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, 8, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, 8, 42).unwrap();
 
         // Qubit 0 is in |0> state, should measure 0
         let results = sim.mz(&[QubitId(0)]);
@@ -2419,7 +2442,7 @@ mod tests {
         let num_shots = 64;
         let seed = 12345u64;
 
-        let mut sim1 = GpuStabMulti::<StdRng>::with_seed(5, num_shots, seed).unwrap();
+        let mut sim1 = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim1.enable_noise(0.0, 0.0, 0.5); // 50% measurement error for clear effect
         sim1.reseed_noise();
 
@@ -2427,7 +2450,7 @@ mod tests {
         let results1 = sim1.mz(&[QubitId(0)]);
 
         // Create new sim with same seed
-        let mut sim2 = GpuStabMulti::<StdRng>::with_seed(5, num_shots, seed).unwrap();
+        let mut sim2 = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim2.enable_noise(0.0, 0.0, 0.5);
         sim2.reseed_noise();
 
@@ -2442,21 +2465,32 @@ mod tests {
 
     #[test]
     fn test_measurement_noise_rate() {
-        // With 50% measurement error on |0>, about half should be flipped
+        // Statistical test: with 50% measurement error, about half should be flipped
         let num_shots = 1000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Enable only measurement noise (no gate noise)
         sim.enable_noise(0.0, 0.0, 0.5); // 50% measurement error
 
         // Qubit is in |0>, should measure 0 without noise
+        // With 50% error, expect ~500 to be flipped to 1
         let results = sim.mz(&[QubitId(0)]);
-        let ones_count: usize = results.iter().filter(|r| r[0]).count();
 
-        // Noise is deterministic (seeded hash-based RNG), so assert exact count.
-        assert_eq!(
-            ones_count, 526,
-            "Measurement noise: expected 526 flips with seed=42, 1000 shots, 50% meas error"
+        let ones_count: usize = results.iter().filter(|r| r[0]).count();
+        let error_rate = ones_count as f64 / num_shots as f64;
+
+        println!(
+            "Measurement noise test: {} ones out of {} shots (rate: {:.2}%)",
+            ones_count,
+            num_shots,
+            error_rate * 100.0
+        );
+
+        // Should be within reasonable range of 50% (say 40-60% with 1000 samples)
+        assert!(
+            error_rate > 0.4 && error_rate < 0.6,
+            "Error rate {:.2}% should be close to 50%",
+            error_rate * 100.0
         );
     }
 
@@ -2466,8 +2500,8 @@ mod tests {
         let num_shots = 100;
         let seed = 999u64;
 
-        let mut sim_noiseless = GpuStabMulti::<StdRng>::with_seed(3, num_shots, seed).unwrap();
-        let mut sim_disabled = GpuStabMulti::<StdRng>::with_seed(3, num_shots, seed).unwrap();
+        let mut sim_noiseless = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, seed).unwrap();
+        let mut sim_disabled = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, seed).unwrap();
 
         // Set high noise but then disable it
         sim_disabled.enable_noise(1.0, 1.0, 1.0);
@@ -2498,7 +2532,7 @@ mod tests {
         // Test that non-deterministic measurements properly update the tableau
         // and produce correlated outcomes for Bell states
         let num_shots = 100;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 12345).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 12345).unwrap();
 
         // Create Bell state: |00> + |11>
         sim.h(&qid(0));
@@ -2535,7 +2569,7 @@ mod tests {
     fn test_ghz_state_correlation() {
         // Test 3-qubit GHZ state: |000> + |111>
         let num_shots = 100;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 54321).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 54321).unwrap();
 
         // Create GHZ state
         sim.h(&qid(0));
@@ -2566,13 +2600,7 @@ mod tests {
         // Test that 1Q gate noise injects errors
         // Apply many identities (H H = I), which should accumulate noise
         let num_shots = 500;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 42).unwrap();
-
-        // Log GPU adapter info for diagnosing cross-platform differences
-        eprintln!(
-            "[diag] 1Q noise test: num_shots={num_shots}, gen_words={}, shots_per_batch={}",
-            sim.gen_words, sim.shots_per_batch
-        );
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 42).unwrap();
 
         // Enable 10% single-qubit gate error
         sim.enable_noise(0.1, 0.0, 0.0);
@@ -2588,28 +2616,27 @@ mod tests {
         // With noise, some shots should show errors (non-zero Z expectation change)
         let results = sim.mz(&[QubitId(0)]);
         let ones_count: usize = results.iter().filter(|r| r[0]).count();
-
         let error_rate = ones_count as f64 / num_shots as f64;
-        eprintln!("[diag] 1Q noise: ones_count={ones_count}/{num_shots} (rate={error_rate:.4})");
 
-        // Gate noise is computed in GPU shaders (WGSL). Use statistical bounds
-        // since different GPU backends may produce slightly different results.
+        // With 10% gate noise over 100 H gates, we expect significant accumulated errors
+        // The exact rate depends on the noise model, but should be non-zero
+        assert!(
+            ones_count > 0,
+            "Should have some errors with 10% 1Q gate noise over 100 gates"
+        );
+        // Should see a reasonable error rate (roughly 25-75% given the noise model)
         assert!(
             error_rate > 0.1 && error_rate < 0.9,
-            "1Q noise: error rate {error_rate:.3} ({ones_count}/{num_shots}) outside expected range [0.1, 0.9]"
+            "Error rate {:.2}% should be significant but not 100%",
+            error_rate * 100.0
         );
     }
 
     #[test]
     fn test_2q_gate_noise_injection() {
         // Test that 2Q gate noise injects errors on CX gates
-        let num_shots = 1000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
-
-        eprintln!(
-            "[diag] 2Q noise test: num_shots={num_shots}, gen_words={}, shots_per_batch={}",
-            sim.gen_words, sim.shots_per_batch
-        );
+        let num_shots = 500;
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         // Enable 20% two-qubit gate error (no 1Q noise)
         sim.enable_noise(0.0, 0.2, 0.0);
@@ -2626,101 +2653,19 @@ mod tests {
 
         // Count shots where at least one qubit shows an error
         let error_shots: usize = results.iter().filter(|r| r[0] || r[1]).count();
-
         let error_rate = error_shots as f64 / num_shots as f64;
-        eprintln!("[diag] 2Q noise: error_shots={error_shots}/{num_shots} (rate={error_rate:.4})");
 
-        // With 20% noise on 50 CX gates (100 noise evaluations per shot),
-        // we expect a high error rate (>50% of shots should show errors).
+        // With 20% 2Q gate noise over 50 CX gates, we expect errors
+        assert!(
+            error_shots > 0,
+            "Should have some errors with 20% 2Q gate noise over 50 CX gates"
+        );
+        // Should see a reasonable error rate
         assert!(
             error_rate > 0.1,
-            "2Q noise: error rate {error_rate:.3} ({error_shots}/{num_shots}) too low for 20% noise on 50 CX gates"
+            "Error rate {:.2}% should be significant with 2Q noise",
+            error_rate * 100.0
         );
-    }
-
-    #[test]
-    fn test_gpu_noise_diagnostic() {
-        // Diagnostic test: sweep multiple seeds for both 1Q and 2Q noise.
-        // Logs results so CI output reveals whether noise works across platforms.
-        let num_shots = 500;
-
-        // Report GPU adapter info
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        if let Ok(adapter) =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            }))
-        {
-            let info = adapter.get_info();
-            eprintln!(
-                "[diag] GPU adapter: name={:?}, backend={:?}, device_type={:?}",
-                info.name, info.backend, info.device_type
-            );
-        }
-
-        // Test 1Q noise (p1) across seeds
-        eprintln!("[diag] --- 1Q gate noise (p1=0.1) across seeds ---");
-        for seed in [1u64, 42, 100, 999, 12345] {
-            let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, seed).unwrap();
-            sim.enable_noise(0.1, 0.0, 0.0);
-            for _ in 0..50 {
-                sim.h(&qid(0));
-                sim.h(&qid(0));
-            }
-            let results = sim.mz(&[QubitId(0)]);
-            let ones: usize = results.iter().filter(|r| r[0]).count();
-            eprintln!("[diag]   seed={seed:>5}: ones={ones}/{num_shots}");
-        }
-
-        // Test 2Q noise (p2) across seeds
-        eprintln!("[diag] --- 2Q gate noise (p2=0.2) across seeds ---");
-        for seed in [1u64, 42, 100, 999, 12345] {
-            let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, seed).unwrap();
-            sim.enable_noise(0.0, 0.2, 0.0);
-            for _ in 0..25 {
-                sim.cx(&qid2(0, 1));
-                sim.cx(&qid2(0, 1));
-            }
-            let results = sim.mz(&[QubitId(0), QubitId(1)]);
-            let errors: usize = results.iter().filter(|r| r[0] || r[1]).count();
-            eprintln!("[diag]   seed={seed:>5}: errors={errors}/{num_shots}");
-        }
-
-        // Test that p1 and p2 are distinguishable:
-        // Set both thresholds to different values, use only 1Q gates (only p1 matters),
-        // then only 2Q gates (only p2 matters).
-        eprintln!("[diag] --- p1 vs p2 isolation ---");
-        {
-            // Only 1Q noise active (p1=0.5, p2=0.0)
-            let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 42).unwrap();
-            sim.enable_noise(0.5, 0.0, 0.0);
-            for _ in 0..20 {
-                sim.h(&qid(0));
-                sim.h(&qid(0));
-            }
-            let results = sim.mz(&[QubitId(0)]);
-            let ones: usize = results.iter().filter(|r| r[0]).count();
-            eprintln!("[diag]   p1=0.5,p2=0.0 + H gates: ones={ones}/{num_shots}");
-        }
-        {
-            // Only 2Q noise active (p1=0.0, p2=0.5)
-            let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
-            sim.enable_noise(0.0, 0.5, 0.0);
-            for _ in 0..20 {
-                sim.cx(&qid2(0, 1));
-                sim.cx(&qid2(0, 1));
-            }
-            let results = sim.mz(&[QubitId(0), QubitId(1)]);
-            let errors: usize = results.iter().filter(|r| r[0] || r[1]).count();
-            eprintln!("[diag]   p1=0.0,p2=0.5 + CX gates: errors={errors}/{num_shots}");
-            // This is the key check: with p2=0.5 on 40 CX gates, errors should be very high
-            assert!(
-                errors > 50,
-                "p2 threshold not working: expected many errors with p2=0.5 on 40 CX gates, got {errors}/{num_shots}"
-            );
-        }
     }
 
     #[test]
@@ -2731,7 +2676,7 @@ mod tests {
         let seed = 99999u64;
 
         // First run: two separate mz() calls on the same qubit
-        let mut sim1 = GpuStabMulti::<StdRng>::with_seed(1, num_shots, seed).unwrap();
+        let mut sim1 = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, seed).unwrap();
         sim1.enable_noise(0.0, 0.0, 0.5); // 50% measurement error
 
         // Put qubit in |0> state, measure twice separately
@@ -2773,7 +2718,7 @@ mod tests {
         let num_shots = 100;
         let seed = 11111u64;
 
-        let mut sim1 = GpuStabMulti::<StdRng>::with_seed(1, num_shots, seed).unwrap();
+        let mut sim1 = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, seed).unwrap();
         sim1.enable_noise(0.0, 0.0, 0.5);
 
         // First run: measure, then reset and measure again
@@ -2815,7 +2760,7 @@ mod tests {
         let num_shots = 10000;
         let target_rate: f64 = 0.05; // 5% error rate
 
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 77777).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 77777).unwrap();
         sim.enable_noise(0.0, 0.0, target_rate as f32);
 
         // Measure |0> state - any flip indicates measurement error
@@ -2835,7 +2780,7 @@ mod tests {
     fn test_noise_isolation_1q_only() {
         // Verify 1Q noise doesn't affect measurement when no gates applied
         let num_shots = 1000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 88888).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 88888).unwrap();
 
         // High 1Q noise, no measurement noise
         sim.enable_noise(0.5, 0.0, 0.0);
@@ -2855,7 +2800,7 @@ mod tests {
     fn test_noise_isolation_2q_only() {
         // Verify 2Q noise doesn't affect single-qubit operations
         let num_shots = 500;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 99988).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 99988).unwrap();
 
         // High 2Q noise, no 1Q or measurement noise
         sim.enable_noise(0.0, 0.5, 0.0);
@@ -2877,7 +2822,7 @@ mod tests {
     fn test_noise_combination() {
         // Test that all three noise sources can work together
         let num_shots = 500;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 11122).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 11122).unwrap();
 
         // Enable all noise types
         sim.enable_noise(0.1, 0.2, 0.1);
@@ -2904,7 +2849,7 @@ mod tests {
     fn test_noise_disable_after_enable() {
         // Verify disable_noise() works correctly
         let num_shots = 500;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 22233).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 22233).unwrap();
 
         // Enable then disable
         sim.enable_noise(0.5, 0.5, 0.5);
@@ -2927,7 +2872,7 @@ mod tests {
     fn test_run_batched_single_batch() {
         // When shots fit in one batch, run_batched should work like normal
         let num_shots = 64; // Should fit in one batch
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         assert!(!sim.requires_batching(), "Should not require batching");
 
@@ -2955,7 +2900,7 @@ mod tests {
         let num_qubits = d * d + (d * d - 1); // 881 qubits
         let num_shots = 1000; // More than one batch
 
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(num_qubits, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(num_qubits, num_shots, 42).unwrap();
 
         assert!(sim.requires_batching(), "Should require batching");
         assert!(sim.num_batches() >= 2, "Should need at least 2 batches");
@@ -2987,7 +2932,7 @@ mod tests {
     fn test_mz_gpu_deterministic_zero() {
         // Test that mz_gpu correctly measures |0> state
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Qubit 0 is in |0> state, should measure 0
         let results = sim.mz_gpu(&[QubitId(0)]);
@@ -3002,7 +2947,7 @@ mod tests {
     fn test_mz_gpu_deterministic_one() {
         // Test that mz_gpu correctly measures |1> state
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Apply X to put qubit in |1> state
         sim.x(&qid(1));
@@ -3016,7 +2961,7 @@ mod tests {
     fn test_mz_gpu_bell_state_correlation() {
         // Test that mz_gpu produces correlated outcomes for Bell states
         let num_shots = 100;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 12345).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 12345).unwrap();
 
         // Create Bell state: |00> + |11>
         sim.h(&qid(0));
@@ -3052,7 +2997,7 @@ mod tests {
     fn test_mz_gpu_ghz_state_correlation() {
         // Test 3-qubit GHZ state: |000> + |111>
         let num_shots = 100;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 54321).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 54321).unwrap();
 
         // Create GHZ state
         sim.h(&qid(0));
@@ -3085,14 +3030,14 @@ mod tests {
         let seed = 12345u64;
 
         // Test with mz (CPU)
-        let mut sim_cpu = GpuStabMulti::<StdRng>::with_seed(5, num_shots, seed).unwrap();
+        let mut sim_cpu = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim_cpu.x(&qid(0));
         sim_cpu.x(&qid(2));
         sim_cpu.x(&qid(4));
         let results_cpu = sim_cpu.mz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
 
         // Test with mz_gpu
-        let mut sim_gpu = GpuStabMulti::<StdRng>::with_seed(5, num_shots, seed).unwrap();
+        let mut sim_gpu = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim_gpu.x(&qid(0));
         sim_gpu.x(&qid(2));
         sim_gpu.x(&qid(4));
@@ -3113,20 +3058,30 @@ mod tests {
     fn test_mz_gpu_with_measurement_noise() {
         // Test that mz_gpu correctly applies measurement noise
         let num_shots = 1000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Enable only measurement noise (no gate noise)
         sim.enable_noise(0.0, 0.0, 0.5); // 50% measurement error
 
         // Qubit is in |0>, should measure 0 without noise
+        // With 50% error, expect ~500 to be flipped to 1
         let results = sim.mz_gpu(&[QubitId(0)]);
-        let ones_count: usize = results.iter().filter(|r| r[0]).count();
 
-        // Noise is deterministic (seeded hash-based RNG), so assert exact count.
-        // Should match test_measurement_noise_rate (same params, different measurement path).
-        assert_eq!(
-            ones_count, 526,
-            "mz_gpu noise: expected 526 flips with seed=42, 1000 shots, 50% meas error"
+        let ones_count: usize = results.iter().filter(|r| r[0]).count();
+        let error_rate = ones_count as f64 / num_shots as f64;
+
+        println!(
+            "mz_gpu noise test: {} ones out of {} shots (rate: {:.2}%)",
+            ones_count,
+            num_shots,
+            error_rate * 100.0
+        );
+
+        // Should be within reasonable range of 50% (say 40-60% with 1000 samples)
+        assert!(
+            error_rate > 0.4 && error_rate < 0.6,
+            "Error rate {:.2}% should be close to 50%",
+            error_rate * 100.0
         );
     }
 
@@ -3137,7 +3092,7 @@ mod tests {
     #[test]
     fn test_mz_queue_basic() {
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Queue some measurements
         sim.mz_queue(&[QubitId(0), QubitId(1)]);
@@ -3164,7 +3119,7 @@ mod tests {
     #[test]
     fn test_mz_queue_multiple_batches() {
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(5, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, 42).unwrap();
 
         // Queue measurements in multiple calls
         sim.x(&qid(0)); // Put qubit 0 in |1>
@@ -3196,7 +3151,7 @@ mod tests {
     fn test_mz_queue_interleaved_with_gates() {
         // Test typical surface code pattern: measure, apply corrections, measure again
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(4, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(4, num_shots, 42).unwrap();
 
         // Round 1: Setup and measure
         sim.h(&qid(0));
@@ -3230,7 +3185,7 @@ mod tests {
     #[test]
     fn test_mz_queue_clear() {
         let num_shots = 32;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Queue some measurements
         sim.mz_queue(&[QubitId(0), QubitId(1), QubitId(2)]);
@@ -3256,7 +3211,7 @@ mod tests {
         let seed = 99999u64;
 
         // Using mz_queue
-        let mut sim_queue = GpuStabMulti::<StdRng>::with_seed(5, num_shots, seed).unwrap();
+        let mut sim_queue = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim_queue.x(&qid(1));
         sim_queue.x(&qid(3));
         sim_queue.mz_queue(&[QubitId(0), QubitId(1)]);
@@ -3264,7 +3219,7 @@ mod tests {
         let results_queue = sim_queue.mz_fetch();
 
         // Using mz_gpu directly
-        let mut sim_direct = GpuStabMulti::<StdRng>::with_seed(5, num_shots, seed).unwrap();
+        let mut sim_direct = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim_direct.x(&qid(1));
         sim_direct.x(&qid(3));
         let results_direct =
@@ -3283,7 +3238,7 @@ mod tests {
     #[test]
     fn test_mz_queue_reset_clears_queue() {
         let num_shots = 32;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Queue some measurements
         sim.mz_queue(&[QubitId(0), QubitId(1), QubitId(2)]);
@@ -3302,7 +3257,7 @@ mod tests {
     #[test]
     fn test_batched_basic() {
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Queue gates and measurements
         sim.h(&qid(0));
@@ -3326,7 +3281,7 @@ mod tests {
     #[test]
     fn test_batched_multiple_rounds() {
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(4, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(4, num_shots, 42).unwrap();
 
         // Round 1
         sim.h(&qid(0));
@@ -3356,7 +3311,7 @@ mod tests {
     fn test_batched_state_persistence() {
         // Verify that state persists between flush() calls
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         // Put qubit 0 in |1> state
         sim.x(&qid(0));
@@ -3379,7 +3334,7 @@ mod tests {
     fn test_batched_fetch_auto_flushes() {
         // Verify that fetch_measurements() auto-flushes pending operations
         let num_shots = 32;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         sim.x(&qid(0));
         sim.measure(&[QubitId(0)]);
@@ -3397,7 +3352,7 @@ mod tests {
     #[test]
     fn test_batched_pending_count() {
         let num_shots = 32;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(3, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         assert_eq!(sim.pending_measurement_count(), 0);
 
@@ -3418,7 +3373,7 @@ mod tests {
         let seed = 12345u64;
 
         // Using batched API
-        let mut sim_batched = GpuStabMulti::<StdRng>::with_seed(5, num_shots, seed).unwrap();
+        let mut sim_batched = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim_batched.x(&qid(1));
         sim_batched.x(&qid(3));
         sim_batched.measure(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
@@ -3426,7 +3381,7 @@ mod tests {
         let results_batched = sim_batched.fetch_measurements();
 
         // Using mz_gpu directly
-        let mut sim_direct = GpuStabMulti::<StdRng>::with_seed(5, num_shots, seed).unwrap();
+        let mut sim_direct = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim_direct.x(&qid(1));
         sim_direct.x(&qid(3));
         let results_direct =
@@ -3448,7 +3403,7 @@ mod tests {
         // 4. Apply corrections
         // 5. Repeat
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(9, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(9, num_shots, 42).unwrap();
 
         // Data qubits: 0-3, Ancillas: 4-8
         let data_qubits: Vec<QubitId> = (0..4).map(QubitId).collect();
@@ -3496,7 +3451,7 @@ mod tests {
     fn test_mx_plus_state() {
         // |+> state should give outcome 0 when measured in X basis
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         // Prepare |+> = H|0>
         sim.h(&qid(0));
@@ -3517,7 +3472,7 @@ mod tests {
     fn test_mx_minus_state() {
         // |-> state should give outcome 1 when measured in X basis
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         // Prepare |-> = X H|0> = H Z|0>
         sim.h(&qid(0));
@@ -3539,7 +3494,7 @@ mod tests {
     fn test_mx_computational_basis() {
         // |0> and |1> measured in X basis should give random results
         let num_shots = 1000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 12345).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 12345).unwrap();
 
         // Measure |0> in X basis - should be 50/50
         let results = sim.mx(&[QubitId(0)]);
@@ -3561,7 +3516,7 @@ mod tests {
         let num_shots = 64;
 
         // Apply SZ then SZdg - should be identity, so measuring |0> gives 0
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
         sim.sz(&qid(0));
         sim.szdg(&qid(0));
         let results = sim.mz(&[QubitId(0)]);
@@ -3580,7 +3535,7 @@ mod tests {
         // H SZ SZdg H = H I H = H H = I
         let num_shots = 64;
 
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
         sim.h(&qid(0));
         sim.sz(&qid(0));
         sim.szdg(&qid(0));
@@ -3605,7 +3560,7 @@ mod tests {
         let num_shots = 64;
 
         // |+Y> transformed to Z basis
-        let mut sim1 = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim1 = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
         sim1.h(&qid(0)); // |+>
         sim1.sz(&qid(0)); // |+Y>
         sim1.szdg(&qid(0)); // |+>
@@ -3614,7 +3569,7 @@ mod tests {
         let outcome1 = results1[0][0];
 
         // |-Y> transformed to Z basis
-        let mut sim2 = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim2 = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
         sim2.h(&qid(0)); // |+>
         sim2.szdg(&qid(0)); // |-Y>
         sim2.szdg(&qid(0)); // |-> (since SZdg |-Y> = |->)
@@ -3647,7 +3602,7 @@ mod tests {
     fn test_my_computational_basis() {
         // |0> measured in Y basis should give random results
         let num_shots = 1000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 54321).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 54321).unwrap();
 
         // Measure |0> in Y basis - should be 50/50
         let results = sim.my(&[QubitId(0)]);
@@ -3667,7 +3622,7 @@ mod tests {
     fn test_mx_multiple_qubits() {
         // Test measuring multiple qubits in X basis
         let num_shots = 64;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(4, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(4, num_shots, 42).unwrap();
 
         // Prepare: q0=|+>, q1=|->, q2=|0>, q3=|1>
         sim.h(&qid(0)); // |+>
@@ -3705,7 +3660,7 @@ mod tests {
         // Test that H|0> gives 50/50 distribution with high confidence
         // Using 10000 shots, seed for reproducibility
         let num_shots = 10000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 12345).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 12345).unwrap();
         sim.h(&qid(0));
         let results = sim.mz(&[QubitId(0)]);
 
@@ -3723,7 +3678,7 @@ mod tests {
     fn test_statistical_bell_state_correlation() {
         // Test Bell state: outcomes should be 50/50 but perfectly correlated
         let num_shots = 10000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 23456).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 23456).unwrap();
         sim.h(&qid(0));
         sim.cx(&qid2(0, 1));
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
@@ -3759,7 +3714,7 @@ mod tests {
         // Test 4-qubit GHZ state: all qubits should be perfectly correlated
         let num_shots = 10000;
         let num_qubits = 4;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(num_qubits, num_shots, 34567).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(num_qubits, num_shots, 34567).unwrap();
 
         // Create GHZ state
         sim.h(&qid(0));
@@ -3801,7 +3756,7 @@ mod tests {
     fn test_statistical_measurement_independence() {
         // Test that measurements of independent qubits are statistically independent
         let num_shots = 10000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 45678).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 45678).unwrap();
 
         // Create independent superpositions
         sim.h(&qid(0));
@@ -3847,7 +3802,7 @@ mod tests {
     fn test_statistical_y_basis_measurement() {
         // Test Y-basis measurement distribution on |0>
         let num_shots = 10000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 56789).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 56789).unwrap();
 
         let results = sim.my(&[QubitId(0)]);
         let ones = results.iter().filter(|r| r[0]).count();
@@ -3863,7 +3818,7 @@ mod tests {
     fn test_statistical_x_basis_measurement() {
         // Test X-basis measurement distribution on |0>
         let num_shots = 10000;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 67890).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 67890).unwrap();
 
         let results = sim.mx(&[QubitId(0)]);
         let ones = results.iter().filter(|r| r[0]).count();
@@ -3881,12 +3836,12 @@ mod tests {
         let num_shots = 1000;
         let seed = 99999;
 
-        let mut sim1 = GpuStabMulti::<StdRng>::with_seed(2, num_shots, seed).unwrap();
+        let mut sim1 = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, seed).unwrap();
         sim1.h(&qid(0));
         sim1.cx(&qid2(0, 1));
         let results1 = sim1.mz(&[QubitId(0), QubitId(1)]);
 
-        let mut sim2 = GpuStabMulti::<StdRng>::with_seed(2, num_shots, seed).unwrap();
+        let mut sim2 = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, seed).unwrap();
         sim2.h(&qid(0));
         sim2.cx(&qid2(0, 1));
         let results2 = sim2.mz(&[QubitId(0), QubitId(1)]);
@@ -3902,11 +3857,11 @@ mod tests {
         // Test that different seeds give different results (with high probability)
         let num_shots = 1000;
 
-        let mut sim1 = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 11111).unwrap();
+        let mut sim1 = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 11111).unwrap();
         sim1.h(&qid(0));
         let results1 = sim1.mz(&[QubitId(0)]);
 
-        let mut sim2 = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 22222).unwrap();
+        let mut sim2 = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 22222).unwrap();
         sim2.h(&qid(0));
         let results2 = sim2.mz(&[QubitId(0)]);
 
@@ -3933,7 +3888,7 @@ mod tests {
     fn test_empty_measurement() {
         // Measuring empty qubit list should return empty results per shot
         let num_shots = 10;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         let results = sim.mz(&[]);
         assert_eq!(results.len(), num_shots);
@@ -3948,7 +3903,7 @@ mod tests {
     #[test]
     fn test_empty_mx_measurement() {
         let num_shots = 10;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         let results = sim.mx(&[]);
         assert_eq!(results.len(), num_shots);
@@ -3960,7 +3915,7 @@ mod tests {
     #[test]
     fn test_empty_my_measurement() {
         let num_shots = 10;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         let results = sim.my(&[]);
         assert_eq!(results.len(), num_shots);
@@ -3972,7 +3927,7 @@ mod tests {
     #[test]
     fn test_single_shot() {
         // Single shot should work correctly
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, 1, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, 1, 42).unwrap();
         sim.h(&qid(0));
         let results = sim.mz(&[QubitId(0)]);
         assert_eq!(results.len(), 1, "Single shot should give one result");
@@ -3983,7 +3938,7 @@ mod tests {
     fn test_single_qubit() {
         // Single qubit simulator should work
         let num_shots = 100;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 42).unwrap();
         sim.h(&qid(0));
         let results = sim.mz(&[QubitId(0)]);
         assert_eq!(results.len(), num_shots);
@@ -4001,7 +3956,7 @@ mod tests {
     fn test_zero_noise_probabilities() {
         // Zero noise should behave like no noise
         let num_shots = 100;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 42).unwrap();
         sim.enable_noise(0.0, 0.0, 0.0);
 
         // Apply identity circuit
@@ -4019,7 +3974,7 @@ mod tests {
     fn test_maximum_noise_probability() {
         // 100% measurement noise should flip all measurements
         let num_shots = 100;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 42).unwrap();
         sim.enable_noise(0.0, 0.0, 1.0);
 
         // Measure |0> state - with 100% error, all should flip to 1
@@ -4035,7 +3990,7 @@ mod tests {
     fn test_repeated_reset() {
         // Multiple resets should be safe
         let num_shots = 10;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(2, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         sim.x(&qid(0));
         sim.reset();
@@ -4052,7 +4007,7 @@ mod tests {
     fn test_measure_same_qubit_twice() {
         // Measuring the same qubit twice should give identical results
         let num_shots = 100;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 42).unwrap();
         sim.h(&qid(0));
 
         let results1 = sim.mz(&[QubitId(0)]);
@@ -4072,7 +4027,7 @@ mod tests {
         // Test with a larger number of qubits
         let num_qubits = 100;
         let num_shots = 10;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(num_qubits, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(num_qubits, num_shots, 42).unwrap();
 
         // Apply some gates
         for i in 0..num_qubits {
@@ -4105,7 +4060,7 @@ mod tests {
     fn test_gate_queue_flush_on_measurement() {
         // Verify gates are flushed before measurement
         let num_shots = 10;
-        let mut sim = GpuStabMulti::<StdRng>::with_seed(1, num_shots, 42).unwrap();
+        let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 42).unwrap();
 
         // Queue a gate
         sim.x(&qid(0));

@@ -122,68 +122,13 @@ impl CircuitPass for PassPipeline {
 /// | RYY | pi | Y + Y |
 pub struct SimplifyRotations;
 
-/// Eighth-turn constant for T gate: fraction = 1 << 61.
-const EIGHTH: u64 = 1 << 61;
-/// Seven-eighths-turn constant for Tdg gate: fraction = 7 << 61.
-const SEVEN_EIGHTHS: u64 = 7 << 61;
-
-/// Map a rotation gate at a special angle to the equivalent named gate.
-///
-/// Returns `None` when the rotation/angle pair has no named equivalent.
-fn simplify_rotation(gate_type: GateType, angle: Angle64) -> Option<GateType> {
-    let f = angle.fraction();
-
-    match gate_type {
-        GateType::RZ => match f {
-            f if f == Angle64::HALF_TURN.fraction() => Some(GateType::Z),
-            f if f == Angle64::QUARTER_TURN.fraction() => Some(GateType::SZ),
-            f if f == Angle64::THREE_QUARTERS_TURN.fraction() => Some(GateType::SZdg),
-            EIGHTH => Some(GateType::T),
-            SEVEN_EIGHTHS => Some(GateType::Tdg),
-            _ => None,
-        },
-        GateType::RX => match f {
-            f if f == Angle64::HALF_TURN.fraction() => Some(GateType::X),
-            f if f == Angle64::QUARTER_TURN.fraction() => Some(GateType::SX),
-            f if f == Angle64::THREE_QUARTERS_TURN.fraction() => Some(GateType::SXdg),
-            _ => None,
-        },
-        GateType::RY => match f {
-            f if f == Angle64::HALF_TURN.fraction() => Some(GateType::Y),
-            f if f == Angle64::QUARTER_TURN.fraction() => Some(GateType::SY),
-            f if f == Angle64::THREE_QUARTERS_TURN.fraction() => Some(GateType::SYdg),
-            _ => None,
-        },
-        GateType::RZZ => match f {
-            f if f == Angle64::QUARTER_TURN.fraction() => Some(GateType::SZZ),
-            f if f == Angle64::THREE_QUARTERS_TURN.fraction() => Some(GateType::SZZdg),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Check whether a two-qubit rotation at half turn should decompose into two
-/// single-qubit Pauli gates. Returns the Pauli gate type if so.
-fn half_turn_decomposition(gate_type: GateType, angle: Angle64) -> Option<GateType> {
-    if angle.fraction() != Angle64::HALF_TURN.fraction() {
-        return None;
-    }
-    match gate_type {
-        GateType::RZZ => Some(GateType::Z),
-        GateType::RXX => Some(GateType::X),
-        GateType::RYY => Some(GateType::Y),
-        _ => None,
-    }
-}
-
 /// Apply an in-place simplification to a gate. Returns `true` if the gate was
 /// simplified (either renamed in place or needs decomposition handling).
 fn simplify_gate_in_place(gate: &mut Gate) -> bool {
     if gate.angles.len() != 1 {
         return false;
     }
-    if let Some(named) = simplify_rotation(gate.gate_type, gate.angles[0]) {
+    if let Some(named) = pecos_core::try_simplify_rotation(gate.gate_type, gate.angles[0]) {
         gate.gate_type = named;
         gate.angles.clear();
         return true;
@@ -354,7 +299,7 @@ impl CircuitPass for SimplifyRotations {
 
             for (i, gate) in tick.gates().iter().enumerate() {
                 if gate.angles.len() == 1
-                    && let Some(pauli) = half_turn_decomposition(gate.gate_type, gate.angles[0])
+                    && let Some(pauli) = pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
                 {
                     decompositions.push((i, pauli));
                 }
@@ -390,7 +335,7 @@ impl CircuitPass for SimplifyRotations {
 
             // Check for two-qubit half-turn decomposition first.
             if gate.angles.len() == 1
-                && let Some(pauli) = half_turn_decomposition(gate.gate_type, gate.angles[0])
+                && let Some(pauli) = pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
             {
                 let qubits = gate.qubits.clone();
 
@@ -1092,7 +1037,7 @@ mod tests {
     #[test]
     fn simplify_rz_quarter_turn_to_sz() {
         assert_eq!(
-            simplify_rotation(GateType::RZ, Angle64::QUARTER_TURN),
+            pecos_core::try_simplify_rotation(GateType::RZ, Angle64::QUARTER_TURN),
             Some(GateType::SZ)
         );
     }
@@ -1100,7 +1045,7 @@ mod tests {
     #[test]
     fn simplify_rz_half_turn_to_z() {
         assert_eq!(
-            simplify_rotation(GateType::RZ, Angle64::HALF_TURN),
+            pecos_core::try_simplify_rotation(GateType::RZ, Angle64::HALF_TURN),
             Some(GateType::Z)
         );
     }
@@ -1108,7 +1053,7 @@ mod tests {
     #[test]
     fn simplify_rz_three_quarters_to_szdg() {
         assert_eq!(
-            simplify_rotation(GateType::RZ, Angle64::THREE_QUARTERS_TURN),
+            pecos_core::try_simplify_rotation(GateType::RZ, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SZdg)
         );
     }
@@ -1116,14 +1061,14 @@ mod tests {
     #[test]
     fn simplify_rz_eighth_turn_to_t() {
         let eighth = Angle64::from_turn_ratio(1, 8);
-        assert_eq!(simplify_rotation(GateType::RZ, eighth), Some(GateType::T));
+        assert_eq!(pecos_core::try_simplify_rotation(GateType::RZ, eighth), Some(GateType::T));
     }
 
     #[test]
     fn simplify_rz_seven_eighths_to_tdg() {
         let seven_eighths = Angle64::from_turn_ratio(7, 8);
         assert_eq!(
-            simplify_rotation(GateType::RZ, seven_eighths),
+            pecos_core::try_simplify_rotation(GateType::RZ, seven_eighths),
             Some(GateType::Tdg)
         );
     }
@@ -1131,7 +1076,7 @@ mod tests {
     #[test]
     fn simplify_rx_quarter_turn_to_sx() {
         assert_eq!(
-            simplify_rotation(GateType::RX, Angle64::QUARTER_TURN),
+            pecos_core::try_simplify_rotation(GateType::RX, Angle64::QUARTER_TURN),
             Some(GateType::SX)
         );
     }
@@ -1139,7 +1084,7 @@ mod tests {
     #[test]
     fn simplify_rx_half_turn_to_x() {
         assert_eq!(
-            simplify_rotation(GateType::RX, Angle64::HALF_TURN),
+            pecos_core::try_simplify_rotation(GateType::RX, Angle64::HALF_TURN),
             Some(GateType::X)
         );
     }
@@ -1147,7 +1092,7 @@ mod tests {
     #[test]
     fn simplify_rx_three_quarters_to_sxdg() {
         assert_eq!(
-            simplify_rotation(GateType::RX, Angle64::THREE_QUARTERS_TURN),
+            pecos_core::try_simplify_rotation(GateType::RX, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SXdg)
         );
     }
@@ -1155,7 +1100,7 @@ mod tests {
     #[test]
     fn simplify_ry_quarter_turn_to_sy() {
         assert_eq!(
-            simplify_rotation(GateType::RY, Angle64::QUARTER_TURN),
+            pecos_core::try_simplify_rotation(GateType::RY, Angle64::QUARTER_TURN),
             Some(GateType::SY)
         );
     }
@@ -1163,7 +1108,7 @@ mod tests {
     #[test]
     fn simplify_ry_half_turn_to_y() {
         assert_eq!(
-            simplify_rotation(GateType::RY, Angle64::HALF_TURN),
+            pecos_core::try_simplify_rotation(GateType::RY, Angle64::HALF_TURN),
             Some(GateType::Y)
         );
     }
@@ -1171,7 +1116,7 @@ mod tests {
     #[test]
     fn simplify_ry_three_quarters_to_sydg() {
         assert_eq!(
-            simplify_rotation(GateType::RY, Angle64::THREE_QUARTERS_TURN),
+            pecos_core::try_simplify_rotation(GateType::RY, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SYdg)
         );
     }
@@ -1179,7 +1124,7 @@ mod tests {
     #[test]
     fn simplify_rzz_quarter_turn_to_szz() {
         assert_eq!(
-            simplify_rotation(GateType::RZZ, Angle64::QUARTER_TURN),
+            pecos_core::try_simplify_rotation(GateType::RZZ, Angle64::QUARTER_TURN),
             Some(GateType::SZZ)
         );
     }
@@ -1187,7 +1132,7 @@ mod tests {
     #[test]
     fn simplify_rzz_three_quarters_to_szzdg() {
         assert_eq!(
-            simplify_rotation(GateType::RZZ, Angle64::THREE_QUARTERS_TURN),
+            pecos_core::try_simplify_rotation(GateType::RZZ, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SZZdg)
         );
     }
@@ -1195,14 +1140,14 @@ mod tests {
     #[test]
     fn simplify_non_special_angle_unchanged() {
         assert_eq!(
-            simplify_rotation(GateType::RZ, Angle64::from_turn_ratio(1, 6)),
+            pecos_core::try_simplify_rotation(GateType::RZ, Angle64::from_turn_ratio(1, 6)),
             None
         );
     }
 
     #[test]
     fn simplify_non_rotation_unchanged() {
-        assert_eq!(simplify_rotation(GateType::H, Angle64::QUARTER_TURN), None);
+        assert_eq!(pecos_core::try_simplify_rotation(GateType::H, Angle64::QUARTER_TURN), None);
     }
 
     // ==================== half_turn_decomposition tests ====================
@@ -1210,7 +1155,7 @@ mod tests {
     #[test]
     fn rzz_half_turn_decomposes_to_z() {
         assert_eq!(
-            half_turn_decomposition(GateType::RZZ, Angle64::HALF_TURN),
+            pecos_core::half_turn_decomposition(GateType::RZZ, Angle64::HALF_TURN),
             Some(GateType::Z)
         );
     }
@@ -1218,7 +1163,7 @@ mod tests {
     #[test]
     fn rxx_half_turn_decomposes_to_x() {
         assert_eq!(
-            half_turn_decomposition(GateType::RXX, Angle64::HALF_TURN),
+            pecos_core::half_turn_decomposition(GateType::RXX, Angle64::HALF_TURN),
             Some(GateType::X)
         );
     }
@@ -1226,7 +1171,7 @@ mod tests {
     #[test]
     fn ryy_half_turn_decomposes_to_y() {
         assert_eq!(
-            half_turn_decomposition(GateType::RYY, Angle64::HALF_TURN),
+            pecos_core::half_turn_decomposition(GateType::RYY, Angle64::HALF_TURN),
             Some(GateType::Y)
         );
     }
@@ -1234,7 +1179,7 @@ mod tests {
     #[test]
     fn rzz_non_half_turn_no_decomposition() {
         assert_eq!(
-            half_turn_decomposition(GateType::RZZ, Angle64::QUARTER_TURN),
+            pecos_core::half_turn_decomposition(GateType::RZZ, Angle64::QUARTER_TURN),
             None
         );
     }

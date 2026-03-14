@@ -206,17 +206,27 @@ where
 
     // ─────────────────────────────────────────────────────────────────
     // Approximate-equality (circular distance)
+    //
+    // Design follows the `approx` crate (AbsDiffEq) but adapted for
+    // circular fixed-point angles:
+    //   - "abs diff" is the shortest arc (circular distance)
+    //   - epsilon is in raw fraction units (1 unit = 1/2^n turn)
+    //   - convenience methods accept radians or turns tolerance
+    //
+    // Enable the `approx` feature to get the `AbsDiffEq` trait impl
+    // and use the `abs_diff_eq!()` / `assert_abs_diff_eq!()` macros.
     // ─────────────────────────────────────────────────────────────────
 
     /// Circular distance between two angles in raw fraction units.
     ///
-    /// Returns the shorter of the two arcs separating `self` and `other`,
+    /// This is the angular analogue of `(self - other).abs()`: it returns
+    /// the shorter of the two arcs separating `self` and `other`,
     /// measured in the underlying fixed-point units (i.e. `1` unit =
     /// one `2^{-n}` of a turn for an `n`-bit type).
     ///
     /// The result is always in `[0, T::MAX / 2 + 1]` (at most a half-turn).
     #[must_use]
-    pub fn distance(&self, other: &Self) -> T
+    pub fn abs_diff(&self, other: &Self) -> T
     where
         T: Ord,
     {
@@ -225,86 +235,148 @@ where
         if d1 < d2 { d1 } else { d2 }
     }
 
-    /// Check whether two angles are within `tol` **fraction units** of each
+    /// Check whether two angles are within `epsilon` **fraction units** of each
     /// other on the circle.
     ///
     /// One fraction unit is `1 / 2^n` of a full turn, where `n` is the bit
-    /// width of `T`. For `Angle64`, one unit ≈ 3.4 × 10⁻²⁰ turns.
+    /// width of `T`. For `Angle64`, one unit is approximately 3.4 * 10^-20 turns.
+    ///
+    /// This is the same comparison performed by the `approx` crate's
+    /// `AbsDiffEq` trait (enable the `approx` feature to use the macros).
     ///
     /// # Example
     /// ```
     /// use pecos_core::Angle64;
     /// let a = Angle64::QUARTER_TURN;
     /// let b = Angle64::QUARTER_TURN + Angle64::new(5);
-    /// assert!(a.is_close(&b, 10));   // within 10 fraction units
-    /// assert!(!a.is_close(&b, 2));   // NOT within 2 fraction units
+    /// assert!(a.abs_diff_eq(&b, 10));   // within 10 fraction units
+    /// assert!(!a.abs_diff_eq(&b, 2));   // NOT within 2 fraction units
     /// ```
     #[must_use]
-    pub fn is_close(&self, other: &Self, tol: T) -> bool
+    pub fn abs_diff_eq(&self, other: &Self, epsilon: T) -> bool
     where
         T: Ord,
     {
-        self.distance(other) <= tol
+        self.abs_diff(other) <= epsilon
     }
 
-    /// Check whether two angles are within `tol_radians` of each other.
+    /// Check whether two angles are within `epsilon_radians` of each other.
     ///
     /// The tolerance is converted to fixed-point units internally, so the
     /// comparison is exact once the conversion is done (no floating-point
-    /// comparison).
+    /// comparison). Use [`epsilon_from_radians`](Self::epsilon_from_radians)
+    /// to obtain a reusable fraction-unit epsilon from a radians value.
     ///
     /// # Example
     /// ```
     /// use pecos_core::Angle64;
     /// let a = Angle64::from_radians(1.0);
     /// let b = Angle64::from_radians(1.0 + 1e-12);
-    /// assert!(a.is_close_radians(&b, 1e-9));
+    /// assert!(a.abs_diff_eq_radians(&b, 1e-9));
     /// ```
     #[must_use]
-    pub fn is_close_radians(&self, other: &Self, tol_radians: f64) -> bool
+    pub fn abs_diff_eq_radians(&self, other: &Self, epsilon_radians: f64) -> bool
     where
         T: Ord,
     {
-        let tol_fraction = Self::radians_to_fraction(tol_radians.abs());
-        self.distance(other) <= tol_fraction
+        self.abs_diff(other) <= Self::epsilon_from_radians(epsilon_radians)
     }
 
-    /// Check whether two angles are within `tol_turns` **turns** of each other.
+    /// Check whether two angles are within `epsilon_turns` **turns** of each other.
     ///
-    /// One turn = 2π radians = 360°.
+    /// One turn = 2pi radians = 360 degrees. Use
+    /// [`epsilon_from_turns`](Self::epsilon_from_turns) to obtain a
+    /// reusable fraction-unit epsilon from a turns value.
     ///
     /// # Example
     /// ```
     /// use pecos_core::Angle64;
     /// let a = Angle64::QUARTER_TURN;
     /// let b = Angle64::from_turns(0.250_000_001);
-    /// assert!(a.is_close_turns(&b, 1e-6));
+    /// assert!(a.abs_diff_eq_turns(&b, 1e-6));
     /// ```
     #[must_use]
-    pub fn is_close_turns(&self, other: &Self, tol_turns: f64) -> bool
+    pub fn abs_diff_eq_turns(&self, other: &Self, epsilon_turns: f64) -> bool
     where
         T: Ord,
     {
-        let tol_fraction = Self::turns_to_fraction(tol_turns.abs());
-        self.distance(other) <= tol_fraction
+        self.abs_diff(other) <= Self::epsilon_from_turns(epsilon_turns)
     }
 
-    /// Convert a radians value to the raw fraction representation.
-    fn radians_to_fraction(radians: f64) -> T {
+    /// Convert a radians tolerance to the equivalent fraction-unit epsilon.
+    ///
+    /// Useful when you want to precompute the epsilon once and reuse it
+    /// across many comparisons, or when passing to the `approx` macros:
+    /// ```
+    /// use pecos_core::Angle64;
+    /// let eps = Angle64::epsilon_from_radians(1e-9);
+    /// let a = Angle64::from_radians(1.0);
+    /// let b = Angle64::from_radians(1.0 + 1e-12);
+    /// assert!(a.abs_diff_eq(&b, eps));
+    /// ```
+    #[must_use]
+    pub fn epsilon_from_radians(radians: f64) -> T {
         let max = T::max_value()
             .to_f64()
             .expect("Failed to convert max_value to f64");
-        let frac = (radians / std::f64::consts::TAU * max).round();
+        let frac = (radians.abs() / std::f64::consts::TAU * max).round();
         T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
     }
 
-    /// Convert a turns value to the raw fraction representation.
-    fn turns_to_fraction(turns: f64) -> T {
+    /// Convert a turns tolerance to the equivalent fraction-unit epsilon.
+    ///
+    /// Useful when you want to precompute the epsilon once and reuse it
+    /// across many comparisons, or when passing to the `approx` macros:
+    /// ```
+    /// use pecos_core::Angle64;
+    /// let eps = Angle64::epsilon_from_turns(1e-6);
+    /// let a = Angle64::QUARTER_TURN;
+    /// let b = Angle64::from_turns(0.250_000_001);
+    /// assert!(a.abs_diff_eq(&b, eps));
+    /// ```
+    #[must_use]
+    pub fn epsilon_from_turns(turns: f64) -> T {
         let max = T::max_value()
             .to_f64()
             .expect("Failed to convert max_value to f64");
-        let frac = (turns * max).round();
+        let frac = (turns.abs() * max).round();
         T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// approx::AbsDiffEq implementation
+// ─────────────────────────────────────────────────────────────────────
+
+#[cfg(feature = "approx")]
+impl<T> approx::AbsDiffEq for Angle<T>
+where
+    T: Copy
+        + PrimInt
+        + Unsigned
+        + Bounded
+        + FromPrimitive
+        + ToPrimitive
+        + Zero
+        + WrappingAdd
+        + WrappingSub
+        + WrappingMul
+        + WrappingNeg
+        + fmt::Debug,
+{
+    type Epsilon = T;
+
+    /// Default epsilon is zero (exact comparison), matching the fact
+    /// that `Angle` is a fixed-point type with exact equality.
+    fn default_epsilon() -> T {
+        T::zero()
+    }
+
+    /// Circular absolute-difference comparison. Returns `true` when the
+    /// shortest arc between `self` and `other` is at most `epsilon`
+    /// fraction units.
+    fn abs_diff_eq(&self, other: &Self, epsilon: T) -> bool {
+        self.abs_diff(other) <= epsilon
     }
 }
 
@@ -1614,129 +1686,208 @@ mod tests {
         assert_eq!(smaller_angle.fraction, 0xBA98);
     }
 
-    // ─── Distance and is_close tests ───────────────────────────────────
+    // ─── abs_diff / abs_diff_eq tests ─────────────────────────────────
 
     #[test]
-    fn test_distance_same_angle() {
+    fn test_abs_diff_same_angle() {
         let a = Angle64::QUARTER_TURN;
-        assert_eq!(a.distance(&a), 0);
+        assert_eq!(a.abs_diff(&a), 0);
     }
 
     #[test]
-    fn test_distance_symmetric() {
+    fn test_abs_diff_symmetric() {
         let a = Angle64::QUARTER_TURN;
         let b = Angle64::HALF_TURN;
-        assert_eq!(a.distance(&b), b.distance(&a));
+        assert_eq!(a.abs_diff(&b), b.abs_diff(&a));
     }
 
     #[test]
-    fn test_distance_opposite_angles() {
+    fn test_abs_diff_opposite_angles() {
         // 0 and pi are half a turn apart
         let a = Angle64::ZERO;
         let b = Angle64::HALF_TURN;
-        assert_eq!(a.distance(&b), Angle64::HALF_TURN.fraction());
+        assert_eq!(a.abs_diff(&b), Angle64::HALF_TURN.fraction());
     }
 
     #[test]
-    fn test_distance_wraparound() {
+    fn test_abs_diff_wraparound() {
         // An angle just below 2pi should be close to 0
         let a = Angle64::ZERO;
         let b = Angle64::new(u64::MAX); // one tick below a full turn
-        assert_eq!(a.distance(&b), 1);
+        assert_eq!(a.abs_diff(&b), 1);
     }
 
     #[test]
-    fn test_distance_quarter_turns() {
+    fn test_abs_diff_quarter_turns() {
         let a = Angle64::QUARTER_TURN;
         let b = Angle64::THREE_QUARTERS_TURN;
         // They are half a turn apart
-        assert_eq!(a.distance(&b), Angle64::HALF_TURN.fraction());
+        assert_eq!(a.abs_diff(&b), Angle64::HALF_TURN.fraction());
     }
 
     #[test]
-    fn test_distance_small_offset() {
+    fn test_abs_diff_small_offset() {
         let a = Angle64::QUARTER_TURN;
         let b = Angle64::QUARTER_TURN + Angle64::new(42);
-        assert_eq!(a.distance(&b), 42);
+        assert_eq!(a.abs_diff(&b), 42);
     }
 
     #[test]
-    fn test_is_close_exact() {
+    fn test_abs_diff_eq_exact() {
         let a = Angle64::HALF_TURN;
-        assert!(a.is_close(&a, 0));
+        assert!(a.abs_diff_eq(&a, 0));
     }
 
     #[test]
-    fn test_is_close_within_tolerance() {
+    fn test_abs_diff_eq_within_tolerance() {
         let a = Angle64::QUARTER_TURN;
         let b = Angle64::QUARTER_TURN + Angle64::new(5);
-        assert!(a.is_close(&b, 10));
-        assert!(a.is_close(&b, 5));
-        assert!(!a.is_close(&b, 4));
+        assert!(a.abs_diff_eq(&b, 10));
+        assert!(a.abs_diff_eq(&b, 5));
+        assert!(!a.abs_diff_eq(&b, 4));
     }
 
     #[test]
-    fn test_is_close_wraparound() {
+    fn test_abs_diff_eq_wraparound() {
         // Angle near 0 vs angle near 2pi
         let a = Angle64::new(3);
         let b = Angle64::new(u64::MAX - 2); // wraps to -3 in fraction space
-        assert!(a.is_close(&b, 6));
-        assert!(!a.is_close(&b, 4));
+        assert!(a.abs_diff_eq(&b, 6));
+        assert!(!a.abs_diff_eq(&b, 4));
     }
 
     #[test]
-    fn test_is_close_radians_basic() {
+    fn test_abs_diff_eq_radians_basic() {
         let a = Angle64::from_radians(1.0);
         let b = Angle64::from_radians(1.0 + 1e-12);
-        assert!(a.is_close_radians(&b, 1e-9));
-        assert!(a.is_close_radians(&b, 1e-11));
+        assert!(a.abs_diff_eq_radians(&b, 1e-9));
+        assert!(a.abs_diff_eq_radians(&b, 1e-11));
     }
 
     #[test]
-    fn test_is_close_radians_not_close() {
+    fn test_abs_diff_eq_radians_not_close() {
         let a = Angle64::from_radians(0.0);
         let b = Angle64::from_radians(0.1);
-        assert!(!a.is_close_radians(&b, 0.01));
-        assert!(a.is_close_radians(&b, 0.2));
+        assert!(!a.abs_diff_eq_radians(&b, 0.01));
+        assert!(a.abs_diff_eq_radians(&b, 0.2));
     }
 
     #[test]
-    fn test_is_close_radians_wraparound() {
+    fn test_abs_diff_eq_radians_wraparound() {
         // Small positive vs just below 2pi
         let a = Angle64::from_radians(0.001);
         let b = Angle64::from_radians(TAU - 0.001);
-        assert!(a.is_close_radians(&b, 0.01));
-        assert!(!a.is_close_radians(&b, 0.001));
+        assert!(a.abs_diff_eq_radians(&b, 0.01));
+        assert!(!a.abs_diff_eq_radians(&b, 0.001));
     }
 
     #[test]
-    fn test_is_close_turns_basic() {
+    fn test_abs_diff_eq_turns_basic() {
         let a = Angle64::QUARTER_TURN;
         let b = Angle64::from_turns(0.250_000_001);
-        assert!(a.is_close_turns(&b, 1e-6));
+        assert!(a.abs_diff_eq_turns(&b, 1e-6));
     }
 
     #[test]
-    fn test_is_close_turns_not_close() {
+    fn test_abs_diff_eq_turns_not_close() {
         let a = Angle64::QUARTER_TURN;
         let b = Angle64::HALF_TURN;
-        assert!(!a.is_close_turns(&b, 0.1));
-        assert!(a.is_close_turns(&b, 0.3));
+        assert!(!a.abs_diff_eq_turns(&b, 0.1));
+        assert!(a.abs_diff_eq_turns(&b, 0.3));
     }
 
     #[test]
-    fn test_is_close_turns_wraparound() {
+    fn test_abs_diff_eq_turns_wraparound() {
         let a = Angle64::from_turns(0.001);
         let b = Angle64::from_turns(0.999);
-        assert!(a.is_close_turns(&b, 0.01));
-        assert!(!a.is_close_turns(&b, 0.001));
+        assert!(a.abs_diff_eq_turns(&b, 0.01));
+        assert!(!a.abs_diff_eq_turns(&b, 0.001));
     }
 
     #[test]
-    fn test_distance_u32() {
-        // Verify distance works for other integer widths
+    fn test_abs_diff_u32() {
+        // Verify abs_diff works for other integer widths
         let a = Angle32::QUARTER_TURN;
         let b = Angle32::QUARTER_TURN + Angle32::new(10);
-        assert_eq!(a.distance(&b), 10);
+        assert_eq!(a.abs_diff(&b), 10);
+    }
+
+    #[test]
+    fn test_epsilon_from_radians() {
+        // pi/2 in fraction units should be a quarter turn
+        let eps = Angle64::epsilon_from_radians(FRAC_PI_2);
+        assert_eq!(eps, Angle64::QUARTER_TURN.fraction());
+    }
+
+    #[test]
+    fn test_epsilon_from_turns() {
+        // 0.25 turns should be a quarter turn
+        let eps = Angle64::epsilon_from_turns(0.25);
+        assert_eq!(eps, Angle64::QUARTER_TURN.fraction());
+    }
+
+    #[test]
+    fn test_epsilon_from_radians_precomputed() {
+        // Precompute epsilon once, use it for multiple comparisons
+        let eps = Angle64::epsilon_from_radians(1e-9);
+        let a = Angle64::from_radians(1.0);
+        let b = Angle64::from_radians(1.0 + 1e-12);
+        let c = Angle64::from_radians(2.0);
+        assert!(a.abs_diff_eq(&b, eps));
+        assert!(!a.abs_diff_eq(&c, eps));
+    }
+
+    // ─── approx crate trait tests ──────────────────────────────────────
+
+    #[cfg(feature = "approx")]
+    mod approx_tests {
+        use super::*;
+
+        #[test]
+        fn test_approx_abs_diff_eq_macro() {
+            use approx::assert_abs_diff_eq;
+            let a = Angle64::QUARTER_TURN;
+            let b = Angle64::QUARTER_TURN + Angle64::new(5);
+            assert_abs_diff_eq!(a, b, epsilon = 10);
+        }
+
+        #[test]
+        fn test_approx_abs_diff_ne_macro() {
+            use approx::assert_abs_diff_ne;
+            let a = Angle64::QUARTER_TURN;
+            let b = Angle64::HALF_TURN;
+            assert_abs_diff_ne!(a, b, epsilon = 100);
+        }
+
+        #[test]
+        fn test_approx_default_epsilon_is_exact() {
+            use approx::AbsDiffEq;
+            // Default epsilon is 0 (exact comparison)
+            assert_eq!(Angle64::default_epsilon(), 0);
+            let a = Angle64::QUARTER_TURN;
+            // Exact match should work with default epsilon
+            assert!(approx::abs_diff_eq!(a, a));
+            // Off by 1 should fail with default epsilon
+            let b = a + Angle64::new(1);
+            assert!(approx::abs_diff_ne!(a, b));
+        }
+
+        #[test]
+        fn test_approx_with_radians_epsilon() {
+            // Demonstrate using epsilon_from_radians with the approx macro
+            let a = Angle64::from_radians(1.0);
+            let b = Angle64::from_radians(1.0 + 1e-12);
+            let eps = Angle64::epsilon_from_radians(1e-9);
+            approx::assert_abs_diff_eq!(a, b, epsilon = eps);
+        }
+
+        #[test]
+        fn test_approx_wraparound() {
+            // Wraparound case via the approx macro
+            let a = Angle64::new(3);
+            let b = Angle64::new(u64::MAX - 2);
+            approx::assert_abs_diff_eq!(a, b, epsilon = 6);
+            approx::assert_abs_diff_ne!(a, b, epsilon = 4);
+        }
     }
 }

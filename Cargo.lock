@@ -3340,6 +3340,7 @@ name = "pecos-core"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "approx 0.5.1",
  "bitvec",
  "num-complex 0.4.6",
  "num-traits",

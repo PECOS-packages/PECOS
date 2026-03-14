@@ -15,6 +15,7 @@ pub mod batched_ops;
 pub mod circuit_executor;
 pub mod clifford_frame;
 pub mod clifford_gateable;
+pub mod clifford_rotation;
 pub mod clifford_test_utils;
 pub mod coin_toss;
 pub mod dense_stab;

@@ -7,6 +7,7 @@ use pecos_core::Angle64;
 use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
+use pecos_qsim::clifford_rotation::CliffordRotation;
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, CoinToss, QuantumSimulator, SparseStab, StateVec,
     StateVecAoS, StateVecSoA,
@@ -790,62 +791,6 @@ impl SparseStabEngine {
         }
     }
 
-    /// Try to handle a single-angle rotation gate at a Clifford angle using
-    /// the shared `pecos_core::try_simplify_rotation` utility.
-    /// Returns `Ok(true)` if handled, `Ok(false)` if non-Clifford.
-    fn try_rotation_as_clifford(
-        &mut self,
-        gate: GateType,
-        angle: Angle64,
-        qubits: &[QubitId],
-    ) -> Result<bool, PecosError> {
-        use pecos_core::try_simplify_rotation;
-        if let Some(clifford) = try_simplify_rotation(gate, angle) {
-            if clifford == GateType::I {
-                return Ok(true); // identity -- nothing to do
-            }
-            // Only dispatch gates that the stabilizer simulator actually supports.
-            // T/Tdg are not Clifford gates -- they come from pi/4 simplification
-            // but the stabilizer cannot handle them.
-            match clifford {
-                GateType::T | GateType::Tdg => return Ok(false),
-                _ => {}
-            }
-            if clifford.is_single_qubit() {
-                self.process_single_qubit_gate(clifford, qubits)?;
-            } else {
-                self.process_two_qubit_gate(clifford, qubits);
-            }
-            return Ok(true);
-        }
-        // Special case: RZZ(pi) = Z tensor Z (decomposition, not a single gate)
-        if gate == GateType::RZZ && pecos_core::is_rzz_z_tensor_z(angle) {
-            for pair in qubits.chunks_exact(2) {
-                self.simulator.z(&[pair[0]]);
-                self.simulator.z(&[pair[1]]);
-            }
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
-    /// Try to handle an R1XY gate at a Clifford angle using the shared utility.
-    fn try_r1xy_as_clifford(
-        &mut self,
-        theta: Angle64,
-        phi: Angle64,
-        qubits: &[QubitId],
-    ) -> Result<bool, PecosError> {
-        use pecos_core::try_simplify_r1xy;
-        if let Some(clifford) = try_simplify_r1xy(theta, phi) {
-            if clifford == GateType::I {
-                return Ok(true);
-            }
-            self.process_single_qubit_gate(clifford, qubits)?;
-            return Ok(true);
-        }
-        Ok(false)
-    }
 }
 
 impl Engine for SparseStabEngine {
@@ -898,28 +843,43 @@ impl Engine for SparseStabEngine {
                     // For idle gates, just let the system naturally evolve
                     // No active operation needed in the simulator
                 }
-                // Rotation gates: try Clifford-angle simplification via shared utility
-                GateType::RZ | GateType::RZZ | GateType::RX | GateType::RY
-                | GateType::RXX | GateType::RYY => {
+                // Rotation gates: delegate to CliffordRotation trait
+                GateType::RZ | GateType::RX | GateType::RY
+                | GateType::RZZ | GateType::RXX | GateType::RYY => {
                     if !cmd.angles.is_empty() {
-                        if !self.try_rotation_as_clifford(cmd.gate_type, cmd.angles[0], &cmd.qubits)? {
-                            return Err(PecosError::Processing(format!(
-                                "{:?} gate with angle {:?} is not a Clifford rotation. \
-                                 Only Clifford angles are supported by the stabilizer simulator.",
-                                cmd.gate_type, cmd.angles[0]
-                            )));
-                        }
+                        let angle = cmd.angles[0];
+                        let qubits = &cmd.qubits;
+                        let result = match cmd.gate_type {
+                            GateType::RZ => self.simulator.try_rz(angle, qubits),
+                            GateType::RX => self.simulator.try_rx(angle, qubits),
+                            GateType::RY => self.simulator.try_ry(angle, qubits),
+                            GateType::RZZ => self.simulator.try_rzz(angle, qubits),
+                            GateType::RXX => self.simulator.try_rxx(angle, qubits),
+                            GateType::RYY => self.simulator.try_ryy(angle, qubits),
+                            _ => unreachable!(),
+                        };
+                        result.map_err(PecosError::Processing)?;
                     }
                 }
                 GateType::R1XY => {
                     if cmd.angles.len() >= 2 {
-                        if !self.try_r1xy_as_clifford(cmd.angles[0], cmd.angles[1], &cmd.qubits)? {
-                            return Err(PecosError::Processing(format!(
-                                "R1XY gate with angles {:?}, {:?} is not a Clifford rotation. \
-                                 Only Clifford angles are supported by the stabilizer simulator.",
-                                cmd.angles[0], cmd.angles[1]
-                            )));
-                        }
+                        self.simulator
+                            .try_r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::CRZ => {
+                    if !cmd.angles.is_empty() {
+                        self.simulator
+                            .try_crz(cmd.angles[0], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::U => {
+                    if cmd.angles.len() >= 3 {
+                        self.simulator
+                            .try_u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
                     }
                 }
                 _ => {

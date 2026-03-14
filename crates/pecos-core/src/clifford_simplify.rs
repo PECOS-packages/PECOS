@@ -69,27 +69,68 @@ pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
 
 /// Try to simplify an R1XY(theta, phi) gate to a named Clifford.
 ///
+/// R1XY(theta, phi) is a rotation by `theta` about the axis
+/// `cos(phi)*X + sin(phi)*Y` in the XY plane.
+///
 /// R1XY has two angle parameters, so it is handled separately from the
 /// single-angle rotations.
 ///
-/// | theta     | phi          | Simplifies to |
-/// |-----------|-------------|---------------|
-/// | 0         | any         | I             |
-/// | pi        | 0           | X             |
-/// | pi        | pi/2        | Y             |
+/// | theta     | phi            | Simplifies to |
+/// |-----------|---------------|---------------|
+/// | 0         | any           | I             |
+/// | pi/2      | 0             | SX            |
+/// | pi/2      | pi/2          | SY            |
+/// | pi        | 0 or pi       | X             |
+/// | pi        | pi/2 or 3pi/2 | Y             |
+/// | 3pi/2     | 0             | SXdg          |
+/// | 3pi/2     | pi/2          | SYdg          |
+///
+/// For theta=pi, phi=pi (rotation about -X) and phi=3pi/2 (rotation about -Y)
+/// are equivalent to X and Y respectively up to global phase, which does not
+/// affect stabilizer simulation or measurement outcomes.
 #[must_use]
 pub fn try_simplify_r1xy(theta: A64, phi: A64) -> Option<GateType> {
     if theta == A64::ZERO {
         return Some(GateType::I);
     }
-    if theta == A64::HALF_TURN || theta == neg(A64::HALF_TURN) {
-        if phi == A64::ZERO {
-            return Some(GateType::X);
-        }
-        if phi == A64::QUARTER_TURN {
-            return Some(GateType::Y);
-        }
+
+    // Determine which axis: X-like (phi = 0 or pi) or Y-like (phi = pi/2 or 3pi/2).
+    // phi=pi is the -X axis and phi=3pi/2 is the -Y axis; these are equivalent
+    // to the positive axis up to global phase for Clifford gates.
+    let is_x_axis = phi == A64::ZERO || phi == A64::HALF_TURN;
+    let is_y_axis = phi == A64::QUARTER_TURN || phi == A64::THREE_QUARTERS_TURN;
+
+    if !is_x_axis && !is_y_axis {
+        return None;
     }
+
+    // Half turn: full Pauli gate
+    if theta == A64::HALF_TURN || theta == neg(A64::HALF_TURN) {
+        return if is_x_axis {
+            Some(GateType::X)
+        } else {
+            Some(GateType::Y)
+        };
+    }
+
+    // Quarter turn: sqrt gate
+    if theta == A64::QUARTER_TURN {
+        return if is_x_axis {
+            Some(GateType::SX)
+        } else {
+            Some(GateType::SY)
+        };
+    }
+
+    // Three-quarter turn: sqrt-dagger gate
+    if theta == A64::THREE_QUARTERS_TURN || theta == neg(A64::QUARTER_TURN) {
+        return if is_x_axis {
+            Some(GateType::SXdg)
+        } else {
+            Some(GateType::SYdg)
+        };
+    }
+
     None
 }
 
@@ -186,13 +227,41 @@ fn simplify_ryy(angle: A64) -> Option<GateType> {
     }
 }
 
+
+/// Check whether a two-qubit rotation at half turn decomposes into two
+/// single-qubit Pauli gates.
+///
+/// Returns `Some(pauli)` when the gate should be replaced by applying
+/// `pauli` to each qubit independently:
+///
+/// | Gate    | Angle | Decomposition |
+/// |---------|-------|---------------|
+/// | RZZ(pi) | pi    | Z + Z         |
+/// | RXX(pi) | pi    | X + X         |
+/// | RYY(pi) | pi    | Y + Y         |
+///
+/// This is separate from `try_simplify_rotation` because the result is a
+/// *decomposition* into two single-qubit gates, not a single gate replacement.
+#[must_use]
+pub fn half_turn_decomposition(gate: GateType, angle: A64) -> Option<GateType> {
+    if angle != A64::HALF_TURN && angle != neg(A64::HALF_TURN) {
+        return None;
+    }
+    match gate {
+        GateType::RZZ => Some(GateType::Z),
+        GateType::RXX => Some(GateType::X),
+        GateType::RYY => Some(GateType::Y),
+        _ => None,
+    }
+}
+
 /// Check whether RZZ at the given angle decomposes to Z tensor Z (i.e. angle = pi).
 ///
-/// This is separate from `try_simplify_rotation` because the result is a *decomposition*
-/// into two single-qubit gates, not a single two-qubit gate replacement.
+/// Convenience wrapper around [`half_turn_decomposition`] for the common
+/// RZZ-only case.
 #[must_use]
 pub fn is_rzz_z_tensor_z(angle: A64) -> bool {
-    angle == A64::HALF_TURN || angle == neg(A64::HALF_TURN)
+    half_turn_decomposition(GateType::RZZ, angle).is_some()
 }
 
 #[cfg(test)]
@@ -239,26 +308,77 @@ mod tests {
     }
 
     #[test]
-    fn rxx_ryy_simplifications() {
+    fn rxx_simplifications() {
+        assert_eq!(try_simplify_rotation(GateType::RXX, Angle64::ZERO), Some(GateType::I));
         assert_eq!(try_simplify_rotation(GateType::RXX, Angle64::QUARTER_TURN), Some(GateType::SXX));
         assert_eq!(try_simplify_rotation(GateType::RXX, Angle64::THREE_QUARTERS_TURN), Some(GateType::SXXdg));
+        assert_eq!(try_simplify_rotation(GateType::RXX, Angle64::HALF_TURN), None);
+    }
+
+    #[test]
+    fn ryy_simplifications() {
+        assert_eq!(try_simplify_rotation(GateType::RYY, Angle64::ZERO), Some(GateType::I));
         assert_eq!(try_simplify_rotation(GateType::RYY, Angle64::QUARTER_TURN), Some(GateType::SYY));
         assert_eq!(try_simplify_rotation(GateType::RYY, Angle64::THREE_QUARTERS_TURN), Some(GateType::SYYdg));
+        assert_eq!(try_simplify_rotation(GateType::RYY, Angle64::HALF_TURN), None);
     }
 
     #[test]
-    fn r1xy_simplifications() {
+    fn r1xy_identity() {
+        // theta=0 with any phi is identity
         assert_eq!(try_simplify_r1xy(Angle64::ZERO, Angle64::ZERO), Some(GateType::I));
         assert_eq!(try_simplify_r1xy(Angle64::ZERO, Angle64::QUARTER_TURN), Some(GateType::I));
-        assert_eq!(try_simplify_r1xy(Angle64::HALF_TURN, Angle64::ZERO), Some(GateType::X));
-        assert_eq!(try_simplify_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN), Some(GateType::Y));
-        // Non-Clifford
-        assert_eq!(try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::ZERO), None);
+        assert_eq!(try_simplify_r1xy(Angle64::ZERO, Angle64::HALF_TURN), Some(GateType::I));
     }
 
     #[test]
-    fn negative_angles_via_wrapping() {
-        // -pi should wrap to same as +pi for half-turn
+    fn r1xy_half_turn_pauli_gates() {
+        // theta=pi, phi=0: X
+        assert_eq!(try_simplify_r1xy(Angle64::HALF_TURN, Angle64::ZERO), Some(GateType::X));
+        // theta=pi, phi=pi/2: Y
+        assert_eq!(try_simplify_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN), Some(GateType::Y));
+        // theta=-pi also works
+        assert_eq!(try_simplify_r1xy(-Angle64::HALF_TURN, Angle64::ZERO), Some(GateType::X));
+        assert_eq!(try_simplify_r1xy(-Angle64::HALF_TURN, Angle64::QUARTER_TURN), Some(GateType::Y));
+    }
+
+    #[test]
+    fn r1xy_half_turn_negated_axis() {
+        // phi=pi (-X axis) is equivalent to X for stabilizer
+        assert_eq!(try_simplify_r1xy(Angle64::HALF_TURN, Angle64::HALF_TURN), Some(GateType::X));
+        // phi=3pi/2 (-Y axis) is equivalent to Y for stabilizer
+        assert_eq!(try_simplify_r1xy(Angle64::HALF_TURN, Angle64::THREE_QUARTERS_TURN), Some(GateType::Y));
+    }
+
+    #[test]
+    fn r1xy_quarter_turn_sqrt_gates() {
+        // theta=pi/2, phi=0: SX
+        assert_eq!(try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::ZERO), Some(GateType::SX));
+        // theta=pi/2, phi=pi/2: SY
+        assert_eq!(try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN), Some(GateType::SY));
+    }
+
+    #[test]
+    fn r1xy_three_quarter_turn_sqrt_dagger_gates() {
+        // theta=3pi/2, phi=0: SXdg
+        assert_eq!(try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::ZERO), Some(GateType::SXdg));
+        // theta=3pi/2, phi=pi/2: SYdg
+        assert_eq!(try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN), Some(GateType::SYdg));
+        // theta=-pi/2 wraps to 3pi/2
+        assert_eq!(try_simplify_r1xy(-Angle64::QUARTER_TURN, Angle64::ZERO), Some(GateType::SXdg));
+        assert_eq!(try_simplify_r1xy(-Angle64::QUARTER_TURN, Angle64::QUARTER_TURN), Some(GateType::SYdg));
+    }
+
+    #[test]
+    fn r1xy_non_clifford_angles() {
+        // Non-Clifford theta
+        assert_eq!(try_simplify_r1xy(Angle64::from_radians(0.123), Angle64::ZERO), None);
+        // Non-axis phi (pi/4 is not along X or Y axis)
+        assert_eq!(try_simplify_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN / 2u64), None);
+    }
+
+    #[test]
+    fn negative_angles_via_wrapping_rz() {
         let neg_pi = Angle64::from_radians(-std::f64::consts::PI);
         assert_eq!(try_simplify_rotation(GateType::RZ, neg_pi), Some(GateType::Z));
 
@@ -267,6 +387,61 @@ mod tests {
 
         let neg_quarter_pi = Angle64::from_radians(-std::f64::consts::FRAC_PI_4);
         assert_eq!(try_simplify_rotation(GateType::RZ, neg_quarter_pi), Some(GateType::Tdg));
+    }
+
+    #[test]
+    fn negative_angles_via_wrapping_rx_ry() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        // RX
+        assert_eq!(try_simplify_rotation(GateType::RX, Angle64::from_radians(-PI)), Some(GateType::X));
+        assert_eq!(try_simplify_rotation(GateType::RX, Angle64::from_radians(-FRAC_PI_2)), Some(GateType::SXdg));
+        // RY
+        assert_eq!(try_simplify_rotation(GateType::RY, Angle64::from_radians(-PI)), Some(GateType::Y));
+        assert_eq!(try_simplify_rotation(GateType::RY, Angle64::from_radians(-FRAC_PI_2)), Some(GateType::SYdg));
+    }
+
+    #[test]
+    fn negative_angles_via_wrapping_two_qubit() {
+        use std::f64::consts::FRAC_PI_2;
+        // RZZ
+        assert_eq!(try_simplify_rotation(GateType::RZZ, Angle64::from_radians(-FRAC_PI_2)), Some(GateType::SZZdg));
+        // RXX
+        assert_eq!(try_simplify_rotation(GateType::RXX, Angle64::from_radians(-FRAC_PI_2)), Some(GateType::SXXdg));
+        // RYY
+        assert_eq!(try_simplify_rotation(GateType::RYY, Angle64::from_radians(-FRAC_PI_2)), Some(GateType::SYYdg));
+    }
+
+    #[test]
+    fn half_turn_decompositions() {
+        assert_eq!(half_turn_decomposition(GateType::RZZ, Angle64::HALF_TURN), Some(GateType::Z));
+        assert_eq!(half_turn_decomposition(GateType::RXX, Angle64::HALF_TURN), Some(GateType::X));
+        assert_eq!(half_turn_decomposition(GateType::RYY, Angle64::HALF_TURN), Some(GateType::Y));
+        // Negative pi
+        let neg_pi = Angle64::from_radians(-std::f64::consts::PI);
+        assert_eq!(half_turn_decomposition(GateType::RZZ, neg_pi), Some(GateType::Z));
+        assert_eq!(half_turn_decomposition(GateType::RXX, neg_pi), Some(GateType::X));
+        assert_eq!(half_turn_decomposition(GateType::RYY, neg_pi), Some(GateType::Y));
+        // Non-half-turn returns None
+        assert_eq!(half_turn_decomposition(GateType::RZZ, Angle64::QUARTER_TURN), None);
+        assert_eq!(half_turn_decomposition(GateType::RZZ, Angle64::ZERO), None);
+        // Non-rotation gate returns None
+        assert_eq!(half_turn_decomposition(GateType::H, Angle64::HALF_TURN), None);
+    }
+
+    #[test]
+    fn is_rzz_z_tensor_z_wraps_half_turn_decomposition() {
+        assert!(is_rzz_z_tensor_z(Angle64::HALF_TURN));
+        assert!(is_rzz_z_tensor_z(Angle64::from_radians(-std::f64::consts::PI)));
+        assert!(!is_rzz_z_tensor_z(Angle64::ZERO));
+        assert!(!is_rzz_z_tensor_z(Angle64::QUARTER_TURN));
+    }
+
+    #[test]
+    fn crz_not_in_simplify_rotation() {
+        // CRZ cannot be simplified to a single gate (CRZ(pi) != CZ).
+        // It is handled via decomposition in the CliffordRotation trait instead.
+        assert_eq!(try_simplify_rotation(GateType::CRZ, Angle64::ZERO), None);
+        assert_eq!(try_simplify_rotation(GateType::CRZ, Angle64::HALF_TURN), None);
     }
 
     #[test]

@@ -2595,8 +2595,6 @@ mod tests {
     fn test_cx() {
         // CX: +IX -> +IX; +IZ -> +ZZ; +XI -> +XX; +ZI -> +ZI;
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
         // +IX -> +IX
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.cx(&q2(0, 1));
@@ -2616,14 +2614,34 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.cx(&q2(0, 1));
         check_state(&state, &["ZI"], &["XX"]);
+
+        // Signed inputs: -IX -> -IX
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.cx(&q2(0, 1));
+        check_state(&state, &["-IX"], &["ZZ"]);
+
+        // -ZI -> -ZI
+        let mut state = prep_state(&["-ZI"], &["XI"]);
+        state.cx(&q2(0, 1));
+        check_state(&state, &["-ZI"], &["XX"]);
+
+        // Y input: +IY -> +ZY (Y1 = iX1Z1 -> i*(IX)*(ZZ) = i*ZX*Z = i*Z*(XZ) = ZY)
+        // In W notation: iIW -> iZW
+        let mut state = prep_state(&["iIW"], &["IX"]);
+        state.cx(&q2(0, 1));
+        check_state(&state, &["iZW"], &["IX"]);
+
+        // Entangled stabilizer: +XX -> +XI, destab +ZI -> +ZI
+        // (ZZ is not a valid destab for XX since they commute; ZI anti-commutes with XX)
+        let mut state = prep_state(&["XX"], &["ZI"]);
+        state.cx(&q2(0, 1));
+        check_state(&state, &["XI"], &["ZI"]);
     }
 
     #[test]
+    #[expect(clippy::shadow_unrelated)]
     fn test_cy() {
         // CY: +IX -> +ZX; +IZ -> +ZZ; +XI -> +XY; +ZI -> +ZI;
-        // Note: CY = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ Y (standard convention)
-
-        // TODO: Expand the set of stabilizer transformations evaluated.
 
         // +IX -> +ZX
         let mut state = prep_state(&["IX"], &["IZ"]);
@@ -2635,7 +2653,7 @@ mod tests {
         state.cy(&q2(0, 1));
         check_state(&state, &["ZZ"], &["ZX"]);
 
-        // +XI -> +XY = +iXW (Y = iXZ = iW)
+        // +XI -> +XY = +iXW
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.cy(&q2(0, 1));
         check_state(&state, &["+iXW"], &["ZI"]);
@@ -2644,14 +2662,26 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.cy(&q2(0, 1));
         check_state(&state, &["ZI"], &["XW"]);
+
+        // Signed: -IX -> -ZX
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.cy(&q2(0, 1));
+        check_state(&state, &["-ZX"], &["ZZ"]);
+
+        // Y input: +IY -> +ZY (iIW -> i*(ZX)*(ZZ) = i*IXZ = i*IW = IY)
+        // Actually: Y1 = iX1Z1, X1->ZX, Z1->ZZ. So Y1 -> i*(ZX)*(ZZ) = i*Z*Z*X*Z = i*I*XZ = i*IW = IY
+        // Wait, let me recalculate in 2q notation:
+        // IY = i*(IX)*(IZ) -> i*(ZX)*(ZZ) = i*ZX*ZZ
+        // ZX*ZZ: (Z*Z)(X*Z) = I*(XZ) = IW. So i*IW = IY.
+        let mut state = prep_state(&["iIW"], &["IX"]);
+        state.cy(&q2(0, 1));
+        check_state(&state, &["iIW"], &["ZX"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_cz() {
         // CZ: +IX -> +ZX; +IZ -> +IZ; +XI -> +XZ; +ZI -> +ZI;
-
-        // TODO: Expand the set of stabilizer transformations evaluated.
 
         // +IX -> +ZX
         let mut state = prep_state(&["IX"], &["IZ"]);
@@ -2672,24 +2702,24 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.cz(&q2(0, 1));
         check_state(&state, &["ZI"], &["XZ"]);
+
+        // Signed: -XI -> -XZ
+        let mut state = prep_state(&["-XI"], &["ZI"]);
+        state.cz(&q2(0, 1));
+        check_state(&state, &["-XZ"], &["ZI"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_sxx() {
-        // SXX: XI -> XI
-        //      IX -> IX
-        //      ZI -> -YX
-        //      IZ -> -XY
+        // SXX: XI -> XI; IX -> IX; ZI -> -YX; IZ -> -XY
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> +XI
+        // +IX -> +IX
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.sxx(&q2(0, 1));
         check_state(&state, &["IX"], &["XW"]);
 
-        // +IZ -> -XY
+        // +IZ -> -XY = -iXW
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.sxx(&q2(0, 1));
         check_state(&state, &["-iXW"], &["IX"]);
@@ -2699,28 +2729,33 @@ mod tests {
         state.sxx(&q2(0, 1));
         check_state(&state, &["XI"], &["WX"]);
 
-        // +ZI -> -YX
+        // +ZI -> -YX = -iWX
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.sxx(&q2(0, 1));
         check_state(&state, &["-iWX"], &["XI"]);
+
+        // Signed: -ZI -> +YX = iWX
+        let mut state = prep_state(&["-ZI"], &["XI"]);
+        state.sxx(&q2(0, 1));
+        check_state(&state, &["iWX"], &["XI"]);
+
+        // Signed: -IZ -> +XY = iXW
+        let mut state = prep_state(&["-IZ"], &["IX"]);
+        state.sxx(&q2(0, 1));
+        check_state(&state, &["iXW"], &["IX"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_sxxdg() {
-        // SXXdg: XI -> XI
-        //        IX -> IX
-        //        ZI -> YX
-        //        IZ -> XY
+        // SXXdg: XI -> XI; IX -> IX; ZI -> YX; IZ -> XY
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> +XI
+        // +IX -> +IX
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.sxxdg(&q2(0, 1));
         check_state(&state, &["IX"], &["XW"]);
 
-        // +IZ -> +XY
+        // +IZ -> +XY = iXW
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.sxxdg(&q2(0, 1));
         check_state(&state, &["iXW"], &["IX"]);
@@ -2730,144 +2765,145 @@ mod tests {
         state.sxxdg(&q2(0, 1));
         check_state(&state, &["XI"], &["WX"]);
 
-        // +ZI -> +YX
+        // +ZI -> +YX = iWX
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.sxxdg(&q2(0, 1));
         check_state(&state, &["iWX"], &["XI"]);
+
+        // Signed: -ZI -> -YX = -iWX
+        let mut state = prep_state(&["-ZI"], &["XI"]);
+        state.sxxdg(&q2(0, 1));
+        check_state(&state, &["-iWX"], &["XI"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_syy() {
-        // SYY: XI -> -ZY
-        //      IX -> -YZ
-        //      ZI -> XY
-        //      IZ -> YX
+        // SYY: XI -> -ZY; IX -> -YZ; ZI -> XY; IZ -> YX
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> -YZ
+        // +IX -> -YZ = -iWZ
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.syy(&q2(0, 1));
         check_state(&state, &["-iWZ"], &["WX"]);
 
-        // +IZ -> +YX
+        // +IZ -> +YX = iWX
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.syy(&q2(0, 1));
         check_state(&state, &["iWX"], &["WZ"]);
 
-        // +XI -> -ZY
+        // +XI -> -ZY = -iZW
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.syy(&q2(0, 1));
         check_state(&state, &["-iZW"], &["XW"]);
 
-        // +ZI -> +XY
+        // +ZI -> +XY = iXW
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.syy(&q2(0, 1));
         check_state(&state, &["iXW"], &["ZW"]);
+
+        // Signed: -XI -> +ZY = iZW
+        let mut state = prep_state(&["-XI"], &["ZI"]);
+        state.syy(&q2(0, 1));
+        check_state(&state, &["iZW"], &["XW"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_syydg() {
-        // SYYdg: XI -> ZY
-        //        IX -> YZ
-        //        ZI -> -XY
-        //        IZ -> -YX
+        // SYYdg: XI -> ZY; IX -> YZ; ZI -> -XY; IZ -> -YX
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> YZ
+        // +IX -> +YZ = iWZ
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.syydg(&q2(0, 1));
         check_state(&state, &["iWZ"], &["WX"]);
 
-        // +IZ -> -YX
+        // +IZ -> -YX = -iWX
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.syydg(&q2(0, 1));
         check_state(&state, &["-iWX"], &["WZ"]);
 
-        // +XI -> ZY
+        // +XI -> +ZY = iZW
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.syydg(&q2(0, 1));
         check_state(&state, &["iZW"], &["XW"]);
-        // +ZI -> +XY
+
+        // +ZI -> -XY = -iXW
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.syydg(&q2(0, 1));
         check_state(&state, &["-iXW"], &["ZW"]);
+
+        // Signed: -IX -> -YZ = -iWZ
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.syydg(&q2(0, 1));
+        check_state(&state, &["-iWZ"], &["WX"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_szz() {
-        // SZZ: +IX -> +ZY;
-        //      +IZ -> +IZ;
-        //      +XI -> +ZY;
-        //      +ZI -> +ZI;
+        // SZZ: IX -> ZY; IZ -> IZ; XI -> YZ; ZI -> ZI
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> ZY
+        // +IX -> +ZY = iZW
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.szz(&q2(0, 1));
         check_state(&state, &["iZW"], &["IZ"]);
 
-        // +IZ -> IZ
+        // +IZ -> +IZ
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.szz(&q2(0, 1));
         check_state(&state, &["IZ"], &["ZW"]);
 
-        // +XI -> YZ
+        // +XI -> +YZ = iWZ
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.szz(&q2(0, 1));
         check_state(&state, &["iWZ"], &["ZI"]);
 
-        // +ZI -> ZI
+        // +ZI -> +ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.szz(&q2(0, 1));
         check_state(&state, &["ZI"], &["WZ"]);
+
+        // Signed: -IX -> -ZY = -iZW
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.szz(&q2(0, 1));
+        check_state(&state, &["-iZW"], &["IZ"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_szzdg() {
-        // SZZ: +IX -> -ZY;
-        //      +IZ -> +IZ;
-        //      +XI -> -ZY;
-        //      +ZI -> +ZI;
+        // SZZdg: IX -> -ZY; IZ -> IZ; XI -> -YZ; ZI -> ZI
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> -ZY
+        // +IX -> -ZY = -iZW
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.szzdg(&q2(0, 1));
         check_state(&state, &["-iZW"], &["IZ"]);
 
-        // +IZ -> IZ
+        // +IZ -> +IZ
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.szzdg(&q2(0, 1));
         check_state(&state, &["IZ"], &["ZW"]);
 
-        // +XI -> -YZ
+        // +XI -> -YZ = -iWZ
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.szzdg(&q2(0, 1));
         check_state(&state, &["-iWZ"], &["ZI"]);
 
-        // +ZI -> ZI
+        // +ZI -> +ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.szzdg(&q2(0, 1));
         check_state(&state, &["ZI"], &["WZ"]);
+
+        // Signed: -IX -> +ZY = iZW
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.szzdg(&q2(0, 1));
+        check_state(&state, &["iZW"], &["IZ"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_swap() {
-        // SWAP: +IX -> +XI;
-        //       +IZ -> +ZI;
-        //       +XI -> +IX;
-        //       +ZI -> +IZ;
-
-        // TODO: Expand the set of stabilizer transformations evaluated.
+        // SWAP: IX -> XI; IZ -> ZI; XI -> IX; ZI -> IZ
 
         // +IX -> +XI
         let mut state = prep_state(&["IX"], &["IZ"]);
@@ -2888,17 +2924,17 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.swap(&q2(0, 1));
         check_state(&state, &["IZ"], &["IX"]);
+
+        // Signed: -IX -> -XI
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.swap(&q2(0, 1));
+        check_state(&state, &["-XI"], &["ZI"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
-    fn test_g2() {
-        // G2: +XI -> +IX
-        //     +IX -> +XI
-        //     +ZI -> +XZ
-        //     +IZ -> +ZX
-
-        // TODO: Expand the set of stabilizer transformations evaluated.
+    fn test_g() {
+        // G: XI -> IX; IX -> XI; ZI -> XZ; IZ -> ZX
 
         // +IX -> +XI
         let mut state = prep_state(&["IX"], &["IZ"]);
@@ -2919,6 +2955,397 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.g(&q2(0, 1));
         check_state(&state, &["XZ"], &["IX"]);
+
+        // Signed: -ZI -> -XZ
+        let mut state = prep_state(&["-ZI"], &["XI"]);
+        state.g(&q2(0, 1));
+        check_state(&state, &["-XZ"], &["IX"]);
+    }
+
+    #[test]
+    #[expect(clippy::shadow_unrelated)]
+    fn test_iswap() {
+        // ISWAP: XI -> ZY; IX -> YZ; ZI -> IZ; IZ -> ZI
+
+        // +XI -> +ZY = iZW
+        let mut state = prep_state(&["XI"], &["ZI"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["iZW"], &["IZ"]);
+
+        // +IX -> +YZ = iWZ
+        let mut state = prep_state(&["IX"], &["IZ"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["iWZ"], &["ZI"]);
+
+        // +ZI -> +IZ, destab +XI -> ZW (Pauli part of ZY=iZW, but destab phases not tracked)
+        let mut state = prep_state(&["ZI"], &["XI"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["IZ"], &["ZW"]);
+
+        // +IZ -> +ZI, destab +IX -> WZ (Pauli part of YZ=iWZ, but destab phases not tracked)
+        let mut state = prep_state(&["IZ"], &["IX"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["ZI"], &["WZ"]);
+
+        // Signed: -XI -> -ZY = -iZW
+        let mut state = prep_state(&["-XI"], &["ZI"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["-iZW"], &["IZ"]);
+
+        // Signed: -IX -> -YZ = -iWZ
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["-iWZ"], &["ZI"]);
+    }
+
+    #[test]
+    #[expect(clippy::shadow_unrelated)]
+    fn test_iswapdg() {
+        // ISWAPdg: XI -> -ZY; IX -> -YZ; ZI -> IZ; IZ -> ZI
+
+        // +XI -> -ZY = -iZW
+        let mut state = prep_state(&["XI"], &["ZI"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["-iZW"], &["IZ"]);
+
+        // +IX -> -YZ = -iWZ
+        let mut state = prep_state(&["IX"], &["IZ"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["-iWZ"], &["ZI"]);
+
+        // +ZI -> +IZ (destab phases not tracked)
+        let mut state = prep_state(&["ZI"], &["XI"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["IZ"], &["ZW"]);
+
+        // +IZ -> +ZI (destab phases not tracked)
+        let mut state = prep_state(&["IZ"], &["IX"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["ZI"], &["WZ"]);
+
+        // Signed: -XI -> +ZY = iZW
+        let mut state = prep_state(&["-XI"], &["ZI"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["iZW"], &["IZ"]);
+
+        // Signed: -IX -> +YZ = iWZ
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["iWZ"], &["ZI"]);
+    }
+
+    #[test]
+    #[expect(clippy::shadow_unrelated)]
+    fn test_g_self_inverse() {
+        // G is Hermitian: G * G = I. Verify on SparseStab.
+
+        // Start with +XI, apply G twice -> should return to +XI
+        let mut state = prep_state(&["XI"], &["ZI"]);
+        state.g(&q2(0, 1)).g(&q2(0, 1));
+        check_state(&state, &["XI"], &["ZI"]);
+
+        // Start with +IX, apply G twice -> should return to +IX
+        let mut state = prep_state(&["IX"], &["IZ"]);
+        state.g(&q2(0, 1)).g(&q2(0, 1));
+        check_state(&state, &["IX"], &["IZ"]);
+
+        // Start with +ZI, apply G twice -> should return to +ZI
+        let mut state = prep_state(&["ZI"], &["XI"]);
+        state.g(&q2(0, 1)).g(&q2(0, 1));
+        check_state(&state, &["ZI"], &["XI"]);
+
+        // Start with +IZ, apply G twice -> should return to +IZ
+        let mut state = prep_state(&["IZ"], &["IX"]);
+        state.g(&q2(0, 1)).g(&q2(0, 1));
+        check_state(&state, &["IZ"], &["IX"]);
+    }
+
+    #[test]
+    #[expect(clippy::shadow_unrelated)]
+    fn test_iswap_iswapdg_inverse() {
+        // ISWAP * ISWAPdg = I. Verify on SparseStab.
+
+        let mut state = prep_state(&["XI"], &["ZI"]);
+        state.iswap(&q2(0, 1)).iswapdg(&q2(0, 1));
+        check_state(&state, &["XI"], &["ZI"]);
+
+        let mut state = prep_state(&["IX"], &["IZ"]);
+        state.iswap(&q2(0, 1)).iswapdg(&q2(0, 1));
+        check_state(&state, &["IX"], &["IZ"]);
+
+        let mut state = prep_state(&["ZI"], &["XI"]);
+        state.iswap(&q2(0, 1)).iswapdg(&q2(0, 1));
+        check_state(&state, &["ZI"], &["XI"]);
+
+        let mut state = prep_state(&["IZ"], &["IX"]);
+        state.iswap(&q2(0, 1)).iswapdg(&q2(0, 1));
+        check_state(&state, &["IZ"], &["IX"]);
+    }
+
+    /// Apply a 2q Clifford gate on qubits (0, 1) to a SparseStab.
+    fn apply_2q_cliff(state: &mut SparseStab, cliff: pecos_core::clifford::Clifford) {
+        use pecos_core::clifford::Clifford;
+        match cliff {
+            Clifford::CX => { state.cx(&q2(0, 1)); }
+            Clifford::CY => { state.cy(&q2(0, 1)); }
+            Clifford::CZ => { state.cz(&q2(0, 1)); }
+            Clifford::SWAP => { state.swap(&q2(0, 1)); }
+            Clifford::SXX => { state.sxx(&q2(0, 1)); }
+            Clifford::SXXdg => { state.sxxdg(&q2(0, 1)); }
+            Clifford::SYY => { state.syy(&q2(0, 1)); }
+            Clifford::SYYdg => { state.syydg(&q2(0, 1)); }
+            Clifford::SZZ => { state.szz(&q2(0, 1)); }
+            Clifford::SZZdg => { state.szzdg(&q2(0, 1)); }
+            Clifford::ISWAP => { state.iswap(&q2(0, 1)); }
+            Clifford::ISWAPdg => { state.iswapdg(&q2(0, 1)); }
+            Clifford::G => { state.g(&q2(0, 1)); }
+            Clifford::Gdg => { state.gdg(&q2(0, 1)); }
+            _ => panic!("not a 2q gate: {cliff:?}"),
+        }
+    }
+
+    /// Apply a 2q Clifford gate on reversed qubits (1, 0) to a SparseStab.
+    fn apply_2q_cliff_reversed(state: &mut SparseStab, cliff: pecos_core::clifford::Clifford) {
+        use pecos_core::clifford::Clifford;
+        match cliff {
+            Clifford::CX => { state.cx(&q2(1, 0)); }
+            Clifford::CY => { state.cy(&q2(1, 0)); }
+            Clifford::CZ => { state.cz(&q2(1, 0)); }
+            Clifford::SWAP => { state.swap(&q2(1, 0)); }
+            Clifford::SXX => { state.sxx(&q2(1, 0)); }
+            Clifford::SXXdg => { state.sxxdg(&q2(1, 0)); }
+            Clifford::SYY => { state.syy(&q2(1, 0)); }
+            Clifford::SYYdg => { state.syydg(&q2(1, 0)); }
+            Clifford::SZZ => { state.szz(&q2(1, 0)); }
+            Clifford::SZZdg => { state.szzdg(&q2(1, 0)); }
+            Clifford::ISWAP => { state.iswap(&q2(1, 0)); }
+            Clifford::ISWAPdg => { state.iswapdg(&q2(1, 0)); }
+            Clifford::G => { state.g(&q2(1, 0)); }
+            Clifford::Gdg => { state.gdg(&q2(1, 0)); }
+            _ => panic!("not a 2q gate: {cliff:?}"),
+        }
+    }
+
+    /// Convert a CliffordRep PauliString image to SparseStab's W-notation representation.
+    ///
+    /// Returns (x_bits, z_bits, signs_minus, signs_i) where:
+    /// - x_bits[q] / z_bits[q]: whether qubit q has X/Z component
+    /// - Y in the PauliString becomes W (x=1,z=1) with an extra i factor absorbed into the phase
+    fn pauli_image_to_w_notation(
+        image: &pecos_core::PauliString,
+        num_qubits: usize,
+    ) -> (Vec<bool>, Vec<bool>, bool, bool) {
+        use pecos_core::Pauli;
+
+        let mut x_bits = vec![false; num_qubits];
+        let mut z_bits = vec![false; num_qubits];
+        let mut num_ys = 0u32;
+
+        for (p, qid) in image.iter_pairs() {
+            let q = usize::from(qid);
+            match p {
+                Pauli::I => {}
+                Pauli::X => { x_bits[q] = true; }
+                Pauli::Z => { z_bits[q] = true; }
+                Pauli::Y => {
+                    x_bits[q] = true;
+                    z_bits[q] = true;
+                    num_ys += 1;
+                }
+            }
+        }
+
+        // W-notation phase = PauliString phase * i^num_ys
+        // i^0 = +1, i^1 = +i, i^2 = -1, i^3 = -i
+        // QuarterPhase encodes: PlusOne=0, MinusOne=1, PlusI=2, MinusI=3
+        // Multiplying by i adds 2 to the encoding (mod 4)
+        let base = image.phase() as u8;
+        let w_phase = (base + 2 * (num_ys as u8 % 4)) % 4;
+
+        let signs_minus = w_phase & 1 != 0; // bit 0 = minus
+        let signs_i = w_phase & 2 != 0; // bit 1 = i
+
+        (x_bits, z_bits, signs_minus, signs_i)
+    }
+
+    /// Automated cross-check: CliffordRep Pauli images match SparseStab for ALL 2q gates.
+    ///
+    /// For each gate and each input generator (XI, ZI, IX, IZ), the CliffordRep predicts
+    /// the output Pauli string. We verify the SparseStab simulator produces exactly the
+    /// same result (same Pauli bits and same phase on the stabilizer).
+    #[test]
+    fn clifford_rep_matches_sparse_stab_all_2q_gates() {
+        use pecos_core::clifford::Clifford;
+        use pecos_core::PauliString;
+
+        let inputs: [(&str, PauliString, &[&str], &[&str]); 4] = [
+            ("X0", PauliString::x(0), &["XI"], &["ZI"]),
+            ("Z0", PauliString::z(0), &["ZI"], &["XI"]),
+            ("X1", PauliString::x(1), &["IX"], &["IZ"]),
+            ("Z1", PauliString::z(1), &["IZ"], &["IX"]),
+        ];
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 1);
+
+            for (name, input_ps, stab_str, destab_str) in &inputs {
+                let image = rep.apply(input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) =
+                    pauli_image_to_w_notation(&image, 2);
+
+                let mut state = prep_state(stab_str, destab_str);
+                apply_2q_cliff(&mut state, cliff);
+
+                // Check Pauli bits
+                for qq in 0..2 {
+                    assert_eq!(
+                        state.stabs.col_x[qq].contains(0), exp_x[qq],
+                        "{cliff:?} on {name}: qubit {qq} X bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                    assert_eq!(
+                        state.stabs.col_z[qq].contains(0), exp_z[qq],
+                        "{cliff:?} on {name}: qubit {qq} Z bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                }
+
+                // Check phase (stabilizer phases ARE tracked)
+                assert_eq!(
+                    state.stabs.signs_minus.contains(0), exp_minus,
+                    "{cliff:?} on {name}: signs_minus mismatch \
+                     (expected image: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(0), exp_i,
+                    "{cliff:?} on {name}: signs_i mismatch \
+                     (expected image: {image:?})"
+                );
+            }
+        }
+    }
+
+    /// Same cross-check but with reversed qubit ordering: gate applied to (1, 0).
+    /// CliffordRep uses on_qubits(1, 0), SparseStab uses gate(&[q1, q0]).
+    /// This catches bugs in asymmetric gates (CX, CY) with swapped control/target.
+    #[test]
+    fn clifford_rep_matches_sparse_stab_reversed_qubits() {
+        use pecos_core::clifford::Clifford;
+        use pecos_core::PauliString;
+
+        let inputs: [(&str, PauliString, &[&str], &[&str]); 4] = [
+            ("X0", PauliString::x(0), &["XI"], &["ZI"]),
+            ("Z0", PauliString::z(0), &["ZI"], &["XI"]),
+            ("X1", PauliString::x(1), &["IX"], &["IZ"]),
+            ("Z1", PauliString::z(1), &["IZ"], &["IX"]),
+        ];
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(1, 0);
+
+            for (name, input_ps, stab_str, destab_str) in &inputs {
+                let image = rep.apply(input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) =
+                    pauli_image_to_w_notation(&image, 2);
+
+                let mut state = prep_state(stab_str, destab_str);
+                apply_2q_cliff_reversed(&mut state, cliff);
+
+                for qq in 0..2 {
+                    assert_eq!(
+                        state.stabs.col_x[qq].contains(0), exp_x[qq],
+                        "{cliff:?} reversed on {name}: qubit {qq} X bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                    assert_eq!(
+                        state.stabs.col_z[qq].contains(0), exp_z[qq],
+                        "{cliff:?} reversed on {name}: qubit {qq} Z bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                }
+
+                assert_eq!(
+                    state.stabs.signs_minus.contains(0), exp_minus,
+                    "{cliff:?} reversed on {name}: signs_minus mismatch \
+                     (expected image: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(0), exp_i,
+                    "{cliff:?} reversed on {name}: signs_i mismatch \
+                     (expected image: {image:?})"
+                );
+            }
+        }
+    }
+
+    /// Same cross-check for all 1q Clifford gates.
+    #[test]
+    fn clifford_rep_matches_sparse_stab_all_1q_gates() {
+        use pecos_core::clifford::Clifford;
+        use pecos_core::PauliString;
+
+        for &cliff in Clifford::all_1q() {
+            let rep = cliff.on_qubit(0);
+
+            // Test X -> ? and Z -> ?
+            for (name, input_ps, stab_str, destab_str) in [
+                ("X", PauliString::x(0), &["XII"][..], &["ZII"][..]),
+                ("Z", PauliString::z(0), &["ZII"][..], &["XII"][..]),
+            ] {
+                let image = rep.apply(&input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) =
+                    pauli_image_to_w_notation(&image, 1);
+
+                // Use a 3-qubit SparseStab (prep_state always creates 3 qubits)
+                let mut state = prep_state(stab_str, destab_str);
+
+                // Apply the 1q gate on qubit 0
+                match cliff {
+                    Clifford::I => {}
+                    Clifford::X => { state.x(&q(0)); }
+                    Clifford::Y => { state.y(&q(0)); }
+                    Clifford::Z => { state.z(&q(0)); }
+                    Clifford::H => { state.h(&q(0)); }
+                    Clifford::SX => { state.sx(&q(0)); }
+                    Clifford::SXdg => { state.sxdg(&q(0)); }
+                    Clifford::SY => { state.sy(&q(0)); }
+                    Clifford::SYdg => { state.sydg(&q(0)); }
+                    Clifford::SZ => { state.sz(&q(0)); }
+                    Clifford::SZdg => { state.szdg(&q(0)); }
+                    Clifford::H2 => { state.h2(&q(0)); }
+                    Clifford::H3 => { state.h3(&q(0)); }
+                    Clifford::H4 => { state.h4(&q(0)); }
+                    Clifford::H5 => { state.h5(&q(0)); }
+                    Clifford::H6 => { state.h6(&q(0)); }
+                    Clifford::F => { state.f(&q(0)); }
+                    Clifford::Fdg => { state.fdg(&q(0)); }
+                    Clifford::F2 => { state.f2(&q(0)); }
+                    Clifford::F2dg => { state.f2dg(&q(0)); }
+                    Clifford::F3 => { state.f3(&q(0)); }
+                    Clifford::F3dg => { state.f3dg(&q(0)); }
+                    Clifford::F4 => { state.f4(&q(0)); }
+                    Clifford::F4dg => { state.f4dg(&q(0)); }
+                    _ => panic!("not a 1q gate: {cliff:?}"),
+                };
+
+                assert_eq!(
+                    state.stabs.col_x[0].contains(0), exp_x[0],
+                    "{cliff:?} on {name}: X bit mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.col_z[0].contains(0), exp_z[0],
+                    "{cliff:?} on {name}: Z bit mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_minus.contains(0), exp_minus,
+                    "{cliff:?} on {name}: signs_minus mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(0), exp_i,
+                    "{cliff:?} on {name}: signs_i mismatch (expected: {image:?})"
+                );
+            }
+        }
     }
 
     fn one_bit_z_teleport(mut state: SparseStab) -> (SparseStab, bool) {

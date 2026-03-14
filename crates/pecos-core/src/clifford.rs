@@ -35,8 +35,8 @@
 
 use crate::clifford_rep::CliffordRep;
 use crate::gate_type::GateType;
-use crate::Pauli;
-use crate::Sign;
+use crate::unitary_rep::UnitaryRep;
+use crate::{Angle64, Pauli, QubitId, Sign};
 use std::fmt;
 use std::ops::Mul;
 
@@ -448,6 +448,108 @@ impl Clifford {
             Clifford::ISWAPdg => CliffordRep::iswapdg(q0, q1),
             Clifford::G => CliffordRep::g(q0, q1),
             Clifford::Gdg => CliffordRep::gdg(q0, q1),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns a [`UnitaryRep`] expression for this single-qubit Clifford on a given qubit.
+    ///
+    /// This provides a direct decomposition for ALL 24 single-qubit Clifford variants,
+    /// including those without a `GateType` entry (H2-H6, F2-F4dg).
+    ///
+    /// # Panics
+    /// Panics if called on a two-qubit gate.
+    #[must_use]
+    pub fn to_unitary_rep_on_qubit(self, q: impl Into<QubitId>) -> UnitaryRep {
+        assert!(self.is_1q(), "to_unitary_rep_on_qubit called on two-qubit gate {self}");
+        let q = q.into();
+        use crate::unitary_rep;
+        match self {
+            // Paulis and identity
+            Clifford::I => unitary_rep::I(q),
+            Clifford::X => unitary_rep::X(q),
+            Clifford::Y => unitary_rep::Y(q),
+            Clifford::Z => unitary_rep::Z(q),
+            // Standard Cliffords
+            Clifford::H => unitary_rep::H(q),
+            Clifford::SX => unitary_rep::SX(q),
+            Clifford::SXdg => unitary_rep::SX(q).dg(),
+            Clifford::SY => unitary_rep::SY(q),
+            Clifford::SYdg => unitary_rep::SY(q).dg(),
+            Clifford::SZ => unitary_rep::SZ(q),
+            Clifford::SZdg => unitary_rep::SZ(q).dg(),
+            // Hadamard variants (A * B means "apply B first, then A")
+            Clifford::H2 => unitary_rep::Z(q) * unitary_rep::SY(q),
+            Clifford::H3 => unitary_rep::Y(q) * unitary_rep::SZ(q),
+            Clifford::H4 => unitary_rep::X(q) * unitary_rep::SZ(q),
+            Clifford::H5 => unitary_rep::Z(q) * unitary_rep::SX(q),
+            Clifford::H6 => unitary_rep::Y(q) * unitary_rep::SX(q),
+            // Face gates
+            Clifford::F => unitary_rep::SZ(q) * unitary_rep::SX(q),
+            Clifford::Fdg => unitary_rep::SX(q).dg() * unitary_rep::SZ(q).dg(),
+            Clifford::F2 => unitary_rep::SY(q) * unitary_rep::SX(q).dg(),
+            Clifford::F2dg => unitary_rep::SX(q) * unitary_rep::SY(q).dg(),
+            Clifford::F3 => unitary_rep::SZ(q) * unitary_rep::SX(q).dg(),
+            Clifford::F3dg => unitary_rep::SX(q) * unitary_rep::SZ(q).dg(),
+            Clifford::F4 => unitary_rep::SX(q) * unitary_rep::SZ(q),
+            Clifford::F4dg => unitary_rep::SZ(q).dg() * unitary_rep::SX(q).dg(),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns a [`UnitaryRep`] expression for this two-qubit Clifford on given qubits.
+    ///
+    /// This provides a direct decomposition for ALL 14 two-qubit Clifford variants,
+    /// including those without a `GateType` entry (ISWAP/ISWAPdg, G/Gdg).
+    ///
+    /// # Panics
+    /// Panics if called on a single-qubit gate.
+    #[must_use]
+    pub fn to_unitary_rep_on_qubits(
+        self,
+        q0: impl Into<QubitId>,
+        q1: impl Into<QubitId>,
+    ) -> UnitaryRep {
+        assert!(self.is_2q(), "to_unitary_rep_on_qubits called on single-qubit gate {self}");
+        let a = q0.into();
+        let b = q1.into();
+        use crate::unitary_rep;
+        match self {
+            Clifford::CX => unitary_rep::CX(a, b),
+            Clifford::CY => unitary_rep::CY(a, b),
+            Clifford::CZ => unitary_rep::CZ(a, b),
+            Clifford::SWAP => unitary_rep::SWAP(a, b),
+            Clifford::SXX => unitary_rep::RXX(Angle64::QUARTER_TURN, a, b),
+            Clifford::SXXdg => unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b),
+            Clifford::SYY => unitary_rep::RYY(Angle64::QUARTER_TURN, a, b),
+            Clifford::SYYdg => unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b),
+            Clifford::SZZ => unitary_rep::SZZ(a, b),
+            Clifford::SZZdg => unitary_rep::SZZ(a, b).dg(),
+            // iSWAP = exp(+i*pi/4*(XX+YY)) = RXX(-pi/2) * RYY(-pi/2)
+            // where RXX(theta) = exp(-i*theta/2*XX), so -pi/2 = THREE_QUARTERS_TURN
+            Clifford::ISWAP => {
+                unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b)
+                    * unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b)
+            }
+            Clifford::ISWAPdg => {
+                (unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b)
+                    * unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b))
+                .dg()
+            }
+            // G = CZ * H(q0) * H(q1) * CZ (apply CZ, then H on both, then CZ)
+            Clifford::G => {
+                unitary_rep::CZ(a, b)
+                    * unitary_rep::H(a)
+                    * unitary_rep::H(b)
+                    * unitary_rep::CZ(a, b)
+            }
+            Clifford::Gdg => {
+                (unitary_rep::CZ(a, b)
+                    * unitary_rep::H(a)
+                    * unitary_rep::H(b)
+                    * unitary_rep::CZ(a, b))
+                .dg()
+            }
             _ => unreachable!(),
         }
     }

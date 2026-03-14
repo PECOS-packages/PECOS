@@ -96,8 +96,8 @@ pub use pecos_core::gate_type::GateType;
 pub use pecos_core::{Gate, QubitId, TimeScale, TimeUnits};
 pub use pecos_num::dag::DagWouldCycleError;
 
-// Re-export operator matrix trait for convenient method-style matrix conversion
-pub use unitary_matrix::ToMatrix;
+// Re-export operator matrix types for convenient method-style matrix conversion
+pub use unitary_matrix::{ToMatrix, UnitaryMatrix};
 
 // Pauli collection and stabilizer group types
 pub use pauli_sequence::{F2Matrix, PauliSequence};

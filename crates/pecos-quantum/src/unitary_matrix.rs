@@ -31,9 +31,302 @@
 
 use nalgebra::DMatrix;
 use num_complex::Complex64;
+use std::fmt;
+use std::ops::{BitAnd, Deref, DerefMut, Mul, Neg, Sub};
+
+use pecos_core::clifford::Clifford;
+use pecos_core::clifford_rep::CliffordRep;
 use pecos_core::gate_type::GateType;
-use pecos_core::unitary_rep::{UnitaryRep, RotationType};
-use pecos_core::{Pauli, PauliString, Phase};
+use pecos_core::unitary_rep::{Unitary, UnitaryRep, RotationType};
+use pecos_core::{Angle64, Op, Pauli, PauliString, Phase};
+
+/// Dense matrix representation of a quantum unitary, with `*` (composition)
+/// and `&` (tensor product) operators.
+///
+/// Wraps [`DMatrix<Complex64>`] and derefs to it, so all nalgebra methods
+/// (indexing, `.nrows()`, `.adjoint()`, etc.) are available directly.
+///
+/// # Operators
+///
+/// - `*` performs matrix multiplication (gate composition)
+/// - `&` performs the Kronecker product (tensor product)
+///
+/// # Example
+///
+/// ```
+/// use pecos_quantum::unitary_matrix::{UnitaryMatrix, ToMatrix};
+/// use pecos_core::unitary_rep::{X, Z};
+///
+/// let mx = X(0).to_matrix();
+/// let mz = Z(0).to_matrix();
+///
+/// // Composition (matrix multiply)
+/// let _composed = &mx * &mz;
+///
+/// // Tensor product (Kronecker)
+/// let _tensored = &mx & &mz;
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnitaryMatrix(pub DMatrix<Complex64>);
+
+impl UnitaryMatrix {
+    /// Creates an identity matrix of size `n x n`.
+    #[must_use]
+    pub fn identity(n: usize) -> Self {
+        Self(DMatrix::identity(n, n))
+    }
+
+    /// Creates a diagonal matrix from a slice of diagonal entries.
+    #[must_use]
+    pub fn diag(entries: &[Complex64]) -> Self {
+        let n = entries.len();
+        let mut m = DMatrix::zeros(n, n);
+        for (i, &v) in entries.iter().enumerate() {
+            m[(i, i)] = v;
+        }
+        Self(m)
+    }
+
+    /// Returns the conjugate transpose (adjoint / dagger).
+    #[must_use]
+    pub fn adjoint(&self) -> Self {
+        Self(self.0.adjoint())
+    }
+
+    /// Returns the number of qubits this matrix represents.
+    #[must_use]
+    pub fn num_qubits(&self) -> usize {
+        let n = self.0.nrows();
+        debug_assert!(n.is_power_of_two(), "matrix dimension must be a power of 2");
+        n.trailing_zeros() as usize
+    }
+
+    /// Checks if this matrix is equivalent to `other` up to a global phase.
+    #[must_use]
+    pub fn equiv_up_to_phase(&self, other: &UnitaryMatrix) -> bool {
+        matrices_equiv_up_to_phase(&self.0, &other.0, 1e-10)
+    }
+
+    /// Checks if this matrix is equivalent to `other` up to a global phase,
+    /// with a custom tolerance.
+    #[must_use]
+    pub fn equiv_up_to_phase_with_tolerance(&self, other: &UnitaryMatrix, tol: f64) -> bool {
+        matrices_equiv_up_to_phase(&self.0, &other.0, tol)
+    }
+
+    /// Returns a reference to the inner `DMatrix`.
+    #[must_use]
+    pub fn inner(&self) -> &DMatrix<Complex64> {
+        &self.0
+    }
+
+    /// Consumes self and returns the inner `DMatrix`.
+    #[must_use]
+    pub fn into_inner(self) -> DMatrix<Complex64> {
+        self.0
+    }
+}
+
+impl From<DMatrix<Complex64>> for UnitaryMatrix {
+    fn from(m: DMatrix<Complex64>) -> Self {
+        Self(m)
+    }
+}
+
+impl From<UnitaryMatrix> for DMatrix<Complex64> {
+    fn from(m: UnitaryMatrix) -> Self {
+        m.0
+    }
+}
+
+impl Deref for UnitaryMatrix {
+    type Target = DMatrix<Complex64>;
+    fn deref(&self) -> &DMatrix<Complex64> {
+        &self.0
+    }
+}
+
+impl DerefMut for UnitaryMatrix {
+    fn deref_mut(&mut self) -> &mut DMatrix<Complex64> {
+        &mut self.0
+    }
+}
+
+// * — matrix multiplication (gate composition)
+
+impl Mul for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(self.0 * rhs.0)
+    }
+}
+
+impl Mul<&UnitaryMatrix> for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: &UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(self.0 * &rhs.0)
+    }
+}
+
+impl Mul<UnitaryMatrix> for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(&self.0 * rhs.0)
+    }
+}
+
+impl Mul for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: &UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(&self.0 * &rhs.0)
+    }
+}
+
+// & — Kronecker product (tensor product)
+
+impl BitAnd for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn bitand(self, rhs: UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(self.0.kronecker(&rhs.0))
+    }
+}
+
+impl BitAnd<&UnitaryMatrix> for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn bitand(self, rhs: &UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(self.0.kronecker(&rhs.0))
+    }
+}
+
+impl BitAnd<UnitaryMatrix> for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn bitand(self, rhs: UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(self.0.kronecker(&rhs.0))
+    }
+}
+
+impl BitAnd for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn bitand(self, rhs: &UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(self.0.kronecker(&rhs.0))
+    }
+}
+
+// Scalar multiplication: UnitaryMatrix * Complex64
+
+impl Mul<Complex64> for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: Complex64) -> UnitaryMatrix {
+        UnitaryMatrix(self.0 * rhs)
+    }
+}
+
+impl Mul<Complex64> for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: Complex64) -> UnitaryMatrix {
+        UnitaryMatrix(&self.0 * rhs)
+    }
+}
+
+// Subtraction
+
+impl Sub for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn sub(self, rhs: UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(self.0 - rhs.0)
+    }
+}
+
+impl Sub<&UnitaryMatrix> for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn sub(self, rhs: &UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(self.0 - &rhs.0)
+    }
+}
+
+impl Sub<UnitaryMatrix> for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn sub(self, rhs: UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(&self.0 - rhs.0)
+    }
+}
+
+impl Sub for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn sub(self, rhs: &UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(&self.0 - &rhs.0)
+    }
+}
+
+// Scalar multiplication: Complex64 * UnitaryMatrix (left-multiply)
+
+impl Mul<UnitaryMatrix> for Complex64 {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(rhs.0 * self)
+    }
+}
+
+impl Mul<&UnitaryMatrix> for Complex64 {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: &UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(&rhs.0 * self)
+    }
+}
+
+// Scalar multiplication with f64
+
+impl Mul<f64> for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: f64) -> UnitaryMatrix {
+        UnitaryMatrix(self.0 * Complex64::new(rhs, 0.0))
+    }
+}
+
+impl Mul<f64> for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: f64) -> UnitaryMatrix {
+        UnitaryMatrix(&self.0 * Complex64::new(rhs, 0.0))
+    }
+}
+
+impl Mul<UnitaryMatrix> for f64 {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(rhs.0 * Complex64::new(self, 0.0))
+    }
+}
+
+impl Mul<&UnitaryMatrix> for f64 {
+    type Output = UnitaryMatrix;
+    fn mul(self, rhs: &UnitaryMatrix) -> UnitaryMatrix {
+        UnitaryMatrix(&rhs.0 * Complex64::new(self, 0.0))
+    }
+}
+
+// Negation
+
+impl Neg for UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn neg(self) -> UnitaryMatrix {
+        UnitaryMatrix(-self.0)
+    }
+}
+
+impl Neg for &UnitaryMatrix {
+    type Output = UnitaryMatrix;
+    fn neg(self) -> UnitaryMatrix {
+        UnitaryMatrix(-&self.0)
+    }
+}
+
+// Display
+
+impl fmt::Display for UnitaryMatrix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Extension trait for converting quantum unitaries to matrix representations.
 ///
@@ -60,26 +353,78 @@ use pecos_core::{Pauli, PauliString, Phase};
 /// assert_eq!(mat.nrows(), 8);
 /// ```
 pub trait ToMatrix {
-    /// Converts to a dense matrix representation.
+    /// Converts to a dense [`UnitaryMatrix`] representation.
     ///
     /// The matrix size is 2^n where n is determined by the maximum qubit index + 1.
-    fn to_matrix(&self) -> DMatrix<Complex64>;
+    fn to_matrix(&self) -> UnitaryMatrix;
 }
 
 impl ToMatrix for UnitaryRep {
-    fn to_matrix(&self) -> DMatrix<Complex64> {
+    fn to_matrix(&self) -> UnitaryMatrix {
         to_matrix(self)
     }
 }
 
 impl ToMatrix for PauliString {
-    fn to_matrix(&self) -> DMatrix<Complex64> {
+    fn to_matrix(&self) -> UnitaryMatrix {
         let num_qubits = self.qubits().into_iter().max().map_or(1, |q| q + 1);
-        pauli_string_to_matrix_impl(self, num_qubits)
+        UnitaryMatrix(pauli_string_to_matrix_impl(self, num_qubits))
     }
 }
 
-/// Converts an `UnitaryRep` to its dense matrix representation.
+impl ToMatrix for CliffordRep {
+    fn to_matrix(&self) -> UnitaryMatrix {
+        let ur = pecos_core::gate_algebra::clifford_rep_to_unitary_rep(self);
+        to_matrix(&ur)
+    }
+}
+
+impl ToMatrix for Pauli {
+    /// Converts to a 2x2 matrix on qubit 0.
+    fn to_matrix(&self) -> UnitaryMatrix {
+        self.on_qubit(0).to_matrix()
+    }
+}
+
+impl ToMatrix for Clifford {
+    /// Converts to a matrix on default qubits (0 for 1q gates, 0-1 for 2q gates).
+    ///
+    /// Uses `Clifford::to_unitary_rep_on_qubit(s)` rather than going through
+    /// `CliffordRep`, because some gate pairs (e.g. G/Gdg) share the same
+    /// CliffordRep but differ at the unitary level.
+    fn to_matrix(&self) -> UnitaryMatrix {
+        let ur = if self.is_1q() {
+            self.to_unitary_rep_on_qubit(0)
+        } else {
+            self.to_unitary_rep_on_qubits(0, 1)
+        };
+        to_matrix(&ur)
+    }
+}
+
+impl ToMatrix for Unitary {
+    /// Converts to a matrix on default qubits (0 for 1q, 0-1 for 2q, 0-1-2 for 3q).
+    fn to_matrix(&self) -> UnitaryMatrix {
+        let qubits: smallvec::SmallVec<[usize; 3]> = (0..self.num_qubits()).collect();
+        let ur = UnitaryRep::Gate(*self, qubits);
+        to_matrix(&ur)
+    }
+}
+
+impl ToMatrix for Op {
+    /// Converts to a matrix. Returns the zero matrix for channels (non-unitary ops).
+    fn to_matrix(&self) -> UnitaryMatrix {
+        match self.clone().into_unitary() {
+            Some(ur) => to_matrix(&ur),
+            None => {
+                // Channel ops don't have a unitary matrix
+                panic!("Cannot convert non-unitary Op (Channel) to a matrix")
+            }
+        }
+    }
+}
+
+/// Converts a [`UnitaryRep`] to a [`UnitaryMatrix`].
 ///
 /// The matrix size is 2^n where n is the number of qubits (determined by
 /// the maximum qubit index + 1).
@@ -99,18 +444,23 @@ impl ToMatrix for PauliString {
 /// assert!((matrix[(0, 1)] - Complex64::new(1.0, 0.0)).norm() < 1e-10);
 /// ```
 #[must_use]
-pub fn to_matrix(op: &UnitaryRep) -> DMatrix<Complex64> {
+pub fn to_matrix(op: &UnitaryRep) -> UnitaryMatrix {
     let num_qubits = op.qubits().into_iter().max().map_or(1, |q| q + 1);
-    to_matrix_with_size(op, num_qubits)
+    UnitaryMatrix(to_matrix_with_size_impl(op, num_qubits))
 }
 
-/// Converts an `UnitaryRep` to its dense matrix representation with a specified size.
+/// Converts a [`UnitaryRep`] to a [`UnitaryMatrix`] with a specified size.
 ///
 /// # Arguments
 /// * `op` - The operator to convert
 /// * `num_qubits` - The number of qubits (matrix will be `2^num_qubits` x `2^num_qubits`)
 #[must_use]
-pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Complex64> {
+pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> UnitaryMatrix {
+    UnitaryMatrix(to_matrix_with_size_impl(op, num_qubits))
+}
+
+/// Internal implementation that returns raw `DMatrix` for recursive use.
+fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Complex64> {
     let dim = 1 << num_qubits; // 2^num_qubits
 
     match op {
@@ -122,7 +472,7 @@ pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Comple
                 angle,
             },
             qubits,
-        ) => rotation_to_matrix(*rotation_type, angle.to_radians(), qubits, num_qubits),
+        ) => rotation_to_matrix(*rotation_type, *angle, qubits, num_qubits),
 
         UnitaryRep::Gate(pecos_core::Unitary::Named(gate_type), qubits) => {
             gate_to_matrix(*gate_type, qubits, num_qubits)
@@ -132,7 +482,7 @@ pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Comple
             // Start with identity, combine each part
             let mut result = DMatrix::identity(dim, dim);
             for part in parts {
-                let part_matrix = to_matrix_with_size(part, num_qubits);
+                let part_matrix = to_matrix_with_size_impl(part, num_qubits);
                 result = combine_disjoint_unitaries(&result, &part_matrix);
             }
             result
@@ -142,20 +492,21 @@ pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Comple
             // Matrix multiplication in reverse order (last part applied first)
             let mut result = DMatrix::identity(dim, dim);
             for part in parts {
-                let part_matrix = to_matrix_with_size(part, num_qubits);
+                let part_matrix = to_matrix_with_size_impl(part, num_qubits);
                 result = part_matrix * result;
             }
             result
         }
 
         UnitaryRep::Adjoint(inner) => {
-            let inner_matrix = to_matrix_with_size(inner, num_qubits);
+            let inner_matrix = to_matrix_with_size_impl(inner, num_qubits);
             inner_matrix.adjoint()
         }
 
         UnitaryRep::Phase { phase, inner } => {
-            let inner_matrix = to_matrix_with_size(inner, num_qubits);
-            let phase_factor = Complex64::new(0.0, phase.to_radians()).exp();
+            let inner_matrix = to_matrix_with_size_impl(inner, num_qubits);
+            let (sin_p, cos_p) = phase.sin_cos();
+            let phase_factor = Complex64::new(cos_p, sin_p); // e^{i*phase}
             inner_matrix * phase_factor
         }
     }
@@ -179,10 +530,10 @@ pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Comple
 /// // Result should be approximately -I
 /// ```
 #[must_use]
-pub fn unitary_exp(op: &UnitaryRep, theta: f64) -> DMatrix<Complex64> {
+pub fn unitary_exp(op: &UnitaryRep, theta: f64) -> UnitaryMatrix {
     let matrix = to_matrix(op);
     let scaled = matrix * Complex64::new(0.0, theta);
-    pecos_num::matrix_exp(&scaled)
+    UnitaryMatrix(pecos_num::matrix_exp(&scaled))
 }
 
 /// Computes the matrix logarithm of a unitary.
@@ -368,14 +719,14 @@ fn embed_single_qubit_gate(
 /// Converts a rotation to a matrix.
 fn rotation_to_matrix(
     rotation_type: RotationType,
-    angle: f64,
+    angle: Angle64,
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half_angle = angle / 2.0;
-    let cos_half = Complex64::new(half_angle.cos(), 0.0);
-    let sin_half = Complex64::new(half_angle.sin(), 0.0);
-    let i = Complex64::new(0.0, 1.0);
+    let half = angle / 2u64;
+    let (sin_half, cos_half) = half.sin_cos();
+    let cos_half = Complex64::new(cos_half, 0.0);
+    let sin_half = Complex64::new(sin_half, 0.0);
     let neg_i = Complex64::new(0.0, -1.0);
 
     match rotation_type {
@@ -394,16 +745,16 @@ fn rotation_to_matrix(
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         RotationType::RZ => {
-            // RZ(θ) = cos(θ/2)I - i*sin(θ/2)Z = diag(e^{-iθ/2}, e^{iθ/2})
-            let exp_neg = (neg_i * Complex64::new(half_angle, 0.0)).exp();
-            let exp_pos = (i * Complex64::new(half_angle, 0.0)).exp();
+            // RZ(θ) = diag(e^{-iθ/2}, e^{iθ/2})
+            let i_sin = Complex64::new(0.0, sin_half.re); // i * sin(θ/2)
+            let exp_neg = cos_half - i_sin; // cos(θ/2) - i*sin(θ/2) = e^{-iθ/2}
+            let exp_pos = cos_half + i_sin; // cos(θ/2) + i*sin(θ/2) = e^{iθ/2}
             let zero = Complex64::new(0.0, 0.0);
             let gate = DMatrix::from_row_slice(2, 2, &[exp_neg, zero, zero, exp_pos]);
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         RotationType::RXX | RotationType::RYY | RotationType::RZZ => {
-            // For two-qubit rotations, use matrix exponential
-            let dim = 1 << num_qubits;
+            // For two-qubit rotations, use matrix exponential: exp(-i * θ/2 * PP)
             let generator = match rotation_type {
                 RotationType::RXX => {
                     two_qubit_pauli_matrix(Pauli::X, Pauli::X, qubits[0], qubits[1], num_qubits)
@@ -414,9 +765,9 @@ fn rotation_to_matrix(
                 RotationType::RZZ => {
                     two_qubit_pauli_matrix(Pauli::Z, Pauli::Z, qubits[0], qubits[1], num_qubits)
                 }
-                _ => DMatrix::identity(dim, dim),
+                _ => unreachable!("outer match already filtered for RXX/RYY/RZZ"),
             };
-            let scaled = generator * Complex64::new(0.0, -half_angle);
+            let scaled = generator * Complex64::new(0.0, -half.to_radians());
             pecos_num::matrix_exp(&scaled)
         }
     }
@@ -487,6 +838,24 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             );
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
+        GateType::SY => {
+            // SY = exp(-i*pi/4 * Y) = (1/sqrt(2)) * [[1, -1], [1, 1]]
+            let gate = DMatrix::from_row_slice(
+                2,
+                2,
+                &[sqrt2_inv, -sqrt2_inv, sqrt2_inv, sqrt2_inv],
+            );
+            embed_single_qubit_gate(&gate, qubits[0], num_qubits)
+        }
+        GateType::SYdg => {
+            // SYdg = SY† = (1/sqrt(2)) * [[1, 1], [-1, 1]]
+            let gate = DMatrix::from_row_slice(
+                2,
+                2,
+                &[sqrt2_inv, sqrt2_inv, -sqrt2_inv, sqrt2_inv],
+            );
+            embed_single_qubit_gate(&gate, qubits[0], num_qubits)
+        }
         GateType::SZ => {
             // S = diag(1, i)
             let gate = DMatrix::from_row_slice(2, 2, &[one, zero, zero, i]);
@@ -494,6 +863,31 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         }
         GateType::SZdg => {
             let gate = DMatrix::from_row_slice(2, 2, &[one, zero, zero, neg_i]);
+            embed_single_qubit_gate(&gate, qubits[0], num_qubits)
+        }
+        GateType::F => {
+            // F = SX * SZ
+            // SX = (1+i)/2 * [[1,-i],[-i,1]], SZ = diag(1,i)
+            // F = (1+i)/2 * [[1,1],[-i,i]]
+            let f = Complex64::new(0.5, 0.5);
+            let gate = DMatrix::from_row_slice(
+                2,
+                2,
+                &[f * one, f * one, f * neg_i, f * i],
+            );
+            embed_single_qubit_gate(&gate, qubits[0], num_qubits)
+        }
+        GateType::Fdg => {
+            // Fdg = SZdg * SXdg
+            // SXdg = (1-i)/2 * [[1,i],[i,1]], SZdg = diag(1,-i)
+            // Fdg = (1-i)/2 * [[1,i],[i,-1]] ... let me compute properly:
+            // Fdg = F† = conjugate_transpose(F)
+            let f = Complex64::new(0.5, -0.5);
+            let gate = DMatrix::from_row_slice(
+                2,
+                2,
+                &[f * one, f * i, f * one, f * neg_i],
+            );
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         GateType::T => {
@@ -525,14 +919,74 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             qubits[1],
             num_qubits,
         ),
+        GateType::CH => {
+            let h_gate =
+                DMatrix::from_row_slice(2, 2, &[sqrt2_inv, sqrt2_inv, sqrt2_inv, -sqrt2_inv]);
+            controlled_gate(&h_gate, qubits[0], qubits[1], num_qubits)
+        }
         GateType::SWAP => swap_matrix(qubits[0], qubits[1], num_qubits),
-        _ => {
-            // Gates not yet implemented: SY, SYdg, U, R1XY, SZZ, SZZdg, CRZ, CCX
-            // Rotation gates (RX, RY, RZ, RXX, RYY, RZZ) should use UnitaryRep::Rotation
-            // Prep/Measure gates are not unitary and shouldn't be converted to matrices
-            log::warn!("Gate type {gate_type:?} not implemented in to_matrix, returning identity");
+        GateType::SXX => {
+            // SXX = RXX(pi/2)
+            rotation_to_matrix(RotationType::RXX, Angle64::QUARTER_TURN, qubits, num_qubits)
+        }
+        GateType::SXXdg => {
+            // SXXdg = RXX(3pi/2)
+            rotation_to_matrix(RotationType::RXX, Angle64::THREE_QUARTERS_TURN, qubits, num_qubits)
+        }
+        GateType::SYY => {
+            rotation_to_matrix(RotationType::RYY, Angle64::QUARTER_TURN, qubits, num_qubits)
+        }
+        GateType::SYYdg => {
+            rotation_to_matrix(RotationType::RYY, Angle64::THREE_QUARTERS_TURN, qubits, num_qubits)
+        }
+        GateType::SZZ => {
+            rotation_to_matrix(RotationType::RZZ, Angle64::QUARTER_TURN, qubits, num_qubits)
+        }
+        GateType::SZZdg => {
+            rotation_to_matrix(RotationType::RZZ, Angle64::THREE_QUARTERS_TURN, qubits, num_qubits)
+        }
+        GateType::CCX => {
+            // Toffoli: flip target when both controls are |1>
             let dim = 1 << num_qubits;
-            DMatrix::identity(dim, dim)
+            let mut result = DMatrix::<Complex64>::identity(dim, dim);
+            let c0 = qubits[0];
+            let c1 = qubits[1];
+            let t = qubits[2];
+            for basis in 0..dim {
+                if ((basis >> c0) & 1) == 1 && ((basis >> c1) & 1) == 1 {
+                    let flipped = basis ^ (1 << t);
+                    result[(basis, basis)] = zero;
+                    result[(flipped, basis)] = one;
+                }
+            }
+            result
+        }
+
+        // Parameterized gates: cannot produce a matrix without an angle.
+        // These should be used via Unitary::Rotation, not Unitary::Named.
+        GateType::RX | GateType::RY | GateType::RZ
+        | GateType::RXX | GateType::RYY | GateType::RZZ
+        | GateType::CRZ | GateType::U | GateType::R1XY => {
+            panic!(
+                "GateType::{gate_type:?} requires angle parameter(s); \
+                 use Unitary::Rotation instead of Unitary::Named"
+            )
+        }
+
+        // Non-unitary operations
+        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+        | GateType::PZ | GateType::QAlloc | GateType::QFree => {
+            panic!(
+                "GateType::{gate_type:?} is not a unitary gate and cannot be converted to a matrix"
+            )
+        }
+
+        // Non-physical / metadata / custom
+        GateType::Idle | GateType::MeasCrosstalkGlobalPayload
+        | GateType::MeasCrosstalkLocalPayload | GateType::Custom => {
+            panic!(
+                "GateType::{gate_type:?} cannot be converted to a unitary matrix"
+            )
         }
     }
 }
@@ -1158,8 +1612,8 @@ mod tests {
         assert_eq!(mat.nrows(), 4); // 2 qubits
 
         // Verify unitarity
-        let product = &mat * mat.adjoint();
-        let identity: DMatrix<Complex64> = DMatrix::identity(4, 4);
+        let product = mat.adjoint() * &mat;
+        let identity = UnitaryMatrix::identity(4);
         assert!(matrices_equiv_up_to_phase(&product, &identity, 1e-10));
     }
 

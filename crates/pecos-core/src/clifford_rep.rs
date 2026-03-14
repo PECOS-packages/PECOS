@@ -689,12 +689,12 @@ impl CliffordRep {
         cliff
     }
 
-    /// iSWAP gate: XI -> -ZY, IX -> YZ, ZI -> IZ, IZ -> ZI
+    /// iSWAP gate: XI -> ZY, IX -> YZ, ZI -> IZ, IZ -> ZI
     #[must_use]
     pub fn iswap(q0: usize, q1: usize) -> Self {
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
-        cliff.x_images[q0] = -(PauliString::z(q0) & PauliString::y(q1));
+        cliff.x_images[q0] = PauliString::z(q0) & PauliString::y(q1);
         cliff.x_images[q1] = PauliString::y(q0) & PauliString::z(q1);
         cliff.z_images[q0] = PauliString::z(q1);
         cliff.z_images[q1] = PauliString::z(q0);
@@ -713,16 +713,28 @@ impl CliffordRep {
         cliff
     }
 
-    /// iSWAP† gate (inverse of iSWAP)
+    /// iSWAP† gate: XI -> -ZY, IX -> -YZ, ZI -> IZ, IZ -> ZI
+    ///
+    /// Both X images have opposite signs from iSWAP (the Z images are the same).
     #[must_use]
     pub fn iswapdg(q0: usize, q1: usize) -> Self {
-        Self::iswap(q0, q1).inverse()
+        let num_qubits = q0.max(q1) + 1;
+        let mut cliff = Self::identity(num_qubits);
+        cliff.x_images[q0] = -(PauliString::z(q0) & PauliString::y(q1));
+        cliff.x_images[q1] = -(PauliString::y(q0) & PauliString::z(q1));
+        cliff.z_images[q0] = PauliString::z(q1);
+        cliff.z_images[q1] = PauliString::z(q0);
+        cliff
     }
 
     /// G† gate (inverse of G)
+    ///
+    /// G is self-inverse at the stabilizer level (G^2 = I for all generators),
+    /// so Gdg has the same CliffordRep as G. The two gates differ only by a
+    /// global phase at the unitary level.
     #[must_use]
     pub fn gdg(q0: usize, q1: usize) -> Self {
-        Self::g(q0, q1).inverse()
+        Self::g(q0, q1)
     }
 }
 
@@ -1989,5 +2001,403 @@ mod tests {
         for d in &doubles { assert!(d.is_valid()); }
 
         assert!(Id(3).is_valid());
+    }
+
+    // ====== CliffordRep::inverse() direct verification ======
+
+    #[test]
+    fn inverse_equals_known_dagger_all_1q() {
+        use crate::clifford::Clifford;
+        // For every 1q Clifford, CliffordRep::inverse() should match the
+        // known dagger gate's CliffordRep.
+        for &cliff in Clifford::all_1q() {
+            let rep = cliff.on_qubit(0);
+            let inv = rep.inverse();
+            let dagger_rep = cliff.inverse().on_qubit(0);
+            assert_eq!(
+                inv, dagger_rep,
+                "CliffordRep::inverse() disagrees with known dagger for {cliff}"
+            );
+        }
+    }
+
+    #[test]
+    fn inverse_equals_known_dagger_all_2q() {
+        use crate::clifford::Clifford;
+        // For every 2q Clifford, CliffordRep::inverse() should match the
+        // known dagger gate's CliffordRep.
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 1);
+            let inv = rep.inverse();
+            let dagger_rep = cliff.inverse().on_qubits(0, 1);
+            assert_eq!(
+                inv, dagger_rep,
+                "CliffordRep::inverse() disagrees with known dagger for {cliff}"
+            );
+        }
+    }
+
+    #[test]
+    fn inverse_is_involutory() {
+        use crate::clifford::Clifford;
+        // (C^{-1})^{-1} == C for all Cliffords
+        for &cliff in Clifford::all_1q() {
+            let rep = cliff.on_qubit(0);
+            let double_inv = rep.inverse().inverse();
+            assert_eq!(rep, double_inv, "inverse(inverse({cliff})) != {cliff}");
+        }
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 1);
+            let double_inv = rep.inverse().inverse();
+            assert_eq!(rep, double_inv, "inverse(inverse({cliff})) != {cliff}");
+        }
+    }
+
+    // ====== Validity preservation ======
+
+    #[test]
+    fn inverse_preserves_validity_all_gates() {
+        use crate::clifford::Clifford;
+        for &cliff in Clifford::all_1q() {
+            let inv = cliff.on_qubit(0).inverse();
+            assert!(inv.is_valid(), "inverse of {cliff} is not valid");
+        }
+        for &cliff in Clifford::all_2q() {
+            let inv = cliff.on_qubits(0, 1).inverse();
+            assert!(inv.is_valid(), "inverse of {cliff} is not valid");
+        }
+    }
+
+    #[test]
+    fn compose_preserves_validity_1q() {
+        use crate::clifford::Clifford;
+        let gates_1q: Vec<CliffordRep> =
+            Clifford::all_1q().iter().map(|c| c.on_qubit(0)).collect();
+        // Test a representative sample of compositions (all pairs would be 24*24=576)
+        for a in &gates_1q {
+            for b in &gates_1q {
+                let composed = a.compose(b);
+                assert!(
+                    composed.is_valid(),
+                    "compose of two 1q Cliffords is not valid"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compose_preserves_validity_2q() {
+        use crate::clifford::Clifford;
+        let gates_2q: Vec<CliffordRep> =
+            Clifford::all_2q().iter().map(|c| c.on_qubits(0, 1)).collect();
+        // Test all pairs (14*14=196)
+        for a in &gates_2q {
+            for b in &gates_2q {
+                let composed = a.compose(b);
+                assert!(
+                    composed.is_valid(),
+                    "compose of two 2q Cliffords is not valid"
+                );
+            }
+        }
+    }
+
+    // ====== single_qubit_cliffords matches named Cliffords ======
+
+    #[test]
+    fn single_qubit_cliffords_matches_named_set() {
+        use crate::clifford::Clifford;
+
+        let from_sequences = CliffordRep::single_qubit_cliffords(0);
+        let from_named: Vec<CliffordRep> =
+            Clifford::all_1q().iter().map(|c| c.on_qubit(0)).collect();
+
+        assert_eq!(from_sequences.len(), 24);
+        assert_eq!(from_named.len(), 24);
+
+        // Every sequence-generated Clifford appears in the named set
+        for (idx, seq_cliff) in from_sequences.iter().enumerate() {
+            assert!(
+                from_named.contains(seq_cliff),
+                "sequence Clifford #{idx} not found in named set"
+            );
+        }
+
+        // Every named Clifford appears in the sequence-generated set
+        for named_cliff in &from_named {
+            assert!(
+                from_sequences.contains(named_cliff),
+                "named Clifford not found in sequence set"
+            );
+        }
+
+        // All 24 are distinct
+        for idx_a in 0..from_sequences.len() {
+            for idx_b in (idx_a + 1)..from_sequences.len() {
+                assert_ne!(
+                    from_sequences[idx_a], from_sequences[idx_b],
+                    "single_qubit_cliffords() produced duplicates at indices {idx_a} and {idx_b}"
+                );
+            }
+        }
+    }
+
+    // ====== inverse on composed (non-named) 2q Cliffords ======
+
+    #[test]
+    fn inverse_correct_on_composed_2q_cliffords() {
+        use crate::clifford::Clifford;
+        let gates_2q: Vec<CliffordRep> =
+            Clifford::all_2q().iter().map(|c| c.on_qubits(0, 1)).collect();
+
+        // Test inverse on all pairwise compositions (14*14 = 196 composed gates)
+        for (idx_a, a) in gates_2q.iter().enumerate() {
+            for (idx_b, b) in gates_2q.iter().enumerate() {
+                let composed = a.compose(b);
+                assert_inverse_correct(&composed);
+                let _ = (idx_a, idx_b);
+            }
+        }
+    }
+
+    // ====== apply() on PauliStrings containing Y ======
+
+    #[test]
+    fn apply_y_uses_correct_phase() {
+        // Y = iXZ, so applying a Clifford to Y_q should give i * X_image * Z_image.
+        // Test on several gates where the result is known.
+
+        // H: X -> Z, Z -> X. So Y -> i*Z*X = i*(iY) = -Y.
+        let h = CliffordRep::h(0);
+        let y0 = PauliString::y(0);
+        let result = h.apply(&y0);
+        assert_eq!(result.get(0), Pauli::Y);
+        assert_eq!(result.phase(), QuarterPhase::MinusOne, "H: Y should map to -Y");
+
+        // SZ: X -> Y, Z -> Z. So Y -> i*Y*Z = i*(iX) = -X.
+        // (Y*Z = iX because Pauli product YZ = iX.)
+        let sz = CliffordRep::sz(0);
+        let result = sz.apply(&y0);
+        assert_eq!(result.get(0), Pauli::X);
+        assert_eq!(result.phase(), QuarterPhase::MinusOne, "SZ: Y should map to -X");
+
+        // SX: X -> X, Z -> -Y. So Y -> i*X*(-Y) = -i*X*Y = -i*(iZ) = Z.
+        let sx = CliffordRep::sx(0);
+        let result = sx.apply(&y0);
+        assert_eq!(result.get(0), Pauli::Z);
+        assert_eq!(result.phase(), QuarterPhase::PlusOne, "SX: Y should map to Z");
+    }
+
+    #[test]
+    fn apply_y_on_2q_gates() {
+        // CX: X0 -> X0X1, Z0 -> Z0, X1 -> X1, Z1 -> Z0Z1.
+        // Y0 = iX0Z0 -> i*(X0X1)*(Z0) = i*X0*Z0*X1 = Y0*X1.
+        let cx = CliffordRep::cx(0, 1);
+        let y0 = PauliString::y(0);
+        let result = cx.apply(&y0);
+        assert_eq!(result.get(0), Pauli::Y);
+        assert_eq!(result.get(1), Pauli::X);
+        assert_eq!(result.phase(), QuarterPhase::PlusOne, "CX: Y0 should map to Y0X1");
+
+        // Y1 = iX1Z1 -> i*(X1)*(Z0Z1) = i*Z0*X1*Z1 = Z0*(iX1Z1) = Z0*Y1.
+        let y1 = PauliString::y(1);
+        let result = cx.apply(&y1);
+        assert_eq!(result.get(0), Pauli::Z);
+        assert_eq!(result.get(1), Pauli::Y);
+        assert_eq!(result.phase(), QuarterPhase::PlusOne, "CX: Y1 should map to Z0Y1");
+    }
+
+    #[test]
+    fn apply_y_matches_matrix_conjugation_all_1q() {
+        // For every 1q Clifford, verify that apply(Y) matches the derived Y image
+        // computed from X and Z images: Y_image = i * X_image * Z_image.
+        use crate::clifford::Clifford;
+
+        for &cliff in Clifford::all_1q() {
+            let rep = cliff.on_qubit(0);
+            let y0 = PauliString::y(0);
+            let result = rep.apply(&y0);
+
+            // Derive expected: i * X_image * Z_image
+            let x_img = rep.x_image(0).clone();
+            let z_img = rep.z_image(0).clone();
+            let expected = i * (x_img * &z_img);
+
+            assert_eq!(
+                result, expected,
+                "{cliff}: apply(Y) disagrees with i * X_image * Z_image"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_y_matches_matrix_conjugation_all_2q() {
+        // For every 2q Clifford, verify apply(Y0) and apply(Y1).
+        use crate::clifford::Clifford;
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 1);
+
+            for q in 0..2 {
+                let y_q = PauliString::y(q);
+                let result = rep.apply(&y_q);
+
+                let x_img = rep.x_image(q).clone();
+                let z_img = rep.z_image(q).clone();
+                let expected = i * (x_img * &z_img);
+
+                assert_eq!(
+                    result, expected,
+                    "{cliff}: apply(Y{q}) disagrees with i * X{q}_image * Z{q}_image"
+                );
+            }
+        }
+    }
+
+    // ====== apply() on multi-qubit PauliStrings ======
+
+    #[test]
+    fn apply_multiqubit_pauli_strings() {
+        // Test apply() on 2-qubit PauliStrings like X0Z1, Y0Y1, etc.
+        // The rule: apply(P0 * P1) should equal apply(P0) * apply(P1)
+        // because Clifford conjugation distributes over Pauli products
+        // (up to phase from reordering, but apply handles this).
+        use crate::clifford::Clifford;
+
+        let paulis_1q = [PauliString::x(0), PauliString::y(0), PauliString::z(0)];
+        let paulis_1q_q1 = [PauliString::x(1), PauliString::y(1), PauliString::z(1)];
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 1);
+
+            for p0 in &paulis_1q {
+                for p1 in &paulis_1q_q1 {
+                    // Build 2-qubit Pauli string P0 * P1
+                    let combined = p0 * p1;
+
+                    // Apply the Clifford to the combined string
+                    let result = rep.apply(&combined);
+
+                    // Apply separately and multiply
+                    let img_p0 = rep.apply(p0);
+                    let img_p1 = rep.apply(p1);
+                    let expected = img_p0 * &img_p1;
+
+                    assert_eq!(
+                        result, expected,
+                        "{cliff}: apply({}) != apply({}) * apply({})",
+                        combined.to_sparse_str(),
+                        p0.to_sparse_str(),
+                        p1.to_sparse_str(),
+                    );
+                }
+            }
+        }
+    }
+
+    // ====== CliffordRep for 2q gates on non-adjacent qubits in 3-qubit register ======
+
+    #[test]
+    fn clifford_rep_nonadjacent_inverse_correct() {
+        // Test that CliffordRep for 2q gates on qubits (0, 2) has correct inverse.
+        use crate::clifford::Clifford;
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 2);
+            assert_inverse_correct(&rep);
+        }
+    }
+
+    #[test]
+    fn clifford_rep_nonadjacent_compose_with_adjacent() {
+        // Compose a gate on (0, 1) with a gate on (0, 2) and verify inverse.
+        let gates_01: Vec<CliffordRep> = vec![
+            CliffordRep::cx(0, 1),
+            CliffordRep::cz(0, 1),
+            CliffordRep::iswap(0, 1),
+            CliffordRep::g(0, 1),
+        ];
+
+        let gates_02: Vec<CliffordRep> = vec![
+            CliffordRep::cx(0, 2),
+            CliffordRep::cz(0, 2),
+            CliffordRep::iswap(0, 2),
+            CliffordRep::g(0, 2),
+        ];
+
+        for a in &gates_01 {
+            for b in &gates_02 {
+                let composed = a.compose(b);
+                assert_eq!(composed.num_qubits(), 3);
+                assert_inverse_correct(&composed);
+            }
+        }
+    }
+
+    #[test]
+    fn clifford_rep_nonadjacent_apply_identity_on_spectator() {
+        // A 2q gate on (0, 2) should act as identity on qubit 1.
+        // Verify: apply(X1) = X1 and apply(Z1) = Z1.
+        use crate::clifford::Clifford;
+
+        let x1 = PauliString::x(1);
+        let z1 = PauliString::z(1);
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 2);
+
+            let x1_img = rep.apply(&x1);
+            assert_eq!(
+                x1_img, x1,
+                "{cliff} on (0,2): X1 should be unchanged but got {}",
+                x1_img.to_sparse_str()
+            );
+
+            let z1_img = rep.apply(&z1);
+            assert_eq!(
+                z1_img, z1,
+                "{cliff} on (0,2): Z1 should be unchanged but got {}",
+                z1_img.to_sparse_str()
+            );
+        }
+    }
+
+    #[test]
+    fn clifford_rep_nonadjacent_matches_adjacent_pauli_images() {
+        // For each 2q Clifford, the Pauli images on qubits (0, 2) should
+        // be the "same" as on (0, 1) but with qubit 1 remapped to qubit 2.
+        use crate::clifford::Clifford;
+
+        for &cliff in Clifford::all_2q() {
+            let rep_01 = cliff.on_qubits(0, 1);
+            let rep_02 = cliff.on_qubits(0, 2);
+
+            // X0 image: in rep_01 the result involves qubits {0,1}.
+            // In rep_02 the result should be the same but with qubit 1 -> qubit 2.
+            let x0_01 = rep_01.x_image(0);
+            let x0_02 = rep_02.x_image(0);
+
+            // Compare: same Pauli on qubit 0, and qubit 1's Pauli in rep_01
+            // should appear on qubit 2 in rep_02.
+            assert_eq!(
+                x0_01.get(0), x0_02.get(0),
+                "{cliff}: X0 image qubit-0 component differs between (0,1) and (0,2)"
+            );
+            assert_eq!(
+                x0_01.get(1), x0_02.get(2),
+                "{cliff}: X0 image: qubit-1 component in (0,1) should match qubit-2 in (0,2)"
+            );
+            assert_eq!(
+                x0_01.phase(), x0_02.phase(),
+                "{cliff}: X0 image phase differs between (0,1) and (0,2)"
+            );
+
+            // Z0 image
+            let z0_01 = rep_01.z_image(0);
+            let z0_02 = rep_02.z_image(0);
+            assert_eq!(z0_01.get(0), z0_02.get(0), "{cliff}: Z0 q0 mismatch");
+            assert_eq!(z0_01.get(1), z0_02.get(2), "{cliff}: Z0 q1->q2 mismatch");
+            assert_eq!(z0_01.phase(), z0_02.phase(), "{cliff}: Z0 phase mismatch");
+        }
     }
 }

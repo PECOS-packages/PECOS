@@ -1990,21 +1990,74 @@ fn rotation_to_clifford_rep(
             Some(result)
         }
 
-        RotationType::RZZ => {
+        RotationType::RXX => {
             let q0 = qubits[0];
             let q1 = qubits[1];
 
             if angle == quarter {
-                Some(CliffordRep::cz(q0, q1).compose(&CliffordRep::identity(num_qubits)))
+                // SXX = RXX(π/2)
+                let cliff = CliffordRep::sxx(q0, q1);
+                Some(extend_clifford(cliff, num_qubits))
             } else if angle == neg_quarter || angle == three_quarter {
-                // SZZ† - CZ with phase adjustment
-                Some(CliffordRep::cz(q0, q1).compose(&CliffordRep::identity(num_qubits)))
+                // SXXdg = RXX(-π/2) = RXX(3π/2)
+                let cliff = CliffordRep::sxxdg(q0, q1);
+                Some(extend_clifford(cliff, num_qubits))
+            } else if angle == half || angle == neg_half {
+                // XX = RXX(π) = (X kron X)
+                let mut result = CliffordRep::identity(num_qubits);
+                result = apply_x(&result, q0);
+                result = apply_x(&result, q1);
+                Some(result)
             } else {
                 None
             }
         }
 
-        _ => None, // RXX, RYY at non-zero angles are not standard Cliffords
+        RotationType::RYY => {
+            let q0 = qubits[0];
+            let q1 = qubits[1];
+
+            if angle == quarter {
+                // SYY = RYY(π/2)
+                let cliff = CliffordRep::syy(q0, q1);
+                Some(extend_clifford(cliff, num_qubits))
+            } else if angle == neg_quarter || angle == three_quarter {
+                // SYYdg = RYY(-π/2) = RYY(3π/2)
+                let cliff = CliffordRep::syydg(q0, q1);
+                Some(extend_clifford(cliff, num_qubits))
+            } else if angle == half || angle == neg_half {
+                // YY = RYY(π) = (Y kron Y)
+                let mut result = CliffordRep::identity(num_qubits);
+                result = apply_y(&result, q0);
+                result = apply_y(&result, q1);
+                Some(result)
+            } else {
+                None
+            }
+        }
+
+        RotationType::RZZ => {
+            let q0 = qubits[0];
+            let q1 = qubits[1];
+
+            if angle == quarter {
+                // SZZ = RZZ(π/2)
+                let cliff = CliffordRep::szz(q0, q1);
+                Some(extend_clifford(cliff, num_qubits))
+            } else if angle == neg_quarter || angle == three_quarter {
+                // SZZdg = RZZ(-π/2) = RZZ(3π/2)
+                let cliff = CliffordRep::szzdg(q0, q1);
+                Some(extend_clifford(cliff, num_qubits))
+            } else if angle == half || angle == neg_half {
+                // ZZ = RZZ(π) = (Z kron Z)
+                let mut result = CliffordRep::identity(num_qubits);
+                result = apply_z(&result, q0);
+                result = apply_z(&result, q1);
+                Some(result)
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -2084,7 +2137,39 @@ fn gate_type_to_clifford_rep(
             let cliff = CliffordRep::swap(qubits[0], qubits[1]);
             Some(extend_clifford(cliff, num_qubits))
         }
-        _ => None, // Non-Clifford or unsupported gate
+        GateType::F => {
+            let cliff = CliffordRep::f(qubits[0]);
+            Some(extend_clifford(cliff, num_qubits))
+        }
+        GateType::Fdg => {
+            let cliff = CliffordRep::fdg(qubits[0]);
+            Some(extend_clifford(cliff, num_qubits))
+        }
+        GateType::SXX => {
+            let cliff = CliffordRep::sxx(qubits[0], qubits[1]);
+            Some(extend_clifford(cliff, num_qubits))
+        }
+        GateType::SXXdg => {
+            let cliff = CliffordRep::sxxdg(qubits[0], qubits[1]);
+            Some(extend_clifford(cliff, num_qubits))
+        }
+        GateType::SYY => {
+            let cliff = CliffordRep::syy(qubits[0], qubits[1]);
+            Some(extend_clifford(cliff, num_qubits))
+        }
+        GateType::SYYdg => {
+            let cliff = CliffordRep::syydg(qubits[0], qubits[1]);
+            Some(extend_clifford(cliff, num_qubits))
+        }
+        GateType::SZZ => {
+            let cliff = CliffordRep::szz(qubits[0], qubits[1]);
+            Some(extend_clifford(cliff, num_qubits))
+        }
+        GateType::SZZdg => {
+            let cliff = CliffordRep::szzdg(qubits[0], qubits[1]);
+            Some(extend_clifford(cliff, num_qubits))
+        }
+        _ => None, // Non-Clifford or parameterized gate
     }
 }
 
@@ -2335,6 +2420,24 @@ pub fn rotation_to_gate_type(rotation_type: RotationType, angle: Angle64) -> Opt
                 None
             }
         }
+        RotationType::RXX => {
+            if angle == quarter {
+                Some(GateType::SXX)
+            } else if angle == neg_quarter {
+                Some(GateType::SXXdg)
+            } else {
+                None
+            }
+        }
+        RotationType::RYY => {
+            if angle == quarter {
+                Some(GateType::SYY)
+            } else if angle == neg_quarter {
+                Some(GateType::SYYdg)
+            } else {
+                None
+            }
+        }
         RotationType::RZZ => {
             if angle == quarter {
                 Some(GateType::SZZ)
@@ -2344,7 +2447,6 @@ pub fn rotation_to_gate_type(rotation_type: RotationType, angle: Angle64) -> Opt
                 None
             }
         }
-        _ => None,
     }
 }
 
@@ -2359,7 +2461,10 @@ trait GateTypeExt {
 
 impl GateTypeExt for GateType {
     fn is_clifford(&self) -> bool {
-        use GateType::{CX, CY, CZ, H, I, SWAP, SX, SXdg, SY, SYdg, SZ, SZZ, SZZdg, SZdg, X, Y, Z};
+        use GateType::{
+            CX, CY, CZ, F, Fdg, H, I, SWAP, SX, SXX, SXXdg, SXdg, SY, SYY, SYYdg, SYdg, SZ,
+            SZZ, SZZdg, SZdg, X, Y, Z,
+        };
         matches!(
             self,
             I | X
@@ -2372,18 +2477,24 @@ impl GateTypeExt for GateType {
                 | SYdg
                 | SZ
                 | SZdg
+                | F
+                | Fdg
                 | CX
                 | CY
                 | CZ
                 | SWAP
+                | SXX
+                | SXXdg
+                | SYY
+                | SYYdg
                 | SZZ
                 | SZZdg
         )
     }
 
     fn is_self_adjoint(&self) -> bool {
-        use GateType::{CX, CY, CZ, H, I, SWAP, X, Y, Z};
-        matches!(self, I | X | Y | Z | H | CX | CY | CZ | SWAP)
+        use GateType::{CCX, CX, CY, CZ, H, I, SWAP, X, Y, Z};
+        matches!(self, I | X | Y | Z | H | CX | CY | CZ | SWAP | CCX)
     }
 }
 

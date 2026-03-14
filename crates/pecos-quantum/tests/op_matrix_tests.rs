@@ -16,11 +16,9 @@
 //! UnitaryRep (expression). This test verifies that the UnitaryRep expression
 //! produces a matrix equivalent (up to global phase) to the expected gate.
 
-use nalgebra::DMatrix;
-use num_complex::Complex64;
 use pecos_core::op;
 use pecos_core::Angle64;
-use pecos_quantum::unitary_matrix::{unitaries_equiv, ToMatrix};
+use pecos_quantum::unitary_matrix::{unitaries_equiv, ToMatrix, UnitaryMatrix};
 
 /// Verify a 1-qubit Clifford Op's UnitaryRep matches a reference UnitaryRep.
 fn check_1q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, name: &str) {
@@ -86,36 +84,36 @@ fn op_szdg_matches_unitary_rep() {
 
 #[test]
 fn op_h2_decomposition_correct() {
-    // H2 = SY * Z
-    let reference = pecos_core::unitary_rep::SY(0) * pecos_core::unitary_rep::Z(0);
+    // H2 = Z * SY (apply SY first, then Z)
+    let reference = pecos_core::unitary_rep::Z(0) * pecos_core::unitary_rep::SY(0);
     check_1q_clifford(op::H2(0), reference, "H2");
 }
 
 #[test]
 fn op_h3_decomposition_correct() {
-    // H3 = SZ * Y
-    let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::Y(0);
+    // H3 = Y * SZ (apply SZ first, then Y)
+    let reference = pecos_core::unitary_rep::Y(0) * pecos_core::unitary_rep::SZ(0);
     check_1q_clifford(op::H3(0), reference, "H3");
 }
 
 #[test]
 fn op_h4_decomposition_correct() {
-    // H4 = SZ * X
-    let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::X(0);
+    // H4 = X * SZ (apply SZ first, then X)
+    let reference = pecos_core::unitary_rep::X(0) * pecos_core::unitary_rep::SZ(0);
     check_1q_clifford(op::H4(0), reference, "H4");
 }
 
 #[test]
 fn op_h5_decomposition_correct() {
-    // H5 = SX * Z
-    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::Z(0);
+    // H5 = Z * SX (apply SX first, then Z)
+    let reference = pecos_core::unitary_rep::Z(0) * pecos_core::unitary_rep::SX(0);
     check_1q_clifford(op::H5(0), reference, "H5");
 }
 
 #[test]
 fn op_h6_decomposition_correct() {
-    // H6 = SX * Y
-    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::Y(0);
+    // H6 = Y * SX (apply SX first, then Y)
+    let reference = pecos_core::unitary_rep::Y(0) * pecos_core::unitary_rep::SX(0);
     check_1q_clifford(op::H6(0), reference, "H6");
 }
 
@@ -125,51 +123,56 @@ fn op_h6_decomposition_correct() {
 
 #[test]
 fn op_f_decomposition_correct() {
-    // F = SX * SZ
-    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0);
+    // F = SZ * SX (apply SX first, then SZ)
+    let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0);
     check_1q_clifford(op::F(0), reference, "F");
 }
 
 #[test]
 fn op_fdg_decomposition_correct() {
-    let reference = (pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0)).dg();
-    // F† should be equivalent to Fdg reference
+    let reference = (pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0)).dg();
     check_1q_clifford(op::Fdg(0), reference, "Fdg");
 }
 
 #[test]
 fn op_f2_decomposition_correct() {
-    let reference = pecos_core::unitary_rep::SX(0).dg() * pecos_core::unitary_rep::SY(0);
+    // F2 = SY * SXdg (apply SXdg first, then SY)
+    let reference = pecos_core::unitary_rep::SY(0) * pecos_core::unitary_rep::SX(0).dg();
     check_1q_clifford(op::F2(0), reference, "F2");
 }
 
 #[test]
 fn op_f2dg_decomposition_correct() {
-    let reference = pecos_core::unitary_rep::SY(0).dg() * pecos_core::unitary_rep::SX(0);
+    // F2dg = SX * SYdg (apply SYdg first, then SX)
+    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SY(0).dg();
     check_1q_clifford(op::F2dg(0), reference, "F2dg");
 }
 
 #[test]
 fn op_f3_decomposition_correct() {
-    let reference = pecos_core::unitary_rep::SX(0).dg() * pecos_core::unitary_rep::SZ(0);
+    // F3 = SZ * SXdg (apply SXdg first, then SZ)
+    let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0).dg();
     check_1q_clifford(op::F3(0), reference, "F3");
 }
 
 #[test]
 fn op_f3dg_decomposition_correct() {
-    let reference = pecos_core::unitary_rep::SZ(0).dg() * pecos_core::unitary_rep::SX(0);
+    // F3dg = SX * SZdg (apply SZdg first, then SX)
+    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0).dg();
     check_1q_clifford(op::F3dg(0), reference, "F3dg");
 }
 
 #[test]
 fn op_f4_decomposition_correct() {
-    let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0);
+    // F4 = SX * SZ (apply SZ first, then SX)
+    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0);
     check_1q_clifford(op::F4(0), reference, "F4");
 }
 
 #[test]
 fn op_f4dg_decomposition_correct() {
-    let reference = pecos_core::unitary_rep::SX(0).dg() * pecos_core::unitary_rep::SZ(0).dg();
+    // F4dg = SZdg * SXdg (apply SXdg first, then SZdg)
+    let reference = pecos_core::unitary_rep::SZ(0).dg() * pecos_core::unitary_rep::SX(0).dg();
     check_1q_clifford(op::F4dg(0), reference, "F4dg");
 }
 
@@ -252,24 +255,36 @@ fn op_szzdg_matches_unitary_rep() {
 // ============================================================================
 
 #[test]
+fn iswap_clifford_path_matches_op_path() {
+    use pecos_core::clifford::Clifford;
+    let cliff_mat = Clifford::ISWAP.to_matrix();
+    let op_mat = op::ISWAP(0, 1).to_matrix();
+    assert!(cliff_mat.equiv_up_to_phase(&op_mat), "ISWAP: Clifford path should match Op path");
+
+    let cliff_dg_mat = Clifford::ISWAPdg.to_matrix();
+    let op_dg_mat = op::ISWAPdg(0, 1).to_matrix();
+    assert!(cliff_dg_mat.equiv_up_to_phase(&op_dg_mat), "ISWAPdg: Clifford path should match Op path");
+}
+
+#[test]
 fn op_iswap_is_unitary() {
-    let mat = op::ISWAP(0, 1).into_unitary().unwrap().to_matrix();
+    let mat = op::ISWAP(0, 1).to_matrix();
     let n = mat.nrows();
     let product = mat.adjoint() * &mat;
-    let identity = DMatrix::<Complex64>::identity(n, n);
-    let diff = (&product - &identity).norm();
+    let identity = UnitaryMatrix::identity(n);
+    let diff = (product - identity).norm();
     assert!(diff < 1e-10, "iSWAP matrix is not unitary, diff = {diff}");
 }
 
 #[test]
 fn op_iswap_dagger_pair() {
-    let mat = op::ISWAP(0, 1).into_unitary().unwrap().to_matrix();
-    let mat_dg = op::ISWAPdg(0, 1).into_unitary().unwrap().to_matrix();
+    let mat = op::ISWAP(0, 1).to_matrix();
+    let mat_dg = op::ISWAPdg(0, 1).to_matrix();
     let product = &mat * &mat_dg;
     let n = product.nrows();
     let scale = product[(0, 0)];
-    let scaled_id = &DMatrix::<Complex64>::identity(n, n) * scale;
-    let diff = (&product - &scaled_id).norm();
+    let scaled_id = UnitaryMatrix::identity(n) * scale;
+    let diff = (product - scaled_id).norm();
     assert!(
         diff < 1e-10,
         "iSWAP * iSWAPdg is not identity (up to phase), diff = {diff}"
@@ -278,23 +293,23 @@ fn op_iswap_dagger_pair() {
 
 #[test]
 fn op_g_is_unitary() {
-    let mat = op::G(0, 1).into_unitary().unwrap().to_matrix();
+    let mat = op::G(0, 1).to_matrix();
     let n = mat.nrows();
     let product = mat.adjoint() * &mat;
-    let identity = DMatrix::<Complex64>::identity(n, n);
-    let diff = (&product - &identity).norm();
+    let identity = UnitaryMatrix::identity(n);
+    let diff = (product - identity).norm();
     assert!(diff < 1e-10, "G matrix is not unitary, diff = {diff}");
 }
 
 #[test]
 fn op_g_dagger_pair() {
-    let mat = op::G(0, 1).into_unitary().unwrap().to_matrix();
-    let mat_dg = op::Gdg(0, 1).into_unitary().unwrap().to_matrix();
+    let mat = op::G(0, 1).to_matrix();
+    let mat_dg = op::Gdg(0, 1).to_matrix();
     let product = &mat * &mat_dg;
     let n = product.nrows();
     let scale = product[(0, 0)];
-    let scaled_id = &DMatrix::<Complex64>::identity(n, n) * scale;
-    let diff = (&product - &scaled_id).norm();
+    let scaled_id = UnitaryMatrix::identity(n) * scale;
+    let diff = (product - scaled_id).norm();
     assert!(
         diff < 1e-10,
         "G * Gdg is not identity (up to phase), diff = {diff}"
@@ -318,11 +333,11 @@ fn dagger_pairs_are_inverse() {
         ("F4", op::F4(0), op::F4dg(0)),
     ];
 
-    let identity_2x2 = DMatrix::<Complex64>::identity(2, 2);
+    let identity_2x2 = UnitaryMatrix::identity(2);
 
     for (name, gate, gate_dg) in pairs {
-        let mat = gate.into_unitary().unwrap().to_matrix();
-        let mat_dg = gate_dg.into_unitary().unwrap().to_matrix();
+        let mat = gate.to_matrix();
+        let mat_dg = gate_dg.to_matrix();
         let product = &mat * &mat_dg;
 
         // Check product is proportional to identity

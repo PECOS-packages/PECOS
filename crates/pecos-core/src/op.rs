@@ -836,7 +836,7 @@ pub fn H2(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h2(q.0),
-        crate::unitary_rep::SY(q) * crate::unitary_rep::Z(q),
+        crate::unitary_rep::Z(q) * crate::unitary_rep::SY(q),
     )
 }
 
@@ -847,7 +847,7 @@ pub fn H3(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h3(q.0),
-        crate::unitary_rep::SZ(q) * crate::unitary_rep::Y(q),
+        crate::unitary_rep::Y(q) * crate::unitary_rep::SZ(q),
     )
 }
 
@@ -858,7 +858,7 @@ pub fn H4(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h4(q.0),
-        crate::unitary_rep::SZ(q) * crate::unitary_rep::X(q),
+        crate::unitary_rep::X(q) * crate::unitary_rep::SZ(q),
     )
 }
 
@@ -869,7 +869,7 @@ pub fn H5(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h5(q.0),
-        crate::unitary_rep::SX(q) * crate::unitary_rep::Z(q),
+        crate::unitary_rep::Z(q) * crate::unitary_rep::SX(q),
     )
 }
 
@@ -880,7 +880,7 @@ pub fn H6(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h6(q.0),
-        crate::unitary_rep::SX(q) * crate::unitary_rep::Y(q),
+        crate::unitary_rep::Y(q) * crate::unitary_rep::SX(q),
     )
 }
 
@@ -891,7 +891,7 @@ pub fn F(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f(q.0),
-        crate::unitary_rep::SX(q) * crate::unitary_rep::SZ(q),
+        crate::unitary_rep::SZ(q) * crate::unitary_rep::SX(q),
     )
 }
 
@@ -902,7 +902,7 @@ pub fn Fdg(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::fdg(q.0),
-        crate::unitary_rep::SZ(q).dg() * crate::unitary_rep::SX(q).dg(),
+        crate::unitary_rep::SX(q).dg() * crate::unitary_rep::SZ(q).dg(),
     )
 }
 
@@ -913,7 +913,7 @@ pub fn F2(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f2(q.0),
-        crate::unitary_rep::SX(q).dg() * crate::unitary_rep::SY(q),
+        crate::unitary_rep::SY(q) * crate::unitary_rep::SX(q).dg(),
     )
 }
 
@@ -924,7 +924,7 @@ pub fn F2dg(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f2dg(q.0),
-        crate::unitary_rep::SY(q).dg() * crate::unitary_rep::SX(q),
+        crate::unitary_rep::SX(q) * crate::unitary_rep::SY(q).dg(),
     )
 }
 
@@ -935,40 +935,40 @@ pub fn F3(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f3(q.0),
-        crate::unitary_rep::SX(q).dg() * crate::unitary_rep::SZ(q),
+        crate::unitary_rep::SZ(q) * crate::unitary_rep::SX(q).dg(),
     )
 }
 
-/// F3-dagger gate (SZdg * SX decomposition).
+/// F3-dagger gate (SX * SZdg decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F3dg(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f3dg(q.0),
-        crate::unitary_rep::SZ(q).dg() * crate::unitary_rep::SX(q),
+        crate::unitary_rep::SX(q) * crate::unitary_rep::SZ(q).dg(),
     )
 }
 
-/// F4 gate (SZ * SX decomposition).
+/// F4 gate (SX * SZ decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F4(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f4(q.0),
-        crate::unitary_rep::SZ(q) * crate::unitary_rep::SX(q),
+        crate::unitary_rep::SX(q) * crate::unitary_rep::SZ(q),
     )
 }
 
-/// F4-dagger gate (SXdg * SZdg decomposition).
+/// F4-dagger gate (SZdg * SXdg decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F4dg(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f4dg(q.0),
-        crate::unitary_rep::SX(q).dg() * crate::unitary_rep::SZ(q).dg(),
+        crate::unitary_rep::SZ(q).dg() * crate::unitary_rep::SX(q).dg(),
     )
 }
 
@@ -1087,12 +1087,11 @@ pub fn SZZdg(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
 pub fn ISWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     let a = q0.into();
     let b = q1.into();
-    // iSWAP = SXX * SYY * SWAP (up to global phase)
+    // iSWAP = exp(+i*pi/4*(XX+YY)) = RXX(-pi/2) * RYY(-pi/2)
     cliff(
         CliffordRep::iswap(a.0, b.0),
-        crate::unitary_rep::RXX(Angle64::QUARTER_TURN, a, b)
-            * crate::unitary_rep::RYY(Angle64::QUARTER_TURN, a, b)
-            * crate::unitary_rep::SWAP(a, b),
+        crate::unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b)
+            * crate::unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b),
     )
 }
 
@@ -1104,9 +1103,8 @@ pub fn ISWAPdg(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     let b = q1.into();
     cliff(
         CliffordRep::iswapdg(a.0, b.0),
-        (crate::unitary_rep::RXX(Angle64::QUARTER_TURN, a, b)
-            * crate::unitary_rep::RYY(Angle64::QUARTER_TURN, a, b)
-            * crate::unitary_rep::SWAP(a, b))
+        (crate::unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b)
+            * crate::unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b))
         .dg(),
     )
 }
@@ -1117,12 +1115,12 @@ pub fn ISWAPdg(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
 pub fn G(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     let a = q0.into();
     let b = q1.into();
-    // G = iSWAP * CZ
+    // G = CZ * H(q0) * H(q1) * CZ
     cliff(
         CliffordRep::g(a.0, b.0),
-        crate::unitary_rep::RXX(Angle64::QUARTER_TURN, a, b)
-            * crate::unitary_rep::RYY(Angle64::QUARTER_TURN, a, b)
-            * crate::unitary_rep::SWAP(a, b)
+        crate::unitary_rep::CZ(a, b)
+            * crate::unitary_rep::H(a)
+            * crate::unitary_rep::H(b)
             * crate::unitary_rep::CZ(a, b),
     )
 }
@@ -1135,9 +1133,9 @@ pub fn Gdg(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     let b = q1.into();
     cliff(
         CliffordRep::gdg(a.0, b.0),
-        (crate::unitary_rep::RXX(Angle64::QUARTER_TURN, a, b)
-            * crate::unitary_rep::RYY(Angle64::QUARTER_TURN, a, b)
-            * crate::unitary_rep::SWAP(a, b)
+        (crate::unitary_rep::CZ(a, b)
+            * crate::unitary_rep::H(a)
+            * crate::unitary_rep::H(b)
             * crate::unitary_rep::CZ(a, b))
         .dg(),
     )

@@ -76,34 +76,20 @@ impl BitAnd for Pauli {
 
 impl Clifford {
     /// Embeds this Clifford gate on default qubits as a `UnitaryRep`.
-    ///
-    /// # Panics
-    /// Panics for Clifford variants without a matching `GateType` (H2-H6, F2-F4, ISWAP, G).
     fn to_unitary_rep_default(self) -> UnitaryRep {
-        let gt = self.to_gate_type().unwrap_or_else(|| {
-            panic!("Clifford::{self} has no matching GateType for UnitaryRep conversion")
-        });
-        let u = Unitary::Named(gt);
         if self.is_1q() {
-            u.on_qubit(0)
+            self.to_unitary_rep_on_qubit(0)
         } else {
-            u.on_qubits(0, 1)
+            self.to_unitary_rep_on_qubits(0, 1)
         }
     }
 
     /// Embeds this Clifford gate on qubits offset by `n` as a `UnitaryRep`.
-    ///
-    /// # Panics
-    /// Panics for Clifford variants without a matching `GateType` (H2-H6, F2-F4, ISWAP, G).
     fn to_unitary_rep_offset(self, offset: usize) -> UnitaryRep {
-        let gt = self.to_gate_type().unwrap_or_else(|| {
-            panic!("Clifford::{self} has no matching GateType for UnitaryRep conversion")
-        });
-        let u = Unitary::Named(gt);
         if self.is_1q() {
-            u.on_qubit(offset)
+            self.to_unitary_rep_on_qubit(offset)
         } else {
-            u.on_qubits(offset, offset + 1)
+            self.to_unitary_rep_on_qubits(offset, offset + 1)
         }
     }
 }
@@ -388,12 +374,20 @@ impl BitAnd<CliffordRep> for UnitaryRep {
     }
 }
 
-/// Convert a `CliffordRep` to a `UnitaryRep` by matching against known
+/// Convert a [`CliffordRep`] to a [`UnitaryRep`] by matching against known
 /// Clifford gates.
 ///
-/// Tries to identify the CliffordRep as a tensor product of single-qubit
+/// Tries to identify the `CliffordRep` as a tensor product of single-qubit
 /// Cliffords first, then falls back to matching known 2-qubit gates.
-fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
+/// Works for all 38 Clifford variants, including those without `GateType`
+/// entries.
+///
+/// # Panics
+///
+/// Panics if the `CliffordRep` cannot be matched to any known gate
+/// decomposition (e.g. Cliffords on 3+ qubits that are not a tensor
+/// product of 1q and 2q gates).
+pub fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
     use crate::clifford::Clifford;
 
     let nq = cr.num_qubits();
@@ -412,12 +406,7 @@ fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
             if *cliff_rep.x_image(q) == *cr.x_image(q)
                 && *cliff_rep.z_image(q) == *cr.z_image(q)
             {
-                if let Some(gt) = cliff.to_gate_type() {
-                    parts.push(Unitary::Named(gt).on_qubit(q));
-                } else {
-                    all_matched = false;
-                    break;
-                }
+                parts.push(cliff.to_unitary_rep_on_qubit(q));
                 found = true;
                 break;
             }
@@ -429,11 +418,7 @@ fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
     }
 
     if all_matched && !parts.is_empty() {
-        // Verify the full CliffordRep matches
-        let candidate: UnitaryRep = parts.into_iter().reduce(|a, b| a & b).unwrap();
-        if candidate.to_clifford_rep(nq).as_ref() == Some(cr) {
-            return candidate;
-        }
+        return parts.into_iter().reduce(|a, b| a & b).unwrap();
     }
 
     // Fallback: try known 2q Cliffords
@@ -443,9 +428,7 @@ fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
                 for &cliff in Clifford::all_2q() {
                     let cliff_rep = cliff.on_qubits(q0, q1).extended_to(nq);
                     if cliff_rep == *cr {
-                        if let Some(gt) = cliff.to_gate_type() {
-                            return Unitary::Named(gt).on_qubits(q0, q1);
-                        }
+                        return cliff.to_unitary_rep_on_qubits(q0, q1);
                     }
                 }
             }
@@ -744,5 +727,42 @@ mod tests {
         assert_eq!(Clifford::H2.to_gate_type(), None);
         assert_eq!(Clifford::ISWAP.to_gate_type(), None);
         assert_eq!(Clifford::G.to_gate_type(), None);
+    }
+
+    #[test]
+    fn clifford_rep_inverse_correctness_1q() {
+        use crate::clifford_rep::CliffordRep;
+
+        // SZ and SZdg should be inverses
+        let sz = CliffordRep::sz(0);
+        let szdg = CliffordRep::szdg(0);
+        let sz_inv = sz.inverse();
+        assert_eq!(sz_inv, szdg, "SZ.inverse() should equal SZdg");
+
+        // SX and SXdg
+        let sx = CliffordRep::sx(0);
+        let sxdg = CliffordRep::sxdg(0);
+        let sx_inv = sx.inverse();
+        assert_eq!(sx_inv, sxdg, "SX.inverse() should equal SXdg");
+    }
+
+    #[test]
+    fn clifford_rep_inverse_correctness_2q() {
+        use crate::clifford_rep::CliffordRep;
+
+        // SZZ and SZZdg
+        let szz = CliffordRep::szz(0, 1);
+        let szzdg = CliffordRep::szzdg(0, 1);
+        assert_ne!(szz, szzdg, "SZZ and SZZdg should be distinct");
+
+        // ISWAP and ISWAPdg differ in their X images (signs are flipped)
+        let iswap = CliffordRep::iswap(0, 1);
+        let iswapdg = CliffordRep::iswapdg(0, 1);
+        assert_ne!(iswap, iswapdg, "ISWAP and ISWAPdg should be distinct");
+
+        // G is self-inverse at the stabilizer level (G^2 = I for all generators)
+        let g = CliffordRep::g(0, 1);
+        let gdg = CliffordRep::gdg(0, 1);
+        assert_eq!(g, gdg, "G is self-inverse at the stabilizer level");
     }
 }

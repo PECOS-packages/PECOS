@@ -185,8 +185,7 @@ impl QisIrParser {
         let mut switch_value = String::new();
         let mut switch_default = String::new();
         let mut switch_cases: Vec<(i64, String)> = Vec::new();
-        let case_re =
-            Regex::new(r"i\d+\s+(-?\d+),\s*label\s+%(\S+)").expect("valid regex");
+        let case_re = Regex::new(r"i\d+\s+(-?\d+),\s*label\s+%(\S+)").expect("valid regex");
 
         for line in ir.lines() {
             let trimmed = line.trim();
@@ -270,7 +269,12 @@ impl QisIrParser {
             }
 
             // Terminators
-            if let Some(term) = self.parse_terminator_line(trimmed, &mut in_switch, &mut switch_value, &mut switch_default) {
+            if let Some(term) = self.parse_terminator_line(
+                trimmed,
+                &mut in_switch,
+                &mut switch_value,
+                &mut switch_default,
+            ) {
                 current_term = Some(term);
                 continue;
             }
@@ -316,9 +320,8 @@ impl QisIrParser {
         }
 
         // Conditional branch: br i1 %cond, label %true, label %false
-        let cond_br_re =
-            Regex::new(r"br\s+i1\s+(%\S+),\s*label\s+%(\S+),\s*label\s+%(\S+)")
-                .expect("valid regex");
+        let cond_br_re = Regex::new(r"br\s+i1\s+(%\S+),\s*label\s+%(\S+),\s*label\s+%(\S+)")
+            .expect("valid regex");
         if let Some(caps) = cond_br_re.captures(line) {
             return Some(RawTerminator::CondBr {
                 cond: caps[1].to_string(),
@@ -334,10 +337,8 @@ impl QisIrParser {
         }
 
         // Switch: switch i32 %val, label %default [
-        let switch_re = Regex::new(
-            r"switch\s+i\d+\s+(%\S+),\s*label\s+%(\S+)\s*\[",
-        )
-        .expect("valid regex");
+        let switch_re =
+            Regex::new(r"switch\s+i\d+\s+(%\S+),\s*label\s+%(\S+)\s*\[").expect("valid regex");
         if let Some(caps) = switch_re.captures(line) {
             *switch_value = caps[1].to_string();
             *switch_default = caps[2].to_string();
@@ -345,8 +346,7 @@ impl QisIrParser {
             // Check if entire switch is on one line (contains `]`)
             if line.contains(']') {
                 let mut cases = Vec::new();
-                let case_re =
-                    Regex::new(r"i\d+\s+(-?\d+),\s*label\s+%(\S+)").expect("valid regex");
+                let case_re = Regex::new(r"i\d+\s+(-?\d+),\s*label\s+%(\S+)").expect("valid regex");
                 // Find cases after the `[`
                 if let Some(bracket_pos) = line.find('[') {
                     let cases_str = &line[bracket_pos + 1..];
@@ -470,9 +470,7 @@ impl QisIrParser {
 
             RawTerminator::RetVal(val) => {
                 let ssa = self.resolve_value(val);
-                Some(Terminator::Return {
-                    values: vec![ssa],
-                })
+                Some(Terminator::Return { values: vec![ssa] })
             }
 
             RawTerminator::Br(target) => {
@@ -540,8 +538,7 @@ impl QisIrParser {
     fn parse_instruction(&mut self, line: &str) -> Result<Option<Vec<Instruction>>> {
         // ---- Call instructions ----
         let call_re =
-            Regex::new(r"(?:(%[^\s]+)\s*=\s*)?call\s+\S+\s+@([^\s(]+)\(")
-                .expect("valid regex");
+            Regex::new(r"(?:(%[^\s]+)\s*=\s*)?call\s+\S+\s+@([^\s(]+)\(").expect("valid regex");
 
         if let Some(caps) = call_re.captures(line) {
             let result_name = caps.get(1).map(|m| m.as_str().to_string());
@@ -625,10 +622,9 @@ impl QisIrParser {
         }
 
         // ---- Select: %r = select i1 %cond, <ty> %a, <ty> %b ----
-        let select_re = Regex::new(
-            r"^(%\S+)\s*=\s*select\s+i1\s+(%?\S+),\s*\S+\s+(%?\S+),\s*\S+\s+(%?\S+)$",
-        )
-        .expect("valid regex");
+        let select_re =
+            Regex::new(r"^(%\S+)\s*=\s*select\s+i1\s+(%?\S+),\s*\S+\s+(%?\S+),\s*\S+\s+(%?\S+)$")
+                .expect("valid regex");
         if let Some(caps) = select_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let cond = self.resolve_or_const(&caps[2]);
@@ -647,8 +643,7 @@ impl QisIrParser {
 
         // ---- Alloca: %r = alloca <type>, align <n> ----
         let alloca_re =
-            Regex::new(r"^(%\S+)\s*=\s*alloca\s+(.+?)(?:,\s*align\s+\d+)?$")
-                .expect("valid regex");
+            Regex::new(r"^(%\S+)\s*=\s*alloca\s+(.+?)(?:,\s*align\s+\d+)?$").expect("valid regex");
         if let Some(caps) = alloca_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let ty = parse_llvm_type(&caps[2]);
@@ -666,10 +661,9 @@ impl QisIrParser {
         }
 
         // ---- Load: %r = load <type>, <type>* %ptr, align <n> ----
-        let load_re = Regex::new(
-            r"^(%\S+)\s*=\s*load\s+(.+?),\s*\S+\s+(%\S+)(?:,\s*align\s+\d+)?$",
-        )
-        .expect("valid regex");
+        let load_re =
+            Regex::new(r"^(%\S+)\s*=\s*load\s+(.+?),\s*\S+\s+(%\S+)(?:,\s*align\s+\d+)?$")
+                .expect("valid regex");
         if let Some(caps) = load_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let ty = parse_llvm_type(&caps[2]);
@@ -686,10 +680,8 @@ impl QisIrParser {
         }
 
         // ---- Store: store <type> <val>, <type>* %ptr, align <n> ----
-        let store_re = Regex::new(
-            r"^store\s+\S+\s+(%?\S+),\s*\S+\s+(%\S+)(?:,\s*align\s+\d+)?$",
-        )
-        .expect("valid regex");
+        let store_re = Regex::new(r"^store\s+\S+\s+(%?\S+),\s*\S+\s+(%\S+)(?:,\s*align\s+\d+)?$")
+            .expect("valid regex");
         if let Some(caps) = store_re.captures(line) {
             let val = self.resolve_or_const(&caps[1]);
             let ptr = self.resolve_value(&caps[2]);
@@ -705,10 +697,9 @@ impl QisIrParser {
         }
 
         // ---- Type casts: trunc, zext, sext, bitcast ----
-        let cast_re = Regex::new(
-            r"^(%\S+)\s*=\s*(?:trunc|zext|sext|bitcast)\s+\S+\s+(%\S+)\s+to\s+\S+$",
-        )
-        .expect("valid regex");
+        let cast_re =
+            Regex::new(r"^(%\S+)\s*=\s*(?:trunc|zext|sext|bitcast)\s+\S+\s+(%\S+)\s+to\s+\S+$")
+                .expect("valid regex");
         if let Some(caps) = cast_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let src = self.resolve_value(&caps[2]);
@@ -726,10 +717,8 @@ impl QisIrParser {
         // ---- Aggregate ops: insertvalue, extractvalue ----
         // These are tracked for SSA value resolution but don't produce
         // meaningful PHIR ops for the quantum pipeline.
-        let extract_re = Regex::new(
-            r"^(%\S+)\s*=\s*extractvalue\s+.+\s+(%\S+),\s*(\d+)$",
-        )
-        .expect("valid regex");
+        let extract_re =
+            Regex::new(r"^(%\S+)\s*=\s*extractvalue\s+.+\s+(%\S+),\s*(\d+)$").expect("valid regex");
         if let Some(caps) = extract_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let agg = self.resolve_value(&caps[2]);
@@ -744,10 +733,9 @@ impl QisIrParser {
             }]));
         }
 
-        let insertvalue_re = Regex::new(
-            r"^(%\S+)\s*=\s*insertvalue\s+.+\s+(%?\S+),\s*\S+\s+(%?\S+),\s*\d+$",
-        )
-        .expect("valid regex");
+        let insertvalue_re =
+            Regex::new(r"^(%\S+)\s*=\s*insertvalue\s+.+\s+(%?\S+),\s*\S+\s+(%?\S+),\s*\d+$")
+                .expect("valid regex");
         if let Some(caps) = insertvalue_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let _agg = self.resolve_or_const(&caps[2]);
@@ -773,8 +761,7 @@ impl QisIrParser {
         }
 
         let mut args = Vec::new();
-        let inttoptr_re =
-            Regex::new(r"inttoptr\s*\(\s*i\d+\s+(\d+)\s+to\b").expect("valid regex");
+        let inttoptr_re = Regex::new(r"inttoptr\s*\(\s*i\d+\s+(\d+)\s+to\b").expect("valid regex");
 
         for part in split_args(args_str) {
             let part = part.trim();
@@ -1118,9 +1105,12 @@ impl QisIrParser {
         if val.starts_with('%') {
             return self.resolve_value(val);
         }
-        if val == "true" || val == "false"
-            || val == "null" || val == "undef"
-            || val == "poison" || val == "zeroinitializer"
+        if val == "true"
+            || val == "false"
+            || val == "null"
+            || val == "undef"
+            || val == "poison"
+            || val == "zeroinitializer"
         {
             return self.fresh_value();
         }
@@ -1242,11 +1232,7 @@ fn parse_phi_line(line: &str) -> Option<RawPhi> {
 /// If a line defines an SSA result (`%name = ...`), register it in the value
 /// map so that forward references resolve correctly. Does not generate PHIR
 /// instructions.
-fn register_result_name(
-    line: &str,
-    value_map: &mut BTreeMap<String, SSAValue>,
-    next_id: &mut u32,
-) {
+fn register_result_name(line: &str, value_map: &mut BTreeMap<String, SSAValue>, next_id: &mut u32) {
     let re = Regex::new(r"^(%\S+)\s*=").expect("valid regex");
     if let Some(caps) = re.captures(line) {
         let name = caps[1].to_string();
@@ -1347,8 +1333,7 @@ fn normalize_qis_name(name: &str) -> String {
     }
 
     // QIS gate operations
-    let re =
-        Regex::new(r"__quantum__qis__([a-z0-9_]+?)(?:__body|__adj)?$").expect("valid regex");
+    let re = Regex::new(r"__quantum__qis__([a-z0-9_]+?)(?:__body|__adj)?$").expect("valid regex");
     if let Some(caps) = re.captures(name) {
         let gate = &caps[1];
         if name.ends_with("__adj") {
@@ -1368,9 +1353,7 @@ fn parse_llvm_type(s: &str) -> crate::types::Type {
         "i8" | "i16" | "i32" | "i64" | "i128" => {
             crate::types::Type::Int(crate::types::IntWidth::I64)
         }
-        "double" | "float" => {
-            crate::types::Type::Float(crate::types::FloatPrecision::F64)
-        }
+        "double" | "float" => crate::types::Type::Float(crate::types::FloatPrecision::F64),
         _ if s.starts_with('{') => crate::types::Type::Unknown,
         _ => crate::types::Type::Unknown,
     }
@@ -1412,10 +1395,7 @@ mod tests {
             normalize_qis_name("__quantum__rt__qubit_allocate"),
             "qalloc"
         );
-        assert_eq!(
-            normalize_qis_name("__quantum__rt__qubit_release"),
-            "qfree"
-        );
+        assert_eq!(normalize_qis_name("__quantum__rt__qubit_release"), "qfree");
     }
 
     #[test]
@@ -1706,10 +1686,7 @@ end:
             ..
         } = term
         {
-            assert_eq!(
-                *default_target,
-                BlockRef::Label("default".to_string())
-            );
+            assert_eq!(*default_target, BlockRef::Label("default".to_string()));
             assert_eq!(cases.len(), 2);
             assert_eq!(cases[0].value, 0);
             assert_eq!(cases[1].value, 1);
@@ -2020,11 +1997,7 @@ cont:
         // Cont block should have block argument from phi and an add
         let cont = &module.body.blocks[2];
         assert_eq!(cont.arguments.len(), 1);
-        let cont_ops: Vec<String> = cont
-            .operations
-            .iter()
-            .map(|i| i.operation.name())
-            .collect();
+        let cont_ops: Vec<String> = cont.operations.iter().map(|i| i.operation.name()).collect();
         assert!(cont_ops.contains(&"arith.add".to_string()));
     }
 }

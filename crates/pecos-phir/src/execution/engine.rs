@@ -640,10 +640,10 @@ mod tests {
         };
 
         let mut engine = PhirEngine::new(module).unwrap();
-        engine.processor.final_exports.insert(
-            "bool_val".to_string(),
-            TypedValue::Bool(true),
-        );
+        engine
+            .processor
+            .final_exports
+            .insert("bool_val".to_string(), TypedValue::Bool(true));
 
         let shot = engine.get_results().unwrap();
         assert_eq!(shot.data.get("bool_val"), Some(&Data::U32(1)));
@@ -669,14 +669,17 @@ mod tests {
 
         let mut engine = PhirEngine::new(module).unwrap();
         let f64_val = 3.5_f64;
-        engine.processor.final_exports.insert(
-            "float_val".to_string(),
-            TypedValue::F64(f64_val),
-        );
+        engine
+            .processor
+            .final_exports
+            .insert("float_val".to_string(), TypedValue::F64(f64_val));
 
         let shot = engine.get_results().unwrap();
         // F64 is transported as I64 via to_bits
-        assert_eq!(shot.data.get("float_val"), Some(&Data::I64(f64_val.to_bits() as i64)));
+        assert_eq!(
+            shot.data.get("float_val"),
+            Some(&Data::I64(f64_val.to_bits() as i64))
+        );
     }
 
     #[test]
@@ -731,10 +734,10 @@ mod tests {
         let mut bits = vec![false; 32];
         bits[0] = true;
         bits[31] = true;
-        engine.processor.final_exports.insert(
-            "bits32".to_string(),
-            TypedValue::BitVec(bits),
-        );
+        engine
+            .processor
+            .final_exports
+            .insert("bits32".to_string(), TypedValue::BitVec(bits));
 
         let shot = engine.get_results().unwrap();
         assert_eq!(shot.data.get("bits32"), Some(&Data::U32(0x8000_0001)));
@@ -763,10 +766,10 @@ mod tests {
         let mut bits = vec![false; 40];
         bits[0] = true;
         bits[35] = true;
-        engine.processor.final_exports.insert(
-            "bits40".to_string(),
-            TypedValue::BitVec(bits),
-        );
+        engine
+            .processor
+            .final_exports
+            .insert("bits40".to_string(), TypedValue::BitVec(bits));
 
         let shot = engine.get_results().unwrap();
         // Should use U64 for >32 bits
@@ -793,22 +796,22 @@ mod tests {
 
         let mut engine = PhirEngine::new(module).unwrap();
 
-        engine.processor.final_exports.insert(
-            "i8_val".to_string(),
-            TypedValue::I8(42),
-        );
-        engine.processor.final_exports.insert(
-            "i16_val".to_string(),
-            TypedValue::I16(-100),
-        );
-        engine.processor.final_exports.insert(
-            "u8_val".to_string(),
-            TypedValue::U8(255),
-        );
-        engine.processor.final_exports.insert(
-            "u16_val".to_string(),
-            TypedValue::U16(1000),
-        );
+        engine
+            .processor
+            .final_exports
+            .insert("i8_val".to_string(), TypedValue::I8(42));
+        engine
+            .processor
+            .final_exports
+            .insert("i16_val".to_string(), TypedValue::I16(-100));
+        engine
+            .processor
+            .final_exports
+            .insert("u8_val".to_string(), TypedValue::U8(255));
+        engine
+            .processor
+            .final_exports
+            .insert("u16_val".to_string(), TypedValue::U16(1000));
 
         let shot = engine.get_results().unwrap();
         assert_eq!(shot.data.get("i8_val"), Some(&Data::I32(42)));
@@ -837,22 +840,22 @@ mod tests {
 
         let mut engine = PhirEngine::new(module).unwrap();
 
-        engine.processor.final_exports.insert(
-            "i32_val".to_string(),
-            TypedValue::I32(-7),
-        );
-        engine.processor.final_exports.insert(
-            "i64_val".to_string(),
-            TypedValue::I64(-99),
-        );
-        engine.processor.final_exports.insert(
-            "u32_val".to_string(),
-            TypedValue::U32(12345),
-        );
-        engine.processor.final_exports.insert(
-            "u64_val".to_string(),
-            TypedValue::U64(999_999),
-        );
+        engine
+            .processor
+            .final_exports
+            .insert("i32_val".to_string(), TypedValue::I32(-7));
+        engine
+            .processor
+            .final_exports
+            .insert("i64_val".to_string(), TypedValue::I64(-99));
+        engine
+            .processor
+            .final_exports
+            .insert("u32_val".to_string(), TypedValue::U32(12345));
+        engine
+            .processor
+            .final_exports
+            .insert("u64_val".to_string(), TypedValue::U64(999_999));
 
         let shot = engine.get_results().unwrap();
         assert_eq!(shot.data.get("i32_val"), Some(&Data::I32(-7)));

@@ -11,7 +11,7 @@ use pecos::prelude::*;
 // Helper
 // ---------------------------------------------------------------------------
 
-/// Parse HUGR bytes, build a PhirEngine, run through SimBuilder, and return
+/// Parse HUGR bytes, build a `PhirEngine`, run through `SimBuilder`, and return
 /// the "c" register values for each shot.
 fn run_hugr(hugr_bytes: &[u8], seed: u64, shots: usize) -> Vec<u32> {
     let builder = pecos_phir::phir_engine()
@@ -43,7 +43,10 @@ fn hugr_single_hadamard_runs() {
     assert_eq!(results.len(), 100, "should get 100 shot results");
     // Every result should be 0 or 1 (single qubit measurement)
     for &v in &results {
-        assert!(v == 0 || v == 1, "single qubit measurement should be 0 or 1, got {v}");
+        assert!(
+            v == 0 || v == 1,
+            "single qubit measurement should be 0 or 1, got {v}"
+        );
     }
 }
 
@@ -99,7 +102,7 @@ fn hugr_rz_x_deterministic() {
 // Cross-engine: HUGR vs QASM for equivalent circuits
 // ---------------------------------------------------------------------------
 
-/// Run a QASM program through QasmEngine for comparison.
+/// Run a QASM program through `QasmEngine` for comparison.
 fn run_qasm(qasm: &str, seed: u64, shots: usize) -> Vec<u32> {
     let results = sim_builder()
         .classical(qasm_engine().qasm(qasm))

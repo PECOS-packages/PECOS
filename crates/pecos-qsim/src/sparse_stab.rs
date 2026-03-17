@@ -1423,7 +1423,7 @@ where
         self
     }
 
-    /// Adjoint of square root of XX gate. SXXdg = X(q1).X(q2).SXX
+    /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
     #[inline]
     fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -1522,7 +1522,7 @@ where
         self
     }
 
-    /// Adjoint of square root of ZZ gate. SZZdg = Z(q1).Z(q2).SZZ
+    /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
     #[inline]
     fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -1605,7 +1605,9 @@ where
                     apply_syy_sign!(g, x1, z1, x2, z2);
                 }
                 for g in col_z[q1].iter() {
-                    if col_x[q1].contains(g) { continue; }
+                    if col_x[q1].contains(g) {
+                        continue;
+                    }
                     let x1 = false;
                     let z1 = true;
                     let x2 = col_x[q2].contains(g);
@@ -1614,7 +1616,9 @@ where
                 }
                 // Generators with identity at q1, non-identity at q2
                 for g in col_x[q2].iter() {
-                    if col_x[q1].contains(g) || col_z[q1].contains(g) { continue; }
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) {
+                        continue;
+                    }
                     let x2 = true;
                     let z2 = col_z[q2].contains(g);
                     apply_syy_sign!(g, false, false, x2, z2);
@@ -1698,7 +1702,7 @@ where
         self
     }
 
-    /// Adjoint of square root of YY gate. SYYdg = Y(q1).Y(q2).SYY
+    /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
     #[inline]
     fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -3074,7 +3078,7 @@ where
         self
     }
 
-    /// Adjoint of square root of XX gate. SXXdg = X(q1).X(q2).SXX
+    /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
     #[inline]
     fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -3159,7 +3163,7 @@ where
         self
     }
 
-    /// Adjoint of square root of ZZ gate. SZZdg = Z(q1).Z(q2).SZZ
+    /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
     #[inline]
     fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -3229,7 +3233,9 @@ where
                     apply_syy_sign!(g, x1, z1, x2, z2);
                 }
                 for g in col_z[q1].iter().copied() {
-                    if col_x[q1].contains(g) { continue; }
+                    if col_x[q1].contains(g) {
+                        continue;
+                    }
                     let x1 = false;
                     let z1 = true;
                     let x2 = col_x[q2].contains(g);
@@ -3238,7 +3244,9 @@ where
                 }
                 // Generators with identity at q1, non-identity at q2
                 for g in col_x[q2].iter().copied() {
-                    if col_x[q1].contains(g) || col_z[q1].contains(g) { continue; }
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) {
+                        continue;
+                    }
                     let x2 = true;
                     let z2 = col_z[q2].contains(g);
                     apply_syy_sign!(g, false, false, x2, z2);
@@ -3320,7 +3328,7 @@ where
         self
     }
 
-    /// Adjoint of square root of YY gate. SYYdg = Y(q1).Y(q2).SYY
+    /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
     #[inline]
     fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -5011,55 +5019,111 @@ mod tests {
         check_state(&state, &["IZ"], &["IX"]);
     }
 
-    /// Apply a 2q Clifford gate on qubits (0, 1) to a SparseStab.
+    /// Apply a 2q Clifford gate on qubits (0, 1) to a `SparseStab`.
     fn apply_2q_cliff(state: &mut SparseStab, cliff: pecos_core::clifford::Clifford) {
         use pecos_core::clifford::Clifford;
         match cliff {
-            Clifford::CX => { state.cx(&q2(0, 1)); }
-            Clifford::CY => { state.cy(&q2(0, 1)); }
-            Clifford::CZ => { state.cz(&q2(0, 1)); }
-            Clifford::SWAP => { state.swap(&q2(0, 1)); }
-            Clifford::SXX => { state.sxx(&q2(0, 1)); }
-            Clifford::SXXdg => { state.sxxdg(&q2(0, 1)); }
-            Clifford::SYY => { state.syy(&q2(0, 1)); }
-            Clifford::SYYdg => { state.syydg(&q2(0, 1)); }
-            Clifford::SZZ => { state.szz(&q2(0, 1)); }
-            Clifford::SZZdg => { state.szzdg(&q2(0, 1)); }
-            Clifford::ISWAP => { state.iswap(&q2(0, 1)); }
-            Clifford::ISWAPdg => { state.iswapdg(&q2(0, 1)); }
-            Clifford::G => { state.g(&q2(0, 1)); }
-            Clifford::Gdg => { state.gdg(&q2(0, 1)); }
+            Clifford::CX => {
+                state.cx(&q2(0, 1));
+            }
+            Clifford::CY => {
+                state.cy(&q2(0, 1));
+            }
+            Clifford::CZ => {
+                state.cz(&q2(0, 1));
+            }
+            Clifford::SWAP => {
+                state.swap(&q2(0, 1));
+            }
+            Clifford::SXX => {
+                state.sxx(&q2(0, 1));
+            }
+            Clifford::SXXdg => {
+                state.sxxdg(&q2(0, 1));
+            }
+            Clifford::SYY => {
+                state.syy(&q2(0, 1));
+            }
+            Clifford::SYYdg => {
+                state.syydg(&q2(0, 1));
+            }
+            Clifford::SZZ => {
+                state.szz(&q2(0, 1));
+            }
+            Clifford::SZZdg => {
+                state.szzdg(&q2(0, 1));
+            }
+            Clifford::ISWAP => {
+                state.iswap(&q2(0, 1));
+            }
+            Clifford::ISWAPdg => {
+                state.iswapdg(&q2(0, 1));
+            }
+            Clifford::G => {
+                state.g(&q2(0, 1));
+            }
+            Clifford::Gdg => {
+                state.gdg(&q2(0, 1));
+            }
             _ => panic!("not a 2q gate: {cliff:?}"),
         }
     }
 
-    /// Apply a 2q Clifford gate on reversed qubits (1, 0) to a SparseStab.
+    /// Apply a 2q Clifford gate on reversed qubits (1, 0) to a `SparseStab`.
     fn apply_2q_cliff_reversed(state: &mut SparseStab, cliff: pecos_core::clifford::Clifford) {
         use pecos_core::clifford::Clifford;
         match cliff {
-            Clifford::CX => { state.cx(&q2(1, 0)); }
-            Clifford::CY => { state.cy(&q2(1, 0)); }
-            Clifford::CZ => { state.cz(&q2(1, 0)); }
-            Clifford::SWAP => { state.swap(&q2(1, 0)); }
-            Clifford::SXX => { state.sxx(&q2(1, 0)); }
-            Clifford::SXXdg => { state.sxxdg(&q2(1, 0)); }
-            Clifford::SYY => { state.syy(&q2(1, 0)); }
-            Clifford::SYYdg => { state.syydg(&q2(1, 0)); }
-            Clifford::SZZ => { state.szz(&q2(1, 0)); }
-            Clifford::SZZdg => { state.szzdg(&q2(1, 0)); }
-            Clifford::ISWAP => { state.iswap(&q2(1, 0)); }
-            Clifford::ISWAPdg => { state.iswapdg(&q2(1, 0)); }
-            Clifford::G => { state.g(&q2(1, 0)); }
-            Clifford::Gdg => { state.gdg(&q2(1, 0)); }
+            Clifford::CX => {
+                state.cx(&q2(1, 0));
+            }
+            Clifford::CY => {
+                state.cy(&q2(1, 0));
+            }
+            Clifford::CZ => {
+                state.cz(&q2(1, 0));
+            }
+            Clifford::SWAP => {
+                state.swap(&q2(1, 0));
+            }
+            Clifford::SXX => {
+                state.sxx(&q2(1, 0));
+            }
+            Clifford::SXXdg => {
+                state.sxxdg(&q2(1, 0));
+            }
+            Clifford::SYY => {
+                state.syy(&q2(1, 0));
+            }
+            Clifford::SYYdg => {
+                state.syydg(&q2(1, 0));
+            }
+            Clifford::SZZ => {
+                state.szz(&q2(1, 0));
+            }
+            Clifford::SZZdg => {
+                state.szzdg(&q2(1, 0));
+            }
+            Clifford::ISWAP => {
+                state.iswap(&q2(1, 0));
+            }
+            Clifford::ISWAPdg => {
+                state.iswapdg(&q2(1, 0));
+            }
+            Clifford::G => {
+                state.g(&q2(1, 0));
+            }
+            Clifford::Gdg => {
+                state.gdg(&q2(1, 0));
+            }
             _ => panic!("not a 2q gate: {cliff:?}"),
         }
     }
 
-    /// Convert a CliffordRep PauliString image to SparseStab's W-notation representation.
+    /// Convert a `CliffordRep` `PauliString` image to `SparseStab`'s W-notation representation.
     ///
-    /// Returns (x_bits, z_bits, signs_minus, signs_i) where:
-    /// - x_bits[q] / z_bits[q]: whether qubit q has X/Z component
-    /// - Y in the PauliString becomes W (x=1,z=1) with an extra i factor absorbed into the phase
+    /// Returns (`x_bits`, `z_bits`, `signs_minus`, `signs_i`) where:
+    /// - `x_bits`[q] / `z_bits`[q]: whether qubit q has X/Z component
+    /// - Y in the `PauliString` becomes W (x=1,z=1) with an extra i factor absorbed into the phase
     fn pauli_image_to_w_notation(
         image: &pecos_core::PauliString,
         num_qubits: usize,
@@ -5074,8 +5138,12 @@ mod tests {
             let q = usize::from(qid);
             match p {
                 Pauli::I => {}
-                Pauli::X => { x_bits[q] = true; }
-                Pauli::Z => { z_bits[q] = true; }
+                Pauli::X => {
+                    x_bits[q] = true;
+                }
+                Pauli::Z => {
+                    z_bits[q] = true;
+                }
                 Pauli::Y => {
                     x_bits[q] = true;
                     z_bits[q] = true;
@@ -5097,15 +5165,15 @@ mod tests {
         (x_bits, z_bits, signs_minus, signs_i)
     }
 
-    /// Automated cross-check: CliffordRep Pauli images match SparseStab for ALL 2q gates.
+    /// Automated cross-check: `CliffordRep` Pauli images match `SparseStab` for ALL 2q gates.
     ///
-    /// For each gate and each input generator (XI, ZI, IX, IZ), the CliffordRep predicts
-    /// the output Pauli string. We verify the SparseStab simulator produces exactly the
+    /// For each gate and each input generator (XI, ZI, IX, IZ), the `CliffordRep` predicts
+    /// the output Pauli string. We verify the `SparseStab` simulator produces exactly the
     /// same result (same Pauli bits and same phase on the stabilizer).
     #[test]
     fn clifford_rep_matches_sparse_stab_all_2q_gates() {
-        use pecos_core::clifford::Clifford;
         use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
 
         let inputs: [(&str, PauliString, &[&str], &[&str]); 4] = [
             ("X0", PauliString::x(0), &["XI"], &["ZI"]),
@@ -5119,8 +5187,7 @@ mod tests {
 
             for (name, input_ps, stab_str, destab_str) in &inputs {
                 let image = rep.apply(input_ps);
-                let (exp_x, exp_z, exp_minus, exp_i) =
-                    pauli_image_to_w_notation(&image, 2);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 2);
 
                 let mut state = prep_state(stab_str, destab_str);
                 apply_2q_cliff(&mut state, cliff);
@@ -5128,12 +5195,14 @@ mod tests {
                 // Check Pauli bits
                 for qq in 0..2 {
                     assert_eq!(
-                        state.stabs.col_x[qq].contains(0), exp_x[qq],
+                        state.stabs.col_x[qq].contains(0),
+                        exp_x[qq],
                         "{cliff:?} on {name}: qubit {qq} X bit mismatch \
                          (expected image: {image:?})"
                     );
                     assert_eq!(
-                        state.stabs.col_z[qq].contains(0), exp_z[qq],
+                        state.stabs.col_z[qq].contains(0),
+                        exp_z[qq],
                         "{cliff:?} on {name}: qubit {qq} Z bit mismatch \
                          (expected image: {image:?})"
                     );
@@ -5141,12 +5210,14 @@ mod tests {
 
                 // Check phase (stabilizer phases ARE tracked)
                 assert_eq!(
-                    state.stabs.signs_minus.contains(0), exp_minus,
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
                     "{cliff:?} on {name}: signs_minus mismatch \
                      (expected image: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.signs_i.contains(0), exp_i,
+                    state.stabs.signs_i.contains(0),
+                    exp_i,
                     "{cliff:?} on {name}: signs_i mismatch \
                      (expected image: {image:?})"
                 );
@@ -5155,12 +5226,12 @@ mod tests {
     }
 
     /// Same cross-check but with reversed qubit ordering: gate applied to (1, 0).
-    /// CliffordRep uses on_qubits(1, 0), SparseStab uses gate(&[q1, q0]).
+    /// `CliffordRep` uses `on_qubits(1`, 0), `SparseStab` uses gate(&[q1, q0]).
     /// This catches bugs in asymmetric gates (CX, CY) with swapped control/target.
     #[test]
     fn clifford_rep_matches_sparse_stab_reversed_qubits() {
-        use pecos_core::clifford::Clifford;
         use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
 
         let inputs: [(&str, PauliString, &[&str], &[&str]); 4] = [
             ("X0", PauliString::x(0), &["XI"], &["ZI"]),
@@ -5174,32 +5245,35 @@ mod tests {
 
             for (name, input_ps, stab_str, destab_str) in &inputs {
                 let image = rep.apply(input_ps);
-                let (exp_x, exp_z, exp_minus, exp_i) =
-                    pauli_image_to_w_notation(&image, 2);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 2);
 
                 let mut state = prep_state(stab_str, destab_str);
                 apply_2q_cliff_reversed(&mut state, cliff);
 
                 for qq in 0..2 {
                     assert_eq!(
-                        state.stabs.col_x[qq].contains(0), exp_x[qq],
+                        state.stabs.col_x[qq].contains(0),
+                        exp_x[qq],
                         "{cliff:?} reversed on {name}: qubit {qq} X bit mismatch \
                          (expected image: {image:?})"
                     );
                     assert_eq!(
-                        state.stabs.col_z[qq].contains(0), exp_z[qq],
+                        state.stabs.col_z[qq].contains(0),
+                        exp_z[qq],
                         "{cliff:?} reversed on {name}: qubit {qq} Z bit mismatch \
                          (expected image: {image:?})"
                     );
                 }
 
                 assert_eq!(
-                    state.stabs.signs_minus.contains(0), exp_minus,
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
                     "{cliff:?} reversed on {name}: signs_minus mismatch \
                      (expected image: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.signs_i.contains(0), exp_i,
+                    state.stabs.signs_i.contains(0),
+                    exp_i,
                     "{cliff:?} reversed on {name}: signs_i mismatch \
                      (expected image: {image:?})"
                 );
@@ -5210,8 +5284,8 @@ mod tests {
     /// Same cross-check for all 1q Clifford gates.
     #[test]
     fn clifford_rep_matches_sparse_stab_all_1q_gates() {
-        use pecos_core::clifford::Clifford;
         use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
 
         for &cliff in Clifford::all_1q() {
             let rep = cliff.on_qubit(0);
@@ -5222,8 +5296,7 @@ mod tests {
                 ("Z", PauliString::z(0), &["ZII"][..], &["XII"][..]),
             ] {
                 let image = rep.apply(&input_ps);
-                let (exp_x, exp_z, exp_minus, exp_i) =
-                    pauli_image_to_w_notation(&image, 1);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 1);
 
                 // Use a 3-qubit SparseStab (prep_state always creates 3 qubits)
                 let mut state = prep_state(stab_str, destab_str);
@@ -5231,46 +5304,96 @@ mod tests {
                 // Apply the 1q gate on qubit 0
                 match cliff {
                     Clifford::I => {}
-                    Clifford::X => { state.x(&q(0)); }
-                    Clifford::Y => { state.y(&q(0)); }
-                    Clifford::Z => { state.z(&q(0)); }
-                    Clifford::H => { state.h(&q(0)); }
-                    Clifford::SX => { state.sx(&q(0)); }
-                    Clifford::SXdg => { state.sxdg(&q(0)); }
-                    Clifford::SY => { state.sy(&q(0)); }
-                    Clifford::SYdg => { state.sydg(&q(0)); }
-                    Clifford::SZ => { state.sz(&q(0)); }
-                    Clifford::SZdg => { state.szdg(&q(0)); }
-                    Clifford::H2 => { state.h2(&q(0)); }
-                    Clifford::H3 => { state.h3(&q(0)); }
-                    Clifford::H4 => { state.h4(&q(0)); }
-                    Clifford::H5 => { state.h5(&q(0)); }
-                    Clifford::H6 => { state.h6(&q(0)); }
-                    Clifford::F => { state.f(&q(0)); }
-                    Clifford::Fdg => { state.fdg(&q(0)); }
-                    Clifford::F2 => { state.f2(&q(0)); }
-                    Clifford::F2dg => { state.f2dg(&q(0)); }
-                    Clifford::F3 => { state.f3(&q(0)); }
-                    Clifford::F3dg => { state.f3dg(&q(0)); }
-                    Clifford::F4 => { state.f4(&q(0)); }
-                    Clifford::F4dg => { state.f4dg(&q(0)); }
+                    Clifford::X => {
+                        state.x(&q(0));
+                    }
+                    Clifford::Y => {
+                        state.y(&q(0));
+                    }
+                    Clifford::Z => {
+                        state.z(&q(0));
+                    }
+                    Clifford::H => {
+                        state.h(&q(0));
+                    }
+                    Clifford::SX => {
+                        state.sx(&q(0));
+                    }
+                    Clifford::SXdg => {
+                        state.sxdg(&q(0));
+                    }
+                    Clifford::SY => {
+                        state.sy(&q(0));
+                    }
+                    Clifford::SYdg => {
+                        state.sydg(&q(0));
+                    }
+                    Clifford::SZ => {
+                        state.sz(&q(0));
+                    }
+                    Clifford::SZdg => {
+                        state.szdg(&q(0));
+                    }
+                    Clifford::H2 => {
+                        state.h2(&q(0));
+                    }
+                    Clifford::H3 => {
+                        state.h3(&q(0));
+                    }
+                    Clifford::H4 => {
+                        state.h4(&q(0));
+                    }
+                    Clifford::H5 => {
+                        state.h5(&q(0));
+                    }
+                    Clifford::H6 => {
+                        state.h6(&q(0));
+                    }
+                    Clifford::F => {
+                        state.f(&q(0));
+                    }
+                    Clifford::Fdg => {
+                        state.fdg(&q(0));
+                    }
+                    Clifford::F2 => {
+                        state.f2(&q(0));
+                    }
+                    Clifford::F2dg => {
+                        state.f2dg(&q(0));
+                    }
+                    Clifford::F3 => {
+                        state.f3(&q(0));
+                    }
+                    Clifford::F3dg => {
+                        state.f3dg(&q(0));
+                    }
+                    Clifford::F4 => {
+                        state.f4(&q(0));
+                    }
+                    Clifford::F4dg => {
+                        state.f4dg(&q(0));
+                    }
                     _ => panic!("not a 1q gate: {cliff:?}"),
-                };
+                }
 
                 assert_eq!(
-                    state.stabs.col_x[0].contains(0), exp_x[0],
+                    state.stabs.col_x[0].contains(0),
+                    exp_x[0],
                     "{cliff:?} on {name}: X bit mismatch (expected: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.col_z[0].contains(0), exp_z[0],
+                    state.stabs.col_z[0].contains(0),
+                    exp_z[0],
                     "{cliff:?} on {name}: Z bit mismatch (expected: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.signs_minus.contains(0), exp_minus,
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
                     "{cliff:?} on {name}: signs_minus mismatch (expected: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.signs_i.contains(0), exp_i,
+                    state.stabs.signs_i.contains(0),
+                    exp_i,
                     "{cliff:?} on {name}: signs_i mismatch (expected: {image:?})"
                 );
             }
@@ -5631,36 +5754,61 @@ mod tests {
         assert_eq!(destabs.num_qubits(), 3);
     }
 
-    /// Apply a 2q Clifford gate on qubits (0, 1) to a SparseStabHybrid.
-    fn apply_2q_cliff_hybrid(
-        state: &mut SparseStabHybrid,
-        cliff: pecos_core::clifford::Clifford,
-    ) {
+    /// Apply a 2q Clifford gate on qubits (0, 1) to a `SparseStabHybrid`.
+    fn apply_2q_cliff_hybrid(state: &mut SparseStabHybrid, cliff: pecos_core::clifford::Clifford) {
         use pecos_core::clifford::Clifford;
         match cliff {
-            Clifford::CX => { state.cx(&q2(0, 1)); }
-            Clifford::CY => { state.cy(&q2(0, 1)); }
-            Clifford::CZ => { state.cz(&q2(0, 1)); }
-            Clifford::SWAP => { state.swap(&q2(0, 1)); }
-            Clifford::SXX => { state.sxx(&q2(0, 1)); }
-            Clifford::SXXdg => { state.sxxdg(&q2(0, 1)); }
-            Clifford::SYY => { state.syy(&q2(0, 1)); }
-            Clifford::SYYdg => { state.syydg(&q2(0, 1)); }
-            Clifford::SZZ => { state.szz(&q2(0, 1)); }
-            Clifford::SZZdg => { state.szzdg(&q2(0, 1)); }
-            Clifford::ISWAP => { state.iswap(&q2(0, 1)); }
-            Clifford::ISWAPdg => { state.iswapdg(&q2(0, 1)); }
-            Clifford::G => { state.g(&q2(0, 1)); }
-            Clifford::Gdg => { state.gdg(&q2(0, 1)); }
+            Clifford::CX => {
+                state.cx(&q2(0, 1));
+            }
+            Clifford::CY => {
+                state.cy(&q2(0, 1));
+            }
+            Clifford::CZ => {
+                state.cz(&q2(0, 1));
+            }
+            Clifford::SWAP => {
+                state.swap(&q2(0, 1));
+            }
+            Clifford::SXX => {
+                state.sxx(&q2(0, 1));
+            }
+            Clifford::SXXdg => {
+                state.sxxdg(&q2(0, 1));
+            }
+            Clifford::SYY => {
+                state.syy(&q2(0, 1));
+            }
+            Clifford::SYYdg => {
+                state.syydg(&q2(0, 1));
+            }
+            Clifford::SZZ => {
+                state.szz(&q2(0, 1));
+            }
+            Clifford::SZZdg => {
+                state.szzdg(&q2(0, 1));
+            }
+            Clifford::ISWAP => {
+                state.iswap(&q2(0, 1));
+            }
+            Clifford::ISWAPdg => {
+                state.iswapdg(&q2(0, 1));
+            }
+            Clifford::G => {
+                state.g(&q2(0, 1));
+            }
+            Clifford::Gdg => {
+                state.gdg(&q2(0, 1));
+            }
             _ => panic!("not a 2q gate: {cliff:?}"),
         }
     }
 
-    /// CliffordRep Pauli images match SparseStabHybrid for all 2q gates (bits + signs).
+    /// `CliffordRep` Pauli images match `SparseStabHybrid` for all 2q gates (bits + signs).
     #[test]
     fn clifford_rep_matches_sparse_stab_hybrid_all_2q_gates() {
-        use pecos_core::clifford::Clifford;
         use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
 
         let inputs: [(&str, PauliString, usize, bool); 4] = [
             ("X0", PauliString::x(0), 0, true),
@@ -5674,8 +5822,7 @@ mod tests {
 
             for (name, input_ps, input_q, init_x) in &inputs {
                 let image = rep.apply(input_ps);
-                let (exp_x, exp_z, exp_minus, exp_i) =
-                    pauli_image_to_w_notation(&image, 2);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 2);
 
                 // Prepare SparseStabHybrid with a single known generator
                 let mut state = SparseStabHybrid::new(2);
@@ -5687,24 +5834,28 @@ mod tests {
                 let gen_id = *input_q;
                 for qq in 0..2 {
                     assert_eq!(
-                        state.stabs.col_x[qq].contains(gen_id), exp_x[qq],
+                        state.stabs.col_x[qq].contains(gen_id),
+                        exp_x[qq],
                         "{cliff:?} on {name}: SparseStabHybrid qubit {qq} X bit mismatch \
                          (expected image: {image:?})"
                     );
                     assert_eq!(
-                        state.stabs.col_z[qq].contains(gen_id), exp_z[qq],
+                        state.stabs.col_z[qq].contains(gen_id),
+                        exp_z[qq],
                         "{cliff:?} on {name}: SparseStabHybrid qubit {qq} Z bit mismatch \
                          (expected image: {image:?})"
                     );
                 }
 
                 assert_eq!(
-                    state.stabs.signs_minus.contains(gen_id), exp_minus,
+                    state.stabs.signs_minus.contains(gen_id),
+                    exp_minus,
                     "{cliff:?} on {name}: SparseStabHybrid signs_minus mismatch \
                      (expected image: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.signs_i.contains(gen_id), exp_i,
+                    state.stabs.signs_i.contains(gen_id),
+                    exp_i,
                     "{cliff:?} on {name}: SparseStabHybrid signs_i mismatch \
                      (expected image: {image:?})"
                 );
@@ -5712,11 +5863,11 @@ mod tests {
         }
     }
 
-    /// CliffordRep Pauli images match SparseStabHybrid for all 1q gates (bits + signs).
+    /// `CliffordRep` Pauli images match `SparseStabHybrid` for all 1q gates (bits + signs).
     #[test]
     fn clifford_rep_matches_sparse_stab_hybrid_all_1q_gates() {
-        use pecos_core::clifford::Clifford;
         use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
 
         for &cliff in Clifford::all_1q() {
             let rep = cliff.on_qubit(0);
@@ -5726,8 +5877,7 @@ mod tests {
                 ("Z", PauliString::z(0), false),
             ] {
                 let image = rep.apply(&input_ps);
-                let (exp_x, exp_z, exp_minus, exp_i) =
-                    pauli_image_to_w_notation(&image, 1);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 1);
 
                 let mut state = SparseStabHybrid::new(3);
                 if init_x {
@@ -5736,46 +5886,96 @@ mod tests {
 
                 match cliff {
                     Clifford::I => {}
-                    Clifford::X => { state.x(&q(0)); }
-                    Clifford::Y => { state.y(&q(0)); }
-                    Clifford::Z => { state.z(&q(0)); }
-                    Clifford::H => { state.h(&q(0)); }
-                    Clifford::SX => { state.sx(&q(0)); }
-                    Clifford::SXdg => { state.sxdg(&q(0)); }
-                    Clifford::SY => { state.sy(&q(0)); }
-                    Clifford::SYdg => { state.sydg(&q(0)); }
-                    Clifford::SZ => { state.sz(&q(0)); }
-                    Clifford::SZdg => { state.szdg(&q(0)); }
-                    Clifford::H2 => { state.h2(&q(0)); }
-                    Clifford::H3 => { state.h3(&q(0)); }
-                    Clifford::H4 => { state.h4(&q(0)); }
-                    Clifford::H5 => { state.h5(&q(0)); }
-                    Clifford::H6 => { state.h6(&q(0)); }
-                    Clifford::F => { state.f(&q(0)); }
-                    Clifford::Fdg => { state.fdg(&q(0)); }
-                    Clifford::F2 => { state.f2(&q(0)); }
-                    Clifford::F2dg => { state.f2dg(&q(0)); }
-                    Clifford::F3 => { state.f3(&q(0)); }
-                    Clifford::F3dg => { state.f3dg(&q(0)); }
-                    Clifford::F4 => { state.f4(&q(0)); }
-                    Clifford::F4dg => { state.f4dg(&q(0)); }
+                    Clifford::X => {
+                        state.x(&q(0));
+                    }
+                    Clifford::Y => {
+                        state.y(&q(0));
+                    }
+                    Clifford::Z => {
+                        state.z(&q(0));
+                    }
+                    Clifford::H => {
+                        state.h(&q(0));
+                    }
+                    Clifford::SX => {
+                        state.sx(&q(0));
+                    }
+                    Clifford::SXdg => {
+                        state.sxdg(&q(0));
+                    }
+                    Clifford::SY => {
+                        state.sy(&q(0));
+                    }
+                    Clifford::SYdg => {
+                        state.sydg(&q(0));
+                    }
+                    Clifford::SZ => {
+                        state.sz(&q(0));
+                    }
+                    Clifford::SZdg => {
+                        state.szdg(&q(0));
+                    }
+                    Clifford::H2 => {
+                        state.h2(&q(0));
+                    }
+                    Clifford::H3 => {
+                        state.h3(&q(0));
+                    }
+                    Clifford::H4 => {
+                        state.h4(&q(0));
+                    }
+                    Clifford::H5 => {
+                        state.h5(&q(0));
+                    }
+                    Clifford::H6 => {
+                        state.h6(&q(0));
+                    }
+                    Clifford::F => {
+                        state.f(&q(0));
+                    }
+                    Clifford::Fdg => {
+                        state.fdg(&q(0));
+                    }
+                    Clifford::F2 => {
+                        state.f2(&q(0));
+                    }
+                    Clifford::F2dg => {
+                        state.f2dg(&q(0));
+                    }
+                    Clifford::F3 => {
+                        state.f3(&q(0));
+                    }
+                    Clifford::F3dg => {
+                        state.f3dg(&q(0));
+                    }
+                    Clifford::F4 => {
+                        state.f4(&q(0));
+                    }
+                    Clifford::F4dg => {
+                        state.f4dg(&q(0));
+                    }
                     _ => panic!("not a 1q gate: {cliff:?}"),
-                };
+                }
 
                 assert_eq!(
-                    state.stabs.col_x[0].contains(0), exp_x[0],
+                    state.stabs.col_x[0].contains(0),
+                    exp_x[0],
                     "{cliff:?} on {name}: SparseStabHybrid X bit mismatch (expected: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.col_z[0].contains(0), exp_z[0],
+                    state.stabs.col_z[0].contains(0),
+                    exp_z[0],
                     "{cliff:?} on {name}: SparseStabHybrid Z bit mismatch (expected: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.signs_minus.contains(0), exp_minus,
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
                     "{cliff:?} on {name}: SparseStabHybrid signs_minus mismatch (expected: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.signs_i.contains(0), exp_i,
+                    state.stabs.signs_i.contains(0),
+                    exp_i,
                     "{cliff:?} on {name}: SparseStabHybrid signs_i mismatch (expected: {image:?})"
                 );
             }

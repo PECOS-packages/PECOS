@@ -66,14 +66,14 @@
 mod circuit;
 mod circuit_display;
 mod dag_circuit;
-pub mod unitary_matrix;
 pub mod pass;
+pub mod pauli_group;
 pub mod pauli_sequence;
 pub mod pauli_set;
-pub mod pauli_group;
 pub mod stabilizer_group;
 mod tick_circuit;
 pub mod tick_circuit_soa;
+pub mod unitary_matrix;
 
 #[cfg(feature = "hugr")]
 pub mod hugr_convert;
@@ -100,9 +100,9 @@ pub use pecos_num::dag::DagWouldCycleError;
 pub use unitary_matrix::{ToMatrix, UnitaryMatrix};
 
 // Pauli collection and stabilizer group types
+pub use pauli_group::{PauliGroup, PauliGroupError};
 pub use pauli_sequence::{F2Matrix, PauliSequence};
 pub use pauli_set::PauliSet;
-pub use pauli_group::{PauliGroup, PauliGroupError};
 pub use stabilizer_group::{PauliStabilizerGroup, PauliStabilizerGroupError};
 
 // Re-export HUGR types when the feature is enabled

@@ -518,8 +518,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code =
-            StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+        let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+            .unwrap();
 
         let config = DistanceSearchConfig::default();
         let result = calculate_distance(&code, &config);
@@ -584,8 +584,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code =
-            StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+        let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+            .unwrap();
 
         let config = DistanceSearchConfig::with_max_weight(2);
         let logicals = find_min_weight_logicals_with_info(&code, &config);

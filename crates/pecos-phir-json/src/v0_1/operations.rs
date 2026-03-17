@@ -3,8 +3,8 @@ use crate::v0_1::environment::{DataType, Environment, TypedValue};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
 use log::debug;
-use pecos_core::{Angle64, Gate};
 use pecos_core::errors::PecosError;
+use pecos_core::{Angle64, Gate};
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1522,9 +1522,9 @@ impl OperationProcessor {
             // Two-qubit rotation gate: RXXRYYRZZ (3 angles)
             "RXXRYYRZZ" | "R2XXYYZZ" | "RXXYYZZ" => {
                 let angles_ref = angles.as_ref().ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(format!(
-                        "RXXRYYRZZ gate requires three angles (alpha, beta, gamma)"
-                    ))
+                    PecosError::ValidationInvalidGateParameters(
+                        "RXXRYYRZZ gate requires three angles (alpha, beta, gamma)".to_string(),
+                    )
                 })?;
                 if angles_ref.len() < 3 {
                     return Err(PecosError::ValidationInvalidGateParameters(format!(
@@ -1539,7 +1539,11 @@ impl OperationProcessor {
                     )));
                 }
                 // Always return canonical name
-                Ok(("RXXRYYRZZ".to_string(), qubit_args, vec![angles_ref[0], angles_ref[1], angles_ref[2]]))
+                Ok((
+                    "RXXRYYRZZ".to_string(),
+                    qubit_args,
+                    vec![angles_ref[0], angles_ref[1], angles_ref[2]],
+                ))
             }
 
             // Two-qubit gates

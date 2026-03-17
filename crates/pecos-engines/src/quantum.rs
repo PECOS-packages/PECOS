@@ -639,9 +639,7 @@ where
                         )));
                     }
                     if cmd.angles.len() < 15 {
-                        return Err(quantum_error(
-                            "U2q gate requires 15 angles",
-                        ));
+                        return Err(quantum_error("U2q gate requires 15 angles"));
                     }
                     let before = [
                         [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
@@ -738,11 +736,7 @@ impl SparseStabEngine {
 }
 
 impl SparseStabEngine {
-    fn process_single_qubit_gate(
-        &mut self,
-        gate_type: GateType,
-        qubits: &[QubitId],
-    ) -> Result<(), PecosError> {
+    fn process_single_qubit_gate(&mut self, gate_type: GateType, qubits: &[QubitId]) {
         match gate_type {
             GateType::X => {
                 debug!("Processing X gate on qubits {qubits:?}");
@@ -786,7 +780,6 @@ impl SparseStabEngine {
             }
             _ => {} // Handled elsewhere
         }
-        Ok(())
     }
 
     fn process_two_qubit_gate(&mut self, gate_type: GateType, qubits: &[QubitId]) {
@@ -832,7 +825,6 @@ impl SparseStabEngine {
             _ => {} // Not a two-qubit gate
         }
     }
-
 }
 
 impl Engine for SparseStabEngine {
@@ -856,7 +848,7 @@ impl Engine for SparseStabEngine {
                 | GateType::SXdg
                 | GateType::SY
                 | GateType::SYdg => {
-                    self.process_single_qubit_gate(cmd.gate_type, &cmd.qubits)?;
+                    self.process_single_qubit_gate(cmd.gate_type, &cmd.qubits);
                 }
                 // Two-qubit Clifford gates
                 GateType::CX
@@ -886,8 +878,12 @@ impl Engine for SparseStabEngine {
                     // No active operation needed in the simulator
                 }
                 // Rotation gates: delegate to CliffordRotation trait
-                GateType::RZ | GateType::RX | GateType::RY
-                | GateType::RZZ | GateType::RXX | GateType::RYY => {
+                GateType::RZ
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZZ
+                | GateType::RXX
+                | GateType::RYY => {
                     if !cmd.angles.is_empty() {
                         let angle = cmd.angles[0];
                         let qubits = &cmd.qubits;

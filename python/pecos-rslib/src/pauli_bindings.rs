@@ -386,13 +386,8 @@ impl PauliString {
     #[allow(clippy::doc_markdown)]
     #[pyo3(signature = (num_qubits=None))]
     fn to_matrix(&self, num_qubits: Option<usize>) -> PyResult<Vec<Vec<(f64, f64)>>> {
-        let n = num_qubits.unwrap_or_else(|| {
-            self.inner
-                .qubits()
-                .into_iter()
-                .max()
-                .map_or(1, |m| m + 1)
-        });
+        let n = num_qubits
+            .unwrap_or_else(|| self.inner.qubits().into_iter().max().map_or(1, |m| m + 1));
         if n > 12 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "to_matrix supports at most 12 qubits",

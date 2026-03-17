@@ -12,15 +12,15 @@
 
 //! Matrix-level verification that Op's dual representations are consistent.
 //!
-//! For each Clifford gate, the Op stores both a CliffordRep (tableau) and a
-//! UnitaryRep (expression). This test verifies that the UnitaryRep expression
+//! For each Clifford gate, the Op stores both a `CliffordRep` (tableau) and a
+//! `UnitaryRep` (expression). This test verifies that the `UnitaryRep` expression
 //! produces a matrix equivalent (up to global phase) to the expected gate.
 
-use pecos_core::op;
 use pecos_core::Angle64;
-use pecos_quantum::unitary_matrix::{unitaries_equiv, ToMatrix, UnitaryMatrix};
+use pecos_core::op;
+use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix, unitaries_equiv};
 
-/// Verify a 1-qubit Clifford Op's UnitaryRep matches a reference UnitaryRep.
+/// Verify a 1-qubit Clifford Op's `UnitaryRep` matches a reference `UnitaryRep`.
 fn check_1q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, name: &str) {
     let ur = gate.into_unitary().unwrap();
     assert!(
@@ -29,7 +29,7 @@ fn check_1q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, na
     );
 }
 
-/// Verify a 2-qubit Clifford Op's UnitaryRep by checking unitarity and
+/// Verify a 2-qubit Clifford Op's `UnitaryRep` by checking unitarity and
 /// that the matrix matches a reference.
 fn check_2q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, name: &str) {
     let ur = gate.into_unitary().unwrap();
@@ -259,11 +259,17 @@ fn iswap_clifford_path_matches_op_path() {
     use pecos_core::clifford::Clifford;
     let cliff_mat = Clifford::ISWAP.to_matrix();
     let op_mat = op::ISWAP(0, 1).to_matrix();
-    assert!(cliff_mat.equiv_up_to_phase(&op_mat), "ISWAP: Clifford path should match Op path");
+    assert!(
+        cliff_mat.equiv_up_to_phase(&op_mat),
+        "ISWAP: Clifford path should match Op path"
+    );
 
     let cliff_dg_mat = Clifford::ISWAPdg.to_matrix();
     let op_dg_mat = op::ISWAPdg(0, 1).to_matrix();
-    assert!(cliff_dg_mat.equiv_up_to_phase(&op_dg_mat), "ISWAPdg: Clifford path should match Op path");
+    assert!(
+        cliff_dg_mat.equiv_up_to_phase(&op_dg_mat),
+        "ISWAPdg: Clifford path should match Op path"
+    );
 }
 
 #[test]

@@ -158,21 +158,19 @@ impl HugrToPhirConverter {
         let mut module = ModuleOp::new("hugr_module");
 
         // Find the container node (DFG or DataflowBlock) holding operations
-        let dfg_node = self
-            .find_operations_container(hugr)
-            .ok_or_else(|| {
-                PhirError::internal(
-                    "No operations container (DFG or DataflowBlock) found in HUGR".to_string(),
-                )
-            })?;
+        let dfg_node = self.find_operations_container(hugr).ok_or_else(|| {
+            PhirError::internal(
+                "No operations container (DFG or DataflowBlock) found in HUGR".to_string(),
+            )
+        })?;
 
         // Gather DFG children in topological order
         let children = self.topological_children(hugr, dfg_node);
 
         // Count qubits and measurements
         let num_qubits = count_ops(hugr, &children, "QAlloc");
-        let num_measurements = count_ops(hugr, &children, "Measure")
-            + count_ops(hugr, &children, "MeasureFree");
+        let num_measurements =
+            count_ops(hugr, &children, "Measure") + count_ops(hugr, &children, "MeasureFree");
 
         // Build the main function
         let func_type = FunctionType {
@@ -332,10 +330,10 @@ impl HugrToPhirConverter {
             let in_port = IncomingPort::from(port_idx);
             if let Some((src_node, _)) = hugr.single_linked_output(node, in_port)
                 && container_set.contains(&src_node.index())
-                    && !processed.contains(&src_node.index())
-                {
-                    return false;
-                }
+                && !processed.contains(&src_node.index())
+            {
+                return false;
+            }
         }
         true
     }
@@ -386,14 +384,12 @@ impl HugrToPhirConverter {
 
                 "Measure" => {
                     // Resolve the qubit input
-                    let qubit_ssa = self
-                        .resolve_wire(hugr, node, 0)
-                        .ok_or_else(|| {
-                            PhirError::internal(format!(
-                                "Measure: unresolved qubit input at node {:?}",
-                                node.index()
-                            ))
-                        })?;
+                    let qubit_ssa = self.resolve_wire(hugr, node, 0).ok_or_else(|| {
+                        PhirError::internal(format!(
+                            "Measure: unresolved qubit input at node {:?}",
+                            node.index()
+                        ))
+                    })?;
 
                     // Output port 0 is the post-measurement qubit (same SSA value)
                     self.map_wire(node, 0, qubit_ssa);
@@ -409,14 +405,12 @@ impl HugrToPhirConverter {
 
                 "MeasureFree" => {
                     // Like Measure but also frees the qubit
-                    let qubit_ssa = self
-                        .resolve_wire(hugr, node, 0)
-                        .ok_or_else(|| {
-                            PhirError::internal(format!(
-                                "MeasureFree: unresolved qubit input at node {:?}",
-                                node.index()
-                            ))
-                        })?;
+                    let qubit_ssa = self.resolve_wire(hugr, node, 0).ok_or_else(|| {
+                        PhirError::internal(format!(
+                            "MeasureFree: unresolved qubit input at node {:?}",
+                            node.index()
+                        ))
+                    })?;
 
                     // No qubit output (qubit is freed)
                     // Output port 0 is the bool result
@@ -428,14 +422,12 @@ impl HugrToPhirConverter {
                 }
 
                 "Reset" => {
-                    let qubit_ssa = self
-                        .resolve_wire(hugr, node, 0)
-                        .ok_or_else(|| {
-                            PhirError::internal(format!(
-                                "Reset: unresolved qubit input at node {:?}",
-                                node.index()
-                            ))
-                        })?;
+                    let qubit_ssa = self.resolve_wire(hugr, node, 0).ok_or_else(|| {
+                        PhirError::internal(format!(
+                            "Reset: unresolved qubit input at node {:?}",
+                            node.index()
+                        ))
+                    })?;
 
                     block.add_instruction(Instruction::new(
                         Operation::Quantum(QuantumOp::Reset),
@@ -510,11 +502,7 @@ impl HugrToPhirConverter {
         let angle_port = IncomingPort::from(num_qubit_inputs);
         let (src_node, _) = hugr.single_linked_output(node, angle_port)?;
         let (value, is_half_turns) = trace_const(hugr, src_node, 0)?;
-        let full_turns = if is_half_turns {
-            value * 0.5
-        } else {
-            value
-        };
+        let full_turns = if is_half_turns { value * 0.5 } else { value };
         // Convert full turns to radians
         Some(full_turns * 2.0 * std::f64::consts::PI)
     }
@@ -649,9 +637,10 @@ fn trace_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, bool)> {
         if name == "from_halfturns_unchecked" {
             let float_port = IncomingPort::from(0);
             if let Some((src_node, _)) = hugr.single_linked_output(node, float_port)
-                && let Some((val, _)) = trace_const(hugr, src_node, depth + 1) {
-                    return Some((val, true));
-                }
+                && let Some((val, _)) = trace_const(hugr, src_node, depth + 1)
+            {
+                return Some((val, true));
+            }
         }
 
         if name == "fdiv" {
@@ -660,22 +649,22 @@ fn trace_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, bool)> {
             if let (Some((num_node, _)), Some((denom_node, _))) = (
                 hugr.single_linked_output(node, num_port),
                 hugr.single_linked_output(node, denom_port),
-            )
-                && let (Some((num_val, _)), Some((denom_val, _))) = (
-                    trace_const(hugr, num_node, depth + 1),
-                    trace_const(hugr, denom_node, depth + 1),
-                )
-                    && denom_val != 0.0 {
-                        return Some((num_val / denom_val, false));
-                    }
+            ) && let (Some((num_val, _)), Some((denom_val, _))) = (
+                trace_const(hugr, num_node, depth + 1),
+                trace_const(hugr, denom_node, depth + 1),
+            ) && denom_val != 0.0
+            {
+                return Some((num_val / denom_val, false));
+            }
         }
 
         if name == "fneg" {
             let input_port = IncomingPort::from(0);
             if let Some((src_node, _)) = hugr.single_linked_output(node, input_port)
-                && let Some((val, is_ht)) = trace_const(hugr, src_node, depth + 1) {
-                    return Some((-val, is_ht));
-                }
+                && let Some((val, is_ht)) = trace_const(hugr, src_node, depth + 1)
+            {
+                return Some((-val, is_ht));
+            }
         }
 
         if name == "convert_s" || name == "convert_u" {
@@ -701,38 +690,42 @@ fn extract_const_float(const_op: &tket::hugr::ops::Const) -> Option<(f64, bool)>
     if let Some(start) = debug_str.find("F64(") {
         let rest = &debug_str[start + 4..];
         if let Some(end) = rest.find(')')
-            && let Ok(val) = rest[..end].parse::<f64>() {
-                return Some((val, false));
-            }
+            && let Ok(val) = rest[..end].parse::<f64>()
+        {
+            return Some((val, false));
+        }
     }
 
     // Pattern: ConstF64 { value: V }
     if let Some(start) = debug_str.find("ConstF64 {")
-        && let Some(val_start) = debug_str[start..].find("value:") {
-            let rest = &debug_str[start + val_start + 6..];
-            if let Some(val) = parse_leading_float(rest.trim()) {
-                return Some((val, false));
-            }
+        && let Some(val_start) = debug_str[start..].find("value:")
+    {
+        let rest = &debug_str[start + val_start + 6..];
+        if let Some(val) = parse_leading_float(rest.trim()) {
+            return Some((val, false));
         }
+    }
 
     // Pattern: Tuple(number)
     if let Some(start) = debug_str.find("Tuple(") {
         let rest = &debug_str[start + 6..];
         if let Some(end) = rest.find(')')
-            && let Ok(val) = rest[..end].parse::<f64>() {
-                return Some((val, false));
-            }
+            && let Ok(val) = rest[..end].parse::<f64>()
+        {
+            return Some((val, false));
+        }
     }
 
     // Pattern: ConstInt { ... value: V ... }
     if let Some(start) = debug_str.find("ConstInt {")
-        && let Some(val_start) = debug_str[start..].find("value:") {
-            let rest = &debug_str[start + val_start + 6..];
-            if let Some(val) = parse_leading_int(rest.trim()) {
-                #[allow(clippy::cast_precision_loss)]
-                return Some((val as f64, false));
-            }
+        && let Some(val_start) = debug_str[start..].find("value:")
+    {
+        let rest = &debug_str[start + val_start + 6..];
+        if let Some(val) = parse_leading_int(rest.trim()) {
+            #[allow(clippy::cast_precision_loss)]
+            return Some((val as f64, false));
         }
+    }
 
     // Fallback: look for "value:" followed by a float
     if let Some(start) = debug_str.find("value:") {
@@ -802,15 +795,27 @@ fn hugr_name_to_quantum_op(name: &str, angle: Option<f64>) -> Option<QuantumOp> 
         // Rotation gates -- try to simplify to a named Clifford gate
         "Rx" => {
             let a = Angle64::from_radians(angle.unwrap_or(0.0));
-            Some(simplify_rotation(pecos_core::gate_type::GateType::RX, a, QuantumOp::RX(a)))
+            Some(simplify_rotation(
+                pecos_core::gate_type::GateType::RX,
+                a,
+                QuantumOp::RX(a),
+            ))
         }
         "Ry" => {
             let a = Angle64::from_radians(angle.unwrap_or(0.0));
-            Some(simplify_rotation(pecos_core::gate_type::GateType::RY, a, QuantumOp::RY(a)))
+            Some(simplify_rotation(
+                pecos_core::gate_type::GateType::RY,
+                a,
+                QuantumOp::RY(a),
+            ))
         }
         "Rz" => {
             let a = Angle64::from_radians(angle.unwrap_or(0.0));
-            Some(simplify_rotation(pecos_core::gate_type::GateType::RZ, a, QuantumOp::RZ(a)))
+            Some(simplify_rotation(
+                pecos_core::gate_type::GateType::RZ,
+                a,
+                QuantumOp::RZ(a),
+            ))
         }
         // Two-qubit gates
         "CX" => Some(QuantumOp::CX),
@@ -830,7 +835,11 @@ fn hugr_name_to_quantum_op(name: &str, angle: Option<f64>) -> Option<QuantumOp> 
 /// Try to simplify a rotation gate to a named Clifford gate using the shared
 /// `pecos_core::try_simplify_rotation` utility. Falls back to the original
 /// rotation `QuantumOp` for non-Clifford angles.
-fn simplify_rotation(gate_type: pecos_core::gate_type::GateType, angle: Angle64, fallback: QuantumOp) -> QuantumOp {
+fn simplify_rotation(
+    gate_type: pecos_core::gate_type::GateType,
+    angle: Angle64,
+    fallback: QuantumOp,
+) -> QuantumOp {
     match pecos_core::try_simplify_rotation(gate_type, angle) {
         Some(clifford) => gate_type_to_quantum_op(clifford),
         None => fallback,
@@ -1003,10 +1012,7 @@ mod tests {
         assert_eq!(hugr_name_to_quantum_op("X", None), Some(QuantumOp::X));
         assert_eq!(hugr_name_to_quantum_op("CX", None), Some(QuantumOp::CX));
         assert_eq!(hugr_name_to_quantum_op("CZ", None), Some(QuantumOp::CZ));
-        assert_eq!(
-            hugr_name_to_quantum_op("SWAP", None),
-            Some(QuantumOp::SWAP)
-        );
+        assert_eq!(hugr_name_to_quantum_op("SWAP", None), Some(QuantumOp::SWAP));
         assert_eq!(
             hugr_name_to_quantum_op("Toffoli", None),
             Some(QuantumOp::Toffoli)
@@ -1025,7 +1031,10 @@ mod tests {
 
         // -pi/2 = Sdg gate for RZ
         let neg_pi_2 = Some(-std::f64::consts::FRAC_PI_2);
-        assert_eq!(hugr_name_to_quantum_op("Rz", neg_pi_2), Some(QuantumOp::Sdg));
+        assert_eq!(
+            hugr_name_to_quantum_op("Rz", neg_pi_2),
+            Some(QuantumOp::Sdg)
+        );
 
         // pi/4 = T gate for RZ
         let pi_4 = Some(std::f64::consts::FRAC_PI_4);
@@ -1033,7 +1042,10 @@ mod tests {
 
         // -pi/4 = Tdg gate for RZ
         let neg_pi_4 = Some(-std::f64::consts::FRAC_PI_4);
-        assert_eq!(hugr_name_to_quantum_op("Rz", neg_pi_4), Some(QuantumOp::Tdg));
+        assert_eq!(
+            hugr_name_to_quantum_op("Rz", neg_pi_4),
+            Some(QuantumOp::Tdg)
+        );
 
         // pi = X gate for RX
         assert_eq!(hugr_name_to_quantum_op("Rx", pi), Some(QuantumOp::X));
@@ -1075,7 +1087,7 @@ mod tests {
 
     #[test]
     fn test_parse_leading_float() {
-        assert_eq!(parse_leading_float("3.14)"), Some(3.14));
+        assert_eq!(parse_leading_float("2.75)"), Some(2.75));
         assert_eq!(parse_leading_float("1.0, "), Some(1.0));
         assert_eq!(parse_leading_float("-2.5}"), Some(-2.5));
         assert_eq!(parse_leading_float("abc"), None);

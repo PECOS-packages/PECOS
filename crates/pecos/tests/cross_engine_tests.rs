@@ -92,7 +92,7 @@ const BELL_PHIR_JSON: &str = r#"{
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Run a QASM program through QasmEngine and return c-register values.
+/// Run a QASM program through `QasmEngine` and return c-register values.
 fn run_qasm(qasm: &str, seed: u64, shots: usize) -> Vec<u32> {
     let results = sim_builder()
         .classical(qasm_engine().qasm(qasm))
@@ -107,7 +107,7 @@ fn run_qasm(qasm: &str, seed: u64, shots: usize) -> Vec<u32> {
         .collect()
 }
 
-/// Run a PHIR-JSON program through PhirJsonEngine and return c-register values.
+/// Run a PHIR-JSON program through `PhirJsonEngine` and return c-register values.
 fn run_phir_json(json: &str, seed: u64, shots: usize) -> Vec<u32> {
     let results = sim_builder()
         .classical(phir_json_engine().json(json).expect("JSON parse"))
@@ -151,8 +151,14 @@ fn cross_engine_measure_zero_qasm_vs_phir_json() {
     let qasm_results = run_qasm(MEASURE_ZERO_QASM, 42, 20);
     let phir_results = run_phir_json(MEASURE_ZERO_PHIR_JSON, 42, 20);
 
-    assert!(qasm_results.iter().all(|&v| v == 0), "QASM: measuring |0> should give 0");
-    assert!(phir_results.iter().all(|&v| v == 0), "PHIR-JSON: measuring |0> should give 0");
+    assert!(
+        qasm_results.iter().all(|&v| v == 0),
+        "QASM: measuring |0> should give 0"
+    );
+    assert!(
+        phir_results.iter().all(|&v| v == 0),
+        "PHIR-JSON: measuring |0> should give 0"
+    );
     assert_eq!(qasm_results, phir_results);
 }
 
@@ -161,8 +167,14 @@ fn cross_engine_x_measure_qasm_vs_phir_json() {
     let qasm_results = run_qasm(X_MEASURE_QASM, 42, 20);
     let phir_results = run_phir_json(X_MEASURE_PHIR_JSON, 42, 20);
 
-    assert!(qasm_results.iter().all(|&v| v == 1), "QASM: X|0> then measure should give 1");
-    assert!(phir_results.iter().all(|&v| v == 1), "PHIR-JSON: X|0> then measure should give 1");
+    assert!(
+        qasm_results.iter().all(|&v| v == 1),
+        "QASM: X|0> then measure should give 1"
+    );
+    assert!(
+        phir_results.iter().all(|&v| v == 1),
+        "PHIR-JSON: X|0> then measure should give 1"
+    );
     assert_eq!(qasm_results, phir_results);
 }
 
@@ -177,7 +189,10 @@ fn cross_engine_bell_qasm_vs_phir_json() {
 
     // Verify Bell state correlations: only 00 and 11 outcomes
     for &v in &qasm_results {
-        assert!(v == 0 || v == 3, "Bell state should only produce 00 or 11, got {v}");
+        assert!(
+            v == 0 || v == 3,
+            "Bell state should only produce 00 or 11, got {v}"
+        );
     }
 }
 
@@ -215,7 +230,10 @@ fn cross_engine_bell_qasm_vs_phir_engine() {
         assert!(v == 0 || v == 3, "QASM Bell state: only 00 or 11, got {v}");
     }
     for &v in &phir_results {
-        assert!(v == 0 || v == 3, "PhirEngine Bell state: only 00 or 11, got {v}");
+        assert!(
+            v == 0 || v == 3,
+            "PhirEngine Bell state: only 00 or 11, got {v}"
+        );
     }
 }
 

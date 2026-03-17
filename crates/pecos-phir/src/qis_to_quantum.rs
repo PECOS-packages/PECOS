@@ -334,12 +334,7 @@ mod tests {
             emit_const_float(angle_ssa, FRAC_PI_2),
             Instruction {
                 results: vec![],
-                operation: Operation::Custom(CustomOp::new(
-                    "qis",
-                    "rz",
-                    vec![],
-                    BTreeMap::new(),
-                )),
+                operation: Operation::Custom(CustomOp::new("qis", "rz", vec![], BTreeMap::new())),
                 operands: vec![q, angle_ssa],
                 result_types: vec![],
                 regions: vec![],
@@ -373,12 +368,7 @@ mod tests {
             emit_const_float(phi_ssa, 0.0),
             Instruction {
                 results: vec![],
-                operation: Operation::Custom(CustomOp::new(
-                    "qis",
-                    "rxy",
-                    vec![],
-                    BTreeMap::new(),
-                )),
+                operation: Operation::Custom(CustomOp::new("qis", "rxy", vec![], BTreeMap::new())),
                 operands: vec![q, theta_ssa, phi_ssa],
                 result_types: vec![],
                 regions: vec![],
@@ -408,12 +398,7 @@ mod tests {
         let m = SSAValue::new(1);
         let mut module = make_module(vec![Instruction {
             results: vec![m],
-            operation: Operation::Custom(CustomOp::new(
-                "qis",
-                "measure",
-                vec![],
-                BTreeMap::new(),
-            )),
+            operation: Operation::Custom(CustomOp::new("qis", "measure", vec![], BTreeMap::new())),
             operands: vec![q],
             result_types: vec![crate::types::Type::Bool],
             regions: vec![],
@@ -496,12 +481,7 @@ entry:
             emit_const_float(angle_ssa, FRAC_PI_2),
             Instruction {
                 results: vec![],
-                operation: Operation::Custom(CustomOp::new(
-                    "qis",
-                    "rzz",
-                    vec![],
-                    BTreeMap::new(),
-                )),
+                operation: Operation::Custom(CustomOp::new("qis", "rzz", vec![], BTreeMap::new())),
                 operands: vec![q1, q2, angle_ssa],
                 result_types: vec![],
                 regions: vec![],
@@ -535,12 +515,7 @@ entry:
         let q2 = SSAValue::new(1);
         let mut module = make_module(vec![Instruction {
             results: vec![],
-            operation: Operation::Custom(CustomOp::new(
-                "qis",
-                "cz",
-                vec![],
-                BTreeMap::new(),
-            )),
+            operation: Operation::Custom(CustomOp::new("qis", "cz", vec![], BTreeMap::new())),
             operands: vec![q1, q2],
             result_types: vec![],
             regions: vec![],
@@ -566,12 +541,7 @@ entry:
         let q2 = SSAValue::new(1);
         let mut module = make_module(vec![Instruction {
             results: vec![],
-            operation: Operation::Custom(CustomOp::new(
-                "qis",
-                "swap",
-                vec![],
-                BTreeMap::new(),
-            )),
+            operation: Operation::Custom(CustomOp::new("qis", "swap", vec![], BTreeMap::new())),
             operands: vec![q1, q2],
             result_types: vec![],
             regions: vec![],
@@ -669,12 +639,7 @@ entry:
         let q = SSAValue::new(0);
         let mut module = make_module(vec![Instruction {
             results: vec![],
-            operation: Operation::Custom(CustomOp::new(
-                "qis",
-                "reset",
-                vec![],
-                BTreeMap::new(),
-            )),
+            operation: Operation::Custom(CustomOp::new("qis", "reset", vec![], BTreeMap::new())),
             operands: vec![q],
             result_types: vec![],
             regions: vec![],
@@ -738,7 +703,10 @@ entry:
 
         let err = convert_qis_to_quantum(&mut module).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("nonexistent_gate"), "Error should mention the op name: {msg}");
+        assert!(
+            msg.contains("nonexistent_gate"),
+            "Error should mention the op name: {msg}"
+        );
     }
 
     #[test]
@@ -747,12 +715,7 @@ entry:
         // rz needs [qubit, angle_ssa] but we only provide [qubit]
         let mut module = make_module(vec![Instruction {
             results: vec![],
-            operation: Operation::Custom(CustomOp::new(
-                "qis",
-                "rz",
-                vec![],
-                BTreeMap::new(),
-            )),
+            operation: Operation::Custom(CustomOp::new("qis", "rz", vec![], BTreeMap::new())),
             operands: vec![q],
             result_types: vec![],
             regions: vec![],
@@ -762,7 +725,10 @@ entry:
 
         let err = convert_qis_to_quantum(&mut module).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("rz angle"), "Error should mention context: {msg}");
+        assert!(
+            msg.contains("rz angle"),
+            "Error should mention context: {msg}"
+        );
     }
 
     #[test]
@@ -773,12 +739,7 @@ entry:
             // No ConstFloat for angle_ssa=99
             Instruction {
                 results: vec![],
-                operation: Operation::Custom(CustomOp::new(
-                    "qis",
-                    "rz",
-                    vec![],
-                    BTreeMap::new(),
-                )),
+                operation: Operation::Custom(CustomOp::new("qis", "rz", vec![], BTreeMap::new())),
                 operands: vec![q, angle_ssa],
                 result_types: vec![],
                 regions: vec![],
@@ -789,7 +750,10 @@ entry:
 
         let err = convert_qis_to_quantum(&mut module).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("cannot resolve"), "Error should mention unresolved constant: {msg}");
+        assert!(
+            msg.contains("cannot resolve"),
+            "Error should mention unresolved constant: {msg}"
+        );
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -798,22 +762,20 @@ entry:
 
     #[test]
     fn test_non_qis_custom_ops_preserved() {
-        let mut module = make_module(vec![
-            Instruction {
-                results: vec![],
-                operation: Operation::Custom(CustomOp::new(
-                    "other_dialect",
-                    "some_op",
-                    vec![],
-                    BTreeMap::new(),
-                )),
-                operands: vec![],
-                result_types: vec![],
-                regions: vec![],
-                attributes: BTreeMap::new(),
-                location: None,
-            },
-        ]);
+        let mut module = make_module(vec![Instruction {
+            results: vec![],
+            operation: Operation::Custom(CustomOp::new(
+                "other_dialect",
+                "some_op",
+                vec![],
+                BTreeMap::new(),
+            )),
+            operands: vec![],
+            result_types: vec![],
+            regions: vec![],
+            attributes: BTreeMap::new(),
+            location: None,
+        }]);
 
         convert_qis_to_quantum(&mut module).unwrap();
         assert_eq!(module.body.blocks[0].operations.len(), 1);

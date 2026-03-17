@@ -130,9 +130,7 @@ impl PauliGroup {
     /// # Errors
     ///
     /// Returns [`PauliGroupError::NonCommuting`] if any pair of generators anticommute.
-    pub fn new(
-        generators: Vec<PauliString>,
-    ) -> Result<Self, PauliGroupError> {
+    pub fn new(generators: Vec<PauliString>) -> Result<Self, PauliGroupError> {
         for idx_a in 0..generators.len() {
             for idx_b in (idx_a + 1)..generators.len() {
                 if !generators[idx_a].commutes_with(&generators[idx_b]) {
@@ -151,9 +149,7 @@ impl PauliGroup {
     ///
     /// The caller must ensure that the generators mutually commute.
     #[must_use]
-    pub fn from_generators_unchecked(
-        generators: Vec<PauliString>,
-    ) -> Self {
+    pub fn from_generators_unchecked(generators: Vec<PauliString>) -> Self {
         Self {
             inner: PauliSequence::new(generators),
         }
@@ -166,9 +162,7 @@ impl PauliGroup {
     /// # Errors
     ///
     /// Returns [`PauliGroupError::NonCommuting`] if any pair of elements anticommute.
-    pub fn try_from_set(
-        set: &PauliSet,
-    ) -> Result<Self, PauliGroupError> {
+    pub fn try_from_set(set: &PauliSet) -> Result<Self, PauliGroupError> {
         Self::try_from(set.to_sequence())
     }
 
@@ -365,9 +359,10 @@ impl PauliGroup {
     /// [`PauliStabilizerGroup`] via [`TryFrom`].
     #[must_use]
     pub fn has_real_phases(&self) -> bool {
-        self.inner.paulis().iter().all(|g| {
-            matches!(g.phase(), QuarterPhase::PlusOne | QuarterPhase::MinusOne)
-        })
+        self.inner
+            .paulis()
+            .iter()
+            .all(|g| matches!(g.phase(), QuarterPhase::PlusOne | QuarterPhase::MinusOne))
     }
 
     /// Returns the group element for the given exponent tuple.
@@ -491,10 +486,7 @@ impl PauliGroup {
     /// Clifford conjugation preserves commutativity and maps quarter-turn phases
     /// to quarter-turn phases, so the result is always a valid `PauliGroup`.
     #[must_use]
-    pub fn apply_clifford(
-        &self,
-        clifford: &pecos_core::clifford_rep::CliffordRep,
-    ) -> PauliGroup {
+    pub fn apply_clifford(&self, clifford: &pecos_core::clifford_rep::CliffordRep) -> PauliGroup {
         let transformed: Vec<PauliString> = self
             .inner
             .paulis()
@@ -518,16 +510,10 @@ impl PauliGroup {
     /// # Errors
     ///
     /// Returns an error if the generator anticommutes with any existing generator.
-    pub fn add_generator(
-        &mut self,
-        generator: PauliString,
-    ) -> Result<(), PauliGroupError> {
+    pub fn add_generator(&mut self, generator: PauliString) -> Result<(), PauliGroupError> {
         for (idx, existing) in self.inner.paulis().iter().enumerate() {
             if !generator.commutes_with(existing) {
-                return Err(PauliGroupError::NonCommuting(
-                    self.num_generators(),
-                    idx,
-                ));
+                return Err(PauliGroupError::NonCommuting(self.num_generators(), idx));
             }
         }
 
@@ -557,18 +543,12 @@ impl PauliGroup {
     ///
     /// Returns an error if any generator from `other` anticommutes with a
     /// generator from `self`.
-    pub fn merge(
-        &mut self,
-        other: &PauliGroup,
-    ) -> Result<(), PauliGroupError> {
+    pub fn merge(&mut self, other: &PauliGroup) -> Result<(), PauliGroupError> {
         let base_len = self.num_generators();
         for (new_idx, new_gen) in other.generators().iter().enumerate() {
             for (old_idx, old_gen) in self.inner.paulis().iter().enumerate() {
                 if !new_gen.commutes_with(old_gen) {
-                    return Err(PauliGroupError::NonCommuting(
-                        base_len + new_idx,
-                        old_idx,
-                    ));
+                    return Err(PauliGroupError::NonCommuting(base_len + new_idx, old_idx));
                 }
             }
         }
@@ -648,9 +628,7 @@ impl TryFrom<PauliSequence> for PauliStabilizerGroup {
     /// has phase `+i` or `-i`.
     fn try_from(seq: PauliSequence) -> Result<Self, Self::Error> {
         let group = PauliGroup::try_from(seq).map_err(|e| match e {
-            PauliGroupError::NonCommuting(a, b) => {
-                PauliStabilizerGroupError::NonCommuting(a, b)
-            }
+            PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
         })?;
         Self::try_from(group)
     }
@@ -875,7 +853,7 @@ mod tests {
 
     #[test]
     fn contains_body() {
-        let group = PauliGroup::new(vec![i * X(0) & Y(1), Z(2)]).unwrap();
+        let group = PauliGroup::new(vec![(i * X(0)) & Y(1), Z(2)]).unwrap();
         assert!(group.contains(&(X(0) & Y(1))));
         assert!(group.contains(&Z(2)));
         assert!(!group.contains(&X(2)));
@@ -1045,7 +1023,7 @@ mod tests {
 
     #[test]
     fn multi_qubit_imaginary_generator() {
-        let generator = i * X(0) & Y(1) & Z(2);
+        let generator = (i * X(0)) & Y(1) & Z(2);
         let group = PauliGroup::new(vec![generator]).unwrap();
         assert_eq!(group.rank(), 1);
         assert!(group.contains_minus_identity());
@@ -1224,7 +1202,10 @@ mod tests {
         let mat = group.commutation_matrix();
         for row in &mat {
             for &val in row {
-                assert!(val, "commutation matrix should be all-true for abelian group");
+                assert!(
+                    val,
+                    "commutation matrix should be all-true for abelian group"
+                );
             }
         }
     }

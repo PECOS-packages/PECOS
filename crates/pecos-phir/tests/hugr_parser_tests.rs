@@ -13,9 +13,13 @@ use pecos_phir::ops::{ClassicalOp, Operation, QuantumOp};
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Get the entry block of the "main" function inside a ModuleOp.
+/// Get the entry block of the "main" function inside a `ModuleOp`.
 fn get_main_block(module: &pecos_phir::builtin_ops::ModuleOp) -> &pecos_phir::phir::Block {
-    let top_block = module.body.blocks.first().expect("module should have a body block");
+    let top_block = module
+        .body
+        .blocks
+        .first()
+        .expect("module should have a body block");
     let func_instr = top_block
         .operations
         .first()
@@ -26,16 +30,23 @@ fn get_main_block(module: &pecos_phir::builtin_ops::ModuleOp) -> &pecos_phir::ph
             .and_then(|r| r.blocks.first())
             .expect("function should have entry block")
     } else {
-        panic!("first operation should be a Func, got {:?}", func_instr.operation);
+        panic!(
+            "first operation should be a Func, got {:?}",
+            func_instr.operation
+        );
     }
 }
 
 /// Collect operation type names from a block (e.g. "quantum.h", "arith.result").
 fn op_names(block: &pecos_phir::phir::Block) -> Vec<String> {
-    block.operations.iter().map(|i| i.operation.name()).collect()
+    block
+        .operations
+        .iter()
+        .map(|i| i.operation.name())
+        .collect()
 }
 
-/// Count occurrences of a specific QuantumOp variant in a block.
+/// Count occurrences of a specific `QuantumOp` variant in a block.
 fn count_quantum_ops<F>(block: &pecos_phir::phir::Block, pred: F) -> usize
 where
     F: Fn(&QuantumOp) -> bool,
@@ -47,7 +58,7 @@ where
         .count()
 }
 
-/// Count VarDefine ops in a block.
+/// Count `VarDefine` ops in a block.
 fn count_var_defines(block: &pecos_phir::phir::Block) -> usize {
     block
         .operations
@@ -56,20 +67,17 @@ fn count_var_defines(block: &pecos_phir::phir::Block) -> usize {
         .count()
 }
 
-/// Check that a block has a Result op with the given export_name.
+/// Check that a block has a Result op with the given `export_name`.
 fn has_result_with_export(block: &pecos_phir::phir::Block, name: &str) -> bool {
     block.operations.iter().any(|i| {
         matches!(&i.operation, Operation::Classical(ClassicalOp::Result))
-            && i.attributes
-                .get("export_name")
-                .and_then(|v| {
-                    if let pecos_phir::phir::AttributeValue::String(s) = v {
-                        Some(s.as_str())
-                    } else {
-                        None
-                    }
-                })
-                == Some(name)
+            && i.attributes.get("export_name").and_then(|v| {
+                if let pecos_phir::phir::AttributeValue::String(s) = v {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            }) == Some(name)
     })
 }
 
@@ -88,7 +96,10 @@ fn parse_single_hadamard_hugr() {
     let names = op_names(block);
 
     // Should have VarDefine for qubits and classical registers
-    assert!(count_var_defines(block) >= 1, "should have VarDefine ops: {names:?}");
+    assert!(
+        count_var_defines(block) >= 1,
+        "should have VarDefine ops: {names:?}"
+    );
 
     // Should contain an H gate
     assert!(
@@ -249,7 +260,10 @@ fn bell_state_no_alloc_ops() {
 
     let block = get_main_block(&module);
     let alloc_count = count_quantum_ops(block, |q| matches!(q, QuantumOp::Alloc));
-    assert_eq!(alloc_count, 0, "should have no Alloc ops (VarDefine handles allocation)");
+    assert_eq!(
+        alloc_count, 0,
+        "should have no Alloc ops (VarDefine handles allocation)"
+    );
 }
 
 #[test]

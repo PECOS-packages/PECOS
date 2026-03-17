@@ -10,12 +10,12 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Tests for UnitaryRep <-> CliffordRep round-trips and is_clifford consistency.
+//! Tests for `UnitaryRep` <-> `CliffordRep` round-trips and `is_clifford` consistency.
 
+use pecos_core::Angle64;
 use pecos_core::clifford::Clifford;
 use pecos_core::gate_type::GateType;
-use pecos_core::unitary_rep::{Unitary, UnitaryRep, RotationType};
-use pecos_core::Angle64;
+use pecos_core::unitary_rep::{RotationType, Unitary, UnitaryRep};
 
 // ============================================================================
 // is_clifford: GateType
@@ -24,11 +24,19 @@ use pecos_core::Angle64;
 #[test]
 fn is_clifford_1q_named_gates() {
     let clifford_gates = [
-        GateType::I, GateType::X, GateType::Y, GateType::Z,
-        GateType::H, GateType::SX, GateType::SXdg,
-        GateType::SY, GateType::SYdg,
-        GateType::SZ, GateType::SZdg,
-        GateType::F, GateType::Fdg,
+        GateType::I,
+        GateType::X,
+        GateType::Y,
+        GateType::Z,
+        GateType::H,
+        GateType::SX,
+        GateType::SXdg,
+        GateType::SY,
+        GateType::SYdg,
+        GateType::SZ,
+        GateType::SZdg,
+        GateType::F,
+        GateType::Fdg,
     ];
     for gt in clifford_gates {
         let u = Unitary::Named(gt);
@@ -39,10 +47,16 @@ fn is_clifford_1q_named_gates() {
 #[test]
 fn is_clifford_2q_named_gates() {
     let clifford_gates = [
-        GateType::CX, GateType::CY, GateType::CZ, GateType::SWAP,
-        GateType::SXX, GateType::SXXdg,
-        GateType::SYY, GateType::SYYdg,
-        GateType::SZZ, GateType::SZZdg,
+        GateType::CX,
+        GateType::CY,
+        GateType::CZ,
+        GateType::SWAP,
+        GateType::SXX,
+        GateType::SXXdg,
+        GateType::SYY,
+        GateType::SYYdg,
+        GateType::SZZ,
+        GateType::SZZdg,
     ];
     for gt in clifford_gates {
         let u = Unitary::Named(gt);
@@ -55,7 +69,10 @@ fn is_not_clifford_non_clifford_named_gates() {
     let non_clifford = [GateType::T, GateType::Tdg, GateType::CH, GateType::CCX];
     for gt in non_clifford {
         let u = Unitary::Named(gt);
-        assert!(!u.is_clifford(), "Unitary::Named({gt:?}) should NOT be Clifford");
+        assert!(
+            !u.is_clifford(),
+            "Unitary::Named({gt:?}) should NOT be Clifford"
+        );
     }
 }
 
@@ -66,7 +83,10 @@ fn is_clifford_quarter_turn_rotations() {
             rotation_type: rot,
             angle: Angle64::QUARTER_TURN,
         };
-        assert!(u.is_clifford(), "{rot:?} at quarter turn should be Clifford");
+        assert!(
+            u.is_clifford(),
+            "{rot:?} at quarter turn should be Clifford"
+        );
     }
 }
 
@@ -77,7 +97,10 @@ fn is_clifford_2q_quarter_turn_rotations() {
             rotation_type: rot,
             angle: Angle64::QUARTER_TURN,
         };
-        assert!(u.is_clifford(), "{rot:?} at quarter turn should be Clifford");
+        assert!(
+            u.is_clifford(),
+            "{rot:?} at quarter turn should be Clifford"
+        );
     }
 }
 
@@ -88,11 +111,19 @@ fn is_clifford_2q_quarter_turn_rotations() {
 #[test]
 fn to_clifford_rep_1q_named_gates() {
     let gates = [
-        GateType::I, GateType::X, GateType::Y, GateType::Z,
-        GateType::H, GateType::SX, GateType::SXdg,
-        GateType::SY, GateType::SYdg,
-        GateType::SZ, GateType::SZdg,
-        GateType::F, GateType::Fdg,
+        GateType::I,
+        GateType::X,
+        GateType::Y,
+        GateType::Z,
+        GateType::H,
+        GateType::SX,
+        GateType::SXdg,
+        GateType::SY,
+        GateType::SYdg,
+        GateType::SZ,
+        GateType::SZdg,
+        GateType::F,
+        GateType::Fdg,
     ];
     for gt in gates {
         let ur = Unitary::Named(gt).on_qubit(0);
@@ -107,10 +138,16 @@ fn to_clifford_rep_1q_named_gates() {
 #[test]
 fn to_clifford_rep_2q_named_gates() {
     let gates = [
-        GateType::CX, GateType::CY, GateType::CZ, GateType::SWAP,
-        GateType::SXX, GateType::SXXdg,
-        GateType::SYY, GateType::SYYdg,
-        GateType::SZZ, GateType::SZZdg,
+        GateType::CX,
+        GateType::CY,
+        GateType::CZ,
+        GateType::SWAP,
+        GateType::SXX,
+        GateType::SXXdg,
+        GateType::SYY,
+        GateType::SYYdg,
+        GateType::SZZ,
+        GateType::SZZdg,
     ];
     for gt in gates {
         let ur = Unitary::Named(gt).on_qubits(0, 1);
@@ -233,9 +270,9 @@ fn to_clifford_rep_exact_match_for_named_1q_gates() {
     ];
     for (cliff, gt) in gates {
         let ur = Unitary::Named(gt).on_qubit(0);
-        let cr = ur.to_clifford_rep(1).unwrap_or_else(|| {
-            panic!("to_clifford_rep failed for Named({gt:?})")
-        });
+        let cr = ur
+            .to_clifford_rep(1)
+            .unwrap_or_else(|| panic!("to_clifford_rep failed for Named({gt:?})"));
         let expected = cliff.on_qubit(0);
         assert_eq!(
             cr, expected,
@@ -336,12 +373,19 @@ fn rotation_to_gate_type_rzz_quarter_and_three_quarter() {
 fn dg_is_identity_for_self_adjoint_gates() {
     // Self-adjoint 1q gates: dg() returns a clone (not Adjoint wrapper)
     let self_adjoint_1q = [
-        GateType::I, GateType::X, GateType::Y, GateType::Z, GateType::H,
+        GateType::I,
+        GateType::X,
+        GateType::Y,
+        GateType::Z,
+        GateType::H,
     ];
     for gt in self_adjoint_1q {
         let ur = Unitary::Named(gt).on_qubit(0);
         let dg = ur.dg();
-        assert_eq!(ur, dg, "dg() of self-adjoint Named({gt:?}) should equal itself");
+        assert_eq!(
+            ur, dg,
+            "dg() of self-adjoint Named({gt:?}) should equal itself"
+        );
     }
 
     // Self-adjoint 2q gates
@@ -349,24 +393,35 @@ fn dg_is_identity_for_self_adjoint_gates() {
     for gt in self_adjoint_2q {
         let ur = Unitary::Named(gt).on_qubits(0, 1);
         let dg = ur.dg();
-        assert_eq!(ur, dg, "dg() of self-adjoint Named({gt:?}) should equal itself");
+        assert_eq!(
+            ur, dg,
+            "dg() of self-adjoint Named({gt:?}) should equal itself"
+        );
     }
 
     // CCX (3-qubit, self-adjoint)
     let ur_ccx = UnitaryRep::Gate(Unitary::Named(GateType::CCX), smallvec::smallvec![0, 1, 2]);
     let dg_ccx = ur_ccx.dg();
-    assert_eq!(ur_ccx, dg_ccx, "dg() of self-adjoint CCX should equal itself");
+    assert_eq!(
+        ur_ccx, dg_ccx,
+        "dg() of self-adjoint CCX should equal itself"
+    );
 }
 
 #[test]
 fn dg_wraps_adjoint_for_non_self_adjoint_gates() {
     // Non-self-adjoint Named gates: dg() wraps in Adjoint
     let not_self_adjoint = [
-        GateType::SX, GateType::SXdg,
-        GateType::SY, GateType::SYdg,
-        GateType::SZ, GateType::SZdg,
-        GateType::T, GateType::Tdg,
-        GateType::F, GateType::Fdg,
+        GateType::SX,
+        GateType::SXdg,
+        GateType::SY,
+        GateType::SYdg,
+        GateType::SZ,
+        GateType::SZdg,
+        GateType::T,
+        GateType::Tdg,
+        GateType::F,
+        GateType::Fdg,
     ];
     for gt in not_self_adjoint {
         let ur = Unitary::Named(gt).on_qubit(0);
@@ -385,9 +440,18 @@ fn dg_wraps_adjoint_for_non_self_adjoint_gates() {
 #[test]
 fn rotation_to_gate_type_half_turn_maps_to_paulis() {
     use pecos_core::unitary_rep::rotation_to_gate_type;
-    assert_eq!(rotation_to_gate_type(RotationType::RX, Angle64::HALF_TURN), Some(GateType::X));
-    assert_eq!(rotation_to_gate_type(RotationType::RY, Angle64::HALF_TURN), Some(GateType::Y));
-    assert_eq!(rotation_to_gate_type(RotationType::RZ, Angle64::HALF_TURN), Some(GateType::Z));
+    assert_eq!(
+        rotation_to_gate_type(RotationType::RX, Angle64::HALF_TURN),
+        Some(GateType::X)
+    );
+    assert_eq!(
+        rotation_to_gate_type(RotationType::RY, Angle64::HALF_TURN),
+        Some(GateType::Y)
+    );
+    assert_eq!(
+        rotation_to_gate_type(RotationType::RZ, Angle64::HALF_TURN),
+        Some(GateType::Z)
+    );
 }
 
 #[test]
@@ -395,11 +459,13 @@ fn rotation_to_gate_type_zero_and_full_turn_return_none() {
     use pecos_core::unitary_rep::rotation_to_gate_type;
     for rot in [RotationType::RX, RotationType::RY, RotationType::RZ] {
         assert_eq!(
-            rotation_to_gate_type(rot, Angle64::ZERO), None,
+            rotation_to_gate_type(rot, Angle64::ZERO),
+            None,
             "{rot:?} at zero should have no named gate"
         );
         assert_eq!(
-            rotation_to_gate_type(rot, Angle64::FULL_TURN), None,
+            rotation_to_gate_type(rot, Angle64::FULL_TURN),
+            None,
             "{rot:?} at full turn should have no named gate"
         );
     }
@@ -409,7 +475,10 @@ fn rotation_to_gate_type_zero_and_full_turn_return_none() {
 fn rotation_to_gate_type_eighth_turn_maps_to_t() {
     use pecos_core::unitary_rep::rotation_to_gate_type;
     let eighth = Angle64::HALF_TURN / 4u64; // pi/4
-    assert_eq!(rotation_to_gate_type(RotationType::RZ, eighth), Some(GateType::T));
+    assert_eq!(
+        rotation_to_gate_type(RotationType::RZ, eighth),
+        Some(GateType::T)
+    );
     // RX and RY at pi/4 have no named gate
     assert_eq!(rotation_to_gate_type(RotationType::RX, eighth), None);
     assert_eq!(rotation_to_gate_type(RotationType::RY, eighth), None);
@@ -422,12 +491,23 @@ fn rotation_to_gate_type_eighth_turn_maps_to_t() {
 #[test]
 fn dg_involution_rotation() {
     for rot in [RotationType::RX, RotationType::RY, RotationType::RZ] {
-        for angle in [Angle64::QUARTER_TURN, Angle64::HALF_TURN, Angle64::THREE_QUARTERS_TURN] {
+        for angle in [
+            Angle64::QUARTER_TURN,
+            Angle64::HALF_TURN,
+            Angle64::THREE_QUARTERS_TURN,
+        ] {
             let ur = UnitaryRep::Gate(
-                Unitary::Rotation { rotation_type: rot, angle },
+                Unitary::Rotation {
+                    rotation_type: rot,
+                    angle,
+                },
                 smallvec::smallvec![0],
             );
-            assert_eq!(ur.dg().dg(), ur, "dg(dg({rot:?}({angle:?}))) should equal original");
+            assert_eq!(
+                ur.dg().dg(),
+                ur,
+                "dg(dg({rot:?}({angle:?}))) should equal original"
+            );
         }
     }
 }
@@ -435,20 +515,32 @@ fn dg_involution_rotation() {
 #[test]
 fn dg_involution_compose() {
     let composed = pecos_core::unitary_rep::H(0) * pecos_core::unitary_rep::SZ(0);
-    assert_eq!(composed.dg().dg(), composed, "dg(dg(H*SZ)) should equal original");
+    assert_eq!(
+        composed.dg().dg(),
+        composed,
+        "dg(dg(H*SZ)) should equal original"
+    );
 }
 
 #[test]
 fn dg_involution_tensor() {
     let tensor = pecos_core::unitary_rep::H(0) & pecos_core::unitary_rep::X(1);
-    assert_eq!(tensor.dg().dg(), tensor, "dg(dg(H&X)) should equal original");
+    assert_eq!(
+        tensor.dg().dg(),
+        tensor,
+        "dg(dg(H&X)) should equal original"
+    );
 }
 
 #[test]
 fn dg_involution_phase() {
-    let phased = pecos_core::unitary_rep::phase(Angle64::QUARTER_TURN)
-        * pecos_core::unitary_rep::X(0);
-    assert_eq!(phased.dg().dg(), phased, "dg(dg(phase*X)) should equal original");
+    let phased =
+        pecos_core::unitary_rep::phase(Angle64::QUARTER_TURN) * pecos_core::unitary_rep::X(0);
+    assert_eq!(
+        phased.dg().dg(),
+        phased,
+        "dg(dg(phase*X)) should equal original"
+    );
 }
 
 #[test]
@@ -469,14 +561,24 @@ fn dg_negates_rotation_angle() {
     let neg_angle = Angle64::THREE_QUARTERS_TURN; // == -pi/2 mod 2pi
     for rot in [RotationType::RX, RotationType::RY, RotationType::RZ] {
         let ur = UnitaryRep::Gate(
-            Unitary::Rotation { rotation_type: rot, angle },
+            Unitary::Rotation {
+                rotation_type: rot,
+                angle,
+            },
             smallvec::smallvec![0],
         );
         let expected = UnitaryRep::Gate(
-            Unitary::Rotation { rotation_type: rot, angle: neg_angle },
+            Unitary::Rotation {
+                rotation_type: rot,
+                angle: neg_angle,
+            },
             smallvec::smallvec![0],
         );
-        assert_eq!(ur.dg(), expected, "dg({rot:?}(quarter)) should be {rot:?}(three_quarter)");
+        assert_eq!(
+            ur.dg(),
+            expected,
+            "dg({rot:?}(quarter)) should be {rot:?}(three_quarter)"
+        );
     }
 }
 
@@ -498,20 +600,14 @@ fn is_clifford_tensor_cliffords() {
 
 #[test]
 fn is_not_clifford_composed_with_non_clifford() {
-    let t_gate = UnitaryRep::Gate(
-        Unitary::Named(GateType::T),
-        smallvec::smallvec![0],
-    );
+    let t_gate = UnitaryRep::Gate(Unitary::Named(GateType::T), smallvec::smallvec![0]);
     let composed = pecos_core::unitary_rep::H(0) * t_gate;
     assert!(!composed.is_clifford(), "H * T should NOT be Clifford");
 }
 
 #[test]
 fn is_not_clifford_tensor_with_non_clifford() {
-    let t_gate = UnitaryRep::Gate(
-        Unitary::Named(GateType::T),
-        smallvec::smallvec![1],
-    );
+    let t_gate = UnitaryRep::Gate(Unitary::Named(GateType::T), smallvec::smallvec![1]);
     let tensor = pecos_core::unitary_rep::H(0) & t_gate;
     assert!(!tensor.is_clifford(), "H & T should NOT be Clifford");
 }
@@ -524,17 +620,14 @@ fn is_clifford_adjoint_of_clifford() {
 
 #[test]
 fn is_not_clifford_adjoint_of_non_clifford() {
-    let t_gate = UnitaryRep::Gate(
-        Unitary::Named(GateType::T),
-        smallvec::smallvec![0],
-    );
+    let t_gate = UnitaryRep::Gate(Unitary::Named(GateType::T), smallvec::smallvec![0]);
     assert!(!t_gate.dg().is_clifford(), "T.dg() should NOT be Clifford");
 }
 
 #[test]
 fn is_clifford_phased_clifford() {
-    let phased = pecos_core::unitary_rep::phase(Angle64::QUARTER_TURN)
-        * pecos_core::unitary_rep::H(0);
+    let phased =
+        pecos_core::unitary_rep::phase(Angle64::QUARTER_TURN) * pecos_core::unitary_rep::H(0);
     assert!(phased.is_clifford(), "phase(pi/2) * H should be Clifford");
 }
 
@@ -547,13 +640,20 @@ fn to_clifford_rep_zero_angle_is_identity() {
     use pecos_core::clifford_rep::CliffordRep;
     for rot in [RotationType::RX, RotationType::RY, RotationType::RZ] {
         let ur = UnitaryRep::Gate(
-            Unitary::Rotation { rotation_type: rot, angle: Angle64::ZERO },
+            Unitary::Rotation {
+                rotation_type: rot,
+                angle: Angle64::ZERO,
+            },
             smallvec::smallvec![0],
         );
         let cr = ur.to_clifford_rep(1);
-        assert!(cr.is_some(), "to_clifford_rep should succeed for {rot:?} at zero");
+        assert!(
+            cr.is_some(),
+            "to_clifford_rep should succeed for {rot:?} at zero"
+        );
         assert_eq!(
-            cr.unwrap(), CliffordRep::identity(1),
+            cr.unwrap(),
+            CliffordRep::identity(1),
             "{rot:?}(0) should produce identity CliffordRep"
         );
     }
@@ -564,13 +664,20 @@ fn to_clifford_rep_full_turn_is_identity() {
     use pecos_core::clifford_rep::CliffordRep;
     for rot in [RotationType::RX, RotationType::RY, RotationType::RZ] {
         let ur = UnitaryRep::Gate(
-            Unitary::Rotation { rotation_type: rot, angle: Angle64::FULL_TURN },
+            Unitary::Rotation {
+                rotation_type: rot,
+                angle: Angle64::FULL_TURN,
+            },
             smallvec::smallvec![0],
         );
         let cr = ur.to_clifford_rep(1);
-        assert!(cr.is_some(), "to_clifford_rep should succeed for {rot:?} at full turn");
+        assert!(
+            cr.is_some(),
+            "to_clifford_rep should succeed for {rot:?} at full turn"
+        );
         assert_eq!(
-            cr.unwrap(), CliffordRep::identity(1),
+            cr.unwrap(),
+            CliffordRep::identity(1),
             "{rot:?}(2pi) should produce identity CliffordRep"
         );
     }

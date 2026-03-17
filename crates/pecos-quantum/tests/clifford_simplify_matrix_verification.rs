@@ -5,8 +5,8 @@
 //! and the expected named Clifford unitary, convert both to dense matrices,
 //! and verify they are equal up to global phase.
 
-use pecos_core::unitary_rep::*;
 use pecos_core::Angle64;
+use pecos_core::unitary_rep::*;
 use pecos_quantum::unitary_matrix::unitaries_equiv;
 
 // ---------------------------------------------------------------------------
@@ -46,20 +46,14 @@ fn rz_quarter_equiv_sz() {
 fn rz_three_quarters_equiv_szdg() {
     let rz = RZ(Angle64::THREE_QUARTERS_TURN, 0);
     let szdg = SZ(0).dg();
-    assert!(
-        unitaries_equiv(&rz, &szdg),
-        "RZ(3pi/2) should equal SZdg"
-    );
+    assert!(unitaries_equiv(&rz, &szdg), "RZ(3pi/2) should equal SZdg");
 }
 
 #[test]
 fn rz_neg_quarter_equiv_szdg() {
     let rz = RZ(-Angle64::QUARTER_TURN, 0);
     let szdg = SZ(0).dg();
-    assert!(
-        unitaries_equiv(&rz, &szdg),
-        "RZ(-pi/2) should equal SZdg"
-    );
+    assert!(unitaries_equiv(&rz, &szdg), "RZ(-pi/2) should equal SZdg");
 }
 
 // ---------------------------------------------------------------------------
@@ -98,20 +92,14 @@ fn rx_quarter_equiv_sx() {
 fn rx_three_quarters_equiv_sxdg() {
     let rx = RX(Angle64::THREE_QUARTERS_TURN, 0);
     let sxdg = SX(0).dg();
-    assert!(
-        unitaries_equiv(&rx, &sxdg),
-        "RX(3pi/2) should equal SXdg"
-    );
+    assert!(unitaries_equiv(&rx, &sxdg), "RX(3pi/2) should equal SXdg");
 }
 
 #[test]
 fn rx_neg_quarter_equiv_sxdg() {
     let rx = RX(-Angle64::QUARTER_TURN, 0);
     let sxdg = SX(0).dg();
-    assert!(
-        unitaries_equiv(&rx, &sxdg),
-        "RX(-pi/2) should equal SXdg"
-    );
+    assert!(unitaries_equiv(&rx, &sxdg), "RX(-pi/2) should equal SXdg");
 }
 
 // ---------------------------------------------------------------------------
@@ -150,20 +138,14 @@ fn ry_quarter_equiv_sy() {
 fn ry_three_quarters_equiv_sydg() {
     let ry = RY(Angle64::THREE_QUARTERS_TURN, 0);
     let sydg = SY(0).dg();
-    assert!(
-        unitaries_equiv(&ry, &sydg),
-        "RY(3pi/2) should equal SYdg"
-    );
+    assert!(unitaries_equiv(&ry, &sydg), "RY(3pi/2) should equal SYdg");
 }
 
 #[test]
 fn ry_neg_quarter_equiv_sydg() {
     let ry = RY(-Angle64::QUARTER_TURN, 0);
     let sydg = SY(0).dg();
-    assert!(
-        unitaries_equiv(&ry, &sydg),
-        "RY(-pi/2) should equal SYdg"
-    );
+    assert!(unitaries_equiv(&ry, &sydg), "RY(-pi/2) should equal SYdg");
 }
 
 // ---------------------------------------------------------------------------
@@ -209,10 +191,7 @@ fn rzz_pi_equiv_z_tensor_z() {
     // RZZ(pi) = Z x Z (the half-turn decomposition)
     let rzz = RZZ(Angle64::HALF_TURN, 0, 1);
     let zz = Z(0) & Z(1);
-    assert!(
-        unitaries_equiv(&rzz, &zz),
-        "RZZ(pi) should equal Z x Z"
-    );
+    assert!(unitaries_equiv(&rzz, &zz), "RZZ(pi) should equal Z x Z");
 }
 
 // ---------------------------------------------------------------------------
@@ -248,10 +227,7 @@ fn rxx_three_quarters_equiv_sxxdg() {
 fn rxx_pi_equiv_x_tensor_x() {
     let rxx = RXX(Angle64::HALF_TURN, 0, 1);
     let xx = X(0) & X(1);
-    assert!(
-        unitaries_equiv(&rxx, &xx),
-        "RXX(pi) should equal X x X"
-    );
+    assert!(unitaries_equiv(&rxx, &xx), "RXX(pi) should equal X x X");
 }
 
 // ---------------------------------------------------------------------------
@@ -286,10 +262,7 @@ fn ryy_three_quarters_equiv_syydg() {
 fn ryy_pi_equiv_y_tensor_y() {
     let ryy = RYY(Angle64::HALF_TURN, 0, 1);
     let yy = Y(0) & Y(1);
-    assert!(
-        unitaries_equiv(&ryy, &yy),
-        "RYY(pi) should equal Y x Y"
-    );
+    assert!(unitaries_equiv(&ryy, &yy), "RYY(pi) should equal Y x Y");
 }
 
 // ---------------------------------------------------------------------------
@@ -308,10 +281,7 @@ fn crz_operator(angle: Angle64, control: usize, target: usize) -> UnitaryRep {
 fn crz_zero_equiv_identity() {
     let crz = crz_operator(Angle64::ZERO, 0, 1);
     let id = I(0) & I(1);
-    assert!(
-        unitaries_equiv(&crz, &id),
-        "CRZ(0) should equal I x I"
-    );
+    assert!(unitaries_equiv(&crz, &id), "CRZ(0) should equal I x I");
 }
 
 #[test]
@@ -320,10 +290,7 @@ fn crz_pi_not_equiv_cz() {
     // So CRZ(pi) != CZ even up to global phase.
     let crz = crz_operator(Angle64::HALF_TURN, 0, 1);
     let cz = CZ(0, 1);
-    assert!(
-        !unitaries_equiv(&crz, &cz),
-        "CRZ(pi) should NOT equal CZ"
-    );
+    assert!(!unitaries_equiv(&crz, &cz), "CRZ(pi) should NOT equal CZ");
 }
 
 #[test]
@@ -368,10 +335,7 @@ fn r1xy_pi_half_equiv_y() {
     // R1XY(pi, pi/2) = rotation by pi about Y = Y
     let ry = RY(Angle64::HALF_TURN, 0);
     let y = Y(0);
-    assert!(
-        unitaries_equiv(&ry, &y),
-        "R1XY(pi, pi/2) should equal Y"
-    );
+    assert!(unitaries_equiv(&ry, &y), "R1XY(pi, pi/2) should equal Y");
 }
 
 #[test]
@@ -379,10 +343,7 @@ fn r1xy_quarter_zero_equiv_sx() {
     // R1XY(pi/2, 0) = RX(pi/2) = SX
     let rx = RX(Angle64::QUARTER_TURN, 0);
     let sx = SX(0);
-    assert!(
-        unitaries_equiv(&rx, &sx),
-        "R1XY(pi/2, 0) should equal SX"
-    );
+    assert!(unitaries_equiv(&rx, &sx), "R1XY(pi/2, 0) should equal SX");
 }
 
 #[test]
@@ -466,9 +427,7 @@ fn u_zero_zero_quarter_equiv_sz() {
 fn u_quarter_zero_pi_equiv_h_like() {
     // U(pi/2, 0, pi) = RZ(0) * RY(pi/2) * RZ(pi) = SY * Z
     // Verify the decomposition is self-consistent
-    let u = RZ(Angle64::ZERO, 0)
-        * RY(Angle64::QUARTER_TURN, 0)
-        * RZ(Angle64::HALF_TURN, 0);
+    let u = RZ(Angle64::ZERO, 0) * RY(Angle64::QUARTER_TURN, 0) * RZ(Angle64::HALF_TURN, 0);
     let expected = SY(0) * Z(0);
     assert!(
         unitaries_equiv(&u, &expected),

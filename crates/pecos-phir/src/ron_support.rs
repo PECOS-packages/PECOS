@@ -334,7 +334,11 @@ entry:
 
         assert_eq!(angles_before.len(), angles_after.len());
         for (before, after) in angles_before.iter().zip(angles_after.iter()) {
-            assert_eq!(before.to_bits(), after.to_bits(), "angle {before} lost precision in RON roundtrip");
+            assert_eq!(
+                before.to_bits(),
+                after.to_bits(),
+                "angle {before} lost precision in RON roundtrip"
+            );
         }
     }
 }

@@ -139,9 +139,9 @@ impl PyPauliStabilizerGroup {
     /// Raises:
     ///     ValueError: If generator doesn't commute or has non-real phase
     fn add_generator(&mut self, generator: &PauliString) -> PyResult<()> {
-        self.inner.add_generator(generator.to_rust()).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("{e}"))
-        })
+        self.inner
+            .add_generator(generator.to_rust())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))
     }
 
     /// Remove and return the generator at the given index.
@@ -171,9 +171,9 @@ impl PyPauliStabilizerGroup {
     /// Raises:
     ///     ValueError: If any generators anticommute
     fn merge(&mut self, other: &PyPauliStabilizerGroup) -> PyResult<()> {
-        self.inner.merge(&other.inner).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("{e}"))
-        })
+        self.inner
+            .merge(&other.inner)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))
     }
 
     // ========================================================================

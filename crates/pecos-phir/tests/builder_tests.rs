@@ -75,7 +75,10 @@ fn test_builder_default() {
 fn test_builder_convenience_function() {
     let builder = phir_engine();
     let result = builder.build();
-    assert!(result.is_err(), "phir_engine() without a module should fail");
+    assert!(
+        result.is_err(),
+        "phir_engine() without a module should fail"
+    );
 }
 
 #[test]
@@ -131,8 +134,7 @@ fn test_builder_program_method() {
     use pecos_phir::PhirEngineBuilder;
 
     // Build a module manually and set it via program()
-    let module = pecos_phir::parse_qis_to_quantum(SINGLE_H_QIS_IR)
-        .expect("should parse");
+    let module = pecos_phir::parse_qis_to_quantum(SINGLE_H_QIS_IR).expect("should parse");
 
     let builder = PhirEngineBuilder::new().program(module);
     let engine = builder.build().expect("should build engine from program()");
@@ -174,12 +176,17 @@ fn test_builder_ron_roundtrip_bell() {
         .from_qis_llvm_ir(BELL_QIS_IR)
         .expect("should parse");
 
-    let ron_string = builder.to_ron().expect("should serialize Bell state to RON");
+    let ron_string = builder
+        .to_ron()
+        .expect("should serialize Bell state to RON");
 
     // RON should contain quantum operation names
     assert!(ron_string.contains("RZ"), "RON should contain RZ ops");
     assert!(ron_string.contains("R1XY"), "RON should contain R1XY ops");
-    assert!(ron_string.contains("Measure"), "RON should contain Measure ops");
+    assert!(
+        ron_string.contains("Measure"),
+        "RON should contain Measure ops"
+    );
 
     // Roundtrip
     let builder2 = phir_engine()
@@ -205,7 +212,11 @@ fn test_builder_ron_roundtrip_execute() {
         .quantum(StateVectorEngineBuilder::default())
         .run(10);
 
-    assert!(result.is_ok(), "RON roundtrip execution failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "RON roundtrip execution failed: {:?}",
+        result.err()
+    );
     assert_eq!(result.unwrap().shots.len(), 10);
 }
 
@@ -275,8 +286,15 @@ fn test_builder_to_sim_run() {
         .from_qis_llvm_ir(SINGLE_H_QIS_IR)
         .expect("should parse");
 
-    let result = builder.to_sim().quantum(StateVectorEngineBuilder::default()).run(10);
-    assert!(result.is_ok(), "to_sim().run() should succeed: {:?}", result.err());
+    let result = builder
+        .to_sim()
+        .quantum(StateVectorEngineBuilder::default())
+        .run(10);
+    assert!(
+        result.is_ok(),
+        "to_sim().run() should succeed: {:?}",
+        result.err()
+    );
     let shots = result.unwrap();
     assert_eq!(shots.shots.len(), 10);
 }
@@ -287,8 +305,15 @@ fn test_builder_to_sim_run_bell() {
         .from_qis_llvm_ir(BELL_QIS_IR)
         .expect("should parse");
 
-    let result = builder.to_sim().quantum(StateVectorEngineBuilder::default()).run(100);
-    assert!(result.is_ok(), "Bell state sim should succeed: {:?}", result.err());
+    let result = builder
+        .to_sim()
+        .quantum(StateVectorEngineBuilder::default())
+        .run(100);
+    assert!(
+        result.is_ok(),
+        "Bell state sim should succeed: {:?}",
+        result.err()
+    );
     let shots = result.unwrap();
     assert_eq!(shots.shots.len(), 100);
 }
@@ -299,8 +324,16 @@ fn test_builder_to_sim_with_seed() {
         .from_qis_llvm_ir(SINGLE_H_QIS_IR)
         .expect("should parse");
 
-    let result = builder.to_sim().quantum(StateVectorEngineBuilder::default()).seed(42).run(10);
-    assert!(result.is_ok(), "seeded sim should succeed: {:?}", result.err());
+    let result = builder
+        .to_sim()
+        .quantum(StateVectorEngineBuilder::default())
+        .seed(42)
+        .run(10);
+    assert!(
+        result.is_ok(),
+        "seeded sim should succeed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -309,8 +342,16 @@ fn test_builder_to_sim_build_then_run() {
         .from_qis_llvm_ir(SINGLE_H_QIS_IR)
         .expect("should parse");
 
-    let mut sim = builder.to_sim().quantum(StateVectorEngineBuilder::default()).build().expect("should build sim");
+    let mut sim = builder
+        .to_sim()
+        .quantum(StateVectorEngineBuilder::default())
+        .build()
+        .expect("should build sim");
     let result = sim.run(5);
-    assert!(result.is_ok(), "built sim run should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "built sim run should succeed: {:?}",
+        result.err()
+    );
     assert_eq!(result.unwrap().shots.len(), 5);
 }

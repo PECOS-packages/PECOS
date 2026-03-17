@@ -577,7 +577,12 @@ pub fn verify_u_after_clifford_ordering<S: ArbitraryRotationGateable>(sim: &mut 
         Angle64::from_radians(PI),
         &qid(0),
     );
-    assert_mx(sim, 0, false, "H then U(pi,0,pi): X|+> = |+>, mx should be 0");
+    assert_mx(
+        sim,
+        0,
+        false,
+        "H then U(pi,0,pi): X|+> = |+>, mx should be 0",
+    );
 
     // H|0> = |+>, then U(pi/2,0,pi)=H on |+> gives H|+> = |0>
     // Z-basis measurement of |0> is deterministic 0.
@@ -589,7 +594,12 @@ pub fn verify_u_after_clifford_ordering<S: ArbitraryRotationGateable>(sim: &mut 
         Angle64::from_radians(PI),
         &qid(0),
     );
-    assert_mz(sim, 0, false, "H then U(pi/2,0,pi): H|+> = |0>, mz should be 0");
+    assert_mz(
+        sim,
+        0,
+        false,
+        "H then U(pi/2,0,pi): H|+> = |0>, mz should be 0",
+    );
 
     // X|0> = |1>, then U(pi,0,pi)=X on |1> gives X|1> = |0>
     sim.reset();
@@ -600,7 +610,12 @@ pub fn verify_u_after_clifford_ordering<S: ArbitraryRotationGateable>(sim: &mut 
         Angle64::from_radians(PI),
         &qid(0),
     );
-    assert_mz(sim, 0, false, "X then U(pi,0,pi): X*X|0> = |0>, mz should be 0");
+    assert_mz(
+        sim,
+        0,
+        false,
+        "X then U(pi,0,pi): X*X|0> = |0>, mz should be 0",
+    );
 }
 
 // ============================================================================
@@ -860,12 +875,20 @@ pub fn verify_u2q_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
     assert_mz(sim, 1, false, "U2q(I)|+0> q1");
 }
 
-/// Verify U2q * U2q_inverse = I for a non-trivial decomposition.
+/// Verify U2q * `U2q_inverse` = I for a non-trivial decomposition.
 pub fn verify_u2q_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
     // Use non-trivial parameters: single-qubit rotations + interaction
     let before = [
-        [Angle64::from_radians(0.5), Angle64::from_radians(0.3), Angle64::from_radians(0.7)],
-        [Angle64::from_radians(1.0), Angle64::from_radians(0.2), Angle64::from_radians(0.4)],
+        [
+            Angle64::from_radians(0.5),
+            Angle64::from_radians(0.3),
+            Angle64::from_radians(0.7),
+        ],
+        [
+            Angle64::from_radians(1.0),
+            Angle64::from_radians(0.2),
+            Angle64::from_radians(0.4),
+        ],
     ];
     let interaction = [
         Angle64::from_radians(0.6),
@@ -873,35 +896,27 @@ pub fn verify_u2q_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
         Angle64::from_radians(0.8),
     ];
     let after = [
-        [Angle64::from_radians(0.9), Angle64::from_radians(0.1), Angle64::from_radians(0.5)],
-        [Angle64::from_radians(0.4), Angle64::from_radians(0.7), Angle64::from_radians(0.2)],
+        [
+            Angle64::from_radians(0.9),
+            Angle64::from_radians(0.1),
+            Angle64::from_radians(0.5),
+        ],
+        [
+            Angle64::from_radians(0.4),
+            Angle64::from_radians(0.7),
+            Angle64::from_radians(0.2),
+        ],
     ];
 
     // U2q_inverse: swap before/after and negate+swap phi/lambda, negate interaction
     let inv_before = [
-        [
-            -after[0][0],
-            -after[0][2],
-            -after[0][1],
-        ],
-        [
-            -after[1][0],
-            -after[1][2],
-            -after[1][1],
-        ],
+        [-after[0][0], -after[0][2], -after[0][1]],
+        [-after[1][0], -after[1][2], -after[1][1]],
     ];
     let inv_interaction = [-interaction[0], -interaction[1], -interaction[2]];
     let inv_after = [
-        [
-            -before[0][0],
-            -before[0][2],
-            -before[0][1],
-        ],
-        [
-            -before[1][0],
-            -before[1][2],
-            -before[1][1],
-        ],
+        [-before[0][0], -before[0][2], -before[0][1]],
+        [-before[1][0], -before[1][2], -before[1][1]],
     ];
 
     // On |01>
@@ -937,7 +952,12 @@ pub fn verify_u2q_matches_rxxryyrzz<S: ArbitraryRotationGateable>(sim: &mut S) {
     sim.reset();
     sim.x(&qid(1)); // |01>
     sim.u2q(id_params, interaction, id_params, &qid2(0, 1));
-    sim.rxxryyrzz(-interaction[0], -interaction[1], -interaction[2], &qid2(0, 1));
+    sim.rxxryyrzz(
+        -interaction[0],
+        -interaction[1],
+        -interaction[2],
+        &qid2(0, 1),
+    );
     assert_mz(sim, 0, false, "U2q(I,int,I)*RXXRYYRZZ_inv|01> q0");
     assert_mz(sim, 1, true, "U2q(I,int,I)*RXXRYYRZZ_inv|01> q1");
 
@@ -945,7 +965,12 @@ pub fn verify_u2q_matches_rxxryyrzz<S: ArbitraryRotationGateable>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0));
     sim.u2q(id_params, interaction, id_params, &qid2(0, 1));
-    sim.rxxryyrzz(-interaction[0], -interaction[1], -interaction[2], &qid2(0, 1));
+    sim.rxxryyrzz(
+        -interaction[0],
+        -interaction[1],
+        -interaction[2],
+        &qid2(0, 1),
+    );
     assert_mx(sim, 0, false, "U2q(I,int,I)*RXXRYYRZZ_inv|+0> q0");
     assert_mz(sim, 1, false, "U2q(I,int,I)*RXXRYYRZZ_inv|+0> q1");
 }

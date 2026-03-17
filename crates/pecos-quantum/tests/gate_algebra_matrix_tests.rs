@@ -14,7 +14,7 @@
 //!
 //! Each test builds a result via the gate algebra operators (`*`, `&`) on
 //! base types (Pauli, Clifford, Unitary) and verifies it is matrix-equivalent
-//! to the independently constructed reference built from UnitaryRep constructors.
+//! to the independently constructed reference built from `UnitaryRep` constructors.
 
 use pecos_core::clifford::Clifford;
 use pecos_core::unitary_rep::{self, RotationType, Unitary, UnitaryRep};
@@ -102,8 +102,8 @@ fn matrix_pauli_tensor_yz() {
 // Pauli * Clifford -> CliffordRep: verify via UnitaryRep matrix
 // ============================================================================
 
-/// Helper: verify a CliffordRep matches a reference UnitaryRep by checking
-/// that both produce the same CliffordRep (stabilizer images).
+/// Helper: verify a `CliffordRep` matches a reference `UnitaryRep` by checking
+/// that both produce the same `CliffordRep` (stabilizer images).
 fn assert_clifford_rep_matches_unitary(
     cr: &pecos_core::clifford_rep::CliffordRep,
     reference: &UnitaryRep,
@@ -113,10 +113,7 @@ fn assert_clifford_rep_matches_unitary(
     let ref_cr = reference
         .to_clifford_rep(nq)
         .unwrap_or_else(|| panic!("{label}: reference UnitaryRep should be Clifford"));
-    assert_eq!(
-        *cr, ref_cr,
-        "{label}: CliffordRep does not match reference"
-    );
+    assert_eq!(*cr, ref_cr, "{label}: CliffordRep does not match reference");
 }
 
 #[test]

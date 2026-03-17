@@ -19,8 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
     from guppylang import guppy
     from guppylang.std.builtins import owned
-    from guppylang.std.quantum import cx, h, measure, qubit, rz, x
-    from guppylang.std.quantum import pi
+    from guppylang.std.quantum import cx, h, measure, pi, qubit, rz, x
 except ImportError as e:
     print(f"Error: Could not import guppylang: {e}")
     print("Please install guppylang: uv pip install guppylang")

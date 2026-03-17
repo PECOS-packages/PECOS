@@ -258,8 +258,7 @@ impl PhirProcessor {
             // Resource management
             QuantumOp::Alloc => {
                 if !instruction.results.is_empty() {
-                    let qubit_id =
-                        usize::try_from(instruction.results[0].id).unwrap_or(usize::MAX);
+                    let qubit_id = usize::try_from(instruction.results[0].id).unwrap_or(usize::MAX);
                     self.qubit_count = self.qubit_count.max(qubit_id + 1);
                     let gate = Gate::qalloc(&[qubit_id]);
                     message_builder.add_gate_command(&gate);
@@ -475,26 +474,82 @@ impl PhirProcessor {
             }
 
             // Binary arithmetic
-            ClassicalOp::Add => { self.process_binary_int_op(instruction, "add", i64::wrapping_add, u64::wrapping_add); Ok(()) }
-            ClassicalOp::Sub => { self.process_binary_int_op(instruction, "sub", i64::wrapping_sub, u64::wrapping_sub); Ok(()) }
-            ClassicalOp::Mul => { self.process_binary_int_op(instruction, "mul", i64::wrapping_mul, u64::wrapping_mul); Ok(()) }
-            ClassicalOp::Div => { self.process_binary_int_op(instruction, "div", |a, b| if b == 0 { 0 } else { a / b }, |a, b| if b == 0 { 0 } else { a / b }); Ok(()) }
-            ClassicalOp::Mod => { self.process_binary_int_op(instruction, "mod", |a, b| if b == 0 { 0 } else { a % b }, |a, b| if b == 0 { 0 } else { a % b }); Ok(()) }
+            ClassicalOp::Add => {
+                self.process_binary_int_op(
+                    instruction,
+                    "add",
+                    i64::wrapping_add,
+                    u64::wrapping_add,
+                );
+                Ok(())
+            }
+            ClassicalOp::Sub => {
+                self.process_binary_int_op(
+                    instruction,
+                    "sub",
+                    i64::wrapping_sub,
+                    u64::wrapping_sub,
+                );
+                Ok(())
+            }
+            ClassicalOp::Mul => {
+                self.process_binary_int_op(
+                    instruction,
+                    "mul",
+                    i64::wrapping_mul,
+                    u64::wrapping_mul,
+                );
+                Ok(())
+            }
+            ClassicalOp::Div => {
+                self.process_binary_int_op(
+                    instruction,
+                    "div",
+                    |a, b| if b == 0 { 0 } else { a / b },
+                    |a, b| if b == 0 { 0 } else { a / b },
+                );
+                Ok(())
+            }
+            ClassicalOp::Mod => {
+                self.process_binary_int_op(
+                    instruction,
+                    "mod",
+                    |a, b| if b == 0 { 0 } else { a % b },
+                    |a, b| if b == 0 { 0 } else { a % b },
+                );
+                Ok(())
+            }
 
             // Bitwise
-            ClassicalOp::And => { self.process_binary_int_op(instruction, "and", |a, b| a & b, |a, b| a & b); Ok(()) }
-            ClassicalOp::Or => { self.process_binary_int_op(instruction, "or", |a, b| a | b, |a, b| a | b); Ok(()) }
-            ClassicalOp::Xor => { self.process_binary_int_op(instruction, "xor", |a, b| a ^ b, |a, b| a ^ b); Ok(()) }
+            ClassicalOp::And => {
+                self.process_binary_int_op(instruction, "and", |a, b| a & b, |a, b| a & b);
+                Ok(())
+            }
+            ClassicalOp::Or => {
+                self.process_binary_int_op(instruction, "or", |a, b| a | b, |a, b| a | b);
+                Ok(())
+            }
+            ClassicalOp::Xor => {
+                self.process_binary_int_op(instruction, "xor", |a, b| a ^ b, |a, b| a ^ b);
+                Ok(())
+            }
             ClassicalOp::Shl(shift) => {
                 if instruction.operands.len() >= 2 {
                     // Binary mode: shift amount from second operand (used by QIS parser)
                     #[allow(clippy::cast_possible_truncation)]
-                    self.process_binary_int_op(instruction, "shl",
+                    self.process_binary_int_op(
+                        instruction,
+                        "shl",
                         |a, b| a.wrapping_shl(b as u32),
-                        |a, b| a.wrapping_shl(b as u32));
+                        |a, b| a.wrapping_shl(b as u32),
+                    );
                 } else {
                     let s = *shift;
-                    self.process_unary_int_op(instruction, move |v: i64| v.wrapping_shl(s), move |v: u64| v.wrapping_shl(s));
+                    self.process_unary_int_op(
+                        instruction,
+                        move |v: i64| v.wrapping_shl(s),
+                        move |v: u64| v.wrapping_shl(s),
+                    );
                 }
                 Ok(())
             }
@@ -502,12 +557,19 @@ impl PhirProcessor {
                 if instruction.operands.len() >= 2 {
                     // Binary mode: shift amount from second operand (used by QIS parser)
                     #[allow(clippy::cast_possible_truncation)]
-                    self.process_binary_int_op(instruction, "shr",
+                    self.process_binary_int_op(
+                        instruction,
+                        "shr",
                         |a, b| a.wrapping_shr(b as u32),
-                        |a, b| a.wrapping_shr(b as u32));
+                        |a, b| a.wrapping_shr(b as u32),
+                    );
                 } else {
                     let s = *shift;
-                    self.process_unary_int_op(instruction, move |v: i64| v.wrapping_shr(s), move |v: u64| v.wrapping_shr(s));
+                    self.process_unary_int_op(
+                        instruction,
+                        move |v: i64| v.wrapping_shr(s),
+                        move |v: u64| v.wrapping_shr(s),
+                    );
                 }
                 Ok(())
             }
@@ -547,12 +609,30 @@ impl PhirProcessor {
             }
 
             // Comparisons
-            ClassicalOp::Eq => { self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Equal); Ok(()) }
-            ClassicalOp::Ne => { self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Equal); Ok(()) }
-            ClassicalOp::Lt => { self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Less); Ok(()) }
-            ClassicalOp::Le => { self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Greater); Ok(()) }
-            ClassicalOp::Gt => { self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Greater); Ok(()) }
-            ClassicalOp::Ge => { self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Less); Ok(()) }
+            ClassicalOp::Eq => {
+                self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Equal);
+                Ok(())
+            }
+            ClassicalOp::Ne => {
+                self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Equal);
+                Ok(())
+            }
+            ClassicalOp::Lt => {
+                self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Less);
+                Ok(())
+            }
+            ClassicalOp::Le => {
+                self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Greater);
+                Ok(())
+            }
+            ClassicalOp::Gt => {
+                self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Greater);
+                Ok(())
+            }
+            ClassicalOp::Ge => {
+                self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Less);
+                Ok(())
+            }
 
             // Select (ternary)
             ClassicalOp::Select => {
@@ -602,10 +682,25 @@ impl PhirProcessor {
             }
 
             // Float arithmetic
-            ClassicalOp::FAdd => { self.process_binary_float_op(instruction, |a, b| a + b); Ok(()) }
-            ClassicalOp::FSub => { self.process_binary_float_op(instruction, |a, b| a - b); Ok(()) }
-            ClassicalOp::FMul => { self.process_binary_float_op(instruction, |a, b| a * b); Ok(()) }
-            ClassicalOp::FDiv => { self.process_binary_float_op(instruction, |a, b| if b == 0.0 { 0.0 } else { a / b }); Ok(()) }
+            ClassicalOp::FAdd => {
+                self.process_binary_float_op(instruction, |a, b| a + b);
+                Ok(())
+            }
+            ClassicalOp::FSub => {
+                self.process_binary_float_op(instruction, |a, b| a - b);
+                Ok(())
+            }
+            ClassicalOp::FMul => {
+                self.process_binary_float_op(instruction, |a, b| a * b);
+                Ok(())
+            }
+            ClassicalOp::FDiv => {
+                self.process_binary_float_op(
+                    instruction,
+                    |a, b| if b == 0.0 { 0.0 } else { a / b },
+                );
+                Ok(())
+            }
             ClassicalOp::FNeg => {
                 if !instruction.operands.is_empty() && !instruction.results.is_empty() {
                     let op_id = instruction.operands[0].id;
@@ -644,12 +739,14 @@ impl PhirProcessor {
 
         if let (Some(l), Some(r)) = (left, right) {
             let result = match (&l, &r) {
-                (TypedValue::I32(a), TypedValue::I32(b)) => {
+                (TypedValue::I32(a), TypedValue::I32(b)) =>
+                {
                     #[allow(clippy::cast_possible_truncation)]
                     TypedValue::I32(signed_op(i64::from(*a), i64::from(*b)) as i32)
                 }
                 (TypedValue::I64(a), TypedValue::I64(b)) => TypedValue::I64(signed_op(*a, *b)),
-                (TypedValue::U32(a), TypedValue::U32(b)) => {
+                (TypedValue::U32(a), TypedValue::U32(b)) =>
+                {
                     #[allow(clippy::cast_possible_truncation)]
                     TypedValue::U32(unsigned_op(u64::from(*a), u64::from(*b)) as u32)
                 }
@@ -744,7 +841,8 @@ impl PhirProcessor {
                     a.cmp(&b)
                 }
             };
-            self.ssa_values.insert(res_id, TypedValue::Bool(cmp_fn(ordering)));
+            self.ssa_values
+                .insert(res_id, TypedValue::Bool(cmp_fn(ordering)));
         }
     }
 
@@ -1213,7 +1311,6 @@ impl PhirProcessor {
             }
         }
     }
-
 }
 
 impl Default for PhirProcessor {

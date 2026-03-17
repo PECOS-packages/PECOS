@@ -497,10 +497,10 @@ impl PauliString {
                 let cmi = num_complex::Complex64::new(0.0, -1.0);
 
                 match self.get(q) {
-                    Pauli::I => [c1, c0, c0, c1],   // [[1,0],[0,1]]
-                    Pauli::X => [c0, c1, c1, c0],   // [[0,1],[1,0]]
-                    Pauli::Y => [c0, cmi, ci, c0],   // [[0,-i],[i,0]]
-                    Pauli::Z => [c1, c0, c0, cm1],   // [[1,0],[0,-1]]
+                    Pauli::I => [c1, c0, c0, c1],  // [[1,0],[0,1]]
+                    Pauli::X => [c0, c1, c1, c0],  // [[0,1],[1,0]]
+                    Pauli::Y => [c0, cmi, ci, c0], // [[0,-i],[i,0]]
+                    Pauli::Z => [c1, c0, c0, cm1], // [[1,0],[0,-1]]
                 }
             })
             .collect();
@@ -543,8 +543,7 @@ impl PauliString {
     /// assert_eq!(ab.weight(), 3);
     /// ```
     pub fn tensor(&self, other: &PauliString) -> Result<PauliString, String> {
-        let my_qubits: std::collections::HashSet<usize> =
-            self.qubits().into_iter().collect();
+        let my_qubits: std::collections::HashSet<usize> = self.qubits().into_iter().collect();
         for q in other.qubits() {
             if my_qubits.contains(&q) {
                 return Err(format!("qubit {q} appears in both operands"));
@@ -1887,7 +1886,10 @@ mod tests {
         let id = PauliString::identity();
         let (mat, dim) = id.to_flat_matrix(1);
         assert_eq!(dim, 2);
-        assert_eq!(mat, vec![c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(1.0, 0.0)]);
+        assert_eq!(
+            mat,
+            vec![c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(1.0, 0.0)]
+        );
     }
 
     #[test]
@@ -1896,7 +1898,10 @@ mod tests {
         let (mat, dim) = x.to_flat_matrix(1);
         assert_eq!(dim, 2);
         // X = [[0,1],[1,0]]
-        assert_eq!(mat, vec![c(0.0, 0.0), c(1.0, 0.0), c(1.0, 0.0), c(0.0, 0.0)]);
+        assert_eq!(
+            mat,
+            vec![c(0.0, 0.0), c(1.0, 0.0), c(1.0, 0.0), c(0.0, 0.0)]
+        );
     }
 
     #[test]
@@ -1905,7 +1910,10 @@ mod tests {
         let (mat, dim) = y.to_flat_matrix(1);
         assert_eq!(dim, 2);
         // Y = [[0,-i],[i,0]]
-        assert_eq!(mat, vec![c(0.0, 0.0), c(0.0, -1.0), c(0.0, 1.0), c(0.0, 0.0)]);
+        assert_eq!(
+            mat,
+            vec![c(0.0, 0.0), c(0.0, -1.0), c(0.0, 1.0), c(0.0, 0.0)]
+        );
     }
 
     #[test]
@@ -1914,7 +1922,10 @@ mod tests {
         let (mat, dim) = z.to_flat_matrix(1);
         assert_eq!(dim, 2);
         // Z = [[1,0],[0,-1]]
-        assert_eq!(mat, vec![c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(-1.0, 0.0)]);
+        assert_eq!(
+            mat,
+            vec![c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(-1.0, 0.0)]
+        );
     }
 
     #[test]
@@ -1925,10 +1936,22 @@ mod tests {
         assert_eq!(dim, 4);
         // X (x) Z = [[0,0,1,0],[0,0,0,-1],[1,0,0,0],[0,-1,0,0]]
         let expected = vec![
-            c(0.0, 0.0), c(0.0, 0.0), c(1.0, 0.0), c(0.0, 0.0),
-            c(0.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(-1.0, 0.0),
-            c(1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0), c(0.0, 0.0),
-            c(0.0, 0.0), c(-1.0, 0.0), c(0.0, 0.0), c(0.0, 0.0),
+            c(0.0, 0.0),
+            c(0.0, 0.0),
+            c(1.0, 0.0),
+            c(0.0, 0.0),
+            c(0.0, 0.0),
+            c(0.0, 0.0),
+            c(0.0, 0.0),
+            c(-1.0, 0.0),
+            c(1.0, 0.0),
+            c(0.0, 0.0),
+            c(0.0, 0.0),
+            c(0.0, 0.0),
+            c(0.0, 0.0),
+            c(-1.0, 0.0),
+            c(0.0, 0.0),
+            c(0.0, 0.0),
         ];
         assert_eq!(mat, expected);
     }
@@ -1938,7 +1961,10 @@ mod tests {
         // -X should be -1 times X
         let mx = PauliString::from_paulis_with_phase(QuarterPhase::MinusOne, &[Pauli::X]);
         let (mat, _) = mx.to_flat_matrix(1);
-        assert_eq!(mat, vec![c(0.0, 0.0), c(-1.0, 0.0), c(-1.0, 0.0), c(0.0, 0.0)]);
+        assert_eq!(
+            mat,
+            vec![c(0.0, 0.0), c(-1.0, 0.0), c(-1.0, 0.0), c(0.0, 0.0)]
+        );
     }
 
     #[test]
@@ -1950,10 +1976,7 @@ mod tests {
                 for col in 0..dim {
                     let m_rc = mat[r * dim + col];
                     let m_cr = mat[col * dim + r].conj();
-                    assert!(
-                        (m_rc - m_cr).norm() < 1e-14,
-                        "Not Hermitian at ({r},{col})"
-                    );
+                    assert!((m_rc - m_cr).norm() < 1e-14, "Not Hermitian at ({r},{col})");
                 }
             }
         }

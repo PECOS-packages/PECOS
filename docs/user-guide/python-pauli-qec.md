@@ -57,15 +57,15 @@ assert Pauli.X.to_int() == 1
 from pecos_rslib import Pauli, PauliString
 
 # From string notation
-p = PauliString.from_str("XZI")    # X on qubit 0, Z on qubit 1, I on qubit 2
+p = PauliString.from_str("XZI")  # X on qubit 0, Z on qubit 1, I on qubit 2
 q = PauliString.from_str("ZXI")
 
 # From list of (Pauli, qubit) pairs
 p = PauliString([(Pauli.X, 0), (Pauli.Z, 1)])
 
 # Get components
-print(p.get_paulis())   # [(Pauli.X, 0), (Pauli.Z, 1)]
-print(p.get_phase())    # 0 (0=+1, 1=+i, 2=-1, 3=-i)
+print(p.get_paulis())  # [(Pauli.X, 0), (Pauli.Z, 1)]
+print(p.get_phase())  # 0 (0=+1, 1=+i, 2=-1, 3=-i)
 
 # String representation
 print(p)  # Shows sparse representation with non-identity operators
@@ -94,15 +94,15 @@ g2 = PauliString.from_str("IZZ")
 group = PauliStabilizerGroup([g1, g2])
 
 # Basic properties
-print(group.rank())           # 2
-print(group.num_qubits())     # 3
-print(group.num_generators()) # 2
-print(group.is_independent()) # True
+print(group.rank())  # 2
+print(group.num_qubits())  # 3
+print(group.num_generators())  # 2
+print(group.is_independent())  # True
 
 # Membership testing (GF(2) span)
 ziz = PauliString.from_str("ZIZ")
-print(group.contains(ziz))            # True (ZIZ = ZZI * IZZ)
-print(group.contains_with_phase(ziz)) # True (with correct +1 phase)
+print(group.contains(ziz))  # True (ZIZ = ZZI * IZZ)
+print(group.contains_with_phase(ziz))  # True (with correct +1 phase)
 
 # Get generators
 for stab in group.stabilizers():
@@ -151,7 +151,7 @@ p2 = PauliString.from_str("ZX")
 seq = PauliSequence([p1, p2])
 
 # Analysis
-print(seq.rank())        # 2 (linearly independent)
+print(seq.rank())  # 2 (linearly independent)
 print(seq.is_abelian())  # False (XZ and ZX anticommute)
 
 # Commutation matrix
@@ -176,12 +176,12 @@ print(len(reduced))  # Number of independent generators
 from pecos_rslib import StabilizerCode
 
 # Built-in codes
-rep = StabilizerCode.repetition(3)    # [[3, 1, 1]] bit-flip code
-steane = StabilizerCode.steane()      # [[7, 1, 3]] Steane code
-five = StabilizerCode.five_qubit()    # [[5, 1, 3]] perfect code
-shor = StabilizerCode.shor()          # [[9, 1, 3]] Shor code
+rep = StabilizerCode.repetition(3)  # [[3, 1, 1]] bit-flip code
+steane = StabilizerCode.steane()  # [[7, 1, 3]] Steane code
+five = StabilizerCode.five_qubit()  # [[5, 1, 3]] perfect code
+shor = StabilizerCode.shor()  # [[9, 1, 3]] Shor code
 four = StabilizerCode.four_two_two()  # [[4, 2, 2]] detection code
-toric = StabilizerCode.toric(3)       # [[18, 2, 3]] toric code
+toric = StabilizerCode.toric(3)  # [[18, 2, 3]] toric code
 ```
 
 ### From a Stabilizer Group
@@ -203,9 +203,9 @@ code = StabilizerCode(group, num_qubits=5)
 from pecos_rslib import StabilizerCode
 
 code = StabilizerCode.steane()
-print(code.num_qubits())          # 7
+print(code.num_qubits())  # 7
 print(code.num_logical_qubits())  # 1
-print(code.code_parameters())     # "[[7, 1]]"
+print(code.code_parameters())  # "[[7, 1]]"
 ```
 
 ### Distance

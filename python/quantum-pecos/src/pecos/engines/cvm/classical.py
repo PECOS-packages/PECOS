@@ -121,17 +121,17 @@ def eval_op(
     elif op == "/":
         expr_eval = a // b
     elif op == "==":
-        expr_eval = a == b
+        expr_eval = BitInt(width, int(a == b))
     elif op == "!=":
-        expr_eval = a != b
+        expr_eval = BitInt(width, int(a != b))
     elif op == "<=":
-        expr_eval = a <= b
+        expr_eval = BitInt(width, int(a <= b))
     elif op == ">=":
-        expr_eval = a >= b
+        expr_eval = BitInt(width, int(a >= b))
     elif op == "<":
-        expr_eval = a < b
+        expr_eval = BitInt(width, int(a < b))
     elif op == ">":
-        expr_eval = a > b
+        expr_eval = BitInt(width, int(a > b))
     elif op == "%":
         expr_eval = a % b
 
@@ -319,6 +319,31 @@ def eval_tick_conds(
     return conds
 
 
+def _resolve_condition_operand(
+    operand: str | tuple[str, int] | list[str | int] | int,
+    output: dict[str, BitInt],
+    name: str,
+) -> BitInt | int:
+    """Resolve a condition operand to a value.
+
+    Args:
+        operand: The operand value - str (variable name), tuple/list (indexed variable), or int literal.
+        output: Dictionary containing variable values.
+        name: Operand name for error messages ('a' or 'b').
+
+    Returns:
+        Resolved value as BitInt or int.
+    """
+    if isinstance(operand, str):
+        return output[operand]
+    if isinstance(operand, tuple | list) and len(operand) == 2:
+        return output[operand[0]][operand[1]]
+    if isinstance(operand, int):
+        return operand
+    msg = f"`{name}` should be `str`, `Tuple[str, int]`, or `int`!"
+    raise TypeError(msg)
+
+
 def eval_condition(
     conditional_expr: dict[str, Any] | tuple[Any, ...] | list[Any] | None,
     output: dict[str, BitInt],
@@ -350,55 +375,13 @@ def eval_condition(
             msg = "Expecting the second conditional element to be bool."
             raise TypeError(msg)
 
-        return eval_condition(conditional_expr[0], output) == eval_condition(
-            conditional_expr[1],
-            output,
-        )
+        return eval_condition(conditional_expr[0], output) == conditional_expr[1]
 
     if conditional_expr:
-        a = conditional_expr["a"]
-        b = conditional_expr["b"]
         op = conditional_expr["op"]
-        if isinstance(a, str):
-            a = output[a]  # str -> BitInt
-        elif isinstance(a, tuple | list) and len(a) == 2:
-            a = output[a[0]][a[1]]  # (str, int) -> int (1 or 0)
-        else:
-            msg = "`a` should be `str` or `Tuple[str, int]`!"
-            raise Exception(msg)
+        a = _resolve_condition_operand(conditional_expr["a"], output, "a")
+        b = _resolve_condition_operand(conditional_expr["b"], output, "b")
 
-        if isinstance(b, str):
-            b = output[b]  # str -> BitInt
-        elif isinstance(b, tuple | list) and len(b) == 2:
-            b = output[b[0]][b[1]]  # (str, int) -> int (1 or 0)
-        elif isinstance(b, int):
-            pass
-        else:
-            msg = "`b` should be `str` or `Tuple[str, int]` or `int`!"
-            raise Exception(msg)
-
-        # Map of operators to their evaluation functions
-        ops = {
-            "==": lambda a, b: bool(a == b),
-            "!=": lambda a, b: bool(a != b),
-            "^": lambda a, b: bool(int(a ^ b)),
-            "|": lambda a, b: bool(int(a | b)),
-            "&": lambda a, b: bool(int(a & b)),
-            "<": lambda a, b: a < b,
-            ">": lambda a, b: a > b,
-            "<=": lambda a, b: a <= b,
-            ">=": lambda a, b: a >= b,
-            ">>": lambda a, b: a >> b,
-            "<<": lambda a, b: a << b,
-            "~": lambda a, _: ~a,
-            "*": lambda a, b: a * b,
-            "/": lambda a, b: a // b,
-        }
-
-        if op in ops:
-            return ops[op](a, b)
-
-        msg = "Comparison operator not recognized!"
-        raise Exception(msg)
+        return bool(eval_op(op, a, b))
 
     return True

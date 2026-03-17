@@ -51,28 +51,29 @@ fn test_bell_ll_end_to_end() {
 
     // Verify the module has quantum ops (not QIS dialect ops)
     let block = &module.body.blocks[0];
-    let has_quantum_ops = block.operations.iter().any(|instr| {
-        matches!(
-            &instr.operation,
-            pecos_phir::ops::Operation::Quantum(_)
-        )
-    });
-    assert!(has_quantum_ops, "Module should contain QuantumOps after conversion");
+    let has_quantum_ops = block
+        .operations
+        .iter()
+        .any(|instr| matches!(&instr.operation, pecos_phir::ops::Operation::Quantum(_)));
+    assert!(
+        has_quantum_ops,
+        "Module should contain QuantumOps after conversion"
+    );
 }
 
 #[test]
 fn test_bell_final_ll_parse_and_convert() {
     let ir = include_str!("../../../examples/bell_final.ll");
-    let module = pecos_phir::parse_qis_to_quantum(ir)
-        .expect("bell_final.ll should parse and convert");
+    let module =
+        pecos_phir::parse_qis_to_quantum(ir).expect("bell_final.ll should parse and convert");
     assert!(!module.body.blocks.is_empty());
 }
 
 #[test]
 fn test_hugr_bell_state_ll_parse_and_convert() {
     let ir = include_str!("../../../crates/pecos/tests/test_data/hugr/bell_state.ll");
-    let module = pecos_phir::parse_qis_to_quantum(ir)
-        .expect("hugr bell_state.ll should parse and convert");
+    let module =
+        pecos_phir::parse_qis_to_quantum(ir).expect("hugr bell_state.ll should parse and convert");
     assert!(!module.body.blocks.is_empty());
 }
 

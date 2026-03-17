@@ -21,10 +21,10 @@
 //! # Sign rules (Y-convention vs W-convention)
 //!
 //! - X, Y, Z, H: identical to W-convention
-//! - SZ: `signs_minus ^= col_x[q] AND col_z[q]` (simpler; W needs signs_i)
+//! - SZ: `signs_minus ^= col_x[q] AND col_z[q]` (simpler; W needs `signs_i`)
 //! - CX: `signs_minus ^= col_x[q1] AND col_z[q2] AND NOT(col_z[q1] XOR col_x[q2])`
-//!        (W-convention has no sign update for CX)
-//! - Measurement: needs additional n_Y accounting via signs_i
+//!   (W-convention has no sign update for CX)
+//! - Measurement: needs additional `n_Y` accounting via `signs_i`
 
 use crate::{CliffordGateable, GensGeneric, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
@@ -265,8 +265,7 @@ where
         // The destab rows only determine WHICH stabs participate -- their phases
         // do not enter the formula. (Same structural cancellation as W-convention.)
 
-        let mut num_minuses =
-            self.destabs.col_x[q].intersection_count(&self.stabs.signs_minus);
+        let mut num_minuses = self.destabs.col_x[q].intersection_count(&self.stabs.signs_minus);
         let mut num_is = self.destabs.col_x[q].intersection_count(&self.stabs.signs_i);
 
         // Y-convention correction: add n_Y per participating stab
@@ -516,7 +515,7 @@ where
     ///     Y -> -X (Y = iXZ, SZ(Y) = SZ(iXZ) = i * Y * Z = i * iXZ * Z = i * iX = -X)
     ///
     /// In Y-convention: `signs_minus ^= col_x[q] AND col_z[q]`
-    /// (no signs_i update needed!)
+    /// (no `signs_i` update needed!)
     #[inline]
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -540,7 +539,7 @@ where
     }
 
     /// Hadamard gate. X -> Z, Z -> X
-    /// Y-convention sign: signs_minus ^= col_x[q] AND col_z[q] (same as W-convention)
+    /// Y-convention sign: `signs_minus` ^= `col_x`[q] AND `col_z`[q] (same as W-convention)
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -570,8 +569,8 @@ where
         self
     }
 
-    /// SZdg (Y-convention): X→-Y, Z→+Z. Y→+X.
-    /// Sign: toggle minus for col_x \ col_z (only X generators, not Y).
+    /// `SZdg` (Y-convention): X→-Y, Z→+Z. Y→+X.
+    /// Sign: toggle minus for `col_x` \ `col_z` (only X generators, not Y).
     #[inline]
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -590,7 +589,7 @@ where
     }
 
     /// SX (Y-convention): X→+X, Z→-Y. Y→+Z.
-    /// Sign: toggle minus for col_z \ col_x (only Z generators, not Y).
+    /// Sign: toggle minus for `col_z` \ `col_x` (only Z generators, not Y).
     #[inline]
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -608,8 +607,8 @@ where
         self
     }
 
-    /// SXdg (Y-convention): X→+X, Z→+Y. Y→-Z.
-    /// Sign: toggle minus for col_x ∩ col_z (only Y generators).
+    /// `SXdg` (Y-convention): X→+X, Z→+Y. Y→-Z.
+    /// Sign: toggle minus for `col_x` ∩ `col_z` (only Y generators).
     #[inline]
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -627,7 +626,7 @@ where
     }
 
     /// SY (Y-convention): X→-Z, Z→+X. Y→+Y.
-    /// Sign: toggle minus for col_x \ col_z (only X generators).
+    /// Sign: toggle minus for `col_x` \ `col_z` (only X generators).
     #[inline]
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -654,8 +653,8 @@ where
         self
     }
 
-    /// SYdg (Y-convention): X→+Z, Z→-X. Y→+Y.
-    /// Sign: toggle minus for col_z \ col_x (only Z generators).
+    /// `SYdg` (Y-convention): X→+Z, Z→-X. Y→+Y.
+    /// Sign: toggle minus for `col_z` \ `col_x` (only Z generators).
     #[inline]
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -712,7 +711,7 @@ where
     }
 
     /// H3 (Y-convention): X→+Y, Z→-Z. Y→+X.
-    /// Sign: toggle minus for col_z \ col_x (only Z generators).
+    /// Sign: toggle minus for `col_z` \ `col_x` (only Z generators).
     #[inline]
     fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -751,7 +750,7 @@ where
     }
 
     /// H5 (Y-convention): X→-X, Z→+Y. Y→+Z.
-    /// Sign: toggle minus for col_x \ col_z (only X generators).
+    /// Sign: toggle minus for `col_x` \ `col_z` (only X generators).
     #[inline]
     fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -852,7 +851,7 @@ where
     }
 
     /// F2 (Y-convention): X→-Z, Z→+Y. Y→-X.
-    /// Sign: toggle minus for col_x (= {X,Y}).
+    /// Sign: toggle minus for `col_x` (= {X,Y}).
     #[inline]
     fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -883,7 +882,7 @@ where
     }
 
     /// F2dg (Y-convention): X→-Y, Z→-X. Y→+Z.
-    /// Sign: toggle minus for col_x ⊕ col_z (= {X,Z}).
+    /// Sign: toggle minus for `col_x` ⊕ `col_z` (= {X,Z}).
     #[inline]
     fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -915,7 +914,7 @@ where
     }
 
     /// F3 (Y-convention): X→+Y, Z→-X. Y→-Z.
-    /// Sign: toggle minus for col_z (= {Z,Y}).
+    /// Sign: toggle minus for `col_z` (= {Z,Y}).
     #[inline]
     fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -946,7 +945,7 @@ where
     }
 
     /// F3dg (Y-convention): X→-Z, Z→-Y. Y→+X.
-    /// Sign: toggle minus for col_x ⊕ col_z (= {X,Z}).
+    /// Sign: toggle minus for `col_x` ⊕ `col_z` (= {X,Z}).
     #[inline]
     fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -978,7 +977,7 @@ where
     }
 
     /// F4 (Y-convention): X→+Z, Z→-Y. Y→-X.
-    /// Sign: toggle minus for col_z (= {Z,Y}).
+    /// Sign: toggle minus for `col_z` (= {Z,Y}).
     #[inline]
     fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -1009,7 +1008,7 @@ where
     }
 
     /// F4dg (Y-convention): X→-Y, Z→+X. Y→-Z.
-    /// Sign: toggle minus for col_x (= {X,Y}).
+    /// Sign: toggle minus for `col_x` (= {X,Y}).
     #[inline]
     fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -1047,7 +1046,7 @@ where
     /// This toggles signs for generators where:
     /// - q1 has X (either X or Y) and q2 has Z (either Z or Y)
     /// - AND q1's Z matches q2's X (both absent or both present)
-    /// i.e., (X,Z) or (Y,Y) on (q1,q2) -- exactly the cases where n_Y changes by +/-2.
+    ///   i.e., (X,Z) or (Y,Y) on (q1,q2) -- exactly the cases where `n_Y` changes by +/-2.
     #[inline]
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -1105,7 +1104,7 @@ where
     /// Square root of XX gate (Y-convention).
     ///
     /// Generators with odd Z-count on {q1,q2}: toggle X on both qubits.
-    /// Sign update: toggle signs_minus when the odd-Z qubit had Y (both x,z set),
+    /// Sign update: toggle `signs_minus` when the odd-Z qubit had Y (both x,z set),
     /// because removing Y's implicit i requires a stored phase correction.
     #[inline]
     fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
@@ -1176,7 +1175,7 @@ where
         self
     }
 
-    /// Adjoint of square root of XX gate. SXXdg = X(q1).X(q2).SXX
+    /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
     #[inline]
     fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -1191,7 +1190,7 @@ where
     /// Square root of ZZ gate (Y-convention).
     ///
     /// Generators with odd X-count on {q1,q2}: toggle Z on both qubits.
-    /// Sign update: toggle signs_minus when the odd-X qubit had Y (both x,z set).
+    /// Sign update: toggle `signs_minus` when the odd-X qubit had Y (both x,z set).
     #[inline]
     fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -1260,7 +1259,7 @@ where
         self
     }
 
-    /// Adjoint of square root of ZZ gate. SZZdg = Z(q1).Z(q2).SZZ
+    /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
     #[inline]
     fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -1275,7 +1274,7 @@ where
     /// Square root of YY gate (Y-convention).
     ///
     /// Generators where odd number of {q1,q2} anticommute with Y: toggle both X,Z on both qubits.
-    /// Sign update: toggle signs_minus when the non-anticommuting qubit had Y (both x,z set).
+    /// Sign update: toggle `signs_minus` when the non-anticommuting qubit had Y (both x,z set).
     #[inline]
     fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -1296,19 +1295,25 @@ where
             //
             // Iterate over generators with X at q1 (x1=1, z1=0) where q2 commutes (x2=z2).
             for g in self.stabs.col_x[q1].iter() {
-                if self.stabs.col_z[q1].contains(g) { continue; } // skip Y, need X (x=1,z=0)
+                if self.stabs.col_z[q1].contains(g) {
+                    continue;
+                } // skip Y, need X (x=1,z=0)
                 let x2 = self.stabs.col_x[q2].contains(g);
                 let z2 = self.stabs.col_z[q2].contains(g);
-                if x2 == z2 { // q2 commutes with Y → generator is affected, toggle
+                if x2 == z2 {
+                    // q2 commutes with Y → generator is affected, toggle
                     self.stabs.signs_minus.toggle(g);
                 }
             }
             // Iterate over generators with X at q2 (x2=1, z2=0) where q1 commutes (x1=z1).
             for g in self.stabs.col_x[q2].iter() {
-                if self.stabs.col_z[q2].contains(g) { continue; } // skip Y, need X (x=1,z=0)
+                if self.stabs.col_z[q2].contains(g) {
+                    continue;
+                } // skip Y, need X (x=1,z=0)
                 let x1 = self.stabs.col_x[q1].contains(g);
                 let z1 = self.stabs.col_z[q1].contains(g);
-                if x1 == z1 { // q1 commutes with Y → toggle
+                if x1 == z1 {
+                    // q1 commutes with Y → toggle
                     self.stabs.signs_minus.toggle(g);
                 }
             }
@@ -1382,7 +1387,7 @@ where
         self
     }
 
-    /// Adjoint of square root of YY gate. SYYdg = Y(q1).Y(q2).SYY
+    /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
     #[inline]
     fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         debug_assert!(
@@ -1480,8 +1485,8 @@ impl StabilizerSimulator for SparseStabYGeneric<BitSet, PecosRng> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::clifford::Clifford;
     use pecos_core::QubitId;
+    use pecos_core::clifford::Clifford;
 
     fn q(n: usize) -> [QubitId; 1] {
         [QubitId(n)]
@@ -1594,17 +1599,20 @@ mod tests {
             let r1 = state.mz(&q(1)).into_iter().next().unwrap();
             assert!(!r0.is_deterministic);
             assert!(r1.is_deterministic);
-            assert_eq!(r0.outcome, r1.outcome, "Bell state qubits must agree (seed={seed})");
+            assert_eq!(
+                r0.outcome, r1.outcome,
+                "Bell state qubits must agree (seed={seed})"
+            );
         }
     }
 
-    /// Convert a CliffordRep PauliString image to Y-convention representation.
+    /// Convert a `CliffordRep` `PauliString` image to Y-convention representation.
     ///
     /// In Y-convention, both X and Z bits set = Y (the full Pauli, including the i).
-    /// The PauliString phase is the coefficient of the named Pauli product, so
-    /// no phase conversion is needed -- the stored phase equals phase() directly.
+    /// The `PauliString` phase is the coefficient of the named Pauli product, so
+    /// no phase conversion is needed -- the stored phase equals `phase()` directly.
     ///
-    /// Returns (x_bits, z_bits, signs_minus, signs_i) for `num_qubits` qubits.
+    /// Returns (`x_bits`, `z_bits`, `signs_minus`, `signs_i`) for `num_qubits` qubits.
     fn pauli_image_to_y_notation(
         image: &pecos_core::PauliString,
         num_qubits: usize,
@@ -1618,9 +1626,16 @@ mod tests {
             let qi = qid.index();
             match pauli {
                 Pauli::I => {}
-                Pauli::X => { x_bits[qi] = true; }
-                Pauli::Z => { z_bits[qi] = true; }
-                Pauli::Y => { x_bits[qi] = true; z_bits[qi] = true; }
+                Pauli::X => {
+                    x_bits[qi] = true;
+                }
+                Pauli::Z => {
+                    z_bits[qi] = true;
+                }
+                Pauli::Y => {
+                    x_bits[qi] = true;
+                    z_bits[qi] = true;
+                }
             }
         }
 
@@ -1637,29 +1652,75 @@ mod tests {
         let qq = &[QubitId(0)];
         match cliff {
             Clifford::I => {}
-            Clifford::X => { state.x(qq); }
-            Clifford::Y => { state.y(qq); }
-            Clifford::Z => { state.z(qq); }
-            Clifford::SX => { state.sx(qq); }
-            Clifford::SXdg => { state.sxdg(qq); }
-            Clifford::SY => { state.sy(qq); }
-            Clifford::SYdg => { state.sydg(qq); }
-            Clifford::SZ => { state.sz(qq); }
-            Clifford::SZdg => { state.szdg(qq); }
-            Clifford::H => { state.h(qq); }
-            Clifford::H2 => { state.h2(qq); }
-            Clifford::H3 => { state.h3(qq); }
-            Clifford::H4 => { state.h4(qq); }
-            Clifford::H5 => { state.h5(qq); }
-            Clifford::H6 => { state.h6(qq); }
-            Clifford::F => { state.f(qq); }
-            Clifford::Fdg => { state.fdg(qq); }
-            Clifford::F2 => { state.f2(qq); }
-            Clifford::F2dg => { state.f2dg(qq); }
-            Clifford::F3 => { state.f3(qq); }
-            Clifford::F3dg => { state.f3dg(qq); }
-            Clifford::F4 => { state.f4(qq); }
-            Clifford::F4dg => { state.f4dg(qq); }
+            Clifford::X => {
+                state.x(qq);
+            }
+            Clifford::Y => {
+                state.y(qq);
+            }
+            Clifford::Z => {
+                state.z(qq);
+            }
+            Clifford::SX => {
+                state.sx(qq);
+            }
+            Clifford::SXdg => {
+                state.sxdg(qq);
+            }
+            Clifford::SY => {
+                state.sy(qq);
+            }
+            Clifford::SYdg => {
+                state.sydg(qq);
+            }
+            Clifford::SZ => {
+                state.sz(qq);
+            }
+            Clifford::SZdg => {
+                state.szdg(qq);
+            }
+            Clifford::H => {
+                state.h(qq);
+            }
+            Clifford::H2 => {
+                state.h2(qq);
+            }
+            Clifford::H3 => {
+                state.h3(qq);
+            }
+            Clifford::H4 => {
+                state.h4(qq);
+            }
+            Clifford::H5 => {
+                state.h5(qq);
+            }
+            Clifford::H6 => {
+                state.h6(qq);
+            }
+            Clifford::F => {
+                state.f(qq);
+            }
+            Clifford::Fdg => {
+                state.fdg(qq);
+            }
+            Clifford::F2 => {
+                state.f2(qq);
+            }
+            Clifford::F2dg => {
+                state.f2dg(qq);
+            }
+            Clifford::F3 => {
+                state.f3(qq);
+            }
+            Clifford::F3dg => {
+                state.f3dg(qq);
+            }
+            Clifford::F4 => {
+                state.f4(qq);
+            }
+            Clifford::F4dg => {
+                state.f4dg(qq);
+            }
             _ => panic!("Not a 1q gate: {cliff:?}"),
         }
     }
@@ -1667,29 +1728,57 @@ mod tests {
     fn apply_2q_cliff(state: &mut SparseStabY, cliff: Clifford) {
         let qq = &[QubitId(0), QubitId(1)];
         match cliff {
-            Clifford::CX => { state.cx(qq); }
-            Clifford::CY => { state.cy(qq); }
-            Clifford::CZ => { state.cz(qq); }
-            Clifford::SXX => { state.sxx(qq); }
-            Clifford::SXXdg => { state.sxxdg(qq); }
-            Clifford::SYY => { state.syy(qq); }
-            Clifford::SYYdg => { state.syydg(qq); }
-            Clifford::SZZ => { state.szz(qq); }
-            Clifford::SZZdg => { state.szzdg(qq); }
-            Clifford::SWAP => { state.swap(qq); }
-            Clifford::ISWAP => { state.iswap(qq); }
-            Clifford::ISWAPdg => { state.iswapdg(qq); }
-            Clifford::G => { state.g(qq); }
-            Clifford::Gdg => { state.gdg(qq); }
+            Clifford::CX => {
+                state.cx(qq);
+            }
+            Clifford::CY => {
+                state.cy(qq);
+            }
+            Clifford::CZ => {
+                state.cz(qq);
+            }
+            Clifford::SXX => {
+                state.sxx(qq);
+            }
+            Clifford::SXXdg => {
+                state.sxxdg(qq);
+            }
+            Clifford::SYY => {
+                state.syy(qq);
+            }
+            Clifford::SYYdg => {
+                state.syydg(qq);
+            }
+            Clifford::SZZ => {
+                state.szz(qq);
+            }
+            Clifford::SZZdg => {
+                state.szzdg(qq);
+            }
+            Clifford::SWAP => {
+                state.swap(qq);
+            }
+            Clifford::ISWAP => {
+                state.iswap(qq);
+            }
+            Clifford::ISWAPdg => {
+                state.iswapdg(qq);
+            }
+            Clifford::G => {
+                state.g(qq);
+            }
+            Clifford::Gdg => {
+                state.gdg(qq);
+            }
             _ => panic!("Not a 2q gate: {cliff:?}"),
         }
     }
 
-    /// Cross-check: SparseStabY gate images match CliffordRep for all 1q Cliffords.
+    /// Cross-check: `SparseStabY` gate images match `CliffordRep` for all 1q Cliffords.
     #[test]
     fn clifford_rep_matches_sparse_stab_y_all_1q_gates() {
-        use pecos_core::clifford::Clifford;
         use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
 
         for &cliff in Clifford::all_1q() {
             let rep = cliff.on_qubit(0);
@@ -1712,15 +1801,18 @@ mod tests {
                 apply_1q_cliff(&mut state, cliff);
 
                 assert_eq!(
-                    state.stabs.col_x[0].contains(0), exp_x[0],
+                    state.stabs.col_x[0].contains(0),
+                    exp_x[0],
                     "{cliff:?} on {name}: X bit mismatch (expected: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.col_z[0].contains(0), exp_z[0],
+                    state.stabs.col_z[0].contains(0),
+                    exp_z[0],
                     "{cliff:?} on {name}: Z bit mismatch (expected: {image:?})"
                 );
                 assert_eq!(
-                    state.stabs.signs_minus.contains(0), exp_minus,
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
                     "{cliff:?} on {name}: signs_minus mismatch (expected: {image:?})"
                 );
                 // In Y-convention, gates should NOT set signs_i
@@ -1733,11 +1825,11 @@ mod tests {
         }
     }
 
-    /// Cross-check: SparseStabY gate images match CliffordRep for all 2q Cliffords.
+    /// Cross-check: `SparseStabY` gate images match `CliffordRep` for all 2q Cliffords.
     #[test]
     fn clifford_rep_matches_sparse_stab_y_all_2q_gates() {
-        use pecos_core::clifford::Clifford;
         use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
 
         let inputs: [(&str, PauliString, usize, bool); 4] = [
             ("X0", PauliString::x(0), 0, true),
@@ -1766,18 +1858,21 @@ mod tests {
                 let gen_id = *input_q;
                 for qubit in 0..2 {
                     assert_eq!(
-                        state.stabs.col_x[qubit].contains(gen_id), exp_x[qubit],
+                        state.stabs.col_x[qubit].contains(gen_id),
+                        exp_x[qubit],
                         "{cliff:?} on {name}: qubit {qubit} X bit mismatch \
                          (expected image: {image:?})"
                     );
                     assert_eq!(
-                        state.stabs.col_z[qubit].contains(gen_id), exp_z[qubit],
+                        state.stabs.col_z[qubit].contains(gen_id),
+                        exp_z[qubit],
                         "{cliff:?} on {name}: qubit {qubit} Z bit mismatch \
                          (expected image: {image:?})"
                     );
                 }
                 assert_eq!(
-                    state.stabs.signs_minus.contains(gen_id), exp_minus,
+                    state.stabs.signs_minus.contains(gen_id),
+                    exp_minus,
                     "{cliff:?} on {name}: signs_minus mismatch \
                      (expected image: {image:?})"
                 );
@@ -1791,7 +1886,7 @@ mod tests {
         }
     }
 
-    /// Test measurement after various gate sequences matches SparseStab (W-convention).
+    /// Test measurement after various gate sequences matches `SparseStab` (W-convention).
     #[test]
     fn test_measurement_matches_w_convention() {
         use crate::SparseStab;
@@ -1862,7 +1957,7 @@ mod tests {
     }
 
     /// Thorough cross-validation: run many random Clifford circuits on both
-    /// SparseStabY and SparseStab and verify all measurements agree.
+    /// `SparseStabY` and `SparseStab` and verify all measurements agree.
     /// Includes circuits with Y-stabilizers (SZ, SY, CY, SYY gates).
     #[test]
     fn thorough_measurement_cross_validation() {
@@ -1878,12 +1973,12 @@ mod tests {
             let ops: &[(Clifford, &[QubitId])] = match seed % 10 {
                 0 => &[
                     (Clifford::H, &[QubitId(0)]),
-                    (Clifford::SZ, &[QubitId(0)]),     // Creates Y stabilizer
+                    (Clifford::SZ, &[QubitId(0)]), // Creates Y stabilizer
                     (Clifford::CX, &[QubitId(0), QubitId(1)]),
                 ],
                 1 => &[
                     (Clifford::H, &[QubitId(0)]),
-                    (Clifford::CY, &[QubitId(0), QubitId(1)]),  // Creates Y
+                    (Clifford::CY, &[QubitId(0), QubitId(1)]), // Creates Y
                 ],
                 2 => &[
                     (Clifford::H, &[QubitId(0)]),
@@ -1920,7 +2015,7 @@ mod tests {
                 7 => &[
                     (Clifford::H, &[QubitId(0)]),
                     (Clifford::SZ, &[QubitId(0)]),
-                    (Clifford::H, &[QubitId(0)]),   // SZ H creates non-trivial 1q state
+                    (Clifford::H, &[QubitId(0)]), // SZ H creates non-trivial 1q state
                     (Clifford::CX, &[QubitId(0), QubitId(1)]),
                 ],
                 8 => &[
@@ -1932,7 +2027,7 @@ mod tests {
                     (Clifford::CX, &[QubitId(1), QubitId(2)]),
                     (Clifford::SZ, &[QubitId(2)]),
                 ],
-                9 | _ => &[
+                _ => &[
                     (Clifford::H, &[QubitId(0)]),
                     (Clifford::SXX, &[QubitId(0), QubitId(1)]),
                     (Clifford::SYY, &[QubitId(1), QubitId(2)]),
@@ -1942,16 +2037,46 @@ mod tests {
 
             for &(gate, qubits) in ops {
                 match gate {
-                    Clifford::H => { y_sim.h(qubits); w_sim.h(qubits); }
-                    Clifford::SZ => { y_sim.sz(qubits); w_sim.sz(qubits); }
-                    Clifford::SY => { y_sim.sy(qubits); w_sim.sy(qubits); }
-                    Clifford::CX => { y_sim.cx(qubits); w_sim.cx(qubits); }
-                    Clifford::CY => { y_sim.cy(qubits); w_sim.cy(qubits); }
-                    Clifford::CZ => { y_sim.cz(qubits); w_sim.cz(qubits); }
-                    Clifford::SXX => { y_sim.sxx(qubits); w_sim.sxx(qubits); }
-                    Clifford::SYY => { y_sim.syy(qubits); w_sim.syy(qubits); }
-                    Clifford::SZZ => { y_sim.szz(qubits); w_sim.szz(qubits); }
-                    Clifford::ISWAP => { y_sim.iswap(qubits); w_sim.iswap(qubits); }
+                    Clifford::H => {
+                        y_sim.h(qubits);
+                        w_sim.h(qubits);
+                    }
+                    Clifford::SZ => {
+                        y_sim.sz(qubits);
+                        w_sim.sz(qubits);
+                    }
+                    Clifford::SY => {
+                        y_sim.sy(qubits);
+                        w_sim.sy(qubits);
+                    }
+                    Clifford::CX => {
+                        y_sim.cx(qubits);
+                        w_sim.cx(qubits);
+                    }
+                    Clifford::CY => {
+                        y_sim.cy(qubits);
+                        w_sim.cy(qubits);
+                    }
+                    Clifford::CZ => {
+                        y_sim.cz(qubits);
+                        w_sim.cz(qubits);
+                    }
+                    Clifford::SXX => {
+                        y_sim.sxx(qubits);
+                        w_sim.sxx(qubits);
+                    }
+                    Clifford::SYY => {
+                        y_sim.syy(qubits);
+                        w_sim.syy(qubits);
+                    }
+                    Clifford::SZZ => {
+                        y_sim.szz(qubits);
+                        w_sim.szz(qubits);
+                    }
+                    Clifford::ISWAP => {
+                        y_sim.iswap(qubits);
+                        w_sim.iswap(qubits);
+                    }
                     _ => panic!("unhandled gate {gate:?}"),
                 }
             }
@@ -1962,12 +2087,14 @@ mod tests {
 
             for i in 0..4 {
                 assert_eq!(
-                    yr[i].outcome, wr[i].outcome,
+                    yr[i].outcome,
+                    wr[i].outcome,
                     "seed {seed} (circuit {}), qubit {i}: outcome mismatch",
                     seed % 10
                 );
                 assert_eq!(
-                    yr[i].is_deterministic, wr[i].is_deterministic,
+                    yr[i].is_deterministic,
+                    wr[i].is_deterministic,
                     "seed {seed} (circuit {}), qubit {i}: determinism mismatch",
                     seed % 10
                 );

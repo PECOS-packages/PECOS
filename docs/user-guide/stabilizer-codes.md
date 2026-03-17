@@ -104,9 +104,9 @@ Once you have a code, query its parameters:
     from pecos_rslib import StabilizerCode
 
     code = StabilizerCode.steane()
-    print(code.num_qubits())          # 7
+    print(code.num_qubits())  # 7
     print(code.num_logical_qubits())  # 1
-    print(code.code_parameters())     # [[7, 1]]
+    print(code.code_parameters())  # [[7, 1]]
     ```
 
 ## Logical Operators

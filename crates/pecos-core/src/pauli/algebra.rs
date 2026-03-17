@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! UnitaryRep algebra for Pauli strings with ergonomic syntax.
+//! `UnitaryRep` algebra for Pauli strings with ergonomic syntax.
 //!
 //! This module extends `PauliString` with operator overloading for natural
 //! mathematical syntax.

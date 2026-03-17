@@ -257,11 +257,22 @@ fn test_measurement_handling() -> Result<(), Box<dyn std::error::Error>> {
 // ──────────────────────────────────────────────────────────────────────
 
 /// Create a single instruction
-fn instr(op: Operation, operands: Vec<u32>, results: Vec<u32>, result_types: Vec<Type>) -> Instruction {
+fn instr(
+    op: Operation,
+    operands: Vec<u32>,
+    results: Vec<u32>,
+    result_types: Vec<Type>,
+) -> Instruction {
     Instruction {
         operation: op,
-        operands: operands.into_iter().map(|id| SSAValue { id, version: 0 }).collect(),
-        results: results.into_iter().map(|id| SSAValue { id, version: 0 }).collect(),
+        operands: operands
+            .into_iter()
+            .map(|id| SSAValue { id, version: 0 })
+            .collect(),
+        results: results
+            .into_iter()
+            .map(|id| SSAValue { id, version: 0 })
+            .collect(),
         result_types,
         regions: vec![],
         attributes: BTreeMap::new(),
@@ -291,7 +302,9 @@ fn test_processor_rz_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let rz_instr = instr(
-        Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(std::f64::consts::FRAC_PI_2))),
+        Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
+            std::f64::consts::FRAC_PI_2,
+        ))),
         vec![0],
         vec![1],
         vec![Type::Qubit],
@@ -335,14 +348,24 @@ fn test_processor_rx_ry_gates() {
         vec![Type::Qubit],
     );
     let ry_instr = instr(
-        Operation::Quantum(QuantumOp::RY(Angle64::from_radians(std::f64::consts::FRAC_PI_4))),
+        Operation::Quantum(QuantumOp::RY(Angle64::from_radians(
+            std::f64::consts::FRAC_PI_4,
+        ))),
         vec![0],
         vec![2],
         vec![Type::Qubit],
     );
 
-    assert!(processor.process_instruction(&rx_instr, &mut builder).unwrap());
-    assert!(processor.process_instruction(&ry_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&rx_instr, &mut builder)
+            .unwrap()
+    );
+    assert!(
+        processor
+            .process_instruction(&ry_instr, &mut builder)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -361,7 +384,11 @@ fn test_processor_u3_gate() {
         vec![Type::Qubit],
     );
 
-    assert!(processor.process_instruction(&u3_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&u3_instr, &mut builder)
+            .unwrap()
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -380,7 +407,11 @@ fn test_processor_swap_gate() {
         vec![Type::Qubit],
     );
 
-    assert!(processor.process_instruction(&swap_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&swap_instr, &mut builder)
+            .unwrap()
+    );
     assert_eq!(processor.get_qubit_count(), 2);
 }
 
@@ -390,13 +421,19 @@ fn test_processor_rzz_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let rzz_instr = instr(
-        Operation::Quantum(QuantumOp::RZZ(Angle64::from_radians(std::f64::consts::FRAC_PI_4))),
+        Operation::Quantum(QuantumOp::RZZ(Angle64::from_radians(
+            std::f64::consts::FRAC_PI_4,
+        ))),
         vec![0, 1],
         vec![2],
         vec![Type::Qubit],
     );
 
-    assert!(processor.process_instruction(&rzz_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&rzz_instr, &mut builder)
+            .unwrap()
+    );
     assert_eq!(processor.get_qubit_count(), 2);
 }
 
@@ -406,13 +443,19 @@ fn test_processor_cphase_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let cp_instr = instr(
-        Operation::Quantum(QuantumOp::CPhase(Angle64::from_radians(std::f64::consts::PI))),
+        Operation::Quantum(QuantumOp::CPhase(Angle64::from_radians(
+            std::f64::consts::PI,
+        ))),
         vec![0, 1],
         vec![2],
         vec![Type::Qubit],
     );
 
-    assert!(processor.process_instruction(&cp_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&cp_instr, &mut builder)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -427,7 +470,11 @@ fn test_processor_cz_gate() {
         vec![Type::Qubit],
     );
 
-    assert!(processor.process_instruction(&cz_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&cz_instr, &mut builder)
+            .unwrap()
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -445,15 +492,13 @@ fn test_processor_s_sdg_t_tdg_gates() {
         (QuantumOp::T, "T"),
         (QuantumOp::Tdg, "Tdg"),
     ] {
-        let gate_instr = instr(
-            Operation::Quantum(op),
-            vec![0],
-            vec![10],
-            vec![Type::Qubit],
-        );
+        let gate_instr = instr(Operation::Quantum(op), vec![0], vec![10], vec![Type::Qubit]);
         let result = processor.process_instruction(&gate_instr, &mut builder);
         assert!(result.is_ok(), "{name} gate failed: {:?}", result.err());
-        assert!(result.unwrap(), "{name} gate should produce quantum instructions");
+        assert!(
+            result.unwrap(),
+            "{name} gate should produce quantum instructions"
+        );
     }
 }
 
@@ -472,7 +517,11 @@ fn test_processor_alloc_dealloc() {
         vec![0],
         vec![Type::Qubit],
     );
-    assert!(processor.process_instruction(&alloc_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&alloc_instr, &mut builder)
+            .unwrap()
+    );
     assert_eq!(processor.get_qubit_count(), 1);
 
     let dealloc_instr = instr(
@@ -481,7 +530,11 @@ fn test_processor_alloc_dealloc() {
         vec![],
         vec![],
     );
-    assert!(processor.process_instruction(&dealloc_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&dealloc_instr, &mut builder)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -495,7 +548,11 @@ fn test_processor_reset() {
         vec![],
         vec![],
     );
-    assert!(processor.process_instruction(&reset_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&reset_instr, &mut builder)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -509,7 +566,11 @@ fn test_processor_init_zero() {
         vec![],
         vec![],
     );
-    assert!(processor.process_instruction(&init_instr, &mut builder).unwrap());
+    assert!(
+        processor
+            .process_instruction(&init_instr, &mut builder)
+            .unwrap()
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -518,6 +579,170 @@ fn test_processor_init_zero() {
 
 #[test]
 fn test_processor_const_int() {
+    let processor = run_instructions(vec![instr(
+        Operation::Classical(ClassicalOp::ConstInt(42)),
+        vec![],
+        vec![0],
+        vec![Type::Int(crate::types::IntWidth::I64)],
+    )]);
+    assert_eq!(
+        processor.ssa_values.get(&0),
+        Some(&super::environment::TypedValue::U32(42))
+    );
+}
+
+#[test]
+fn test_processor_const_float() {
+    let processor = run_instructions(vec![instr(
+        Operation::Classical(ClassicalOp::ConstFloat(1.234)),
+        vec![],
+        vec![0],
+        vec![Type::Float(crate::types::FloatPrecision::F64)],
+    )]);
+    assert_eq!(
+        processor.ssa_values.get(&0),
+        Some(&super::environment::TypedValue::F64(1.234))
+    );
+}
+
+#[test]
+fn test_processor_const_bool() {
+    let processor = run_instructions(vec![instr(
+        Operation::Classical(ClassicalOp::ConstBool(true)),
+        vec![],
+        vec![0],
+        vec![Type::Bool],
+    )]);
+    assert_eq!(
+        processor.ssa_values.get(&0),
+        Some(&super::environment::TypedValue::Bool(true))
+    );
+}
+
+#[test]
+fn test_processor_add() {
+    let processor = run_instructions(vec![
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(10)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(20)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Add),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+    ]);
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::U32(30))
+    );
+}
+
+#[test]
+fn test_processor_sub() {
+    let processor = run_instructions(vec![
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(30)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(12)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Sub),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+    ]);
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::U32(18))
+    );
+}
+
+#[test]
+fn test_processor_mul() {
+    let processor = run_instructions(vec![
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(6)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(7)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Mul),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+    ]);
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::U32(42))
+    );
+}
+
+#[test]
+fn test_processor_div_and_mod() {
+    let processor = run_instructions(vec![
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(17)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(5)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Div),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Mod),
+            vec![0, 1],
+            vec![3],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+    ]);
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::U32(3))
+    );
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::U32(2))
+    );
+}
+
+#[test]
+fn test_processor_div_by_zero() {
     let processor = run_instructions(vec![
         instr(
             Operation::Classical(ClassicalOp::ConstInt(42)),
@@ -525,87 +750,24 @@ fn test_processor_const_int() {
             vec![0],
             vec![Type::Int(crate::types::IntWidth::I64)],
         ),
-    ]);
-    assert_eq!(processor.ssa_values.get(&0), Some(&super::environment::TypedValue::U32(42)));
-}
-
-#[test]
-fn test_processor_const_float() {
-    let processor = run_instructions(vec![
         instr(
-            Operation::Classical(ClassicalOp::ConstFloat(1.234)),
+            Operation::Classical(ClassicalOp::ConstInt(0)),
             vec![],
-            vec![0],
-            vec![Type::Float(crate::types::FloatPrecision::F64)],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
         ),
-    ]);
-    assert_eq!(processor.ssa_values.get(&0), Some(&super::environment::TypedValue::F64(1.234)));
-}
-
-#[test]
-fn test_processor_const_bool() {
-    let processor = run_instructions(vec![
         instr(
-            Operation::Classical(ClassicalOp::ConstBool(true)),
-            vec![],
-            vec![0],
-            vec![Type::Bool],
+            Operation::Classical(ClassicalOp::Div),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
         ),
-    ]);
-    assert_eq!(processor.ssa_values.get(&0), Some(&super::environment::TypedValue::Bool(true)));
-}
-
-#[test]
-fn test_processor_add() {
-    let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(10)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(20)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Add), vec![0, 1], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-    ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::U32(30)));
-}
-
-#[test]
-fn test_processor_sub() {
-    let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(30)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(12)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Sub), vec![0, 1], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-    ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::U32(18)));
-}
-
-#[test]
-fn test_processor_mul() {
-    let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(6)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(7)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Mul), vec![0, 1], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-    ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::U32(42)));
-}
-
-#[test]
-fn test_processor_div_and_mod() {
-    let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(17)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(5)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Div), vec![0, 1], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Mod), vec![0, 1], vec![3], vec![Type::Int(crate::types::IntWidth::I64)]),
-    ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::U32(3)));
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::U32(2)));
-}
-
-#[test]
-fn test_processor_div_by_zero() {
-    let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(42)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(0)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Div), vec![0, 1], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
     ]);
     // Division by zero should produce 0
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::U32(0)));
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::U32(0))
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -615,62 +777,184 @@ fn test_processor_div_by_zero() {
 #[test]
 fn test_processor_bitwise_and_or_xor() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(0b1100)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(0b1010)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::And), vec![0, 1], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Or), vec![0, 1], vec![3], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Xor), vec![0, 1], vec![4], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(0b1100)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(0b1010)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::And),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Or),
+            vec![0, 1],
+            vec![3],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Xor),
+            vec![0, 1],
+            vec![4],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::U32(0b1000))); // AND
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::U32(0b1110))); // OR
-    assert_eq!(processor.ssa_values.get(&4), Some(&super::environment::TypedValue::U32(0b0110))); // XOR
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::U32(0b1000))
+    ); // AND
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::U32(0b1110))
+    ); // OR
+    assert_eq!(
+        processor.ssa_values.get(&4),
+        Some(&super::environment::TypedValue::U32(0b0110))
+    ); // XOR
 }
 
 #[test]
 fn test_processor_shl_shr() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(1)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Shl(3)), vec![0], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(16)), vec![], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Shr(2)), vec![2], vec![3], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(1)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Shl(3)),
+            vec![0],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(16)),
+            vec![],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Shr(2)),
+            vec![2],
+            vec![3],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&1), Some(&super::environment::TypedValue::U32(8)));  // 1 << 3
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::U32(4)));  // 16 >> 2
+    assert_eq!(
+        processor.ssa_values.get(&1),
+        Some(&super::environment::TypedValue::U32(8))
+    ); // 1 << 3
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::U32(4))
+    ); // 16 >> 2
 }
 
 #[test]
 fn test_processor_shl_shr_binary_mode() {
     // Test Shl/Shr with two operands (binary mode), matching how the QIS parser emits them
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(1)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(3)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(1)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(3)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
         // Shl(0) with two operands: value=SSA0, shift_amount=SSA1
-        instr(Operation::Classical(ClassicalOp::Shl(0)), vec![0, 1], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(16)), vec![], vec![3], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(2)), vec![], vec![4], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::Shl(0)),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(16)),
+            vec![],
+            vec![3],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(2)),
+            vec![],
+            vec![4],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
         // Shr(0) with two operands: value=SSA3, shift_amount=SSA4
-        instr(Operation::Classical(ClassicalOp::Shr(0)), vec![3, 4], vec![5], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::Shr(0)),
+            vec![3, 4],
+            vec![5],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::U32(8)));  // 1 << 3
-    assert_eq!(processor.ssa_values.get(&5), Some(&super::environment::TypedValue::U32(4)));  // 16 >> 2
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::U32(8))
+    ); // 1 << 3
+    assert_eq!(
+        processor.ssa_values.get(&5),
+        Some(&super::environment::TypedValue::U32(4))
+    ); // 16 >> 2
 }
 
 #[test]
 fn test_processor_not() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstBool(true)), vec![], vec![0], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Not), vec![0], vec![1], vec![Type::Bool]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstBool(true)),
+            vec![],
+            vec![0],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Not),
+            vec![0],
+            vec![1],
+            vec![Type::Bool],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&1), Some(&super::environment::TypedValue::Bool(false)));
+    assert_eq!(
+        processor.ssa_values.get(&1),
+        Some(&super::environment::TypedValue::Bool(false))
+    );
 }
 
 #[test]
 fn test_processor_neg_float() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstFloat(42.0)), vec![], vec![0], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::Neg), vec![0], vec![1], vec![Type::Float(crate::types::FloatPrecision::F64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstFloat(42.0)),
+            vec![],
+            vec![0],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Neg),
+            vec![0],
+            vec![1],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&1), Some(&super::environment::TypedValue::F64(-42.0)));
+    assert_eq!(
+        processor.ssa_values.get(&1),
+        Some(&super::environment::TypedValue::F64(-42.0))
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -680,35 +964,127 @@ fn test_processor_neg_float() {
 #[test]
 fn test_processor_comparisons() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(10)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(20)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Eq), vec![0, 1], vec![2], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Ne), vec![0, 1], vec![3], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Lt), vec![0, 1], vec![4], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Le), vec![0, 1], vec![5], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Gt), vec![0, 1], vec![6], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Ge), vec![0, 1], vec![7], vec![Type::Bool]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(10)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(20)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Eq),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Ne),
+            vec![0, 1],
+            vec![3],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Lt),
+            vec![0, 1],
+            vec![4],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Le),
+            vec![0, 1],
+            vec![5],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Gt),
+            vec![0, 1],
+            vec![6],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Ge),
+            vec![0, 1],
+            vec![7],
+            vec![Type::Bool],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::Bool(false))); // 10 == 20
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::Bool(true)));  // 10 != 20
-    assert_eq!(processor.ssa_values.get(&4), Some(&super::environment::TypedValue::Bool(true)));  // 10 < 20
-    assert_eq!(processor.ssa_values.get(&5), Some(&super::environment::TypedValue::Bool(true)));  // 10 <= 20
-    assert_eq!(processor.ssa_values.get(&6), Some(&super::environment::TypedValue::Bool(false))); // 10 > 20
-    assert_eq!(processor.ssa_values.get(&7), Some(&super::environment::TypedValue::Bool(false))); // 10 >= 20
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::Bool(false))
+    ); // 10 == 20
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::Bool(true))
+    ); // 10 != 20
+    assert_eq!(
+        processor.ssa_values.get(&4),
+        Some(&super::environment::TypedValue::Bool(true))
+    ); // 10 < 20
+    assert_eq!(
+        processor.ssa_values.get(&5),
+        Some(&super::environment::TypedValue::Bool(true))
+    ); // 10 <= 20
+    assert_eq!(
+        processor.ssa_values.get(&6),
+        Some(&super::environment::TypedValue::Bool(false))
+    ); // 10 > 20
+    assert_eq!(
+        processor.ssa_values.get(&7),
+        Some(&super::environment::TypedValue::Bool(false))
+    ); // 10 >= 20
 }
 
 #[test]
 fn test_processor_comparisons_equal() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(5)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(5)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Eq), vec![0, 1], vec![2], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Le), vec![0, 1], vec![3], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Ge), vec![0, 1], vec![4], vec![Type::Bool]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(5)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(5)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Eq),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Le),
+            vec![0, 1],
+            vec![3],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Ge),
+            vec![0, 1],
+            vec![4],
+            vec![Type::Bool],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::Bool(true)));  // 5 == 5
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::Bool(true)));  // 5 <= 5
-    assert_eq!(processor.ssa_values.get(&4), Some(&super::environment::TypedValue::Bool(true)));  // 5 >= 5
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::Bool(true))
+    ); // 5 == 5
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::Bool(true))
+    ); // 5 <= 5
+    assert_eq!(
+        processor.ssa_values.get(&4),
+        Some(&super::environment::TypedValue::Bool(true))
+    ); // 5 >= 5
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -718,23 +1094,69 @@ fn test_processor_comparisons_equal() {
 #[test]
 fn test_processor_select() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstBool(true)), vec![], vec![0], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(100)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(200)), vec![], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Select), vec![0, 1, 2], vec![3], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstBool(true)),
+            vec![],
+            vec![0],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(100)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(200)),
+            vec![],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Select),
+            vec![0, 1, 2],
+            vec![3],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::U32(100)));
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::U32(100))
+    );
 }
 
 #[test]
 fn test_processor_select_false() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstBool(false)), vec![], vec![0], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(100)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::ConstInt(200)), vec![], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Select), vec![0, 1, 2], vec![3], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstBool(false)),
+            vec![],
+            vec![0],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(100)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(200)),
+            vec![],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Select),
+            vec![0, 1, 2],
+            vec![3],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::U32(200)));
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::U32(200))
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -744,36 +1166,109 @@ fn test_processor_select_false() {
 #[test]
 fn test_processor_float_arithmetic() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstFloat(3.0)), vec![], vec![0], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::ConstFloat(2.0)), vec![], vec![1], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::FAdd), vec![0, 1], vec![2], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::FSub), vec![0, 1], vec![3], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::FMul), vec![0, 1], vec![4], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::FDiv), vec![0, 1], vec![5], vec![Type::Float(crate::types::FloatPrecision::F64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstFloat(3.0)),
+            vec![],
+            vec![0],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstFloat(2.0)),
+            vec![],
+            vec![1],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::FAdd),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::FSub),
+            vec![0, 1],
+            vec![3],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::FMul),
+            vec![0, 1],
+            vec![4],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::FDiv),
+            vec![0, 1],
+            vec![5],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::F64(5.0)));  // 3 + 2
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::F64(1.0)));  // 3 - 2
-    assert_eq!(processor.ssa_values.get(&4), Some(&super::environment::TypedValue::F64(6.0)));  // 3 * 2
-    assert_eq!(processor.ssa_values.get(&5), Some(&super::environment::TypedValue::F64(1.5)));  // 3 / 2
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::F64(5.0))
+    ); // 3 + 2
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::F64(1.0))
+    ); // 3 - 2
+    assert_eq!(
+        processor.ssa_values.get(&4),
+        Some(&super::environment::TypedValue::F64(6.0))
+    ); // 3 * 2
+    assert_eq!(
+        processor.ssa_values.get(&5),
+        Some(&super::environment::TypedValue::F64(1.5))
+    ); // 3 / 2
 }
 
 #[test]
 fn test_processor_fneg() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstFloat(7.5)), vec![], vec![0], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::FNeg), vec![0], vec![1], vec![Type::Float(crate::types::FloatPrecision::F64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstFloat(7.5)),
+            vec![],
+            vec![0],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::FNeg),
+            vec![0],
+            vec![1],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&1), Some(&super::environment::TypedValue::F64(-7.5)));
+    assert_eq!(
+        processor.ssa_values.get(&1),
+        Some(&super::environment::TypedValue::F64(-7.5))
+    );
 }
 
 #[test]
 fn test_processor_fdiv_by_zero() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstFloat(1.0)), vec![], vec![0], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::ConstFloat(0.0)), vec![], vec![1], vec![Type::Float(crate::types::FloatPrecision::F64)]),
-        instr(Operation::Classical(ClassicalOp::FDiv), vec![0, 1], vec![2], vec![Type::Float(crate::types::FloatPrecision::F64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstFloat(1.0)),
+            vec![],
+            vec![0],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::ConstFloat(0.0)),
+            vec![],
+            vec![1],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::FDiv),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Float(crate::types::FloatPrecision::F64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::F64(0.0)));
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::F64(0.0))
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -785,13 +1280,20 @@ fn test_processor_memory_alloc_store_load() {
     let processor = run_instructions(vec![
         // alloca i64 -> ptr %0
         instr(
-            Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(Type::Int(crate::types::IntWidth::I64)))),
+            Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(Type::Int(
+                crate::types::IntWidth::I64,
+            )))),
             vec![],
             vec![0],
             vec![Type::Int(crate::types::IntWidth::I64)],
         ),
         // store 42 into %0
-        instr(Operation::Classical(ClassicalOp::ConstInt(42)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(42)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
         instr(
             Operation::Memory(MemoryOp::Store),
             vec![1, 0], // value, pointer
@@ -806,28 +1308,61 @@ fn test_processor_memory_alloc_store_load() {
             vec![Type::Int(crate::types::IntWidth::I64)],
         ),
     ]);
-    assert_eq!(processor.ssa_values.get(&2), Some(&super::environment::TypedValue::U32(42)));
+    assert_eq!(
+        processor.ssa_values.get(&2),
+        Some(&super::environment::TypedValue::U32(42))
+    );
 }
 
 #[test]
 fn test_processor_memory_overwrite() {
     let processor = run_instructions(vec![
         instr(
-            Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(Type::Int(crate::types::IntWidth::I64)))),
+            Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(Type::Int(
+                crate::types::IntWidth::I64,
+            )))),
             vec![],
             vec![0],
             vec![Type::Int(crate::types::IntWidth::I64)],
         ),
         // Store 10
-        instr(Operation::Classical(ClassicalOp::ConstInt(10)), vec![], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Memory(MemoryOp::Store), vec![1, 0], vec![], vec![]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(10)),
+            vec![],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Memory(MemoryOp::Store),
+            vec![1, 0],
+            vec![],
+            vec![],
+        ),
         // Store 99 (overwrite)
-        instr(Operation::Classical(ClassicalOp::ConstInt(99)), vec![], vec![2], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Memory(MemoryOp::Store), vec![2, 0], vec![], vec![]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(99)),
+            vec![],
+            vec![2],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Memory(MemoryOp::Store),
+            vec![2, 0],
+            vec![],
+            vec![],
+        ),
         // Load - should get 99
-        instr(Operation::Memory(MemoryOp::Load), vec![0], vec![3], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Memory(MemoryOp::Load),
+            vec![0],
+            vec![3],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&3), Some(&super::environment::TypedValue::U32(99)));
+    assert_eq!(
+        processor.ssa_values.get(&3),
+        Some(&super::environment::TypedValue::U32(99))
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -837,10 +1372,23 @@ fn test_processor_memory_overwrite() {
 #[test]
 fn test_processor_assign() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstInt(42)), vec![], vec![0], vec![Type::Int(crate::types::IntWidth::I64)]),
-        instr(Operation::Classical(ClassicalOp::Assign), vec![0], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstInt(42)),
+            vec![],
+            vec![0],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Assign),
+            vec![0],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&1), Some(&super::environment::TypedValue::U32(42)));
+    assert_eq!(
+        processor.ssa_values.get(&1),
+        Some(&super::environment::TypedValue::U32(42))
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -850,19 +1398,45 @@ fn test_processor_assign() {
 #[test]
 fn test_processor_bitcast_bool_to_int_true() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstBool(true)), vec![], vec![0], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Bitcast), vec![0], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstBool(true)),
+            vec![],
+            vec![0],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Bitcast),
+            vec![0],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&1), Some(&super::environment::TypedValue::U32(1)));
+    assert_eq!(
+        processor.ssa_values.get(&1),
+        Some(&super::environment::TypedValue::U32(1))
+    );
 }
 
 #[test]
 fn test_processor_bitcast_bool_to_int_false() {
     let processor = run_instructions(vec![
-        instr(Operation::Classical(ClassicalOp::ConstBool(false)), vec![], vec![0], vec![Type::Bool]),
-        instr(Operation::Classical(ClassicalOp::Bitcast), vec![0], vec![1], vec![Type::Int(crate::types::IntWidth::I64)]),
+        instr(
+            Operation::Classical(ClassicalOp::ConstBool(false)),
+            vec![],
+            vec![0],
+            vec![Type::Bool],
+        ),
+        instr(
+            Operation::Classical(ClassicalOp::Bitcast),
+            vec![0],
+            vec![1],
+            vec![Type::Int(crate::types::IntWidth::I64)],
+        ),
     ]);
-    assert_eq!(processor.ssa_values.get(&1), Some(&super::environment::TypedValue::U32(0)));
+    assert_eq!(
+        processor.ssa_values.get(&1),
+        Some(&super::environment::TypedValue::U32(0))
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -883,11 +1457,16 @@ fn test_processor_result_export() {
         vec![0],
         vec![Type::Int(crate::types::IntWidth::I64)],
     );
-    processor.process_instruction(&const_instr, &mut builder).unwrap();
+    processor
+        .process_instruction(&const_instr, &mut builder)
+        .unwrap();
 
     // Create a Result instruction with export_name attribute
     let mut attrs = BTreeMap::new();
-    attrs.insert("export_name".to_string(), AttributeValue::String("my_result".to_string()));
+    attrs.insert(
+        "export_name".to_string(),
+        AttributeValue::String("my_result".to_string()),
+    );
     let result_instr = Instruction {
         operation: Operation::Classical(ClassicalOp::Result),
         operands: vec![SSAValue { id: 0, version: 0 }],
@@ -897,10 +1476,15 @@ fn test_processor_result_export() {
         attributes: attrs,
         location: None,
     };
-    processor.process_instruction(&result_instr, &mut builder).unwrap();
+    processor
+        .process_instruction(&result_instr, &mut builder)
+        .unwrap();
 
     let exports = processor.get_export_results();
-    assert_eq!(exports.get("my_result"), Some(&super::environment::TypedValue::U32(42)));
+    assert_eq!(
+        exports.get("my_result"),
+        Some(&super::environment::TypedValue::U32(42))
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -919,7 +1503,11 @@ fn test_processor_wrong_operand_count_single_qubit() {
         vec![2],
         vec![Type::Qubit],
     );
-    assert!(processor.process_instruction(&bad_instr, &mut builder).is_err());
+    assert!(
+        processor
+            .process_instruction(&bad_instr, &mut builder)
+            .is_err()
+    );
 }
 
 #[test]
@@ -934,7 +1522,11 @@ fn test_processor_wrong_operand_count_two_qubit() {
         vec![2],
         vec![Type::Qubit],
     );
-    assert!(processor.process_instruction(&bad_instr, &mut builder).is_err());
+    assert!(
+        processor
+            .process_instruction(&bad_instr, &mut builder)
+            .is_err()
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -955,7 +1547,10 @@ fn test_processor_unimplemented_quantum_op() {
     let result = processor.process_instruction(&toffoli_instr, &mut builder);
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("not yet implemented"), "Error should mention unimplemented: {msg}");
+    assert!(
+        msg.contains("not yet implemented"),
+        "Error should mention unimplemented: {msg}"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -984,7 +1579,10 @@ fn test_engine_compile_empty_name_error() -> Result<(), Box<dyn std::error::Erro
     let result = engine.compile();
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("empty"), "Error should mention empty name: {msg}");
+    assert!(
+        msg.contains("empty"),
+        "Error should mention empty name: {msg}"
+    );
 
     Ok(())
 }
@@ -1060,21 +1658,49 @@ fn test_engine_classical_only_module() -> Result<(), Box<dyn std::error::Error>>
 fn test_engine_rz_rxy_module() -> Result<(), Box<dyn std::error::Error>> {
     // Build a module with Alloc, RZ, R1XY, Measure, Dealloc
     let instructions = vec![
-        instr(Operation::Quantum(QuantumOp::Alloc), vec![], vec![0], vec![Type::Qubit]),
         instr(
-            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(std::f64::consts::FRAC_PI_2))),
-            vec![0], vec![1], vec![Type::Qubit],
+            Operation::Quantum(QuantumOp::Alloc),
+            vec![],
+            vec![0],
+            vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::R1XY(Angle64::from_radians(std::f64::consts::FRAC_PI_2), Angle64::ZERO)),
-            vec![0], vec![2], vec![Type::Qubit],
+            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
+                std::f64::consts::FRAC_PI_2,
+            ))),
+            vec![0],
+            vec![1],
+            vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(std::f64::consts::FRAC_PI_2))),
-            vec![0], vec![3], vec![Type::Qubit],
+            Operation::Quantum(QuantumOp::R1XY(
+                Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+                Angle64::ZERO,
+            )),
+            vec![0],
+            vec![2],
+            vec![Type::Qubit],
         ),
-        instr(Operation::Quantum(QuantumOp::Measure), vec![0], vec![4], vec![Type::Bit]),
-        instr(Operation::Quantum(QuantumOp::Dealloc), vec![0], vec![], vec![]),
+        instr(
+            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
+                std::f64::consts::FRAC_PI_2,
+            ))),
+            vec![0],
+            vec![3],
+            vec![Type::Qubit],
+        ),
+        instr(
+            Operation::Quantum(QuantumOp::Measure),
+            vec![0],
+            vec![4],
+            vec![Type::Bit],
+        ),
+        instr(
+            Operation::Quantum(QuantumOp::Dealloc),
+            vec![0],
+            vec![],
+            vec![],
+        ),
     ];
 
     let main_block = Block {

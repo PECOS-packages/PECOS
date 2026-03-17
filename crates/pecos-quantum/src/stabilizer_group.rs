@@ -119,9 +119,7 @@ impl PauliStabilizerGroup {
     ///
     /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any generator has phase +i or -i.
     /// Returns [`PauliStabilizerGroupError::NonCommuting`] if any pair of generators anticommute.
-    pub fn new(
-        generators: Vec<PauliString>,
-    ) -> Result<Self, PauliStabilizerGroupError> {
+    pub fn new(generators: Vec<PauliString>) -> Result<Self, PauliStabilizerGroupError> {
         // Validate real phases
         for (i, generator) in generators.iter().enumerate() {
             match generator.phase() {
@@ -132,9 +130,7 @@ impl PauliStabilizerGroup {
 
         // PauliGroup::new validates mutual commutativity
         let inner = PauliGroup::new(generators).map_err(|e| match e {
-            PauliGroupError::NonCommuting(a, b) => {
-                PauliStabilizerGroupError::NonCommuting(a, b)
-            }
+            PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
         })?;
         Ok(Self { inner })
     }
@@ -147,9 +143,7 @@ impl PauliStabilizerGroup {
     /// real phases. This is intended for internal use where the generators
     /// are known to be valid (e.g., extracted from a simulator tableau).
     #[must_use]
-    pub fn from_generators_unchecked(
-        generators: Vec<PauliString>,
-    ) -> Self {
+    pub fn from_generators_unchecked(generators: Vec<PauliString>) -> Self {
         Self {
             inner: PauliGroup::from_generators_unchecked(generators),
         }
@@ -178,9 +172,7 @@ impl PauliStabilizerGroup {
     /// Returns [`PauliStabilizerGroupError::NonCommuting`] if any pair anticommute.
     /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any reduced generator
     /// has a non-real phase.
-    pub fn try_from_set(
-        set: &PauliSet,
-    ) -> Result<Self, PauliStabilizerGroupError> {
+    pub fn try_from_set(set: &PauliSet) -> Result<Self, PauliStabilizerGroupError> {
         Self::try_from(set.to_sequence())
     }
 
@@ -435,14 +427,12 @@ impl PauliStabilizerGroup {
             _ => {
                 return Err(PauliStabilizerGroupError::NonRealPhase(
                     self.num_generators(),
-                ))
+                ));
             }
         }
 
         self.inner.add_generator(generator).map_err(|e| match e {
-            PauliGroupError::NonCommuting(a, b) => {
-                PauliStabilizerGroupError::NonCommuting(a, b)
-            }
+            PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
         })
     }
 
@@ -467,17 +457,11 @@ impl PauliStabilizerGroup {
     ///
     /// Returns an error if any generator from `other` anticommutes with a
     /// generator from `self`.
-    pub fn merge(
-        &mut self,
-        other: &PauliStabilizerGroup,
-    ) -> Result<(), PauliStabilizerGroupError> {
+    pub fn merge(&mut self, other: &PauliStabilizerGroup) -> Result<(), PauliStabilizerGroupError> {
         self.inner.merge(&other.inner).map_err(|e| match e {
-            PauliGroupError::NonCommuting(a, b) => {
-                PauliStabilizerGroupError::NonCommuting(a, b)
-            }
+            PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
         })
     }
-
 }
 
 impl FromStr for PauliStabilizerGroup {
@@ -513,8 +497,8 @@ impl fmt::Display for PauliStabilizerGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::{Pauli, PauliOperator};
     use pecos_core::pauli::constructors::*;
+    use pecos_core::{Pauli, PauliOperator};
 
     #[test]
     fn test_repetition_code() {
@@ -917,25 +901,25 @@ mod tests {
 
     #[test]
     fn test_add_generator() {
-        let mut group = PauliStabilizerGroup::new(vec![Zs(&[0, 1])]).unwrap();
+        let mut group = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         assert_eq!(group.num_generators(), 1);
 
         // Add a commuting generator
-        group.add_generator(Zs(&[1, 2])).unwrap();
+        group.add_generator(Zs([1, 2])).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert_eq!(group.rank(), 2);
     }
 
     #[test]
     fn test_add_generator_rejects_anticommuting() {
-        let mut group = PauliStabilizerGroup::new(vec![Zs(&[0, 1])]).unwrap();
+        let mut group = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         let result = group.add_generator(X(0));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_add_generator_rejects_imaginary_phase() {
-        let mut group = PauliStabilizerGroup::new(vec![Zs(&[0, 1])]).unwrap();
+        let mut group = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         let bad = PauliString::from_paulis_with_phase(QuarterPhase::PlusI, &[Pauli::Z]);
         let result = group.add_generator(bad);
         assert!(result.is_err());
@@ -943,7 +927,7 @@ mod tests {
 
     #[test]
     fn test_remove_generator() {
-        let mut group = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
+        let mut group = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         assert_eq!(group.num_generators(), 2);
 
         let removed = group.remove_generator(0);
@@ -954,8 +938,8 @@ mod tests {
     #[test]
     fn test_merge_compatible_groups() {
         // Two groups on disjoint qubits
-        let mut group_a = PauliStabilizerGroup::new(vec![Zs(&[0, 1])]).unwrap();
-        let group_b = PauliStabilizerGroup::new(vec![Zs(&[2, 3])]).unwrap();
+        let mut group_a = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
+        let group_b = PauliStabilizerGroup::new(vec![Zs([2, 3])]).unwrap();
 
         group_a.merge(&group_b).unwrap();
         assert_eq!(group_a.num_generators(), 2);
@@ -964,7 +948,7 @@ mod tests {
 
     #[test]
     fn test_merge_rejects_anticommuting() {
-        let mut group_a = PauliStabilizerGroup::new(vec![Zs(&[0, 1])]).unwrap();
+        let mut group_a = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         // X(0) anticommutes with Z(0)Z(1) (odd overlap on qubit 0)
         let group_b = PauliStabilizerGroup::new(vec![X(0)]).unwrap();
 
@@ -1052,10 +1036,7 @@ mod tests {
         let unchecked = PauliStabilizerGroup::from_generators_unchecked(gens);
         assert_eq!(checked.rank(), unchecked.rank());
         assert_eq!(checked.num_qubits(), unchecked.num_qubits());
-        assert_eq!(
-            checked.stabilizers().len(),
-            unchecked.stabilizers().len()
-        );
+        assert_eq!(checked.stabilizers().len(), unchecked.stabilizers().len());
         for s in checked.stabilizers() {
             assert!(unchecked.contains_with_phase(s));
         }

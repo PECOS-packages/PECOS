@@ -419,11 +419,10 @@ impl PyPhirEngineBuilder {
     /// Set the program from QIS LLVM IR text
     #[pyo3(signature = (llvm_ir))]
     fn qis_llvm_ir(&self, llvm_ir: &str) -> PyResult<Self> {
-        let builder = self
-            .inner
-            .clone()
-            .from_qis_llvm_ir(llvm_ir)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to parse QIS LLVM IR: {e}")))?;
+        let builder =
+            self.inner.clone().from_qis_llvm_ir(llvm_ir).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to parse QIS LLVM IR: {e}"))
+            })?;
         Ok(Self { inner: builder })
     }
 

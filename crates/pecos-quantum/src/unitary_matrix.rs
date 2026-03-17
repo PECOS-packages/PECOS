@@ -38,7 +38,7 @@ use std::sync::LazyLock;
 use pecos_core::clifford::Clifford;
 use pecos_core::clifford_rep::CliffordRep;
 use pecos_core::gate_type::GateType;
-use pecos_core::unitary_rep::{Unitary, UnitaryRep, RotationType};
+use pecos_core::unitary_rep::{RotationType, Unitary, UnitaryRep};
 use pecos_core::{Angle64, Op, Pauli, PauliString, Phase};
 
 /// Dense matrix representation of a quantum unitary, with `*` (composition)
@@ -177,7 +177,8 @@ impl UnitaryMatrix {
             _ => return None,
         };
 
-        if let Some((gate, _)) = table.iter()
+        if let Some((gate, _)) = table
+            .iter()
             .find(|(_, ref_canon)| matrices_approx_equal(&canonical, ref_canon, 1e-8))
         {
             return Some(*gate);
@@ -243,9 +244,9 @@ fn try_identify_rotation(mat: &DMatrix<Complex64>) -> Option<Unitary> {
 
 /// Identifies a 2x2 matrix as RX, RY, RZ, or R1XY with some angle(s).
 ///
-/// Decomposes M = c_I * I + c_X * X + c_Y * Y + c_Z * Z.
+/// Decomposes M = `c_I` * I + `c_X` * X + `c_Y` * Y + `c_Z` * Z.
 /// - If exactly one Pauli coefficient is nonzero: single-axis rotation (RX/RY/RZ).
-/// - If c_X and c_Y are nonzero but c_Z is zero: R1XY(theta, phi).
+/// - If `c_X` and `c_Y` are nonzero but `c_Z` is zero: R1XY(theta, phi).
 fn try_identify_1q_rotation(mat: &DMatrix<Complex64>) -> Option<Unitary> {
     let m = |r, c| mat[(r, c)];
 
@@ -278,15 +279,10 @@ fn try_identify_1q_rotation(mat: &DMatrix<Complex64>) -> Option<Unitary> {
 /// Identifies an R1XY(theta, phi) gate from its Pauli decomposition.
 ///
 /// R1XY = cos(theta/2)*I - i*sin(theta/2)*(cos(phi)*X + sin(phi)*Y)
-/// So c_X = -i*alpha*sin(theta/2)*cos(phi), c_Y = -i*alpha*sin(theta/2)*sin(phi).
+/// So `c_X` = -i*alpha*sin(theta/2)*cos(phi), `c_Y` = -i*alpha*sin(theta/2)*sin(phi).
 ///
-/// From c_I and c_X/c_Y we can extract theta and phi.
-fn try_identify_r1xy(
-    c_i: Complex64,
-    c_x: Complex64,
-    c_y: Complex64,
-    tol: f64,
-) -> Option<Unitary> {
+/// From `c_I` and `c_X/c_Y` we can extract theta and phi.
+fn try_identify_r1xy(c_i: Complex64, c_x: Complex64, c_y: Complex64, tol: f64) -> Option<Unitary> {
     if c_i.norm() < tol {
         // theta = pi: cos(theta/2) = 0, so c_I = 0.
         // c_X = -i*alpha*cos(phi), c_Y = -i*alpha*sin(phi)
@@ -418,7 +414,7 @@ fn try_identify_2q_rotation(mat: &DMatrix<Complex64>) -> Option<Unitary> {
     // Verify all other 12 Pauli*Pauli components are zero.
     // The total energy must be in just the {II, XX, YY, ZZ} components:
     // sum of |c_ab|^2 for all 16 basis elements = ||M||_F^2 / 4
-    let total_norm_sq = mat.iter().map(|v| v.norm_sqr()).sum::<f64>() / 4.0;
+    let total_norm_sq = mat.iter().map(num_complex::Complex::norm_sqr).sum::<f64>() / 4.0;
     let accounted = c_ii.norm_sqr() + c_xx.norm_sqr() + c_yy.norm_sqr() + c_zz.norm_sqr();
     if (total_norm_sq - accounted) > tol * total_norm_sq.max(1.0) {
         return None;
@@ -496,7 +492,7 @@ fn try_identify_rxxryyrzz(
     let qm = d_psi_m.arg();
     let pm = d_phi_m.arg();
 
-    let a = ((qm - qp) + (pm - pp)) / 2.0;
+    let a = f64::midpoint(qm - qp, pm - pp);
     let b = ((qm - qp) - (pm - pp)) / 2.0;
     let c = (qm - pp) - a;
 
@@ -513,8 +509,8 @@ fn try_identify_rxxryyrzz(
 ///   U = (A0 x A1) * exp(-i/2(a*XX + b*YY + c*ZZ)) * (B0 x B1)
 ///
 /// Algorithm:
-/// 1. Transform to magic basis: U_M = Q† U Q
-/// 2. Compute Sigma = U_M^T U_M (complex symmetric, unitary)
+/// 1. Transform to magic basis: `U_M` = Q† U Q
+/// 2. Compute Sigma = `U_M^T` `U_M` (complex symmetric, unitary)
 /// 3. Jointly diagonalize Re(Sigma) and Im(Sigma) (they commute)
 /// 4. Extract interaction angles from eigenvalues
 /// 5. Factor out single-qubit gates from O1, O2
@@ -526,12 +522,28 @@ fn try_identify_u2q(mat: &DMatrix<Complex64>, tol: f64) -> Option<Unitary> {
 
     // Magic basis change matrix Q
     // Columns: |Phi+>, i|Psi+>, i|Psi->, i|Phi->
-    let q = DMatrix::from_row_slice(4, 4, &[
-        Complex64::new(s, 0.0),  Complex64::new(0.0, 0.0),       Complex64::new(0.0, 0.0),       ci * s,
-        Complex64::new(0.0, 0.0),       ci * s,                  Complex64::new(s, 0.0),  Complex64::new(0.0, 0.0),
-        Complex64::new(0.0, 0.0),       ci * s,                  Complex64::new(-s, 0.0), Complex64::new(0.0, 0.0),
-        Complex64::new(s, 0.0),  Complex64::new(0.0, 0.0),       Complex64::new(0.0, 0.0),       ci * (-s),
-    ]);
+    let q = DMatrix::from_row_slice(
+        4,
+        4,
+        &[
+            Complex64::new(s, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            ci * s,
+            Complex64::new(0.0, 0.0),
+            ci * s,
+            Complex64::new(s, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            ci * s,
+            Complex64::new(-s, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(s, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            ci * (-s),
+        ],
+    );
     let q_adj = q.adjoint();
 
     // Transform to magic basis
@@ -559,13 +571,17 @@ fn try_identify_u2q(mat: &DMatrix<Complex64>, tol: f64) -> Option<Unitary> {
     let eigenvalues = &eigen.eigenvalues;
     let mut fixed = [false; 4];
     for i in 0..4 {
-        if fixed[i] { continue; }
+        if fixed[i] {
+            continue;
+        }
         for j in (i + 1)..4 {
-            if fixed[j] { continue; }
+            if fixed[j] {
+                continue;
+            }
             if (eigenvalues[i] - eigenvalues[j]).abs() < degen_tol {
                 // nalgebra's SymmetricEigen can produce incorrect eigenvectors for
                 // nearly-degenerate eigenvalues. Recompute via SVD null space.
-                let avg_eval = (eigenvalues[i] + eigenvalues[j]) / 2.0;
+                let avg_eval = f64::midpoint(eigenvalues[i], eigenvalues[j]);
                 let shifted = &combined - nalgebra::DMatrix::<f64>::identity(n, n) * avg_eval;
                 let svd = shifted.svd(true, true);
                 let vt = svd.v_t.unwrap();
@@ -591,21 +607,25 @@ fn try_identify_u2q(mat: &DMatrix<Complex64>, tol: f64) -> Option<Unitary> {
     // O2 = V^T. Eigenvalues of Sigma: lambda_k = v_k^T * (Re + i*Im) * v_k
     // Delta_k = exp(i * arg(lambda_k) / 2), Delta_inv_k = exp(-i * arg(lambda_k) / 2)
     let mut delta_inv = [Complex64::new(0.0, 0.0); 4];
-    for k in 0..4 {
+    for (k, delta_inv_k) in delta_inv.iter_mut().enumerate() {
         let vk = v.column(k);
-        let re_val: f64 = vk.dot(&(&a_re * &vk));
-        let im_val: f64 = vk.dot(&(&a_im * &vk));
+        let re_val: f64 = vk.dot(&(&a_re * vk));
+        let im_val: f64 = vk.dot(&(&a_im * vk));
         let phase = Complex64::new(re_val, im_val).arg() / 2.0;
-        delta_inv[k] = Complex64::from_polar(1.0, -phase);
+        *delta_inv_k = Complex64::from_polar(1.0, -phase);
     }
 
     // O1 = U_M * V * Delta^{-1}
     let v_complex = DMatrix::from_fn(n, n, |i, j| Complex64::new(v[(i, j)], 0.0));
-    let delta_inv_diag = DMatrix::from_diagonal(&nalgebra::DVector::from_fn(n, |k, _| delta_inv[k]));
+    let delta_inv_diag =
+        DMatrix::from_diagonal(&nalgebra::DVector::from_fn(n, |k, _| delta_inv[k]));
     let o1_complex = &u_m * &v_complex * &delta_inv_diag;
 
     // Verify O1 is approximately real
-    let max_im = o1_complex.iter().map(|v| v.im.abs()).fold(0.0_f64, f64::max);
+    let max_im = o1_complex
+        .iter()
+        .map(|v| v.im.abs())
+        .fold(0.0_f64, f64::max);
     if max_im > 1e-6 {
         return None;
     }
@@ -628,7 +648,7 @@ fn try_identify_u2q(mat: &DMatrix<Complex64>, tol: f64) -> Option<Unitary> {
     let qm = -delta_inv[2].arg();
     let pm = -delta_inv[3].arg();
 
-    let alpha = ((qm - qp) + (pm - pp)) / 2.0;
+    let alpha = f64::midpoint(qm - qp, pm - pp);
     let beta = ((qm - qp) - (pm - pp)) / 2.0;
     let gamma = (qm - pp) - alpha;
 
@@ -678,7 +698,10 @@ fn try_identify_u2q(mat: &DMatrix<Complex64>, tol: f64) -> Option<Unitary> {
 /// Factors a 4x4 matrix K = A ⊗ B into two 2x2 matrices A and B.
 ///
 /// Uses the block structure: K = [[a00*B, a01*B], [a10*B, a11*B]]
-fn factor_tensor_product(k: &DMatrix<Complex64>, tol: f64) -> Option<(DMatrix<Complex64>, DMatrix<Complex64>)> {
+fn factor_tensor_product(
+    k: &DMatrix<Complex64>,
+    tol: f64,
+) -> Option<(DMatrix<Complex64>, DMatrix<Complex64>)> {
     // Find the 2x2 block with largest Frobenius norm
     let mut best_norm_sq = 0.0;
     let mut best_p = 0;
@@ -729,7 +752,7 @@ fn factor_tensor_product(k: &DMatrix<Complex64>, tol: f64) -> Option<(DMatrix<Co
 }
 
 /// Given M = alpha * (cos(theta/2) I - i sin(theta/2) P), extracts theta
-/// from the identity coefficient c_I and Pauli coefficient c_P.
+/// from the identity coefficient `c_I` and Pauli coefficient `c_P`.
 fn extract_rotation_angle(
     c_i: Complex64,
     c_p: Complex64,
@@ -760,44 +783,64 @@ fn extract_rotation_angle(
 
 /// Non-parameterized unitary gate types (non-dg before dg for self-inverse preference).
 const NAMED_GATE_1Q: [GateType; 15] = [
-    GateType::I, GateType::X, GateType::Y, GateType::Z,
-    GateType::H, GateType::F, GateType::Fdg,
-    GateType::SX, GateType::SXdg, GateType::SY, GateType::SYdg,
-    GateType::SZ, GateType::SZdg, GateType::T, GateType::Tdg,
+    GateType::I,
+    GateType::X,
+    GateType::Y,
+    GateType::Z,
+    GateType::H,
+    GateType::F,
+    GateType::Fdg,
+    GateType::SX,
+    GateType::SXdg,
+    GateType::SY,
+    GateType::SYdg,
+    GateType::SZ,
+    GateType::SZdg,
+    GateType::T,
+    GateType::Tdg,
 ];
 
 const NAMED_GATE_2Q: [GateType; 11] = [
-    GateType::CX, GateType::CY, GateType::CZ, GateType::CH,
+    GateType::CX,
+    GateType::CY,
+    GateType::CZ,
+    GateType::CH,
     GateType::SWAP,
-    GateType::SXX, GateType::SXXdg, GateType::SYY, GateType::SYYdg,
-    GateType::SZZ, GateType::SZZdg,
+    GateType::SXX,
+    GateType::SXXdg,
+    GateType::SYY,
+    GateType::SYYdg,
+    GateType::SZZ,
+    GateType::SZZdg,
 ];
 
 const NAMED_GATE_3Q: [GateType; 1] = [GateType::CCX];
 
 /// Builds a cached lookup table mapping `Unitary::Named(gate)` to its canonical matrix.
-fn build_unitary_table(gates: &[GateType], num_qubits: usize) -> Vec<(Unitary, DMatrix<Complex64>)> {
+fn build_unitary_table(
+    gates: &[GateType],
+    num_qubits: usize,
+) -> Vec<(Unitary, DMatrix<Complex64>)> {
     let qubits: Vec<usize> = (0..num_qubits).collect();
-    gates.iter().map(|&g| {
-        let mat = gate_to_matrix(g, &qubits, num_qubits);
-        let canon = canonicalize_matrix(&mat)
-            .expect("gate matrix should not be zero");
-        (Unitary::Named(g), canon)
-    }).collect()
+    gates
+        .iter()
+        .map(|&g| {
+            let mat = gate_to_matrix(g, &qubits, num_qubits);
+            let canon = canonicalize_matrix(&mat).expect("gate matrix should not be zero");
+            (Unitary::Named(g), canon)
+        })
+        .collect()
 }
 
 /// Cached canonical forms for gate identification.
-static UNITARY_1Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> = LazyLock::new(|| {
-    build_unitary_table(&NAMED_GATE_1Q, 1)
-});
+static UNITARY_1Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> =
+    LazyLock::new(|| build_unitary_table(&NAMED_GATE_1Q, 1));
 
-static UNITARY_2Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> = LazyLock::new(|| {
-    build_unitary_table(&NAMED_GATE_2Q, 2)
-});
+static UNITARY_2Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> =
+    LazyLock::new(|| build_unitary_table(&NAMED_GATE_2Q, 2));
 
-static UNITARY_3Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> = LazyLock::new(|| {
-    build_unitary_table(&NAMED_GATE_3Q, 3)
-});
+static UNITARY_3Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> =
+    LazyLock::new(|| build_unitary_table(&NAMED_GATE_3Q, 3));
 
 impl From<DMatrix<Complex64>> for UnitaryMatrix {
     fn from(m: DMatrix<Complex64>) -> Self {
@@ -1063,7 +1106,7 @@ impl ToMatrix for Clifford {
     ///
     /// Uses `Clifford::to_unitary_rep_on_qubit(s)` rather than going through
     /// `CliffordRep`, because some gate pairs (e.g. G/Gdg) share the same
-    /// CliffordRep but differ at the unitary level.
+    /// `CliffordRep` but differ at the unitary level.
     fn to_matrix(&self) -> UnitaryMatrix {
         let ur = if self.is_1q() {
             self.to_unitary_rep_on_qubit(0)
@@ -1154,14 +1197,9 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             u3_to_matrix(*theta, *phi, *lambda, qubits, num_qubits)
         }
 
-        UnitaryRep::Gate(
-            pecos_core::Unitary::RXXRYYRZZ {
-                alpha,
-                beta,
-                gamma,
-            },
-            qubits,
-        ) => rxxryyrzz_to_matrix(*alpha, *beta, *gamma, qubits, num_qubits),
+        UnitaryRep::Gate(pecos_core::Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
+            rxxryyrzz_to_matrix(*alpha, *beta, *gamma, qubits, num_qubits)
+        }
 
         UnitaryRep::Gate(
             pecos_core::Unitary::U2q {
@@ -1541,13 +1579,43 @@ fn u2q_to_matrix(
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
     // After gates (applied first, right-most)
-    let a0 = u3_to_matrix(after[0][0], after[0][1], after[0][2], &[qubits[0]], num_qubits);
-    let a1 = u3_to_matrix(after[1][0], after[1][1], after[1][2], &[qubits[1]], num_qubits);
+    let a0 = u3_to_matrix(
+        after[0][0],
+        after[0][1],
+        after[0][2],
+        &[qubits[0]],
+        num_qubits,
+    );
+    let a1 = u3_to_matrix(
+        after[1][0],
+        after[1][1],
+        after[1][2],
+        &[qubits[1]],
+        num_qubits,
+    );
     // Interaction
-    let int = rxxryyrzz_to_matrix(interaction[0], interaction[1], interaction[2], qubits, num_qubits);
+    let int = rxxryyrzz_to_matrix(
+        interaction[0],
+        interaction[1],
+        interaction[2],
+        qubits,
+        num_qubits,
+    );
     // Before gates (applied last, left-most)
-    let b0 = u3_to_matrix(before[0][0], before[0][1], before[0][2], &[qubits[0]], num_qubits);
-    let b1 = u3_to_matrix(before[1][0], before[1][1], before[1][2], &[qubits[1]], num_qubits);
+    let b0 = u3_to_matrix(
+        before[0][0],
+        before[0][1],
+        before[0][2],
+        &[qubits[0]],
+        num_qubits,
+    );
+    let b1 = u3_to_matrix(
+        before[1][0],
+        before[1][1],
+        before[1][2],
+        &[qubits[1]],
+        num_qubits,
+    );
     &b0 * &b1 * &int * &a0 * &a1
 }
 
@@ -1618,20 +1686,14 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         }
         GateType::SY => {
             // SY = exp(-i*pi/4 * Y) = (1/sqrt(2)) * [[1, -1], [1, 1]]
-            let gate = DMatrix::from_row_slice(
-                2,
-                2,
-                &[sqrt2_inv, -sqrt2_inv, sqrt2_inv, sqrt2_inv],
-            );
+            let gate =
+                DMatrix::from_row_slice(2, 2, &[sqrt2_inv, -sqrt2_inv, sqrt2_inv, sqrt2_inv]);
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         GateType::SYdg => {
             // SYdg = SY† = (1/sqrt(2)) * [[1, 1], [-1, 1]]
-            let gate = DMatrix::from_row_slice(
-                2,
-                2,
-                &[sqrt2_inv, sqrt2_inv, -sqrt2_inv, sqrt2_inv],
-            );
+            let gate =
+                DMatrix::from_row_slice(2, 2, &[sqrt2_inv, sqrt2_inv, -sqrt2_inv, sqrt2_inv]);
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         GateType::SZ => {
@@ -1648,11 +1710,7 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             // SX = (1+i)/2 * [[1,-i],[-i,1]], SZ = diag(1,i)
             // F = (1+i)/2 * [[1,1],[-i,i]]
             let f = Complex64::new(0.5, 0.5);
-            let gate = DMatrix::from_row_slice(
-                2,
-                2,
-                &[f * one, f * one, f * neg_i, f * i],
-            );
+            let gate = DMatrix::from_row_slice(2, 2, &[f * one, f * one, f * neg_i, f * i]);
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         GateType::Fdg => {
@@ -1661,11 +1719,7 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             // Fdg = (1-i)/2 * [[1,i],[i,-1]] ... let me compute properly:
             // Fdg = F† = conjugate_transpose(F)
             let f = Complex64::new(0.5, -0.5);
-            let gate = DMatrix::from_row_slice(
-                2,
-                2,
-                &[f * one, f * i, f * one, f * neg_i],
-            );
+            let gate = DMatrix::from_row_slice(2, 2, &[f * one, f * i, f * one, f * neg_i]);
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         GateType::T => {
@@ -1709,20 +1763,31 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         }
         GateType::SXXdg => {
             // SXXdg = RXX(3pi/2)
-            rotation_to_matrix(RotationType::RXX, Angle64::THREE_QUARTERS_TURN, qubits, num_qubits)
+            rotation_to_matrix(
+                RotationType::RXX,
+                Angle64::THREE_QUARTERS_TURN,
+                qubits,
+                num_qubits,
+            )
         }
         GateType::SYY => {
             rotation_to_matrix(RotationType::RYY, Angle64::QUARTER_TURN, qubits, num_qubits)
         }
-        GateType::SYYdg => {
-            rotation_to_matrix(RotationType::RYY, Angle64::THREE_QUARTERS_TURN, qubits, num_qubits)
-        }
+        GateType::SYYdg => rotation_to_matrix(
+            RotationType::RYY,
+            Angle64::THREE_QUARTERS_TURN,
+            qubits,
+            num_qubits,
+        ),
         GateType::SZZ => {
             rotation_to_matrix(RotationType::RZZ, Angle64::QUARTER_TURN, qubits, num_qubits)
         }
-        GateType::SZZdg => {
-            rotation_to_matrix(RotationType::RZZ, Angle64::THREE_QUARTERS_TURN, qubits, num_qubits)
-        }
+        GateType::SZZdg => rotation_to_matrix(
+            RotationType::RZZ,
+            Angle64::THREE_QUARTERS_TURN,
+            qubits,
+            num_qubits,
+        ),
         GateType::CCX => {
             // Toffoli: flip target when both controls are |1>
             let dim = 1 << num_qubits;
@@ -1742,9 +1807,17 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
 
         // Parameterized gates: cannot produce a matrix without an angle.
         // These should be used via Unitary::Rotation, not Unitary::Named.
-        GateType::RX | GateType::RY | GateType::RZ
-        | GateType::RXX | GateType::RYY | GateType::RZZ
-        | GateType::CRZ | GateType::U | GateType::R1XY | GateType::RXXRYYRZZ | GateType::U2q => {
+        GateType::RX
+        | GateType::RY
+        | GateType::RZ
+        | GateType::RXX
+        | GateType::RYY
+        | GateType::RZZ
+        | GateType::CRZ
+        | GateType::U
+        | GateType::R1XY
+        | GateType::RXXRYYRZZ
+        | GateType::U2q => {
             panic!(
                 "GateType::{gate_type:?} requires angle parameter(s); \
                  use Unitary::Rotation instead of Unitary::Named"
@@ -1752,19 +1825,23 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         }
 
         // Non-unitary operations
-        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
-        | GateType::PZ | GateType::QAlloc | GateType::QFree => {
+        GateType::MZ
+        | GateType::MeasureLeaked
+        | GateType::MeasureFree
+        | GateType::PZ
+        | GateType::QAlloc
+        | GateType::QFree => {
             panic!(
                 "GateType::{gate_type:?} is not a unitary gate and cannot be converted to a matrix"
             )
         }
 
         // Non-physical / metadata / custom
-        GateType::Idle | GateType::MeasCrosstalkGlobalPayload
-        | GateType::MeasCrosstalkLocalPayload | GateType::Custom => {
-            panic!(
-                "GateType::{gate_type:?} cannot be converted to a unitary matrix"
-            )
+        GateType::Idle
+        | GateType::MeasCrosstalkGlobalPayload
+        | GateType::MeasCrosstalkLocalPayload
+        | GateType::Custom => {
+            panic!("GateType::{gate_type:?} cannot be converted to a unitary matrix")
         }
     }
 }
@@ -2571,7 +2648,10 @@ mod tests {
         assert_eq!(t_mat.try_to_unitary(), Some(Unitary::Named(GateType::T)));
 
         let tdg_mat = pecos_core::unitary_rep::T(0).dg().to_matrix();
-        assert_eq!(tdg_mat.try_to_unitary(), Some(Unitary::Named(GateType::Tdg)));
+        assert_eq!(
+            tdg_mat.try_to_unitary(),
+            Some(Unitary::Named(GateType::Tdg))
+        );
     }
 
     #[test]
@@ -2605,12 +2685,16 @@ mod tests {
     #[test]
     fn try_to_unitary_returns_none_for_non_unitary() {
         // A singular matrix is not in any named table and not unitary
-        let mat = UnitaryMatrix::from(DMatrix::from_row_slice(2, 2, &[
-            Complex64::new(1.0, 0.0),
-            Complex64::new(2.0, 0.0),
-            Complex64::new(3.0, 0.0),
-            Complex64::new(4.0, 0.0),
-        ]));
+        let mat = UnitaryMatrix::from(DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(1.0, 0.0),
+                Complex64::new(2.0, 0.0),
+                Complex64::new(3.0, 0.0),
+                Complex64::new(4.0, 0.0),
+            ],
+        ));
         assert_eq!(mat.try_to_unitary(), None);
     }
 
@@ -2647,19 +2731,19 @@ mod tests {
     fn try_to_unitary_identifies_1q_rotations() {
         use pecos_core::unitary_rep::RY;
 
-        for &(angle_rad, label) in &[
-            (0.3, "0.3"),
-            (1.0, "1.0"),
-            (2.5, "2.5"),
-            (-0.7, "-0.7"),
-        ] {
+        for &(angle_rad, label) in &[(0.3, "0.3"), (1.0, "1.0"), (2.5, "2.5"), (-0.7, "-0.7")] {
             let angle = Angle64::from_radians(angle_rad);
 
             // RX
             let mat = RX(angle, 0).to_matrix();
-            let u = mat.try_to_unitary().unwrap_or_else(|| panic!("RX({label}) not identified"));
+            let u = mat
+                .try_to_unitary()
+                .unwrap_or_else(|| panic!("RX({label}) not identified"));
             match u {
-                Unitary::Rotation { rotation_type: RotationType::RX, angle: a } => {
+                Unitary::Rotation {
+                    rotation_type: RotationType::RX,
+                    angle: a,
+                } => {
                     let diff = (a.to_radians_signed() - angle.to_radians_signed()).abs();
                     assert!(diff < 1e-6, "RX({label}): angle mismatch {diff}");
                 }
@@ -2668,9 +2752,14 @@ mod tests {
 
             // RY
             let mat = RY(angle, 0).to_matrix();
-            let u = mat.try_to_unitary().unwrap_or_else(|| panic!("RY({label}) not identified"));
+            let u = mat
+                .try_to_unitary()
+                .unwrap_or_else(|| panic!("RY({label}) not identified"));
             match u {
-                Unitary::Rotation { rotation_type: RotationType::RY, angle: a } => {
+                Unitary::Rotation {
+                    rotation_type: RotationType::RY,
+                    angle: a,
+                } => {
                     let diff = (a.to_radians_signed() - angle.to_radians_signed()).abs();
                     assert!(diff < 1e-6, "RY({label}): angle mismatch {diff}");
                 }
@@ -2679,9 +2768,14 @@ mod tests {
 
             // RZ
             let mat = RZ(angle, 0).to_matrix();
-            let u = mat.try_to_unitary().unwrap_or_else(|| panic!("RZ({label}) not identified"));
+            let u = mat
+                .try_to_unitary()
+                .unwrap_or_else(|| panic!("RZ({label}) not identified"));
             match u {
-                Unitary::Rotation { rotation_type: RotationType::RZ, angle: a } => {
+                Unitary::Rotation {
+                    rotation_type: RotationType::RZ,
+                    angle: a,
+                } => {
                     let diff = (a.to_radians_signed() - angle.to_radians_signed()).abs();
                     assert!(diff < 1e-6, "RZ({label}): angle mismatch {diff}");
                 }
@@ -2698,9 +2792,14 @@ mod tests {
             let angle = Angle64::from_radians(angle_rad);
 
             let mat = RXX(angle, 0, 1).to_matrix();
-            let u = mat.try_to_unitary().unwrap_or_else(|| panic!("RXX({angle_rad}) not identified"));
+            let u = mat
+                .try_to_unitary()
+                .unwrap_or_else(|| panic!("RXX({angle_rad}) not identified"));
             match u {
-                Unitary::Rotation { rotation_type: RotationType::RXX, angle: a } => {
+                Unitary::Rotation {
+                    rotation_type: RotationType::RXX,
+                    angle: a,
+                } => {
                     let diff = (a.to_radians_signed() - angle.to_radians_signed()).abs();
                     assert!(diff < 1e-6, "RXX({angle_rad}): angle mismatch {diff}");
                 }
@@ -2708,9 +2807,14 @@ mod tests {
             }
 
             let mat = RYY(angle, 0, 1).to_matrix();
-            let u = mat.try_to_unitary().unwrap_or_else(|| panic!("RYY({angle_rad}) not identified"));
+            let u = mat
+                .try_to_unitary()
+                .unwrap_or_else(|| panic!("RYY({angle_rad}) not identified"));
             match u {
-                Unitary::Rotation { rotation_type: RotationType::RYY, angle: a } => {
+                Unitary::Rotation {
+                    rotation_type: RotationType::RYY,
+                    angle: a,
+                } => {
                     let diff = (a.to_radians_signed() - angle.to_radians_signed()).abs();
                     assert!(diff < 1e-6, "RYY({angle_rad}): angle mismatch {diff}");
                 }
@@ -2718,9 +2822,14 @@ mod tests {
             }
 
             let mat = RZZ(angle, 0, 1).to_matrix();
-            let u = mat.try_to_unitary().unwrap_or_else(|| panic!("RZZ({angle_rad}) not identified"));
+            let u = mat
+                .try_to_unitary()
+                .unwrap_or_else(|| panic!("RZZ({angle_rad}) not identified"));
             match u {
-                Unitary::Rotation { rotation_type: RotationType::RZZ, angle: a } => {
+                Unitary::Rotation {
+                    rotation_type: RotationType::RZZ,
+                    angle: a,
+                } => {
                     let diff = (a.to_radians_signed() - angle.to_radians_signed()).abs();
                     assert!(diff < 1e-6, "RZZ({angle_rad}): angle mismatch {diff}");
                 }
@@ -2742,16 +2851,12 @@ mod tests {
         // R1XY(theta, phi) for various angles
         // Note: R1XY(-theta, phi) = R1XY(theta, phi+pi), so we compare matrices
         // rather than raw angles to handle this sign ambiguity.
-        for &(theta_rad, phi_rad) in &[
-            (0.3, 0.7),
-            (1.0, 2.0),
-            (2.5, -0.5),
-            (-0.7, 1.2),
-        ] {
+        for &(theta_rad, phi_rad) in &[(0.3, 0.7), (1.0, 2.0), (2.5, -0.5), (-0.7, 1.2)] {
             let theta = Angle64::from_radians(theta_rad);
             let phi = Angle64::from_radians(phi_rad);
             let mat = Unitary::R1XY { theta, phi }.on_qubit(0).to_matrix();
-            let u = mat.try_to_unitary()
+            let u = mat
+                .try_to_unitary()
                 .unwrap_or_else(|| panic!("R1XY({theta_rad}, {phi_rad}) not identified"));
             match u {
                 Unitary::R1XY { .. } => {
@@ -2770,16 +2875,42 @@ mod tests {
     fn try_to_unitary_r1xy_special_cases() {
         // R1XY(theta, 0) should be identified as RX (single-axis, not R1XY)
         let theta = Angle64::from_radians(0.5);
-        let mat = Unitary::R1XY { theta, phi: Angle64::ZERO }.on_qubit(0).to_matrix();
+        let mat = Unitary::R1XY {
+            theta,
+            phi: Angle64::ZERO,
+        }
+        .on_qubit(0)
+        .to_matrix();
         let u = mat.try_to_unitary().unwrap();
-        assert!(matches!(u, Unitary::Rotation { rotation_type: RotationType::RX, .. }),
-            "R1XY(0.5, 0) should match as RX, got {u:?}");
+        assert!(
+            matches!(
+                u,
+                Unitary::Rotation {
+                    rotation_type: RotationType::RX,
+                    ..
+                }
+            ),
+            "R1XY(0.5, 0) should match as RX, got {u:?}"
+        );
 
         // R1XY(theta, pi/2) should be identified as RY
-        let mat = Unitary::R1XY { theta, phi: Angle64::QUARTER_TURN }.on_qubit(0).to_matrix();
+        let mat = Unitary::R1XY {
+            theta,
+            phi: Angle64::QUARTER_TURN,
+        }
+        .on_qubit(0)
+        .to_matrix();
         let u = mat.try_to_unitary().unwrap();
-        assert!(matches!(u, Unitary::Rotation { rotation_type: RotationType::RY, .. }),
-            "R1XY(0.5, pi/2) should match as RY, got {u:?}");
+        assert!(
+            matches!(
+                u,
+                Unitary::Rotation {
+                    rotation_type: RotationType::RY,
+                    ..
+                }
+            ),
+            "R1XY(0.5, pi/2) should match as RY, got {u:?}"
+        );
     }
 
     #[test]
@@ -2787,12 +2918,18 @@ mod tests {
         // RZ(pi) should be identified as Z (named gate), not Rotation
         let rz_pi = RZ(Angle64::from_radians(PI), 0).to_matrix();
         let u = rz_pi.try_to_unitary().unwrap();
-        assert!(matches!(u, Unitary::Named(GateType::Z)), "RZ(pi) should match as Z, got {u:?}");
+        assert!(
+            matches!(u, Unitary::Named(GateType::Z)),
+            "RZ(pi) should match as Z, got {u:?}"
+        );
 
         // RZ(pi/2) should be identified as SZ (named gate), not Rotation
         let rz_half = RZ(Angle64::from_radians(PI / 2.0), 0).to_matrix();
         let u = rz_half.try_to_unitary().unwrap();
-        assert!(matches!(u, Unitary::Named(GateType::SZ)), "RZ(pi/2) should match as SZ, got {u:?}");
+        assert!(
+            matches!(u, Unitary::Named(GateType::SZ)),
+            "RZ(pi/2) should match as SZ, got {u:?}"
+        );
     }
 
     #[test]
@@ -2809,8 +2946,10 @@ mod tests {
         match u {
             Unitary::RXXRYYRZZ { alpha, beta, gamma } => {
                 let reconstructed = rxxryyrzz_to_matrix(alpha, beta, gamma, &[0, 1], 2);
-                assert!(matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
-                    "RXXRYYRZZ roundtrip failed");
+                assert!(
+                    matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
+                    "RXXRYYRZZ roundtrip failed"
+                );
             }
             other => panic!("Expected RXXRYYRZZ, got {other:?}"),
         }
@@ -2828,8 +2967,10 @@ mod tests {
         match u {
             Unitary::RXXRYYRZZ { alpha, beta, gamma } => {
                 let reconstructed = rxxryyrzz_to_matrix(alpha, beta, gamma, &[0, 1], 2);
-                assert!(matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
-                    "RXXRYYRZZ (two axes) roundtrip failed");
+                assert!(
+                    matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
+                    "RXXRYYRZZ (two axes) roundtrip failed"
+                );
             }
             other => panic!("Expected RXXRYYRZZ for two-axis rotation, got {other:?}"),
         }
@@ -2841,8 +2982,16 @@ mod tests {
         let a = Angle64::from_radians(0.5);
         let mat_rxx = UnitaryMatrix::from(rotation_to_matrix(RotationType::RXX, a, &[0, 1], 2));
         let u = mat_rxx.try_to_unitary().unwrap();
-        assert!(matches!(u, Unitary::Rotation { rotation_type: RotationType::RXX, .. }),
-            "Single-axis RXX should be Rotation, got {u:?}");
+        assert!(
+            matches!(
+                u,
+                Unitary::Rotation {
+                    rotation_type: RotationType::RXX,
+                    ..
+                }
+            ),
+            "Single-axis RXX should be Rotation, got {u:?}"
+        );
     }
 
     #[test]
@@ -2862,11 +3011,19 @@ mod tests {
         let u = mat.try_to_unitary().unwrap();
         // Verify the identified U3 produces the same matrix
         match u {
-            Unitary::U3 { theta: t, phi: p, lambda: l } => {
+            Unitary::U3 {
+                theta: t,
+                phi: p,
+                lambda: l,
+            } => {
                 let reconstructed = u3_to_matrix(t, p, l, &[0], 1);
-                assert!(matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
+                assert!(
+                    matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
                     "U3 roundtrip failed: got theta={}, phi={}, lambda={}",
-                    t.to_radians_signed(), p.to_radians_signed(), l.to_radians_signed());
+                    t.to_radians_signed(),
+                    p.to_radians_signed(),
+                    l.to_radians_signed()
+                );
             }
             other => panic!("Expected U3, got {other:?}"),
         }
@@ -2889,10 +3046,16 @@ mod tests {
         let mat = UnitaryMatrix::from(DMatrix::from_row_slice(2, 2, &[u00, u01, u10, u11]));
         let u = mat.try_to_unitary().unwrap();
         match u {
-            Unitary::U3 { theta: t, phi: p, lambda: l } => {
+            Unitary::U3 {
+                theta: t,
+                phi: p,
+                lambda: l,
+            } => {
                 let reconstructed = u3_to_matrix(t, p, l, &[0], 1);
-                assert!(matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
-                    "U3 with global phase roundtrip failed");
+                assert!(
+                    matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
+                    "U3 with global phase roundtrip failed"
+                );
             }
             other => panic!("Expected U3, got {other:?}"),
         }
@@ -2914,10 +3077,16 @@ mod tests {
         let mat = UnitaryMatrix::from(DMatrix::from_row_slice(2, 2, &[u00, u01, u10, u11]));
         let u = mat.try_to_unitary().unwrap();
         match u {
-            Unitary::U3 { theta: t, phi: p, lambda: l } => {
+            Unitary::U3 {
+                theta: t,
+                phi: p,
+                lambda: l,
+            } => {
                 let reconstructed = u3_to_matrix(t, p, l, &[0], 1);
-                assert!(matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
-                    "U3 near-pi roundtrip failed");
+                assert!(
+                    matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
+                    "U3 near-pi roundtrip failed"
+                );
             }
             other => panic!("Expected U3, got {other:?}"),
         }
@@ -2932,18 +3101,28 @@ mod tests {
         let nz = 0.8_f64;
         let cos_a = Complex64::new(angle.cos(), 0.0);
         let sin_a = Complex64::new(angle.sin(), 0.0);
-        let mat = UnitaryMatrix::from(DMatrix::from_row_slice(2, 2, &[
-            cos_a - Complex64::i() * sin_a * nz,
-            -Complex64::i() * sin_a * nx,
-            -Complex64::i() * sin_a * nx,
-            cos_a + Complex64::i() * sin_a * nz,
-        ]));
+        let mat = UnitaryMatrix::from(DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                cos_a - Complex64::i() * sin_a * nz,
+                -Complex64::i() * sin_a * nx,
+                -Complex64::i() * sin_a * nx,
+                cos_a + Complex64::i() * sin_a * nz,
+            ],
+        ));
         let u = mat.try_to_unitary().unwrap();
         match u {
-            Unitary::U3 { theta: t, phi: p, lambda: l } => {
+            Unitary::U3 {
+                theta: t,
+                phi: p,
+                lambda: l,
+            } => {
                 let reconstructed = u3_to_matrix(t, p, l, &[0], 1);
-                assert!(matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
-                    "Mixed XZ rotation U3 roundtrip failed");
+                assert!(
+                    matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-8),
+                    "Mixed XZ rotation U3 roundtrip failed"
+                );
             }
             other => panic!("Expected U3 for mixed axis rotation, got {other:?}"),
         }
@@ -2982,9 +3161,21 @@ mod tests {
         // - small angles near zero
         // - mixed positive/negative
         let angles = [
-            0.1, -0.1, 0.5, -0.5, 1.0, -1.0,
-            1.5, -1.5, 2.0, -2.0, 3.0, -3.0,
-            0.01, std::f64::consts::FRAC_PI_4, std::f64::consts::FRAC_PI_2,
+            0.1,
+            -0.1,
+            0.5,
+            -0.5,
+            1.0,
+            -1.0,
+            1.5,
+            -1.5,
+            2.0,
+            -2.0,
+            3.0,
+            -3.0,
+            0.01,
+            std::f64::consts::FRAC_PI_4,
+            std::f64::consts::FRAC_PI_2,
         ];
         let mut count = 0;
         for &a in &angles {
@@ -3003,11 +3194,15 @@ mod tests {
                     let mat_rzz = rotation_to_matrix(RotationType::RZZ, gamma, &[0, 1], 2);
                     let original = &mat_rxx * &mat_ryy * &mat_rzz;
                     let mat = UnitaryMatrix::from(original.clone());
-                    let u = mat.try_to_unitary().unwrap_or_else(|| {
-                        panic!("Failed to identify RXXRYYRZZ({a}, {b}, {c})")
-                    });
+                    let u = mat
+                        .try_to_unitary()
+                        .unwrap_or_else(|| panic!("Failed to identify RXXRYYRZZ({a}, {b}, {c})"));
                     match u {
-                        Unitary::RXXRYYRZZ { alpha: ra, beta: rb, gamma: rc } => {
+                        Unitary::RXXRYYRZZ {
+                            alpha: ra,
+                            beta: rb,
+                            gamma: rc,
+                        } => {
                             let reconstructed = rxxryyrzz_to_matrix(ra, rb, rc, &[0, 1], 2);
                             assert!(
                                 matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-7),
@@ -3019,10 +3214,12 @@ mod tests {
                             );
                         }
                         // Some angle combos might simplify to single-axis, which is OK
-                        Unitary::Rotation { rotation_type, angle } => {
-                            let reconstructed = rotation_to_matrix(
-                                rotation_type, angle, &[0, 1], 2,
-                            );
+                        Unitary::Rotation {
+                            rotation_type,
+                            angle,
+                        } => {
+                            let reconstructed =
+                                rotation_to_matrix(rotation_type, angle, &[0, 1], 2);
                             assert!(
                                 matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-7),
                                 "Single-axis roundtrip failed for ({a}, {b}, {c}): \
@@ -3030,9 +3227,7 @@ mod tests {
                                 angle.to_radians_signed(),
                             );
                         }
-                        other => panic!(
-                            "Unexpected variant for ({a}, {b}, {c}): {other:?}"
-                        ),
+                        other => panic!("Unexpected variant for ({a}, {b}, {c}): {other:?}"),
                     }
                     count += 1;
                 }
@@ -3052,14 +3247,21 @@ mod tests {
             Angle64::from_radians(0.3),
             Angle64::from_radians(0.5),
             Angle64::from_radians(0.7),
-            &[0], 2,
+            &[0],
+            2,
         );
         let cx_mat = gate_to_matrix(GateType::CX, &[0, 1], 2);
         let original = &cx_mat * &u3_mat;
         let mat = UnitaryMatrix::from(original.clone());
-        let u = mat.try_to_unitary().expect("Should identify general 2Q unitary");
+        let u = mat
+            .try_to_unitary()
+            .expect("Should identify general 2Q unitary");
         match u {
-            Unitary::U2q { before, interaction, after } => {
+            Unitary::U2q {
+                before,
+                interaction,
+                after,
+            } => {
                 let reconstructed = u2q_to_matrix(&before, &interaction, &after, &[0, 1], 2);
                 assert!(
                     matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-6),
@@ -3077,25 +3279,30 @@ mod tests {
             Angle64::from_radians(0.3),
             Angle64::from_radians(0.5),
             Angle64::from_radians(0.7),
-            &[0], 2,
+            &[0],
+            2,
         );
         let cx_mat = gate_to_matrix(GateType::CX, &[0, 1], 2);
         let original = &cx_mat * &u3_mat;
         let phase = Complex64::from_polar(1.0, 0.4);
         let phased = &original * phase;
         let mat = UnitaryMatrix::from(phased);
-        let u = mat.try_to_unitary().expect("Should identify phased general 2Q unitary");
-        match u {
-            Unitary::U2q { before, interaction, after } => {
-                let reconstructed = u2q_to_matrix(&before, &interaction, &after, &[0, 1], 2);
-                assert!(
-                    matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-7),
-                    "U2q roundtrip failed with global phase"
-                );
-            }
-            // Could also match Named(CX) if the phase gets canonicalized away
-            _ => {}
+        let u = mat
+            .try_to_unitary()
+            .expect("Should identify phased general 2Q unitary");
+        if let Unitary::U2q {
+            before,
+            interaction,
+            after,
+        } = u
+        {
+            let reconstructed = u2q_to_matrix(&before, &interaction, &after, &[0, 1], 2);
+            assert!(
+                matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-7),
+                "U2q roundtrip failed with global phase"
+            );
         }
+        // Could also match Named(CX) if the phase gets canonicalized away
     }
 
     #[test]
@@ -3103,16 +3310,29 @@ mod tests {
         // CNOT should be identified as Named(CX), not U2q
         let cx = UnitaryMatrix::from(gate_to_matrix(GateType::CX, &[0, 1], 2));
         let u = cx.try_to_unitary().unwrap();
-        assert!(matches!(u, Unitary::Named(GateType::CX)),
-            "CNOT should be Named(CX), got {u:?}");
+        assert!(
+            matches!(u, Unitary::Named(GateType::CX)),
+            "CNOT should be Named(CX), got {u:?}"
+        );
 
         // RXX should stay as Rotation, not U2q
-        let rxx = UnitaryMatrix::from(
-            rotation_to_matrix(RotationType::RXX, Angle64::from_radians(0.5), &[0, 1], 2)
-        );
+        let rxx = UnitaryMatrix::from(rotation_to_matrix(
+            RotationType::RXX,
+            Angle64::from_radians(0.5),
+            &[0, 1],
+            2,
+        ));
         let u = rxx.try_to_unitary().unwrap();
-        assert!(matches!(u, Unitary::Rotation { rotation_type: RotationType::RXX, .. }),
-            "RXX should be Rotation, got {u:?}");
+        assert!(
+            matches!(
+                u,
+                Unitary::Rotation {
+                    rotation_type: RotationType::RXX,
+                    ..
+                }
+            ),
+            "RXX should be Rotation, got {u:?}"
+        );
     }
 
     #[test]
@@ -3130,23 +3350,31 @@ mod tests {
                         Angle64::from_radians(a),
                         Angle64::from_radians(b),
                         Angle64::from_radians(0.1),
-                        &[0], 2,
+                        &[0],
+                        2,
                     );
                     let u3_1 = u3_to_matrix(
                         Angle64::from_radians(g),
                         Angle64::from_radians(0.2),
                         Angle64::from_radians(0.3),
-                        &[1], 2,
+                        &[1],
+                        2,
                     );
                     let cx_mat = gate_to_matrix(GateType::CX, &[0, 1], 2);
                     let original = &u3_0 * &u3_1 * &cx_mat;
                     let mat = UnitaryMatrix::from(original);
                     total += 1;
-                    let u = mat.try_to_unitary()
-                        .unwrap_or_else(|| panic!("Failed to identify unitary at a={a}, b={b}, g={g}"));
+                    let u = mat.try_to_unitary().unwrap_or_else(|| {
+                        panic!("Failed to identify unitary at a={a}, b={b}, g={g}")
+                    });
                     match &u {
-                        Unitary::U2q { before, interaction, after } => {
-                            let reconstructed = u2q_to_matrix(before, interaction, after, &[0, 1], 2);
+                        Unitary::U2q {
+                            before,
+                            interaction,
+                            after,
+                        } => {
+                            let reconstructed =
+                                u2q_to_matrix(before, interaction, after, &[0, 1], 2);
                             assert!(
                                 matrices_equiv_up_to_phase(&mat.0, &reconstructed, 1e-5),
                                 "U2q roundtrip failed at a={a}, b={b}, g={g}"
@@ -3154,12 +3382,16 @@ mod tests {
                             pass_count += 1;
                         }
                         // Some might simplify to Named or RXXRYYRZZ
-                        _ => { pass_count += 1; }
+                        _ => {
+                            pass_count += 1;
+                        }
                     }
                 }
             }
         }
-        assert!(pass_count == total, "Not all cases passed: {pass_count}/{total}");
+        assert!(
+            pass_count == total,
+            "Not all cases passed: {pass_count}/{total}"
+        );
     }
-
 }

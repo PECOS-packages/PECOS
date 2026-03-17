@@ -1,13 +1,13 @@
-//! Integration tests for SparseStabEngine rotation gate handling via ByteMessage.
+//! Integration tests for `SparseStabEngine` rotation gate handling via `ByteMessage`.
 //!
 //! These tests verify that Clifford-angle rotation gates (RZ, RX, RY, RZZ, RXX, RYY, R1XY)
-//! are correctly processed when sent as ByteMessage commands to the SparseStabEngine,
-//! exercising the full ByteMessage -> Engine::process() -> CliffordRotation trait path.
+//! are correctly processed when sent as `ByteMessage` commands to the `SparseStabEngine`,
+//! exercising the full `ByteMessage` -> `Engine::process()` -> `CliffordRotation` trait path.
 
 use pecos_core::{Angle64, Gate};
+use pecos_engines::Engine;
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::quantum::SparseStabEngine;
-use pecos_engines::Engine;
 
 /// Helper: build a circuit, process it, return measurement outcomes.
 fn run_sparse_stab(num_qubits: usize, build: impl FnOnce(&mut ByteMessageBuilder)) -> Vec<u32> {
@@ -19,7 +19,7 @@ fn run_sparse_stab(num_qubits: usize, build: impl FnOnce(&mut ByteMessageBuilder
     result.outcomes().expect("outcomes failed")
 }
 
-/// Helper: build a circuit, expect process() to fail, return the error message.
+/// Helper: build a circuit, expect `process()` to fail, return the error message.
 fn expect_sparse_stab_error(
     num_qubits: usize,
     build: impl FnOnce(&mut ByteMessageBuilder),
@@ -357,8 +357,18 @@ fn u_hadamard_like() {
     // Apply twice to see it's not identity (verifies it's doing something nontrivial).
     // SY * Z applied twice: (SY*Z)^2. Let's just check it works.
     let outcomes = run_sparse_stab(1, |b| {
-        b.add_u(Angle64::QUARTER_TURN, Angle64::ZERO, Angle64::HALF_TURN, &[0]);
-        b.add_u(Angle64::QUARTER_TURN, Angle64::ZERO, Angle64::HALF_TURN, &[0]);
+        b.add_u(
+            Angle64::QUARTER_TURN,
+            Angle64::ZERO,
+            Angle64::HALF_TURN,
+            &[0],
+        );
+        b.add_u(
+            Angle64::QUARTER_TURN,
+            Angle64::ZERO,
+            Angle64::HALF_TURN,
+            &[0],
+        );
         b.add_measurements(&[0]);
     });
     // (SY*Z)^2 |0> -- both are Clifford so result is deterministic
@@ -856,7 +866,12 @@ fn mixed_clifford_rotations_in_circuit() {
 fn rxxryyrzz_identity_on_sparse_stab() {
     // RXXRYYRZZ(0,0,0) = I
     let outcomes = run_sparse_stab(2, |b| {
-        let gate = Gate::rxxryyrzz(Angle64::ZERO, Angle64::ZERO, Angle64::ZERO, &[(0usize, 1usize)]);
+        let gate = Gate::rxxryyrzz(
+            Angle64::ZERO,
+            Angle64::ZERO,
+            Angle64::ZERO,
+            &[(0usize, 1usize)],
+        );
         b.add_gate_command(&gate);
         b.add_measurements(&[0, 1]);
     });
@@ -1020,12 +1035,7 @@ fn u2q_non_clifford_fails_on_sparse_stab() {
     let zero = [Angle64::ZERO; 3];
     let non_clifford = [Angle64::from_radians(0.5), Angle64::ZERO, Angle64::ZERO];
     let msg = expect_sparse_stab_error(2, |b| {
-        let gate = Gate::u2q(
-            [zero; 2],
-            non_clifford,
-            [zero; 2],
-            &[(0usize, 1usize)],
-        );
+        let gate = Gate::u2q([zero; 2], non_clifford, [zero; 2], &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
         b.add_measurements(&[0, 1]);
     });

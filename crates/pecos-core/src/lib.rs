@@ -26,7 +26,6 @@ pub mod gate_registry;
 pub mod gate_type;
 pub mod gates;
 pub mod index_set;
-pub mod unitary_rep;
 pub mod pauli;
 pub mod phase;
 pub mod prelude;
@@ -35,6 +34,7 @@ pub mod rng;
 pub mod sets;
 pub mod signal;
 pub mod sorted_vec_set;
+pub mod unitary_rep;
 pub mod value;
 
 pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};

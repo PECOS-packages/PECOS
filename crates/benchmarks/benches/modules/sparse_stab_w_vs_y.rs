@@ -108,7 +108,7 @@ fn run_circuit<S: CliffordGateable + QuantumSimulator>(
     }
 }
 
-/// Compare W-convention (SparseStab) vs Y-convention (SparseStabY) on surface code.
+/// Compare W-convention (`SparseStab`) vs Y-convention (`SparseStabY`) on surface code.
 fn bench_w_vs_y_surface_code<M: Measurement>(c: &mut Criterion<M>) {
     use criterion::BatchSize;
 
@@ -124,44 +124,36 @@ fn bench_w_vs_y_surface_code<M: Measurement>(c: &mut Criterion<M>) {
             group.throughput(Throughput::Elements(ops_per_run as u64));
 
             // --- SparseStab (W-convention) ---
-            group.bench_with_input(
-                BenchmarkId::new("SparseStab_W", &label),
-                &(),
-                |b, ()| {
-                    b.iter_batched(
-                        || {
-                            let mut sim = SparseStab::new(params.num_qubits);
-                            sim.reset();
-                            sim
-                        },
-                        |mut sim| {
-                            run_circuit(&mut sim, &params, rounds);
-                            black_box(sim)
-                        },
-                        BatchSize::SmallInput,
-                    );
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("SparseStab_W", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        let mut sim = SparseStab::new(params.num_qubits);
+                        sim.reset();
+                        sim
+                    },
+                    |mut sim| {
+                        run_circuit(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
 
             // --- SparseStabY (Y-convention) ---
-            group.bench_with_input(
-                BenchmarkId::new("SparseStabY", &label),
-                &(),
-                |b, ()| {
-                    b.iter_batched(
-                        || {
-                            let mut sim = SparseStabY::new(params.num_qubits);
-                            sim.reset();
-                            sim
-                        },
-                        |mut sim| {
-                            run_circuit(&mut sim, &params, rounds);
-                            black_box(sim)
-                        },
-                        BatchSize::SmallInput,
-                    );
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("SparseStabY", &label), &(), |b, ()| {
+                b.iter_batched(
+                    || {
+                        let mut sim = SparseStabY::new(params.num_qubits);
+                        sim.reset();
+                        sim
+                    },
+                    |mut sim| {
+                        run_circuit(&mut sim, &params, rounds);
+                        black_box(sim)
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
         }
     }
 

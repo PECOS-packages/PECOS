@@ -220,7 +220,8 @@ from pecos_rslib import GateRegistry, GateDefBuilder, AngleSource
 registry = GateRegistry()
 
 # Define a custom gate
-(GateDefBuilder()
+(
+    GateDefBuilder()
     .define("RZX", quantum_arity=2)
     .angle_arity(1)
     .step("H", [1])
@@ -228,7 +229,8 @@ registry = GateRegistry()
     .step_with_angles("RZ", [1], [AngleSource.input(0)])
     .step("CX", [0, 1])
     .step("H", [1])
-    .register_into(registry))
+    .register_into(registry)
+)
 
 # Decompose
 steps = registry.decompose("RZX", [0, 1], [0.5])

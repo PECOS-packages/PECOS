@@ -13,11 +13,11 @@
 //! Tests for [`UnitaryMatrix`] operators and [`ToMatrix`] impls on base types.
 
 use num_complex::Complex64;
-use pecos_core::clifford::Clifford;
-use pecos_core::unitary_rep::{Unitary, RotationType};
-use pecos_core::{op, Angle64, Pauli, PauliString};
-use pecos_core::clifford_rep::CliffordRep;
 use pecos_core::Phase;
+use pecos_core::clifford::Clifford;
+use pecos_core::clifford_rep::CliffordRep;
+use pecos_core::unitary_rep::{RotationType, Unitary};
+use pecos_core::{Angle64, Pauli, PauliString, op};
 use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
 
 // ============================================================================
@@ -339,12 +339,21 @@ fn to_matrix_unitary_named_all_1q_are_unitary() {
     use pecos_core::gate_type::GateType;
     let identity = UnitaryMatrix::identity(2);
     let gates_1q = [
-        GateType::I, GateType::X, GateType::Y, GateType::Z,
-        GateType::H, GateType::SX, GateType::SXdg,
-        GateType::SY, GateType::SYdg,
-        GateType::SZ, GateType::SZdg,
-        GateType::F, GateType::Fdg,
-        GateType::T, GateType::Tdg,
+        GateType::I,
+        GateType::X,
+        GateType::Y,
+        GateType::Z,
+        GateType::H,
+        GateType::SX,
+        GateType::SXdg,
+        GateType::SY,
+        GateType::SYdg,
+        GateType::SZ,
+        GateType::SZdg,
+        GateType::F,
+        GateType::Fdg,
+        GateType::T,
+        GateType::Tdg,
     ];
     for gt in gates_1q {
         let u = Unitary::Named(gt);
@@ -371,11 +380,17 @@ fn to_matrix_unitary_named_all_2q_are_unitary() {
     use pecos_core::gate_type::GateType;
     let identity = UnitaryMatrix::identity(4);
     let gates_2q = [
-        GateType::CX, GateType::CY, GateType::CZ, GateType::CH,
+        GateType::CX,
+        GateType::CY,
+        GateType::CZ,
+        GateType::CH,
         GateType::SWAP,
-        GateType::SXX, GateType::SXXdg,
-        GateType::SYY, GateType::SYYdg,
-        GateType::SZZ, GateType::SZZdg,
+        GateType::SXX,
+        GateType::SXXdg,
+        GateType::SYY,
+        GateType::SYYdg,
+        GateType::SZZ,
+        GateType::SZZdg,
     ];
     for gt in gates_2q {
         let u = Unitary::Named(gt);
@@ -594,7 +609,10 @@ fn all_1q_cliffords_are_unitary() {
         let mat = cliff.to_matrix();
         let product = mat.adjoint() * &mat;
         let diff = (product - identity.clone()).norm();
-        assert!(diff < 1e-10, "Clifford::{cliff:?} is not unitary, diff = {diff}");
+        assert!(
+            diff < 1e-10,
+            "Clifford::{cliff:?} is not unitary, diff = {diff}"
+        );
     }
 }
 
@@ -605,7 +623,10 @@ fn all_2q_cliffords_are_unitary() {
         let mat = cliff.to_matrix();
         let product = mat.adjoint() * &mat;
         let diff = (product - identity.clone()).norm();
-        assert!(diff < 1e-10, "Clifford::{cliff:?} is not unitary, diff = {diff}");
+        assert!(
+            diff < 1e-10,
+            "Clifford::{cliff:?} is not unitary, diff = {diff}"
+        );
     }
 }
 
@@ -654,9 +675,16 @@ fn self_adjoint_1q_cliffords_are_involutions_via_matrix() {
     let identity = UnitaryMatrix::identity(2);
     // All 1q self-adjoint Cliffords: Paulis + Hadamard variants
     let involutions = [
-        Clifford::I, Clifford::X, Clifford::Y, Clifford::Z,
-        Clifford::H, Clifford::H2, Clifford::H3,
-        Clifford::H4, Clifford::H5, Clifford::H6,
+        Clifford::I,
+        Clifford::X,
+        Clifford::Y,
+        Clifford::Z,
+        Clifford::H,
+        Clifford::H2,
+        Clifford::H3,
+        Clifford::H4,
+        Clifford::H5,
+        Clifford::H6,
     ];
     for cliff in involutions {
         let mat = cliff.to_matrix();
@@ -702,7 +730,11 @@ fn ccx_is_involution_via_matrix() {
 fn rotation_zero_angle_is_identity() {
     let identity = UnitaryMatrix::identity(2);
     for rot in [RotationType::RX, RotationType::RY, RotationType::RZ] {
-        let mat = Unitary::Rotation { rotation_type: rot, angle: Angle64::ZERO }.to_matrix();
+        let mat = Unitary::Rotation {
+            rotation_type: rot,
+            angle: Angle64::ZERO,
+        }
+        .to_matrix();
         let diff = (&mat - &identity).norm();
         assert!(diff < 1e-10, "{rot:?}(0) should be identity, diff = {diff}");
     }
@@ -712,9 +744,16 @@ fn rotation_zero_angle_is_identity() {
 fn rotation_full_turn_is_identity() {
     let identity = UnitaryMatrix::identity(2);
     for rot in [RotationType::RX, RotationType::RY, RotationType::RZ] {
-        let mat = Unitary::Rotation { rotation_type: rot, angle: Angle64::FULL_TURN }.to_matrix();
+        let mat = Unitary::Rotation {
+            rotation_type: rot,
+            angle: Angle64::FULL_TURN,
+        }
+        .to_matrix();
         let diff = (&mat - &identity).norm();
-        assert!(diff < 1e-10, "{rot:?}(2pi) should be identity, diff = {diff}");
+        assert!(
+            diff < 1e-10,
+            "{rot:?}(2pi) should be identity, diff = {diff}"
+        );
     }
 }
 
@@ -722,7 +761,10 @@ fn rotation_full_turn_is_identity() {
 fn rotation_2q_zero_angle_is_identity() {
     let identity = UnitaryMatrix::identity(4);
     for rot in [RotationType::RXX, RotationType::RYY, RotationType::RZZ] {
-        let u = Unitary::Rotation { rotation_type: rot, angle: Angle64::ZERO };
+        let u = Unitary::Rotation {
+            rotation_type: rot,
+            angle: Angle64::ZERO,
+        };
         let mat = u.on_qubits(0, 1).to_matrix();
         let diff = (&mat - &identity).norm();
         assert!(diff < 1e-10, "{rot:?}(0) should be identity, diff = {diff}");
@@ -736,22 +778,37 @@ fn rotation_2q_zero_angle_is_identity() {
 #[test]
 fn rotation_half_turn_equals_pauli_up_to_phase() {
     let rx_pi = Unitary::Rotation {
-        rotation_type: RotationType::RX, angle: Angle64::HALF_TURN,
-    }.to_matrix();
+        rotation_type: RotationType::RX,
+        angle: Angle64::HALF_TURN,
+    }
+    .to_matrix();
     let x = Pauli::X.to_matrix();
-    assert!(rx_pi.equiv_up_to_phase(&x), "RX(pi) should equal X up to phase");
+    assert!(
+        rx_pi.equiv_up_to_phase(&x),
+        "RX(pi) should equal X up to phase"
+    );
 
     let ry_pi = Unitary::Rotation {
-        rotation_type: RotationType::RY, angle: Angle64::HALF_TURN,
-    }.to_matrix();
+        rotation_type: RotationType::RY,
+        angle: Angle64::HALF_TURN,
+    }
+    .to_matrix();
     let y = Pauli::Y.to_matrix();
-    assert!(ry_pi.equiv_up_to_phase(&y), "RY(pi) should equal Y up to phase");
+    assert!(
+        ry_pi.equiv_up_to_phase(&y),
+        "RY(pi) should equal Y up to phase"
+    );
 
     let rz_pi = Unitary::Rotation {
-        rotation_type: RotationType::RZ, angle: Angle64::HALF_TURN,
-    }.to_matrix();
+        rotation_type: RotationType::RZ,
+        angle: Angle64::HALF_TURN,
+    }
+    .to_matrix();
     let z = Pauli::Z.to_matrix();
-    assert!(rz_pi.equiv_up_to_phase(&z), "RZ(pi) should equal Z up to phase");
+    assert!(
+        rz_pi.equiv_up_to_phase(&z),
+        "RZ(pi) should equal Z up to phase"
+    );
 }
 
 // ============================================================================
@@ -824,7 +881,10 @@ fn rotation_angle_additivity_various() {
     // RX(pi/2) * RX(pi) = RX(3pi/2)
     let composed = (RX(q, 0) * RX(h, 0)).to_matrix();
     let direct = RX(q + h, 0).to_matrix();
-    assert!(composed.equiv_up_to_phase(&direct), "RX(pi/2)*RX(pi) should equal RX(3pi/2)");
+    assert!(
+        composed.equiv_up_to_phase(&direct),
+        "RX(pi/2)*RX(pi) should equal RX(3pi/2)"
+    );
 
     // RY(pi/2) * RY(3pi/2) = RY(2pi) = I
     let composed = (RY(q, 0) * RY(tq, 0)).to_matrix();
@@ -876,25 +936,42 @@ fn rotation_matches_named_gate_when_gate_type_exists() {
 
     let cases: &[(RotationType, Angle64, GateType)] = &[
         (RotationType::RX, Angle64::QUARTER_TURN, GateType::SX),
-        (RotationType::RX, Angle64::THREE_QUARTERS_TURN, GateType::SXdg),
+        (
+            RotationType::RX,
+            Angle64::THREE_QUARTERS_TURN,
+            GateType::SXdg,
+        ),
         (RotationType::RX, Angle64::HALF_TURN, GateType::X),
         (RotationType::RY, Angle64::QUARTER_TURN, GateType::SY),
-        (RotationType::RY, Angle64::THREE_QUARTERS_TURN, GateType::SYdg),
+        (
+            RotationType::RY,
+            Angle64::THREE_QUARTERS_TURN,
+            GateType::SYdg,
+        ),
         (RotationType::RY, Angle64::HALF_TURN, GateType::Y),
         (RotationType::RZ, Angle64::QUARTER_TURN, GateType::SZ),
-        (RotationType::RZ, Angle64::THREE_QUARTERS_TURN, GateType::SZdg),
+        (
+            RotationType::RZ,
+            Angle64::THREE_QUARTERS_TURN,
+            GateType::SZdg,
+        ),
         (RotationType::RZ, Angle64::HALF_TURN, GateType::Z),
     ];
 
     for &(rot, angle, expected_gt) in cases {
         // Verify rotation_to_gate_type returns the expected gate
         assert_eq!(
-            rotation_to_gate_type(rot, angle), Some(expected_gt),
+            rotation_to_gate_type(rot, angle),
+            Some(expected_gt),
             "{rot:?}({angle:?}) should map to {expected_gt:?}"
         );
 
         // Verify the rotation matrix matches the named gate matrix
-        let rot_mat = Unitary::Rotation { rotation_type: rot, angle }.to_matrix();
+        let rot_mat = Unitary::Rotation {
+            rotation_type: rot,
+            angle,
+        }
+        .to_matrix();
         let named_mat = Unitary::Named(expected_gt).to_matrix();
         assert!(
             rot_mat.equiv_up_to_phase(&named_mat),
@@ -909,15 +986,32 @@ fn rotation_2q_matches_named_gate_when_gate_type_exists() {
 
     let cases: &[(RotationType, Angle64, GateType)] = &[
         (RotationType::RXX, Angle64::QUARTER_TURN, GateType::SXX),
-        (RotationType::RXX, Angle64::THREE_QUARTERS_TURN, GateType::SXXdg),
+        (
+            RotationType::RXX,
+            Angle64::THREE_QUARTERS_TURN,
+            GateType::SXXdg,
+        ),
         (RotationType::RYY, Angle64::QUARTER_TURN, GateType::SYY),
-        (RotationType::RYY, Angle64::THREE_QUARTERS_TURN, GateType::SYYdg),
+        (
+            RotationType::RYY,
+            Angle64::THREE_QUARTERS_TURN,
+            GateType::SYYdg,
+        ),
         (RotationType::RZZ, Angle64::QUARTER_TURN, GateType::SZZ),
-        (RotationType::RZZ, Angle64::THREE_QUARTERS_TURN, GateType::SZZdg),
+        (
+            RotationType::RZZ,
+            Angle64::THREE_QUARTERS_TURN,
+            GateType::SZZdg,
+        ),
     ];
 
     for &(rot, angle, expected_gt) in cases {
-        let rot_mat = Unitary::Rotation { rotation_type: rot, angle }.on_qubits(0, 1).to_matrix();
+        let rot_mat = Unitary::Rotation {
+            rotation_type: rot,
+            angle,
+        }
+        .on_qubits(0, 1)
+        .to_matrix();
         let named_mat = Unitary::Named(expected_gt).on_qubits(0, 1).to_matrix();
         assert!(
             rot_mat.equiv_up_to_phase(&named_mat),
@@ -939,7 +1033,7 @@ fn qubit_embedding_non_default_indices() {
     let mat_q0 = pecos_quantum::unitary_matrix::to_matrix_with_size(&x_q0, 3);
     let mat_q2 = pecos_quantum::unitary_matrix::to_matrix_with_size(&x_q2, 3);
 
-    assert!(!UnitaryMatrix::from(mat_q0).equiv_up_to_phase(&UnitaryMatrix::from(mat_q2)));
+    assert!(!mat_q0.equiv_up_to_phase(&mat_q2));
 }
 
 #[test]
@@ -947,7 +1041,10 @@ fn cx_qubit_order_matters() {
     // CX(0,1) != CX(1,0)
     let cx_01 = pecos_core::unitary_rep::CX(0, 1).to_matrix();
     let cx_10 = pecos_core::unitary_rep::CX(1, 0).to_matrix();
-    assert!(!cx_01.equiv_up_to_phase(&cx_10), "CX(0,1) should differ from CX(1,0)");
+    assert!(
+        !cx_01.equiv_up_to_phase(&cx_10),
+        "CX(0,1) should differ from CX(1,0)"
+    );
 }
 
 // ============================================================================
@@ -957,8 +1054,16 @@ fn cx_qubit_order_matters() {
 #[test]
 fn face_gates_have_order_3() {
     let identity = UnitaryMatrix::identity(2);
-    for cliff in [Clifford::F, Clifford::Fdg, Clifford::F2, Clifford::F2dg,
-                  Clifford::F3, Clifford::F3dg, Clifford::F4, Clifford::F4dg] {
+    for cliff in [
+        Clifford::F,
+        Clifford::Fdg,
+        Clifford::F2,
+        Clifford::F2dg,
+        Clifford::F3,
+        Clifford::F3dg,
+        Clifford::F4,
+        Clifford::F4dg,
+    ] {
         let mat = cliff.to_matrix();
         let cubed = &(&mat * &mat) * &mat;
         assert!(
@@ -1011,14 +1116,23 @@ fn hadamard_squared_is_identity_exact() {
     let h2 = &h * &h;
     let identity = UnitaryMatrix::identity(2);
     let diff = (&h2 - &identity).norm();
-    assert!(diff < 1e-10, "H^2 should be exactly identity, diff = {diff}");
+    assert!(
+        diff < 1e-10,
+        "H^2 should be exactly identity, diff = {diff}"
+    );
 }
 
 #[test]
 fn s_gates_have_order_4() {
     let identity = UnitaryMatrix::identity(2);
-    for cliff in [Clifford::SX, Clifford::SXdg, Clifford::SY, Clifford::SYdg,
-                  Clifford::SZ, Clifford::SZdg] {
+    for cliff in [
+        Clifford::SX,
+        Clifford::SXdg,
+        Clifford::SY,
+        Clifford::SYdg,
+        Clifford::SZ,
+        Clifford::SZdg,
+    ] {
         let mat = cliff.to_matrix();
         let sq = &mat * &mat;
         let fourth = &sq * &sq;
@@ -1075,7 +1189,7 @@ fn all_1q_clifford_adjoint_matches_inverse_matrix() {
         let mat_adj = mat.adjoint();
         let inv_mat = cliff.inverse().to_matrix();
         assert!(
-            UnitaryMatrix::from(mat_adj).equiv_up_to_phase(&inv_mat),
+            mat_adj.equiv_up_to_phase(&inv_mat),
             "Clifford::{cliff:?}.to_matrix().adjoint() should match {cliff:?}.inverse().to_matrix()"
         );
     }
@@ -1088,7 +1202,7 @@ fn all_2q_clifford_adjoint_matches_inverse_matrix() {
         let mat_adj = mat.adjoint();
         let inv_mat = cliff.inverse().to_matrix();
         assert!(
-            UnitaryMatrix::from(mat_adj).equiv_up_to_phase(&inv_mat),
+            mat_adj.equiv_up_to_phase(&inv_mat),
             "Clifford::{cliff:?}.to_matrix().adjoint() should match {cliff:?}.inverse().to_matrix()"
         );
     }
@@ -1107,12 +1221,11 @@ fn exact_matrix_values_cx() {
     // |00>->|00>, |01>->|11>, |10>->|10>, |11>->|01>
     // where index = q0 + 2*q1
     let expected = UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
-        4, 4,
+        4,
+        4,
         &[
-            one, zero, zero, zero,
-            zero, zero, zero, one,
-            zero, zero, one, zero,
-            zero, one, zero, zero,
+            one, zero, zero, zero, zero, zero, zero, one, zero, zero, one, zero, zero, one, zero,
+            zero,
         ],
     ));
     assert!(
@@ -1142,12 +1255,11 @@ fn exact_matrix_values_swap() {
     // SWAP in little-endian: swaps indices 1 and 2
     // |00>->|00>, |01>->|10>, |10>->|01>, |11>->|11>
     let expected = UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
-        4, 4,
+        4,
+        4,
         &[
-            one, zero, zero, zero,
-            zero, zero, one, zero,
-            zero, one, zero, zero,
-            zero, zero, zero, one,
+            one, zero, zero, zero, zero, zero, one, zero, zero, one, zero, zero, zero, zero, zero,
+            one,
         ],
     ));
     assert!(
@@ -1167,12 +1279,10 @@ fn exact_matrix_values_iswap() {
     // Standard iSWAP in little-endian basis (same as big-endian since SWAP is symmetric):
     // [[1,0,0,0],[0,0,i,0],[0,i,0,0],[0,0,0,1]]
     let expected = UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
-        4, 4,
+        4,
+        4,
         &[
-            one, zero, zero, zero,
-            zero, zero, i, zero,
-            zero, i, zero, zero,
-            zero, zero, zero, one,
+            one, zero, zero, zero, zero, zero, i, zero, zero, i, zero, zero, zero, zero, zero, one,
         ],
     ));
     assert!(
@@ -1190,12 +1300,11 @@ fn exact_matrix_values_iswapdg() {
     let neg_i = Complex64::new(0.0, -1.0);
     // iSWAP† = [[1,0,0,0],[0,0,-i,0],[0,-i,0,0],[0,0,0,1]]
     let expected = UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
-        4, 4,
+        4,
+        4,
         &[
-            one, zero, zero, zero,
-            zero, zero, neg_i, zero,
-            zero, neg_i, zero, zero,
-            zero, zero, zero, one,
+            one, zero, zero, zero, zero, zero, neg_i, zero, zero, neg_i, zero, zero, zero, zero,
+            zero, one,
         ],
     ));
     assert!(
@@ -1204,7 +1313,7 @@ fn exact_matrix_values_iswapdg() {
     );
 }
 
-/// Verify that ISWAPdg via the Clifford path also matches the standard iSWAP†.
+/// Verify that `ISWAPdg` via the Clifford path also matches the standard iSWAP†.
 #[test]
 fn exact_matrix_values_iswapdg_clifford_path() {
     let mat = Clifford::ISWAPdg.to_matrix();
@@ -1212,12 +1321,11 @@ fn exact_matrix_values_iswapdg_clifford_path() {
     let zero = Complex64::new(0.0, 0.0);
     let neg_i = Complex64::new(0.0, -1.0);
     let expected = UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
-        4, 4,
+        4,
+        4,
         &[
-            one, zero, zero, zero,
-            zero, zero, neg_i, zero,
-            zero, neg_i, zero, zero,
-            zero, zero, zero, one,
+            one, zero, zero, zero, zero, zero, neg_i, zero, zero, neg_i, zero, zero, zero, zero,
+            zero, one,
         ],
     ));
     assert!(
@@ -1243,33 +1351,59 @@ fn exact_matrix_values_gdg_clifford_path() {
 
 /// Verify that U maps Pauli `input` to `sign * output` via conjugation: U P U† = s * Q.
 fn assert_pauli_transform(
-    mat: &UnitaryMatrix, input: &UnitaryMatrix, output: &UnitaryMatrix, sign: f64, name: &str, pauli_name: &str,
+    mat: &UnitaryMatrix,
+    input: &UnitaryMatrix,
+    output: &UnitaryMatrix,
+    sign: f64,
+    name: &str,
+    pauli_name: &str,
 ) {
     let mat_adj = mat.adjoint();
-    let result = &(mat * &(input * &UnitaryMatrix::from(mat_adj))) * Complex64::new(sign, 0.0);
+    let result = &(mat * &(input * &mat_adj)) * Complex64::new(sign, 0.0);
     let diff = (&result - output).norm();
-    assert!(diff < 1e-10, "{name}: {pauli_name} transformation failed, diff = {diff}");
+    assert!(
+        diff < 1e-10,
+        "{name}: {pauli_name} transformation failed, diff = {diff}"
+    );
 }
 
 fn pauli_x() -> UnitaryMatrix {
-    UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(2, 2, &[
-        Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0),
-        Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
-    ]))
+    UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    ))
 }
 
 fn pauli_y() -> UnitaryMatrix {
-    UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(2, 2, &[
-        Complex64::new(0.0, 0.0), Complex64::new(0.0, -1.0),
-        Complex64::new(0.0, 1.0), Complex64::new(0.0, 0.0),
-    ]))
+    UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, -1.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    ))
 }
 
 fn pauli_z() -> UnitaryMatrix {
-    UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(2, 2, &[
-        Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
-        Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0),
-    ]))
+    UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ],
+    ))
 }
 
 #[test]
@@ -1326,8 +1460,14 @@ fn face_gates_pauli_transformations() {
     let fdg_rep = CliffordRep::fdg(0);
     verify_1q_pauli_transforms(&fdg, &fdg_rep, "Fdg", &x, &y, &z);
 
-    for cliff in [Clifford::F2, Clifford::F2dg, Clifford::F3, Clifford::F3dg,
-                  Clifford::F4, Clifford::F4dg] {
+    for cliff in [
+        Clifford::F2,
+        Clifford::F2dg,
+        Clifford::F3,
+        Clifford::F3dg,
+        Clifford::F4,
+        Clifford::F4dg,
+    ] {
         let mat = cliff.to_matrix();
         let rep = cliff.on_qubit(0);
         verify_1q_pauli_transforms(&mat, &rep, &format!("{cliff}"), &x, &y, &z);
@@ -1335,7 +1475,7 @@ fn face_gates_pauli_transformations() {
 }
 
 /// Verify that a matrix correctly implements the Pauli transformations
-/// defined by a CliffordRep, for a single-qubit gate.
+/// defined by a `CliffordRep`, for a single-qubit gate.
 fn verify_1q_pauli_transforms(
     mat: &UnitaryMatrix,
     rep: &CliffordRep,
@@ -1347,14 +1487,11 @@ fn verify_1q_pauli_transforms(
     let mat_adj = mat.adjoint();
     let x_image = rep.x_image(0);
     let z_image = rep.z_image(0);
-    let inputs: [(&str, &UnitaryMatrix, &PauliString); 2] = [
-        ("X", x, &x_image),
-        ("Z", z, &z_image),
-    ];
+    let inputs: [(&str, &UnitaryMatrix, &PauliString); 2] = [("X", x, x_image), ("Z", z, z_image)];
 
     for (in_name, in_mat, image) in &inputs {
         // Compute U * P * U†
-        let result = mat * &(*in_mat * &UnitaryMatrix::from(mat_adj.clone()));
+        let result = mat * &(*in_mat * &mat_adj.clone());
         // Build expected Pauli matrix from the CliffordRep image
         let expected = pauli_string_to_1q_matrix(image);
         let diff = (&result - &expected).norm();
@@ -1365,7 +1502,7 @@ fn verify_1q_pauli_transforms(
     }
 }
 
-/// Convert a single-qubit PauliString to its 2x2 matrix representation.
+/// Convert a single-qubit `PauliString` to its 2x2 matrix representation.
 fn pauli_string_to_1q_matrix(ps: &PauliString) -> UnitaryMatrix {
     let x = pauli_x();
     let y = pauli_y();
@@ -1394,13 +1531,9 @@ fn exact_matrix_values_g() {
     let h = Complex64::new(0.5, 0.0);
     let nh = Complex64::new(-0.5, 0.0);
     let expected = UnitaryMatrix::from(nalgebra::DMatrix::from_row_slice(
-        4, 4,
-        &[
-            h, h, h, nh,
-            h, nh, h, h,
-            h, h, nh, h,
-            nh, h, h, h,
-        ],
+        4,
+        4,
+        &[h, h, h, nh, h, nh, h, h, h, h, nh, h, nh, h, h, h],
     ));
     assert!(
         mat.equiv_up_to_phase(&expected),
@@ -1422,7 +1555,7 @@ fn g_squared_is_identity() {
 // 2-qubit Pauli conjugation: U * P * U† matches CliffordRep images
 // ============================================================================
 
-/// Build a 2-qubit Pauli matrix from a PauliString (phase * P0 tensor P1).
+/// Build a 2-qubit Pauli matrix from a `PauliString` (phase * P0 tensor P1).
 fn pauli_string_to_2q_matrix(ps: &PauliString) -> UnitaryMatrix {
     let i2 = UnitaryMatrix::identity(2);
     let px = pauli_x();
@@ -1456,15 +1589,15 @@ fn two_qubit_clifford_pauli_conjugation() {
         let i2 = UnitaryMatrix::identity(2);
         // Little-endian: index = q0 + 2*q1, so matrix is q1_pauli tensor q0_pauli
         let generators: [(usize, &str, UnitaryMatrix); 4] = [
-            (0, "X0", &i2 & pauli_x()),   // I tensor X = X on q0 (LSB)
-            (1, "X1", pauli_x() & &i2),   // X tensor I = X on q1 (MSB)
-            (0, "Z0", &i2 & pauli_z()),   // I tensor Z = Z on q0
-            (1, "Z1", pauli_z() & &i2),   // Z tensor I = Z on q1
+            (0, "X0", &i2 & pauli_x()), // I tensor X = X on q0 (LSB)
+            (1, "X1", pauli_x() & &i2), // X tensor I = X on q1 (MSB)
+            (0, "Z0", &i2 & pauli_z()), // I tensor Z = Z on q0
+            (1, "Z1", pauli_z() & &i2), // Z tensor I = Z on q1
         ];
 
         for (qubit, gen_name, gen_mat) in &generators {
             // Compute U * P * U†
-            let result = &mat * &(gen_mat * &UnitaryMatrix::from(mat_adj.clone()));
+            let result = &mat * &(gen_mat * &mat_adj.clone());
 
             // Get expected image from CliffordRep
             let image = if gen_name.starts_with('X') {
@@ -1561,18 +1694,21 @@ fn op_clifford_rep_matches_unitary_rep_1q() {
 
 use pecos_core::op::Op;
 
-/// Verify that a CliffordRep and a UnitaryMatrix agree on their Pauli images.
-/// This avoids calling CliffordRep::to_matrix() which can't handle arbitrary compositions.
+/// Verify that a `CliffordRep` and a `UnitaryMatrix` agree on their Pauli images.
+/// This avoids calling `CliffordRep::to_matrix()` which can't handle arbitrary compositions.
 fn assert_clifford_rep_matches_matrix_1q(cr: &CliffordRep, mat: &UnitaryMatrix, label: &str) {
     let mat_adj = mat.adjoint();
     let x = pauli_x();
     let z = pauli_z();
 
     for (gen_name, gen_mat, image) in [("X", &x, cr.x_image(0)), ("Z", &z, cr.z_image(0))] {
-        let result = mat * &(gen_mat * &UnitaryMatrix::from(mat_adj.clone()));
+        let result = mat * &(gen_mat * &mat_adj.clone());
         let expected = pauli_string_to_1q_matrix(image);
         let diff = (&result - &expected).norm();
-        assert!(diff < 1e-10, "{label}: {gen_name} image mismatch, diff = {diff}");
+        assert!(
+            diff < 1e-10,
+            "{label}: {gen_name} image mismatch, diff = {diff}"
+        );
     }
 }
 
@@ -1587,11 +1723,18 @@ fn assert_clifford_rep_matches_matrix_2q(cr: &CliffordRep, mat: &UnitaryMatrix, 
     ];
 
     for (qubit, gen_name, gen_mat) in &generators {
-        let result = mat * &(gen_mat * &UnitaryMatrix::from(mat_adj.clone()));
-        let image = if gen_name.starts_with('X') { cr.x_image(*qubit) } else { cr.z_image(*qubit) };
+        let result = mat * &(gen_mat * &mat_adj.clone());
+        let image = if gen_name.starts_with('X') {
+            cr.x_image(*qubit)
+        } else {
+            cr.z_image(*qubit)
+        };
         let expected = pauli_string_to_2q_matrix(image);
         let diff = (&result - &expected).norm();
-        assert!(diff < 1e-10, "{label}: {gen_name} image mismatch, diff = {diff}");
+        assert!(
+            diff < 1e-10,
+            "{label}: {gen_name} image mismatch, diff = {diff}"
+        );
     }
 }
 
@@ -1600,7 +1743,12 @@ fn op_composition_preserves_dual_consistency_1q() {
     // Compose pairs of 1q Clifford Ops and verify CliffordRep and UnitaryRep agree.
     // Only use Clifford-level ops (not Pauli-level X/Y/Z).
     let gates: Vec<Op> = vec![
-        op::H(0), op::SZ(0), op::SX(0), op::F(0), op::H2(0), op::SY(0),
+        op::H(0),
+        op::SZ(0),
+        op::SX(0),
+        op::F(0),
+        op::H2(0),
+        op::SY(0),
     ];
 
     for a in &gates {
@@ -1617,7 +1765,11 @@ fn op_composition_preserves_dual_consistency_1q() {
 fn op_composition_preserves_dual_consistency_2q() {
     // Compose pairs of 2q Clifford Ops and verify CliffordRep and UnitaryRep agree.
     let gates: Vec<Op> = vec![
-        op::CX(0, 1), op::CZ(0, 1), op::SWAP(0, 1), op::ISWAP(0, 1), op::G(0, 1),
+        op::CX(0, 1),
+        op::CZ(0, 1),
+        op::SWAP(0, 1),
+        op::ISWAP(0, 1),
+        op::G(0, 1),
     ];
 
     for a in &gates {

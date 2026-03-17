@@ -100,7 +100,7 @@ pub enum ChannelExpr {
     Measure { basis: Basis, qubit: usize },
     /// A unitary operation lifted to the channel level.
     Unitary(UnitaryRep),
-    /// Mixed-unitary channel: ρ → Σ_k p_k U_k ρ U_k†.
+    /// Mixed-unitary channel: ρ → `Σ_k` `p_k` `U_k` ρ `U_k`†.
     ///
     /// Each entry is `(probability, unitary)` with probabilities summing to 1.
     /// Covers Pauli channels, depolarizing noise, dephasing, bit-flip, etc.
@@ -255,8 +255,7 @@ impl Op {
     pub fn into_unitary(self) -> Option<UnitaryRep> {
         match self {
             Op::Pauli(ps) => Some(UnitaryRep::from(ps)),
-            Op::Clifford(_, ur) => Some(ur),
-            Op::Unitary(ur) => Some(ur),
+            Op::Clifford(_, ur) | Op::Unitary(ur) => Some(ur),
             Op::Channel(_) => None,
         }
     }
@@ -267,8 +266,7 @@ impl Op {
     pub fn into_channel(self) -> ChannelExpr {
         match self {
             Op::Pauli(ps) => ChannelExpr::Unitary(UnitaryRep::from(ps)),
-            Op::Clifford(_, ur) => ChannelExpr::Unitary(ur),
-            Op::Unitary(ur) => ChannelExpr::Unitary(ur),
+            Op::Clifford(_, ur) | Op::Unitary(ur) => ChannelExpr::Unitary(ur),
             Op::Channel(ch) => ch,
         }
     }
@@ -291,8 +289,7 @@ impl Op {
     pub fn to_unitary_level(self) -> Option<Op> {
         match self {
             Op::Pauli(ps) => Some(Op::Unitary(UnitaryRep::from(ps))),
-            Op::Clifford(_, ur) => Some(Op::Unitary(ur)),
-            Op::Unitary(ur) => Some(Op::Unitary(ur)),
+            Op::Clifford(_, ur) | Op::Unitary(ur) => Some(Op::Unitary(ur)),
             Op::Channel(_) => None,
         }
     }
@@ -895,7 +892,7 @@ pub fn F(qubit: impl Into<QubitId>) -> Op {
     )
 }
 
-/// Face gate F-dagger (SZdg * SXdg decomposition).
+/// Face gate F-dagger (`SZdg` * `SXdg` decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn Fdg(qubit: impl Into<QubitId>) -> Op {
@@ -906,7 +903,7 @@ pub fn Fdg(qubit: impl Into<QubitId>) -> Op {
     )
 }
 
-/// F2 gate (SXdg * SY decomposition).
+/// F2 gate (`SXdg` * SY decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F2(qubit: impl Into<QubitId>) -> Op {
@@ -917,7 +914,7 @@ pub fn F2(qubit: impl Into<QubitId>) -> Op {
     )
 }
 
-/// F2-dagger gate (SYdg * SX decomposition).
+/// F2-dagger gate (`SYdg` * SX decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F2dg(qubit: impl Into<QubitId>) -> Op {
@@ -928,7 +925,7 @@ pub fn F2dg(qubit: impl Into<QubitId>) -> Op {
     )
 }
 
-/// F3 gate (SXdg * SZ decomposition).
+/// F3 gate (`SXdg` * SZ decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F3(qubit: impl Into<QubitId>) -> Op {
@@ -939,7 +936,7 @@ pub fn F3(qubit: impl Into<QubitId>) -> Op {
     )
 }
 
-/// F3-dagger gate (SX * SZdg decomposition).
+/// F3-dagger gate (SX * `SZdg` decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F3dg(qubit: impl Into<QubitId>) -> Op {
@@ -961,7 +958,7 @@ pub fn F4(qubit: impl Into<QubitId>) -> Op {
     )
 }
 
-/// F4-dagger gate (SZdg * SXdg decomposition).
+/// F4-dagger gate (`SZdg` * `SXdg` decomposition).
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F4dg(qubit: impl Into<QubitId>) -> Op {
@@ -1204,11 +1201,7 @@ pub fn RZZ(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op
 /// Toffoli gate (CCX, 3 qubits).
 #[allow(non_snake_case)]
 #[must_use]
-pub fn CCX(
-    c0: impl Into<QubitId>,
-    c1: impl Into<QubitId>,
-    target: impl Into<QubitId>,
-) -> Op {
+pub fn CCX(c0: impl Into<QubitId>, c1: impl Into<QubitId>, target: impl Into<QubitId>) -> Op {
     Op::Unitary(crate::unitary_rep::CCX(c0, c1, target))
 }
 
@@ -1260,7 +1253,7 @@ pub fn MX(qubit: impl Into<QubitId>) -> Op {
 // Noise channel constructors
 // ============================================================================
 
-/// Single-qubit depolarizing channel: ρ → (1−p)ρ + (p/3)(XρX + YρY + ZρZ).
+/// Single-qubit depolarizing channel: ρ → (1−p)ρ + (p/3)(XρX + `YρY` + `ZρZ`).
 ///
 /// # Panics
 /// Panics if `p` is not in [0, 1].
@@ -1278,7 +1271,7 @@ pub fn Depolarizing(p: f64, qubit: impl Into<QubitId>) -> Op {
     ]))
 }
 
-/// Dephasing (phase-flip) channel: ρ → (1−p)ρ + p ZρZ.
+/// Dephasing (phase-flip) channel: ρ → (1−p)ρ + p `ZρZ`.
 ///
 /// # Panics
 /// Panics if `p` is not in [0, 1].
@@ -1293,7 +1286,7 @@ pub fn Dephasing(p: f64, qubit: impl Into<QubitId>) -> Op {
     ]))
 }
 
-/// Bit-flip channel: ρ → (1−p)ρ + p XρX.
+/// Bit-flip channel: ρ → (1−p)ρ + p `XρX`.
 ///
 /// # Panics
 /// Panics if `p` is not in [0, 1].
@@ -1308,7 +1301,7 @@ pub fn BitFlip(p: f64, qubit: impl Into<QubitId>) -> Op {
     ]))
 }
 
-/// General single-qubit Pauli channel: ρ → (1−px−py−pz)ρ + px XρX + py YρY + pz ZρZ.
+/// General single-qubit Pauli channel: ρ → (1−px−py−pz)ρ + px `XρX` + py `YρY` + pz `ZρZ`.
 ///
 /// # Panics
 /// Panics if any probability is negative or if `px + py + pz > 1`.
@@ -1341,17 +1334,14 @@ pub fn PauliChannel(px: f64, py: f64, pz: f64, qubit: impl Into<QubitId>) -> Op 
 #[allow(non_snake_case)]
 #[must_use]
 pub fn AmplitudeDamping(gamma: f64, qubit: impl Into<QubitId>) -> Op {
-    assert!(
-        (0.0..=1.0).contains(&gamma),
-        "gamma must be in [0, 1]"
-    );
+    assert!((0.0..=1.0).contains(&gamma), "gamma must be in [0, 1]");
     Op::Channel(ChannelExpr::AmplitudeDamping {
         gamma,
         qubit: qubit.into().0,
     })
 }
 
-/// Bit-phase-flip channel: ρ → (1−p)ρ + p YρY.
+/// Bit-phase-flip channel: ρ → (1−p)ρ + p `YρY`.
 ///
 /// # Panics
 /// Panics if `p` is not in [0, 1].
@@ -1376,21 +1366,26 @@ pub fn BitPhaseFlip(p: f64, qubit: impl Into<QubitId>) -> Op {
 /// Panics if `p` is not in [0, 1].
 #[allow(non_snake_case)]
 #[must_use]
-pub fn Depolarizing2(
-    p: f64,
-    q0: impl Into<QubitId>,
-    q1: impl Into<QubitId>,
-) -> Op {
+pub fn Depolarizing2(p: f64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     assert!((0.0..=1.0).contains(&p), "probability p must be in [0, 1]");
     let a = q0.into();
     let b = q1.into();
     let p15 = p / 15.0;
     use crate::unitary_rep;
-    let paulis_1q = [unitary_rep::I, unitary_rep::X, unitary_rep::Y, unitary_rep::Z];
+    let paulis_1q = [
+        unitary_rep::I,
+        unitary_rep::X,
+        unitary_rep::Y,
+        unitary_rep::Z,
+    ];
     let mut ops = Vec::with_capacity(16);
     for (idx_a, pi) in paulis_1q.iter().enumerate() {
         for (idx_b, pj) in paulis_1q.iter().enumerate() {
-            let prob = if idx_a == 0 && idx_b == 0 { 1.0 - p } else { p15 };
+            let prob = if idx_a == 0 && idx_b == 0 {
+                1.0 - p
+            } else {
+                p15
+            };
             ops.push((prob, pi(a) & pj(b)));
         }
     }
@@ -1409,10 +1404,7 @@ pub fn Depolarizing2(
 #[allow(non_snake_case)]
 #[must_use]
 pub fn PhaseDamping(lambda: f64, qubit: impl Into<QubitId>) -> Op {
-    assert!(
-        (0.0..=1.0).contains(&lambda),
-        "lambda must be in [0, 1]"
-    );
+    assert!((0.0..=1.0).contains(&lambda), "lambda must be in [0, 1]");
     Op::Channel(ChannelExpr::PhaseDamping {
         lambda,
         qubit: qubit.into().0,
@@ -1430,10 +1422,7 @@ pub fn PhaseDamping(lambda: f64, qubit: impl Into<QubitId>) -> Op {
 #[allow(non_snake_case)]
 #[must_use]
 pub fn Erasure(prob: f64, qubit: impl Into<QubitId>) -> Op {
-    assert!(
-        (0.0..=1.0).contains(&prob),
-        "probability must be in [0, 1]"
-    );
+    assert!((0.0..=1.0).contains(&prob), "probability must be in [0, 1]");
     Op::Channel(ChannelExpr::Erasure {
         prob,
         qubit: qubit.into().0,
@@ -1462,10 +1451,7 @@ pub fn Reset(qubit: impl Into<QubitId>) -> Op {
 #[allow(non_snake_case)]
 #[must_use]
 pub fn Leakage(rate: f64, qubit: impl Into<QubitId>) -> Op {
-    assert!(
-        (0.0..=1.0).contains(&rate),
-        "rate must be in [0, 1]"
-    );
+    assert!((0.0..=1.0).contains(&rate), "rate must be in [0, 1]");
     Op::Channel(ChannelExpr::Leakage {
         rate,
         qubit: qubit.into().0,
@@ -1479,8 +1465,8 @@ pub fn Leakage(rate: f64, qubit: impl Into<QubitId>) -> Op {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pauli::algebra::i;
     use crate::PauliOperator;
+    use crate::pauli::algebra::i;
 
     // --- Level detection ---
 
@@ -1684,7 +1670,7 @@ mod tests {
 
     #[test]
     fn i_times_pauli() {
-        let op = i * X(2) & Y(5) & Z(3);
+        let op = (i * X(2)) & Y(5) & Z(3);
         assert!(op.is_pauli());
     }
 
@@ -1734,7 +1720,7 @@ mod tests {
 
     #[test]
     fn minus_one_times_op() {
-        let op = -1 * X(9) & Y(4);
+        let op = (-1 * X(9)) & Y(4);
         assert!(op.is_pauli());
     }
 
@@ -1775,22 +1761,34 @@ mod tests {
         let a = X(0) & -Y(1) & Z(2);
         assert!(a.is_pauli());
         let ps_a = a.as_pauli().unwrap();
-        assert_eq!(ps_a.phase(), crate::phase::quarter_phase::QuarterPhase::MinusOne);
+        assert_eq!(
+            ps_a.phase(),
+            crate::phase::quarter_phase::QuarterPhase::MinusOne
+        );
 
         // Two negations cancel: (-X) & (-Y) has phase (-1)*(-1) = +1
         let b = -X(0) & -Y(1);
         let ps_b = b.as_pauli().unwrap();
-        assert_eq!(ps_b.phase(), crate::phase::quarter_phase::QuarterPhase::PlusOne);
+        assert_eq!(
+            ps_b.phase(),
+            crate::phase::quarter_phase::QuarterPhase::PlusOne
+        );
 
         // i and -1 combine: i * (-1) = -i
-        let c = i * X(0) & -Y(1);
+        let c = (i * X(0)) & -Y(1);
         let ps_c = c.as_pauli().unwrap();
-        assert_eq!(ps_c.phase(), crate::phase::quarter_phase::QuarterPhase::MinusI);
+        assert_eq!(
+            ps_c.phase(),
+            crate::phase::quarter_phase::QuarterPhase::MinusI
+        );
 
         // -i at one point, -1 at another: (-i)*(-1) = +i
-        let d = -i * X(0) & -Z(1);
+        let d = (-i * X(0)) & -Z(1);
         let ps_d = d.as_pauli().unwrap();
-        assert_eq!(ps_d.phase(), crate::phase::quarter_phase::QuarterPhase::PlusI);
+        assert_eq!(
+            ps_d.phase(),
+            crate::phase::quarter_phase::QuarterPhase::PlusI
+        );
     }
 
     // --- Level ordering ---
@@ -1838,33 +1836,54 @@ mod tests {
     #[test]
     fn all_1q_clifford_constructors_have_valid_tableau() {
         let gates: Vec<Op> = vec![
-            H(0), SX(0), SXdg(0), SY(0), SYdg(0), SZ(0), SZdg(0),
-            H2(0), H3(0), H4(0), H5(0), H6(0),
-            F(0), Fdg(0), F2(0), F2dg(0), F3(0), F3dg(0), F4(0), F4dg(0),
+            H(0),
+            SX(0),
+            SXdg(0),
+            SY(0),
+            SYdg(0),
+            SZ(0),
+            SZdg(0),
+            H2(0),
+            H3(0),
+            H4(0),
+            H5(0),
+            H6(0),
+            F(0),
+            Fdg(0),
+            F2(0),
+            F2dg(0),
+            F3(0),
+            F3dg(0),
+            F4(0),
+            F4dg(0),
         ];
         for gate in &gates {
             let cr = gate.as_clifford().unwrap();
-            assert!(
-                cr.is_valid(),
-                "Clifford tableau invalid for gate: {gate}"
-            );
+            assert!(cr.is_valid(), "Clifford tableau invalid for gate: {gate}");
         }
     }
 
     #[test]
     fn all_2q_clifford_constructors_have_valid_tableau() {
         let gates: Vec<Op> = vec![
-            CX(0, 1), CY(0, 1), CZ(0, 1), SWAP(0, 1),
-            SXX(0, 1), SXXdg(0, 1), SYY(0, 1), SYYdg(0, 1),
-            SZZ(0, 1), SZZdg(0, 1),
-            ISWAP(0, 1), ISWAPdg(0, 1), G(0, 1), Gdg(0, 1),
+            CX(0, 1),
+            CY(0, 1),
+            CZ(0, 1),
+            SWAP(0, 1),
+            SXX(0, 1),
+            SXXdg(0, 1),
+            SYY(0, 1),
+            SYYdg(0, 1),
+            SZZ(0, 1),
+            SZZdg(0, 1),
+            ISWAP(0, 1),
+            ISWAPdg(0, 1),
+            G(0, 1),
+            Gdg(0, 1),
         ];
         for gate in &gates {
             let cr = gate.as_clifford().unwrap();
-            assert!(
-                cr.is_valid(),
-                "Clifford tableau invalid for gate: {gate}"
-            );
+            assert!(cr.is_valid(), "Clifford tableau invalid for gate: {gate}");
         }
     }
 
@@ -1874,7 +1893,7 @@ mod tests {
     fn qubits_pauli() {
         let op = X(0) & Z(3);
         let mut qs = op.qubits();
-        qs.sort();
+        qs.sort_unstable();
         assert_eq!(qs, vec![0, 3]);
     }
 
@@ -1998,7 +2017,7 @@ mod tests {
     fn channel_tensor_qubits() {
         let op = PZ(0) & MZ(2);
         let mut qs = op.qubits();
-        qs.sort();
+        qs.sort_unstable();
         assert_eq!(qs, vec![0, 2]);
     }
 
@@ -2049,13 +2068,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "probability p must be in [0, 1]")]
     fn depolarizing_rejects_negative() {
-        Depolarizing(-0.1, 0);
+        let _ = Depolarizing(-0.1, 0);
     }
 
     #[test]
     #[should_panic(expected = "probability p must be in [0, 1]")]
     fn depolarizing_rejects_above_one() {
-        Depolarizing(1.5, 0);
+        let _ = Depolarizing(1.5, 0);
     }
 
     #[test]
@@ -2079,7 +2098,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "probabilities must sum to at most 1")]
     fn pauli_channel_rejects_overflow() {
-        PauliChannel(0.5, 0.3, 0.3, 0);
+        let _ = PauliChannel(0.5, 0.3, 0.3, 0);
     }
 
     #[test]
@@ -2097,7 +2116,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "gamma must be in [0, 1]")]
     fn amplitude_damping_rejects_negative() {
-        AmplitudeDamping(-0.1, 0);
+        let _ = AmplitudeDamping(-0.1, 0);
     }
 
     #[test]
@@ -2154,7 +2173,7 @@ mod tests {
     fn depolarizing2_qubits() {
         let op = Depolarizing2(0.1, 2, 5);
         let mut qs = op.qubits();
-        qs.sort();
+        qs.sort_unstable();
         assert_eq!(qs, vec![2, 5]);
     }
 
@@ -2168,7 +2187,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "lambda must be in [0, 1]")]
     fn phase_damping_rejects_negative() {
-        PhaseDamping(-0.1, 0);
+        let _ = PhaseDamping(-0.1, 0);
     }
 
     #[test]
@@ -2181,7 +2200,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "probability must be in [0, 1]")]
     fn erasure_rejects_negative() {
-        Erasure(-0.1, 0);
+        let _ = Erasure(-0.1, 0);
     }
 
     #[test]
@@ -2201,7 +2220,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "rate must be in [0, 1]")]
     fn leakage_rejects_negative() {
-        Leakage(-0.1, 0);
+        let _ = Leakage(-0.1, 0);
     }
 
     #[test]
@@ -2262,7 +2281,10 @@ mod tests {
     fn x_squared_is_identity() {
         let op = X(0) * X(0);
         let ps = op.as_pauli().unwrap();
-        assert_eq!(ps.phase(), crate::phase::quarter_phase::QuarterPhase::PlusOne);
+        assert_eq!(
+            ps.phase(),
+            crate::phase::quarter_phase::QuarterPhase::PlusOne
+        );
         assert_eq!(ps.weight(), 0);
     }
 
@@ -2307,13 +2329,13 @@ mod tests {
     #[test]
     fn phased_pauli_tensor_clifford_preserves_phase() {
         // (i*X(0)) & H(1) should promote to Clifford with phase retained
-        let op = i * X(0) & H(1);
+        let op = (i * X(0)) & H(1);
         assert!(op.is_clifford());
     }
 
     #[test]
     fn phased_pauli_promotes_to_unitary() {
-        let op = -i * X(0) & T(1);
+        let op = (-i * X(0)) & T(1);
         assert!(op.is_unitary());
     }
 

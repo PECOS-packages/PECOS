@@ -29,9 +29,9 @@
 //! assert_eq!(code.distance(), Some(1));
 //! ```
 
+use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
 use pecos_quantum::F2Matrix;
 use pecos_quantum::PauliStabilizerGroup;
-use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
 
 /// Converts a binary symplectic vector `(x_0..x_{n-1} | z_0..z_{n-1})` to a `PauliString`.
 fn symplectic_vec_to_pauli(vec: &[u8], n: usize) -> PauliString {
@@ -347,7 +347,10 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn repetition(n: usize) -> Self {
-        assert!(n >= 2, "repetition code requires at least 2 qubits, got {n}");
+        assert!(
+            n >= 2,
+            "repetition code requires at least 2 qubits, got {n}"
+        );
         use pecos_core::pauli::constructors::Zs;
         let generators: Vec<PauliString> = (0..n - 1).map(|i| Zs([i, i + 1])).collect();
         Self {
@@ -624,9 +627,9 @@ mod tests {
         let code = StabilizerCode::steane();
 
         let syn = code.syndrome(&Z(0));
-        assert!(syn[0]);    // X on {0,2,4,6}
-        assert!(!syn[1]);   // X on {1,2,5,6}
-        assert!(!syn[2]);   // X on {3,4,5,6}
+        assert!(syn[0]); // X on {0,2,4,6}
+        assert!(!syn[1]); // X on {1,2,5,6}
+        assert!(!syn[2]); // X on {3,4,5,6}
         assert!(!syn[3]);
         assert!(!syn[4]);
         assert!(!syn[5]);
@@ -730,9 +733,7 @@ mod tests {
 
     #[test]
     fn logical_operators_full_rank() {
-        let code = StabilizerCode::from_group(
-            PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap(),
-        );
+        let code = StabilizerCode::from_group(PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap());
         assert_eq!(code.num_logical_qubits(), 0);
         let logicals = code.logical_operators();
         assert!(logicals.is_empty());
@@ -756,9 +757,7 @@ mod tests {
 
     #[test]
     fn test_distance_no_logicals() {
-        let code = StabilizerCode::from_group(
-            PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap(),
-        );
+        let code = StabilizerCode::from_group(PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap());
         assert_eq!(code.distance(), None);
     }
 
@@ -779,9 +778,7 @@ mod tests {
 
     #[test]
     fn test_distance_full_rank() {
-        let code = StabilizerCode::from_group(
-            PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap(),
-        );
+        let code = StabilizerCode::from_group(PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap());
         assert_eq!(code.num_logical_qubits(), 0);
         assert_eq!(code.distance(), None);
     }
@@ -822,7 +819,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "at least 2 qubits")]
     fn test_repetition_code_n1_panics() {
-        StabilizerCode::repetition(1);
+        let _ = StabilizerCode::repetition(1);
     }
 
     #[test]
@@ -880,7 +877,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "toric code requires L >= 2")]
     fn test_toric_code_l1_panics() {
-        StabilizerCode::toric(1);
+        let _ = StabilizerCode::toric(1);
     }
 
     #[test]
@@ -1006,6 +1003,6 @@ mod tests {
     #[should_panic(expected = "num_qubits (1) must be >= group.num_qubits() (3)")]
     fn test_new_rejects_too_small_num_qubits() {
         let group = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        StabilizerCode::new(group, 1);
+        let _ = StabilizerCode::new(group, 1);
     }
 }

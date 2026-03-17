@@ -85,7 +85,11 @@ pub fn emit_qis_rzz(qubit1: SSAValue, qubit2: SSAValue, angle: SSAValue) -> Inst
 ///
 /// Appends instructions and constants to `out`. The caller provides
 /// `fresh_id`, a closure that returns a fresh `SSAValue` each call.
-pub fn decompose_h(qubit: SSAValue, out: &mut Vec<Instruction>, fresh_id: &mut impl FnMut() -> SSAValue) {
+pub fn decompose_h(
+    qubit: SSAValue,
+    out: &mut Vec<Instruction>,
+    fresh_id: &mut impl FnMut() -> SSAValue,
+) {
     let neg_half_pi = fresh_id();
     out.push(emit_const_float(neg_half_pi, -PI / 2.0));
     let half_pi = fresh_id();
@@ -300,7 +304,6 @@ impl HugrToQisConverter {
 
         instructions
     }
-
 }
 
 #[cfg(test)]

@@ -67,9 +67,10 @@ impl PyPauliSequence {
     ///     PauliSequence
     #[staticmethod]
     fn from_str(s: &str) -> PyResult<Self> {
-        let seq: RustPauliSequence = s.parse().map_err(|e: pecos::core::ParsePauliStringError| {
-            pyo3::exceptions::PyValueError::new_err(format!("Failed to parse: {e}"))
-        })?;
+        let seq: RustPauliSequence =
+            s.parse().map_err(|e: pecos::core::ParsePauliStringError| {
+                pyo3::exceptions::PyValueError::new_err(format!("Failed to parse: {e}"))
+            })?;
         Ok(Self { inner: seq })
     }
 

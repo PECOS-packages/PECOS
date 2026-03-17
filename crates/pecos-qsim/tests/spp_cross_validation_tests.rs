@@ -13,109 +13,190 @@
 //! Cross-validation tests for SPP gates (SXX, SYY, SZZ and their daggers).
 //!
 //! Tests validate agreement across six representations:
-//! 1. Unitary matrix (CliffordRep -> UnitaryMatrix)
-//! 2. StateVec (state vector simulator)
-//! 3. DensityMatrix
-//! 4. SparseStab (W-convention stabilizer)
-//! 5. SparseStabY (Y-convention stabilizer)
-//! 6. CliffordRep (Pauli image tracking)
+//! 1. Unitary matrix (`CliffordRep` -> `UnitaryMatrix`)
+//! 2. `StateVec` (state vector simulator)
+//! 3. `DensityMatrix`
+//! 4. `SparseStab` (W-convention stabilizer)
+//! 5. `SparseStabY` (Y-convention stabilizer)
+//! 6. `CliffordRep` (Pauli image tracking)
 
 mod helpers;
 
 use helpers::assert_states_equal;
+use pecos_core::PauliString;
 use pecos_core::Set;
 use pecos_core::clifford::Clifford;
-use pecos_core::PauliString;
-use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
 use pecos_qsim::{
     CliffordGateable, DenseStateVec, DensityMatrix, SparseStab, SparseStabHybrid, SparseStabY,
     StateVec, qid, qid2,
 };
+use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
+
+type NamedPrep = (&'static str, fn(&mut StateVec));
+type CircuitTestEntry = (
+    &'static str,
+    fn(&mut StateVec),
+    fn(&mut DensityMatrix),
+    fn(&mut SparseStab),
+    fn(&mut SparseStabY),
+);
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-/// Apply a 2q SPP gate to StateVec.
+/// Apply a 2q SPP gate to `StateVec`.
 fn apply_sv(sim: &mut StateVec, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
         _ => panic!("unexpected gate {gate:?}"),
     }
 }
 
-/// Apply a 2q SPP gate to DensityMatrix.
+/// Apply a 2q SPP gate to `DensityMatrix`.
 fn apply_dm(sim: &mut DensityMatrix, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
         _ => panic!("unexpected gate {gate:?}"),
     }
 }
 
-/// Apply a 2q SPP gate to SparseStab.
+/// Apply a 2q SPP gate to `SparseStab`.
 fn apply_ss(sim: &mut SparseStab, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
         _ => panic!("unexpected gate {gate:?}"),
     }
 }
 
-/// Apply a 2q SPP gate to SparseStabY.
+/// Apply a 2q SPP gate to `SparseStabY`.
 fn apply_sy(sim: &mut SparseStabY, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
         _ => panic!("unexpected gate {gate:?}"),
     }
 }
 
-/// Apply a 2q SPP gate to SparseStabHybrid.
+/// Apply a 2q SPP gate to `SparseStabHybrid`.
 fn apply_sh(sim: &mut SparseStabHybrid, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
         _ => panic!("unexpected gate {gate:?}"),
     }
 }
 
-/// Apply a 2q SPP gate to DenseStateVec (StateVecSoA).
+/// Apply a 2q SPP gate to `DenseStateVec` (`StateVecSoA`).
 fn apply_dsv(sim: &mut DenseStateVec, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
         _ => panic!("unexpected gate {gate:?}"),
     }
 }
@@ -130,14 +211,17 @@ const SPP_GATES: [Clifford; 6] = [
 ];
 
 /// Apply a unitary matrix to a state vector.
-fn matrix_times_state(mat: &UnitaryMatrix, state: &[num_complex::Complex64]) -> Vec<num_complex::Complex64> {
+fn matrix_times_state(
+    mat: &UnitaryMatrix,
+    state: &[num_complex::Complex64],
+) -> Vec<num_complex::Complex64> {
     let dim = mat.nrows();
     (0..dim)
         .map(|r| (0..dim).map(|c| mat[(r, c)] * state[c]).sum())
         .collect()
 }
 
-/// Compare two probability distributions (from DensityMatrix or StateVec).
+/// Compare two probability distributions (from `DensityMatrix` or `StateVec`).
 fn assert_probs_close(p1: f64, p2: f64, context: &str) {
     assert!(
         (p1 - p2).abs() < 1e-10,
@@ -169,7 +253,7 @@ fn stab_probabilities(stab: &SparseStab, num_qubits: usize) -> Vec<f64> {
     probs
 }
 
-/// Extract probabilities from SparseStabY by forced measurement.
+/// Extract probabilities from `SparseStabY` by forced measurement.
 fn stab_y_probabilities(stab: &SparseStabY, num_qubits: usize) -> Vec<f64> {
     let dim = 1 << num_qubits;
     let mut probs = Vec::with_capacity(dim);
@@ -192,7 +276,7 @@ fn stab_y_probabilities(stab: &SparseStabY, num_qubits: usize) -> Vec<f64> {
     probs
 }
 
-/// Extract probabilities from SparseStabHybrid by forced measurement.
+/// Extract probabilities from `SparseStabHybrid` by forced measurement.
 fn stab_hybrid_probabilities(stab: &SparseStabHybrid, num_qubits: usize) -> Vec<f64> {
     let dim = 1 << num_qubits;
     let mut probs = Vec::with_capacity(dim);
@@ -215,81 +299,250 @@ fn stab_hybrid_probabilities(stab: &SparseStabHybrid, num_qubits: usize) -> Vec<
     probs
 }
 
-type StatePrep = (&'static str, fn(&mut StateVec), fn(&mut DensityMatrix), fn(&mut SparseStab), fn(&mut SparseStabY), fn(&mut SparseStabHybrid));
+type StatePrep = (
+    &'static str,
+    fn(&mut StateVec),
+    fn(&mut DensityMatrix),
+    fn(&mut SparseStab),
+    fn(&mut SparseStabY),
+    fn(&mut SparseStabHybrid),
+);
 
 /// Input states that exercise different Pauli sectors.
 /// Includes Z-basis, X-basis, Y-basis, and entangled states to cover all
 /// sign branches (especially z-parity for SYY).
 fn input_states() -> Vec<StatePrep> {
     vec![
-        ("|00>",
-         |_: &mut StateVec| {},
-         |_: &mut DensityMatrix| {},
-         |_: &mut SparseStab| {},
-         |_: &mut SparseStabY| {},
-         |_: &mut SparseStabHybrid| {}),
-        ("|10>",
-         |s: &mut StateVec| { s.x(&qid(0)); },
-         |s: &mut DensityMatrix| { s.x(&qid(0)); },
-         |s: &mut SparseStab| { s.x(&qid(0)); },
-         |s: &mut SparseStabY| { s.x(&qid(0)); },
-         |s: &mut SparseStabHybrid| { s.x(&qid(0)); }),
-        ("|01>",
-         |s: &mut StateVec| { s.x(&qid(1)); },
-         |s: &mut DensityMatrix| { s.x(&qid(1)); },
-         |s: &mut SparseStab| { s.x(&qid(1)); },
-         |s: &mut SparseStabY| { s.x(&qid(1)); },
-         |s: &mut SparseStabHybrid| { s.x(&qid(1)); }),
-        ("|11>",
-         |s: &mut StateVec| { s.x(&qid(0)); s.x(&qid(1)); },
-         |s: &mut DensityMatrix| { s.x(&qid(0)); s.x(&qid(1)); },
-         |s: &mut SparseStab| { s.x(&qid(0)); s.x(&qid(1)); },
-         |s: &mut SparseStabY| { s.x(&qid(0)); s.x(&qid(1)); },
-         |s: &mut SparseStabHybrid| { s.x(&qid(0)); s.x(&qid(1)); }),
-        ("|++>",
-         |s: &mut StateVec| { s.h(&qid(0)); s.h(&qid(1)); },
-         |s: &mut DensityMatrix| { s.h(&qid(0)); s.h(&qid(1)); },
-         |s: &mut SparseStab| { s.h(&qid(0)); s.h(&qid(1)); },
-         |s: &mut SparseStabY| { s.h(&qid(0)); s.h(&qid(1)); },
-         |s: &mut SparseStabHybrid| { s.h(&qid(0)); s.h(&qid(1)); }),
-        ("|+->",
-         |s: &mut StateVec| { s.h(&qid(0)); s.x(&qid(1)); s.h(&qid(1)); },
-         |s: &mut DensityMatrix| { s.h(&qid(0)); s.x(&qid(1)); s.h(&qid(1)); },
-         |s: &mut SparseStab| { s.h(&qid(0)); s.x(&qid(1)); s.h(&qid(1)); },
-         |s: &mut SparseStabY| { s.h(&qid(0)); s.x(&qid(1)); s.h(&qid(1)); },
-         |s: &mut SparseStabHybrid| { s.h(&qid(0)); s.x(&qid(1)); s.h(&qid(1)); }),
-        ("Bell |00>+|11>",
-         |s: &mut StateVec| { s.h(&qid(0)); s.cx(&qid2(0, 1)); },
-         |s: &mut DensityMatrix| { s.h(&qid(0)); s.cx(&qid2(0, 1)); },
-         |s: &mut SparseStab| { s.h(&qid(0)); s.cx(&qid2(0, 1)); },
-         |s: &mut SparseStabY| { s.h(&qid(0)); s.cx(&qid2(0, 1)); },
-         |s: &mut SparseStabHybrid| { s.h(&qid(0)); s.cx(&qid2(0, 1)); }),
-        ("|0,+i> (Y eigenstate at q1)",
-         |s: &mut StateVec| { s.sx(&qid(1)); },
-         |s: &mut DensityMatrix| { s.sx(&qid(1)); },
-         |s: &mut SparseStab| { s.sx(&qid(1)); },
-         |s: &mut SparseStabY| { s.sx(&qid(1)); },
-         |s: &mut SparseStabHybrid| { s.sx(&qid(1)); }),
+        (
+            "|00>",
+            |_: &mut StateVec| {},
+            |_: &mut DensityMatrix| {},
+            |_: &mut SparseStab| {},
+            |_: &mut SparseStabY| {},
+            |_: &mut SparseStabHybrid| {},
+        ),
+        (
+            "|10>",
+            |s: &mut StateVec| {
+                s.x(&qid(0));
+            },
+            |s: &mut DensityMatrix| {
+                s.x(&qid(0));
+            },
+            |s: &mut SparseStab| {
+                s.x(&qid(0));
+            },
+            |s: &mut SparseStabY| {
+                s.x(&qid(0));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.x(&qid(0));
+            },
+        ),
+        (
+            "|01>",
+            |s: &mut StateVec| {
+                s.x(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.x(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.x(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.x(&qid(1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.x(&qid(1));
+            },
+        ),
+        (
+            "|11>",
+            |s: &mut StateVec| {
+                s.x(&qid(0));
+                s.x(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.x(&qid(0));
+                s.x(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.x(&qid(0));
+                s.x(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.x(&qid(0));
+                s.x(&qid(1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.x(&qid(0));
+                s.x(&qid(1));
+            },
+        ),
+        (
+            "|++>",
+            |s: &mut StateVec| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+            },
+        ),
+        (
+            "|+->",
+            |s: &mut StateVec| {
+                s.h(&qid(0));
+                s.x(&qid(1));
+                s.h(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.h(&qid(0));
+                s.x(&qid(1));
+                s.h(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.h(&qid(0));
+                s.x(&qid(1));
+                s.h(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.h(&qid(0));
+                s.x(&qid(1));
+                s.h(&qid(1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.h(&qid(0));
+                s.x(&qid(1));
+                s.h(&qid(1));
+            },
+        ),
+        (
+            "Bell |00>+|11>",
+            |s: &mut StateVec| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+            },
+            |s: &mut DensityMatrix| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+            },
+            |s: &mut SparseStab| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+            },
+            |s: &mut SparseStabY| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+            },
+        ),
+        (
+            "|0,+i> (Y eigenstate at q1)",
+            |s: &mut StateVec| {
+                s.sx(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.sx(&qid(1));
+            },
+        ),
         // Y-eigenstates on both qubits: exercises both z-parity branches for SYY
-        ("|+i,+i> (Y eigenstates both)",
-         |s: &mut StateVec| { s.sx(&qid(0)); s.sx(&qid(1)); },
-         |s: &mut DensityMatrix| { s.sx(&qid(0)); s.sx(&qid(1)); },
-         |s: &mut SparseStab| { s.sx(&qid(0)); s.sx(&qid(1)); },
-         |s: &mut SparseStabY| { s.sx(&qid(0)); s.sx(&qid(1)); },
-         |s: &mut SparseStabHybrid| { s.sx(&qid(0)); s.sx(&qid(1)); }),
-        ("|+i,-i> (opposite Y eigenstates)",
-         |s: &mut StateVec| { s.sx(&qid(0)); s.sxdg(&qid(1)); },
-         |s: &mut DensityMatrix| { s.sx(&qid(0)); s.sxdg(&qid(1)); },
-         |s: &mut SparseStab| { s.sx(&qid(0)); s.sxdg(&qid(1)); },
-         |s: &mut SparseStabY| { s.sx(&qid(0)); s.sxdg(&qid(1)); },
-         |s: &mut SparseStabHybrid| { s.sx(&qid(0)); s.sxdg(&qid(1)); }),
+        (
+            "|+i,+i> (Y eigenstates both)",
+            |s: &mut StateVec| {
+                s.sx(&qid(0));
+                s.sx(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.sx(&qid(0));
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.sx(&qid(0));
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.sx(&qid(0));
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.sx(&qid(0));
+                s.sx(&qid(1));
+            },
+        ),
+        (
+            "|+i,-i> (opposite Y eigenstates)",
+            |s: &mut StateVec| {
+                s.sx(&qid(0));
+                s.sxdg(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.sx(&qid(0));
+                s.sxdg(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.sx(&qid(0));
+                s.sxdg(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.sx(&qid(0));
+                s.sxdg(&qid(1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.sx(&qid(0));
+                s.sxdg(&qid(1));
+            },
+        ),
         // Mixed X/Y: generators with different (x,z) patterns
-        ("|+,+i> (X at q0, Y at q1)",
-         |s: &mut StateVec| { s.h(&qid(0)); s.sx(&qid(1)); },
-         |s: &mut DensityMatrix| { s.h(&qid(0)); s.sx(&qid(1)); },
-         |s: &mut SparseStab| { s.h(&qid(0)); s.sx(&qid(1)); },
-         |s: &mut SparseStabY| { s.h(&qid(0)); s.sx(&qid(1)); },
-         |s: &mut SparseStabHybrid| { s.h(&qid(0)); s.sx(&qid(1)); }),
+        (
+            "|+,+i> (X at q0, Y at q1)",
+            |s: &mut StateVec| {
+                s.h(&qid(0));
+                s.sx(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.h(&qid(0));
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.h(&qid(0));
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.h(&qid(0));
+                s.sx(&qid(1));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.h(&qid(0));
+                s.sx(&qid(1));
+            },
+        ),
     ]
 }
 
@@ -300,13 +553,24 @@ fn input_states() -> Vec<StatePrep> {
 #[test]
 fn statevec_matches_unitary_matrix_all_1q_cliffords() {
     // 1-qubit input state preparation functions
-    let preps: Vec<(&str, fn(&mut StateVec))> = vec![
+    let preps: Vec<NamedPrep> = vec![
         ("|0>", |_: &mut StateVec| {}),
-        ("|1>", |s: &mut StateVec| { s.x(&qid(0)); }),
-        ("|+>", |s: &mut StateVec| { s.h(&qid(0)); }),
-        ("|->", |s: &mut StateVec| { s.x(&qid(0)); s.h(&qid(0)); }),
-        ("|+i>", |s: &mut StateVec| { s.sx(&qid(0)); }),
-        ("|-i>", |s: &mut StateVec| { s.sxdg(&qid(0)); }),
+        ("|1>", |s: &mut StateVec| {
+            s.x(&qid(0));
+        }),
+        ("|+>", |s: &mut StateVec| {
+            s.h(&qid(0));
+        }),
+        ("|->", |s: &mut StateVec| {
+            s.x(&qid(0));
+            s.h(&qid(0));
+        }),
+        ("|+i>", |s: &mut StateVec| {
+            s.sx(&qid(0));
+        }),
+        ("|-i>", |s: &mut StateVec| {
+            s.sxdg(&qid(0));
+        }),
     ];
 
     for &gate in Clifford::all_1q() {
@@ -324,10 +588,7 @@ fn statevec_matches_unitary_matrix_all_1q_cliffords() {
             prep(&mut sim);
             apply_1q_sv(&mut sim, gate);
 
-            assert_states_equal(
-                sim.state(),
-                &expected,
-            );
+            assert_states_equal(sim.state(), &expected);
             let _ = name;
         }
     }
@@ -354,10 +615,7 @@ fn statevec_matches_unitary_matrix_all_2q_cliffords() {
             prep_sv(&mut sim);
             apply_2q_sv(&mut sim, gate);
 
-            assert_states_equal(
-                sim.state(),
-                &expected,
-            );
+            assert_states_equal(sim.state(), &expected);
             let _ = name;
         }
     }
@@ -384,10 +642,7 @@ fn statevec_matches_unitary_matrix_spp_gates() {
             prep_sv(&mut sim);
             apply_sv(&mut sim, gate);
 
-            assert_states_equal(
-                sim.state(),
-                &expected,
-            );
+            assert_states_equal(sim.state(), &expected);
             let _ = name;
         }
     }
@@ -439,10 +694,10 @@ fn sparse_stab_matches_statevec_spp_gates() {
             apply_ss(&mut ss, gate);
 
             let ss_probs = stab_probabilities(&ss, 2);
-            for i in 0..4 {
+            for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    ss_probs[i],
+                    ss_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStab vs StateVec"),
                 );
             }
@@ -467,10 +722,10 @@ fn sparse_stab_y_matches_statevec_spp_gates() {
             apply_sy(&mut sy, gate);
 
             let sy_probs = stab_y_probabilities(&sy, 2);
-            for i in 0..4 {
+            for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    sy_probs[i],
+                    sy_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStabY vs StateVec"),
                 );
             }
@@ -621,8 +876,8 @@ fn deterministic_measurements_agree_all_stab_sims_spp_gates() {
 // 7. CliffordRep Pauli images: all four generators, all stabilizer sims
 // ============================================================================
 
-/// Extract Pauli bit pattern from a CliffordRep image.
-/// Returns (x_bits, z_bits, num_ys) -- the sign encoding depends on convention.
+/// Extract Pauli bit pattern from a `CliffordRep` image.
+/// Returns (`x_bits`, `z_bits`, `num_ys`) -- the sign encoding depends on convention.
 fn image_pauli_bits(image: &PauliString, num_qubits: usize) -> (Vec<bool>, Vec<bool>, u32) {
     use pecos_core::Pauli;
 
@@ -634,8 +889,12 @@ fn image_pauli_bits(image: &PauliString, num_qubits: usize) -> (Vec<bool>, Vec<b
         let q = usize::from(qid);
         match p {
             Pauli::I => {}
-            Pauli::X => { x_bits[q] = true; }
-            Pauli::Z => { z_bits[q] = true; }
+            Pauli::X => {
+                x_bits[q] = true;
+            }
+            Pauli::Z => {
+                z_bits[q] = true;
+            }
             Pauli::Y => {
                 x_bits[q] = true;
                 z_bits[q] = true;
@@ -646,7 +905,7 @@ fn image_pauli_bits(image: &PauliString, num_qubits: usize) -> (Vec<bool>, Vec<b
     (x_bits, z_bits, num_ys)
 }
 
-/// Convert CliffordRep image to W-convention (SparseStab/SparseStabHybrid) sign bits.
+/// Convert `CliffordRep` image to W-convention (SparseStab/SparseStabHybrid) sign bits.
 /// W = XZ, so Y = iW means each Y factor absorbs an extra i into the phase.
 fn image_to_w_signs(image: &PauliString, num_ys: u32) -> (bool, bool) {
     let base = image.phase() as u8;
@@ -654,8 +913,8 @@ fn image_to_w_signs(image: &PauliString, num_ys: u32) -> (bool, bool) {
     (w_phase & 1 != 0, w_phase & 2 != 0)
 }
 
-/// Convert CliffordRep image to Y-convention (SparseStabY) sign bits.
-/// Y is stored directly, so CliffordRep phase maps with no conversion.
+/// Convert `CliffordRep` image to Y-convention (`SparseStabY`) sign bits.
+/// Y is stored directly, so `CliffordRep` phase maps with no conversion.
 fn image_to_y_signs(image: &PauliString) -> (bool, bool) {
     let phase = image.phase() as u8;
     (phase & 1 != 0, phase & 2 != 0)
@@ -690,20 +949,24 @@ fn clifford_rep_matches_all_stab_sims_spp_gates() {
 
                 for qubit in 0..2 {
                     assert_eq!(
-                        ss.stabs().col_x[qubit].contains(gen_id), exp_x[qubit],
+                        ss.stabs().col_x[qubit].contains(gen_id),
+                        exp_x[qubit],
                         "{gate:?} on {input_ps:?}: SparseStab qubit {qubit} X-bit mismatch (image: {image:?})"
                     );
                     assert_eq!(
-                        ss.stabs().col_z[qubit].contains(gen_id), exp_z[qubit],
+                        ss.stabs().col_z[qubit].contains(gen_id),
+                        exp_z[qubit],
                         "{gate:?} on {input_ps:?}: SparseStab qubit {qubit} Z-bit mismatch (image: {image:?})"
                     );
                 }
                 assert_eq!(
-                    ss.stabs().signs_minus.contains(gen_id), w_minus,
+                    ss.stabs().signs_minus.contains(gen_id),
+                    w_minus,
                     "{gate:?} on {input_ps:?}: SparseStab signs_minus mismatch (image: {image:?})"
                 );
                 assert_eq!(
-                    ss.stabs().signs_i.contains(gen_id), w_i,
+                    ss.stabs().signs_i.contains(gen_id),
+                    w_i,
                     "{gate:?} on {input_ps:?}: SparseStab signs_i mismatch (image: {image:?})"
                 );
             }
@@ -718,20 +981,24 @@ fn clifford_rep_matches_all_stab_sims_spp_gates() {
 
                 for qubit in 0..2 {
                     assert_eq!(
-                        sy.stabs().col_x[qubit].contains(gen_id), exp_x[qubit],
+                        sy.stabs().col_x[qubit].contains(gen_id),
+                        exp_x[qubit],
                         "{gate:?} on {input_ps:?}: SparseStabY qubit {qubit} X-bit mismatch (image: {image:?})"
                     );
                     assert_eq!(
-                        sy.stabs().col_z[qubit].contains(gen_id), exp_z[qubit],
+                        sy.stabs().col_z[qubit].contains(gen_id),
+                        exp_z[qubit],
                         "{gate:?} on {input_ps:?}: SparseStabY qubit {qubit} Z-bit mismatch (image: {image:?})"
                     );
                 }
                 assert_eq!(
-                    sy.stabs().signs_minus.contains(gen_id), y_minus,
+                    sy.stabs().signs_minus.contains(gen_id),
+                    y_minus,
                     "{gate:?} on {input_ps:?}: SparseStabY signs_minus mismatch (image: {image:?})"
                 );
                 assert_eq!(
-                    sy.stabs().signs_i.contains(gen_id), y_i,
+                    sy.stabs().signs_i.contains(gen_id),
+                    y_i,
                     "{gate:?} on {input_ps:?}: SparseStabY signs_i mismatch (image: {image:?})"
                 );
             }
@@ -746,20 +1013,24 @@ fn clifford_rep_matches_all_stab_sims_spp_gates() {
 
                 for qubit in 0..2 {
                     assert_eq!(
-                        sh.stabs().col_x[qubit].contains(&gen_id), exp_x[qubit],
+                        sh.stabs().col_x[qubit].contains(&gen_id),
+                        exp_x[qubit],
                         "{gate:?} on {input_ps:?}: SparseStabHybrid qubit {qubit} X-bit mismatch (image: {image:?})"
                     );
                     assert_eq!(
-                        sh.stabs().col_z[qubit].contains(&gen_id), exp_z[qubit],
+                        sh.stabs().col_z[qubit].contains(&gen_id),
+                        exp_z[qubit],
                         "{gate:?} on {input_ps:?}: SparseStabHybrid qubit {qubit} Z-bit mismatch (image: {image:?})"
                     );
                 }
                 assert_eq!(
-                    sh.stabs().signs_minus.contains(gen_id), w_minus,
+                    sh.stabs().signs_minus.contains(gen_id),
+                    w_minus,
                     "{gate:?} on {input_ps:?}: SparseStabHybrid signs_minus mismatch (image: {image:?})"
                 );
                 assert_eq!(
-                    sh.stabs().signs_i.contains(gen_id), w_i,
+                    sh.stabs().signs_i.contains(gen_id),
+                    w_i,
                     "{gate:?} on {input_ps:?}: SparseStabHybrid signs_i mismatch (image: {image:?})"
                 );
             }
@@ -808,10 +1079,10 @@ fn spp_squared_is_pp_all_simulators() {
             ss.sxx(&qid2(0, 1));
             ss.sxx(&qid2(0, 1));
             let ss_probs = stab_probabilities(&ss, 2);
-            for i in 0..4 {
+            for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    ss_probs[i],
+                    ss_prob,
                     &format!("SXX^2=XX SparseStab on {name}, state {i}"),
                 );
             }
@@ -822,10 +1093,10 @@ fn spp_squared_is_pp_all_simulators() {
             sy.sxx(&qid2(0, 1));
             sy.sxx(&qid2(0, 1));
             let sy_probs = stab_y_probabilities(&sy, 2);
-            for i in 0..4 {
+            for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    sy_probs[i],
+                    sy_prob,
                     &format!("SXX^2=XX SparseStabY on {name}, state {i}"),
                 );
             }
@@ -861,10 +1132,10 @@ fn spp_squared_is_pp_all_simulators() {
             ss.syy(&qid2(0, 1));
             ss.syy(&qid2(0, 1));
             let ss_probs = stab_probabilities(&ss, 2);
-            for i in 0..4 {
+            for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    ss_probs[i],
+                    ss_prob,
                     &format!("SYY^2=YY SparseStab on {name}, state {i}"),
                 );
             }
@@ -874,10 +1145,10 @@ fn spp_squared_is_pp_all_simulators() {
             sy.syy(&qid2(0, 1));
             sy.syy(&qid2(0, 1));
             let sy_probs = stab_y_probabilities(&sy, 2);
-            for i in 0..4 {
+            for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    sy_probs[i],
+                    sy_prob,
                     &format!("SYY^2=YY SparseStabY on {name}, state {i}"),
                 );
             }
@@ -913,10 +1184,10 @@ fn spp_squared_is_pp_all_simulators() {
             ss.szz(&qid2(0, 1));
             ss.szz(&qid2(0, 1));
             let ss_probs = stab_probabilities(&ss, 2);
-            for i in 0..4 {
+            for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    ss_probs[i],
+                    ss_prob,
                     &format!("SZZ^2=ZZ SparseStab on {name}, state {i}"),
                 );
             }
@@ -926,10 +1197,10 @@ fn spp_squared_is_pp_all_simulators() {
             sy.szz(&qid2(0, 1));
             sy.szz(&qid2(0, 1));
             let sy_probs = stab_y_probabilities(&sy, 2);
-            for i in 0..4 {
+            for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    sy_probs[i],
+                    sy_prob,
                     &format!("SZZ^2=ZZ SparseStabY on {name}, state {i}"),
                 );
             }
@@ -1032,32 +1303,154 @@ fn gate_then_dagger_identity_all_simulators() {
 fn spp_in_circuit_sequences_all_simulators() {
     // Test SPP gates within larger circuit sequences to catch
     // interactions with other gate updates.
-    let circuits: Vec<(&str, fn(&mut StateVec), fn(&mut DensityMatrix), fn(&mut SparseStab), fn(&mut SparseStabY))> = vec![
-        ("H(0).SXX.H(1).SZZ",
-         |s: &mut StateVec| { s.h(&qid(0)); s.sxx(&qid2(0, 1)); s.h(&qid(1)); s.szz(&qid2(0, 1)); },
-         |s: &mut DensityMatrix| { s.h(&qid(0)); s.sxx(&qid2(0, 1)); s.h(&qid(1)); s.szz(&qid2(0, 1)); },
-         |s: &mut SparseStab| { s.h(&qid(0)); s.sxx(&qid2(0, 1)); s.h(&qid(1)); s.szz(&qid2(0, 1)); },
-         |s: &mut SparseStabY| { s.h(&qid(0)); s.sxx(&qid2(0, 1)); s.h(&qid(1)); s.szz(&qid2(0, 1)); }),
-        ("SYY.CX.SZZdg",
-         |s: &mut StateVec| { s.syy(&qid2(0, 1)); s.cx(&qid2(0, 1)); s.szzdg(&qid2(0, 1)); },
-         |s: &mut DensityMatrix| { s.syy(&qid2(0, 1)); s.cx(&qid2(0, 1)); s.szzdg(&qid2(0, 1)); },
-         |s: &mut SparseStab| { s.syy(&qid2(0, 1)); s.cx(&qid2(0, 1)); s.szzdg(&qid2(0, 1)); },
-         |s: &mut SparseStabY| { s.syy(&qid2(0, 1)); s.cx(&qid2(0, 1)); s.szzdg(&qid2(0, 1)); }),
-        ("H(0).H(1).SXXdg.SZ(0).SYY.H(0)",
-         |s: &mut StateVec| { s.h(&qid(0)); s.h(&qid(1)); s.sxxdg(&qid2(0, 1)); s.sz(&qid(0)); s.syy(&qid2(0, 1)); s.h(&qid(0)); },
-         |s: &mut DensityMatrix| { s.h(&qid(0)); s.h(&qid(1)); s.sxxdg(&qid2(0, 1)); s.sz(&qid(0)); s.syy(&qid2(0, 1)); s.h(&qid(0)); },
-         |s: &mut SparseStab| { s.h(&qid(0)); s.h(&qid(1)); s.sxxdg(&qid2(0, 1)); s.sz(&qid(0)); s.syy(&qid2(0, 1)); s.h(&qid(0)); },
-         |s: &mut SparseStabY| { s.h(&qid(0)); s.h(&qid(1)); s.sxxdg(&qid2(0, 1)); s.sz(&qid(0)); s.syy(&qid2(0, 1)); s.h(&qid(0)); }),
-        ("X(0).SZZ.SXX.SYYdg.H(1)",
-         |s: &mut StateVec| { s.x(&qid(0)); s.szz(&qid2(0, 1)); s.sxx(&qid2(0, 1)); s.syydg(&qid2(0, 1)); s.h(&qid(1)); },
-         |s: &mut DensityMatrix| { s.x(&qid(0)); s.szz(&qid2(0, 1)); s.sxx(&qid2(0, 1)); s.syydg(&qid2(0, 1)); s.h(&qid(1)); },
-         |s: &mut SparseStab| { s.x(&qid(0)); s.szz(&qid2(0, 1)); s.sxx(&qid2(0, 1)); s.syydg(&qid2(0, 1)); s.h(&qid(1)); },
-         |s: &mut SparseStabY| { s.x(&qid(0)); s.szz(&qid2(0, 1)); s.sxx(&qid2(0, 1)); s.syydg(&qid2(0, 1)); s.h(&qid(1)); }),
-        ("Bell.SYY.SXXdg.SZZ",
-         |s: &mut StateVec| { s.h(&qid(0)); s.cx(&qid2(0, 1)); s.syy(&qid2(0, 1)); s.sxxdg(&qid2(0, 1)); s.szz(&qid2(0, 1)); },
-         |s: &mut DensityMatrix| { s.h(&qid(0)); s.cx(&qid2(0, 1)); s.syy(&qid2(0, 1)); s.sxxdg(&qid2(0, 1)); s.szz(&qid2(0, 1)); },
-         |s: &mut SparseStab| { s.h(&qid(0)); s.cx(&qid2(0, 1)); s.syy(&qid2(0, 1)); s.sxxdg(&qid2(0, 1)); s.szz(&qid2(0, 1)); },
-         |s: &mut SparseStabY| { s.h(&qid(0)); s.cx(&qid2(0, 1)); s.syy(&qid2(0, 1)); s.sxxdg(&qid2(0, 1)); s.szz(&qid2(0, 1)); }),
+    let circuits: Vec<CircuitTestEntry> = vec![
+        (
+            "H(0).SXX.H(1).SZZ",
+            |s: &mut StateVec| {
+                s.h(&qid(0));
+                s.sxx(&qid2(0, 1));
+                s.h(&qid(1));
+                s.szz(&qid2(0, 1));
+            },
+            |s: &mut DensityMatrix| {
+                s.h(&qid(0));
+                s.sxx(&qid2(0, 1));
+                s.h(&qid(1));
+                s.szz(&qid2(0, 1));
+            },
+            |s: &mut SparseStab| {
+                s.h(&qid(0));
+                s.sxx(&qid2(0, 1));
+                s.h(&qid(1));
+                s.szz(&qid2(0, 1));
+            },
+            |s: &mut SparseStabY| {
+                s.h(&qid(0));
+                s.sxx(&qid2(0, 1));
+                s.h(&qid(1));
+                s.szz(&qid2(0, 1));
+            },
+        ),
+        (
+            "SYY.CX.SZZdg",
+            |s: &mut StateVec| {
+                s.syy(&qid2(0, 1));
+                s.cx(&qid2(0, 1));
+                s.szzdg(&qid2(0, 1));
+            },
+            |s: &mut DensityMatrix| {
+                s.syy(&qid2(0, 1));
+                s.cx(&qid2(0, 1));
+                s.szzdg(&qid2(0, 1));
+            },
+            |s: &mut SparseStab| {
+                s.syy(&qid2(0, 1));
+                s.cx(&qid2(0, 1));
+                s.szzdg(&qid2(0, 1));
+            },
+            |s: &mut SparseStabY| {
+                s.syy(&qid2(0, 1));
+                s.cx(&qid2(0, 1));
+                s.szzdg(&qid2(0, 1));
+            },
+        ),
+        (
+            "H(0).H(1).SXXdg.SZ(0).SYY.H(0)",
+            |s: &mut StateVec| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+                s.sxxdg(&qid2(0, 1));
+                s.sz(&qid(0));
+                s.syy(&qid2(0, 1));
+                s.h(&qid(0));
+            },
+            |s: &mut DensityMatrix| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+                s.sxxdg(&qid2(0, 1));
+                s.sz(&qid(0));
+                s.syy(&qid2(0, 1));
+                s.h(&qid(0));
+            },
+            |s: &mut SparseStab| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+                s.sxxdg(&qid2(0, 1));
+                s.sz(&qid(0));
+                s.syy(&qid2(0, 1));
+                s.h(&qid(0));
+            },
+            |s: &mut SparseStabY| {
+                s.h(&qid(0));
+                s.h(&qid(1));
+                s.sxxdg(&qid2(0, 1));
+                s.sz(&qid(0));
+                s.syy(&qid2(0, 1));
+                s.h(&qid(0));
+            },
+        ),
+        (
+            "X(0).SZZ.SXX.SYYdg.H(1)",
+            |s: &mut StateVec| {
+                s.x(&qid(0));
+                s.szz(&qid2(0, 1));
+                s.sxx(&qid2(0, 1));
+                s.syydg(&qid2(0, 1));
+                s.h(&qid(1));
+            },
+            |s: &mut DensityMatrix| {
+                s.x(&qid(0));
+                s.szz(&qid2(0, 1));
+                s.sxx(&qid2(0, 1));
+                s.syydg(&qid2(0, 1));
+                s.h(&qid(1));
+            },
+            |s: &mut SparseStab| {
+                s.x(&qid(0));
+                s.szz(&qid2(0, 1));
+                s.sxx(&qid2(0, 1));
+                s.syydg(&qid2(0, 1));
+                s.h(&qid(1));
+            },
+            |s: &mut SparseStabY| {
+                s.x(&qid(0));
+                s.szz(&qid2(0, 1));
+                s.sxx(&qid2(0, 1));
+                s.syydg(&qid2(0, 1));
+                s.h(&qid(1));
+            },
+        ),
+        (
+            "Bell.SYY.SXXdg.SZZ",
+            |s: &mut StateVec| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+                s.syy(&qid2(0, 1));
+                s.sxxdg(&qid2(0, 1));
+                s.szz(&qid2(0, 1));
+            },
+            |s: &mut DensityMatrix| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+                s.syy(&qid2(0, 1));
+                s.sxxdg(&qid2(0, 1));
+                s.szz(&qid2(0, 1));
+            },
+            |s: &mut SparseStab| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+                s.syy(&qid2(0, 1));
+                s.sxxdg(&qid2(0, 1));
+                s.szz(&qid2(0, 1));
+            },
+            |s: &mut SparseStabY| {
+                s.h(&qid(0));
+                s.cx(&qid2(0, 1));
+                s.syy(&qid2(0, 1));
+                s.sxxdg(&qid2(0, 1));
+                s.szz(&qid2(0, 1));
+            },
+        ),
     ];
 
     for (circ_name, run_sv, run_dm, run_ss, run_sy) in &circuits {
@@ -1079,10 +1472,26 @@ fn spp_in_circuit_sequences_all_simulators() {
         for i in 0..4 {
             let sv_prob = sv.probability(i);
             let dm_prob = dm.probability(i);
-            assert_probs_close(sv_prob, dm_prob, &format!("{circ_name} SV vs DM, state {i}"));
-            assert_probs_close(sv_prob, ss_probs[i], &format!("{circ_name} SV vs SS, state {i}"));
-            assert_probs_close(sv_prob, sy_probs[i], &format!("{circ_name} SV vs SY, state {i}"));
-            assert_probs_close(ss_probs[i], sy_probs[i], &format!("{circ_name} SS vs SY, state {i}"));
+            assert_probs_close(
+                sv_prob,
+                dm_prob,
+                &format!("{circ_name} SV vs DM, state {i}"),
+            );
+            assert_probs_close(
+                sv_prob,
+                ss_probs[i],
+                &format!("{circ_name} SV vs SS, state {i}"),
+            );
+            assert_probs_close(
+                sv_prob,
+                sy_probs[i],
+                &format!("{circ_name} SV vs SY, state {i}"),
+            );
+            assert_probs_close(
+                ss_probs[i],
+                sy_probs[i],
+                &format!("{circ_name} SS vs SY, state {i}"),
+            );
         }
     }
 }
@@ -1101,12 +1510,24 @@ fn spp_nonadjacent_qubits_all_simulators() {
         sv.h(&qid(0));
         sv.h(&qid(2));
         match gate {
-            Clifford::SXX => { sv.sxx(&q02); }
-            Clifford::SXXdg => { sv.sxxdg(&q02); }
-            Clifford::SYY => { sv.syy(&q02); }
-            Clifford::SYYdg => { sv.syydg(&q02); }
-            Clifford::SZZ => { sv.szz(&q02); }
-            Clifford::SZZdg => { sv.szzdg(&q02); }
+            Clifford::SXX => {
+                sv.sxx(&q02);
+            }
+            Clifford::SXXdg => {
+                sv.sxxdg(&q02);
+            }
+            Clifford::SYY => {
+                sv.syy(&q02);
+            }
+            Clifford::SYYdg => {
+                sv.syydg(&q02);
+            }
+            Clifford::SZZ => {
+                sv.szz(&q02);
+            }
+            Clifford::SZZdg => {
+                sv.szzdg(&q02);
+            }
             _ => unreachable!(),
         }
 
@@ -1114,12 +1535,24 @@ fn spp_nonadjacent_qubits_all_simulators() {
         ss.h(&qid(0));
         ss.h(&qid(2));
         match gate {
-            Clifford::SXX => { ss.sxx(&q02); }
-            Clifford::SXXdg => { ss.sxxdg(&q02); }
-            Clifford::SYY => { ss.syy(&q02); }
-            Clifford::SYYdg => { ss.syydg(&q02); }
-            Clifford::SZZ => { ss.szz(&q02); }
-            Clifford::SZZdg => { ss.szzdg(&q02); }
+            Clifford::SXX => {
+                ss.sxx(&q02);
+            }
+            Clifford::SXXdg => {
+                ss.sxxdg(&q02);
+            }
+            Clifford::SYY => {
+                ss.syy(&q02);
+            }
+            Clifford::SYYdg => {
+                ss.syydg(&q02);
+            }
+            Clifford::SZZ => {
+                ss.szz(&q02);
+            }
+            Clifford::SZZdg => {
+                ss.szzdg(&q02);
+            }
             _ => unreachable!(),
         }
 
@@ -1127,12 +1560,24 @@ fn spp_nonadjacent_qubits_all_simulators() {
         sy.h(&qid(0));
         sy.h(&qid(2));
         match gate {
-            Clifford::SXX => { sy.sxx(&q02); }
-            Clifford::SXXdg => { sy.sxxdg(&q02); }
-            Clifford::SYY => { sy.syy(&q02); }
-            Clifford::SYYdg => { sy.syydg(&q02); }
-            Clifford::SZZ => { sy.szz(&q02); }
-            Clifford::SZZdg => { sy.szzdg(&q02); }
+            Clifford::SXX => {
+                sy.sxx(&q02);
+            }
+            Clifford::SXXdg => {
+                sy.sxxdg(&q02);
+            }
+            Clifford::SYY => {
+                sy.syy(&q02);
+            }
+            Clifford::SYYdg => {
+                sy.syydg(&q02);
+            }
+            Clifford::SZZ => {
+                sy.szz(&q02);
+            }
+            Clifford::SZZdg => {
+                sy.szzdg(&q02);
+            }
             _ => unreachable!(),
         }
 
@@ -1141,8 +1586,16 @@ fn spp_nonadjacent_qubits_all_simulators() {
 
         for i in 0..8 {
             let sv_prob = sv.probability(i);
-            assert_probs_close(sv_prob, ss_probs[i], &format!("{gate:?} nonadj SV vs SS, state {i}"));
-            assert_probs_close(sv_prob, sy_probs[i], &format!("{gate:?} nonadj SV vs SY, state {i}"));
+            assert_probs_close(
+                sv_prob,
+                ss_probs[i],
+                &format!("{gate:?} nonadj SV vs SS, state {i}"),
+            );
+            assert_probs_close(
+                sv_prob,
+                sy_probs[i],
+                &format!("{gate:?} nonadj SV vs SY, state {i}"),
+            );
         }
     }
 }
@@ -1172,21 +1625,33 @@ fn unitary_matrix_spp_properties() {
         let product = &g_mat * &d_mat;
         let phase = product[(0, 0)];
         let diff = (&product - &(&identity * phase)).norm();
-        assert!(diff < tolerance, "{gate:?} * {dagger:?} should be proportional to identity, diff = {diff}");
-        assert!((phase.norm() - 1.0).abs() < tolerance, "{gate:?} * {dagger:?} phase should have unit magnitude");
+        assert!(
+            diff < tolerance,
+            "{gate:?} * {dagger:?} should be proportional to identity, diff = {diff}"
+        );
+        assert!(
+            (phase.norm() - 1.0).abs() < tolerance,
+            "{gate:?} * {dagger:?} phase should have unit magnitude"
+        );
 
         // dagger * gate = scalar * I
         let product2 = &d_mat * &g_mat;
         let phase2 = product2[(0, 0)];
         let diff2 = (&product2 - &(&identity * phase2)).norm();
-        assert!(diff2 < tolerance, "{dagger:?} * {gate:?} should be proportional to identity, diff = {diff2}");
+        assert!(
+            diff2 < tolerance,
+            "{dagger:?} * {gate:?} should be proportional to identity, diff = {diff2}"
+        );
 
         // gate^4 = scalar * I
         let g_squared = &g_mat * &g_mat;
         let g_fourth = &g_squared * &g_squared;
         let phase4 = g_fourth[(0, 0)];
         let diff3 = (&g_fourth - &(&identity * phase4)).norm();
-        assert!(diff3 < tolerance, "{gate:?}^4 should be proportional to identity, diff = {diff3}");
+        assert!(
+            diff3 < tolerance,
+            "{gate:?}^4 should be proportional to identity, diff = {diff3}"
+        );
     }
 }
 
@@ -1207,10 +1672,10 @@ fn sparse_stab_hybrid_matches_statevec_spp_gates() {
             apply_sh(&mut sh, gate);
 
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
-            for i in 0..4 {
+            for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    sh_probs[i],
+                    sh_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStabHybrid vs StateVec"),
                 );
             }
@@ -1255,7 +1720,11 @@ fn sparse_stab_hybrid_roundtrip_properties() {
         {
             // SXX^2 = XX
             let mut ref_sv = StateVec::new(2);
-            let prep_sv = input_states().into_iter().find(|(n, ..)| *n == name).unwrap().1;
+            let prep_sv = input_states()
+                .into_iter()
+                .find(|(n, ..)| *n == name)
+                .unwrap()
+                .1;
             prep_sv(&mut ref_sv);
             ref_sv.x(&qid(0));
             ref_sv.x(&qid(1));
@@ -1265,10 +1734,10 @@ fn sparse_stab_hybrid_roundtrip_properties() {
             sh.sxx(&qid2(0, 1));
             sh.sxx(&qid2(0, 1));
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
-            for i in 0..4 {
+            for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    sh_probs[i],
+                    sh_prob,
                     &format!("SXX^2=XX SparseStabHybrid on {name}, state {i}"),
                 );
             }
@@ -1276,7 +1745,11 @@ fn sparse_stab_hybrid_roundtrip_properties() {
         {
             // SYY^2 = YY
             let mut ref_sv = StateVec::new(2);
-            let prep_sv = input_states().into_iter().find(|(n, ..)| *n == name).unwrap().1;
+            let prep_sv = input_states()
+                .into_iter()
+                .find(|(n, ..)| *n == name)
+                .unwrap()
+                .1;
             prep_sv(&mut ref_sv);
             ref_sv.y(&qid(0));
             ref_sv.y(&qid(1));
@@ -1286,10 +1759,10 @@ fn sparse_stab_hybrid_roundtrip_properties() {
             sh.syy(&qid2(0, 1));
             sh.syy(&qid2(0, 1));
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
-            for i in 0..4 {
+            for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    sh_probs[i],
+                    sh_prob,
                     &format!("SYY^2=YY SparseStabHybrid on {name}, state {i}"),
                 );
             }
@@ -1297,7 +1770,11 @@ fn sparse_stab_hybrid_roundtrip_properties() {
         {
             // SZZ^2 = ZZ
             let mut ref_sv = StateVec::new(2);
-            let prep_sv = input_states().into_iter().find(|(n, ..)| *n == name).unwrap().1;
+            let prep_sv = input_states()
+                .into_iter()
+                .find(|(n, ..)| *n == name)
+                .unwrap()
+                .1;
             prep_sv(&mut ref_sv);
             ref_sv.z(&qid(0));
             ref_sv.z(&qid(1));
@@ -1307,10 +1784,10 @@ fn sparse_stab_hybrid_roundtrip_properties() {
             sh.szz(&qid2(0, 1));
             sh.szz(&qid2(0, 1));
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
-            for i in 0..4 {
+            for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
                     ref_sv.probability(i),
-                    sh_probs[i],
+                    sh_prob,
                     &format!("SZZ^2=ZZ SparseStabHybrid on {name}, state {i}"),
                 );
             }
@@ -1351,40 +1828,102 @@ fn dense_statevec_matches_statevec_spp_gates() {
 
 /// All 1q single-qubit input states for testing (on a 2-qubit system, applied to q0).
 /// Using 2 qubits lets us verify the gate doesn't corrupt qubit 1.
-type StatePrep1q = (&'static str, fn(&mut StateVec), fn(&mut SparseStab), fn(&mut SparseStabY), fn(&mut SparseStabHybrid));
+type StatePrep1q = (
+    &'static str,
+    fn(&mut StateVec),
+    fn(&mut SparseStab),
+    fn(&mut SparseStabY),
+    fn(&mut SparseStabHybrid),
+);
 
 fn input_states_1q() -> Vec<StatePrep1q> {
     vec![
-        ("|0>",
-         |_: &mut StateVec| {},
-         |_: &mut SparseStab| {},
-         |_: &mut SparseStabY| {},
-         |_: &mut SparseStabHybrid| {}),
-        ("|1>",
-         |s: &mut StateVec| { s.x(&qid(0)); },
-         |s: &mut SparseStab| { s.x(&qid(0)); },
-         |s: &mut SparseStabY| { s.x(&qid(0)); },
-         |s: &mut SparseStabHybrid| { s.x(&qid(0)); }),
-        ("|+>",
-         |s: &mut StateVec| { s.h(&qid(0)); },
-         |s: &mut SparseStab| { s.h(&qid(0)); },
-         |s: &mut SparseStabY| { s.h(&qid(0)); },
-         |s: &mut SparseStabHybrid| { s.h(&qid(0)); }),
-        ("|->",
-         |s: &mut StateVec| { s.x(&qid(0)); s.h(&qid(0)); },
-         |s: &mut SparseStab| { s.x(&qid(0)); s.h(&qid(0)); },
-         |s: &mut SparseStabY| { s.x(&qid(0)); s.h(&qid(0)); },
-         |s: &mut SparseStabHybrid| { s.x(&qid(0)); s.h(&qid(0)); }),
-        ("|+i>",
-         |s: &mut StateVec| { s.sx(&qid(0)); },
-         |s: &mut SparseStab| { s.sx(&qid(0)); },
-         |s: &mut SparseStabY| { s.sx(&qid(0)); },
-         |s: &mut SparseStabHybrid| { s.sx(&qid(0)); }),
-        ("|-i>",
-         |s: &mut StateVec| { s.sxdg(&qid(0)); },
-         |s: &mut SparseStab| { s.sxdg(&qid(0)); },
-         |s: &mut SparseStabY| { s.sxdg(&qid(0)); },
-         |s: &mut SparseStabHybrid| { s.sxdg(&qid(0)); }),
+        (
+            "|0>",
+            |_: &mut StateVec| {},
+            |_: &mut SparseStab| {},
+            |_: &mut SparseStabY| {},
+            |_: &mut SparseStabHybrid| {},
+        ),
+        (
+            "|1>",
+            |s: &mut StateVec| {
+                s.x(&qid(0));
+            },
+            |s: &mut SparseStab| {
+                s.x(&qid(0));
+            },
+            |s: &mut SparseStabY| {
+                s.x(&qid(0));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.x(&qid(0));
+            },
+        ),
+        (
+            "|+>",
+            |s: &mut StateVec| {
+                s.h(&qid(0));
+            },
+            |s: &mut SparseStab| {
+                s.h(&qid(0));
+            },
+            |s: &mut SparseStabY| {
+                s.h(&qid(0));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.h(&qid(0));
+            },
+        ),
+        (
+            "|->",
+            |s: &mut StateVec| {
+                s.x(&qid(0));
+                s.h(&qid(0));
+            },
+            |s: &mut SparseStab| {
+                s.x(&qid(0));
+                s.h(&qid(0));
+            },
+            |s: &mut SparseStabY| {
+                s.x(&qid(0));
+                s.h(&qid(0));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.x(&qid(0));
+                s.h(&qid(0));
+            },
+        ),
+        (
+            "|+i>",
+            |s: &mut StateVec| {
+                s.sx(&qid(0));
+            },
+            |s: &mut SparseStab| {
+                s.sx(&qid(0));
+            },
+            |s: &mut SparseStabY| {
+                s.sx(&qid(0));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.sx(&qid(0));
+            },
+        ),
+        (
+            "|-i>",
+            |s: &mut StateVec| {
+                s.sxdg(&qid(0));
+            },
+            |s: &mut SparseStab| {
+                s.sxdg(&qid(0));
+            },
+            |s: &mut SparseStabY| {
+                s.sxdg(&qid(0));
+            },
+            |s: &mut SparseStabHybrid| {
+                s.sxdg(&qid(0));
+            },
+        ),
     ]
 }
 
@@ -1393,29 +1932,75 @@ fn apply_1q_sv(sim: &mut StateVec, gate: Clifford) {
     let q = qid(0);
     match gate {
         Clifford::I => {}
-        Clifford::X => { sim.x(&q); }
-        Clifford::Y => { sim.y(&q); }
-        Clifford::Z => { sim.z(&q); }
-        Clifford::H => { sim.h(&q); }
-        Clifford::H2 => { sim.h2(&q); }
-        Clifford::H3 => { sim.h3(&q); }
-        Clifford::H4 => { sim.h4(&q); }
-        Clifford::H5 => { sim.h5(&q); }
-        Clifford::H6 => { sim.h6(&q); }
-        Clifford::SX => { sim.sx(&q); }
-        Clifford::SXdg => { sim.sxdg(&q); }
-        Clifford::SY => { sim.sy(&q); }
-        Clifford::SYdg => { sim.sydg(&q); }
-        Clifford::SZ => { sim.sz(&q); }
-        Clifford::SZdg => { sim.szdg(&q); }
-        Clifford::F => { sim.f(&q); }
-        Clifford::Fdg => { sim.fdg(&q); }
-        Clifford::F2 => { sim.f2(&q); }
-        Clifford::F2dg => { sim.f2dg(&q); }
-        Clifford::F3 => { sim.f3(&q); }
-        Clifford::F3dg => { sim.f3dg(&q); }
-        Clifford::F4 => { sim.f4(&q); }
-        Clifford::F4dg => { sim.f4dg(&q); }
+        Clifford::X => {
+            sim.x(&q);
+        }
+        Clifford::Y => {
+            sim.y(&q);
+        }
+        Clifford::Z => {
+            sim.z(&q);
+        }
+        Clifford::H => {
+            sim.h(&q);
+        }
+        Clifford::H2 => {
+            sim.h2(&q);
+        }
+        Clifford::H3 => {
+            sim.h3(&q);
+        }
+        Clifford::H4 => {
+            sim.h4(&q);
+        }
+        Clifford::H5 => {
+            sim.h5(&q);
+        }
+        Clifford::H6 => {
+            sim.h6(&q);
+        }
+        Clifford::SX => {
+            sim.sx(&q);
+        }
+        Clifford::SXdg => {
+            sim.sxdg(&q);
+        }
+        Clifford::SY => {
+            sim.sy(&q);
+        }
+        Clifford::SYdg => {
+            sim.sydg(&q);
+        }
+        Clifford::SZ => {
+            sim.sz(&q);
+        }
+        Clifford::SZdg => {
+            sim.szdg(&q);
+        }
+        Clifford::F => {
+            sim.f(&q);
+        }
+        Clifford::Fdg => {
+            sim.fdg(&q);
+        }
+        Clifford::F2 => {
+            sim.f2(&q);
+        }
+        Clifford::F2dg => {
+            sim.f2dg(&q);
+        }
+        Clifford::F3 => {
+            sim.f3(&q);
+        }
+        Clifford::F3dg => {
+            sim.f3dg(&q);
+        }
+        Clifford::F4 => {
+            sim.f4(&q);
+        }
+        Clifford::F4dg => {
+            sim.f4dg(&q);
+        }
         _ => panic!("not a 1q gate: {gate:?}"),
     }
 }
@@ -1424,29 +2009,75 @@ fn apply_1q_ss(sim: &mut SparseStab, gate: Clifford) {
     let q = qid(0);
     match gate {
         Clifford::I => {}
-        Clifford::X => { sim.x(&q); }
-        Clifford::Y => { sim.y(&q); }
-        Clifford::Z => { sim.z(&q); }
-        Clifford::H => { sim.h(&q); }
-        Clifford::H2 => { sim.h2(&q); }
-        Clifford::H3 => { sim.h3(&q); }
-        Clifford::H4 => { sim.h4(&q); }
-        Clifford::H5 => { sim.h5(&q); }
-        Clifford::H6 => { sim.h6(&q); }
-        Clifford::SX => { sim.sx(&q); }
-        Clifford::SXdg => { sim.sxdg(&q); }
-        Clifford::SY => { sim.sy(&q); }
-        Clifford::SYdg => { sim.sydg(&q); }
-        Clifford::SZ => { sim.sz(&q); }
-        Clifford::SZdg => { sim.szdg(&q); }
-        Clifford::F => { sim.f(&q); }
-        Clifford::Fdg => { sim.fdg(&q); }
-        Clifford::F2 => { sim.f2(&q); }
-        Clifford::F2dg => { sim.f2dg(&q); }
-        Clifford::F3 => { sim.f3(&q); }
-        Clifford::F3dg => { sim.f3dg(&q); }
-        Clifford::F4 => { sim.f4(&q); }
-        Clifford::F4dg => { sim.f4dg(&q); }
+        Clifford::X => {
+            sim.x(&q);
+        }
+        Clifford::Y => {
+            sim.y(&q);
+        }
+        Clifford::Z => {
+            sim.z(&q);
+        }
+        Clifford::H => {
+            sim.h(&q);
+        }
+        Clifford::H2 => {
+            sim.h2(&q);
+        }
+        Clifford::H3 => {
+            sim.h3(&q);
+        }
+        Clifford::H4 => {
+            sim.h4(&q);
+        }
+        Clifford::H5 => {
+            sim.h5(&q);
+        }
+        Clifford::H6 => {
+            sim.h6(&q);
+        }
+        Clifford::SX => {
+            sim.sx(&q);
+        }
+        Clifford::SXdg => {
+            sim.sxdg(&q);
+        }
+        Clifford::SY => {
+            sim.sy(&q);
+        }
+        Clifford::SYdg => {
+            sim.sydg(&q);
+        }
+        Clifford::SZ => {
+            sim.sz(&q);
+        }
+        Clifford::SZdg => {
+            sim.szdg(&q);
+        }
+        Clifford::F => {
+            sim.f(&q);
+        }
+        Clifford::Fdg => {
+            sim.fdg(&q);
+        }
+        Clifford::F2 => {
+            sim.f2(&q);
+        }
+        Clifford::F2dg => {
+            sim.f2dg(&q);
+        }
+        Clifford::F3 => {
+            sim.f3(&q);
+        }
+        Clifford::F3dg => {
+            sim.f3dg(&q);
+        }
+        Clifford::F4 => {
+            sim.f4(&q);
+        }
+        Clifford::F4dg => {
+            sim.f4dg(&q);
+        }
         _ => panic!("not a 1q gate: {gate:?}"),
     }
 }
@@ -1455,29 +2086,75 @@ fn apply_1q_sy(sim: &mut SparseStabY, gate: Clifford) {
     let q = qid(0);
     match gate {
         Clifford::I => {}
-        Clifford::X => { sim.x(&q); }
-        Clifford::Y => { sim.y(&q); }
-        Clifford::Z => { sim.z(&q); }
-        Clifford::H => { sim.h(&q); }
-        Clifford::H2 => { sim.h2(&q); }
-        Clifford::H3 => { sim.h3(&q); }
-        Clifford::H4 => { sim.h4(&q); }
-        Clifford::H5 => { sim.h5(&q); }
-        Clifford::H6 => { sim.h6(&q); }
-        Clifford::SX => { sim.sx(&q); }
-        Clifford::SXdg => { sim.sxdg(&q); }
-        Clifford::SY => { sim.sy(&q); }
-        Clifford::SYdg => { sim.sydg(&q); }
-        Clifford::SZ => { sim.sz(&q); }
-        Clifford::SZdg => { sim.szdg(&q); }
-        Clifford::F => { sim.f(&q); }
-        Clifford::Fdg => { sim.fdg(&q); }
-        Clifford::F2 => { sim.f2(&q); }
-        Clifford::F2dg => { sim.f2dg(&q); }
-        Clifford::F3 => { sim.f3(&q); }
-        Clifford::F3dg => { sim.f3dg(&q); }
-        Clifford::F4 => { sim.f4(&q); }
-        Clifford::F4dg => { sim.f4dg(&q); }
+        Clifford::X => {
+            sim.x(&q);
+        }
+        Clifford::Y => {
+            sim.y(&q);
+        }
+        Clifford::Z => {
+            sim.z(&q);
+        }
+        Clifford::H => {
+            sim.h(&q);
+        }
+        Clifford::H2 => {
+            sim.h2(&q);
+        }
+        Clifford::H3 => {
+            sim.h3(&q);
+        }
+        Clifford::H4 => {
+            sim.h4(&q);
+        }
+        Clifford::H5 => {
+            sim.h5(&q);
+        }
+        Clifford::H6 => {
+            sim.h6(&q);
+        }
+        Clifford::SX => {
+            sim.sx(&q);
+        }
+        Clifford::SXdg => {
+            sim.sxdg(&q);
+        }
+        Clifford::SY => {
+            sim.sy(&q);
+        }
+        Clifford::SYdg => {
+            sim.sydg(&q);
+        }
+        Clifford::SZ => {
+            sim.sz(&q);
+        }
+        Clifford::SZdg => {
+            sim.szdg(&q);
+        }
+        Clifford::F => {
+            sim.f(&q);
+        }
+        Clifford::Fdg => {
+            sim.fdg(&q);
+        }
+        Clifford::F2 => {
+            sim.f2(&q);
+        }
+        Clifford::F2dg => {
+            sim.f2dg(&q);
+        }
+        Clifford::F3 => {
+            sim.f3(&q);
+        }
+        Clifford::F3dg => {
+            sim.f3dg(&q);
+        }
+        Clifford::F4 => {
+            sim.f4(&q);
+        }
+        Clifford::F4dg => {
+            sim.f4dg(&q);
+        }
         _ => panic!("not a 1q gate: {gate:?}"),
     }
 }
@@ -1486,29 +2163,75 @@ fn apply_1q_sh(sim: &mut SparseStabHybrid, gate: Clifford) {
     let q = qid(0);
     match gate {
         Clifford::I => {}
-        Clifford::X => { sim.x(&q); }
-        Clifford::Y => { sim.y(&q); }
-        Clifford::Z => { sim.z(&q); }
-        Clifford::H => { sim.h(&q); }
-        Clifford::H2 => { sim.h2(&q); }
-        Clifford::H3 => { sim.h3(&q); }
-        Clifford::H4 => { sim.h4(&q); }
-        Clifford::H5 => { sim.h5(&q); }
-        Clifford::H6 => { sim.h6(&q); }
-        Clifford::SX => { sim.sx(&q); }
-        Clifford::SXdg => { sim.sxdg(&q); }
-        Clifford::SY => { sim.sy(&q); }
-        Clifford::SYdg => { sim.sydg(&q); }
-        Clifford::SZ => { sim.sz(&q); }
-        Clifford::SZdg => { sim.szdg(&q); }
-        Clifford::F => { sim.f(&q); }
-        Clifford::Fdg => { sim.fdg(&q); }
-        Clifford::F2 => { sim.f2(&q); }
-        Clifford::F2dg => { sim.f2dg(&q); }
-        Clifford::F3 => { sim.f3(&q); }
-        Clifford::F3dg => { sim.f3dg(&q); }
-        Clifford::F4 => { sim.f4(&q); }
-        Clifford::F4dg => { sim.f4dg(&q); }
+        Clifford::X => {
+            sim.x(&q);
+        }
+        Clifford::Y => {
+            sim.y(&q);
+        }
+        Clifford::Z => {
+            sim.z(&q);
+        }
+        Clifford::H => {
+            sim.h(&q);
+        }
+        Clifford::H2 => {
+            sim.h2(&q);
+        }
+        Clifford::H3 => {
+            sim.h3(&q);
+        }
+        Clifford::H4 => {
+            sim.h4(&q);
+        }
+        Clifford::H5 => {
+            sim.h5(&q);
+        }
+        Clifford::H6 => {
+            sim.h6(&q);
+        }
+        Clifford::SX => {
+            sim.sx(&q);
+        }
+        Clifford::SXdg => {
+            sim.sxdg(&q);
+        }
+        Clifford::SY => {
+            sim.sy(&q);
+        }
+        Clifford::SYdg => {
+            sim.sydg(&q);
+        }
+        Clifford::SZ => {
+            sim.sz(&q);
+        }
+        Clifford::SZdg => {
+            sim.szdg(&q);
+        }
+        Clifford::F => {
+            sim.f(&q);
+        }
+        Clifford::Fdg => {
+            sim.fdg(&q);
+        }
+        Clifford::F2 => {
+            sim.f2(&q);
+        }
+        Clifford::F2dg => {
+            sim.f2dg(&q);
+        }
+        Clifford::F3 => {
+            sim.f3(&q);
+        }
+        Clifford::F3dg => {
+            sim.f3dg(&q);
+        }
+        Clifford::F4 => {
+            sim.f4(&q);
+        }
+        Clifford::F4dg => {
+            sim.f4dg(&q);
+        }
         _ => panic!("not a 1q gate: {gate:?}"),
     }
 }
@@ -1530,10 +2253,10 @@ fn sparse_stab_matches_statevec_all_1q_cliffords() {
             apply_1q_ss(&mut ss, gate);
 
             let ss_probs = stab_probabilities(&ss, 2);
-            for i in 0..4 {
+            for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    ss_probs[i],
+                    ss_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStab vs StateVec"),
                 );
             }
@@ -1558,10 +2281,10 @@ fn sparse_stab_y_matches_statevec_all_1q_cliffords() {
             apply_1q_sy(&mut sy, gate);
 
             let sy_probs = stab_y_probabilities(&sy, 2);
-            for i in 0..4 {
+            for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    sy_probs[i],
+                    sy_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStabY vs StateVec"),
                 );
             }
@@ -1615,10 +2338,10 @@ fn sparse_stab_hybrid_matches_statevec_all_1q_cliffords() {
             apply_1q_sh(&mut sh, gate);
 
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
-            for i in 0..4 {
+            for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    sh_probs[i],
+                    sh_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStabHybrid vs StateVec"),
                 );
             }
@@ -1655,13 +2378,11 @@ fn deterministic_measurements_agree_all_stab_sims_1q_cliffords() {
                 let sh_result = sh_copy.mz(&qid(q));
 
                 assert_eq!(
-                    ss_result[0].is_deterministic,
-                    sy_result[0].is_deterministic,
+                    ss_result[0].is_deterministic, sy_result[0].is_deterministic,
                     "{gate:?} on {name}, qubit {q}: determinism mismatch (SS vs SY)"
                 );
                 assert_eq!(
-                    ss_result[0].is_deterministic,
-                    sh_result[0].is_deterministic,
+                    ss_result[0].is_deterministic, sh_result[0].is_deterministic,
                     "{gate:?} on {name}, qubit {q}: determinism mismatch (SS vs SH)"
                 );
 
@@ -1691,8 +2412,8 @@ fn gate_then_dagger_identity_all_1q_cliffords() {
         (Clifford::SX, Clifford::SXdg),
         (Clifford::SY, Clifford::SYdg),
         (Clifford::SZ, Clifford::SZdg),
-        (Clifford::H, Clifford::H),     // H is self-inverse
-        (Clifford::H2, Clifford::H2),   // H2 is self-inverse
+        (Clifford::H, Clifford::H),   // H is self-inverse
+        (Clifford::H2, Clifford::H2), // H2 is self-inverse
         (Clifford::H3, Clifford::H3),
         (Clifford::H4, Clifford::H4),
         (Clifford::H5, Clifford::H5),
@@ -1793,20 +2514,48 @@ fn gate_then_dagger_identity_all_1q_cliffords() {
 fn apply_2q_sv(sim: &mut StateVec, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::CX => { sim.cx(&q); }
-        Clifford::CY => { sim.cy(&q); }
-        Clifford::CZ => { sim.cz(&q); }
-        Clifford::SWAP => { sim.swap(&q); }
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
-        Clifford::ISWAP => { sim.iswap(&q); }
-        Clifford::ISWAPdg => { sim.iswapdg(&q); }
-        Clifford::G => { sim.g(&q); }
-        Clifford::Gdg => { sim.gdg(&q); }
+        Clifford::CX => {
+            sim.cx(&q);
+        }
+        Clifford::CY => {
+            sim.cy(&q);
+        }
+        Clifford::CZ => {
+            sim.cz(&q);
+        }
+        Clifford::SWAP => {
+            sim.swap(&q);
+        }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
+        Clifford::ISWAP => {
+            sim.iswap(&q);
+        }
+        Clifford::ISWAPdg => {
+            sim.iswapdg(&q);
+        }
+        Clifford::G => {
+            sim.g(&q);
+        }
+        Clifford::Gdg => {
+            sim.gdg(&q);
+        }
         _ => panic!("not a 2q gate: {gate:?}"),
     }
 }
@@ -1814,20 +2563,48 @@ fn apply_2q_sv(sim: &mut StateVec, gate: Clifford) {
 fn apply_2q_ss(sim: &mut SparseStab, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::CX => { sim.cx(&q); }
-        Clifford::CY => { sim.cy(&q); }
-        Clifford::CZ => { sim.cz(&q); }
-        Clifford::SWAP => { sim.swap(&q); }
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
-        Clifford::ISWAP => { sim.iswap(&q); }
-        Clifford::ISWAPdg => { sim.iswapdg(&q); }
-        Clifford::G => { sim.g(&q); }
-        Clifford::Gdg => { sim.gdg(&q); }
+        Clifford::CX => {
+            sim.cx(&q);
+        }
+        Clifford::CY => {
+            sim.cy(&q);
+        }
+        Clifford::CZ => {
+            sim.cz(&q);
+        }
+        Clifford::SWAP => {
+            sim.swap(&q);
+        }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
+        Clifford::ISWAP => {
+            sim.iswap(&q);
+        }
+        Clifford::ISWAPdg => {
+            sim.iswapdg(&q);
+        }
+        Clifford::G => {
+            sim.g(&q);
+        }
+        Clifford::Gdg => {
+            sim.gdg(&q);
+        }
         _ => panic!("not a 2q gate: {gate:?}"),
     }
 }
@@ -1835,20 +2612,48 @@ fn apply_2q_ss(sim: &mut SparseStab, gate: Clifford) {
 fn apply_2q_sy_all(sim: &mut SparseStabY, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::CX => { sim.cx(&q); }
-        Clifford::CY => { sim.cy(&q); }
-        Clifford::CZ => { sim.cz(&q); }
-        Clifford::SWAP => { sim.swap(&q); }
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
-        Clifford::ISWAP => { sim.iswap(&q); }
-        Clifford::ISWAPdg => { sim.iswapdg(&q); }
-        Clifford::G => { sim.g(&q); }
-        Clifford::Gdg => { sim.gdg(&q); }
+        Clifford::CX => {
+            sim.cx(&q);
+        }
+        Clifford::CY => {
+            sim.cy(&q);
+        }
+        Clifford::CZ => {
+            sim.cz(&q);
+        }
+        Clifford::SWAP => {
+            sim.swap(&q);
+        }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
+        Clifford::ISWAP => {
+            sim.iswap(&q);
+        }
+        Clifford::ISWAPdg => {
+            sim.iswapdg(&q);
+        }
+        Clifford::G => {
+            sim.g(&q);
+        }
+        Clifford::Gdg => {
+            sim.gdg(&q);
+        }
         _ => panic!("not a 2q gate: {gate:?}"),
     }
 }
@@ -1856,20 +2661,48 @@ fn apply_2q_sy_all(sim: &mut SparseStabY, gate: Clifford) {
 fn apply_2q_sh_all(sim: &mut SparseStabHybrid, gate: Clifford) {
     let q = qid2(0, 1);
     match gate {
-        Clifford::CX => { sim.cx(&q); }
-        Clifford::CY => { sim.cy(&q); }
-        Clifford::CZ => { sim.cz(&q); }
-        Clifford::SWAP => { sim.swap(&q); }
-        Clifford::SXX => { sim.sxx(&q); }
-        Clifford::SXXdg => { sim.sxxdg(&q); }
-        Clifford::SYY => { sim.syy(&q); }
-        Clifford::SYYdg => { sim.syydg(&q); }
-        Clifford::SZZ => { sim.szz(&q); }
-        Clifford::SZZdg => { sim.szzdg(&q); }
-        Clifford::ISWAP => { sim.iswap(&q); }
-        Clifford::ISWAPdg => { sim.iswapdg(&q); }
-        Clifford::G => { sim.g(&q); }
-        Clifford::Gdg => { sim.gdg(&q); }
+        Clifford::CX => {
+            sim.cx(&q);
+        }
+        Clifford::CY => {
+            sim.cy(&q);
+        }
+        Clifford::CZ => {
+            sim.cz(&q);
+        }
+        Clifford::SWAP => {
+            sim.swap(&q);
+        }
+        Clifford::SXX => {
+            sim.sxx(&q);
+        }
+        Clifford::SXXdg => {
+            sim.sxxdg(&q);
+        }
+        Clifford::SYY => {
+            sim.syy(&q);
+        }
+        Clifford::SYYdg => {
+            sim.syydg(&q);
+        }
+        Clifford::SZZ => {
+            sim.szz(&q);
+        }
+        Clifford::SZZdg => {
+            sim.szzdg(&q);
+        }
+        Clifford::ISWAP => {
+            sim.iswap(&q);
+        }
+        Clifford::ISWAPdg => {
+            sim.iswapdg(&q);
+        }
+        Clifford::G => {
+            sim.g(&q);
+        }
+        Clifford::Gdg => {
+            sim.gdg(&q);
+        }
         _ => panic!("not a 2q gate: {gate:?}"),
     }
 }
@@ -1891,10 +2724,10 @@ fn sparse_stab_matches_statevec_all_2q_cliffords() {
             apply_2q_ss(&mut ss, gate);
 
             let ss_probs = stab_probabilities(&ss, 2);
-            for i in 0..4 {
+            for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    ss_probs[i],
+                    ss_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStab vs StateVec"),
                 );
             }
@@ -1919,10 +2752,10 @@ fn sparse_stab_y_matches_statevec_all_2q_cliffords() {
             apply_2q_sy_all(&mut sy, gate);
 
             let sy_probs = stab_y_probabilities(&sy, 2);
-            for i in 0..4 {
+            for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    sy_probs[i],
+                    sy_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStabY vs StateVec"),
                 );
             }
@@ -1976,10 +2809,10 @@ fn sparse_stab_hybrid_matches_statevec_all_2q_cliffords() {
             apply_2q_sh_all(&mut sh, gate);
 
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
-            for i in 0..4 {
+            for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
                     sv.probability(i),
-                    sh_probs[i],
+                    sh_prob,
                     &format!("{gate:?} on {name}, basis state {i}: SparseStabHybrid vs StateVec"),
                 );
             }
@@ -2016,13 +2849,11 @@ fn deterministic_measurements_agree_all_stab_sims_2q_cliffords() {
                 let sh_result = sh_copy.mz(&qid(q));
 
                 assert_eq!(
-                    ss_result[0].is_deterministic,
-                    sy_result[0].is_deterministic,
+                    ss_result[0].is_deterministic, sy_result[0].is_deterministic,
                     "{gate:?} on {name}, qubit {q}: determinism mismatch (SS vs SY)"
                 );
                 assert_eq!(
-                    ss_result[0].is_deterministic,
-                    sh_result[0].is_deterministic,
+                    ss_result[0].is_deterministic, sh_result[0].is_deterministic,
                     "{gate:?} on {name}, qubit {q}: determinism mismatch (SS vs SH)"
                 );
 
@@ -2048,10 +2879,10 @@ fn deterministic_measurements_agree_all_stab_sims_2q_cliffords() {
 #[test]
 fn gate_then_dagger_identity_all_2q_cliffords() {
     let pairs = [
-        (Clifford::CX, Clifford::CX),         // CX is self-inverse
-        (Clifford::CY, Clifford::CY),         // CY is self-inverse
-        (Clifford::CZ, Clifford::CZ),         // CZ is self-inverse
-        (Clifford::SWAP, Clifford::SWAP),      // SWAP is self-inverse
+        (Clifford::CX, Clifford::CX),     // CX is self-inverse
+        (Clifford::CY, Clifford::CY),     // CY is self-inverse
+        (Clifford::CZ, Clifford::CZ),     // CZ is self-inverse
+        (Clifford::SWAP, Clifford::SWAP), // SWAP is self-inverse
         (Clifford::SXX, Clifford::SXXdg),
         (Clifford::SYY, Clifford::SYYdg),
         (Clifford::SZZ, Clifford::SZZdg),
@@ -2142,20 +2973,48 @@ fn gate_then_dagger_identity_all_2q_cliffords() {
     }
 }
 
-/// Apply the named state prep to a DenseStateVec.
+/// Apply the named state prep to a `DenseStateVec`.
 fn prep_dsv(sim: &mut DenseStateVec, name: &str) {
     match name {
         "|00>" => {}
-        "|10>" => { sim.x(&qid(0)); }
-        "|01>" => { sim.x(&qid(1)); }
-        "|11>" => { sim.x(&qid(0)); sim.x(&qid(1)); }
-        "|++>" => { sim.h(&qid(0)); sim.h(&qid(1)); }
-        "|+->" => { sim.h(&qid(0)); sim.x(&qid(1)); sim.h(&qid(1)); }
-        "Bell |00>+|11>" => { sim.h(&qid(0)); sim.cx(&qid2(0, 1)); }
-        "|0,+i> (Y eigenstate at q1)" => { sim.sx(&qid(1)); }
-        "|+i,+i> (Y eigenstates both)" => { sim.sx(&qid(0)); sim.sx(&qid(1)); }
-        "|+i,-i> (opposite Y eigenstates)" => { sim.sx(&qid(0)); sim.sxdg(&qid(1)); }
-        "|+,+i> (X at q0, Y at q1)" => { sim.h(&qid(0)); sim.sx(&qid(1)); }
+        "|10>" => {
+            sim.x(&qid(0));
+        }
+        "|01>" => {
+            sim.x(&qid(1));
+        }
+        "|11>" => {
+            sim.x(&qid(0));
+            sim.x(&qid(1));
+        }
+        "|++>" => {
+            sim.h(&qid(0));
+            sim.h(&qid(1));
+        }
+        "|+->" => {
+            sim.h(&qid(0));
+            sim.x(&qid(1));
+            sim.h(&qid(1));
+        }
+        "Bell |00>+|11>" => {
+            sim.h(&qid(0));
+            sim.cx(&qid2(0, 1));
+        }
+        "|0,+i> (Y eigenstate at q1)" => {
+            sim.sx(&qid(1));
+        }
+        "|+i,+i> (Y eigenstates both)" => {
+            sim.sx(&qid(0));
+            sim.sx(&qid(1));
+        }
+        "|+i,-i> (opposite Y eigenstates)" => {
+            sim.sx(&qid(0));
+            sim.sxdg(&qid(1));
+        }
+        "|+,+i> (X at q0, Y at q1)" => {
+            sim.h(&qid(0));
+            sim.sx(&qid(1));
+        }
         _ => panic!("unknown state prep: {name}"),
     }
 }
@@ -2180,8 +3039,11 @@ fn pauli_on_qubit(p: pecos_core::Pauli, qubit: usize, num_qubits: usize) -> Unit
 }
 
 /// Given a matrix that is a Pauli operator (up to global phase),
-/// identify its XZ-decomposition: matrix = phase * X^{x_bits} Z^{z_bits}.
-fn identify_pauli_xz(mat: &UnitaryMatrix, num_qubits: usize) -> (Vec<bool>, Vec<bool>, num_complex::Complex64) {
+/// identify its XZ-decomposition: matrix = phase * `X^{x_bits`} `Z^{z_bits`}.
+fn identify_pauli_xz(
+    mat: &UnitaryMatrix,
+    num_qubits: usize,
+) -> (Vec<bool>, Vec<bool>, num_complex::Complex64) {
     let dim = 1usize << num_qubits;
     assert_eq!(mat.nrows(), dim);
 
@@ -2225,7 +3087,7 @@ fn identify_pauli_xz(mat: &UnitaryMatrix, num_qubits: usize) -> (Vec<bool>, Vec<
     (x_bits, z_bits, phase)
 }
 
-/// Map a Complex64 phase (+1, -1, +i, or -i) to (signs_minus, signs_i).
+/// Map a Complex64 phase (+1, -1, +i, or -i) to (`signs_minus`, `signs_i`).
 fn phase_to_sign_bits(phase: num_complex::Complex64) -> (bool, bool) {
     let minus = phase.re < -0.5 || phase.im < -0.5;
     let has_i = phase.im.abs() > 0.5;
@@ -2263,25 +3125,31 @@ fn unitary_conjugation_matches_all_stab_sims_all_cliffords() {
             // SparseStab (W-convention)
             {
                 let mut ss = SparseStab::new(num_qubits);
-                if init_x { ss.h(&qid(0)); }
+                if init_x {
+                    ss.h(&qid(0));
+                }
                 apply_1q_ss(&mut ss, gate);
 
                 for q in 0..num_qubits {
                     assert_eq!(
-                        ss.stabs().col_x[q].contains(gen_id), x_bits[q],
+                        ss.stabs().col_x[q].contains(gen_id),
+                        x_bits[q],
                         "1q {gate:?} on {input_pauli:?}: SS qubit {q} X-bit"
                     );
                     assert_eq!(
-                        ss.stabs().col_z[q].contains(gen_id), z_bits[q],
+                        ss.stabs().col_z[q].contains(gen_id),
+                        z_bits[q],
                         "1q {gate:?} on {input_pauli:?}: SS qubit {q} Z-bit"
                     );
                 }
                 assert_eq!(
-                    ss.stabs().signs_minus.contains(gen_id), w_minus,
+                    ss.stabs().signs_minus.contains(gen_id),
+                    w_minus,
                     "1q {gate:?} on {input_pauli:?}: SS signs_minus (xz_phase={xz_phase:?})"
                 );
                 assert_eq!(
-                    ss.stabs().signs_i.contains(gen_id), w_i,
+                    ss.stabs().signs_i.contains(gen_id),
+                    w_i,
                     "1q {gate:?} on {input_pauli:?}: SS signs_i (xz_phase={xz_phase:?})"
                 );
             }
@@ -2289,25 +3157,31 @@ fn unitary_conjugation_matches_all_stab_sims_all_cliffords() {
             // SparseStabY (Y-convention)
             {
                 let mut sy = SparseStabY::new(num_qubits);
-                if init_x { sy.h(&qid(0)); }
+                if init_x {
+                    sy.h(&qid(0));
+                }
                 apply_1q_sy(&mut sy, gate);
 
                 for q in 0..num_qubits {
                     assert_eq!(
-                        sy.stabs().col_x[q].contains(gen_id), x_bits[q],
+                        sy.stabs().col_x[q].contains(gen_id),
+                        x_bits[q],
                         "1q {gate:?} on {input_pauli:?}: SY qubit {q} X-bit"
                     );
                     assert_eq!(
-                        sy.stabs().col_z[q].contains(gen_id), z_bits[q],
+                        sy.stabs().col_z[q].contains(gen_id),
+                        z_bits[q],
                         "1q {gate:?} on {input_pauli:?}: SY qubit {q} Z-bit"
                     );
                 }
                 assert_eq!(
-                    sy.stabs().signs_minus.contains(gen_id), y_minus,
+                    sy.stabs().signs_minus.contains(gen_id),
+                    y_minus,
                     "1q {gate:?} on {input_pauli:?}: SY signs_minus (y_phase={y_phase:?})"
                 );
                 assert_eq!(
-                    sy.stabs().signs_i.contains(gen_id), y_i,
+                    sy.stabs().signs_i.contains(gen_id),
+                    y_i,
                     "1q {gate:?} on {input_pauli:?}: SY signs_i (y_phase={y_phase:?})"
                 );
             }
@@ -2315,25 +3189,31 @@ fn unitary_conjugation_matches_all_stab_sims_all_cliffords() {
             // SparseStabHybrid (W-convention)
             {
                 let mut sh = SparseStabHybrid::new(num_qubits);
-                if init_x { sh.h(&qid(0)); }
+                if init_x {
+                    sh.h(&qid(0));
+                }
                 apply_1q_sh(&mut sh, gate);
 
                 for q in 0..num_qubits {
                     assert_eq!(
-                        sh.stabs().col_x[q].contains(&gen_id), x_bits[q],
+                        sh.stabs().col_x[q].contains(&gen_id),
+                        x_bits[q],
                         "1q {gate:?} on {input_pauli:?}: SH qubit {q} X-bit"
                     );
                     assert_eq!(
-                        sh.stabs().col_z[q].contains(&gen_id), z_bits[q],
+                        sh.stabs().col_z[q].contains(&gen_id),
+                        z_bits[q],
                         "1q {gate:?} on {input_pauli:?}: SH qubit {q} Z-bit"
                     );
                 }
                 assert_eq!(
-                    sh.stabs().signs_minus.contains(gen_id), w_minus,
+                    sh.stabs().signs_minus.contains(gen_id),
+                    w_minus,
                     "1q {gate:?} on {input_pauli:?}: SH signs_minus (xz_phase={xz_phase:?})"
                 );
                 assert_eq!(
-                    sh.stabs().signs_i.contains(gen_id), w_i,
+                    sh.stabs().signs_i.contains(gen_id),
+                    w_i,
                     "1q {gate:?} on {input_pauli:?}: SH signs_i (xz_phase={xz_phase:?})"
                 );
             }
@@ -2372,25 +3252,31 @@ fn unitary_conjugation_matches_all_stab_sims_all_cliffords() {
             // SparseStab (W-convention)
             {
                 let mut ss = SparseStab::new(num_qubits);
-                if *init_x { ss.h(&qid(*input_q)); }
+                if *init_x {
+                    ss.h(&qid(*input_q));
+                }
                 apply_2q_ss(&mut ss, gate);
 
                 for q in 0..num_qubits {
                     assert_eq!(
-                        ss.stabs().col_x[q].contains(gen_id), x_bits[q],
+                        ss.stabs().col_x[q].contains(gen_id),
+                        x_bits[q],
                         "2q {gate:?} on {input_pauli:?}_{input_q}: SS qubit {q} X-bit"
                     );
                     assert_eq!(
-                        ss.stabs().col_z[q].contains(gen_id), z_bits[q],
+                        ss.stabs().col_z[q].contains(gen_id),
+                        z_bits[q],
                         "2q {gate:?} on {input_pauli:?}_{input_q}: SS qubit {q} Z-bit"
                     );
                 }
                 assert_eq!(
-                    ss.stabs().signs_minus.contains(gen_id), w_minus,
+                    ss.stabs().signs_minus.contains(gen_id),
+                    w_minus,
                     "2q {gate:?} on {input_pauli:?}_{input_q}: SS signs_minus (xz_phase={xz_phase:?})"
                 );
                 assert_eq!(
-                    ss.stabs().signs_i.contains(gen_id), w_i,
+                    ss.stabs().signs_i.contains(gen_id),
+                    w_i,
                     "2q {gate:?} on {input_pauli:?}_{input_q}: SS signs_i (xz_phase={xz_phase:?})"
                 );
             }
@@ -2398,25 +3284,31 @@ fn unitary_conjugation_matches_all_stab_sims_all_cliffords() {
             // SparseStabY (Y-convention)
             {
                 let mut sy = SparseStabY::new(num_qubits);
-                if *init_x { sy.h(&qid(*input_q)); }
+                if *init_x {
+                    sy.h(&qid(*input_q));
+                }
                 apply_2q_sy_all(&mut sy, gate);
 
                 for q in 0..num_qubits {
                     assert_eq!(
-                        sy.stabs().col_x[q].contains(gen_id), x_bits[q],
+                        sy.stabs().col_x[q].contains(gen_id),
+                        x_bits[q],
                         "2q {gate:?} on {input_pauli:?}_{input_q}: SY qubit {q} X-bit"
                     );
                     assert_eq!(
-                        sy.stabs().col_z[q].contains(gen_id), z_bits[q],
+                        sy.stabs().col_z[q].contains(gen_id),
+                        z_bits[q],
                         "2q {gate:?} on {input_pauli:?}_{input_q}: SY qubit {q} Z-bit"
                     );
                 }
                 assert_eq!(
-                    sy.stabs().signs_minus.contains(gen_id), y_minus,
+                    sy.stabs().signs_minus.contains(gen_id),
+                    y_minus,
                     "2q {gate:?} on {input_pauli:?}_{input_q}: SY signs_minus (y_phase={y_phase:?})"
                 );
                 assert_eq!(
-                    sy.stabs().signs_i.contains(gen_id), y_i,
+                    sy.stabs().signs_i.contains(gen_id),
+                    y_i,
                     "2q {gate:?} on {input_pauli:?}_{input_q}: SY signs_i (y_phase={y_phase:?})"
                 );
             }
@@ -2424,25 +3316,31 @@ fn unitary_conjugation_matches_all_stab_sims_all_cliffords() {
             // SparseStabHybrid (W-convention)
             {
                 let mut sh = SparseStabHybrid::new(num_qubits);
-                if *init_x { sh.h(&qid(*input_q)); }
+                if *init_x {
+                    sh.h(&qid(*input_q));
+                }
                 apply_2q_sh_all(&mut sh, gate);
 
                 for q in 0..num_qubits {
                     assert_eq!(
-                        sh.stabs().col_x[q].contains(&gen_id), x_bits[q],
+                        sh.stabs().col_x[q].contains(&gen_id),
+                        x_bits[q],
                         "2q {gate:?} on {input_pauli:?}_{input_q}: SH qubit {q} X-bit"
                     );
                     assert_eq!(
-                        sh.stabs().col_z[q].contains(&gen_id), z_bits[q],
+                        sh.stabs().col_z[q].contains(&gen_id),
+                        z_bits[q],
                         "2q {gate:?} on {input_pauli:?}_{input_q}: SH qubit {q} Z-bit"
                     );
                 }
                 assert_eq!(
-                    sh.stabs().signs_minus.contains(gen_id), w_minus,
+                    sh.stabs().signs_minus.contains(gen_id),
+                    w_minus,
                     "2q {gate:?} on {input_pauli:?}_{input_q}: SH signs_minus (xz_phase={xz_phase:?})"
                 );
                 assert_eq!(
-                    sh.stabs().signs_i.contains(gen_id), w_i,
+                    sh.stabs().signs_i.contains(gen_id),
+                    w_i,
                     "2q {gate:?} on {input_pauli:?}_{input_q}: SH signs_i (xz_phase={xz_phase:?})"
                 );
             }

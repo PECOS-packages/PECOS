@@ -95,5 +95,7 @@ pub use logical_discovery::{
     LogicalDiscoveryError, LogicalDiscoveryResult, discover_logical_operators,
 };
 pub use stabilizer_code::StabilizerCode;
-pub use stabilizer_code_spec::{StabilizerCodeSpec, StabilizerCodeSpecBuilder, StabilizerCodeSpecError};
+pub use stabilizer_code_spec::{
+    StabilizerCodeSpec, StabilizerCodeSpecBuilder, StabilizerCodeSpecError,
+};
 pub use surface::{SurfaceCode, SurfaceCodeBuilder};

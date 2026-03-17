@@ -113,97 +113,129 @@ impl PyCliffordRep {
     /// SX† gate on qubit q.
     #[staticmethod]
     fn sxdg(q: usize) -> Self {
-        Self { inner: RustCliffordRep::sxdg(q) }
+        Self {
+            inner: RustCliffordRep::sxdg(q),
+        }
     }
 
     /// SY† gate on qubit q.
     #[staticmethod]
     fn sydg(q: usize) -> Self {
-        Self { inner: RustCliffordRep::sydg(q) }
+        Self {
+            inner: RustCliffordRep::sydg(q),
+        }
     }
 
     /// SZ† gate on qubit q.
     #[staticmethod]
     fn szdg(q: usize) -> Self {
-        Self { inner: RustCliffordRep::szdg(q) }
+        Self {
+            inner: RustCliffordRep::szdg(q),
+        }
     }
 
     /// H2 gate on qubit q.
     #[staticmethod]
     fn h2(q: usize) -> Self {
-        Self { inner: RustCliffordRep::h2(q) }
+        Self {
+            inner: RustCliffordRep::h2(q),
+        }
     }
 
     /// H3 gate on qubit q.
     #[staticmethod]
     fn h3(q: usize) -> Self {
-        Self { inner: RustCliffordRep::h3(q) }
+        Self {
+            inner: RustCliffordRep::h3(q),
+        }
     }
 
     /// H4 gate on qubit q.
     #[staticmethod]
     fn h4(q: usize) -> Self {
-        Self { inner: RustCliffordRep::h4(q) }
+        Self {
+            inner: RustCliffordRep::h4(q),
+        }
     }
 
     /// H5 gate on qubit q.
     #[staticmethod]
     fn h5(q: usize) -> Self {
-        Self { inner: RustCliffordRep::h5(q) }
+        Self {
+            inner: RustCliffordRep::h5(q),
+        }
     }
 
     /// H6 gate on qubit q.
     #[staticmethod]
     fn h6(q: usize) -> Self {
-        Self { inner: RustCliffordRep::h6(q) }
+        Self {
+            inner: RustCliffordRep::h6(q),
+        }
     }
 
     /// F (Face) gate on qubit q.
     #[staticmethod]
     fn f(q: usize) -> Self {
-        Self { inner: RustCliffordRep::f(q) }
+        Self {
+            inner: RustCliffordRep::f(q),
+        }
     }
 
     /// F† gate on qubit q.
     #[staticmethod]
     fn fdg(q: usize) -> Self {
-        Self { inner: RustCliffordRep::fdg(q) }
+        Self {
+            inner: RustCliffordRep::fdg(q),
+        }
     }
 
     /// F2 gate on qubit q.
     #[staticmethod]
     fn f2(q: usize) -> Self {
-        Self { inner: RustCliffordRep::f2(q) }
+        Self {
+            inner: RustCliffordRep::f2(q),
+        }
     }
 
     /// F2† gate on qubit q.
     #[staticmethod]
     fn f2dg(q: usize) -> Self {
-        Self { inner: RustCliffordRep::f2dg(q) }
+        Self {
+            inner: RustCliffordRep::f2dg(q),
+        }
     }
 
     /// F3 gate on qubit q.
     #[staticmethod]
     fn f3(q: usize) -> Self {
-        Self { inner: RustCliffordRep::f3(q) }
+        Self {
+            inner: RustCliffordRep::f3(q),
+        }
     }
 
     /// F3† gate on qubit q.
     #[staticmethod]
     fn f3dg(q: usize) -> Self {
-        Self { inner: RustCliffordRep::f3dg(q) }
+        Self {
+            inner: RustCliffordRep::f3dg(q),
+        }
     }
 
     /// F4 gate on qubit q.
     #[staticmethod]
     fn f4(q: usize) -> Self {
-        Self { inner: RustCliffordRep::f4(q) }
+        Self {
+            inner: RustCliffordRep::f4(q),
+        }
     }
 
     /// F4† gate on qubit q.
     #[staticmethod]
     fn f4dg(q: usize) -> Self {
-        Self { inner: RustCliffordRep::f4dg(q) }
+        Self {
+            inner: RustCliffordRep::f4dg(q),
+        }
     }
 
     /// CNOT (controlled-X) gate with control c and target t.
@@ -241,49 +273,65 @@ impl PyCliffordRep {
     /// SXX gate on qubits a and b.
     #[staticmethod]
     fn sxx(a: usize, b: usize) -> Self {
-        Self { inner: RustCliffordRep::sxx(a, b) }
+        Self {
+            inner: RustCliffordRep::sxx(a, b),
+        }
     }
 
     /// SXX† gate on qubits a and b.
     #[staticmethod]
     fn sxxdg(a: usize, b: usize) -> Self {
-        Self { inner: RustCliffordRep::sxxdg(a, b) }
+        Self {
+            inner: RustCliffordRep::sxxdg(a, b),
+        }
     }
 
     /// SYY gate on qubits a and b.
     #[staticmethod]
     fn syy(a: usize, b: usize) -> Self {
-        Self { inner: RustCliffordRep::syy(a, b) }
+        Self {
+            inner: RustCliffordRep::syy(a, b),
+        }
     }
 
     /// SYY† gate on qubits a and b.
     #[staticmethod]
     fn syydg(a: usize, b: usize) -> Self {
-        Self { inner: RustCliffordRep::syydg(a, b) }
+        Self {
+            inner: RustCliffordRep::syydg(a, b),
+        }
     }
 
     /// SZZ gate on qubits a and b.
     #[staticmethod]
     fn szz(a: usize, b: usize) -> Self {
-        Self { inner: RustCliffordRep::szz(a, b) }
+        Self {
+            inner: RustCliffordRep::szz(a, b),
+        }
     }
 
     /// SZZ† gate on qubits a and b.
     #[staticmethod]
     fn szzdg(a: usize, b: usize) -> Self {
-        Self { inner: RustCliffordRep::szzdg(a, b) }
+        Self {
+            inner: RustCliffordRep::szzdg(a, b),
+        }
     }
 
     /// iSWAP gate on qubits a and b.
     #[staticmethod]
     fn iswap(a: usize, b: usize) -> Self {
-        Self { inner: RustCliffordRep::iswap(a, b) }
+        Self {
+            inner: RustCliffordRep::iswap(a, b),
+        }
     }
 
     /// G gate on qubits a and b.
     #[staticmethod]
     fn g(a: usize, b: usize) -> Self {
-        Self { inner: RustCliffordRep::g(a, b) }
+        Self {
+            inner: RustCliffordRep::g(a, b),
+        }
     }
 
     // ========================================================================
@@ -447,7 +495,9 @@ macro_rules! clifford_1q {
         #[pyfunction]
         #[pyo3(name = $export_name)]
         fn $py_name(q: usize) -> PyCliffordRep {
-            PyCliffordRep { inner: RustCliffordRep::$method(q) }
+            PyCliffordRep {
+                inner: RustCliffordRep::$method(q),
+            }
         }
     };
 }
@@ -457,46 +507,48 @@ macro_rules! clifford_2q {
         #[pyfunction]
         #[pyo3(name = $export_name)]
         fn $py_name(a: usize, b: usize) -> PyCliffordRep {
-            PyCliffordRep { inner: RustCliffordRep::$method(a, b) }
+            PyCliffordRep {
+                inner: RustCliffordRep::$method(a, b),
+            }
         }
     };
 }
 
 // Single-qubit gates
-clifford_1q!(py_h,    "H",    h);
-clifford_1q!(py_h2,   "H2",   h2);
-clifford_1q!(py_h3,   "H3",   h3);
-clifford_1q!(py_h4,   "H4",   h4);
-clifford_1q!(py_h5,   "H5",   h5);
-clifford_1q!(py_h6,   "H6",   h6);
-clifford_1q!(py_sx,   "SX",   sx);
+clifford_1q!(py_h, "H", h);
+clifford_1q!(py_h2, "H2", h2);
+clifford_1q!(py_h3, "H3", h3);
+clifford_1q!(py_h4, "H4", h4);
+clifford_1q!(py_h5, "H5", h5);
+clifford_1q!(py_h6, "H6", h6);
+clifford_1q!(py_sx, "SX", sx);
 clifford_1q!(py_sxdg, "SXdg", sxdg);
-clifford_1q!(py_sy,   "SY",   sy);
+clifford_1q!(py_sy, "SY", sy);
 clifford_1q!(py_sydg, "SYdg", sydg);
-clifford_1q!(py_sz,   "SZ",   sz);
+clifford_1q!(py_sz, "SZ", sz);
 clifford_1q!(py_szdg, "SZdg", szdg);
-clifford_1q!(py_f,    "F",    f);
-clifford_1q!(py_fdg,  "Fdg",  fdg);
-clifford_1q!(py_f2,   "F2",   f2);
+clifford_1q!(py_f, "F", f);
+clifford_1q!(py_fdg, "Fdg", fdg);
+clifford_1q!(py_f2, "F2", f2);
 clifford_1q!(py_f2dg, "F2dg", f2dg);
-clifford_1q!(py_f3,   "F3",   f3);
+clifford_1q!(py_f3, "F3", f3);
 clifford_1q!(py_f3dg, "F3dg", f3dg);
-clifford_1q!(py_f4,   "F4",   f4);
+clifford_1q!(py_f4, "F4", f4);
 clifford_1q!(py_f4dg, "F4dg", f4dg);
 
 // Two-qubit gates
-clifford_2q!(py_cx,    "CX",    cx);
-clifford_2q!(py_cy,    "CY",    cy);
-clifford_2q!(py_cz,    "CZ",    cz);
-clifford_2q!(py_swap,  "SWAP",  swap);
-clifford_2q!(py_sxx,   "SXX",   sxx);
+clifford_2q!(py_cx, "CX", cx);
+clifford_2q!(py_cy, "CY", cy);
+clifford_2q!(py_cz, "CZ", cz);
+clifford_2q!(py_swap, "SWAP", swap);
+clifford_2q!(py_sxx, "SXX", sxx);
 clifford_2q!(py_sxxdg, "SXXdg", sxxdg);
-clifford_2q!(py_syy,   "SYY",   syy);
+clifford_2q!(py_syy, "SYY", syy);
 clifford_2q!(py_syydg, "SYYdg", syydg);
-clifford_2q!(py_szz,   "SZZ",   szz);
+clifford_2q!(py_szz, "SZZ", szz);
 clifford_2q!(py_szzdg, "SZZdg", szzdg);
 clifford_2q!(py_iswap, "ISWAP", iswap);
-clifford_2q!(py_g,     "G",     g);
+clifford_2q!(py_g, "G", g);
 
 /// Register Clifford types with Python module.
 pub fn register_clifford_types(m: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -83,10 +83,10 @@ pub use engine_builder::QASMEngineBuilder;
 pub use parser::{ParseConfig, QASMParser};
 pub use preprocessor::Preprocessor;
 pub use program::QASMProgram;
-#[cfg(feature = "phir")]
-pub use qasm_to_phir::{qasm_program_to_phir_module, qasm_to_phir_module, qasm_to_ron};
 #[cfg(feature = "wasm")]
 pub use program::QasmEngineWasm;
+#[cfg(feature = "phir")]
+pub use qasm_to_phir::{qasm_program_to_phir_module, qasm_to_phir_module, qasm_to_ron};
 pub use unified_engine_builder::{QasmEngineBuilder, qasm_engine};
 pub use util::{count_qubits_in_file, count_qubits_in_str};
 

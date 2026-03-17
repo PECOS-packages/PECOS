@@ -120,7 +120,9 @@ impl BitAnd for Clifford {
 
         // Extend both to the combined qubit count and compose.
         // Since they act on disjoint qubits, composition = tensor product.
-        lhs_rep.extended_to(total_nq).compose(&rhs_rep.extended_to(total_nq))
+        lhs_rep
+            .extended_to(total_nq)
+            .compose(&rhs_rep.extended_to(total_nq))
     }
 }
 
@@ -177,6 +179,7 @@ impl BitAnd<Clifford> for Pauli {
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl BitAnd<Pauli> for Clifford {
     type Output = CliffordRep;
 
@@ -387,6 +390,7 @@ impl BitAnd<CliffordRep> for UnitaryRep {
 /// Panics if the `CliffordRep` cannot be matched to any known gate
 /// decomposition (e.g. Cliffords on 3+ qubits that are not a tensor
 /// product of 1q and 2q gates).
+#[must_use]
 pub fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
     use crate::clifford::Clifford;
 
@@ -403,9 +407,7 @@ pub fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
         let mut found = false;
         for &cliff in Clifford::all_1q() {
             let cliff_rep = cliff.on_qubit(q).extended_to(nq);
-            if *cliff_rep.x_image(q) == *cr.x_image(q)
-                && *cliff_rep.z_image(q) == *cr.z_image(q)
-            {
+            if *cliff_rep.x_image(q) == *cr.x_image(q) && *cliff_rep.z_image(q) == *cr.z_image(q) {
                 parts.push(cliff.to_unitary_rep_on_qubit(q));
                 found = true;
                 break;
@@ -448,8 +450,8 @@ pub fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pauli::PauliOperator;
     use crate::QuarterPhase;
+    use crate::pauli::PauliOperator;
 
     // Pauli * Pauli -> PauliString
     #[test]
@@ -661,8 +663,8 @@ mod tests {
     // Clifford <-> Unitary -> UnitaryRep
     #[test]
     fn clifford_mul_unitary() {
-        use crate::unitary_rep::RotationType;
         use crate::Angle64;
+        use crate::unitary_rep::RotationType;
         let rz = Unitary::Rotation {
             rotation_type: RotationType::RZ,
             angle: Angle64::from_turn_ratio(1, 8),
@@ -673,8 +675,8 @@ mod tests {
 
     #[test]
     fn unitary_mul_clifford() {
-        use crate::unitary_rep::RotationType;
         use crate::Angle64;
+        use crate::unitary_rep::RotationType;
         let rz = Unitary::Rotation {
             rotation_type: RotationType::RZ,
             angle: Angle64::from_turn_ratio(1, 8),
@@ -685,8 +687,8 @@ mod tests {
 
     #[test]
     fn clifford_tensor_unitary() {
-        use crate::unitary_rep::RotationType;
         use crate::Angle64;
+        use crate::unitary_rep::RotationType;
         let rz = Unitary::Rotation {
             rotation_type: RotationType::RZ,
             angle: Angle64::from_turn_ratio(1, 8),

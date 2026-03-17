@@ -862,11 +862,7 @@ impl PauliSequence {
         &self,
         clifford: &pecos_core::clifford_rep::CliffordRep,
     ) -> PauliSequence {
-        let transformed: Vec<PauliString> = self
-            .paulis
-            .iter()
-            .map(|p| clifford.apply(p))
-            .collect();
+        let transformed: Vec<PauliString> = self.paulis.iter().map(|p| clifford.apply(p)).collect();
         PauliSequence::new(transformed)
     }
 }
@@ -1052,16 +1048,14 @@ mod tests {
     #[test]
     fn test_steane_code() {
         // [[7,1,3]] Steane code
-        let gens = PauliSequence::new(
-            vec![
-                Xs([0, 2, 4, 6]),
-                Xs([1, 2, 5, 6]),
-                Xs([3, 4, 5, 6]),
-                Zs([0, 2, 4, 6]),
-                Zs([1, 2, 5, 6]),
-                Zs([3, 4, 5, 6]),
-            ],
-        );
+        let gens = PauliSequence::new(vec![
+            Xs([0, 2, 4, 6]),
+            Xs([1, 2, 5, 6]),
+            Xs([3, 4, 5, 6]),
+            Zs([0, 2, 4, 6]),
+            Zs([1, 2, 5, 6]),
+            Zs([3, 4, 5, 6]),
+        ]);
         assert_eq!(gens.rank(), 6);
         assert!(gens.is_abelian());
 
@@ -1246,16 +1240,14 @@ mod tests {
     #[test]
     fn test_centralizer_steane_code() {
         // [[7,1]] Steane code: 6 generators, centralizer dimension = 14 - 6 = 8
-        let gens = PauliSequence::new(
-            vec![
-                Xs([0, 2, 4, 6]),
-                Xs([1, 2, 5, 6]),
-                Xs([3, 4, 5, 6]),
-                Zs([0, 2, 4, 6]),
-                Zs([1, 2, 5, 6]),
-                Zs([3, 4, 5, 6]),
-            ],
-        );
+        let gens = PauliSequence::new(vec![
+            Xs([0, 2, 4, 6]),
+            Xs([1, 2, 5, 6]),
+            Xs([3, 4, 5, 6]),
+            Zs([0, 2, 4, 6]),
+            Zs([1, 2, 5, 6]),
+            Zs([3, 4, 5, 6]),
+        ]);
         let cent = gens.centralizer();
         assert_eq!(cent.len(), 8); // 6 stabilizer directions + 2 logical
     }
@@ -1263,14 +1255,12 @@ mod tests {
     #[test]
     fn test_centralizer_five_qubit_code() {
         // [[5,1,3]]: 4 generators, centralizer dimension = 10 - 4 = 6
-        let gens = PauliSequence::new(
-            vec![
-                X(0) & Z(1) & Z(2) & X(3),
-                X(1) & Z(2) & Z(3) & X(4),
-                X(0) & X(2) & Z(3) & Z(4),
-                Z(0) & X(1) & X(3) & Z(4),
-            ],
-        );
+        let gens = PauliSequence::new(vec![
+            X(0) & Z(1) & Z(2) & X(3),
+            X(1) & Z(2) & Z(3) & X(4),
+            X(0) & X(2) & Z(3) & Z(4),
+            Z(0) & X(1) & X(3) & Z(4),
+        ]);
         let cent = gens.centralizer();
         assert_eq!(cent.len(), 6);
     }
@@ -1377,10 +1367,7 @@ mod tests {
         assert_eq!(id.num_cols(), 3);
         for i in 0..3 {
             for j in 0..3 {
-                assert_eq!(
-                    id.row(i)[j],
-                    u8::from(i == j),
-                );
+                assert_eq!(id.row(i)[j], u8::from(i == j),);
             }
         }
     }
@@ -1506,8 +1493,8 @@ mod tests {
 
     #[test]
     fn test_apply_clifford_phase_preservation() {
-        use pecos_core::clifford_rep::CliffordRep;
         use pecos_core::QuarterPhase;
+        use pecos_core::clifford_rep::CliffordRep;
 
         // Z gate: X -> -X
         let seq = PauliSequence::new(vec![X(0)]);

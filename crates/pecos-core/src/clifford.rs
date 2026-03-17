@@ -86,7 +86,6 @@ pub enum Clifford {
     F4dg = 23,
 
     // === Two-qubit gates ===
-
     CX = 24,
     CY = 25,
     CZ = 26,
@@ -191,12 +190,12 @@ const ALL_VARIANTS: [Clifford; 38] = [
     Clifford::Gdg,
 ];
 
-/// Pauli image: (negated, target_pauli) where target_pauli is in {X, Y, Z}.
+/// Pauli image: (negated, `target_pauli`) where `target_pauli` is in {X, Y, Z}.
 /// `negated = true` means the image is -P, `false` means +P.
 type SignedPauli = (bool, Pauli);
 
 /// Single-qubit Pauli images table (indexed by discriminant, only valid for 0..24).
-/// Entry: (neg_x, pauli_x, neg_z, pauli_z)
+/// Entry: (`neg_x`, `pauli_x`, `neg_z`, `pauli_z`)
 const IMAGES_1Q: [(bool, Pauli, bool, Pauli); 24] = [
     //                     X image     Z image
     (false, Pauli::X, false, Pauli::Z), //  0: I
@@ -293,11 +292,21 @@ impl Clifford {
             Self::SZZ => Some(GateType::SZZ),
             Self::SZZdg => Some(GateType::SZZdg),
             // These Clifford variants don't have matching GateType entries yet
-            Self::H2 | Self::H3 | Self::H4 | Self::H5 | Self::H6
-            | Self::F2 | Self::F2dg | Self::F3 | Self::F3dg
-            | Self::F4 | Self::F4dg
-            | Self::ISWAP | Self::ISWAPdg
-            | Self::G | Self::Gdg => None,
+            Self::H2
+            | Self::H3
+            | Self::H4
+            | Self::H5
+            | Self::H6
+            | Self::F2
+            | Self::F2dg
+            | Self::F3
+            | Self::F3dg
+            | Self::F4
+            | Self::F4dg
+            | Self::ISWAP
+            | Self::ISWAPdg
+            | Self::G
+            | Self::Gdg => None,
         }
     }
 
@@ -461,7 +470,10 @@ impl Clifford {
     /// Panics if called on a two-qubit gate.
     #[must_use]
     pub fn to_unitary_rep_on_qubit(self, q: impl Into<QubitId>) -> UnitaryRep {
-        assert!(self.is_1q(), "to_unitary_rep_on_qubit called on two-qubit gate {self}");
+        assert!(
+            self.is_1q(),
+            "to_unitary_rep_on_qubit called on two-qubit gate {self}"
+        );
         let q = q.into();
         use crate::unitary_rep;
         match self {
@@ -510,7 +522,10 @@ impl Clifford {
         q0: impl Into<QubitId>,
         q1: impl Into<QubitId>,
     ) -> UnitaryRep {
-        assert!(self.is_2q(), "to_unitary_rep_on_qubits called on single-qubit gate {self}");
+        assert!(
+            self.is_2q(),
+            "to_unitary_rep_on_qubits called on single-qubit gate {self}"
+        );
         let a = q0.into();
         let b = q1.into();
         use crate::unitary_rep;
@@ -531,11 +546,9 @@ impl Clifford {
                 unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b)
                     * unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b)
             }
-            Clifford::ISWAPdg => {
-                (unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b)
-                    * unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b))
-                .dg()
-            }
+            Clifford::ISWAPdg => (unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b)
+                * unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b))
+            .dg(),
             // G = CZ * H(q0) * H(q1) * CZ (apply CZ, then H on both, then CZ)
             Clifford::G => {
                 unitary_rep::CZ(a, b)
@@ -543,13 +556,11 @@ impl Clifford {
                     * unitary_rep::H(b)
                     * unitary_rep::CZ(a, b)
             }
-            Clifford::Gdg => {
-                (unitary_rep::CZ(a, b)
-                    * unitary_rep::H(a)
-                    * unitary_rep::H(b)
-                    * unitary_rep::CZ(a, b))
-                .dg()
-            }
+            Clifford::Gdg => (unitary_rep::CZ(a, b)
+                * unitary_rep::H(a)
+                * unitary_rep::H(b)
+                * unitary_rep::CZ(a, b))
+            .dg(),
             _ => unreachable!(),
         }
     }
@@ -632,7 +643,10 @@ impl Clifford {
                 return variant;
             }
         }
-        unreachable!("Invalid Clifford images: X->({}, {:?}), Z->({}, {:?})", nx, px, nz, pz)
+        unreachable!(
+            "Invalid Clifford images: X->({}, {:?}), Z->({}, {:?})",
+            nx, px, nz, pz
+        )
     }
 
     /// Inverse for two-qubit gates (hardcoded dagger pairs and self-inverses).
@@ -660,7 +674,7 @@ impl Clifford {
 }
 
 /// Multiply two distinct non-identity Paulis.
-/// Returns (epsilon, third_pauli) where epsilon encodes the sign:
+/// Returns (epsilon, `third_pauli`) where epsilon encodes the sign:
 /// - `false` for cyclic (X*Y, Y*Z, Z*X)
 /// - `true` for anti-cyclic (Y*X, Z*Y, X*Z)
 fn pauli_product_sign(p1: Pauli, p2: Pauli) -> (bool, Pauli) {
@@ -905,8 +919,12 @@ mod tests {
     #[test]
     fn test_hadamards_are_involutions() {
         for &h in &[
-            Clifford::H, Clifford::H2, Clifford::H3,
-            Clifford::H4, Clifford::H5, Clifford::H6,
+            Clifford::H,
+            Clifford::H2,
+            Clifford::H3,
+            Clifford::H4,
+            Clifford::H5,
+            Clifford::H6,
         ] {
             assert_eq!(h.compose(h), Clifford::I, "{h}^2 != I");
         }

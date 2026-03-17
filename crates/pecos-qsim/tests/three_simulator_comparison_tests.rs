@@ -450,19 +450,29 @@ fn test_reset_consistency() {
 fn test_h_variant_gates_consistency() {
     // Each H variant applied to |0>
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.h2(&qid(0)); dm.h2(&qid(0)); stab.h2(&qid(0));
+        sv.h2(&qid(0));
+        dm.h2(&qid(0));
+        stab.h2(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.h3(&qid(0)); dm.h3(&qid(0)); stab.h3(&qid(0));
+        sv.h3(&qid(0));
+        dm.h3(&qid(0));
+        stab.h3(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.h4(&qid(0)); dm.h4(&qid(0)); stab.h4(&qid(0));
+        sv.h4(&qid(0));
+        dm.h4(&qid(0));
+        stab.h4(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.h5(&qid(0)); dm.h5(&qid(0)); stab.h5(&qid(0));
+        sv.h5(&qid(0));
+        dm.h5(&qid(0));
+        stab.h5(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.h6(&qid(0)); dm.h6(&qid(0)); stab.h6(&qid(0));
+        sv.h6(&qid(0));
+        dm.h6(&qid(0));
+        stab.h6(&qid(0));
     });
 
     // H variants applied to H|0> = |+>
@@ -493,28 +503,44 @@ fn test_h_variant_gates_consistency() {
 fn test_f_family_gates_consistency() {
     // Each F variant on |0>
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.f(&qid(0)); dm.f(&qid(0)); stab.f(&qid(0));
+        sv.f(&qid(0));
+        dm.f(&qid(0));
+        stab.f(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.fdg(&qid(0)); dm.fdg(&qid(0)); stab.fdg(&qid(0));
+        sv.fdg(&qid(0));
+        dm.fdg(&qid(0));
+        stab.fdg(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.f2(&qid(0)); dm.f2(&qid(0)); stab.f2(&qid(0));
+        sv.f2(&qid(0));
+        dm.f2(&qid(0));
+        stab.f2(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.f2dg(&qid(0)); dm.f2dg(&qid(0)); stab.f2dg(&qid(0));
+        sv.f2dg(&qid(0));
+        dm.f2dg(&qid(0));
+        stab.f2dg(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.f3(&qid(0)); dm.f3(&qid(0)); stab.f3(&qid(0));
+        sv.f3(&qid(0));
+        dm.f3(&qid(0));
+        stab.f3(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.f3dg(&qid(0)); dm.f3dg(&qid(0)); stab.f3dg(&qid(0));
+        sv.f3dg(&qid(0));
+        dm.f3dg(&qid(0));
+        stab.f3dg(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.f4(&qid(0)); dm.f4(&qid(0)); stab.f4(&qid(0));
+        sv.f4(&qid(0));
+        dm.f4(&qid(0));
+        stab.f4(&qid(0));
     });
     compare_clifford_circuit(1, |sv, dm, stab| {
-        sv.f4dg(&qid(0)); dm.f4dg(&qid(0)); stab.f4dg(&qid(0));
+        sv.f4dg(&qid(0));
+        dm.f4dg(&qid(0));
+        stab.f4dg(&qid(0));
     });
 
     // F * Fdg = I

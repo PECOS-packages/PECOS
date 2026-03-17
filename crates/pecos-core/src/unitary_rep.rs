@@ -261,9 +261,11 @@ impl Unitary {
                 after,
             } => {
                 // Identity if all U3s are identity (theta=0, phi+lambda=0) and interaction is zero
-                before.iter().chain(after.iter()).all(|u3| {
-                    u3[0] == Angle64::ZERO && (u3[1] + u3[2]) == Angle64::ZERO
-                }) && interaction.iter().all(|a| *a == Angle64::ZERO)
+                before
+                    .iter()
+                    .chain(after.iter())
+                    .all(|u3| u3[0] == Angle64::ZERO && (u3[1] + u3[2]) == Angle64::ZERO)
+                    && interaction.iter().all(|a| *a == Angle64::ZERO)
             }
             Self::Named(gate_type) => *gate_type == GateType::I,
         }
@@ -1034,7 +1036,13 @@ impl UnitaryRep {
                 ))
             }
             // Gate adjoint: negate angle for rotations, wrap for non-self-adjoint named gates
-            Self::Gate(Unitary::Rotation { rotation_type, angle }, qubits) => Self::Gate(
+            Self::Gate(
+                Unitary::Rotation {
+                    rotation_type,
+                    angle,
+                },
+                qubits,
+            ) => Self::Gate(
                 Unitary::Rotation {
                     rotation_type: *rotation_type,
                     angle: negate_angle(*angle),
@@ -1076,7 +1084,11 @@ impl UnitaryRep {
                 qubits,
             ) => {
                 let negate_u3 = |u3: &[Angle64; 3]| -> [Angle64; 3] {
-                    [negate_angle(u3[0]), negate_angle(u3[2]), negate_angle(u3[1])]
+                    [
+                        negate_angle(u3[0]),
+                        negate_angle(u3[2]),
+                        negate_angle(u3[1]),
+                    ]
                 };
                 Self::Gate(
                     Unitary::U2q {
@@ -1476,7 +1488,13 @@ impl UnitaryRep {
             }
 
             // R1XY, U3, RXXRYYRZZ, and U2q are not Paulis
-            Self::Gate(Unitary::R1XY { .. } | Unitary::U3 { .. } | Unitary::RXXRYYRZZ { .. } | Unitary::U2q { .. }, _) => None,
+            Self::Gate(
+                Unitary::R1XY { .. }
+                | Unitary::U3 { .. }
+                | Unitary::RXXRYYRZZ { .. }
+                | Unitary::U2q { .. },
+                _,
+            ) => None,
 
             Self::Compose(_) => {
                 // Composition of Paulis requires multiplication
@@ -1789,12 +1807,10 @@ impl UnitaryRep {
                     && (*beta == Angle64::ZERO || *beta == Angle64::HALF_TURN)
                     && (*gamma == Angle64::ZERO || *gamma == Angle64::HALF_TURN)
             }
-            // U2q is Hermitian iff U2q = U2q†, which is structurally complex;
-            // conservatively return false (matrix-level check can verify).
-            Self::Gate(Unitary::U2q { .. }, _) => false,
             Self::Tensor(parts) => parts.iter().all(UnitaryRep::is_hermitian),
-            // Composition of Hermitians isn't generally Hermitian; phase factors break Hermiticity
-            Self::Compose(_) | Self::Phase { .. } => false,
+            // U2q Hermiticity is structurally complex; conservatively return false.
+            // Composition of Hermitians isn't generally Hermitian; phase factors break Hermiticity.
+            Self::Gate(Unitary::U2q { .. }, _) | Self::Compose(_) | Self::Phase { .. } => false,
             Self::Adjoint(inner) => inner.is_hermitian(), // (A†)† = A, so same as inner
         }
     }
@@ -1922,7 +1938,13 @@ impl UnitaryRep {
                 gates
             }
 
-            Self::Gate(Unitary::Rotation { rotation_type, angle }, qubits) => {
+            Self::Gate(
+                Unitary::Rotation {
+                    rotation_type,
+                    angle,
+                },
+                qubits,
+            ) => {
                 let gate_type = match rotation_type {
                     RotationType::RX => GateType::RX,
                     RotationType::RY => GateType::RY,
@@ -1983,11 +2005,21 @@ impl UnitaryRep {
                 vec![Gate::with_angles(
                     GateType::U2q,
                     smallvec::smallvec![
-                        before[0][0], before[0][1], before[0][2],
-                        before[1][0], before[1][1], before[1][2],
-                        interaction[0], interaction[1], interaction[2],
-                        after[0][0], after[0][1], after[0][2],
-                        after[1][0], after[1][1], after[1][2]
+                        before[0][0],
+                        before[0][1],
+                        before[0][2],
+                        before[1][0],
+                        before[1][1],
+                        before[1][2],
+                        interaction[0],
+                        interaction[1],
+                        interaction[2],
+                        after[0][0],
+                        after[0][1],
+                        after[0][2],
+                        after[1][0],
+                        after[1][1],
+                        after[1][2]
                     ],
                     qubit_ids,
                 )]
@@ -2075,9 +2107,13 @@ impl UnitaryRep {
                 Some(result)
             }
 
-            Self::Gate(Unitary::Rotation { rotation_type, angle }, qubits) => {
-                rotation_to_clifford_rep(*rotation_type, *angle, qubits, num_qubits)
-            }
+            Self::Gate(
+                Unitary::Rotation {
+                    rotation_type,
+                    angle,
+                },
+                qubits,
+            ) => rotation_to_clifford_rep(*rotation_type, *angle, qubits, num_qubits),
 
             // R1XY Clifford case: decompose as RZ(-phi+pi/2) * RY(theta) * RZ(phi-pi/2)
             // and convert each to CliffordRep. Only reached when is_clifford() is true.
@@ -2778,8 +2814,8 @@ trait GateTypeExt {
 impl GateTypeExt for GateType {
     fn is_clifford(&self) -> bool {
         use GateType::{
-            CX, CY, CZ, F, Fdg, H, I, SWAP, SX, SXX, SXXdg, SXdg, SY, SYY, SYYdg, SYdg, SZ,
-            SZZ, SZZdg, SZdg, X, Y, Z,
+            CX, CY, CZ, F, Fdg, H, I, SWAP, SX, SXX, SXXdg, SXdg, SY, SYY, SYYdg, SYdg, SZ, SZZ,
+            SZZdg, SZdg, X, Y, Z,
         };
         matches!(
             self,
@@ -3298,7 +3334,11 @@ pub fn SZZs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
 /// Toffoli (CCX) gate.
 #[must_use]
 #[allow(non_snake_case)]
-pub fn CCX(c0: impl Into<QubitId>, c1: impl Into<QubitId>, target: impl Into<QubitId>) -> UnitaryRep {
+pub fn CCX(
+    c0: impl Into<QubitId>,
+    c1: impl Into<QubitId>,
+    target: impl Into<QubitId>,
+) -> UnitaryRep {
     UnitaryRep::gate(
         GateType::CCX,
         smallvec::smallvec![c0.into().0, c1.into().0, target.into().0],
@@ -3510,7 +3550,13 @@ impl UnitaryRep {
                     diagram.add_gate(q, name, color, GateFamily::Default);
                 }
             }
-            Self::Gate(Unitary::Rotation { rotation_type, angle }, qubits) => {
+            Self::Gate(
+                Unitary::Rotation {
+                    rotation_type,
+                    angle,
+                },
+                qubits,
+            ) => {
                 let resolved_gt = rotation_to_gate_type(*rotation_type, *angle);
                 let name = if let Some(gt) = resolved_gt {
                     format!("{gt:?}")
@@ -5052,7 +5098,13 @@ mod tests {
     fn from_str_rz_with_angle() {
         let op: UnitaryRep = "RZ(pi/4) 0".parse().unwrap();
         match op {
-            UnitaryRep::Gate(Unitary::Rotation { rotation_type, angle }, qubits) => {
+            UnitaryRep::Gate(
+                Unitary::Rotation {
+                    rotation_type,
+                    angle,
+                },
+                qubits,
+            ) => {
                 assert_eq!(rotation_type, RotationType::RZ);
                 assert_eq!(angle, Angle64::HALF_TURN / 4);
                 assert_eq!(qubits[0], 0);
@@ -5065,7 +5117,13 @@ mod tests {
     fn from_str_rx_with_angle() {
         let op: UnitaryRep = "RX(pi/2) 3".parse().unwrap();
         match op {
-            UnitaryRep::Gate(Unitary::Rotation { rotation_type, angle }, qubits) => {
+            UnitaryRep::Gate(
+                Unitary::Rotation {
+                    rotation_type,
+                    angle,
+                },
+                qubits,
+            ) => {
                 assert_eq!(rotation_type, RotationType::RX);
                 assert_eq!(angle, Angle64::QUARTER_TURN);
                 assert_eq!(qubits[0], 3);
@@ -5078,7 +5136,13 @@ mod tests {
     fn from_str_rzz_two_qubit() {
         let op: UnitaryRep = "RZZ(pi) 0 1".parse().unwrap();
         match op {
-            UnitaryRep::Gate(Unitary::Rotation { rotation_type, angle }, qubits) => {
+            UnitaryRep::Gate(
+                Unitary::Rotation {
+                    rotation_type,
+                    angle,
+                },
+                qubits,
+            ) => {
                 assert_eq!(rotation_type, RotationType::RZZ);
                 assert_eq!(angle, Angle64::HALF_TURN);
                 assert_eq!(qubits.as_slice(), &[0, 1]);
@@ -5408,28 +5472,36 @@ mod tests {
     #[test]
     fn unitary_rotation_is_clifford() {
         // Quarter-turn multiples are Clifford
-        assert!(Unitary::Rotation {
-            rotation_type: RotationType::RZ,
-            angle: Angle64::QUARTER_TURN,
-        }
-        .is_clifford());
-        assert!(Unitary::Rotation {
-            rotation_type: RotationType::RX,
-            angle: Angle64::HALF_TURN,
-        }
-        .is_clifford());
-        assert!(Unitary::Rotation {
-            rotation_type: RotationType::RY,
-            angle: Angle64::ZERO,
-        }
-        .is_clifford());
+        assert!(
+            Unitary::Rotation {
+                rotation_type: RotationType::RZ,
+                angle: Angle64::QUARTER_TURN,
+            }
+            .is_clifford()
+        );
+        assert!(
+            Unitary::Rotation {
+                rotation_type: RotationType::RX,
+                angle: Angle64::HALF_TURN,
+            }
+            .is_clifford()
+        );
+        assert!(
+            Unitary::Rotation {
+                rotation_type: RotationType::RY,
+                angle: Angle64::ZERO,
+            }
+            .is_clifford()
+        );
 
         // Non-quarter-turn is not Clifford
-        assert!(!Unitary::Rotation {
-            rotation_type: RotationType::RZ,
-            angle: Angle64::from_turn_ratio(1, 8),
-        }
-        .is_clifford());
+        assert!(
+            !Unitary::Rotation {
+                rotation_type: RotationType::RZ,
+                angle: Angle64::from_turn_ratio(1, 8),
+            }
+            .is_clifford()
+        );
     }
 
     #[test]
@@ -5437,22 +5509,32 @@ mod tests {
         assert!(Unitary::Named(GateType::I).is_identity());
         assert!(!Unitary::Named(GateType::H).is_identity());
 
-        assert!(Unitary::Rotation {
-            rotation_type: RotationType::RZ,
-            angle: Angle64::ZERO,
-        }
-        .is_identity());
-        assert!(!Unitary::Rotation {
-            rotation_type: RotationType::RZ,
-            angle: Angle64::QUARTER_TURN,
-        }
-        .is_identity());
+        assert!(
+            Unitary::Rotation {
+                rotation_type: RotationType::RZ,
+                angle: Angle64::ZERO,
+            }
+            .is_identity()
+        );
+        assert!(
+            !Unitary::Rotation {
+                rotation_type: RotationType::RZ,
+                angle: Angle64::QUARTER_TURN,
+            }
+            .is_identity()
+        );
     }
 
     #[test]
     fn unitary_to_gate_type() {
-        assert_eq!(Unitary::Named(GateType::H).to_gate_type(), Some(GateType::H));
-        assert_eq!(Unitary::Named(GateType::CX).to_gate_type(), Some(GateType::CX));
+        assert_eq!(
+            Unitary::Named(GateType::H).to_gate_type(),
+            Some(GateType::H)
+        );
+        assert_eq!(
+            Unitary::Named(GateType::CX).to_gate_type(),
+            Some(GateType::CX)
+        );
 
         // Quarter-turn RZ -> SZ
         assert_eq!(
@@ -5513,19 +5595,25 @@ mod tests {
     fn unitary_on_qubit() {
         let h = Unitary::Named(GateType::H);
         let rep = h.on_qubit(3);
-        assert!(matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::H), ref q) if q.as_slice() == [3]));
+        assert!(
+            matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::H), ref q) if q.as_slice() == [3])
+        );
     }
 
     #[test]
     fn unitary_on_qubits() {
         let cx = Unitary::Named(GateType::CX);
         let rep = cx.on_qubits(2, 5);
-        assert!(matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::CX), ref q) if q.as_slice() == [2, 5]));
+        assert!(
+            matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::CX), ref q) if q.as_slice() == [2, 5])
+        );
 
         // 1q gate ignores second qubit
         let h = Unitary::Named(GateType::H);
         let rep = h.on_qubits(3, 99);
-        assert!(matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::H), ref q) if q.as_slice() == [3]));
+        assert!(
+            matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::H), ref q) if q.as_slice() == [3])
+        );
     }
 
     #[test]

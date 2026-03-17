@@ -5,11 +5,11 @@
 
 use pecos_core::Angle64;
 use pecos_core::prelude::GateType;
+use pecos_phir::Result;
 use pecos_phir::builtin_ops::{BuiltinOp, FuncOp, VarDefineOp};
 use pecos_phir::ops::{ClassicalOp, Operation, QuantumOp, SSAValue};
 use pecos_phir::phir::{AttributeValue, Block, Instruction, Module};
 use pecos_phir::types::{FunctionType, Type};
-use pecos_phir::Result;
 
 use crate::ast::Operation as QasmOp;
 use crate::parser::{Program, QASMParser};
@@ -151,12 +151,11 @@ impl Converter {
 
             QasmOp::NativeGate(gate) => {
                 let quantum_op = gate_type_to_quantum_op(gate.gate_type, &gate.params)?;
-                let operands: Vec<SSAValue> =
-                    gate.qubits.iter().map(|q| qubit_ssa[q.0]).collect();
+                let operands: Vec<SSAValue> = gate.qubits.iter().map(|q| qubit_ssa[q.0]).collect();
                 let results: Vec<SSAValue> = operands.iter().map(|_| self.new_ssa()).collect();
                 let result_types = vec![Type::Qubit; results.len()];
 
-                if gate.gate_type == GateType::Prep {
+                if gate.gate_type == GateType::PZ {
                     // Prep/reset: emit Reset instead of a gate
                     block.add_instruction(Instruction::new(
                         Operation::Quantum(QuantumOp::Reset),
@@ -180,11 +179,8 @@ impl Converter {
                 c_index,
             } => {
                 if let Some(qubit) = gate.qubits.first() {
-                    self.deferred_measurements.push((
-                        qubit_ssa[qubit.0],
-                        c_reg.clone(),
-                        *c_index,
-                    ));
+                    self.deferred_measurements
+                        .push((qubit_ssa[qubit.0], c_reg.clone(), *c_index));
                 }
             }
 
@@ -282,10 +278,8 @@ impl Converter {
 
                 // Shift left by bit_idx
                 let shifted_ssa = self.new_ssa();
-                let shift_amount =
-                    u32::try_from(*bit_idx).map_err(|_| {
-                        pecos_phir::PhirError::internal("bit index too large")
-                    })?;
+                let shift_amount = u32::try_from(*bit_idx)
+                    .map_err(|_| pecos_phir::PhirError::internal("bit index too large"))?;
                 block.add_instruction(Instruction::new(
                     Operation::Classical(ClassicalOp::Shl(shift_amount)),
                     vec![cast_ssa],
@@ -342,7 +336,10 @@ fn gate_name_to_quantum_op(name: &str, params: &[f64]) -> Result<QuantumOp> {
         "ry" => Ok(QuantumOp::RY(angle_param(params, 0))),
         "rz" => Ok(QuantumOp::RZ(angle_param(params, 0))),
         "rzz" => Ok(QuantumOp::RZZ(angle_param(params, 0))),
-        "r1xy" => Ok(QuantumOp::R1XY(angle_param(params, 0), angle_param(params, 1))),
+        "r1xy" => Ok(QuantumOp::R1XY(
+            angle_param(params, 0),
+            angle_param(params, 1),
+        )),
         "u" | "u3" => Ok(QuantumOp::U3(
             angle_param(params, 0),
             angle_param(params, 1),
@@ -372,9 +369,12 @@ fn gate_type_to_quantum_op(gate_type: GateType, params: &[f64]) -> Result<Quantu
         GateType::RY => Ok(QuantumOp::RY(angle_param(params, 0))),
         GateType::RZ => Ok(QuantumOp::RZ(angle_param(params, 0))),
         GateType::RZZ => Ok(QuantumOp::RZZ(angle_param(params, 0))),
-        GateType::R1XY => Ok(QuantumOp::R1XY(angle_param(params, 0), angle_param(params, 1))),
-        GateType::Measure => Ok(QuantumOp::Measure),
-        GateType::Prep => Ok(QuantumOp::Reset),
+        GateType::R1XY => Ok(QuantumOp::R1XY(
+            angle_param(params, 0),
+            angle_param(params, 1),
+        )),
+        GateType::MZ => Ok(QuantumOp::Measure),
+        GateType::PZ => Ok(QuantumOp::Reset),
         _ => Err(pecos_phir::PhirError::internal(format!(
             "Unsupported gate type: {gate_type:?}"
         ))),
@@ -400,7 +400,11 @@ mod tests {
     }
 
     fn get_main_block(module: &Module) -> &Block {
-        let block = module.body.blocks.first().expect("module should have a block");
+        let block = module
+            .body
+            .blocks
+            .first()
+            .expect("module should have a block");
         let func_instr = block.operations.first().expect("should have a function");
         if let Operation::Builtin(BuiltinOp::Func(func)) = &func_instr.operation {
             func.body
@@ -431,9 +435,18 @@ mod tests {
             .iter()
             .map(|i| i.operation.name())
             .collect();
-        assert!(ops.contains(&"quantum.h".to_string()), "should contain H gate: {ops:?}");
-        assert!(ops.contains(&"quantum.measure".to_string()), "should contain Measure: {ops:?}");
-        assert!(ops.contains(&"arith.result".to_string()), "should contain Result: {ops:?}");
+        assert!(
+            ops.contains(&"quantum.h".to_string()),
+            "should contain H gate: {ops:?}"
+        );
+        assert!(
+            ops.contains(&"quantum.measure".to_string()),
+            "should contain Measure: {ops:?}"
+        );
+        assert!(
+            ops.contains(&"arith.result".to_string()),
+            "should contain Result: {ops:?}"
+        );
     }
 
     #[test]
@@ -472,9 +485,10 @@ mod tests {
         let module = parse_and_convert(qasm);
         let block = get_main_block(&module);
 
-        let has_rz = block.operations.iter().any(|i| {
-            matches!(&i.operation, Operation::Quantum(QuantumOp::RZ(_)))
-        });
+        let has_rz = block
+            .operations
+            .iter()
+            .any(|i| matches!(&i.operation, Operation::Quantum(QuantumOp::RZ(_))));
         assert!(has_rz, "should contain RZ gate");
     }
 
@@ -538,7 +552,10 @@ mod tests {
             .iter()
             .filter(|i| matches!(&i.operation, Operation::Quantum(QuantumOp::Alloc)))
             .count();
-        assert_eq!(alloc_count, 0, "should have no Alloc ops (VarDefine handles allocation)");
+        assert_eq!(
+            alloc_count, 0,
+            "should have no Alloc ops (VarDefine handles allocation)"
+        );
     }
 
     #[test]

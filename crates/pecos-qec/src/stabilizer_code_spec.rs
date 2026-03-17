@@ -812,10 +812,8 @@ impl StabilizerCodeSpec {
     pub fn from_stabilizer_code(
         code: &crate::StabilizerCode,
     ) -> std::result::Result<Self, crate::LogicalDiscoveryError> {
-        let mut spec = Self::from_stabilizers(
-            code.num_qubits(),
-            code.group().stabilizers().to_vec(),
-        );
+        let mut spec =
+            Self::from_stabilizers(code.num_qubits(), code.group().stabilizers().to_vec());
         spec.discover_logicals()?;
         Ok(spec)
     }
@@ -1113,8 +1111,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code =
-            StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+        let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+            .unwrap();
 
         assert_eq!(code.num_qubits(), 3);
         assert_eq!(code.num_logical_qubits(), 1);
@@ -1136,8 +1134,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code =
-            StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+        let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+            .unwrap();
 
         assert!(code.verify().is_ok());
     }
@@ -1164,7 +1162,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0)]);
         let logical_x = pauli_string(&[(Pauli::Z, 1)]); // Should be X, not Z
 
-        let code = StabilizerCodeSpec::new(2, vec![stab], vec![logical_z], vec![logical_x]).unwrap();
+        let code =
+            StabilizerCodeSpec::new(2, vec![stab], vec![logical_z], vec![logical_x]).unwrap();
 
         let result = code.verify_logical_pairs_anticommute();
         assert!(matches!(
@@ -1217,8 +1216,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code =
-            StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+        let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+            .unwrap();
 
         // Single X error is detectable (not a logical error)
         let x0 = pauli_string(&[(Pauli::X, 0)]);
@@ -1239,8 +1238,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code =
-            StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+        let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+            .unwrap();
 
         let indices = code.build_indices();
 
@@ -1332,7 +1331,8 @@ mod tests {
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
         let mut code =
-            StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+            StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+                .unwrap();
 
         let result = code.calculate_distance();
         assert!(result.is_some());
@@ -1458,7 +1458,8 @@ mod tests {
         ]);
 
         let mut code =
-            StabilizerCodeSpec::new(5, vec![s1, s2, s3, s4], vec![logical_z], vec![logical_x]).unwrap();
+            StabilizerCodeSpec::new(5, vec![s1, s2, s3, s4], vec![logical_z], vec![logical_x])
+                .unwrap();
 
         let result = code.calculate_distance();
         assert!(result.is_some());
@@ -1711,7 +1712,10 @@ mod tests {
 
         // Syndrome computation
         let syndrome = code.syndrome(&X(0));
-        assert!(syndrome.iter().any(|&s| s), "X error should trigger at least one stabilizer");
+        assert!(
+            syndrome.iter().any(|&s| s),
+            "X error should trigger at least one stabilizer"
+        );
     }
 
     // ========================================================================
@@ -1804,8 +1808,8 @@ mod tests {
 
     #[test]
     fn test_from_stabilizer_code_preserves_explicit_num_qubits() {
-        use pecos_quantum::PauliStabilizerGroup;
         use pecos_core::pauli::constructors::Z;
+        use pecos_quantum::PauliStabilizerGroup;
 
         // StabilizerCode with explicit num_qubits > group touches
         let group = PauliStabilizerGroup::new(vec![Z(0)]).unwrap();

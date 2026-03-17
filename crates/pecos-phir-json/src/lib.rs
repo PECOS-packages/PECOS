@@ -468,7 +468,8 @@ mod tests {
         let path = dir.path().join("test_module.json");
         std::fs::write(&path, SIMPLE_PHIR_JSON).expect("should write file");
 
-        let module = convert_phir_json_file_to_module(&path).expect("should convert file to module");
+        let module =
+            convert_phir_json_file_to_module(&path).expect("should convert file to module");
         assert!(!module.name.is_empty());
         assert!(!module.body.blocks.is_empty());
         assert!(!module.body.blocks[0].operations.is_empty());
@@ -530,7 +531,11 @@ mod tests {
             .quantum(StateVectorEngineBuilder::default())
             .seed(42)
             .run(10);
-        assert!(result1.is_ok(), "PhirJsonEngine failed: {:?}", result1.err());
+        assert!(
+            result1.is_ok(),
+            "PhirJsonEngine failed: {:?}",
+            result1.err()
+        );
         let shots1 = result1.unwrap();
 
         // Path 2: JSON -> Module -> RON -> Module -> PhirEngine
@@ -542,10 +547,18 @@ mod tests {
             .quantum(StateVectorEngineBuilder::default())
             .seed(42)
             .run(10);
-        assert!(result2.is_ok(), "PhirEngine (RON) failed: {:?}", result2.err());
+        assert!(
+            result2.is_ok(),
+            "PhirEngine (RON) failed: {:?}",
+            result2.err()
+        );
         let shots2 = result2.unwrap();
 
-        assert_eq!(shots1.shots.len(), shots2.shots.len(), "shot counts should match");
+        assert_eq!(
+            shots1.shots.len(),
+            shots2.shots.len(),
+            "shot counts should match"
+        );
     }
 
     #[cfg(feature = "v0_1")]
@@ -562,7 +575,11 @@ mod tests {
             .quantum(StateVectorEngineBuilder::default())
             .seed(42)
             .run(100);
-        assert!(result1.is_ok(), "PhirJsonEngine failed: {:?}", result1.err());
+        assert!(
+            result1.is_ok(),
+            "PhirJsonEngine failed: {:?}",
+            result1.err()
+        );
         let shots1 = result1.unwrap();
 
         // Path 2: JSON -> Module -> RON -> Module -> PhirEngine
@@ -574,10 +591,18 @@ mod tests {
             .quantum(StateVectorEngineBuilder::default())
             .seed(42)
             .run(100);
-        assert!(result2.is_ok(), "PhirEngine (RON) failed: {:?}", result2.err());
+        assert!(
+            result2.is_ok(),
+            "PhirEngine (RON) failed: {:?}",
+            result2.err()
+        );
         let shots2 = result2.unwrap();
 
-        assert_eq!(shots1.shots.len(), shots2.shots.len(), "shot counts should match");
+        assert_eq!(
+            shots1.shots.len(),
+            shots2.shots.len(),
+            "shot counts should match"
+        );
 
         // Compare shared register values between engines
         let mut compared = 0;
@@ -593,6 +618,9 @@ mod tests {
             }
         }
         // Ensure we actually compared something
-        assert!(compared > 0, "no shared registers found between engines to compare");
+        assert!(
+            compared > 0,
+            "no shared registers found between engines to compare"
+        );
     }
 }

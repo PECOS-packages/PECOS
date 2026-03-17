@@ -1,13 +1,13 @@
-//! Integration tests for StateVecEngine rotation gate handling via ByteMessage.
+//! Integration tests for `StateVecEngine` rotation gate handling via `ByteMessage`.
 //!
 //! These tests verify that RXXRYYRZZ and U2q gates are correctly processed when
-//! sent as ByteMessage commands to the StateVecEngine, exercising the full
-//! ByteMessage -> Engine::process() -> ArbitraryRotationGateable trait path.
+//! sent as `ByteMessage` commands to the `StateVecEngine`, exercising the full
+//! `ByteMessage` -> `Engine::process()` -> `ArbitraryRotationGateable` trait path.
 
 use pecos_core::{Angle64, Gate, Unitary};
+use pecos_engines::Engine;
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::quantum::DenseStateVecEngine;
-use pecos_engines::Engine;
 
 /// Helper: build a circuit, process it, return measurement outcomes.
 /// Uses a fixed seed for deterministic results.
@@ -26,7 +26,12 @@ fn run_state_vec(num_qubits: usize, build: impl FnOnce(&mut ByteMessageBuilder))
 fn rxxryyrzz_identity_is_noop() {
     // RXXRYYRZZ(0,0,0) = I
     let outcomes = run_state_vec(2, |b| {
-        let gate = Gate::rxxryyrzz(Angle64::ZERO, Angle64::ZERO, Angle64::ZERO, &[(0usize, 1usize)]);
+        let gate = Gate::rxxryyrzz(
+            Angle64::ZERO,
+            Angle64::ZERO,
+            Angle64::ZERO,
+            &[(0usize, 1usize)],
+        );
         b.add_gate_command(&gate);
         b.add_measurements(&[0, 1]);
     });
@@ -100,8 +105,16 @@ fn u2q_identity_preserves_input_state() {
 #[test]
 fn u2q_inverse_cancels() {
     let before = [
-        [Angle64::from_radians(0.5), Angle64::from_radians(0.3), Angle64::from_radians(0.7)],
-        [Angle64::from_radians(1.0), Angle64::from_radians(0.2), Angle64::from_radians(0.4)],
+        [
+            Angle64::from_radians(0.5),
+            Angle64::from_radians(0.3),
+            Angle64::from_radians(0.7),
+        ],
+        [
+            Angle64::from_radians(1.0),
+            Angle64::from_radians(0.2),
+            Angle64::from_radians(0.4),
+        ],
     ];
     let interaction = [
         Angle64::from_radians(0.6),
@@ -109,8 +122,16 @@ fn u2q_inverse_cancels() {
         Angle64::from_radians(0.8),
     ];
     let after = [
-        [Angle64::from_radians(0.9), Angle64::from_radians(0.1), Angle64::from_radians(0.5)],
-        [Angle64::from_radians(0.4), Angle64::from_radians(0.7), Angle64::from_radians(0.2)],
+        [
+            Angle64::from_radians(0.9),
+            Angle64::from_radians(0.1),
+            Angle64::from_radians(0.5),
+        ],
+        [
+            Angle64::from_radians(0.4),
+            Angle64::from_radians(0.7),
+            Angle64::from_radians(0.2),
+        ],
     ];
 
     // Inverse: swap before/after and negate+swap phi/lambda, negate interaction
@@ -182,8 +203,16 @@ fn u2q_unitary_rep_to_gates_roundtrip() {
     // Build a Unitary::U2q, convert via UnitaryRep::to_gates(), and verify
     // the resulting Gate produces the same state as Gate::u2q() directly.
     let before = [
-        [Angle64::from_radians(0.5), Angle64::from_radians(0.3), Angle64::from_radians(0.7)],
-        [Angle64::from_radians(1.0), Angle64::from_radians(0.2), Angle64::from_radians(0.4)],
+        [
+            Angle64::from_radians(0.5),
+            Angle64::from_radians(0.3),
+            Angle64::from_radians(0.7),
+        ],
+        [
+            Angle64::from_radians(1.0),
+            Angle64::from_radians(0.2),
+            Angle64::from_radians(0.4),
+        ],
     ];
     let interaction = [
         Angle64::from_radians(0.6),
@@ -191,12 +220,24 @@ fn u2q_unitary_rep_to_gates_roundtrip() {
         Angle64::from_radians(0.8),
     ];
     let after = [
-        [Angle64::from_radians(0.9), Angle64::from_radians(0.1), Angle64::from_radians(0.5)],
-        [Angle64::from_radians(0.4), Angle64::from_radians(0.7), Angle64::from_radians(0.2)],
+        [
+            Angle64::from_radians(0.9),
+            Angle64::from_radians(0.1),
+            Angle64::from_radians(0.5),
+        ],
+        [
+            Angle64::from_radians(0.4),
+            Angle64::from_radians(0.7),
+            Angle64::from_radians(0.2),
+        ],
     ];
 
     // Path 1: UnitaryRep::to_gates() -> Engine
-    let unitary = Unitary::U2q { before, interaction, after };
+    let unitary = Unitary::U2q {
+        before,
+        interaction,
+        after,
+    };
     let rep = unitary.on_qubits(0, 1);
     let gates = rep.decompose();
     assert_eq!(gates.len(), 1, "U2q should produce exactly one gate");
@@ -278,7 +319,12 @@ fn u2q_multi_pair_identity() {
     let id = [zero; 2];
 
     let outcomes = run_state_vec(4, |b| {
-        let gate = Gate::u2q(id, [Angle64::ZERO; 3], id, &[(0usize, 1usize), (2usize, 3usize)]);
+        let gate = Gate::u2q(
+            id,
+            [Angle64::ZERO; 3],
+            id,
+            &[(0usize, 1usize), (2usize, 3usize)],
+        );
         b.add_gate_command(&gate);
         b.add_measurements(&[0, 1, 2, 3]);
     });
@@ -296,7 +342,12 @@ fn u2q_multi_pair_single_qubit_x_on_first() {
     let interaction = [Angle64::ZERO; 3];
 
     let outcomes = run_state_vec(4, |b| {
-        let gate = Gate::u2q(before, interaction, after, &[(0usize, 1usize), (2usize, 3usize)]);
+        let gate = Gate::u2q(
+            before,
+            interaction,
+            after,
+            &[(0usize, 1usize), (2usize, 3usize)],
+        );
         b.add_gate_command(&gate);
         b.add_measurements(&[0, 1, 2, 3]);
     });
@@ -306,8 +357,16 @@ fn u2q_multi_pair_single_qubit_x_on_first() {
 #[test]
 fn u2q_multi_pair_inverse_cancels() {
     let before = [
-        [Angle64::from_radians(0.5), Angle64::from_radians(0.3), Angle64::from_radians(0.7)],
-        [Angle64::from_radians(1.0), Angle64::from_radians(0.2), Angle64::from_radians(0.4)],
+        [
+            Angle64::from_radians(0.5),
+            Angle64::from_radians(0.3),
+            Angle64::from_radians(0.7),
+        ],
+        [
+            Angle64::from_radians(1.0),
+            Angle64::from_radians(0.2),
+            Angle64::from_radians(0.4),
+        ],
     ];
     let interaction = [
         Angle64::from_radians(0.6),
@@ -315,8 +374,16 @@ fn u2q_multi_pair_inverse_cancels() {
         Angle64::from_radians(0.8),
     ];
     let after = [
-        [Angle64::from_radians(0.9), Angle64::from_radians(0.1), Angle64::from_radians(0.5)],
-        [Angle64::from_radians(0.4), Angle64::from_radians(0.7), Angle64::from_radians(0.2)],
+        [
+            Angle64::from_radians(0.9),
+            Angle64::from_radians(0.1),
+            Angle64::from_radians(0.5),
+        ],
+        [
+            Angle64::from_radians(0.4),
+            Angle64::from_radians(0.7),
+            Angle64::from_radians(0.2),
+        ],
     ];
 
     let inv_before = [
@@ -331,8 +398,18 @@ fn u2q_multi_pair_inverse_cancels() {
 
     let outcomes = run_state_vec(4, |b| {
         b.add_x(&[1, 2]); // |0110>
-        let fwd = Gate::u2q(before, interaction, after, &[(0usize, 1usize), (2usize, 3usize)]);
-        let inv = Gate::u2q(inv_before, inv_interaction, inv_after, &[(0usize, 1usize), (2usize, 3usize)]);
+        let fwd = Gate::u2q(
+            before,
+            interaction,
+            after,
+            &[(0usize, 1usize), (2usize, 3usize)],
+        );
+        let inv = Gate::u2q(
+            inv_before,
+            inv_interaction,
+            inv_after,
+            &[(0usize, 1usize), (2usize, 3usize)],
+        );
         b.add_gate_command(&fwd);
         b.add_gate_command(&inv);
         b.add_measurements(&[0, 1, 2, 3]);

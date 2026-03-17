@@ -1458,6 +1458,34 @@ impl Engine for QuestCudaStateVecEngine {
                         }
                     }
                 }
+                GateType::RXXRYYRZZ | GateType::U2q => {
+                    // RXXRYYRZZ(a,b,c) = RXX(a) · RYY(b) · RZZ(c)
+                    if cmd.angles.len() < 3 {
+                        return Err(PecosError::Processing(
+                            "RXXRYYRZZ gate requires three angles".to_string(),
+                        ));
+                    }
+                    let theta_xx = cmd.angles[0].to_radians();
+                    let theta_yy = cmd.angles[1].to_radians();
+                    let theta_zz = cmd.angles[2].to_radians();
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            // RXX
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_x)(self.qureg_handle, b, theta_xx);
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            // RYY
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_y)(self.qureg_handle, b, theta_yy);
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            // RZZ
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_z)(self.qureg_handle, b, theta_zz);
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                        }
+                    }
+                }
             }
         }
 

@@ -10,17 +10,29 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Cross-simulator consistency tests: SparseStab vs StateVec.
+//! Cross-simulator consistency tests: `SparseStab` vs `StateVec`.
 //!
-//! For each Clifford gate, apply it to |0...0> in both SparseStab and StateVec,
-//! then verify that SparseStab's deterministic measurements match StateVec's
+//! For each Clifford gate, apply it to |0...0> in both `SparseStab` and `StateVec`,
+//! then verify that `SparseStab`'s deterministic measurements match `StateVec`'s
 //! state amplitudes.
 
 use pecos_core::clifford::Clifford;
 use pecos_qsim::{CliffordGateable, SparseStab, StateVec, qid, qid2};
 
-/// For a 1-qubit state, measure in Z, X, Y bases using SparseStab,
-/// and verify deterministic outcomes match StateVec amplitudes.
+type GateTestEntry = (
+    Clifford,
+    Box<dyn Fn(&mut StateVec)>,
+    Box<dyn Fn(&mut SparseStab)>,
+);
+
+type BatchGateTestEntry = (
+    &'static str,
+    Box<dyn Fn(&mut StateVec, &[pecos_core::QubitId])>,
+    Box<dyn Fn(&mut StateVec)>,
+);
+
+/// For a 1-qubit state, measure in Z, X, Y bases using `SparseStab`,
+/// and verify deterministic outcomes match `StateVec` amplitudes.
 fn cross_check_1q(cliff: Clifford) {
     let apply = |sim: &mut StateVec| apply_1q_clifford(sim, cliff);
     let apply_stab = |sim: &mut SparseStab| apply_1q_clifford_stab(sim, cliff);
@@ -35,7 +47,7 @@ fn cross_check_1q(cliff: Clifford) {
             apply(&mut sv);
             let state = sv.state();
             let prob0 = state[0].norm_sqr();
-            let expected_outcome = if prob0 > 0.5 { false } else { true };
+            let expected_outcome = prob0 <= 0.5;
             assert_eq!(
                 results[0].outcome, expected_outcome,
                 "Z-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
@@ -55,7 +67,7 @@ fn cross_check_1q(cliff: Clifford) {
             sv.h(&qid(0));
             let state = sv.state();
             let prob0 = state[0].norm_sqr();
-            let expected_outcome = if prob0 > 0.5 { false } else { true };
+            let expected_outcome = prob0 <= 0.5;
             assert_eq!(
                 results[0].outcome, expected_outcome,
                 "X-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
@@ -76,7 +88,7 @@ fn cross_check_1q(cliff: Clifford) {
             sv.sx(&qid(0));
             let state = sv.state();
             let prob0 = state[0].norm_sqr();
-            let expected_outcome = if prob0 > 0.5 { false } else { true };
+            let expected_outcome = prob0 <= 0.5;
             assert_eq!(
                 results[0].outcome, expected_outcome,
                 "Y-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
@@ -87,7 +99,11 @@ fn cross_check_1q(cliff: Clifford) {
 }
 
 /// For a 2-qubit state, check deterministic measurements match across simulators.
-fn cross_check_2q(cliff: Clifford, apply_sv: &dyn Fn(&mut StateVec), apply_ss: &dyn Fn(&mut SparseStab)) {
+fn cross_check_2q(
+    cliff: Clifford,
+    apply_sv: &dyn Fn(&mut StateVec),
+    apply_ss: &dyn Fn(&mut SparseStab),
+) {
     for q in 0..2 {
         // Z-basis
         {
@@ -99,11 +115,13 @@ fn cross_check_2q(cliff: Clifford, apply_sv: &dyn Fn(&mut StateVec), apply_ss: &
                 apply_sv(&mut sv);
                 let state = sv.state();
                 // Probability of qubit q being |0>: sum |a_k|^2 where bit q of k is 0
-                let prob0: f64 = state.iter().enumerate()
+                let prob0: f64 = state
+                    .iter()
+                    .enumerate()
                     .filter(|(k, _)| (k >> q) & 1 == 0)
                     .map(|(_, a)| a.norm_sqr())
                     .sum();
-                let expected_outcome = if prob0 > 0.5 { false } else { true };
+                let expected_outcome = prob0 <= 0.5;
                 assert_eq!(
                     results[0].outcome, expected_outcome,
                     "Z-basis q{q} mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
@@ -122,11 +140,13 @@ fn cross_check_2q(cliff: Clifford, apply_sv: &dyn Fn(&mut StateVec), apply_ss: &
                 apply_sv(&mut sv);
                 sv.h(&qid(q));
                 let state = sv.state();
-                let prob0: f64 = state.iter().enumerate()
+                let prob0: f64 = state
+                    .iter()
+                    .enumerate()
                     .filter(|(k, _)| (k >> q) & 1 == 0)
                     .map(|(_, a)| a.norm_sqr())
                     .sum();
-                let expected_outcome = if prob0 > 0.5 { false } else { true };
+                let expected_outcome = prob0 <= 0.5;
                 assert_eq!(
                     results[0].outcome, expected_outcome,
                     "X-basis q{q} mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
@@ -140,61 +160,153 @@ fn cross_check_2q(cliff: Clifford, apply_sv: &dyn Fn(&mut StateVec), apply_ss: &
 fn apply_1q_clifford(sim: &mut StateVec, cliff: Clifford) {
     match cliff {
         Clifford::I => {}
-        Clifford::X => { sim.x(&qid(0)); }
-        Clifford::Y => { sim.y(&qid(0)); }
-        Clifford::Z => { sim.z(&qid(0)); }
-        Clifford::H => { sim.h(&qid(0)); }
-        Clifford::SX => { sim.sx(&qid(0)); }
-        Clifford::SXdg => { sim.sxdg(&qid(0)); }
-        Clifford::SY => { sim.sy(&qid(0)); }
-        Clifford::SYdg => { sim.sydg(&qid(0)); }
-        Clifford::SZ => { sim.sz(&qid(0)); }
-        Clifford::SZdg => { sim.szdg(&qid(0)); }
-        Clifford::H2 => { sim.h2(&qid(0)); }
-        Clifford::H3 => { sim.h3(&qid(0)); }
-        Clifford::H4 => { sim.h4(&qid(0)); }
-        Clifford::H5 => { sim.h5(&qid(0)); }
-        Clifford::H6 => { sim.h6(&qid(0)); }
-        Clifford::F => { sim.f(&qid(0)); }
-        Clifford::Fdg => { sim.fdg(&qid(0)); }
-        Clifford::F2 => { sim.f2(&qid(0)); }
-        Clifford::F2dg => { sim.f2dg(&qid(0)); }
-        Clifford::F3 => { sim.f3(&qid(0)); }
-        Clifford::F3dg => { sim.f3dg(&qid(0)); }
-        Clifford::F4 => { sim.f4(&qid(0)); }
-        Clifford::F4dg => { sim.f4dg(&qid(0)); }
+        Clifford::X => {
+            sim.x(&qid(0));
+        }
+        Clifford::Y => {
+            sim.y(&qid(0));
+        }
+        Clifford::Z => {
+            sim.z(&qid(0));
+        }
+        Clifford::H => {
+            sim.h(&qid(0));
+        }
+        Clifford::SX => {
+            sim.sx(&qid(0));
+        }
+        Clifford::SXdg => {
+            sim.sxdg(&qid(0));
+        }
+        Clifford::SY => {
+            sim.sy(&qid(0));
+        }
+        Clifford::SYdg => {
+            sim.sydg(&qid(0));
+        }
+        Clifford::SZ => {
+            sim.sz(&qid(0));
+        }
+        Clifford::SZdg => {
+            sim.szdg(&qid(0));
+        }
+        Clifford::H2 => {
+            sim.h2(&qid(0));
+        }
+        Clifford::H3 => {
+            sim.h3(&qid(0));
+        }
+        Clifford::H4 => {
+            sim.h4(&qid(0));
+        }
+        Clifford::H5 => {
+            sim.h5(&qid(0));
+        }
+        Clifford::H6 => {
+            sim.h6(&qid(0));
+        }
+        Clifford::F => {
+            sim.f(&qid(0));
+        }
+        Clifford::Fdg => {
+            sim.fdg(&qid(0));
+        }
+        Clifford::F2 => {
+            sim.f2(&qid(0));
+        }
+        Clifford::F2dg => {
+            sim.f2dg(&qid(0));
+        }
+        Clifford::F3 => {
+            sim.f3(&qid(0));
+        }
+        Clifford::F3dg => {
+            sim.f3dg(&qid(0));
+        }
+        Clifford::F4 => {
+            sim.f4(&qid(0));
+        }
+        Clifford::F4dg => {
+            sim.f4dg(&qid(0));
+        }
         _ => panic!("unexpected 2q gate in 1q test"),
-    };
+    }
 }
 
 fn apply_1q_clifford_stab(sim: &mut SparseStab, cliff: Clifford) {
     match cliff {
         Clifford::I => {}
-        Clifford::X => { sim.x(&qid(0)); }
-        Clifford::Y => { sim.y(&qid(0)); }
-        Clifford::Z => { sim.z(&qid(0)); }
-        Clifford::H => { sim.h(&qid(0)); }
-        Clifford::SX => { sim.sx(&qid(0)); }
-        Clifford::SXdg => { sim.sxdg(&qid(0)); }
-        Clifford::SY => { sim.sy(&qid(0)); }
-        Clifford::SYdg => { sim.sydg(&qid(0)); }
-        Clifford::SZ => { sim.sz(&qid(0)); }
-        Clifford::SZdg => { sim.szdg(&qid(0)); }
-        Clifford::H2 => { sim.h2(&qid(0)); }
-        Clifford::H3 => { sim.h3(&qid(0)); }
-        Clifford::H4 => { sim.h4(&qid(0)); }
-        Clifford::H5 => { sim.h5(&qid(0)); }
-        Clifford::H6 => { sim.h6(&qid(0)); }
-        Clifford::F => { sim.f(&qid(0)); }
-        Clifford::Fdg => { sim.fdg(&qid(0)); }
-        Clifford::F2 => { sim.f2(&qid(0)); }
-        Clifford::F2dg => { sim.f2dg(&qid(0)); }
-        Clifford::F3 => { sim.f3(&qid(0)); }
-        Clifford::F3dg => { sim.f3dg(&qid(0)); }
-        Clifford::F4 => { sim.f4(&qid(0)); }
-        Clifford::F4dg => { sim.f4dg(&qid(0)); }
+        Clifford::X => {
+            sim.x(&qid(0));
+        }
+        Clifford::Y => {
+            sim.y(&qid(0));
+        }
+        Clifford::Z => {
+            sim.z(&qid(0));
+        }
+        Clifford::H => {
+            sim.h(&qid(0));
+        }
+        Clifford::SX => {
+            sim.sx(&qid(0));
+        }
+        Clifford::SXdg => {
+            sim.sxdg(&qid(0));
+        }
+        Clifford::SY => {
+            sim.sy(&qid(0));
+        }
+        Clifford::SYdg => {
+            sim.sydg(&qid(0));
+        }
+        Clifford::SZ => {
+            sim.sz(&qid(0));
+        }
+        Clifford::SZdg => {
+            sim.szdg(&qid(0));
+        }
+        Clifford::H2 => {
+            sim.h2(&qid(0));
+        }
+        Clifford::H3 => {
+            sim.h3(&qid(0));
+        }
+        Clifford::H4 => {
+            sim.h4(&qid(0));
+        }
+        Clifford::H5 => {
+            sim.h5(&qid(0));
+        }
+        Clifford::H6 => {
+            sim.h6(&qid(0));
+        }
+        Clifford::F => {
+            sim.f(&qid(0));
+        }
+        Clifford::Fdg => {
+            sim.fdg(&qid(0));
+        }
+        Clifford::F2 => {
+            sim.f2(&qid(0));
+        }
+        Clifford::F2dg => {
+            sim.f2dg(&qid(0));
+        }
+        Clifford::F3 => {
+            sim.f3(&qid(0));
+        }
+        Clifford::F3dg => {
+            sim.f3dg(&qid(0));
+        }
+        Clifford::F4 => {
+            sim.f4(&qid(0));
+        }
+        Clifford::F4dg => {
+            sim.f4dg(&qid(0));
+        }
         _ => panic!("unexpected 2q gate in 1q test"),
-    };
+    }
 }
 
 // ============================================================================
@@ -214,49 +326,133 @@ fn sparse_stab_matches_state_vec_all_1q_cliffords() {
 
 #[test]
 fn sparse_stab_matches_state_vec_2q_cliffords() {
-    let gates: Vec<(Clifford, Box<dyn Fn(&mut StateVec)>, Box<dyn Fn(&mut SparseStab)>)> = vec![
-        (Clifford::CX,
-         Box::new(|s: &mut StateVec| { s.cx(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.cx(&qid2(0, 1)); })),
-        (Clifford::CY,
-         Box::new(|s: &mut StateVec| { s.cy(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.cy(&qid2(0, 1)); })),
-        (Clifford::CZ,
-         Box::new(|s: &mut StateVec| { s.cz(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.cz(&qid2(0, 1)); })),
-        (Clifford::SWAP,
-         Box::new(|s: &mut StateVec| { s.swap(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.swap(&qid2(0, 1)); })),
-        (Clifford::SXX,
-         Box::new(|s: &mut StateVec| { s.sxx(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.sxx(&qid2(0, 1)); })),
-        (Clifford::SXXdg,
-         Box::new(|s: &mut StateVec| { s.sxxdg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.sxxdg(&qid2(0, 1)); })),
-        (Clifford::SYY,
-         Box::new(|s: &mut StateVec| { s.syy(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.syy(&qid2(0, 1)); })),
-        (Clifford::SYYdg,
-         Box::new(|s: &mut StateVec| { s.syydg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.syydg(&qid2(0, 1)); })),
-        (Clifford::SZZ,
-         Box::new(|s: &mut StateVec| { s.szz(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.szz(&qid2(0, 1)); })),
-        (Clifford::SZZdg,
-         Box::new(|s: &mut StateVec| { s.szzdg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.szzdg(&qid2(0, 1)); })),
-        (Clifford::ISWAP,
-         Box::new(|s: &mut StateVec| { s.iswap(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.iswap(&qid2(0, 1)); })),
-        (Clifford::G,
-         Box::new(|s: &mut StateVec| { s.g(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.g(&qid2(0, 1)); })),
-        (Clifford::ISWAPdg,
-         Box::new(|s: &mut StateVec| { s.iswapdg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.iswapdg(&qid2(0, 1)); })),
-        (Clifford::Gdg,
-         Box::new(|s: &mut StateVec| { s.gdg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.gdg(&qid2(0, 1)); })),
+    let gates: Vec<GateTestEntry> = vec![
+        (
+            Clifford::CX,
+            Box::new(|s: &mut StateVec| {
+                s.cx(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cx(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::CY,
+            Box::new(|s: &mut StateVec| {
+                s.cy(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cy(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::CZ,
+            Box::new(|s: &mut StateVec| {
+                s.cz(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cz(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SWAP,
+            Box::new(|s: &mut StateVec| {
+                s.swap(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.swap(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SXX,
+            Box::new(|s: &mut StateVec| {
+                s.sxx(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.sxx(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SXXdg,
+            Box::new(|s: &mut StateVec| {
+                s.sxxdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.sxxdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SYY,
+            Box::new(|s: &mut StateVec| {
+                s.syy(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.syy(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SYYdg,
+            Box::new(|s: &mut StateVec| {
+                s.syydg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.syydg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SZZ,
+            Box::new(|s: &mut StateVec| {
+                s.szz(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.szz(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SZZdg,
+            Box::new(|s: &mut StateVec| {
+                s.szzdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.szzdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::ISWAP,
+            Box::new(|s: &mut StateVec| {
+                s.iswap(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.iswap(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::G,
+            Box::new(|s: &mut StateVec| {
+                s.g(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.g(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::ISWAPdg,
+            Box::new(|s: &mut StateVec| {
+                s.iswapdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.iswapdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::Gdg,
+            Box::new(|s: &mut StateVec| {
+                s.gdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.gdg(&qid2(0, 1));
+            }),
+        ),
     ];
 
     for (cliff, apply_sv, apply_ss) in &gates {
@@ -271,49 +467,133 @@ fn sparse_stab_matches_state_vec_2q_cliffords() {
 #[test]
 fn sparse_stab_matches_state_vec_2q_on_plus_plus() {
     // Apply H to both qubits first, then apply gate, then check measurements
-    let gates: Vec<(Clifford, Box<dyn Fn(&mut StateVec)>, Box<dyn Fn(&mut SparseStab)>)> = vec![
-        (Clifford::CX,
-         Box::new(|s: &mut StateVec| { s.cx(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.cx(&qid2(0, 1)); })),
-        (Clifford::CY,
-         Box::new(|s: &mut StateVec| { s.cy(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.cy(&qid2(0, 1)); })),
-        (Clifford::CZ,
-         Box::new(|s: &mut StateVec| { s.cz(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.cz(&qid2(0, 1)); })),
-        (Clifford::SWAP,
-         Box::new(|s: &mut StateVec| { s.swap(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.swap(&qid2(0, 1)); })),
-        (Clifford::SXX,
-         Box::new(|s: &mut StateVec| { s.sxx(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.sxx(&qid2(0, 1)); })),
-        (Clifford::SXXdg,
-         Box::new(|s: &mut StateVec| { s.sxxdg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.sxxdg(&qid2(0, 1)); })),
-        (Clifford::SYY,
-         Box::new(|s: &mut StateVec| { s.syy(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.syy(&qid2(0, 1)); })),
-        (Clifford::SYYdg,
-         Box::new(|s: &mut StateVec| { s.syydg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.syydg(&qid2(0, 1)); })),
-        (Clifford::SZZ,
-         Box::new(|s: &mut StateVec| { s.szz(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.szz(&qid2(0, 1)); })),
-        (Clifford::SZZdg,
-         Box::new(|s: &mut StateVec| { s.szzdg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.szzdg(&qid2(0, 1)); })),
-        (Clifford::ISWAP,
-         Box::new(|s: &mut StateVec| { s.iswap(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.iswap(&qid2(0, 1)); })),
-        (Clifford::G,
-         Box::new(|s: &mut StateVec| { s.g(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.g(&qid2(0, 1)); })),
-        (Clifford::ISWAPdg,
-         Box::new(|s: &mut StateVec| { s.iswapdg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.iswapdg(&qid2(0, 1)); })),
-        (Clifford::Gdg,
-         Box::new(|s: &mut StateVec| { s.gdg(&qid2(0, 1)); }),
-         Box::new(|s: &mut SparseStab| { s.gdg(&qid2(0, 1)); })),
+    let gates: Vec<GateTestEntry> = vec![
+        (
+            Clifford::CX,
+            Box::new(|s: &mut StateVec| {
+                s.cx(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cx(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::CY,
+            Box::new(|s: &mut StateVec| {
+                s.cy(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cy(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::CZ,
+            Box::new(|s: &mut StateVec| {
+                s.cz(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cz(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SWAP,
+            Box::new(|s: &mut StateVec| {
+                s.swap(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.swap(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SXX,
+            Box::new(|s: &mut StateVec| {
+                s.sxx(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.sxx(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SXXdg,
+            Box::new(|s: &mut StateVec| {
+                s.sxxdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.sxxdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SYY,
+            Box::new(|s: &mut StateVec| {
+                s.syy(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.syy(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SYYdg,
+            Box::new(|s: &mut StateVec| {
+                s.syydg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.syydg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SZZ,
+            Box::new(|s: &mut StateVec| {
+                s.szz(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.szz(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SZZdg,
+            Box::new(|s: &mut StateVec| {
+                s.szzdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.szzdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::ISWAP,
+            Box::new(|s: &mut StateVec| {
+                s.iswap(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.iswap(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::G,
+            Box::new(|s: &mut StateVec| {
+                s.g(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.g(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::ISWAPdg,
+            Box::new(|s: &mut StateVec| {
+                s.iswapdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.iswapdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::Gdg,
+            Box::new(|s: &mut StateVec| {
+                s.gdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.gdg(&qid2(0, 1));
+            }),
+        ),
     ];
 
     for (cliff, apply_sv, apply_ss) in &gates {
@@ -331,11 +611,13 @@ fn sparse_stab_matches_state_vec_2q_on_plus_plus() {
                     sv.h(&qid(1));
                     apply_sv(&mut sv);
                     let state = sv.state();
-                    let prob0: f64 = state.iter().enumerate()
+                    let prob0: f64 = state
+                        .iter()
+                        .enumerate()
                         .filter(|(k, _)| (k >> q) & 1 == 0)
                         .map(|(_, a)| a.norm_sqr())
                         .sum();
-                    let expected_outcome = if prob0 > 0.5 { false } else { true };
+                    let expected_outcome = prob0 <= 0.5;
                     assert_eq!(
                         results[0].outcome, expected_outcome,
                         "Z q{q} on |++> mismatch for {cliff}"
@@ -357,11 +639,13 @@ fn sparse_stab_matches_state_vec_2q_on_plus_plus() {
                     apply_sv(&mut sv);
                     sv.h(&qid(q));
                     let state = sv.state();
-                    let prob0: f64 = state.iter().enumerate()
+                    let prob0: f64 = state
+                        .iter()
+                        .enumerate()
                         .filter(|(k, _)| (k >> q) & 1 == 0)
                         .map(|(_, a)| a.norm_sqr())
                         .sum();
-                    let expected_outcome = if prob0 > 0.5 { false } else { true };
+                    let expected_outcome = prob0 <= 0.5;
                     assert_eq!(
                         results[0].outcome, expected_outcome,
                         "X q{q} on |++> mismatch for {cliff}"
@@ -393,7 +677,9 @@ fn cross_check_nonadjacent(
                 let mut sv = StateVec::new(3);
                 apply_sv(&mut sv);
                 let state = sv.state();
-                let prob0: f64 = state.iter().enumerate()
+                let prob0: f64 = state
+                    .iter()
+                    .enumerate()
                     .filter(|(k, _)| (k >> q) & 1 == 0)
                     .map(|(_, a)| a.norm_sqr())
                     .sum();
@@ -418,7 +704,9 @@ fn cross_check_nonadjacent(
                 sv.h(&qid(2));
                 apply_sv(&mut sv);
                 let state = sv.state();
-                let prob0: f64 = state.iter().enumerate()
+                let prob0: f64 = state
+                    .iter()
+                    .enumerate()
                     .filter(|(k, _)| (k >> q) & 1 == 0)
                     .map(|(_, a)| a.norm_sqr())
                     .sum();
@@ -444,7 +732,9 @@ fn cross_check_nonadjacent(
                 apply_sv(&mut sv);
                 sv.h(&qid(q));
                 let state = sv.state();
-                let prob0: f64 = state.iter().enumerate()
+                let prob0: f64 = state
+                    .iter()
+                    .enumerate()
                     .filter(|(k, _)| (k >> q) & 1 == 0)
                     .map(|(_, a)| a.norm_sqr())
                     .sum();
@@ -460,49 +750,133 @@ fn cross_check_nonadjacent(
 
 #[test]
 fn sparse_stab_matches_state_vec_2q_nonadjacent() {
-    let gates: Vec<(Clifford, Box<dyn Fn(&mut StateVec)>, Box<dyn Fn(&mut SparseStab)>)> = vec![
-        (Clifford::CX,
-         Box::new(|s: &mut StateVec| { s.cx(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.cx(&qid2(0, 2)); })),
-        (Clifford::CY,
-         Box::new(|s: &mut StateVec| { s.cy(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.cy(&qid2(0, 2)); })),
-        (Clifford::CZ,
-         Box::new(|s: &mut StateVec| { s.cz(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.cz(&qid2(0, 2)); })),
-        (Clifford::SWAP,
-         Box::new(|s: &mut StateVec| { s.swap(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.swap(&qid2(0, 2)); })),
-        (Clifford::SXX,
-         Box::new(|s: &mut StateVec| { s.sxx(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.sxx(&qid2(0, 2)); })),
-        (Clifford::SXXdg,
-         Box::new(|s: &mut StateVec| { s.sxxdg(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.sxxdg(&qid2(0, 2)); })),
-        (Clifford::SYY,
-         Box::new(|s: &mut StateVec| { s.syy(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.syy(&qid2(0, 2)); })),
-        (Clifford::SYYdg,
-         Box::new(|s: &mut StateVec| { s.syydg(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.syydg(&qid2(0, 2)); })),
-        (Clifford::SZZ,
-         Box::new(|s: &mut StateVec| { s.szz(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.szz(&qid2(0, 2)); })),
-        (Clifford::SZZdg,
-         Box::new(|s: &mut StateVec| { s.szzdg(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.szzdg(&qid2(0, 2)); })),
-        (Clifford::ISWAP,
-         Box::new(|s: &mut StateVec| { s.iswap(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.iswap(&qid2(0, 2)); })),
-        (Clifford::ISWAPdg,
-         Box::new(|s: &mut StateVec| { s.iswapdg(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.iswapdg(&qid2(0, 2)); })),
-        (Clifford::G,
-         Box::new(|s: &mut StateVec| { s.g(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.g(&qid2(0, 2)); })),
-        (Clifford::Gdg,
-         Box::new(|s: &mut StateVec| { s.gdg(&qid2(0, 2)); }),
-         Box::new(|s: &mut SparseStab| { s.gdg(&qid2(0, 2)); })),
+    let gates: Vec<GateTestEntry> = vec![
+        (
+            Clifford::CX,
+            Box::new(|s: &mut StateVec| {
+                s.cx(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cx(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::CY,
+            Box::new(|s: &mut StateVec| {
+                s.cy(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cy(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::CZ,
+            Box::new(|s: &mut StateVec| {
+                s.cz(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cz(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::SWAP,
+            Box::new(|s: &mut StateVec| {
+                s.swap(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.swap(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::SXX,
+            Box::new(|s: &mut StateVec| {
+                s.sxx(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.sxx(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::SXXdg,
+            Box::new(|s: &mut StateVec| {
+                s.sxxdg(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.sxxdg(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::SYY,
+            Box::new(|s: &mut StateVec| {
+                s.syy(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.syy(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::SYYdg,
+            Box::new(|s: &mut StateVec| {
+                s.syydg(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.syydg(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::SZZ,
+            Box::new(|s: &mut StateVec| {
+                s.szz(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.szz(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::SZZdg,
+            Box::new(|s: &mut StateVec| {
+                s.szzdg(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.szzdg(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::ISWAP,
+            Box::new(|s: &mut StateVec| {
+                s.iswap(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.iswap(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::ISWAPdg,
+            Box::new(|s: &mut StateVec| {
+                s.iswapdg(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.iswapdg(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::G,
+            Box::new(|s: &mut StateVec| {
+                s.g(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.g(&qid2(0, 2));
+            }),
+        ),
+        (
+            Clifford::Gdg,
+            Box::new(|s: &mut StateVec| {
+                s.gdg(&qid2(0, 2));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.gdg(&qid2(0, 2));
+            }),
+        ),
     ];
 
     for (cliff, apply_sv, apply_ss) in &gates {
@@ -514,7 +888,7 @@ fn sparse_stab_matches_state_vec_2q_nonadjacent() {
 // Measurement outcome consistency: SparseStab vs StateVec after 2q gates
 // ============================================================================
 
-/// For a 2q gate applied to H(0)|00>, verify SparseStab and StateVec agree on
+/// For a 2q gate applied to H(0)|00>, verify `SparseStab` and `StateVec` agree on
 /// measurement determinism for all qubits in Z, X, and Y bases.
 fn cross_check_measurement_after_gate(
     cliff: Clifford,
@@ -558,7 +932,9 @@ fn cross_check_measurement_after_gate(
             apply_sv(&mut sv);
             sv.h(&qid(q));
             let state = sv.state();
-            let prob0: f64 = state.iter().enumerate()
+            let prob0: f64 = state
+                .iter()
+                .enumerate()
                 .filter(|(k, _)| (k >> q) & 1 == 0)
                 .map(|(_, a)| a.norm_sqr())
                 .sum();
@@ -576,21 +952,133 @@ fn cross_check_measurement_after_gate(
 
 #[test]
 fn measurement_consistency_after_2q_gates() {
-    let gates: Vec<(Clifford, Box<dyn Fn(&mut StateVec)>, Box<dyn Fn(&mut SparseStab)>)> = vec![
-        (Clifford::CX,     Box::new(|s: &mut StateVec| { s.cx(&qid2(0, 1)); }),     Box::new(|s: &mut SparseStab| { s.cx(&qid2(0, 1)); })),
-        (Clifford::CY,     Box::new(|s: &mut StateVec| { s.cy(&qid2(0, 1)); }),     Box::new(|s: &mut SparseStab| { s.cy(&qid2(0, 1)); })),
-        (Clifford::CZ,     Box::new(|s: &mut StateVec| { s.cz(&qid2(0, 1)); }),     Box::new(|s: &mut SparseStab| { s.cz(&qid2(0, 1)); })),
-        (Clifford::SWAP,   Box::new(|s: &mut StateVec| { s.swap(&qid2(0, 1)); }),   Box::new(|s: &mut SparseStab| { s.swap(&qid2(0, 1)); })),
-        (Clifford::SXX,    Box::new(|s: &mut StateVec| { s.sxx(&qid2(0, 1)); }),    Box::new(|s: &mut SparseStab| { s.sxx(&qid2(0, 1)); })),
-        (Clifford::SXXdg,  Box::new(|s: &mut StateVec| { s.sxxdg(&qid2(0, 1)); }),  Box::new(|s: &mut SparseStab| { s.sxxdg(&qid2(0, 1)); })),
-        (Clifford::SYY,    Box::new(|s: &mut StateVec| { s.syy(&qid2(0, 1)); }),    Box::new(|s: &mut SparseStab| { s.syy(&qid2(0, 1)); })),
-        (Clifford::SYYdg,  Box::new(|s: &mut StateVec| { s.syydg(&qid2(0, 1)); }),  Box::new(|s: &mut SparseStab| { s.syydg(&qid2(0, 1)); })),
-        (Clifford::SZZ,    Box::new(|s: &mut StateVec| { s.szz(&qid2(0, 1)); }),    Box::new(|s: &mut SparseStab| { s.szz(&qid2(0, 1)); })),
-        (Clifford::SZZdg,  Box::new(|s: &mut StateVec| { s.szzdg(&qid2(0, 1)); }),  Box::new(|s: &mut SparseStab| { s.szzdg(&qid2(0, 1)); })),
-        (Clifford::ISWAP,  Box::new(|s: &mut StateVec| { s.iswap(&qid2(0, 1)); }),  Box::new(|s: &mut SparseStab| { s.iswap(&qid2(0, 1)); })),
-        (Clifford::ISWAPdg, Box::new(|s: &mut StateVec| { s.iswapdg(&qid2(0, 1)); }), Box::new(|s: &mut SparseStab| { s.iswapdg(&qid2(0, 1)); })),
-        (Clifford::G,      Box::new(|s: &mut StateVec| { s.g(&qid2(0, 1)); }),      Box::new(|s: &mut SparseStab| { s.g(&qid2(0, 1)); })),
-        (Clifford::Gdg,    Box::new(|s: &mut StateVec| { s.gdg(&qid2(0, 1)); }),    Box::new(|s: &mut SparseStab| { s.gdg(&qid2(0, 1)); })),
+    let gates: Vec<GateTestEntry> = vec![
+        (
+            Clifford::CX,
+            Box::new(|s: &mut StateVec| {
+                s.cx(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cx(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::CY,
+            Box::new(|s: &mut StateVec| {
+                s.cy(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cy(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::CZ,
+            Box::new(|s: &mut StateVec| {
+                s.cz(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.cz(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SWAP,
+            Box::new(|s: &mut StateVec| {
+                s.swap(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.swap(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SXX,
+            Box::new(|s: &mut StateVec| {
+                s.sxx(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.sxx(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SXXdg,
+            Box::new(|s: &mut StateVec| {
+                s.sxxdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.sxxdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SYY,
+            Box::new(|s: &mut StateVec| {
+                s.syy(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.syy(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SYYdg,
+            Box::new(|s: &mut StateVec| {
+                s.syydg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.syydg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SZZ,
+            Box::new(|s: &mut StateVec| {
+                s.szz(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.szz(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::SZZdg,
+            Box::new(|s: &mut StateVec| {
+                s.szzdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.szzdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::ISWAP,
+            Box::new(|s: &mut StateVec| {
+                s.iswap(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.iswap(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::ISWAPdg,
+            Box::new(|s: &mut StateVec| {
+                s.iswapdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.iswapdg(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::G,
+            Box::new(|s: &mut StateVec| {
+                s.g(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.g(&qid2(0, 1));
+            }),
+        ),
+        (
+            Clifford::Gdg,
+            Box::new(|s: &mut StateVec| {
+                s.gdg(&qid2(0, 1));
+            }),
+            Box::new(|s: &mut SparseStab| {
+                s.gdg(&qid2(0, 1));
+            }),
+        ),
     ];
 
     for (cliff, apply_sv, apply_ss) in &gates {
@@ -611,12 +1099,16 @@ fn batch_cx_matches_sequential() {
 
     // StateVec: batch
     let mut sv_batch = StateVec::new(4);
-    for q in 0..4 { sv_batch.h(&qid(q)); }
+    for q in 0..4 {
+        sv_batch.h(&qid(q));
+    }
     sv_batch.cx(&batch_qubits);
 
     // StateVec: sequential
     let mut sv_seq = StateVec::new(4);
-    for q in 0..4 { sv_seq.h(&qid(q)); }
+    for q in 0..4 {
+        sv_seq.h(&qid(q));
+    }
     sv_seq.cx(&qid2(0, 1)).cx(&qid2(2, 3));
 
     let batch_state = sv_batch.state();
@@ -630,11 +1122,15 @@ fn batch_cx_matches_sequential() {
 
     // SparseStab: batch vs sequential (check via deterministic measurements)
     let mut ss_batch = SparseStab::new(4);
-    for q in 0..4 { ss_batch.h(&qid(q)); }
+    for q in 0..4 {
+        ss_batch.h(&qid(q));
+    }
     ss_batch.cx(&batch_qubits);
 
     let mut ss_seq = SparseStab::new(4);
-    for q in 0..4 { ss_seq.h(&qid(q)); }
+    for q in 0..4 {
+        ss_seq.h(&qid(q));
+    }
     ss_seq.cx(&qid2(0, 1)).cx(&qid2(2, 3));
 
     for q in 0..4 {
@@ -660,28 +1156,92 @@ fn batch_2q_gates_match_sequential() {
     let batch_qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
 
     // Test several 2q gates in batch mode
-    let gates: Vec<(
-        &str,
-        Box<dyn Fn(&mut StateVec, &[QubitId])>,
-        Box<dyn Fn(&mut StateVec)>,
-    )> = vec![
-        ("CZ",     Box::new(|s, q| { s.cz(q); }),     Box::new(|s: &mut StateVec| { s.cz(&qid2(0, 1)).cz(&qid2(2, 3)); })),
-        ("SWAP",   Box::new(|s, q| { s.swap(q); }),    Box::new(|s: &mut StateVec| { s.swap(&qid2(0, 1)).swap(&qid2(2, 3)); })),
-        ("SXX",    Box::new(|s, q| { s.sxx(q); }),     Box::new(|s: &mut StateVec| { s.sxx(&qid2(0, 1)).sxx(&qid2(2, 3)); })),
-        ("SYY",    Box::new(|s, q| { s.syy(q); }),     Box::new(|s: &mut StateVec| { s.syy(&qid2(0, 1)).syy(&qid2(2, 3)); })),
-        ("SZZ",    Box::new(|s, q| { s.szz(q); }),     Box::new(|s: &mut StateVec| { s.szz(&qid2(0, 1)).szz(&qid2(2, 3)); })),
-        ("ISWAP",  Box::new(|s, q| { s.iswap(q); }),   Box::new(|s: &mut StateVec| { s.iswap(&qid2(0, 1)).iswap(&qid2(2, 3)); })),
-        ("ISWAPdg", Box::new(|s, q| { s.iswapdg(q); }), Box::new(|s: &mut StateVec| { s.iswapdg(&qid2(0, 1)).iswapdg(&qid2(2, 3)); })),
-        ("G",      Box::new(|s, q| { s.g(q); }),       Box::new(|s: &mut StateVec| { s.g(&qid2(0, 1)).g(&qid2(2, 3)); })),
+    let gates: Vec<BatchGateTestEntry> = vec![
+        (
+            "CZ",
+            Box::new(|s, q| {
+                s.cz(q);
+            }),
+            Box::new(|s: &mut StateVec| {
+                s.cz(&qid2(0, 1)).cz(&qid2(2, 3));
+            }),
+        ),
+        (
+            "SWAP",
+            Box::new(|s, q| {
+                s.swap(q);
+            }),
+            Box::new(|s: &mut StateVec| {
+                s.swap(&qid2(0, 1)).swap(&qid2(2, 3));
+            }),
+        ),
+        (
+            "SXX",
+            Box::new(|s, q| {
+                s.sxx(q);
+            }),
+            Box::new(|s: &mut StateVec| {
+                s.sxx(&qid2(0, 1)).sxx(&qid2(2, 3));
+            }),
+        ),
+        (
+            "SYY",
+            Box::new(|s, q| {
+                s.syy(q);
+            }),
+            Box::new(|s: &mut StateVec| {
+                s.syy(&qid2(0, 1)).syy(&qid2(2, 3));
+            }),
+        ),
+        (
+            "SZZ",
+            Box::new(|s, q| {
+                s.szz(q);
+            }),
+            Box::new(|s: &mut StateVec| {
+                s.szz(&qid2(0, 1)).szz(&qid2(2, 3));
+            }),
+        ),
+        (
+            "ISWAP",
+            Box::new(|s, q| {
+                s.iswap(q);
+            }),
+            Box::new(|s: &mut StateVec| {
+                s.iswap(&qid2(0, 1)).iswap(&qid2(2, 3));
+            }),
+        ),
+        (
+            "ISWAPdg",
+            Box::new(|s, q| {
+                s.iswapdg(q);
+            }),
+            Box::new(|s: &mut StateVec| {
+                s.iswapdg(&qid2(0, 1)).iswapdg(&qid2(2, 3));
+            }),
+        ),
+        (
+            "G",
+            Box::new(|s, q| {
+                s.g(q);
+            }),
+            Box::new(|s: &mut StateVec| {
+                s.g(&qid2(0, 1)).g(&qid2(2, 3));
+            }),
+        ),
     ];
 
     for (name, batch_fn, seq_fn) in &gates {
         let mut sv_batch = StateVec::new(4);
-        for q in 0..4 { sv_batch.h(&qid(q)); }
+        for q in 0..4 {
+            sv_batch.h(&qid(q));
+        }
         batch_fn(&mut sv_batch, &batch_qubits);
 
         let mut sv_seq = StateVec::new(4);
-        for q in 0..4 { sv_seq.h(&qid(q)); }
+        for q in 0..4 {
+            sv_seq.h(&qid(q));
+        }
         seq_fn(&mut sv_seq);
 
         let batch_state = sv_batch.state();

@@ -22,7 +22,7 @@ through BitUInt storage, and the signed arithmetic pipeline.
 from __future__ import annotations
 
 import pecos as pc
-from pecos.engines.cvm.classical import eval_cop, eval_op, get_val
+from pecos.engines.cvm.classical import eval_condition, eval_cop, eval_op, get_val
 from pecos.simulators import SparseSim
 
 
@@ -379,6 +379,33 @@ def test_comparison_with_zero_operand() -> None:
     assert int(output["ne_result"]) == 1
 
 
+def test_comparison_into_indexed_target() -> None:
+    """Test that comparison results can be stored into indexed bit positions.
+
+    This is the scenario that triggers TypeError: 'bool' object is not subscriptable
+    when eval_op returns a bare bool instead of BitInt for comparison operations.
+    """
+    output = {"x": pc.BitInt(64), "m": pc.BitInt(64)}
+
+    eval_cop({"t": "x", "op": "=", "a": 5}, output, width=32, shot_id=0)
+
+    # Store (x == 5) into m[0] -- should set bit 0 to 1
+    eval_cop({"t": ("m", 0), "op": "==", "a": "x", "b": 5}, output, width=32, shot_id=0)
+    assert output["m"][0] == 1
+
+    # Store (x == 0) into m[1] -- should set bit 1 to 0
+    eval_cop({"t": ("m", 1), "op": "==", "a": "x", "b": 0}, output, width=32, shot_id=0)
+    assert output["m"][1] == 0
+
+    # Store (x != 0) into m[2] -- should set bit 2 to 1
+    eval_cop({"t": ("m", 2), "op": "!=", "a": "x", "b": 0}, output, width=32, shot_id=0)
+    assert output["m"][2] == 1
+
+    # Store (x < 10) into m[3] -- should set bit 3 to 1
+    eval_cop({"t": ("m", 3), "op": "<", "a": "x", "b": 10}, output, width=32, shot_id=0)
+    assert output["m"][3] == 1
+
+
 def test_comparison_zero_equals_zero() -> None:
     """Test that 0 == 0 produces True (1), not 0."""
     output = {"x": pc.BitInt(64), "result": pc.BitInt(64)}
@@ -619,3 +646,234 @@ def test_negative_variable_comparison() -> None:
 
     assert int(output["lt"]) == 1  # -100 < -10
     assert int(output["gt"]) == 0  # -100 > -10 is false
+
+
+# ---------------------------------------------------------------------------
+# eval_condition tests
+# ---------------------------------------------------------------------------
+
+
+def test_eval_condition_comparison_ops() -> None:
+    """Test eval_condition with comparison operators returns correct bools."""
+    output = {"x": pc.BitInt(32, 5), "y": pc.BitInt(32, 10)}
+
+    assert eval_condition({"op": "==", "a": "x", "b": 5}, output) is True
+    assert eval_condition({"op": "==", "a": "x", "b": 0}, output) is False
+    assert eval_condition({"op": "!=", "a": "x", "b": 0}, output) is True
+    assert eval_condition({"op": "<", "a": "x", "b": "y"}, output) is True
+    assert eval_condition({"op": ">", "a": "x", "b": "y"}, output) is False
+    assert eval_condition({"op": "<=", "a": "x", "b": 5}, output) is True
+    assert eval_condition({"op": ">=", "a": "x", "b": 5}, output) is True
+
+
+def test_eval_condition_arithmetic_truthiness() -> None:
+    """Test eval_condition with arithmetic ops used as truthiness checks.
+
+    Conditions like {"op": "&", "a": "m", "b": 3} should evaluate the
+    expression and return True/False based on BitInt truthiness.
+    """
+    output = {"m": pc.BitInt(32, 0b1010), "z": pc.BitInt(32, 0)}
+
+    # m & 0b0010 = 0b0010 (nonzero -> True)
+    assert eval_condition({"op": "&", "a": "m", "b": 0b0010}, output) is True
+    # m & 0b0100 = 0b0000 (zero -> False)
+    assert eval_condition({"op": "&", "a": "m", "b": 0b0100}, output) is False
+    # m >> 1 = 0b0101 (nonzero -> True)
+    assert eval_condition({"op": ">>", "a": "m", "b": 1}, output) is True
+    # z | 0 = 0 (zero -> False)
+    assert eval_condition({"op": "|", "a": "z", "b": 0}, output) is False
+
+
+def test_eval_condition_tuple_path() -> None:
+    """Test the (condition, expected_bool) tuple form.
+
+    The tuple form means 'evaluate the condition and check if it matches
+    the expected boolean'. E.g., (cond, False) means 'condition is false'.
+    """
+    output = {"x": pc.BitInt(32, 5)}
+
+    cond_true = {"op": "==", "a": "x", "b": 5}  # evaluates to True
+    cond_false = {"op": "==", "a": "x", "b": 0}  # evaluates to False
+
+    # (true_cond, True) -> True
+    assert eval_condition((cond_true, True), output) is True
+    # (true_cond, False) -> False
+    assert eval_condition((cond_true, False), output) is False
+    # (false_cond, True) -> False
+    assert eval_condition((cond_false, True), output) is False
+    # (false_cond, False) -> True
+    assert eval_condition((cond_false, False), output) is True
+
+    # Also works with list form
+    assert eval_condition([cond_true, True], output) is True
+    assert eval_condition([cond_false, False], output) is True
+
+
+def test_eval_condition_indexed_operands() -> None:
+    """Test eval_condition with indexed variable operands like ("m", 0)."""
+    output = {"m": pc.BitInt(32, 0b101)}  # bits 0 and 2 are set
+
+    # m[0] == 1
+    assert eval_condition({"op": "==", "a": ("m", 0), "b": 1}, output) is True
+    # m[1] == 0
+    assert eval_condition({"op": "==", "a": ("m", 1), "b": 0}, output) is True
+    # m[2] == 1
+    assert eval_condition({"op": "==", "a": ("m", 2), "b": 1}, output) is True
+    # Also works with indexed b operand
+    assert eval_condition({"op": "==", "a": 1, "b": ("m", 0)}, output) is True
+
+
+def test_eval_condition_none_returns_true() -> None:
+    """Test that None condition (unconditional) returns True."""
+    assert eval_condition(None, {}) is True
+
+
+# ---------------------------------------------------------------------------
+# Nested / complex expression tests
+# ---------------------------------------------------------------------------
+
+
+def test_nested_binary_expression() -> None:
+    """Test eval_cop with nested sub-expressions in both a and b.
+
+    Computes: result = (x + y) * (x - y)
+    With x=7, y=3: (7+3) * (7-3) = 10 * 4 = 40
+    """
+    output = {"x": pc.BitInt(32, 7), "y": pc.BitInt(32, 3), "result": pc.BitInt(32)}
+
+    eval_cop(
+        {
+            "t": "result",
+            "op": "*",
+            "a": {"op": "+", "a": "x", "b": "y"},
+            "b": {"op": "-", "a": "x", "b": "y"},
+        },
+        output,
+        width=32,
+        shot_id=0,
+    )
+    assert int(output["result"]) == 40
+
+
+def test_deeply_nested_expression() -> None:
+    """Test three levels of nesting.
+
+    Computes: result = ((x + 1) * 2) - y
+    With x=5, y=3: ((5+1) * 2) - 3 = 12 - 3 = 9
+    """
+    output = {"x": pc.BitInt(32, 5), "y": pc.BitInt(32, 3), "result": pc.BitInt(32)}
+
+    eval_cop(
+        {
+            "t": "result",
+            "op": "-",
+            "a": {
+                "op": "*",
+                "a": {"op": "+", "a": "x", "b": 1},
+                "b": 2,
+            },
+            "b": "y",
+        },
+        output,
+        width=32,
+        shot_id=0,
+    )
+    assert int(output["result"]) == 9
+
+
+def test_nested_comparison_in_expression() -> None:
+    """Test that a comparison nested inside an arithmetic expression works.
+
+    This is the pattern that originally caused the bool subscript bug:
+    a comparison returning BitInt is used as an operand in further operations.
+
+    Computes: result = (x == 5) + (y == 3)
+    With x=5, y=3: 1 + 1 = 2
+    """
+    output = {"x": pc.BitInt(32, 5), "y": pc.BitInt(32, 3), "result": pc.BitInt(32)}
+
+    eval_cop(
+        {
+            "t": "result",
+            "op": "+",
+            "a": {"op": "==", "a": "x", "b": 5},
+            "b": {"op": "==", "a": "y", "b": 3},
+        },
+        output,
+        width=32,
+        shot_id=0,
+    )
+    assert int(output["result"]) == 2
+
+
+def test_nested_comparison_into_indexed_target() -> None:
+    """Test nested comparison stored into an indexed bit position.
+
+    Computes: m[0] = (x > 0) & (x < 10)
+    With x=5: (True=1) & (True=1) = 1
+    """
+    output = {"x": pc.BitInt(32, 5), "m": pc.BitInt(32)}
+
+    eval_cop(
+        {
+            "t": ("m", 0),
+            "op": "&",
+            "a": {"op": ">", "a": "x", "b": 0},
+            "b": {"op": "<", "a": "x", "b": 10},
+        },
+        output,
+        width=32,
+        shot_id=0,
+    )
+    assert output["m"][0] == 1
+
+
+def test_nested_unary_in_expression() -> None:
+    """Test unary NOT nested inside a binary expression.
+
+    Computes: result = (~x) & 0xFF
+    With x=0: ~0 = -1 (all bits set), -1 & 0xFF = 0xFF = 255
+    """
+    output = {"x": pc.BitInt(32, 0), "result": pc.BitInt(32)}
+
+    eval_cop(
+        {
+            "t": "result",
+            "op": "&",
+            "a": {"op": "~", "c": "x"},
+            "b": 0xFF,
+        },
+        output,
+        width=32,
+        shot_id=0,
+    )
+    assert int(output["result"]) == 255
+
+
+def test_nested_expression_in_condition() -> None:
+    """Test that eval_condition works when used alongside nested eval_cop.
+
+    Simulates the real pattern: compute a nested expression, then check
+    a condition on the result.
+    """
+    output = {"x": pc.BitInt(32, 5), "y": pc.BitInt(32, 3), "sum": pc.BitInt(32)}
+
+    # sum = x + y (= 8)
+    eval_cop(
+        {
+            "t": "sum",
+            "op": "+",
+            "a": "x",
+            "b": "y",
+        },
+        output,
+        width=32,
+        shot_id=0,
+    )
+
+    # Condition: sum > 5
+    assert eval_condition({"op": ">", "a": "sum", "b": 5}, output) is True
+    # Condition: sum == 8
+    assert eval_condition({"op": "==", "a": "sum", "b": 8}, output) is True
+    # Condition: (sum & 1) -- 8 is even, so bit 0 is 0 -> falsy
+    assert eval_condition({"op": "&", "a": "sum", "b": 1}, output) is False

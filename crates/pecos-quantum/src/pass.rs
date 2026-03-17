@@ -299,7 +299,8 @@ impl CircuitPass for SimplifyRotations {
 
             for (i, gate) in tick.gates().iter().enumerate() {
                 if gate.angles.len() == 1
-                    && let Some(pauli) = pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
+                    && let Some(pauli) =
+                        pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
                 {
                     decompositions.push((i, pauli));
                 }
@@ -335,7 +336,8 @@ impl CircuitPass for SimplifyRotations {
 
             // Check for two-qubit half-turn decomposition first.
             if gate.angles.len() == 1
-                && let Some(pauli) = pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
+                && let Some(pauli) =
+                    pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
             {
                 let qubits = gate.qubits.clone();
 
@@ -1061,7 +1063,10 @@ mod tests {
     #[test]
     fn simplify_rz_eighth_turn_to_t() {
         let eighth = Angle64::from_turn_ratio(1, 8);
-        assert_eq!(pecos_core::try_simplify_rotation(GateType::RZ, eighth), Some(GateType::T));
+        assert_eq!(
+            pecos_core::try_simplify_rotation(GateType::RZ, eighth),
+            Some(GateType::T)
+        );
     }
 
     #[test]
@@ -1147,7 +1152,10 @@ mod tests {
 
     #[test]
     fn simplify_non_rotation_unchanged() {
-        assert_eq!(pecos_core::try_simplify_rotation(GateType::H, Angle64::QUARTER_TURN), None);
+        assert_eq!(
+            pecos_core::try_simplify_rotation(GateType::H, Angle64::QUARTER_TURN),
+            None
+        );
     }
 
     // ==================== half_turn_decomposition tests ====================
@@ -1355,9 +1363,7 @@ mod tests {
     // (up to global phase) by comparing the rotation UnitaryRep against the
     // named-gate UnitaryRep using dense matrix comparison.
 
-    use crate::unitary_matrix::{
-        matrices_equiv_up_to_phase, unitaries_equiv, to_matrix_with_size,
-    };
+    use crate::unitary_matrix::{matrices_equiv_up_to_phase, to_matrix_with_size, unitaries_equiv};
 
     use pecos_core::unitary_rep::{self, UnitaryRep};
 

@@ -28,9 +28,9 @@
 //! // H transforms X(0) -> Z(0), Z(1) unchanged
 //! ```
 
-use crate::unitary_rep::UnitaryRep;
 use crate::pauli::algebra::i;
-use crate::{Pauli, Phase, PauliString, QuarterPhase};
+use crate::unitary_rep::UnitaryRep;
+use crate::{Pauli, PauliString, Phase, QuarterPhase};
 use rand::RngExt;
 use std::fmt;
 use std::ops::{BitAnd, Mul};
@@ -177,7 +177,7 @@ impl CliffordRep {
         result
     }
 
-    /// Applies this Clifford transformation to an UnitaryRep.
+    /// Applies this Clifford transformation to an `UnitaryRep`.
     ///
     /// This works seamlessly with Pauli operators created via `X(n)`, `Y(n)`, `Z(n)`.
     /// Returns `None` for non-Pauli operators.
@@ -441,105 +441,105 @@ impl CliffordRep {
     }
 
     /// SX† gate on qubit q.
-    /// Decomposition: X · SX (CliffordGateable: self.x(q).sx(q))
+    /// Decomposition: X · SX (`CliffordGateable`: self.x(q).sx(q))
     #[must_use]
     pub fn sxdg(qubit: usize) -> Self {
         Self::sx(qubit).compose(&Self::x(qubit))
     }
 
     /// SY† gate on qubit q.
-    /// Decomposition: Y · SY (CliffordGateable: self.y(q).sy(q))
+    /// Decomposition: Y · SY (`CliffordGateable`: self.y(q).sy(q))
     #[must_use]
     pub fn sydg(qubit: usize) -> Self {
         Self::sy(qubit).compose(&Self::y(qubit))
     }
 
     /// H2 gate on qubit q.
-    /// Decomposition: SY · Z (CliffordGateable: self.sy(q).z(q))
+    /// Decomposition: SY · Z (`CliffordGateable`: self.sy(q).z(q))
     #[must_use]
     pub fn h2(qubit: usize) -> Self {
         Self::z(qubit).compose(&Self::sy(qubit))
     }
 
     /// H3 gate on qubit q.
-    /// Decomposition: SZ · Y (CliffordGateable: self.sz(q).y(q))
+    /// Decomposition: SZ · Y (`CliffordGateable`: self.sz(q).y(q))
     #[must_use]
     pub fn h3(qubit: usize) -> Self {
         Self::y(qubit).compose(&Self::sz(qubit))
     }
 
     /// H4 gate on qubit q.
-    /// Decomposition: SZ · X (CliffordGateable: self.sz(q).x(q))
+    /// Decomposition: SZ · X (`CliffordGateable`: self.sz(q).x(q))
     #[must_use]
     pub fn h4(qubit: usize) -> Self {
         Self::x(qubit).compose(&Self::sz(qubit))
     }
 
     /// H5 gate on qubit q.
-    /// Decomposition: SX · Z (CliffordGateable: self.sx(q).z(q))
+    /// Decomposition: SX · Z (`CliffordGateable`: self.sx(q).z(q))
     #[must_use]
     pub fn h5(qubit: usize) -> Self {
         Self::z(qubit).compose(&Self::sx(qubit))
     }
 
     /// H6 gate on qubit q.
-    /// Decomposition: SX · Y (CliffordGateable: self.sx(q).y(q))
+    /// Decomposition: SX · Y (`CliffordGateable`: self.sx(q).y(q))
     #[must_use]
     pub fn h6(qubit: usize) -> Self {
         Self::y(qubit).compose(&Self::sx(qubit))
     }
 
     /// F (Face) gate on qubit q.
-    /// Decomposition: SX · SZ (CliffordGateable: self.sx(q).sz(q))
+    /// Decomposition: SX · SZ (`CliffordGateable`: self.sx(q).sz(q))
     #[must_use]
     pub fn f(qubit: usize) -> Self {
         Self::sz(qubit).compose(&Self::sx(qubit))
     }
 
     /// F† gate on qubit q.
-    /// Decomposition: SZ† · SX† (CliffordGateable: self.szdg(q).sxdg(q))
+    /// Decomposition: SZ† · SX† (`CliffordGateable`: self.szdg(q).sxdg(q))
     #[must_use]
     pub fn fdg(qubit: usize) -> Self {
         Self::sxdg(qubit).compose(&Self::szdg(qubit))
     }
 
     /// F2 gate on qubit q.
-    /// Decomposition: SX† · SY (CliffordGateable: self.sxdg(q).sy(q))
+    /// Decomposition: SX† · SY (`CliffordGateable`: self.sxdg(q).sy(q))
     #[must_use]
     pub fn f2(qubit: usize) -> Self {
         Self::sy(qubit).compose(&Self::sxdg(qubit))
     }
 
     /// F2† gate on qubit q.
-    /// Decomposition: SY† · SX (CliffordGateable: self.sydg(q).sx(q))
+    /// Decomposition: SY† · SX (`CliffordGateable`: self.sydg(q).sx(q))
     #[must_use]
     pub fn f2dg(qubit: usize) -> Self {
         Self::sx(qubit).compose(&Self::sydg(qubit))
     }
 
     /// F3 gate on qubit q.
-    /// Decomposition: SX† · SZ (CliffordGateable: self.sxdg(q).sz(q))
+    /// Decomposition: SX† · SZ (`CliffordGateable`: self.sxdg(q).sz(q))
     #[must_use]
     pub fn f3(qubit: usize) -> Self {
         Self::sz(qubit).compose(&Self::sxdg(qubit))
     }
 
     /// F3† gate on qubit q.
-    /// Decomposition: SZ† · SX (CliffordGateable: self.szdg(q).sx(q))
+    /// Decomposition: SZ† · SX (`CliffordGateable`: self.szdg(q).sx(q))
     #[must_use]
     pub fn f3dg(qubit: usize) -> Self {
         Self::sx(qubit).compose(&Self::szdg(qubit))
     }
 
     /// F4 gate on qubit q.
-    /// Decomposition: SZ · SX (CliffordGateable: self.sz(q).sx(q))
+    /// Decomposition: SZ · SX (`CliffordGateable`: self.sz(q).sx(q))
     #[must_use]
     pub fn f4(qubit: usize) -> Self {
         Self::sx(qubit).compose(&Self::sz(qubit))
     }
 
     /// F4† gate on qubit q.
-    /// Decomposition: SX† · SZ† (CliffordGateable: self.sxdg(q).szdg(q))
+    /// Decomposition: SX† · SZ† (`CliffordGateable`: self.sxdg(q).szdg(q))
     #[must_use]
     pub fn f4dg(qubit: usize) -> Self {
         Self::szdg(qubit).compose(&Self::sxdg(qubit))
@@ -730,7 +730,7 @@ impl CliffordRep {
     /// G† gate (inverse of G)
     ///
     /// G is self-inverse at the stabilizer level (G^2 = I for all generators),
-    /// so Gdg has the same CliffordRep as G. The two gates differ only by a
+    /// so Gdg has the same `CliffordRep` as G. The two gates differ only by a
     /// global phase at the unitary level.
     #[must_use]
     pub fn gdg(q0: usize, q1: usize) -> Self {
@@ -746,29 +746,29 @@ impl CliffordRep {
     /// All 24 single-qubit Cliffords as generator sequences (H=0, S=1).
     /// Applied left-to-right: [a, b, c] means C = a * b * c.
     const SINGLE_QUBIT_SEQUENCES: &'static [&'static [u8]] = &[
-        &[],              //  0: I
-        &[0, 1, 1, 0],    //  1: X = HSSH
-        &[1, 1, 0, 1, 1, 0], //  2: Y = SSHSSH
-        &[1, 1],          //  3: Z = SS
-        &[1],             //  4: S
-        &[1, 1, 1],       //  5: Sdg
-        &[0],             //  6: H
-        &[1, 0],          //  7: SH
-        &[0, 1],          //  8: HS
-        &[1, 1, 0],       //  9: S²H
-        &[0, 1, 1],       // 10: HS²
-        &[1, 1, 1, 0],    // 11: S³H
-        &[1, 0, 1],       // 12: SHS
-        &[0, 1, 0],       // 13: HSH
-        &[1, 0, 1, 0],    // 14: SHSH
-        &[1, 1, 0, 1],    // 15: S²HS
-        &[1, 0, 1, 1],    // 16: SHS²
-        &[1, 1, 1, 0, 1], // 17: S³HS
-        &[1, 1, 0, 1, 1], // 18: S²HS²
-        &[1, 1, 0, 1, 0], // 19: S²HSH
-        &[0, 1, 1, 0, 1], // 20: HS²HS
-        &[1, 1, 1, 0, 1, 1],   // 21: S³HS²
-        &[1, 1, 1, 0, 1, 0],   // 22: S³HSH
+        &[],                    //  0: I
+        &[0, 1, 1, 0],          //  1: X = HSSH
+        &[1, 1, 0, 1, 1, 0],    //  2: Y = SSHSSH
+        &[1, 1],                //  3: Z = SS
+        &[1],                   //  4: S
+        &[1, 1, 1],             //  5: Sdg
+        &[0],                   //  6: H
+        &[1, 0],                //  7: SH
+        &[0, 1],                //  8: HS
+        &[1, 1, 0],             //  9: S²H
+        &[0, 1, 1],             // 10: HS²
+        &[1, 1, 1, 0],          // 11: S³H
+        &[1, 0, 1],             // 12: SHS
+        &[0, 1, 0],             // 13: HSH
+        &[1, 0, 1, 0],          // 14: SHSH
+        &[1, 1, 0, 1],          // 15: S²HS
+        &[1, 0, 1, 1],          // 16: SHS²
+        &[1, 1, 1, 0, 1],       // 17: S³HS
+        &[1, 1, 0, 1, 1],       // 18: S²HS²
+        &[1, 1, 0, 1, 0],       // 19: S²HSH
+        &[0, 1, 1, 0, 1],       // 20: HS²HS
+        &[1, 1, 1, 0, 1, 1],    // 21: S³HS²
+        &[1, 1, 1, 0, 1, 0],    // 22: S³HSH
         &[0, 1, 1, 0, 1, 1, 1], // 23: HS²HS³
     ];
 
@@ -851,16 +851,8 @@ impl fmt::Display for CliffordRep {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "CliffordRep({} qubits):", self.num_qubits)?;
         for q in 0..self.num_qubits {
-            writeln!(
-                f,
-                "  X_{q} -> {}",
-                self.x_images[q].to_sparse_str()
-            )?;
-            writeln!(
-                f,
-                "  Z_{q} -> {}",
-                self.z_images[q].to_sparse_str()
-            )?;
+            writeln!(f, "  X_{q} -> {}", self.x_images[q].to_sparse_str())?;
+            writeln!(f, "  Z_{q} -> {}", self.z_images[q].to_sparse_str())?;
         }
         Ok(())
     }
@@ -910,7 +902,7 @@ impl Mul<&CliffordRep> for &CliffordRep {
 impl BitAnd for CliffordRep {
     type Output = CliffordRep;
 
-    /// Tensor product of two CliffordReps acting on disjoint qubits.
+    /// Tensor product of two `CliffordReps` acting on disjoint qubits.
     fn bitand(self, rhs: CliffordRep) -> CliffordRep {
         // Since compose auto-extends with identity on extra qubits,
         // and these CliffordReps act on disjoint qubits, composing gives the tensor.
@@ -950,10 +942,10 @@ impl From<PauliString> for CliffordRep {
     /// Converts a `PauliString` into a `CliffordRep`.
     ///
     /// A Pauli P acts on generators by conjugation:
-    /// - `P X_q P†` depends on whether P commutes or anticommutes with X_q
-    /// - If P commutes with X_q: `X_q` -> `X_q`
-    /// - If P anticommutes with X_q: `X_q` -> `-X_q`
-    /// (Same logic for Z_q.)
+    /// - `P X_q P†` depends on whether P commutes or anticommutes with `X_q`
+    /// - If P commutes with `X_q`: `X_q` -> `X_q`
+    /// - If P anticommutes with `X_q`: `X_q` -> `-X_q`
+    ///   (Same logic for `Z_q`.)
     fn from(pauli: PauliString) -> CliffordRep {
         let n = pauli.qubits().into_iter().max().map_or(1, |m| m + 1);
         let mut cliff = CliffordRep::identity(n);
@@ -1032,84 +1024,152 @@ pub mod constructors {
     // Single-qubit sqrt gates and their daggers
 
     #[must_use]
-    pub fn SX(q: usize) -> CliffordRep { CliffordRep::sx(q) }
+    pub fn SX(q: usize) -> CliffordRep {
+        CliffordRep::sx(q)
+    }
     #[must_use]
-    pub fn SXdg(q: usize) -> CliffordRep { CliffordRep::sxdg(q) }
+    pub fn SXdg(q: usize) -> CliffordRep {
+        CliffordRep::sxdg(q)
+    }
     #[must_use]
-    pub fn SY(q: usize) -> CliffordRep { CliffordRep::sy(q) }
+    pub fn SY(q: usize) -> CliffordRep {
+        CliffordRep::sy(q)
+    }
     #[must_use]
-    pub fn SYdg(q: usize) -> CliffordRep { CliffordRep::sydg(q) }
+    pub fn SYdg(q: usize) -> CliffordRep {
+        CliffordRep::sydg(q)
+    }
     #[must_use]
-    pub fn SZ(q: usize) -> CliffordRep { CliffordRep::sz(q) }
+    pub fn SZ(q: usize) -> CliffordRep {
+        CliffordRep::sz(q)
+    }
     #[must_use]
-    pub fn SZdg(q: usize) -> CliffordRep { CliffordRep::szdg(q) }
+    pub fn SZdg(q: usize) -> CliffordRep {
+        CliffordRep::szdg(q)
+    }
 
     // Hadamard variants
 
     #[must_use]
-    pub fn H2(q: usize) -> CliffordRep { CliffordRep::h2(q) }
+    pub fn H2(q: usize) -> CliffordRep {
+        CliffordRep::h2(q)
+    }
     #[must_use]
-    pub fn H3(q: usize) -> CliffordRep { CliffordRep::h3(q) }
+    pub fn H3(q: usize) -> CliffordRep {
+        CliffordRep::h3(q)
+    }
     #[must_use]
-    pub fn H4(q: usize) -> CliffordRep { CliffordRep::h4(q) }
+    pub fn H4(q: usize) -> CliffordRep {
+        CliffordRep::h4(q)
+    }
     #[must_use]
-    pub fn H5(q: usize) -> CliffordRep { CliffordRep::h5(q) }
+    pub fn H5(q: usize) -> CliffordRep {
+        CliffordRep::h5(q)
+    }
     #[must_use]
-    pub fn H6(q: usize) -> CliffordRep { CliffordRep::h6(q) }
+    pub fn H6(q: usize) -> CliffordRep {
+        CliffordRep::h6(q)
+    }
 
     // Face gates
 
     #[must_use]
-    pub fn F(q: usize) -> CliffordRep { CliffordRep::f(q) }
+    pub fn F(q: usize) -> CliffordRep {
+        CliffordRep::f(q)
+    }
     #[must_use]
-    pub fn Fdg(q: usize) -> CliffordRep { CliffordRep::fdg(q) }
+    pub fn Fdg(q: usize) -> CliffordRep {
+        CliffordRep::fdg(q)
+    }
     #[must_use]
-    pub fn F2(q: usize) -> CliffordRep { CliffordRep::f2(q) }
+    pub fn F2(q: usize) -> CliffordRep {
+        CliffordRep::f2(q)
+    }
     #[must_use]
-    pub fn F2dg(q: usize) -> CliffordRep { CliffordRep::f2dg(q) }
+    pub fn F2dg(q: usize) -> CliffordRep {
+        CliffordRep::f2dg(q)
+    }
     #[must_use]
-    pub fn F3(q: usize) -> CliffordRep { CliffordRep::f3(q) }
+    pub fn F3(q: usize) -> CliffordRep {
+        CliffordRep::f3(q)
+    }
     #[must_use]
-    pub fn F3dg(q: usize) -> CliffordRep { CliffordRep::f3dg(q) }
+    pub fn F3dg(q: usize) -> CliffordRep {
+        CliffordRep::f3dg(q)
+    }
     #[must_use]
-    pub fn F4(q: usize) -> CliffordRep { CliffordRep::f4(q) }
+    pub fn F4(q: usize) -> CliffordRep {
+        CliffordRep::f4(q)
+    }
     #[must_use]
-    pub fn F4dg(q: usize) -> CliffordRep { CliffordRep::f4dg(q) }
+    pub fn F4dg(q: usize) -> CliffordRep {
+        CliffordRep::f4dg(q)
+    }
 
     // Two-qubit gates
 
     #[must_use]
-    pub fn CX(c: usize, t: usize) -> CliffordRep { CliffordRep::cx(c, t) }
+    pub fn CX(c: usize, t: usize) -> CliffordRep {
+        CliffordRep::cx(c, t)
+    }
     #[must_use]
-    pub fn CY(c: usize, t: usize) -> CliffordRep { CliffordRep::cy(c, t) }
+    pub fn CY(c: usize, t: usize) -> CliffordRep {
+        CliffordRep::cy(c, t)
+    }
     #[must_use]
-    pub fn CZ(a: usize, b: usize) -> CliffordRep { CliffordRep::cz(a, b) }
+    pub fn CZ(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::cz(a, b)
+    }
     #[must_use]
-    pub fn SWAP(a: usize, b: usize) -> CliffordRep { CliffordRep::swap(a, b) }
+    pub fn SWAP(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::swap(a, b)
+    }
     #[must_use]
-    pub fn SXX(a: usize, b: usize) -> CliffordRep { CliffordRep::sxx(a, b) }
+    pub fn SXX(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::sxx(a, b)
+    }
     #[must_use]
-    pub fn SXXdg(a: usize, b: usize) -> CliffordRep { CliffordRep::sxxdg(a, b) }
+    pub fn SXXdg(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::sxxdg(a, b)
+    }
     #[must_use]
-    pub fn SYY(a: usize, b: usize) -> CliffordRep { CliffordRep::syy(a, b) }
+    pub fn SYY(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::syy(a, b)
+    }
     #[must_use]
-    pub fn SYYdg(a: usize, b: usize) -> CliffordRep { CliffordRep::syydg(a, b) }
+    pub fn SYYdg(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::syydg(a, b)
+    }
     #[must_use]
-    pub fn SZZ(a: usize, b: usize) -> CliffordRep { CliffordRep::szz(a, b) }
+    pub fn SZZ(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::szz(a, b)
+    }
     #[must_use]
-    pub fn SZZdg(a: usize, b: usize) -> CliffordRep { CliffordRep::szzdg(a, b) }
+    pub fn SZZdg(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::szzdg(a, b)
+    }
     #[must_use]
-    pub fn ISWAP(a: usize, b: usize) -> CliffordRep { CliffordRep::iswap(a, b) }
+    pub fn ISWAP(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::iswap(a, b)
+    }
     #[must_use]
-    pub fn ISWAPdg(a: usize, b: usize) -> CliffordRep { CliffordRep::iswapdg(a, b) }
+    pub fn ISWAPdg(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::iswapdg(a, b)
+    }
     #[must_use]
-    pub fn G(a: usize, b: usize) -> CliffordRep { CliffordRep::g(a, b) }
+    pub fn G(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::g(a, b)
+    }
     #[must_use]
-    pub fn Gdg(a: usize, b: usize) -> CliffordRep { CliffordRep::gdg(a, b) }
+    pub fn Gdg(a: usize, b: usize) -> CliffordRep {
+        CliffordRep::gdg(a, b)
+    }
 
     /// Identity Clifford on `n` qubits.
     #[must_use]
-    pub fn Id(n: usize) -> CliffordRep { CliffordRep::identity(n) }
+    pub fn Id(n: usize) -> CliffordRep {
+        CliffordRep::identity(n)
+    }
 }
 
 #[cfg(test)]
@@ -1453,7 +1513,10 @@ mod tests {
             CliffordRep::cy(0, 1),
         ];
         for gate in &gates {
-            assert!(gate.inverse().is_valid(), "inverse of {gate:?} is not valid");
+            assert!(
+                gate.inverse().is_valid(),
+                "inverse of {gate:?} is not valid"
+            );
         }
     }
 
@@ -1795,10 +1858,10 @@ mod tests {
         let s = CliffordRep::sz(0);
 
         // All four Mul variants should work
-        let _r1 = h.clone() * s.clone();
-        let _r2 = h.clone() * &s;
-        let _r3 = &h * s.clone();
-        let _r4 = &h * &s;
+        let _ = h.clone() * s.clone();
+        let _ = h.clone() * &s;
+        let _ = &h * s.clone();
+        let _ = &h * &s;
     }
 
     #[test]
@@ -1883,26 +1946,46 @@ mod tests {
         let h3_composed = CliffordRep::y(0).compose(&CliffordRep::sz(0));
         let x0 = PauliString::x(0);
         let z0 = PauliString::z(0);
-        assert_eq!(h3_composed.apply(&x0), PauliString::y(0),
-            "H3(X) should be Y");
-        assert_eq!(h3_composed.apply(&z0), -PauliString::z(0),
-            "H3(Z) should be -Z");
+        assert_eq!(
+            h3_composed.apply(&x0),
+            PauliString::y(0),
+            "H3(X) should be Y"
+        );
+        assert_eq!(
+            h3_composed.apply(&z0),
+            -PauliString::z(0),
+            "H3(Z) should be -Z"
+        );
     }
 
     #[test]
     fn test_all_single_qubit_gates_valid() {
         let gates = [
-            CliffordRep::h(0), CliffordRep::h2(0), CliffordRep::h3(0),
-            CliffordRep::h4(0), CliffordRep::h5(0), CliffordRep::h6(0),
-            CliffordRep::sz(0), CliffordRep::szdg(0),
-            CliffordRep::sx(0), CliffordRep::sxdg(0),
-            CliffordRep::sy(0), CliffordRep::sydg(0),
-            CliffordRep::sz(0), CliffordRep::szdg(0),
-            CliffordRep::x(0), CliffordRep::y(0), CliffordRep::z(0),
-            CliffordRep::f(0), CliffordRep::fdg(0),
-            CliffordRep::f2(0), CliffordRep::f2dg(0),
-            CliffordRep::f3(0), CliffordRep::f3dg(0),
-            CliffordRep::f4(0), CliffordRep::f4dg(0),
+            CliffordRep::h(0),
+            CliffordRep::h2(0),
+            CliffordRep::h3(0),
+            CliffordRep::h4(0),
+            CliffordRep::h5(0),
+            CliffordRep::h6(0),
+            CliffordRep::sz(0),
+            CliffordRep::szdg(0),
+            CliffordRep::sx(0),
+            CliffordRep::sxdg(0),
+            CliffordRep::sy(0),
+            CliffordRep::sydg(0),
+            CliffordRep::sz(0),
+            CliffordRep::szdg(0),
+            CliffordRep::x(0),
+            CliffordRep::y(0),
+            CliffordRep::z(0),
+            CliffordRep::f(0),
+            CliffordRep::fdg(0),
+            CliffordRep::f2(0),
+            CliffordRep::f2dg(0),
+            CliffordRep::f3(0),
+            CliffordRep::f3dg(0),
+            CliffordRep::f4(0),
+            CliffordRep::f4dg(0),
         ];
         for (idx, gate) in gates.iter().enumerate() {
             assert!(gate.is_valid(), "Single-qubit gate {idx} is not valid");
@@ -1912,11 +1995,18 @@ mod tests {
     #[test]
     fn test_all_two_qubit_gates_valid() {
         let gates = [
-            CliffordRep::cx(0, 1), CliffordRep::cy(0, 1), CliffordRep::cz(0, 1),
-            CliffordRep::swap(0, 1), CliffordRep::iswap(0, 1), CliffordRep::g(0, 1),
-            CliffordRep::sxx(0, 1), CliffordRep::sxxdg(0, 1),
-            CliffordRep::syy(0, 1), CliffordRep::syydg(0, 1),
-            CliffordRep::szz(0, 1), CliffordRep::szzdg(0, 1),
+            CliffordRep::cx(0, 1),
+            CliffordRep::cy(0, 1),
+            CliffordRep::cz(0, 1),
+            CliffordRep::swap(0, 1),
+            CliffordRep::iswap(0, 1),
+            CliffordRep::g(0, 1),
+            CliffordRep::sxx(0, 1),
+            CliffordRep::sxxdg(0, 1),
+            CliffordRep::syy(0, 1),
+            CliffordRep::syydg(0, 1),
+            CliffordRep::szz(0, 1),
+            CliffordRep::szzdg(0, 1),
         ];
         for (idx, gate) in gates.iter().enumerate() {
             assert!(gate.is_valid(), "Two-qubit gate {idx} is not valid");
@@ -1942,10 +2032,16 @@ mod tests {
             let n = product.num_qubits();
             let identity = CliffordRep::identity(n);
             for q in 0..n {
-                assert_eq!(product.x_image(q), identity.x_image(q),
-                    "Pair {idx}: G * G† x_image({q}) mismatch");
-                assert_eq!(product.z_image(q), identity.z_image(q),
-                    "Pair {idx}: G * G† z_image({q}) mismatch");
+                assert_eq!(
+                    product.x_image(q),
+                    identity.x_image(q),
+                    "Pair {idx}: G * G† x_image({q}) mismatch"
+                );
+                assert_eq!(
+                    product.z_image(q),
+                    identity.z_image(q),
+                    "Pair {idx}: G * G† z_image({q}) mismatch"
+                );
             }
         }
     }
@@ -1970,15 +2066,25 @@ mod tests {
     fn test_hadamard_variants_are_involutions() {
         // All H variants are self-inverse (H^2 = I)
         for gate in [
-            CliffordRep::h(0), CliffordRep::h2(0), CliffordRep::h3(0),
-            CliffordRep::h4(0), CliffordRep::h5(0), CliffordRep::h6(0),
+            CliffordRep::h(0),
+            CliffordRep::h2(0),
+            CliffordRep::h3(0),
+            CliffordRep::h4(0),
+            CliffordRep::h5(0),
+            CliffordRep::h6(0),
         ] {
             let product = gate.compose(&gate);
             let identity = CliffordRep::identity(1);
-            assert_eq!(product.x_image(0), identity.x_image(0),
-                "Hadamard variant not involution on X");
-            assert_eq!(product.z_image(0), identity.z_image(0),
-                "Hadamard variant not involution on Z");
+            assert_eq!(
+                product.x_image(0),
+                identity.x_image(0),
+                "Hadamard variant not involution on X"
+            );
+            assert_eq!(
+                product.z_image(0),
+                identity.z_image(0),
+                "Hadamard variant not involution on Z"
+            );
         }
     }
 
@@ -1987,18 +2093,48 @@ mod tests {
         use super::constructors::*;
         // Verify all constructors compile and are valid
         let singles = [
-            H(0), H2(0), H3(0), H4(0), H5(0), H6(0),
-            SX(0), SXdg(0), SY(0), SYdg(0), SZ(0), SZdg(0),
-            F(0), Fdg(0), F2(0), F2dg(0), F3(0), F3dg(0), F4(0), F4dg(0),
+            H(0),
+            H2(0),
+            H3(0),
+            H4(0),
+            H5(0),
+            H6(0),
+            SX(0),
+            SXdg(0),
+            SY(0),
+            SYdg(0),
+            SZ(0),
+            SZdg(0),
+            F(0),
+            Fdg(0),
+            F2(0),
+            F2dg(0),
+            F3(0),
+            F3dg(0),
+            F4(0),
+            F4dg(0),
         ];
-        for s in &singles { assert!(s.is_valid()); }
+        for s in &singles {
+            assert!(s.is_valid());
+        }
 
         let doubles = [
-            CX(0, 1), CY(0, 1), CZ(0, 1), SWAP(0, 1),
-            SXX(0, 1), SXXdg(0, 1), SYY(0, 1), SYYdg(0, 1),
-            SZZ(0, 1), SZZdg(0, 1), ISWAP(0, 1), G(0, 1),
+            CX(0, 1),
+            CY(0, 1),
+            CZ(0, 1),
+            SWAP(0, 1),
+            SXX(0, 1),
+            SXXdg(0, 1),
+            SYY(0, 1),
+            SYYdg(0, 1),
+            SZZ(0, 1),
+            SZZdg(0, 1),
+            ISWAP(0, 1),
+            G(0, 1),
         ];
-        for d in &doubles { assert!(d.is_valid()); }
+        for d in &doubles {
+            assert!(d.is_valid());
+        }
 
         assert!(Id(3).is_valid());
     }
@@ -2071,8 +2207,7 @@ mod tests {
     #[test]
     fn compose_preserves_validity_1q() {
         use crate::clifford::Clifford;
-        let gates_1q: Vec<CliffordRep> =
-            Clifford::all_1q().iter().map(|c| c.on_qubit(0)).collect();
+        let gates_1q: Vec<CliffordRep> = Clifford::all_1q().iter().map(|c| c.on_qubit(0)).collect();
         // Test a representative sample of compositions (all pairs would be 24*24=576)
         for a in &gates_1q {
             for b in &gates_1q {
@@ -2088,8 +2223,10 @@ mod tests {
     #[test]
     fn compose_preserves_validity_2q() {
         use crate::clifford::Clifford;
-        let gates_2q: Vec<CliffordRep> =
-            Clifford::all_2q().iter().map(|c| c.on_qubits(0, 1)).collect();
+        let gates_2q: Vec<CliffordRep> = Clifford::all_2q()
+            .iter()
+            .map(|c| c.on_qubits(0, 1))
+            .collect();
         // Test all pairs (14*14=196)
         for a in &gates_2q {
             for b in &gates_2q {
@@ -2147,8 +2284,10 @@ mod tests {
     #[test]
     fn inverse_correct_on_composed_2q_cliffords() {
         use crate::clifford::Clifford;
-        let gates_2q: Vec<CliffordRep> =
-            Clifford::all_2q().iter().map(|c| c.on_qubits(0, 1)).collect();
+        let gates_2q: Vec<CliffordRep> = Clifford::all_2q()
+            .iter()
+            .map(|c| c.on_qubits(0, 1))
+            .collect();
 
         // Test inverse on all pairwise compositions (14*14 = 196 composed gates)
         for (idx_a, a) in gates_2q.iter().enumerate() {
@@ -2172,20 +2311,32 @@ mod tests {
         let y0 = PauliString::y(0);
         let result = h.apply(&y0);
         assert_eq!(result.get(0), Pauli::Y);
-        assert_eq!(result.phase(), QuarterPhase::MinusOne, "H: Y should map to -Y");
+        assert_eq!(
+            result.phase(),
+            QuarterPhase::MinusOne,
+            "H: Y should map to -Y"
+        );
 
         // SZ: X -> Y, Z -> Z. So Y -> i*Y*Z = i*(iX) = -X.
         // (Y*Z = iX because Pauli product YZ = iX.)
         let sz = CliffordRep::sz(0);
         let result = sz.apply(&y0);
         assert_eq!(result.get(0), Pauli::X);
-        assert_eq!(result.phase(), QuarterPhase::MinusOne, "SZ: Y should map to -X");
+        assert_eq!(
+            result.phase(),
+            QuarterPhase::MinusOne,
+            "SZ: Y should map to -X"
+        );
 
         // SX: X -> X, Z -> -Y. So Y -> i*X*(-Y) = -i*X*Y = -i*(iZ) = Z.
         let sx = CliffordRep::sx(0);
         let result = sx.apply(&y0);
         assert_eq!(result.get(0), Pauli::Z);
-        assert_eq!(result.phase(), QuarterPhase::PlusOne, "SX: Y should map to Z");
+        assert_eq!(
+            result.phase(),
+            QuarterPhase::PlusOne,
+            "SX: Y should map to Z"
+        );
     }
 
     #[test]
@@ -2197,14 +2348,22 @@ mod tests {
         let result = cx.apply(&y0);
         assert_eq!(result.get(0), Pauli::Y);
         assert_eq!(result.get(1), Pauli::X);
-        assert_eq!(result.phase(), QuarterPhase::PlusOne, "CX: Y0 should map to Y0X1");
+        assert_eq!(
+            result.phase(),
+            QuarterPhase::PlusOne,
+            "CX: Y0 should map to Y0X1"
+        );
 
         // Y1 = iX1Z1 -> i*(X1)*(Z0Z1) = i*Z0*X1*Z1 = Z0*(iX1Z1) = Z0*Y1.
         let y1 = PauliString::y(1);
         let result = cx.apply(&y1);
         assert_eq!(result.get(0), Pauli::Z);
         assert_eq!(result.get(1), Pauli::Y);
-        assert_eq!(result.phase(), QuarterPhase::PlusOne, "CX: Y1 should map to Z0Y1");
+        assert_eq!(
+            result.phase(),
+            QuarterPhase::PlusOne,
+            "CX: Y1 should map to Z0Y1"
+        );
     }
 
     #[test]
@@ -2284,7 +2443,8 @@ mod tests {
                     let expected = img_p0 * &img_p1;
 
                     assert_eq!(
-                        result, expected,
+                        result,
+                        expected,
                         "{cliff}: apply({}) != apply({}) * apply({})",
                         combined.to_sparse_str(),
                         p0.to_sparse_str(),
@@ -2348,14 +2508,16 @@ mod tests {
 
             let x1_img = rep.apply(&x1);
             assert_eq!(
-                x1_img, x1,
+                x1_img,
+                x1,
                 "{cliff} on (0,2): X1 should be unchanged but got {}",
                 x1_img.to_sparse_str()
             );
 
             let z1_img = rep.apply(&z1);
             assert_eq!(
-                z1_img, z1,
+                z1_img,
+                z1,
                 "{cliff} on (0,2): Z1 should be unchanged but got {}",
                 z1_img.to_sparse_str()
             );
@@ -2380,15 +2542,18 @@ mod tests {
             // Compare: same Pauli on qubit 0, and qubit 1's Pauli in rep_01
             // should appear on qubit 2 in rep_02.
             assert_eq!(
-                x0_01.get(0), x0_02.get(0),
+                x0_01.get(0),
+                x0_02.get(0),
                 "{cliff}: X0 image qubit-0 component differs between (0,1) and (0,2)"
             );
             assert_eq!(
-                x0_01.get(1), x0_02.get(2),
+                x0_01.get(1),
+                x0_02.get(2),
                 "{cliff}: X0 image: qubit-1 component in (0,1) should match qubit-2 in (0,2)"
             );
             assert_eq!(
-                x0_01.phase(), x0_02.phase(),
+                x0_01.phase(),
+                x0_02.phase(),
                 "{cliff}: X0 image phase differs between (0,1) and (0,2)"
             );
 

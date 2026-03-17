@@ -33,6 +33,7 @@ use nalgebra::DMatrix;
 use num_complex::Complex64;
 use std::fmt;
 use std::ops::{BitAnd, Deref, DerefMut, Mul, Neg, Sub};
+use std::sync::LazyLock;
 
 use pecos_core::clifford::Clifford;
 use pecos_core::clifford_rep::CliffordRep;
@@ -125,7 +126,135 @@ impl UnitaryMatrix {
     pub fn into_inner(self) -> DMatrix<Complex64> {
         self.0
     }
+
+    /// Returns `true` if this matrix is unitary (U * U† = I) within tolerance.
+    #[must_use]
+    pub fn is_unitary(&self) -> bool {
+        self.is_unitary_with_tolerance(1e-10)
+    }
+
+    /// Returns `true` if this matrix is unitary within the given tolerance.
+    #[must_use]
+    pub fn is_unitary_with_tolerance(&self, tol: f64) -> bool {
+        let n = self.nrows();
+        if n != self.ncols() {
+            return false;
+        }
+        let product = &self.0 * self.0.adjoint();
+        let identity = DMatrix::<Complex64>::identity(n, n);
+        (product - identity).norm() < tol
+    }
+
+    /// Canonicalizes by dividing all entries by the first nonzero entry
+    /// (row-major scan). This removes any scalar factor (not just unit phases),
+    /// so `2*H` and `e^{iπ/3}*H` both canonicalize to the same matrix as `H`.
+    ///
+    /// Returns `None` if the matrix is all zeros.
+    #[must_use]
+    pub fn canonicalize(&self) -> Option<Self> {
+        canonicalize_matrix(&self.0).map(Self)
+    }
+
+    /// Attempts to identify this matrix as a [`Unitary`] gate descriptor
+    /// (up to any nonzero scalar, not just global phase).
+    ///
+    /// Searches all non-parameterized unitary gate types: 15 single-qubit (2x2),
+    /// 11 two-qubit (4x4), and 1 three-qubit (8x8). Other sizes return `None`.
+    ///
+    /// The returned `Unitary` can be further queried with `is_pauli()`,
+    /// `is_clifford()`, `try_to_pauli()`, etc.
+    ///
+    /// For self-inverse gates, the non-dagger variant is returned.
+    #[must_use]
+    pub fn try_to_unitary(&self) -> Option<Unitary> {
+        let canonical = canonicalize_matrix(&self.0)?;
+
+        let table: &[(Unitary, DMatrix<Complex64>)] = match self.nrows() {
+            2 => &UNITARY_1Q_TABLE,
+            4 => &UNITARY_2Q_TABLE,
+            8 => &UNITARY_3Q_TABLE,
+            _ => return None,
+        };
+
+        table.iter()
+            .find(|(_, ref_canon)| matrices_approx_equal(&canonical, ref_canon, 1e-8))
+            .map(|(gate, _)| *gate)
+    }
 }
+
+// ============================================================================
+// Canonicalization and cached lookup tables
+// ============================================================================
+
+/// Divides all entries by the first nonzero entry (row-major scan).
+/// Returns `None` for the zero matrix.
+fn canonicalize_matrix(mat: &DMatrix<Complex64>) -> Option<DMatrix<Complex64>> {
+    for i in 0..mat.nrows() {
+        for j in 0..mat.ncols() {
+            let v = mat[(i, j)];
+            if v.norm() > 1e-14 {
+                return Some(mat / v);
+            }
+        }
+    }
+    None
+}
+
+/// Element-wise approximate equality.
+fn matrices_approx_equal(a: &DMatrix<Complex64>, b: &DMatrix<Complex64>, tol: f64) -> bool {
+    if a.nrows() != b.nrows() || a.ncols() != b.ncols() {
+        return false;
+    }
+    for i in 0..a.nrows() {
+        for j in 0..a.ncols() {
+            if (a[(i, j)] - b[(i, j)]).norm() > tol {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Non-parameterized unitary gate types (non-dg before dg for self-inverse preference).
+const NAMED_GATE_1Q: [GateType; 15] = [
+    GateType::I, GateType::X, GateType::Y, GateType::Z,
+    GateType::H, GateType::F, GateType::Fdg,
+    GateType::SX, GateType::SXdg, GateType::SY, GateType::SYdg,
+    GateType::SZ, GateType::SZdg, GateType::T, GateType::Tdg,
+];
+
+const NAMED_GATE_2Q: [GateType; 11] = [
+    GateType::CX, GateType::CY, GateType::CZ, GateType::CH,
+    GateType::SWAP,
+    GateType::SXX, GateType::SXXdg, GateType::SYY, GateType::SYYdg,
+    GateType::SZZ, GateType::SZZdg,
+];
+
+const NAMED_GATE_3Q: [GateType; 1] = [GateType::CCX];
+
+/// Builds a cached lookup table mapping `Unitary::Named(gate)` to its canonical matrix.
+fn build_unitary_table(gates: &[GateType], num_qubits: usize) -> Vec<(Unitary, DMatrix<Complex64>)> {
+    let qubits: Vec<usize> = (0..num_qubits).collect();
+    gates.iter().map(|&g| {
+        let mat = gate_to_matrix(g, &qubits, num_qubits);
+        let canon = canonicalize_matrix(&mat)
+            .expect("gate matrix should not be zero");
+        (Unitary::Named(g), canon)
+    }).collect()
+}
+
+/// Cached canonical forms for gate identification.
+static UNITARY_1Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> = LazyLock::new(|| {
+    build_unitary_table(&NAMED_GATE_1Q, 1)
+});
+
+static UNITARY_2Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> = LazyLock::new(|| {
+    build_unitary_table(&NAMED_GATE_2Q, 2)
+});
+
+static UNITARY_3Q_TABLE: LazyLock<Vec<(Unitary, DMatrix<Complex64>)>> = LazyLock::new(|| {
+    build_unitary_table(&NAMED_GATE_3Q, 3)
+});
 
 impl From<DMatrix<Complex64>> for UnitaryMatrix {
     fn from(m: DMatrix<Complex64>) -> Self {
@@ -1744,5 +1873,139 @@ mod tests {
         let op_mat = op.to_matrix();
 
         assert!(matrices_equiv_up_to_phase(&ps_mat, &op_mat, 1e-10));
+    }
+
+    // ========================================================================
+    // try_to_unitary tests
+    // ========================================================================
+
+    #[test]
+    fn try_to_unitary_identifies_all_named_1q_gates() {
+        use super::NAMED_GATE_1Q;
+        for &gate in &NAMED_GATE_1Q {
+            let mat = UnitaryMatrix(super::gate_to_matrix(gate, &[0], 1));
+            assert_eq!(
+                mat.try_to_unitary(),
+                Some(Unitary::Named(gate)),
+                "failed to identify {gate:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn try_to_unitary_identifies_all_named_2q_gates() {
+        use super::NAMED_GATE_2Q;
+        for &gate in &NAMED_GATE_2Q {
+            let mat = UnitaryMatrix(super::gate_to_matrix(gate, &[0, 1], 2));
+            let identified = mat.try_to_unitary();
+            assert!(identified.is_some(), "failed to identify {gate:?}");
+            // Verify via matrix comparison (handles self-inverse gates)
+            let id_gate = identified.unwrap().to_gate_type().unwrap();
+            let id_mat = UnitaryMatrix(super::gate_to_matrix(id_gate, &[0, 1], 2));
+            assert!(
+                mat.equiv_up_to_phase(&id_mat),
+                "{gate:?} identified as {:?} but matrices don't match",
+                identified.unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn try_to_unitary_identifies_ccx() {
+        let mat = UnitaryMatrix(super::gate_to_matrix(GateType::CCX, &[0, 1, 2], 3));
+        assert_eq!(mat.try_to_unitary(), Some(Unitary::Named(GateType::CCX)));
+    }
+
+    #[test]
+    fn try_to_unitary_finds_t_gate() {
+        let t_mat = T(0).to_matrix();
+        assert_eq!(t_mat.try_to_unitary(), Some(Unitary::Named(GateType::T)));
+
+        let tdg_mat = pecos_core::unitary_rep::T(0).dg().to_matrix();
+        assert_eq!(tdg_mat.try_to_unitary(), Some(Unitary::Named(GateType::Tdg)));
+    }
+
+    #[test]
+    fn try_to_unitary_with_any_scalar() {
+        // iX should still be identified as X
+        let x_mat = X(0).to_matrix();
+        let ix = &x_mat * Complex64::new(0.0, 1.0);
+        assert_eq!(ix.try_to_unitary(), Some(Unitary::Named(GateType::X)));
+
+        // 2*H (non-unitary scalar) should still be identified as H
+        let h_mat = H(0).to_matrix();
+        let two_h = &h_mat * 2.0;
+        assert_eq!(two_h.try_to_unitary(), Some(Unitary::Named(GateType::H)));
+
+        // (3+4i)*Z should still be identified as Z
+        let z_mat = Z(0).to_matrix();
+        let scaled_z = &z_mat * Complex64::new(3.0, 4.0);
+        assert_eq!(scaled_z.try_to_unitary(), Some(Unitary::Named(GateType::Z)));
+
+        // -iT should still be identified as T
+        let t_mat = T(0).to_matrix();
+        let phased = &t_mat * Complex64::new(0.0, -1.0);
+        assert_eq!(phased.try_to_unitary(), Some(Unitary::Named(GateType::T)));
+
+        // 5*CX should still be identified as CX
+        let cx_mat = CX(0, 1).to_matrix();
+        let scaled = &cx_mat * 5.0;
+        assert_eq!(scaled.try_to_unitary(), Some(Unitary::Named(GateType::CX)));
+    }
+
+    #[test]
+    fn try_to_unitary_returns_none_for_unknown() {
+        // A random rotation that doesn't match any named gate
+        let rx_pi_3 = RX(Angle64::from_radians(1.0), 0).to_matrix();
+        assert_eq!(rx_pi_3.try_to_unitary(), None);
+    }
+
+    #[test]
+    fn try_to_unitary_pauli_and_clifford_classification() {
+        // Paulis
+        let x = X(0).to_matrix().try_to_unitary().unwrap();
+        assert!(x.is_pauli());
+        assert!(x.is_clifford());
+        assert_eq!(x.try_to_pauli(), Some(Pauli::X));
+
+        let z = Z(0).to_matrix().try_to_unitary().unwrap();
+        assert!(z.is_pauli());
+        assert_eq!(z.try_to_pauli(), Some(Pauli::Z));
+
+        // Clifford but not Pauli
+        let h = H(0).to_matrix().try_to_unitary().unwrap();
+        assert!(!h.is_pauli());
+        assert!(h.is_clifford());
+        assert_eq!(h.try_to_pauli(), None);
+
+        // Non-Clifford
+        let t = T(0).to_matrix().try_to_unitary().unwrap();
+        assert!(!t.is_pauli());
+        assert!(!t.is_clifford());
+        assert_eq!(t.try_to_pauli(), None);
+    }
+
+    // ========================================================================
+    // is_unitary tests
+    // ========================================================================
+
+    #[test]
+    fn is_unitary_for_known_gates() {
+        assert!(X(0).to_matrix().is_unitary());
+        assert!(H(0).to_matrix().is_unitary());
+        assert!(CX(0, 1).to_matrix().is_unitary());
+        assert!(T(0).to_matrix().is_unitary());
+    }
+
+    #[test]
+    fn is_unitary_rejects_scaled_matrices() {
+        let scaled = &X(0).to_matrix() * 2.0;
+        assert!(!scaled.is_unitary());
+    }
+
+    #[test]
+    fn is_unitary_rejects_non_square() {
+        let mat = UnitaryMatrix(DMatrix::zeros(2, 4));
+        assert!(!mat.is_unitary());
     }
 }

@@ -707,6 +707,580 @@ where
         self
     }
 
+    /// Adjoint sqrt of Z gate. X -> -Y, Z -> Z, W -> X
+    #[inline]
+    fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_x[qu]:
+            //   signs_minus ^= col_x[qu]  (toggle minus first)
+            //   signs_minus ^= signs_i & col_x[qu]  (carry from existing i)
+            //   signs_i ^= col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Sqrt of X gate. X -> X, Z -> -Y, W -> -Z
+    #[inline]
+    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of X gate. X -> X, Z -> +Y, W -> Z
+    #[inline]
+    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_z[qu]
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Sqrt of Y gate. X -> -Z, Z -> X, W -> W
+    #[inline]
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu]:
+            //   signs_minus ^= col_x[qu]; signs_minus ^= (col_x[qu] ∩ col_z[qu])
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of Y gate. X -> Z, Z -> -X, W -> W
+    #[inline]
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu]:
+            //   signs_minus ^= col_z[qu]; signs_minus ^= (col_x[qu] ∩ col_z[qu])
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H2 gate. X -> -Z, Z -> -X, W -> -W
+    #[inline]
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] ∪ col_z[qu]:
+            //   signs_minus ^= col_x[qu]; signs_minus ^= col_z[qu];
+            //   then undo the double-toggle on intersection: signs_minus ^= (col_x ∩ col_z)
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H3 gate. X -> Y, Z -> -Z, W -> -X
+    #[inline]
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu], then mul_i for col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H4 gate. X -> -Y, Z -> -Z, W -> X
+    #[inline]
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu], then mul_minus_i for col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H5 gate. X -> -X, Z -> Y, W -> -Z
+    #[inline]
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu], then mul_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z (same as SX)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H6 gate. X -> -X, Z -> -Y, W -> Z
+    #[inline]
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu], then mul_minus_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z (same as SX)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// F gate. X -> Y, Z -> X, W -> Z
+    #[inline]
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_x[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_z ^= col_x, then swap col_x <-> col_z
+            // Row updates: (1,0)->(1,1): insert row_z; (0,1)->(1,0): move row_z->row_x; (1,1)->(0,1): remove row_x
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        // (1,1) -> (0,1): remove from row_x
+                        g.row_x[i].remove(qu);
+                    } else {
+                        // (1,0) -> (1,1): insert into row_z
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        // (0,1) -> (1,0): move from row_z to row_x
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Fdg gate. X -> Z, Z -> Y, W -> X
+    #[inline]
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_z[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_x ^= col_z, then swap col_x <-> col_z
+            // Row updates: (1,0)->(0,1): move row_x->row_z; (0,1)->(1,1): insert row_x; (1,1)->(1,0): remove row_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        // (1,1) -> (1,0): remove from row_z
+                        g.row_z[i].remove(qu);
+                    } else {
+                        // (1,0) -> (0,1): move from row_x to row_z
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        // (0,1) -> (1,1): insert into row_x
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2 gate. X -> -Z, Z -> Y, W -> -X
+    #[inline]
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu], then mul_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2dg gate. X -> -Y, Z -> -X, W -> Z
+    #[inline]
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu], then mul_minus_i for col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3 gate. X -> Y, Z -> -X, W -> -Z
+    #[inline]
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu], then mul_i for col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3dg gate. X -> -Z, Z -> -Y, W -> X
+    #[inline]
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu], then mul_minus_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4 gate. X -> Z, Z -> -Y, W -> -X
+    #[inline]
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_z[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4dg gate. X -> -Y, Z -> X, W -> -Z
+    #[inline]
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_x[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
     /// Applies a CX or CNOT (Controlled-X) gate between two qubits.
     ///
     /// The CX performs the transformation:
@@ -1729,6 +2303,638 @@ where
                     }
                 }
 
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of Z gate. X -> -Y, Z -> Z, W -> X
+    #[inline]
+    fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter().copied() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Sqrt of X gate. X -> X, Z -> -Y, W -> -Z
+    #[inline]
+    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter().copied() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of X gate. X -> X, Z -> +Y, W -> Z
+    #[inline]
+    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter().copied() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Sqrt of Y gate. X -> -Z, Z -> X, W -> W
+    #[inline]
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu]:
+            //   signs_minus ^= col_x; signs_minus ^= (col_x ∩ col_z)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of Y gate. X -> Z, Z -> -X, W -> W
+    #[inline]
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu]:
+            //   signs_minus ^= col_z; signs_minus ^= (col_x ∩ col_z)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H2 gate. X -> -Z, Z -> -X, W -> -W
+    #[inline]
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x ∪ col_z:
+            //   signs_minus ^= col_x; signs_minus ^= col_z; signs_minus ^= (col_x ∩ col_z)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H3 gate. X -> Y, Z -> -Z, W -> -X
+    #[inline]
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu], then mul_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter().copied() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H4 gate. X -> -Y, Z -> -Z, W -> X
+    #[inline]
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu], then mul_minus_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter().copied() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H5 gate. X -> -X, Z -> Y, W -> -Z
+    #[inline]
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu], then mul_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z (same as SX)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter().copied() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H6 gate. X -> -X, Z -> -Y, W -> Z
+    #[inline]
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu], then mul_minus_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z (same as SX)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter().copied() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// F gate. X -> Y, Z -> X, W -> Z
+    #[inline]
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_x[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_z ^= col_x, then swap
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Fdg gate. X -> Z, Z -> Y, W -> X
+    #[inline]
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_z[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_x ^= col_z, then swap
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2 gate. X -> -Z, Z -> Y, W -> -X
+    #[inline]
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu], then mul_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2dg gate. X -> -Y, Z -> -X, W -> Z
+    #[inline]
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu], then mul_minus_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3 gate. X -> Y, Z -> -X, W -> -Z
+    #[inline]
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu], then mul_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3dg gate. X -> -Z, Z -> -Y, W -> X
+    #[inline]
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu], then mul_minus_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4 gate. X -> Z, Z -> -Y, W -> -X
+    #[inline]
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_z[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4dg gate. X -> -Y, Z -> X, W -> -Z
+    #[inline]
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_x[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
                 mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
             }
         }
@@ -4501,6 +5707,76 @@ mod tests {
                     state.stabs.signs_i.contains(gen_id), exp_i,
                     "{cliff:?} on {name}: SparseStabHybrid signs_i mismatch \
                      (expected image: {image:?})"
+                );
+            }
+        }
+    }
+
+    /// CliffordRep Pauli images match SparseStabHybrid for all 1q gates (bits + signs).
+    #[test]
+    fn clifford_rep_matches_sparse_stab_hybrid_all_1q_gates() {
+        use pecos_core::clifford::Clifford;
+        use pecos_core::PauliString;
+
+        for &cliff in Clifford::all_1q() {
+            let rep = cliff.on_qubit(0);
+
+            for (name, input_ps, init_x) in [
+                ("X", PauliString::x(0), true),
+                ("Z", PauliString::z(0), false),
+            ] {
+                let image = rep.apply(&input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) =
+                    pauli_image_to_w_notation(&image, 1);
+
+                let mut state = SparseStabHybrid::new(3);
+                if init_x {
+                    state.h(&q(0));
+                }
+
+                match cliff {
+                    Clifford::I => {}
+                    Clifford::X => { state.x(&q(0)); }
+                    Clifford::Y => { state.y(&q(0)); }
+                    Clifford::Z => { state.z(&q(0)); }
+                    Clifford::H => { state.h(&q(0)); }
+                    Clifford::SX => { state.sx(&q(0)); }
+                    Clifford::SXdg => { state.sxdg(&q(0)); }
+                    Clifford::SY => { state.sy(&q(0)); }
+                    Clifford::SYdg => { state.sydg(&q(0)); }
+                    Clifford::SZ => { state.sz(&q(0)); }
+                    Clifford::SZdg => { state.szdg(&q(0)); }
+                    Clifford::H2 => { state.h2(&q(0)); }
+                    Clifford::H3 => { state.h3(&q(0)); }
+                    Clifford::H4 => { state.h4(&q(0)); }
+                    Clifford::H5 => { state.h5(&q(0)); }
+                    Clifford::H6 => { state.h6(&q(0)); }
+                    Clifford::F => { state.f(&q(0)); }
+                    Clifford::Fdg => { state.fdg(&q(0)); }
+                    Clifford::F2 => { state.f2(&q(0)); }
+                    Clifford::F2dg => { state.f2dg(&q(0)); }
+                    Clifford::F3 => { state.f3(&q(0)); }
+                    Clifford::F3dg => { state.f3dg(&q(0)); }
+                    Clifford::F4 => { state.f4(&q(0)); }
+                    Clifford::F4dg => { state.f4dg(&q(0)); }
+                    _ => panic!("not a 1q gate: {cliff:?}"),
+                };
+
+                assert_eq!(
+                    state.stabs.col_x[0].contains(0), exp_x[0],
+                    "{cliff:?} on {name}: SparseStabHybrid X bit mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.col_z[0].contains(0), exp_z[0],
+                    "{cliff:?} on {name}: SparseStabHybrid Z bit mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_minus.contains(0), exp_minus,
+                    "{cliff:?} on {name}: SparseStabHybrid signs_minus mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(0), exp_i,
+                    "{cliff:?} on {name}: SparseStabHybrid signs_i mismatch (expected: {image:?})"
                 );
             }
         }

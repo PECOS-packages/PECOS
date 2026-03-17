@@ -1367,7 +1367,6 @@ fn verify_1q_pauli_transforms(
 
 /// Convert a single-qubit PauliString to its 2x2 matrix representation.
 fn pauli_string_to_1q_matrix(ps: &PauliString) -> UnitaryMatrix {
-    use pecos_core::phase::quarter_phase::QuarterPhase;
     let x = pauli_x();
     let y = pauli_y();
     let z = pauli_z();

@@ -570,6 +570,475 @@ where
         self
     }
 
+    /// SZdg (Y-convention): X→-Y, Z→+Z. Y→+X.
+    /// Sign: toggle minus for col_x \ col_z (only X generators, not Y).
+    #[inline]
+    fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// SX (Y-convention): X→+X, Z→-Y. Y→+Z.
+    /// Sign: toggle minus for col_z \ col_x (only Z generators, not Y).
+    #[inline]
+    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// SXdg (Y-convention): X→+X, Z→+Y. Y→-Z.
+    /// Sign: toggle minus for col_x ∩ col_z (only Y generators).
+    #[inline]
+    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// SY (Y-convention): X→-Z, Z→+X. Y→+Y.
+    /// Sign: toggle minus for col_x \ col_z (only X generators).
+    #[inline]
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// SYdg (Y-convention): X→+Z, Z→-X. Y→+Y.
+    /// Sign: toggle minus for col_z \ col_x (only Z generators).
+    #[inline]
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H2 (Y-convention): X→-Z, Z→-X. Y→-Y.
+    /// Sign: toggle minus for all non-identity generators.
+    #[inline]
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.col_x[qu]
+                .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H3 (Y-convention): X→+Y, Z→-Z. Y→+X.
+    /// Sign: toggle minus for col_z \ col_x (only Z generators).
+    #[inline]
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H4 (Y-convention): X→-Y, Z→-Z. Y→-X.
+    /// Sign: toggle minus for all non-identity generators.
+    #[inline]
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.col_x[qu]
+                .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H5 (Y-convention): X→-X, Z→+Y. Y→+Z.
+    /// Sign: toggle minus for col_x \ col_z (only X generators).
+    #[inline]
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H6 (Y-convention): X→-X, Z→-Y. Y→-Z.
+    /// Sign: toggle minus for all non-identity generators.
+    #[inline]
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.col_x[qu]
+                .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// F (Y-convention): X→+Y, Z→+X. Y→+Z.
+    /// Sign: none (all images positive).
+    #[inline]
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            // Data: col_z ^= col_x, then swap col_x ↔ col_z.
+            // Net effect: new_x = old_x ⊕ old_z, new_z = old_x.
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Fdg (Y-convention): X→+Z, Z→+Y. Y→+X.
+    /// Sign: none (all images positive).
+    #[inline]
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            // Data: col_x ^= col_z, then swap col_x ↔ col_z.
+            // Net effect: new_x = old_z, new_z = old_x ⊕ old_z.
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2 (Y-convention): X→-Z, Z→+Y. Y→-X.
+    /// Sign: toggle minus for col_x (= {X,Y}).
+    #[inline]
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            // Data: col_x ^= col_z, then swap.
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2dg (Y-convention): X→-Y, Z→-X. Y→+Z.
+    /// Sign: toggle minus for col_x ⊕ col_z (= {X,Z}).
+    #[inline]
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.col_x[qu]
+                .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            // Data: col_z ^= col_x, then swap.
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3 (Y-convention): X→+Y, Z→-X. Y→-Z.
+    /// Sign: toggle minus for col_z (= {Z,Y}).
+    #[inline]
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            // Data: col_z ^= col_x, then swap.
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3dg (Y-convention): X→-Z, Z→-Y. Y→+X.
+    /// Sign: toggle minus for col_x ⊕ col_z (= {X,Z}).
+    #[inline]
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.col_x[qu]
+                .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            // Data: col_x ^= col_z, then swap.
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4 (Y-convention): X→+Z, Z→-Y. Y→-X.
+    /// Sign: toggle minus for col_z (= {Z,Y}).
+    #[inline]
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            // Data: col_x ^= col_z, then swap.
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4dg (Y-convention): X→-Y, Z→+X. Y→-Z.
+    /// Sign: toggle minus for col_x (= {X,Y}).
+    #[inline]
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            // Data: col_z ^= col_x, then swap.
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
     /// CX gate (Y-convention).
     ///
     /// Data update: same as W-convention (XI->XX, IZ->ZZ, ZI->ZI, IX->IX)

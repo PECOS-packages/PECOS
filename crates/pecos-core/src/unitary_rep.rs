@@ -52,7 +52,7 @@
 use crate::gate_type::GateType;
 use crate::pauli::PauliOperator;
 use crate::phase::Phase;
-use crate::{Angle64, PauliString, QuarterPhase, QubitId};
+use crate::{Angle64, Pauli, PauliString, QuarterPhase, QubitId};
 use smallvec::SmallVec;
 use std::ops::{BitAnd, Mul, Neg};
 use std::str::FromStr;
@@ -200,6 +200,27 @@ impl Unitary {
         match self {
             Self::Rotation { angle, .. } => *angle == Angle64::ZERO,
             Self::Named(gate_type) => *gate_type == GateType::I,
+        }
+    }
+
+    /// Checks if this unitary is a Pauli operation (I, X, Y, or Z).
+    #[must_use]
+    pub fn is_pauli(&self) -> bool {
+        matches!(
+            self,
+            Self::Named(GateType::I | GateType::X | GateType::Y | GateType::Z)
+        )
+    }
+
+    /// Returns the corresponding `Pauli` if this is a Pauli gate.
+    #[must_use]
+    pub fn try_to_pauli(&self) -> Option<Pauli> {
+        match self {
+            Self::Named(GateType::I) => Some(Pauli::I),
+            Self::Named(GateType::X) => Some(Pauli::X),
+            Self::Named(GateType::Y) => Some(Pauli::Y),
+            Self::Named(GateType::Z) => Some(Pauli::Z),
+            _ => None,
         }
     }
 

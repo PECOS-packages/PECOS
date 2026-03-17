@@ -759,6 +759,383 @@ where
         self
     }
 
+    /// Square root of XX gate. SXX = exp(+iπ/4·XX).
+    ///
+    /// Generators with odd Z-count on {q1,q2} get phase * -i and X toggled on both qubits.
+    ///
+    /// Derivation: for anticommuting Q, Q → i·Q·(XX).
+    /// Per-qubit phase from right-multiplying (X^x Z^z)·X = (-1)^z · X^{x⊕1} Z^z.
+    /// For odd Z-count: total = i·(-1) = -i (uniform).
+    ///
+    /// ```text
+    /// XI -> XI      IX -> IX
+    /// ZI -> -YX     IZ -> -XY
+    /// ```
+    #[inline]
+    fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXX requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
+            for g in self.stabs.col_z[q1].iter() {
+                if !self.stabs.col_z[q2].contains(g) {
+                    // multiply by -i: toggle minus, then toggle i (with carry)
+                    self.stabs.signs_minus.toggle(g);
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            for g in self.stabs.col_z[q2].iter() {
+                if !self.stabs.col_z[q1].contains(g) {
+                    self.stabs.signs_minus.toggle(g);
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle X on q1,q2 for odd-Z generators.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                unsafe {
+                    let col_z_q1 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q1));
+                    let col_z_q2 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q2));
+                    let col_x_q1 = tab.col_x.get_unchecked_mut(q1);
+                    let old_col_x_q1 = col_x_q1.clone();
+                    col_x_q1.xor_assign(&*col_z_q1);
+                    col_x_q1.xor_assign(&*col_z_q2);
+                    for i in old_col_x_q1.iter() {
+                        if !tab.col_x.get_unchecked(q1).contains(i) {
+                            tab.row_x.get_unchecked_mut(i).remove(q1);
+                        }
+                    }
+                    for i in tab.col_x.get_unchecked(q1).iter() {
+                        if !old_col_x_q1.contains(i) {
+                            tab.row_x.get_unchecked_mut(i).insert(q1);
+                        }
+                    }
+
+                    let col_z_q1 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q1));
+                    let col_z_q2 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q2));
+                    let col_x_q2 = tab.col_x.get_unchecked_mut(q2);
+                    let old_col_x_q2 = col_x_q2.clone();
+                    col_x_q2.xor_assign(&*col_z_q1);
+                    col_x_q2.xor_assign(&*col_z_q2);
+                    for i in old_col_x_q2.iter() {
+                        if !tab.col_x.get_unchecked(q2).contains(i) {
+                            tab.row_x.get_unchecked_mut(i).remove(q2);
+                        }
+                    }
+                    for i in tab.col_x.get_unchecked(q2).iter() {
+                        if !old_col_x_q2.contains(i) {
+                            tab.row_x.get_unchecked_mut(i).insert(q2);
+                        }
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of XX gate. SXXdg = X(q1).X(q2).SXX
+    #[inline]
+    fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXXdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.x(&q1s).x(&q2s).sxx(qubits)
+    }
+
+    /// Square root of ZZ gate. SZZ = exp(+iπ/4·ZZ).
+    ///
+    /// Generators with odd X-count on {q1,q2} get phase * +i and Z toggled on both qubits.
+    ///
+    /// Derivation: for anticommuting Q, Q → i·Q·(ZZ).
+    /// Per-qubit phase from right-multiplying (X^x Z^z)·Z = X^x Z^{z⊕1} (no extra phase).
+    /// Total: i·1 = +i (uniform).
+    ///
+    /// ```text
+    /// XI -> YZ      IX -> ZY
+    /// ZI -> ZI      IZ -> IZ
+    /// ```
+    #[inline]
+    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZ requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): multiply phase by +i for odd X-count generators.
+            for g in self.stabs.col_x[q1].iter() {
+                if !self.stabs.col_x[q2].contains(g) {
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            for g in self.stabs.col_x[q2].iter() {
+                if !self.stabs.col_x[q1].contains(g) {
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle Z on q1,q2 for odd-X generators.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                unsafe {
+                    let col_x_q1 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q1));
+                    let col_x_q2 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q2));
+                    let col_z_q1 = tab.col_z.get_unchecked_mut(q1);
+                    let old_col_z_q1 = col_z_q1.clone();
+                    col_z_q1.xor_assign(&*col_x_q1);
+                    col_z_q1.xor_assign(&*col_x_q2);
+                    for i in old_col_z_q1.iter() {
+                        if !tab.col_z.get_unchecked(q1).contains(i) {
+                            tab.row_z.get_unchecked_mut(i).remove(q1);
+                        }
+                    }
+                    for i in tab.col_z.get_unchecked(q1).iter() {
+                        if !old_col_z_q1.contains(i) {
+                            tab.row_z.get_unchecked_mut(i).insert(q1);
+                        }
+                    }
+
+                    let col_x_q1 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q1));
+                    let col_x_q2 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q2));
+                    let col_z_q2 = tab.col_z.get_unchecked_mut(q2);
+                    let old_col_z_q2 = col_z_q2.clone();
+                    col_z_q2.xor_assign(&*col_x_q1);
+                    col_z_q2.xor_assign(&*col_x_q2);
+                    for i in old_col_z_q2.iter() {
+                        if !tab.col_z.get_unchecked(q2).contains(i) {
+                            tab.row_z.get_unchecked_mut(i).remove(q2);
+                        }
+                    }
+                    for i in tab.col_z.get_unchecked(q2).iter() {
+                        if !old_col_z_q2.contains(i) {
+                            tab.row_z.get_unchecked_mut(i).insert(q2);
+                        }
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of ZZ gate. SZZdg = Z(q1).Z(q2).SZZ
+    #[inline]
+    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.z(&q1s).z(&q2s).szz(qubits)
+    }
+
+    /// Square root of YY gate. SYY = exp(+iπ/4·YY).
+    ///
+    /// Generators where odd number of {q1,q2} have x!=z (anticommute with Y)
+    /// get phase update and both X,Z toggled on both qubits.
+    ///
+    /// Derivation: for anticommuting Q, Q → i·Q·(YY). Y = i·(XZ) in stored form.
+    /// Per-qubit phase from (X^x Z^z)·Y = i·(-1)^z · X^{x⊕1} Z^{z⊕1}.
+    /// Two-qubit product: -(-1)^{z1+z2}.
+    /// Total: i·(-1)^{z1+z2+1}.
+    ///   z1+z2 even: -i
+    ///   z1+z2 odd:  +i
+    ///
+    /// ```text
+    /// XI -> -ZY     IX -> -YZ
+    /// ZI -> XY      IZ -> YX
+    /// ```
+    #[inline]
+    fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SYY requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): for affected generators ((x1^z1)^(x2^z2)=1),
+            // multiply by -i when z1+z2 even, +i when z1+z2 odd.
+            {
+                let signs_minus = &mut self.stabs.signs_minus;
+                let signs_i = &mut self.stabs.signs_i;
+                let col_x = &self.stabs.col_x;
+                let col_z = &self.stabs.col_z;
+
+                macro_rules! mul_i {
+                    (plus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        if $signs_i.contains($g) {
+                            $signs_minus.toggle($g);
+                            $signs_i.remove($g);
+                        } else {
+                            $signs_i.insert($g);
+                        }
+                    };
+                    (minus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        $signs_minus.toggle($g);
+                        mul_i!(plus, $g, $signs_i, $signs_minus);
+                    };
+                }
+
+                macro_rules! apply_syy_sign {
+                    ($g:expr, $x1:expr, $z1:expr, $x2:expr, $z2:expr) => {
+                        if ($x1 != $z1) != ($x2 != $z2) {
+                            if $z1 == $z2 {
+                                mul_i!(minus, $g, signs_i, signs_minus);
+                            } else {
+                                mul_i!(plus, $g, signs_i, signs_minus);
+                            }
+                        }
+                    };
+                }
+
+                // Visit generators reachable from q1 columns
+                for g in col_x[q1].iter() {
+                    let x1 = true;
+                    let z1 = col_z[q1].contains(g);
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                for g in col_z[q1].iter() {
+                    if col_x[q1].contains(g) { continue; }
+                    let x1 = false;
+                    let z1 = true;
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                // Generators with identity at q1, non-identity at q2
+                for g in col_x[q2].iter() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) { continue; }
+                    let x2 = true;
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, false, false, x2, z2);
+                }
+                for g in col_z[q2].iter() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) || col_x[q2].contains(g) {
+                        continue;
+                    }
+                    apply_syy_sign!(g, false, false, false, true);
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle both X and Z on q1,q2
+            // for generators where (x1^z1) XOR (x2^z2) = 1.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                unsafe {
+                    // Compute the affected set: anti_y[q] = col_x[q] ^ col_z[q]
+                    let mut anti_y_q1 = tab.col_x.get_unchecked(q1).clone();
+                    anti_y_q1.xor_assign(tab.col_z.get_unchecked(q1));
+                    let mut anti_y_q2 = tab.col_x.get_unchecked(q2).clone();
+                    anti_y_q2.xor_assign(tab.col_z.get_unchecked(q2));
+                    let mut affected = anti_y_q1;
+                    affected.xor_assign(&anti_y_q2);
+
+                    // Toggle X bits at q1 and q2
+                    let old_col_x_q1 = tab.col_x.get_unchecked(q1).clone();
+                    tab.col_x.get_unchecked_mut(q1).xor_assign(&affected);
+                    for i in old_col_x_q1.iter() {
+                        if !tab.col_x.get_unchecked(q1).contains(i) {
+                            tab.row_x.get_unchecked_mut(i).remove(q1);
+                        }
+                    }
+                    for i in tab.col_x.get_unchecked(q1).iter() {
+                        if !old_col_x_q1.contains(i) {
+                            tab.row_x.get_unchecked_mut(i).insert(q1);
+                        }
+                    }
+
+                    let old_col_x_q2 = tab.col_x.get_unchecked(q2).clone();
+                    tab.col_x.get_unchecked_mut(q2).xor_assign(&affected);
+                    for i in old_col_x_q2.iter() {
+                        if !tab.col_x.get_unchecked(q2).contains(i) {
+                            tab.row_x.get_unchecked_mut(i).remove(q2);
+                        }
+                    }
+                    for i in tab.col_x.get_unchecked(q2).iter() {
+                        if !old_col_x_q2.contains(i) {
+                            tab.row_x.get_unchecked_mut(i).insert(q2);
+                        }
+                    }
+
+                    // Toggle Z bits at q1 and q2
+                    let old_col_z_q1 = tab.col_z.get_unchecked(q1).clone();
+                    tab.col_z.get_unchecked_mut(q1).xor_assign(&affected);
+                    for i in old_col_z_q1.iter() {
+                        if !tab.col_z.get_unchecked(q1).contains(i) {
+                            tab.row_z.get_unchecked_mut(i).remove(q1);
+                        }
+                    }
+                    for i in tab.col_z.get_unchecked(q1).iter() {
+                        if !old_col_z_q1.contains(i) {
+                            tab.row_z.get_unchecked_mut(i).insert(q1);
+                        }
+                    }
+
+                    let old_col_z_q2 = tab.col_z.get_unchecked(q2).clone();
+                    tab.col_z.get_unchecked_mut(q2).xor_assign(&affected);
+                    for i in old_col_z_q2.iter() {
+                        if !tab.col_z.get_unchecked(q2).contains(i) {
+                            tab.row_z.get_unchecked_mut(i).remove(q2);
+                        }
+                    }
+                    for i in tab.col_z.get_unchecked(q2).iter() {
+                        if !old_col_z_q2.contains(i) {
+                            tab.row_z.get_unchecked_mut(i).insert(q2);
+                        }
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of YY gate. SYYdg = Y(q1).Y(q2).SYY
+    #[inline]
+    fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SYYdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.y(&q1s).y(&q2s).syy(qubits)
+    }
+
     /// Measures qubits in the Z basis.
     ///
     /// Returns a vector containing:
@@ -943,6 +1320,18 @@ where
     pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
         let generators = self.destabs.generators();
         pecos_quantum::PauliSequence::new(generators)
+    }
+
+    /// Returns a reference to the stabilizer generators.
+    #[inline]
+    pub fn stabs(&self) -> &GensHybrid {
+        &self.stabs
+    }
+
+    /// Returns a reference to the destabilizer generators.
+    #[inline]
+    pub fn destabs(&self) -> &GensHybrid {
+        &self.destabs
     }
 
     /// Negate the sign of a stabilizer generator.
@@ -1401,6 +1790,340 @@ where
             }
         }
         self
+    }
+
+    /// Square root of XX gate. SXX = exp(+iπ/4·XX).
+    ///
+    /// Generators with odd Z-count on {q1,q2} get phase * -i and X toggled on both qubits.
+    #[inline]
+    fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXX requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
+            for g in self.stabs.col_z[q1].iter().copied() {
+                if !self.stabs.col_z[q2].contains(g) {
+                    // multiply by -i: toggle minus, then toggle i (with carry)
+                    self.stabs.signs_minus.toggle(g);
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            for g in self.stabs.col_z[q2].iter().copied() {
+                if !self.stabs.col_z[q1].contains(g) {
+                    self.stabs.signs_minus.toggle(g);
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle X on q1,q2 for odd-Z generators.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                let col_z_q1_clone = tab.col_z[q1].clone();
+                let col_z_q2_clone = tab.col_z[q2].clone();
+
+                let old_col_x_q1 = tab.col_x[q1].clone();
+                tab.col_x[q1].xor_assign(&col_z_q1_clone);
+                tab.col_x[q1].xor_assign(&col_z_q2_clone);
+                for i in old_col_x_q1.iter().copied() {
+                    if !tab.col_x[q1].contains(i) {
+                        tab.row_x[i].remove(q1);
+                    }
+                }
+                for i in tab.col_x[q1].iter().copied() {
+                    if !old_col_x_q1.contains(i) {
+                        tab.row_x[i].insert(q1);
+                    }
+                }
+
+                let old_col_x_q2 = tab.col_x[q2].clone();
+                tab.col_x[q2].xor_assign(&col_z_q1_clone);
+                tab.col_x[q2].xor_assign(&col_z_q2_clone);
+                for i in old_col_x_q2.iter().copied() {
+                    if !tab.col_x[q2].contains(i) {
+                        tab.row_x[i].remove(q2);
+                    }
+                }
+                for i in tab.col_x[q2].iter().copied() {
+                    if !old_col_x_q2.contains(i) {
+                        tab.row_x[i].insert(q2);
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of XX gate. SXXdg = X(q1).X(q2).SXX
+    #[inline]
+    fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXXdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.x(&q1s).x(&q2s).sxx(qubits)
+    }
+
+    /// Square root of ZZ gate. SZZ = exp(+iπ/4·ZZ).
+    ///
+    /// Generators with odd X-count on {q1,q2} get phase * +i and Z toggled on both qubits.
+    #[inline]
+    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZ requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): multiply phase by +i for odd X-count generators.
+            for g in self.stabs.col_x[q1].iter().copied() {
+                if !self.stabs.col_x[q2].contains(g) {
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            for g in self.stabs.col_x[q2].iter().copied() {
+                if !self.stabs.col_x[q1].contains(g) {
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle Z on q1,q2 for odd-X generators.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                let col_x_q1_clone = tab.col_x[q1].clone();
+                let col_x_q2_clone = tab.col_x[q2].clone();
+
+                let old_col_z_q1 = tab.col_z[q1].clone();
+                tab.col_z[q1].xor_assign(&col_x_q1_clone);
+                tab.col_z[q1].xor_assign(&col_x_q2_clone);
+                for i in old_col_z_q1.iter().copied() {
+                    if !tab.col_z[q1].contains(i) {
+                        tab.row_z[i].remove(q1);
+                    }
+                }
+                for i in tab.col_z[q1].iter().copied() {
+                    if !old_col_z_q1.contains(i) {
+                        tab.row_z[i].insert(q1);
+                    }
+                }
+
+                let old_col_z_q2 = tab.col_z[q2].clone();
+                tab.col_z[q2].xor_assign(&col_x_q1_clone);
+                tab.col_z[q2].xor_assign(&col_x_q2_clone);
+                for i in old_col_z_q2.iter().copied() {
+                    if !tab.col_z[q2].contains(i) {
+                        tab.row_z[i].remove(q2);
+                    }
+                }
+                for i in tab.col_z[q2].iter().copied() {
+                    if !old_col_z_q2.contains(i) {
+                        tab.row_z[i].insert(q2);
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of ZZ gate. SZZdg = Z(q1).Z(q2).SZZ
+    #[inline]
+    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.z(&q1s).z(&q2s).szz(qubits)
+    }
+
+    /// Square root of YY gate. SYY = exp(+iπ/4·YY).
+    ///
+    /// Generators where odd number of {q1,q2} anticommute with Y get phase update
+    /// and both X,Z toggled on both qubits. Sign is z-parity dependent.
+    #[inline]
+    fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SYY requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only)
+            {
+                let signs_minus = &mut self.stabs.signs_minus;
+                let signs_i = &mut self.stabs.signs_i;
+                let col_x = &self.stabs.col_x;
+                let col_z = &self.stabs.col_z;
+
+                macro_rules! mul_i {
+                    (plus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        if $signs_i.contains($g) {
+                            $signs_minus.toggle($g);
+                            $signs_i.remove($g);
+                        } else {
+                            $signs_i.insert($g);
+                        }
+                    };
+                    (minus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        $signs_minus.toggle($g);
+                        mul_i!(plus, $g, $signs_i, $signs_minus);
+                    };
+                }
+
+                macro_rules! apply_syy_sign {
+                    ($g:expr, $x1:expr, $z1:expr, $x2:expr, $z2:expr) => {
+                        if ($x1 != $z1) != ($x2 != $z2) {
+                            if $z1 == $z2 {
+                                mul_i!(minus, $g, signs_i, signs_minus);
+                            } else {
+                                mul_i!(plus, $g, signs_i, signs_minus);
+                            }
+                        }
+                    };
+                }
+
+                // Visit generators reachable from q1 columns
+                for g in col_x[q1].iter().copied() {
+                    let x1 = true;
+                    let z1 = col_z[q1].contains(g);
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                for g in col_z[q1].iter().copied() {
+                    if col_x[q1].contains(g) { continue; }
+                    let x1 = false;
+                    let z1 = true;
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                // Generators with identity at q1, non-identity at q2
+                for g in col_x[q2].iter().copied() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) { continue; }
+                    let x2 = true;
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, false, false, x2, z2);
+                }
+                for g in col_z[q2].iter().copied() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) || col_x[q2].contains(g) {
+                        continue;
+                    }
+                    apply_syy_sign!(g, false, false, false, true);
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle both X and Z on q1,q2
+            // for generators where (x1^z1) XOR (x2^z2) = 1.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                // Compute the affected set: anti_y[q] = col_x[q] ^ col_z[q]
+                let mut anti_y_q1 = tab.col_x[q1].clone();
+                anti_y_q1.xor_assign(&tab.col_z[q1]);
+                let mut anti_y_q2 = tab.col_x[q2].clone();
+                anti_y_q2.xor_assign(&tab.col_z[q2]);
+                let mut affected = anti_y_q1;
+                affected.xor_assign(&anti_y_q2);
+
+                // Toggle X bits at q1 and q2
+                let old_col_x_q1 = tab.col_x[q1].clone();
+                tab.col_x[q1].xor_assign(&affected);
+                for i in old_col_x_q1.iter().copied() {
+                    if !tab.col_x[q1].contains(i) {
+                        tab.row_x[i].remove(q1);
+                    }
+                }
+                for i in tab.col_x[q1].iter().copied() {
+                    if !old_col_x_q1.contains(i) {
+                        tab.row_x[i].insert(q1);
+                    }
+                }
+
+                let old_col_x_q2 = tab.col_x[q2].clone();
+                tab.col_x[q2].xor_assign(&affected);
+                for i in old_col_x_q2.iter().copied() {
+                    if !tab.col_x[q2].contains(i) {
+                        tab.row_x[i].remove(q2);
+                    }
+                }
+                for i in tab.col_x[q2].iter().copied() {
+                    if !old_col_x_q2.contains(i) {
+                        tab.row_x[i].insert(q2);
+                    }
+                }
+
+                // Toggle Z bits at q1 and q2
+                let old_col_z_q1 = tab.col_z[q1].clone();
+                tab.col_z[q1].xor_assign(&affected);
+                for i in old_col_z_q1.iter().copied() {
+                    if !tab.col_z[q1].contains(i) {
+                        tab.row_z[i].remove(q1);
+                    }
+                }
+                for i in tab.col_z[q1].iter().copied() {
+                    if !old_col_z_q1.contains(i) {
+                        tab.row_z[i].insert(q1);
+                    }
+                }
+
+                let old_col_z_q2 = tab.col_z[q2].clone();
+                tab.col_z[q2].xor_assign(&affected);
+                for i in old_col_z_q2.iter().copied() {
+                    if !tab.col_z[q2].contains(i) {
+                        tab.row_z[i].remove(q2);
+                    }
+                }
+                for i in tab.col_z[q2].iter().copied() {
+                    if !old_col_z_q2.contains(i) {
+                        tab.row_z[i].insert(q2);
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of YY gate. SYYdg = Y(q1).Y(q2).SYY
+    #[inline]
+    fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SYYdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.y(&q1s).y(&q2s).syy(qubits)
     }
 
     /// Measures qubits in the Z basis.
@@ -3700,5 +4423,86 @@ mod tests {
         // Default state: destabilizers are X0, X1, X2
         assert_eq!(destabs.len(), 3);
         assert_eq!(destabs.num_qubits(), 3);
+    }
+
+    /// Apply a 2q Clifford gate on qubits (0, 1) to a SparseStabHybrid.
+    fn apply_2q_cliff_hybrid(
+        state: &mut SparseStabHybrid,
+        cliff: pecos_core::clifford::Clifford,
+    ) {
+        use pecos_core::clifford::Clifford;
+        match cliff {
+            Clifford::CX => { state.cx(&q2(0, 1)); }
+            Clifford::CY => { state.cy(&q2(0, 1)); }
+            Clifford::CZ => { state.cz(&q2(0, 1)); }
+            Clifford::SWAP => { state.swap(&q2(0, 1)); }
+            Clifford::SXX => { state.sxx(&q2(0, 1)); }
+            Clifford::SXXdg => { state.sxxdg(&q2(0, 1)); }
+            Clifford::SYY => { state.syy(&q2(0, 1)); }
+            Clifford::SYYdg => { state.syydg(&q2(0, 1)); }
+            Clifford::SZZ => { state.szz(&q2(0, 1)); }
+            Clifford::SZZdg => { state.szzdg(&q2(0, 1)); }
+            Clifford::ISWAP => { state.iswap(&q2(0, 1)); }
+            Clifford::ISWAPdg => { state.iswapdg(&q2(0, 1)); }
+            Clifford::G => { state.g(&q2(0, 1)); }
+            Clifford::Gdg => { state.gdg(&q2(0, 1)); }
+            _ => panic!("not a 2q gate: {cliff:?}"),
+        }
+    }
+
+    /// CliffordRep Pauli images match SparseStabHybrid for all 2q gates (bits + signs).
+    #[test]
+    fn clifford_rep_matches_sparse_stab_hybrid_all_2q_gates() {
+        use pecos_core::clifford::Clifford;
+        use pecos_core::PauliString;
+
+        let inputs: [(&str, PauliString, usize, bool); 4] = [
+            ("X0", PauliString::x(0), 0, true),
+            ("Z0", PauliString::z(0), 0, false),
+            ("X1", PauliString::x(1), 1, true),
+            ("Z1", PauliString::z(1), 1, false),
+        ];
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 1);
+
+            for (name, input_ps, input_q, init_x) in &inputs {
+                let image = rep.apply(input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) =
+                    pauli_image_to_w_notation(&image, 2);
+
+                // Prepare SparseStabHybrid with a single known generator
+                let mut state = SparseStabHybrid::new(2);
+                if *init_x {
+                    state.h(&q(*input_q));
+                }
+                apply_2q_cliff_hybrid(&mut state, cliff);
+
+                let gen_id = *input_q;
+                for qq in 0..2 {
+                    assert_eq!(
+                        state.stabs.col_x[qq].contains(gen_id), exp_x[qq],
+                        "{cliff:?} on {name}: SparseStabHybrid qubit {qq} X bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                    assert_eq!(
+                        state.stabs.col_z[qq].contains(gen_id), exp_z[qq],
+                        "{cliff:?} on {name}: SparseStabHybrid qubit {qq} Z bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                }
+
+                assert_eq!(
+                    state.stabs.signs_minus.contains(gen_id), exp_minus,
+                    "{cliff:?} on {name}: SparseStabHybrid signs_minus mismatch \
+                     (expected image: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(gen_id), exp_i,
+                    "{cliff:?} on {name}: SparseStabHybrid signs_i mismatch \
+                     (expected image: {image:?})"
+                );
+            }
+        }
     }
 }

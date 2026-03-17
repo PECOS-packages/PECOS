@@ -44,8 +44,8 @@ LocationSet = set[Location] | list[Location] | tuple[Location, ...]
 GateDict = dict[str, LocationSet]
 CircuitSetup = int | list[GateDict] | None
 
-# R2XXYYZZ gate names (composite gate, not a single native GateType)
-_R2XXYYZZ_GATES = {"R2XXYYZZ", "RZZRYYRXX", "RXXYYZZ"}
+# RXXRYYRZZ gate names (composite gate, not a single native GateType)
+_RXXRYYRZZ_GATES = {"RXXRYYRZZ", "R2XXYYZZ", "RZZRYYRXX", "RXXYYZZ"}
 
 # GateType string to symbol mapping (for iteration)
 _GATETYPE_TO_SYMBOL = {
@@ -85,7 +85,8 @@ _GATETYPE_TO_SYMBOL = {
     "CH": "CH",
     "CCX": "CCX",
     "SWAP": "SWAP",
-    "R2XXYYZZ": "R2XXYYZZ",
+    "RXXRYYRZZ": "RXXRYYRZZ",
+    "R2XXYYZZ": "RXXRYYRZZ",
     "Prep": "init |0>",
     "Measure": "measure",
     "MeasureFree": "measure",
@@ -177,7 +178,7 @@ class QuantumCircuit(MutableSequence):
 
         Uses the Rust-side ``add_gate`` method which resolves gate names via
         ``GateType::from_str``. Special handling is only needed for composite
-        gates (R2XXYYZZ) that don't map to a single GateType.
+        gates (RXXRYYRZZ) that don't map to a single GateType.
         """
         # Handle logical gate objects that have a .symbol attribute
         if not isinstance(symbol, str):
@@ -205,8 +206,8 @@ class QuantumCircuit(MutableSequence):
                 tick_handle.meta("_params", params_json)
             return
 
-        # Handle R2XXYYZZ gate (composite, not a single native GateType)
-        if symbol.upper() in _R2XXYYZZ_GATES:
+        # Handle RXXRYYRZZ gate (composite, not a single native GateType)
+        if symbol.upper() in _RXXRYYRZZ_GATES:
             angles = params.get("angles")
             if angles is not None and len(angles) >= 3:
                 zz_angle, yy_angle, xx_angle = angles[0], angles[1], angles[2]
@@ -220,7 +221,7 @@ class QuantumCircuit(MutableSequence):
                     result = tick_handle.rzz(zz_angle, loc[0], loc[1])
                     if hasattr(result, "meta"):
                         result.meta("_symbol", symbol)
-                        result.meta("_r2xxyyzz_angles", f"{zz_angle},{yy_angle},{xx_angle}")
+                        result.meta("_rxxryyrzz_angles", f"{zz_angle},{yy_angle},{xx_angle}")
                         if params_json:
                             result.meta("_params", params_json)
             return
@@ -435,12 +436,12 @@ class QuantumCircuit(MutableSequence):
                 except json.JSONDecodeError:
                     pass
 
-            # Check for R2XXYYZZ special case (stored as RZZ with metadata)
+            # Check for RXXRYYRZZ special case (stored as RZZ with metadata)
             if (
-                r2xxyyzz_angles := tick_obj.get_gate_attr(gate_idx, "_r2xxyyzz_angles")
-            ) is not None and stored_symbol in _R2XXYYZZ_GATES:
-                # Reconstruct R2XXYYZZ angles from metadata
-                angle_parts = r2xxyyzz_angles.split(",")
+                rxxryyrzz_angles := tick_obj.get_gate_attr(gate_idx, "_rxxryyrzz_angles")
+            ) is not None and stored_symbol in _RXXRYYRZZ_GATES:
+                # Reconstruct RXXRYYRZZ angles from metadata
+                angle_parts = rxxryyrzz_angles.split(",")
                 if len(angle_parts) >= 3:
                     params["angles"] = [float(a) for a in angle_parts[:3]]
             elif hasattr(gate, "angles"):

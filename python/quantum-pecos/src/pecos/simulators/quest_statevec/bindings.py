@@ -138,12 +138,12 @@ def _cy_decomposition(
     backend.sz_gate(q2)
 
 
-def _r2xxyyzz_decomposition(
+def _rxxryyrzz_decomposition(
     backend: QuantumBackend,
     qs: int | list[int] | tuple[int, ...],
     p: dict[str, Any],
 ) -> None:
-    """R2XXYYZZ/RZZRYYRXX decomposition using manual RXX, RYY, RZZ."""
+    """RXXRYYRZZ decomposition using manual RXX, RYY, RZZ."""
     q1, q2 = (qs[0], qs[1]) if isinstance(qs, list | tuple) else (qs, qs)
     angles = p.get("angles", [0, 0, 0])
     theta = angles[0] if len(angles) > 0 else 0
@@ -312,8 +312,9 @@ def get_bindings(state: QuestStateVec) -> dict:
         "RXX": lambda _s, qs, **p: _rxx_decomposition(backend, qs, p),
         "RYY": lambda _s, qs, **p: _ryy_decomposition(backend, qs, p),
         "RZZ": lambda _s, qs, **p: _rzz_decomposition(backend, qs, p),
-        "R2XXYYZZ": lambda _s, qs, **p: _r2xxyyzz_decomposition(backend, qs, p),
-        "RZZRYYRXX": lambda _s, qs, **p: _r2xxyyzz_decomposition(backend, qs, p),
+        "RXXRYYRZZ": lambda _s, qs, **p: _rxxryyrzz_decomposition(backend, qs, p),
+        "R2XXYYZZ": lambda _s, qs, **p: _rxxryyrzz_decomposition(backend, qs, p),  # backward compat alias
+        "RZZRYYRXX": lambda _s, qs, **p: _rxxryyrzz_decomposition(backend, qs, p),
         # Two-qubit Clifford gates from traits
         "SXX": lambda _s, qs, **_p: backend.sxx_gate(
             qs[0] if isinstance(qs, list | tuple) else qs,

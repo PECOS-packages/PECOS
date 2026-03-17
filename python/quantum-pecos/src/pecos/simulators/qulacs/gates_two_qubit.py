@@ -253,7 +253,7 @@ def RZZ(
     state.qulacs_state.run_2q_gate("RZZ", qubits, {"angle": angle})
 
 
-def R2XXYYZZ(
+def RXXRYYRZZ(
     state: Qulacs,
     qubit1: int | tuple[int, int] | list[int],
     qubit2: int | None = None,
@@ -271,14 +271,14 @@ def R2XXYYZZ(
     """
     # Handle both calling conventions
     if qubit2 is None:
-        # Called with tuple/list: R2XXYYZZ(state, (qubit1, qubit2))
+        # Called with tuple/list: RXXRYYRZZ(state, (qubit1, qubit2))
         if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            msg = "R2XXYYZZ requires two qubits"
+            msg = "RXXRYYRZZ requires two qubits"
             raise ValueError(msg)
     else:
-        # Called with separate args: R2XXYYZZ(state, qubit1, qubit2)
+        # Called with separate args: RXXRYYRZZ(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
 
     # Extract angles from angles parameter or params
@@ -289,8 +289,8 @@ def R2XXYYZZ(
     else:
         angle_list = [0.0, 0.0, 0.0]
 
-    # Apply RZZ, RYY, RXX in order (note the order matches RZZRYYRXX)
-    state.qulacs_state.run_2q_gate("RZZRYYRXX", qubits, {"angles": angle_list})
+    # Apply RXX, RYY, RZZ in order (note the order matches RXXRYYRZZ)
+    state.qulacs_state.run_2q_gate("RXXRYYRZZ", qubits, {"angles": angle_list})
 
 
 def SXX(

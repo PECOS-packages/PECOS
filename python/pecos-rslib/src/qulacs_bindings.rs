@@ -525,16 +525,16 @@ impl PyQulacs {
                 self.inner.ryy(angle, pair);
                 Ok(None)
             }
-            "RZZRYYRXX" => {
+            "RXXRYYRZZ" | "RZZRYYRXX" => {
                 let params = params.ok_or_else(|| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "Angles parameter required for RZZRYYRXX gate",
+                        "Angles parameter required for RXXRYYRZZ gate",
                     )
                 })?;
-                let angles = Self::extract_angles_param(params, "RZZRYYRXX", 3)?;
-                // Use the rzzryyrxx method from ArbitraryRotationGateable trait
+                let angles = Self::extract_angles_param(params, "RXXRYYRZZ", 3)?;
+                // Use the rxxryyrzz method from ArbitraryRotationGateable trait
                 // angles[0] = theta (XX), angles[1] = phi (YY), angles[2] = lambda (ZZ)
-                self.inner.rzzryyrxx(angles[0], angles[1], angles[2], pair);
+                self.inner.rxxryyrzz(angles[0], angles[1], angles[2], pair);
                 Ok(None)
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

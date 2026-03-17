@@ -30,7 +30,7 @@ two_qubits = {
     "RXX",
     "RYY",
     "RZZ",
-    "RXXYYZZ",
+    "RXXRYYRZZ",
 }
 
 one_qubits = {

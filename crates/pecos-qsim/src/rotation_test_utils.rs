@@ -708,101 +708,101 @@ pub fn verify_r1xy_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
 }
 
 // ============================================================================
-// RZZRYYRXX Composite Gate Tests
+// RXXRYYRZZ Composite Gate Tests
 // ============================================================================
 
-/// Verify RZZRYYRXX(0, 0, 0) = I.
-pub fn verify_rzzryyrxx_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
+/// Verify RXXRYYRZZ(0, 0, 0) = I.
+pub fn verify_rxxryyrzz_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
     // On |00>
     sim.reset();
-    sim.rzzryyrxx(
+    sim.rxxryyrzz(
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         &qid2(0, 1),
     );
-    assert_mz(sim, 0, false, "RZZRYYRXX(0,0,0)|00> q0");
-    assert_mz(sim, 1, false, "RZZRYYRXX(0,0,0)|00> q1");
+    assert_mz(sim, 0, false, "RXXRYYRZZ(0,0,0)|00> q0");
+    assert_mz(sim, 1, false, "RXXRYYRZZ(0,0,0)|00> q1");
 
     // On |10>
     sim.reset();
     sim.x(&qid(0));
-    sim.rzzryyrxx(
+    sim.rxxryyrzz(
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         &qid2(0, 1),
     );
-    assert_mz(sim, 0, true, "RZZRYYRXX(0,0,0)|10> q0");
-    assert_mz(sim, 1, false, "RZZRYYRXX(0,0,0)|10> q1");
+    assert_mz(sim, 0, true, "RXXRYYRZZ(0,0,0)|10> q0");
+    assert_mz(sim, 1, false, "RXXRYYRZZ(0,0,0)|10> q1");
 
     // On |+0>
     sim.reset();
     sim.h(&qid(0));
-    sim.rzzryyrxx(
+    sim.rxxryyrzz(
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         &qid2(0, 1),
     );
-    assert_mx(sim, 0, false, "RZZRYYRXX(0,0,0)|+0> q0");
-    assert_mz(sim, 1, false, "RZZRYYRXX(0,0,0)|+0> q1");
+    assert_mx(sim, 0, false, "RXXRYYRZZ(0,0,0)|+0> q0");
+    assert_mz(sim, 1, false, "RXXRYYRZZ(0,0,0)|+0> q1");
 }
 
-/// Verify RZZRYYRXX(a,b,c) * RZZRYYRXX(-a,-b,-c) = I.
-pub fn verify_rzzryyrxx_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
+/// Verify RXXRYYRZZ(a,b,c) * RXXRYYRZZ(-a,-b,-c) = I.
+pub fn verify_rxxryyrzz_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
     let cases: &[(f64, f64, f64)] = &[(0.5, 0.3, 0.7), (FRAC_PI_4, FRAC_PI_2, PI)];
 
     for &(a, b, c) in cases {
         // On |01>
         sim.reset();
         sim.x(&qid(1));
-        sim.rzzryyrxx(
+        sim.rxxryyrzz(
             Angle64::from_radians(a),
             Angle64::from_radians(b),
             Angle64::from_radians(c),
             &qid2(0, 1),
         );
-        sim.rzzryyrxx(
+        sim.rxxryyrzz(
             Angle64::from_radians(-a),
             Angle64::from_radians(-b),
             Angle64::from_radians(-c),
             &qid2(0, 1),
         );
-        assert_mz(sim, 0, false, &format!("RZZRYYRXX inv|01> q0 a={a}"));
-        assert_mz(sim, 1, true, &format!("RZZRYYRXX inv|01> q1 a={a}"));
+        assert_mz(sim, 0, false, &format!("RXXRYYRZZ inv|01> q0 a={a}"));
+        assert_mz(sim, 1, true, &format!("RXXRYYRZZ inv|01> q1 a={a}"));
 
         // On |+0>
         sim.reset();
         sim.h(&qid(0));
-        sim.rzzryyrxx(
+        sim.rxxryyrzz(
             Angle64::from_radians(a),
             Angle64::from_radians(b),
             Angle64::from_radians(c),
             &qid2(0, 1),
         );
-        sim.rzzryyrxx(
+        sim.rxxryyrzz(
             Angle64::from_radians(-a),
             Angle64::from_radians(-b),
             Angle64::from_radians(-c),
             &qid2(0, 1),
         );
-        assert_mx(sim, 0, false, &format!("RZZRYYRXX inv|+0> q0 a={a}"));
-        assert_mz(sim, 1, false, &format!("RZZRYYRXX inv|+0> q1 a={a}"));
+        assert_mx(sim, 0, false, &format!("RXXRYYRZZ inv|+0> q0 a={a}"));
+        assert_mz(sim, 1, false, &format!("RXXRYYRZZ inv|+0> q1 a={a}"));
     }
 }
 
-/// Verify RZZRYYRXX equals the explicit RXX * RYY * RZZ sequence by checking
+/// Verify RXXRYYRZZ equals the explicit RXX * RYY * RZZ sequence by checking
 /// that applying the composite followed by the inverse of each component gives identity.
-pub fn verify_rzzryyrxx_decomposition<S: ArbitraryRotationGateable>(sim: &mut S) {
+pub fn verify_rxxryyrzz_decomposition<S: ArbitraryRotationGateable>(sim: &mut S) {
     let (a, b, c) = (0.5, 0.3, 0.7);
 
-    // Apply RZZRYYRXX(a,b,c) then undo with RZZ(-c) * RYY(-b) * RXX(-a)
-    // If RZZRYYRXX = RXX(a) * RYY(b) * RZZ(c), then the inverse is
+    // Apply RXXRYYRZZ(a,b,c) then undo with RZZ(-c) * RYY(-b) * RXX(-a)
+    // If RXXRYYRZZ = RXX(a) * RYY(b) * RZZ(c), then the inverse is
     // RZZ(-c) * RYY(-b) * RXX(-a).
     sim.reset();
     sim.x(&qid(1)); // |01>
-    sim.rzzryyrxx(
+    sim.rxxryyrzz(
         Angle64::from_radians(a),
         Angle64::from_radians(b),
         Angle64::from_radians(c),
@@ -811,13 +811,13 @@ pub fn verify_rzzryyrxx_decomposition<S: ArbitraryRotationGateable>(sim: &mut S)
     sim.rzz(Angle64::from_radians(-c), &qid2(0, 1));
     sim.ryy(Angle64::from_radians(-b), &qid2(0, 1));
     sim.rxx(Angle64::from_radians(-a), &qid2(0, 1));
-    assert_mz(sim, 0, false, "RZZRYYRXX decomp|01> q0");
-    assert_mz(sim, 1, true, "RZZRYYRXX decomp|01> q1");
+    assert_mz(sim, 0, false, "RXXRYYRZZ decomp|01> q0");
+    assert_mz(sim, 1, true, "RXXRYYRZZ decomp|01> q1");
 
     // Also on |+0>
     sim.reset();
     sim.h(&qid(0));
-    sim.rzzryyrxx(
+    sim.rxxryyrzz(
         Angle64::from_radians(a),
         Angle64::from_radians(b),
         Angle64::from_radians(c),
@@ -826,8 +826,8 @@ pub fn verify_rzzryyrxx_decomposition<S: ArbitraryRotationGateable>(sim: &mut S)
     sim.rzz(Angle64::from_radians(-c), &qid2(0, 1));
     sim.ryy(Angle64::from_radians(-b), &qid2(0, 1));
     sim.rxx(Angle64::from_radians(-a), &qid2(0, 1));
-    assert_mx(sim, 0, false, "RZZRYYRXX decomp|+0> q0");
-    assert_mz(sim, 1, false, "RZZRYYRXX decomp|+0> q1");
+    assert_mx(sim, 0, false, "RXXRYYRZZ decomp|+0> q0");
+    assert_mz(sim, 1, false, "RXXRYYRZZ decomp|+0> q1");
 }
 
 // ============================================================================
@@ -921,8 +921,8 @@ pub fn verify_u2q_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
     assert_mz(sim, 1, false, "U2q*U2q_inv|+0> q1");
 }
 
-/// Verify U2q with only interaction (no single-qubit gates) matches RZZRYYRXX.
-pub fn verify_u2q_matches_rzzryyrxx<S: ArbitraryRotationGateable>(sim: &mut S) {
+/// Verify U2q with only interaction (no single-qubit gates) matches RXXRYYRZZ.
+pub fn verify_u2q_matches_rxxryyrzz<S: ArbitraryRotationGateable>(sim: &mut S) {
     let zero = [Angle64::ZERO; 3];
     let id_params = [zero; 2];
     let interaction = [
@@ -931,23 +931,23 @@ pub fn verify_u2q_matches_rzzryyrxx<S: ArbitraryRotationGateable>(sim: &mut S) {
         Angle64::from_radians(0.7),
     ];
 
-    // Apply U2q(I, interaction, I) then undo with RZZRYYRXX(-a,-b,-c)
+    // Apply U2q(I, interaction, I) then undo with RXXRYYRZZ(-a,-b,-c)
     // They should be equivalent since u2q with identity single-qubit gates
-    // is just rzzryyrxx.
+    // is just rxxryyrzz.
     sim.reset();
     sim.x(&qid(1)); // |01>
     sim.u2q(id_params, interaction, id_params, &qid2(0, 1));
-    sim.rzzryyrxx(-interaction[0], -interaction[1], -interaction[2], &qid2(0, 1));
-    assert_mz(sim, 0, false, "U2q(I,int,I)*RZZRYYRXX_inv|01> q0");
-    assert_mz(sim, 1, true, "U2q(I,int,I)*RZZRYYRXX_inv|01> q1");
+    sim.rxxryyrzz(-interaction[0], -interaction[1], -interaction[2], &qid2(0, 1));
+    assert_mz(sim, 0, false, "U2q(I,int,I)*RXXRYYRZZ_inv|01> q0");
+    assert_mz(sim, 1, true, "U2q(I,int,I)*RXXRYYRZZ_inv|01> q1");
 
     // On |+0>
     sim.reset();
     sim.h(&qid(0));
     sim.u2q(id_params, interaction, id_params, &qid2(0, 1));
-    sim.rzzryyrxx(-interaction[0], -interaction[1], -interaction[2], &qid2(0, 1));
-    assert_mx(sim, 0, false, "U2q(I,int,I)*RZZRYYRXX_inv|+0> q0");
-    assert_mz(sim, 1, false, "U2q(I,int,I)*RZZRYYRXX_inv|+0> q1");
+    sim.rxxryyrzz(-interaction[0], -interaction[1], -interaction[2], &qid2(0, 1));
+    assert_mx(sim, 0, false, "U2q(I,int,I)*RXXRYYRZZ_inv|+0> q0");
+    assert_mz(sim, 1, false, "U2q(I,int,I)*RXXRYYRZZ_inv|+0> q1");
 }
 
 // ============================================================================
@@ -1117,15 +1117,15 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
         verify_rxx_ryy_identity(sim);
         verify_two_qubit_rotation_inverse(sim);
 
-        // -- RZZRYYRXX composite gate --
-        verify_rzzryyrxx_identity(sim);
-        verify_rzzryyrxx_inverse(sim);
-        verify_rzzryyrxx_decomposition(sim);
+        // -- RXXRYYRZZ composite gate --
+        verify_rxxryyrzz_identity(sim);
+        verify_rxxryyrzz_inverse(sim);
+        verify_rxxryyrzz_decomposition(sim);
 
         // -- U2q general 2-qubit gate --
         verify_u2q_identity(sim);
         verify_u2q_inverse(sim);
-        verify_u2q_matches_rzzryyrxx(sim);
+        verify_u2q_matches_rxxryyrzz(sim);
     }
 }
 

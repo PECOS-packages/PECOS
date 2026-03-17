@@ -629,7 +629,7 @@ where
                     let beta = cmd.angles[1];
                     let gamma = cmd.angles[2];
                     debug!("Processing RXXRYYRZZ gate on qubits {:?}", cmd.qubits);
-                    self.simulator.rzzryyrxx(alpha, beta, gamma, &cmd.qubits);
+                    self.simulator.rxxryyrzz(alpha, beta, gamma, &cmd.qubits);
                 }
                 GateType::U2q => {
                     if cmd.qubits.len() % 2 != 0 {

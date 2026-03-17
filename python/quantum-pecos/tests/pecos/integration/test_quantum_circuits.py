@@ -1000,15 +1000,15 @@ def test_swap_gate() -> None:
     assert (0, 1) in results[0][1]
 
 
-def test_r2xxyyzz_gate() -> None:
-    """Test R2XXYYZZ gate preserves all three angles."""
+def test_rxxryyrzz_gate() -> None:
+    """Test RXXRYYRZZ gate preserves all three angles."""
     qc = QuantumCircuit()
-    qc.append("R2XXYYZZ", {(0, 1)}, angles=(0.1, 0.2, 0.3))
+    qc.append("RXXRYYRZZ", {(0, 1)}, angles=(0.1, 0.2, 0.3))
 
     results = list(qc.items())
     assert len(results) == 1
     symbol, _, params = results[0]
-    assert symbol == "R2XXYYZZ"
+    assert symbol == "RXXRYYRZZ"
     assert len(params["angles"]) == 3
 
 

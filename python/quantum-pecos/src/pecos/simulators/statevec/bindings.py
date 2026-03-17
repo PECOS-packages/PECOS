@@ -253,13 +253,18 @@ def get_bindings(state: StateVec) -> dict:
             tuple(qs) if isinstance(qs, list) else qs,
             {"angle": p["angles"][0]} if "angles" in p else {"angle": 0},
         ),
-        "RZZRYYRXX": lambda _s, qs, **p: sim.run_2q_gate(
-            "RZZRYYRXX",
+        "RXXRYYRZZ": lambda _s, qs, **p: sim.run_2q_gate(
+            "RXXRYYRZZ",
             tuple(qs) if isinstance(qs, list) else qs,
             {"angles": p["angles"]} if "angles" in p else {"angles": [0, 0, 0]},
         ),
         "R2XXYYZZ": lambda _s, qs, **p: sim.run_2q_gate(
-            "RZZRYYRXX",
+            "RXXRYYRZZ",
+            tuple(qs) if isinstance(qs, list) else qs,
+            {"angles": p["angles"]} if "angles" in p else {"angles": [0, 0, 0]},
+        ),
+        "RZZRYYRXX": lambda _s, qs, **p: sim.run_2q_gate(
+            "RXXRYYRZZ",
             tuple(qs) if isinstance(qs, list) else qs,
             {"angles": p["angles"]} if "angles" in p else {"angles": [0, 0, 0]},
         ),

@@ -310,7 +310,7 @@ def _test_all_gates_incremental(
     _apply({"SYYdg": {(1, 3)}})
     _apply({"SX": {1, 2}})
     _apply(
-        {"R2XXYYZZ": {(0, 3)}},
+        {"RXXRYYRZZ": {(0, 3)}},
         angles=(pc.f64.frac_pi_4, pc.f64.pi / 16, pc.f64.frac_pi_2),
     )
     _apply({"SY": {2, 3}})

@@ -71,7 +71,8 @@ alt_symbols = {
     # 'G2': q2.G2,
     # 'II': q2.II,
     "ZZPhase": "RZZ",
-    "RXXYYZZ": "R2XXYYZZ",
+    "RXXYYZZ": "RXXRYYRZZ",
+    "R2XXYYZZ": "RXXRYYRZZ",
     "ZZ": "SZZ",
     "ZZMax": "SZZ",
     # Mølmer-Sørensen gates

@@ -299,6 +299,8 @@ where
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
+            | GateType::RXXRYYRZZ
+            | GateType::U2q
             | GateType::T
             | GateType::Tdg
             | GateType::U

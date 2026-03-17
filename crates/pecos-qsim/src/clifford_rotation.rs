@@ -111,6 +111,32 @@ pub trait CliffordRotation: CliffordGateable {
         lambda: Angle64,
         qubits: &[QubitId],
     ) -> Result<&mut Self, String>;
+
+    /// Try to apply RXXRYYRZZ(alpha, beta, gamma) = RXX(alpha) * RYY(beta) * RZZ(gamma).
+    /// Succeeds when each component is a Clifford angle.
+    ///
+    /// # Errors
+    /// Returns `Err` with a message if any component angle is not a Clifford angle.
+    fn try_rxxryyrzz(
+        &mut self,
+        alpha: Angle64,
+        beta: Angle64,
+        gamma: Angle64,
+        qubits: &[QubitId],
+    ) -> Result<&mut Self, String>;
+
+    /// Try to apply U2q(before, interaction, after). Succeeds when all component
+    /// U3 gates and the interaction (RXXRYYRZZ) are Clifford.
+    ///
+    /// # Errors
+    /// Returns `Err` with a message if any component is not a Clifford angle.
+    fn try_u2q(
+        &mut self,
+        before: [[Angle64; 3]; 2],
+        interaction: [Angle64; 3],
+        after: [[Angle64; 3]; 2],
+        qubits: &[QubitId],
+    ) -> Result<&mut Self, String>;
 }
 
 impl<T: CliffordGateable> CliffordRotation for T {
@@ -189,6 +215,46 @@ impl<T: CliffordGateable> CliffordRotation for T {
         self.try_rz(phi, qubits).map_err(|_| {
             format!("U(theta={theta}, phi={phi}, lambda={lambda}) is not a Clifford rotation")
         })?;
+        Ok(self)
+    }
+
+    fn try_rxxryyrzz(
+        &mut self,
+        alpha: Angle64,
+        beta: Angle64,
+        gamma: Angle64,
+        qubits: &[QubitId],
+    ) -> Result<&mut Self, String> {
+        // RXXRYYRZZ(a,b,c) = RXX(a) * RYY(b) * RZZ(c)
+        let err = |_| {
+            format!("RXXRYYRZZ(alpha={alpha}, beta={beta}, gamma={gamma}) is not a Clifford rotation")
+        };
+        self.try_rxx(alpha, qubits).map_err(err)?;
+        self.try_ryy(beta, qubits).map_err(err)?;
+        self.try_rzz(gamma, qubits).map_err(err)?;
+        Ok(self)
+    }
+
+    fn try_u2q(
+        &mut self,
+        before: [[Angle64; 3]; 2],
+        interaction: [Angle64; 3],
+        after: [[Angle64; 3]; 2],
+        qubits: &[QubitId],
+    ) -> Result<&mut Self, String> {
+        // U2q = (U3(before[0]) x U3(before[1])) * RXXRYYRZZ(interaction) * (U3(after[0]) x U3(after[1]))
+        // Applied right-to-left: after first, then interaction, then before.
+        let err = || "U2q is not a Clifford rotation".to_string();
+        for pair in qubits.chunks(2) {
+            let q0 = &pair[..1];
+            let q1 = &pair[1..2];
+            self.try_u(after[0][0], after[0][1], after[0][2], q0).map_err(|_| err())?;
+            self.try_u(after[1][0], after[1][1], after[1][2], q1).map_err(|_| err())?;
+            self.try_rxxryyrzz(interaction[0], interaction[1], interaction[2], pair)
+                .map_err(|_| err())?;
+            self.try_u(before[0][0], before[0][1], before[0][2], q0).map_err(|_| err())?;
+            self.try_u(before[1][0], before[1][1], before[1][2], q1).map_err(|_| err())?;
+        }
         Ok(self)
     }
 }

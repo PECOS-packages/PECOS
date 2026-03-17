@@ -698,6 +698,84 @@ impl Gate {
         )
     }
 
+    /// Create RXXRYYRZZ gate on multiple qubit pairs
+    #[must_use]
+    pub fn rxxryyrzz(
+        alpha: Angle64,
+        beta: Angle64,
+        gamma: Angle64,
+        qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
+        Self::rxxryyrzz_vec(alpha, beta, gamma, &flat_qubits)
+    }
+
+    /// Create RXXRYYRZZ gate from a flat qubit slice
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of qubits is not even.
+    #[must_use]
+    pub fn rxxryyrzz_vec(
+        alpha: Angle64,
+        beta: Angle64,
+        gamma: Angle64,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> Self {
+        assert!(
+            qubits.len().is_multiple_of(2),
+            "RXXRYYRZZ gate requires an even number of qubits"
+        );
+        Self::with_angles(
+            GateType::RXXRYYRZZ,
+            smallvec::smallvec![alpha, beta, gamma],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create U2q gate on multiple qubit pairs
+    ///
+    /// Angles are packed as: before[0](3) + before[1](3) + interaction(3) + after[0](3) + after[1](3)
+    #[must_use]
+    pub fn u2q(
+        before: [[Angle64; 3]; 2],
+        interaction: [Angle64; 3],
+        after: [[Angle64; 3]; 2],
+        qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
+        Self::u2q_vec(before, interaction, after, &flat_qubits)
+    }
+
+    /// Create U2q gate from a flat qubit slice
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of qubits is not even.
+    #[must_use]
+    pub fn u2q_vec(
+        before: [[Angle64; 3]; 2],
+        interaction: [Angle64; 3],
+        after: [[Angle64; 3]; 2],
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> Self {
+        assert!(
+            qubits.len().is_multiple_of(2),
+            "U2q gate requires an even number of qubits"
+        );
+        Self::with_angles(
+            GateType::U2q,
+            smallvec::smallvec![
+                before[0][0], before[0][1], before[0][2],
+                before[1][0], before[1][1], before[1][2],
+                interaction[0], interaction[1], interaction[2],
+                after[0][0], after[0][1], after[0][2],
+                after[1][0], after[1][1], after[1][2],
+            ],
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Create Measure gate on multiple qubits
     #[must_use]
     pub fn measure(qubits: &[impl Into<QubitId> + Copy]) -> Self {

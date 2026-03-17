@@ -263,4 +263,42 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ) -> &mut Self {
         self.rxx(theta, qubits).ryy(phi, qubits).rzz(lambda, qubits)
     }
+
+    /// Applies a general 2-qubit unitary via KAK decomposition:
+    /// U = (U3(before[0]) x U3(before[1])) * RXXRYYRZZ(interaction) * (U3(after[0]) x U3(after[1]))
+    ///
+    /// # Parameters
+    /// - `before`: U3(theta, phi, lambda) parameters for each qubit, applied after the interaction
+    /// - `interaction`: [alpha, beta, gamma] for RXXRYYRZZ
+    /// - `after`: U3(theta, phi, lambda) parameters for each qubit, applied before the interaction
+    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    ///
+    /// # Returns
+    /// A mutable reference to `Self` for method chaining.
+    #[inline]
+    fn u2q(
+        &mut self,
+        before: [[Angle64; 3]; 2],
+        interaction: [Angle64; 3],
+        after: [[Angle64; 3]; 2],
+        qubits: &[QubitId],
+    ) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "U2q requires pairs of qubits"
+        );
+        for pair in qubits.chunks_exact(2) {
+            let q0 = &[pair[0]];
+            let q1 = &[pair[1]];
+            // Apply after (right-most) single-qubit gates first
+            self.u(after[0][0], after[0][1], after[0][2], q0);
+            self.u(after[1][0], after[1][1], after[1][2], q1);
+            // Interaction
+            self.rzzryyrxx(interaction[0], interaction[1], interaction[2], pair);
+            // Apply before (left-most) single-qubit gates last
+            self.u(before[0][0], before[0][1], before[0][2], q0);
+            self.u(before[1][0], before[1][1], before[1][2], q1);
+        }
+        self
+    }
 }

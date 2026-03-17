@@ -266,6 +266,16 @@ impl Engine for QuestStateVecEngine {
                     }
                     self.simulator.ryy(cmd.angles[0], &cmd.qubits);
                 }
+                GateType::RXXRYYRZZ | GateType::U2q => {
+                    if cmd.angles.len() < 3 {
+                        return Err(PecosError::Processing(
+                            "RXXRYYRZZ gate requires three angles".to_string(),
+                        ));
+                    }
+                    self.simulator.rxx(cmd.angles[0], &cmd.qubits);
+                    self.simulator.ryy(cmd.angles[1], &cmd.qubits);
+                    self.simulator.rzz(cmd.angles[2], &cmd.qubits);
+                }
             }
         }
 
@@ -544,6 +554,16 @@ impl Engine for QuestDensityMatrixEngine {
                         ));
                     }
                     self.simulator.ryy(cmd.angles[0], &cmd.qubits);
+                }
+                GateType::RXXRYYRZZ | GateType::U2q => {
+                    if cmd.angles.len() < 3 {
+                        return Err(PecosError::Processing(
+                            "RXXRYYRZZ gate requires three angles".to_string(),
+                        ));
+                    }
+                    self.simulator.rxx(cmd.angles[0], &cmd.qubits);
+                    self.simulator.ryy(cmd.angles[1], &cmd.qubits);
+                    self.simulator.rzz(cmd.angles[2], &cmd.qubits);
                 }
             }
         }

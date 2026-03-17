@@ -563,6 +563,46 @@ pub fn verify_u_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
     }
 }
 
+/// Regression test for gate fusion ordering: a queued Clifford (H) followed by U
+/// must apply H before U, not after. This catches bugs where U bypasses
+/// the fusion queue and operates on stale state.
+pub fn verify_u_after_clifford_ordering<S: ArbitraryRotationGateable>(sim: &mut S) {
+    // H|0> = |+>, then U(pi,0,pi)=X on |+> gives X|+> = |+>
+    // X-basis measurement of |+> is deterministic 0.
+    sim.reset();
+    sim.h(&qid(0));
+    sim.u(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
+    assert_mx(sim, 0, false, "H then U(pi,0,pi): X|+> = |+>, mx should be 0");
+
+    // H|0> = |+>, then U(pi/2,0,pi)=H on |+> gives H|+> = |0>
+    // Z-basis measurement of |0> is deterministic 0.
+    sim.reset();
+    sim.h(&qid(0));
+    sim.u(
+        Angle64::from_radians(FRAC_PI_2),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
+    assert_mz(sim, 0, false, "H then U(pi/2,0,pi): H|+> = |0>, mz should be 0");
+
+    // X|0> = |1>, then U(pi,0,pi)=X on |1> gives X|1> = |0>
+    sim.reset();
+    sim.x(&qid(0));
+    sim.u(
+        Angle64::from_radians(PI),
+        Angle64::from_radians(0.0),
+        Angle64::from_radians(PI),
+        &qid(0),
+    );
+    assert_mz(sim, 0, false, "X then U(pi,0,pi): X*X|0> = |0>, mz should be 0");
+}
+
 // ============================================================================
 // R1XY Gate Tests
 // ============================================================================
@@ -791,6 +831,126 @@ pub fn verify_rzzryyrxx_decomposition<S: ArbitraryRotationGateable>(sim: &mut S)
 }
 
 // ============================================================================
+// U2q General 2-Qubit Gate Tests
+// ============================================================================
+
+/// Verify U2q with identity parameters = I.
+pub fn verify_u2q_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
+    let zero = [Angle64::ZERO; 3];
+    let id_params = [zero; 2];
+
+    // On |00>
+    sim.reset();
+    sim.u2q(id_params, [Angle64::ZERO; 3], id_params, &qid2(0, 1));
+    assert_mz(sim, 0, false, "U2q(I)|00> q0");
+    assert_mz(sim, 1, false, "U2q(I)|00> q1");
+
+    // On |10>
+    sim.reset();
+    sim.x(&qid(0));
+    sim.u2q(id_params, [Angle64::ZERO; 3], id_params, &qid2(0, 1));
+    assert_mz(sim, 0, true, "U2q(I)|10> q0");
+    assert_mz(sim, 1, false, "U2q(I)|10> q1");
+
+    // On |+0>
+    sim.reset();
+    sim.h(&qid(0));
+    sim.u2q(id_params, [Angle64::ZERO; 3], id_params, &qid2(0, 1));
+    assert_mx(sim, 0, false, "U2q(I)|+0> q0");
+    assert_mz(sim, 1, false, "U2q(I)|+0> q1");
+}
+
+/// Verify U2q * U2q_inverse = I for a non-trivial decomposition.
+pub fn verify_u2q_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
+    // Use non-trivial parameters: single-qubit rotations + interaction
+    let before = [
+        [Angle64::from_radians(0.5), Angle64::from_radians(0.3), Angle64::from_radians(0.7)],
+        [Angle64::from_radians(1.0), Angle64::from_radians(0.2), Angle64::from_radians(0.4)],
+    ];
+    let interaction = [
+        Angle64::from_radians(0.6),
+        Angle64::from_radians(0.3),
+        Angle64::from_radians(0.8),
+    ];
+    let after = [
+        [Angle64::from_radians(0.9), Angle64::from_radians(0.1), Angle64::from_radians(0.5)],
+        [Angle64::from_radians(0.4), Angle64::from_radians(0.7), Angle64::from_radians(0.2)],
+    ];
+
+    // U2q_inverse: swap before/after and negate+swap phi/lambda, negate interaction
+    let inv_before = [
+        [
+            -after[0][0],
+            -after[0][2],
+            -after[0][1],
+        ],
+        [
+            -after[1][0],
+            -after[1][2],
+            -after[1][1],
+        ],
+    ];
+    let inv_interaction = [-interaction[0], -interaction[1], -interaction[2]];
+    let inv_after = [
+        [
+            -before[0][0],
+            -before[0][2],
+            -before[0][1],
+        ],
+        [
+            -before[1][0],
+            -before[1][2],
+            -before[1][1],
+        ],
+    ];
+
+    // On |01>
+    sim.reset();
+    sim.x(&qid(1));
+    sim.u2q(before, interaction, after, &qid2(0, 1));
+    sim.u2q(inv_before, inv_interaction, inv_after, &qid2(0, 1));
+    assert_mz(sim, 0, false, "U2q*U2q_inv|01> q0");
+    assert_mz(sim, 1, true, "U2q*U2q_inv|01> q1");
+
+    // On |+0>
+    sim.reset();
+    sim.h(&qid(0));
+    sim.u2q(before, interaction, after, &qid2(0, 1));
+    sim.u2q(inv_before, inv_interaction, inv_after, &qid2(0, 1));
+    assert_mx(sim, 0, false, "U2q*U2q_inv|+0> q0");
+    assert_mz(sim, 1, false, "U2q*U2q_inv|+0> q1");
+}
+
+/// Verify U2q with only interaction (no single-qubit gates) matches RZZRYYRXX.
+pub fn verify_u2q_matches_rzzryyrxx<S: ArbitraryRotationGateable>(sim: &mut S) {
+    let zero = [Angle64::ZERO; 3];
+    let id_params = [zero; 2];
+    let interaction = [
+        Angle64::from_radians(0.5),
+        Angle64::from_radians(0.3),
+        Angle64::from_radians(0.7),
+    ];
+
+    // Apply U2q(I, interaction, I) then undo with RZZRYYRXX(-a,-b,-c)
+    // They should be equivalent since u2q with identity single-qubit gates
+    // is just rzzryyrxx.
+    sim.reset();
+    sim.x(&qid(1)); // |01>
+    sim.u2q(id_params, interaction, id_params, &qid2(0, 1));
+    sim.rzzryyrxx(-interaction[0], -interaction[1], -interaction[2], &qid2(0, 1));
+    assert_mz(sim, 0, false, "U2q(I,int,I)*RZZRYYRXX_inv|01> q0");
+    assert_mz(sim, 1, true, "U2q(I,int,I)*RZZRYYRXX_inv|01> q1");
+
+    // On |+0>
+    sim.reset();
+    sim.h(&qid(0));
+    sim.u2q(id_params, interaction, id_params, &qid2(0, 1));
+    sim.rzzryyrxx(-interaction[0], -interaction[1], -interaction[2], &qid2(0, 1));
+    assert_mx(sim, 0, false, "U2q(I,int,I)*RZZRYYRXX_inv|+0> q0");
+    assert_mz(sim, 1, false, "U2q(I,int,I)*RZZRYYRXX_inv|+0> q1");
+}
+
+// ============================================================================
 // Half-Pi Clifford Equivalences
 // ============================================================================
 
@@ -934,6 +1094,7 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
     verify_u_as_x(sim);
     verify_u_as_h(sim);
     verify_u_inverse(sim);
+    verify_u_after_clifford_ordering(sim);
 
     // -- R1XY gate --
     verify_r1xy_identity(sim);
@@ -960,6 +1121,11 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
         verify_rzzryyrxx_identity(sim);
         verify_rzzryyrxx_inverse(sim);
         verify_rzzryyrxx_decomposition(sim);
+
+        // -- U2q general 2-qubit gate --
+        verify_u2q_identity(sim);
+        verify_u2q_inverse(sim);
+        verify_u2q_matches_rzzryyrxx(sim);
     }
 }
 

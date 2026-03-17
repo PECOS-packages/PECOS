@@ -77,7 +77,10 @@ pub enum GateType {
     /// RYY rotation gate
     RYY = 81,
     RZZ = 82,
-    // RXXYYZZ
+    /// General 2-qubit Pauli rotation: exp(-i/2 * (a*XX + b*YY + c*ZZ))
+    RXXRYYRZZ = 83,
+    /// General 2-qubit unitary via KAK decomposition
+    U2q = 84,
     /// Toffoli gate (CCX, 3 qubits)
     CCX = 90,
 
@@ -149,6 +152,8 @@ impl From<u8> for GateType {
             80 => GateType::RXX,
             81 => GateType::RYY,
             82 => GateType::RZZ,
+            83 => GateType::RXXRYYRZZ,
+            84 => GateType::U2q,
             90 => GateType::CCX,
             104 => GateType::MZ,
             105 => GateType::MeasureLeaked,
@@ -226,7 +231,10 @@ impl GateType {
             GateType::R1XY => 2,
 
             // Gates with three parameters
-            GateType::U => 3,
+            GateType::U | GateType::RXXRYYRZZ => 3,
+
+            // Gates with fifteen parameters (KAK decomposition)
+            GateType::U2q => 15,
         }
     }
 
@@ -286,7 +294,9 @@ impl GateType {
             | GateType::CRZ
             | GateType::RXX
             | GateType::RYY
-            | GateType::RZZ => 2,
+            | GateType::RZZ
+            | GateType::RXXRYYRZZ
+            | GateType::U2q => 2,
 
             // Three-qubit gates
             GateType::CCX => 3,
@@ -309,7 +319,8 @@ impl GateType {
             | GateType::RZZ
             | GateType::CRZ => 1,
             GateType::R1XY => 2,
-            GateType::U => 3,
+            GateType::U | GateType::RXXRYYRZZ => 3,
+            GateType::U2q => 15,
             // All other gates have no angle parameters
             _ => 0,
         }
@@ -381,6 +392,8 @@ impl fmt::Display for GateType {
             GateType::SWAP => write!(f, "SWAP"),
             GateType::CRZ => write!(f, "CRZ"),
             GateType::RZZ => write!(f, "RZZ"),
+            GateType::RXXRYYRZZ => write!(f, "RXXRYYRZZ"),
+            GateType::U2q => write!(f, "U2q"),
             GateType::CCX => write!(f, "CCX"),
             GateType::MZ => write!(f, "MZ"),
             GateType::MeasureLeaked => write!(f, "MeasureLeaked"),
@@ -443,6 +456,8 @@ impl std::str::FromStr for GateType {
             "RXX" => Ok(GateType::RXX),
             "RYY" => Ok(GateType::RYY),
             "RZZ" => Ok(GateType::RZZ),
+            "RXXRYYRZZ" => Ok(GateType::RXXRYYRZZ),
+            "U2Q" => Ok(GateType::U2q),
             "CRZ" => Ok(GateType::CRZ),
             "CCX" | "TOFFOLI" => Ok(GateType::CCX),
             "SWAP" => Ok(GateType::SWAP),

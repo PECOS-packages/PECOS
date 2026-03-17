@@ -4003,76 +4003,19 @@ where
         let sin = (theta / 2.0).sin();
 
         // U gate matrix elements
-        let u00_re = cos;
-        let u01_re = -sin * lambda.cos();
-        let u01_im = -sin * lambda.sin();
-        let u10_re = sin * phi.cos();
-        let u10_im = sin * phi.sin();
-        let u11_re = cos * (phi + lambda).cos();
-        let u11_im = cos * (phi + lambda).sin();
+        let m = Complex2x2 {
+            a_re: cos,
+            a_im: 0.0,
+            b_re: -sin * lambda.cos(),
+            b_im: -sin * lambda.sin(),
+            c_re: sin * phi.cos(),
+            c_im: sin * phi.sin(),
+            d_re: cos * (phi + lambda).cos(),
+            d_im: cos * (phi + lambda).sin(),
+        };
 
         for &q in qubits {
-            let q = q.index();
-            let step = 1 << q;
-
-            if step >= 4 {
-                // SIMD version
-                let u00_re_v = f64x4::splat(u00_re);
-                let u01_re_v = f64x4::splat(u01_re);
-                let u01_im_v = f64x4::splat(u01_im);
-                let u10_re_v = f64x4::splat(u10_re);
-                let u10_im_v = f64x4::splat(u10_im);
-                let u11_re_v = f64x4::splat(u11_re);
-                let u11_im_v = f64x4::splat(u11_im);
-
-                for i in (0..self.real.len()).step_by(step * 2) {
-                    let mut j = i;
-                    while j + 4 <= i + step {
-                        let p = j + step;
-
-                        let re_a = f64x4::from(&self.real[j..j + 4]);
-                        let im_a = f64x4::from(&self.imag[j..j + 4]);
-                        let re_b = f64x4::from(&self.real[p..p + 4]);
-                        let im_b = f64x4::from(&self.imag[p..p + 4]);
-
-                        let new_re_a: [f64; 4] =
-                            (u00_re_v * re_a + u01_re_v * re_b - u01_im_v * im_b).into();
-                        let new_im_a: [f64; 4] =
-                            (u00_re_v * im_a + u01_re_v * im_b + u01_im_v * re_b).into();
-                        let new_re_b: [f64; 4] =
-                            (u10_re_v * re_a - u10_im_v * im_a + u11_re_v * re_b - u11_im_v * im_b)
-                                .into();
-                        let new_im_b: [f64; 4] =
-                            (u10_re_v * im_a + u10_im_v * re_a + u11_re_v * im_b + u11_im_v * re_b)
-                                .into();
-
-                        self.real[j..j + 4].copy_from_slice(&new_re_a);
-                        self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                        self.real[p..p + 4].copy_from_slice(&new_re_b);
-                        self.imag[p..p + 4].copy_from_slice(&new_im_b);
-
-                        j += 4;
-                    }
-                }
-            } else {
-                // Scalar fallback for small step
-                for i in (0..self.real.len()).step_by(step * 2) {
-                    for j in i..(i + step) {
-                        let p = j + step;
-                        let re_a = self.real[j];
-                        let im_a = self.imag[j];
-                        let re_b = self.real[p];
-                        let im_b = self.imag[p];
-
-                        self.real[j] = u00_re * re_a + u01_re * re_b - u01_im * im_b;
-                        self.imag[j] = u00_re * im_a + u01_re * im_b + u01_im * re_b;
-                        self.real[p] =
-                            u10_re * re_a - u10_im * im_a + u11_re * re_b - u11_im * im_b;
-                        self.imag[p] =
-                            u10_re * im_a + u10_im * re_a + u11_re * im_b + u11_im * re_b;
-                    }
-                }
-            }
+            self.queue_gate(q.index(), &m);
         }
         self
     }

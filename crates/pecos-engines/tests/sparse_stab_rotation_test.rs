@@ -849,3 +849,185 @@ fn mixed_clifford_rotations_in_circuit() {
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
+
+// --- RXXRYYRZZ tests (via Gate::rxxryyrzz + add_gate_command) ---
+
+#[test]
+fn rxxryyrzz_identity_on_sparse_stab() {
+    // RXXRYYRZZ(0,0,0) = I
+    let outcomes = run_sparse_stab(2, |b| {
+        let gate = Gate::rxxryyrzz(Angle64::ZERO, Angle64::ZERO, Angle64::ZERO, &[(0usize, 1usize)]);
+        b.add_gate_command(&gate);
+        b.add_measurements(&[0, 1]);
+    });
+    assert_eq!(outcomes, vec![0, 0]);
+}
+
+#[test]
+fn rxxryyrzz_clifford_angles_on_sparse_stab() {
+    // RXXRYYRZZ(pi, 0, 0) = RXX(pi) = X x X: |00> -> |11>
+    let outcomes = run_sparse_stab(2, |b| {
+        let gate = Gate::rxxryyrzz(
+            Angle64::HALF_TURN,
+            Angle64::ZERO,
+            Angle64::ZERO,
+            &[(0usize, 1usize)],
+        );
+        b.add_gate_command(&gate);
+        b.add_measurements(&[0, 1]);
+    });
+    assert_eq!(outcomes, vec![1, 1]);
+}
+
+#[test]
+fn rxxryyrzz_inverse_clifford_on_sparse_stab() {
+    // RXXRYYRZZ(pi/2, pi/2, pi/2) * RXXRYYRZZ(-pi/2, -pi/2, -pi/2) = I
+    let q = Angle64::QUARTER_TURN;
+    let outcomes = run_sparse_stab(2, |b| {
+        b.add_x(&[1]); // |01>
+        let fwd = Gate::rxxryyrzz(q, q, q, &[(0usize, 1usize)]);
+        let inv = Gate::rxxryyrzz(-q, -q, -q, &[(0usize, 1usize)]);
+        b.add_gate_command(&fwd);
+        b.add_gate_command(&inv);
+        b.add_measurements(&[0, 1]);
+    });
+    assert_eq!(outcomes, vec![0, 1]);
+}
+
+#[test]
+fn rxxryyrzz_non_clifford_fails_on_sparse_stab() {
+    let msg = expect_sparse_stab_error(2, |b| {
+        let gate = Gate::rxxryyrzz(
+            Angle64::from_radians(0.5),
+            Angle64::ZERO,
+            Angle64::ZERO,
+            &[(0usize, 1usize)],
+        );
+        b.add_gate_command(&gate);
+        b.add_measurements(&[0, 1]);
+    });
+    assert!(msg.contains("not a Clifford"), "error: {msg}");
+}
+
+// --- U2q tests (via Gate::u2q + add_gate_command) ---
+
+#[test]
+fn u2q_identity_on_sparse_stab() {
+    let zero = [Angle64::ZERO; 3];
+    let id = [zero; 2];
+    let outcomes = run_sparse_stab(2, |b| {
+        let gate = Gate::u2q(id, [Angle64::ZERO; 3], id, &[(0usize, 1usize)]);
+        b.add_gate_command(&gate);
+        b.add_measurements(&[0, 1]);
+    });
+    assert_eq!(outcomes, vec![0, 0]);
+}
+
+#[test]
+fn u2q_clifford_single_qubit_only() {
+    // U2q with X on q0 (U3(pi,0,pi)) and identity interaction
+    let zero = [Angle64::ZERO; 3];
+    let x_params = [Angle64::HALF_TURN, Angle64::ZERO, Angle64::HALF_TURN];
+    let outcomes = run_sparse_stab(2, |b| {
+        let gate = Gate::u2q(
+            [zero; 2],
+            [Angle64::ZERO; 3],
+            [x_params, zero],
+            &[(0usize, 1usize)],
+        );
+        b.add_gate_command(&gate);
+        b.add_measurements(&[0, 1]);
+    });
+    // X on q0, I on q1: |00> -> |10>
+    assert_eq!(outcomes, vec![1, 0]);
+}
+
+#[test]
+fn u2q_clifford_interaction_rxx_pi() {
+    // U2q with identity single-qubit gates and interaction = (pi, 0, 0)
+    // = RXXRYYRZZ(pi, 0, 0) = RXX(pi) = XX: |00> -> |11>
+    let zero = [Angle64::ZERO; 3];
+    let id = [zero; 2];
+    let interaction = [Angle64::HALF_TURN, Angle64::ZERO, Angle64::ZERO];
+
+    let outcomes = run_sparse_stab(2, |b| {
+        let gate = Gate::u2q(id, interaction, id, &[(0usize, 1usize)]);
+        b.add_gate_command(&gate);
+        b.add_measurements(&[0, 1]);
+    });
+    assert_eq!(outcomes, vec![1, 1]);
+}
+
+#[test]
+fn u2q_clifford_interaction_quarter_turn() {
+    // U2q with identity single-qubit gates and interaction = (pi/2, pi/2, pi/2).
+    // Forward then inverse should cancel, preserving |01>.
+    let zero = [Angle64::ZERO; 3];
+    let id = [zero; 2];
+    let q = Angle64::QUARTER_TURN;
+
+    let outcomes = run_sparse_stab(2, |b| {
+        b.add_x(&[1]); // |01>
+        let fwd = Gate::u2q(id, [q, q, q], id, &[(0usize, 1usize)]);
+        let inv = Gate::u2q(id, [-q, -q, -q], id, &[(0usize, 1usize)]);
+        b.add_gate_command(&fwd);
+        b.add_gate_command(&inv);
+        b.add_measurements(&[0, 1]);
+    });
+    assert_eq!(outcomes, vec![0, 1]);
+}
+
+#[test]
+fn u2q_clifford_interaction_with_single_qubit_gates() {
+    // U2q with X on after[0] and interaction = (pi/2, 0, 0) = SXX.
+    // Apply twice: SXX * SXX = XX.
+    // With after X on q0 applied each time, net = X^2 * XX = XX on q0,q1.
+    // Actually the U gate composition is more nuanced -- use inverse instead.
+    //
+    // Forward: U2q(I, (pi/2,0,0), [X, I]) then inverse should cancel on |01>.
+    let zero = [Angle64::ZERO; 3];
+    let x_params = [Angle64::HALF_TURN, Angle64::ZERO, Angle64::HALF_TURN];
+    let q = Angle64::QUARTER_TURN;
+
+    let before = [zero; 2];
+    let interaction = [q, Angle64::ZERO, Angle64::ZERO];
+    let after = [x_params, zero]; // X on q0
+
+    // Inverse: swap before/after, negate+swap phi/lambda, negate interaction
+    let inv_before = [
+        [-x_params[0], -x_params[2], -x_params[1]],
+        [-zero[0], -zero[2], -zero[1]],
+    ];
+    let inv_interaction = [-q, Angle64::ZERO, Angle64::ZERO];
+    let inv_after = [
+        [-zero[0], -zero[2], -zero[1]],
+        [-zero[0], -zero[2], -zero[1]],
+    ];
+
+    let outcomes = run_sparse_stab(2, |b| {
+        b.add_x(&[1]); // |01>
+        let fwd = Gate::u2q(before, interaction, after, &[(0usize, 1usize)]);
+        let inv = Gate::u2q(inv_before, inv_interaction, inv_after, &[(0usize, 1usize)]);
+        b.add_gate_command(&fwd);
+        b.add_gate_command(&inv);
+        b.add_measurements(&[0, 1]);
+    });
+    assert_eq!(outcomes, vec![0, 1]);
+}
+
+#[test]
+fn u2q_non_clifford_fails_on_sparse_stab() {
+    let zero = [Angle64::ZERO; 3];
+    let non_clifford = [Angle64::from_radians(0.5), Angle64::ZERO, Angle64::ZERO];
+    let msg = expect_sparse_stab_error(2, |b| {
+        let gate = Gate::u2q(
+            [zero; 2],
+            non_clifford,
+            [zero; 2],
+            &[(0usize, 1usize)],
+        );
+        b.add_gate_command(&gate);
+        b.add_measurements(&[0, 1]);
+    });
+    assert!(msg.contains("not a Clifford"), "error: {msg}");
+}

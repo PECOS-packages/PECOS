@@ -166,10 +166,33 @@ impl RotationType {
 /// Describes *what gate*, not *where it acts*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Unitary {
-    /// Rotation gate: exp(-i theta/2 P)
+    /// Single-axis rotation: exp(-i theta/2 P)
     Rotation {
         rotation_type: RotationType,
         angle: Angle64,
+    },
+    /// XY-plane rotation: exp(-i theta/2 (cos(phi) X + sin(phi) Y))
+    R1XY { theta: Angle64, phi: Angle64 },
+    /// General single-qubit unitary U(theta, phi, lambda)
+    /// Matrix: [[cos(t/2), -e^{il}sin(t/2)], [e^{ip}sin(t/2), e^{i(p+l)}cos(t/2)]]
+    U3 {
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+    },
+    /// General 2-qubit Pauli rotation: exp(-i/2 * (alpha*XX + beta*YY + gamma*ZZ))
+    RXXRYYRZZ {
+        alpha: Angle64,
+        beta: Angle64,
+        gamma: Angle64,
+    },
+    /// General 2-qubit unitary via KAK decomposition:
+    /// U = (U3(before[0]) x U3(before[1])) * RXXRYYRZZ(interaction) * (U3(after[0]) x U3(after[1]))
+    /// Each [Angle64; 3] is [theta, phi, lambda] for a U3 gate.
+    U2q {
+        before: [[Angle64; 3]; 2],
+        interaction: [Angle64; 3],
+        after: [[Angle64; 3]; 2],
     },
     /// Named gate (H, CX, SWAP, etc.) without angle parameter
     Named(GateType),
@@ -181,6 +204,8 @@ impl Unitary {
     pub fn num_qubits(&self) -> usize {
         match self {
             Self::Rotation { rotation_type, .. } => rotation_type.num_qubits(),
+            Self::R1XY { .. } | Self::U3 { .. } => 1,
+            Self::RXXRYYRZZ { .. } | Self::U2q { .. } => 2,
             Self::Named(gate_type) => gate_type.quantum_arity(),
         }
     }
@@ -190,6 +215,30 @@ impl Unitary {
     pub fn is_clifford(&self) -> bool {
         match self {
             Self::Rotation { angle, .. } => is_multiple_of_quarter_turn(*angle),
+            Self::R1XY { theta, phi } => {
+                is_multiple_of_quarter_turn(*theta) && is_multiple_of_quarter_turn(*phi)
+            }
+            Self::U3 { theta, phi, lambda } => {
+                is_multiple_of_quarter_turn(*theta)
+                    && is_multiple_of_quarter_turn(*phi)
+                    && is_multiple_of_quarter_turn(*lambda)
+            }
+            Self::RXXRYYRZZ { alpha, beta, gamma } => {
+                is_multiple_of_quarter_turn(*alpha)
+                    && is_multiple_of_quarter_turn(*beta)
+                    && is_multiple_of_quarter_turn(*gamma)
+            }
+            Self::U2q {
+                before,
+                interaction,
+                after,
+            } => {
+                before
+                    .iter()
+                    .chain(after.iter())
+                    .all(|u3| u3.iter().all(|a| is_multiple_of_quarter_turn(*a)))
+                    && interaction.iter().all(|a| is_multiple_of_quarter_turn(*a))
+            }
             Self::Named(gate_type) => gate_type.is_clifford(),
         }
     }
@@ -199,6 +248,23 @@ impl Unitary {
     pub fn is_identity(&self) -> bool {
         match self {
             Self::Rotation { angle, .. } => *angle == Angle64::ZERO,
+            Self::R1XY { theta, .. } => *theta == Angle64::ZERO,
+            Self::U3 { theta, phi, lambda } => {
+                *theta == Angle64::ZERO && (*phi + *lambda) == Angle64::ZERO
+            }
+            Self::RXXRYYRZZ { alpha, beta, gamma } => {
+                *alpha == Angle64::ZERO && *beta == Angle64::ZERO && *gamma == Angle64::ZERO
+            }
+            Self::U2q {
+                before,
+                interaction,
+                after,
+            } => {
+                // Identity if all U3s are identity (theta=0, phi+lambda=0) and interaction is zero
+                before.iter().chain(after.iter()).all(|u3| {
+                    u3[0] == Angle64::ZERO && (u3[1] + u3[2]) == Angle64::ZERO
+                }) && interaction.iter().all(|a| *a == Angle64::ZERO)
+            }
             Self::Named(gate_type) => *gate_type == GateType::I,
         }
     }
@@ -232,6 +298,10 @@ impl Unitary {
                 rotation_type,
                 angle,
             } => rotation_to_gate_type(*rotation_type, *angle),
+            Self::R1XY { .. } => Some(GateType::R1XY),
+            Self::U3 { .. } => Some(GateType::U),
+            Self::RXXRYYRZZ { .. } => Some(GateType::RXXRYYRZZ),
+            Self::U2q { .. } => Some(GateType::U2q),
             Self::Named(gate_type) => Some(*gate_type),
         }
     }
@@ -971,6 +1041,56 @@ impl UnitaryRep {
                 },
                 qubits.clone(),
             ),
+            Self::Gate(Unitary::R1XY { theta, phi }, qubits) => Self::Gate(
+                Unitary::R1XY {
+                    theta: negate_angle(*theta),
+                    phi: *phi,
+                },
+                qubits.clone(),
+            ),
+            // U(theta, phi, lambda)† = U(-theta, -lambda, -phi)
+            Self::Gate(Unitary::U3 { theta, phi, lambda }, qubits) => Self::Gate(
+                Unitary::U3 {
+                    theta: negate_angle(*theta),
+                    phi: negate_angle(*lambda),
+                    lambda: negate_angle(*phi),
+                },
+                qubits.clone(),
+            ),
+            Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => Self::Gate(
+                Unitary::RXXRYYRZZ {
+                    alpha: negate_angle(*alpha),
+                    beta: negate_angle(*beta),
+                    gamma: negate_angle(*gamma),
+                },
+                qubits.clone(),
+            ),
+            // U2q† = (B0†⊗B1†) * RXXRYYRZZ(-a,-b,-c) * (A0†⊗A1†)
+            // where Ui† = U(-theta, -lambda, -phi), so: swap before/after and negate+swap phi/lambda
+            Self::Gate(
+                Unitary::U2q {
+                    before,
+                    interaction,
+                    after,
+                },
+                qubits,
+            ) => {
+                let negate_u3 = |u3: &[Angle64; 3]| -> [Angle64; 3] {
+                    [negate_angle(u3[0]), negate_angle(u3[2]), negate_angle(u3[1])]
+                };
+                Self::Gate(
+                    Unitary::U2q {
+                        before: [negate_u3(&after[0]), negate_u3(&after[1])],
+                        interaction: [
+                            negate_angle(interaction[0]),
+                            negate_angle(interaction[1]),
+                            negate_angle(interaction[2]),
+                        ],
+                        after: [negate_u3(&before[0]), negate_u3(&before[1])],
+                    },
+                    qubits.clone(),
+                )
+            }
             Self::Gate(Unitary::Named(gate_type), _) => {
                 if gate_type.is_self_adjoint() {
                     self.clone()
@@ -1355,6 +1475,9 @@ impl UnitaryRep {
                 Some(ps)
             }
 
+            // R1XY, U3, RXXRYYRZZ, and U2q are not Paulis
+            Self::Gate(Unitary::R1XY { .. } | Unitary::U3 { .. } | Unitary::RXXRYYRZZ { .. } | Unitary::U2q { .. }, _) => None,
+
             Self::Compose(_) => {
                 // Composition of Paulis requires multiplication
                 // This is more complex; skip for now
@@ -1652,6 +1775,23 @@ impl UnitaryRep {
                 // Rotations are Hermitian only at angle 0 or π
                 *angle == Angle64::ZERO || *angle == Angle64::HALF_TURN
             }
+            Self::Gate(Unitary::R1XY { theta, .. }, _) => {
+                *theta == Angle64::ZERO || *theta == Angle64::HALF_TURN
+            }
+            // U(theta, phi, lambda) is Hermitian when U = U†, i.e. U(-theta, -lambda, -phi) = U(theta, phi, lambda)
+            // This requires theta=0 (or pi) and phi=-lambda
+            Self::Gate(Unitary::U3 { theta, phi, lambda }, _) => {
+                (*theta == Angle64::ZERO || *theta == Angle64::HALF_TURN)
+                    && *phi == negate_angle(*lambda)
+            }
+            Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, _) => {
+                (*alpha == Angle64::ZERO || *alpha == Angle64::HALF_TURN)
+                    && (*beta == Angle64::ZERO || *beta == Angle64::HALF_TURN)
+                    && (*gamma == Angle64::ZERO || *gamma == Angle64::HALF_TURN)
+            }
+            // U2q is Hermitian iff U2q = U2q†, which is structurally complex;
+            // conservatively return false (matrix-level check can verify).
+            Self::Gate(Unitary::U2q { .. }, _) => false,
             Self::Tensor(parts) => parts.iter().all(UnitaryRep::is_hermitian),
             // Composition of Hermitians isn't generally Hermitian; phase factors break Hermiticity
             Self::Compose(_) | Self::Phase { .. } => false,
@@ -1800,6 +1940,59 @@ impl UnitaryRep {
                 )]
             }
 
+            Self::Gate(Unitary::R1XY { theta, phi }, qubits) => {
+                let qubit_ids: crate::GateQubits =
+                    qubits.iter().map(|&q| crate::QubitId(q)).collect();
+                vec![Gate::with_angles(
+                    GateType::R1XY,
+                    smallvec::smallvec![*theta, *phi],
+                    qubit_ids,
+                )]
+            }
+
+            Self::Gate(Unitary::U3 { theta, phi, lambda }, qubits) => {
+                let qubit_ids: crate::GateQubits =
+                    qubits.iter().map(|&q| crate::QubitId(q)).collect();
+                vec![Gate::with_angles(
+                    GateType::U,
+                    smallvec::smallvec![*theta, *phi, *lambda],
+                    qubit_ids,
+                )]
+            }
+
+            Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
+                let qubit_ids: crate::GateQubits =
+                    qubits.iter().map(|&q| crate::QubitId(q)).collect();
+                vec![Gate::with_angles(
+                    GateType::RXXRYYRZZ,
+                    smallvec::smallvec![*alpha, *beta, *gamma],
+                    qubit_ids,
+                )]
+            }
+
+            Self::Gate(
+                Unitary::U2q {
+                    before,
+                    interaction,
+                    after,
+                },
+                qubits,
+            ) => {
+                let qubit_ids: crate::GateQubits =
+                    qubits.iter().map(|&q| crate::QubitId(q)).collect();
+                vec![Gate::with_angles(
+                    GateType::U2q,
+                    smallvec::smallvec![
+                        before[0][0], before[0][1], before[0][2],
+                        before[1][0], before[1][1], before[1][2],
+                        interaction[0], interaction[1], interaction[2],
+                        after[0][0], after[0][1], after[0][2],
+                        after[1][0], after[1][1], after[1][2]
+                    ],
+                    qubit_ids,
+                )]
+            }
+
             Self::Gate(Unitary::Named(gate_type), qubits) => {
                 let qubit_ids: crate::GateQubits =
                     qubits.iter().map(|&q| crate::QubitId(q)).collect();
@@ -1884,6 +2077,108 @@ impl UnitaryRep {
 
             Self::Gate(Unitary::Rotation { rotation_type, angle }, qubits) => {
                 rotation_to_clifford_rep(*rotation_type, *angle, qubits, num_qubits)
+            }
+
+            // R1XY Clifford case: decompose as RZ(-phi+pi/2) * RY(theta) * RZ(phi-pi/2)
+            // and convert each to CliffordRep. Only reached when is_clifford() is true.
+            Self::Gate(Unitary::R1XY { theta, phi }, qubits) => {
+                let q = qubits[0];
+                let rz1 = Unitary::Rotation {
+                    rotation_type: RotationType::RZ,
+                    angle: negate_angle(*phi) + Angle64::QUARTER_TURN,
+                };
+                let ry = Unitary::Rotation {
+                    rotation_type: RotationType::RY,
+                    angle: *theta,
+                };
+                let rz2 = Unitary::Rotation {
+                    rotation_type: RotationType::RZ,
+                    angle: *phi - Angle64::QUARTER_TURN,
+                };
+                let rep = UnitaryRep::Gate(rz1, SmallVec::from_slice(&[q]))
+                    * UnitaryRep::Gate(ry, SmallVec::from_slice(&[q]))
+                    * UnitaryRep::Gate(rz2, SmallVec::from_slice(&[q]));
+                rep.to_clifford_rep(num_qubits)
+            }
+
+            // RXXRYYRZZ Clifford case: decompose as RXX(alpha) * RYY(beta) * RZZ(gamma)
+            Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
+                let qs: SmallVec<[usize; 3]> = SmallVec::from_slice(&[qubits[0], qubits[1]]);
+                let rxx = Unitary::Rotation {
+                    rotation_type: RotationType::RXX,
+                    angle: *alpha,
+                };
+                let ryy = Unitary::Rotation {
+                    rotation_type: RotationType::RYY,
+                    angle: *beta,
+                };
+                let rzz = Unitary::Rotation {
+                    rotation_type: RotationType::RZZ,
+                    angle: *gamma,
+                };
+                let rep = UnitaryRep::Gate(rxx, qs.clone())
+                    * UnitaryRep::Gate(ryy, qs.clone())
+                    * UnitaryRep::Gate(rzz, qs);
+                rep.to_clifford_rep(num_qubits)
+            }
+
+            // U2q Clifford case: decompose as (U3⊗U3) * RXXRYYRZZ * (U3⊗U3)
+            Self::Gate(
+                Unitary::U2q {
+                    before,
+                    interaction,
+                    after,
+                },
+                qubits,
+            ) => {
+                let qs: SmallVec<[usize; 3]> = SmallVec::from_slice(&[qubits[0], qubits[1]]);
+                // Build the decomposition: after[0]⊗after[1], then RXXRYYRZZ, then before[0]⊗before[1]
+                let u3_gate = |params: &[Angle64; 3], q: usize| -> UnitaryRep {
+                    UnitaryRep::Gate(
+                        Unitary::U3 {
+                            theta: params[0],
+                            phi: params[1],
+                            lambda: params[2],
+                        },
+                        SmallVec::from_slice(&[q]),
+                    )
+                };
+                let rxxryyrzz = UnitaryRep::Gate(
+                    Unitary::RXXRYYRZZ {
+                        alpha: interaction[0],
+                        beta: interaction[1],
+                        gamma: interaction[2],
+                    },
+                    qs,
+                );
+                let rep = u3_gate(&before[0], qubits[0])
+                    * u3_gate(&before[1], qubits[1])
+                    * rxxryyrzz
+                    * u3_gate(&after[0], qubits[0])
+                    * u3_gate(&after[1], qubits[1]);
+                rep.to_clifford_rep(num_qubits)
+            }
+
+            // U3 Clifford case: decompose as RZ(phi) * RY(theta) * RZ(lambda)
+            // (only reached when is_clifford() is true)
+            Self::Gate(Unitary::U3 { theta, phi, lambda }, qubits) => {
+                let q = qubits[0];
+                let rz_phi = Unitary::Rotation {
+                    rotation_type: RotationType::RZ,
+                    angle: *phi,
+                };
+                let ry = Unitary::Rotation {
+                    rotation_type: RotationType::RY,
+                    angle: *theta,
+                };
+                let rz_lambda = Unitary::Rotation {
+                    rotation_type: RotationType::RZ,
+                    angle: *lambda,
+                };
+                let rep = UnitaryRep::Gate(rz_phi, SmallVec::from_slice(&[q]))
+                    * UnitaryRep::Gate(ry, SmallVec::from_slice(&[q]))
+                    * UnitaryRep::Gate(rz_lambda, SmallVec::from_slice(&[q]));
+                rep.to_clifford_rep(num_qubits)
             }
 
             Self::Gate(Unitary::Named(gate_type), qubits) => {
@@ -3232,6 +3527,22 @@ impl UnitaryRep {
                     diagram.add_gate(qubits[1], &name, color, family);
                     diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
                 }
+            }
+            Self::Gate(Unitary::R1XY { .. }, qubits) => {
+                diagram.add_gate(qubits[0], "R1XY", CellColor::None, GateFamily::Default);
+            }
+            Self::Gate(Unitary::U3 { .. }, qubits) => {
+                diagram.add_gate(qubits[0], "U", CellColor::None, GateFamily::Default);
+            }
+            Self::Gate(Unitary::RXXRYYRZZ { .. }, qubits) => {
+                diagram.add_gate(qubits[0], "RXXRYYRZZ", CellColor::None, GateFamily::Default);
+                diagram.add_gate(qubits[1], "RXXRYYRZZ", CellColor::None, GateFamily::Default);
+                diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
+            }
+            Self::Gate(Unitary::U2q { .. }, qubits) => {
+                diagram.add_gate(qubits[0], "U2q", CellColor::None, GateFamily::Default);
+                diagram.add_gate(qubits[1], "U2q", CellColor::None, GateFamily::Default);
+                diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
             }
             Self::Gate(Unitary::Named(gate_type), qubits) => match gate_type {
                 GateType::CX => {

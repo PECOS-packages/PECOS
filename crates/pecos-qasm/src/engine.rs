@@ -667,6 +667,8 @@ impl QASMEngine {
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
+            | GateType::RXXRYYRZZ
+            | GateType::U2q
             | GateType::R1XY
             | GateType::U => {
                 // Convert angles to radians for process_parameterized_gate

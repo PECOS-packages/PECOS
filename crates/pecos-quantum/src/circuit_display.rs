@@ -63,6 +63,8 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::RXX => "RXX",
         GateType::RYY => "RYY",
         GateType::RZZ => "RZZ",
+        GateType::RXXRYYRZZ => "RXXRYYRZZ",
+        GateType::U2q => "U2q",
         GateType::CCX => "CCX",
         GateType::MZ => "MZ",
         GateType::MeasureLeaked => "ML",
@@ -213,7 +215,9 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::CCX
         | GateType::SWAP
         | GateType::U
-        | GateType::R1XY => CellColor::None,
+        | GateType::R1XY
+        | GateType::RXXRYYRZZ
+        | GateType::U2q => CellColor::None,
     }
 }
 

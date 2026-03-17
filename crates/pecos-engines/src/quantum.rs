@@ -613,6 +613,48 @@ where
                         self.simulator.u(theta, phi, lambda, &cmd.qubits);
                     }
                 }
+                GateType::RXXRYYRZZ => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RXXRYYRZZ gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.len() < 3 {
+                        return Err(quantum_error(
+                            "RXXRYYRZZ gate requires 3 angles (alpha, beta, gamma)",
+                        ));
+                    }
+                    let alpha = cmd.angles[0];
+                    let beta = cmd.angles[1];
+                    let gamma = cmd.angles[2];
+                    debug!("Processing RXXRYYRZZ gate on qubits {:?}", cmd.qubits);
+                    self.simulator.rzzryyrxx(alpha, beta, gamma, &cmd.qubits);
+                }
+                GateType::U2q => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "U2q gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.len() < 15 {
+                        return Err(quantum_error(
+                            "U2q gate requires 15 angles",
+                        ));
+                    }
+                    let before = [
+                        [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
+                        [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
+                    ];
+                    let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
+                    let after = [
+                        [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
+                        [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
+                    ];
+                    debug!("Processing U2q gate on qubits {:?}", cmd.qubits);
+                    self.simulator.u2q(before, interaction, after, &cmd.qubits);
+                }
             }
         }
 
@@ -879,6 +921,29 @@ impl Engine for SparseStabEngine {
                     if cmd.angles.len() >= 3 {
                         self.simulator
                             .try_u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::RXXRYYRZZ => {
+                    if cmd.angles.len() >= 3 {
+                        self.simulator
+                            .try_rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::U2q => {
+                    if cmd.angles.len() >= 15 {
+                        let before = [
+                            [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
+                            [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
+                        ];
+                        let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
+                        let after = [
+                            [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
+                            [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
+                        ];
+                        self.simulator
+                            .try_u2q(before, interaction, after, &cmd.qubits)
                             .map_err(PecosError::Processing)?;
                     }
                 }

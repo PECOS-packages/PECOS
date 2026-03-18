@@ -9,6 +9,7 @@ members = [
   "go/pecos-go-ffi",
   "crates/pecos*",
   "crates/benchmarks",
+  "exp/pecos*",
 ]
 
 [workspace.package]
@@ -135,7 +136,7 @@ pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }
 pecos-qasm = { version = "0.1.1", path = "crates/pecos-qasm" }
 pecos-phir-json = { version = "0.1.1", path = "crates/pecos-phir-json" }
 pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
-pecos-experimental = { version = "0.1.1", path = "crates/pecos-experimental" }
+pecos-experimental = { version = "0.1.1", path = "exp/pecos-experimental" }
 pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
@@ -152,7 +153,7 @@ pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
 pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
 pecos-cuquantum = { version = "0.1.1", path = "crates/pecos-cuquantum" }
-pecos-neo = { version = "0.1.1", path = "crates/pecos-neo" }
+pecos-neo = { version = "0.1.1", path = "exp/pecos-neo" }
 pecos-cuquantum-sys = { version = "0.1.1", path = "crates/pecos-cuquantum-sys" }
 
 # Decoder crates

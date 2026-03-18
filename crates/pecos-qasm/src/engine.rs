@@ -1238,15 +1238,16 @@ impl QASMEngine {
         match name {
             "RNGseed" => {
                 if args.len() != 1 {
-                    return Err(PecosError::ParseInvalidExpression(
-                        "Expected a single seed for RNGseed. Received {args.len()}".to_string(),
-                    ));
+                    return Err(PecosError::ParseInvalidExpression(format!(
+                        "RNGseed expects exactly 1 argument (seed), got {}",
+                        args.len()
+                    )));
                 }
                 let seed: u64 = match &args[0] {
                     Expression::Integer(bit_vec) => bit_vec.load(),
                     _ => {
                         return Err(PecosError::ParseInvalidExpression(
-                            "Invalid seed for RNGseed. Expected u64".to_string(),
+                            "RNGseed expects argument 1 to be a u64 integer seed".to_string(),
                         ));
                     }
                 };
@@ -1256,15 +1257,16 @@ impl QASMEngine {
             }
             "RNGindex" => {
                 if args.len() != 1 {
-                    return Err(PecosError::ParseInvalidExpression(
-                        "Expected a single index for RNGseed. Received {args.len()}".to_string(),
-                    ));
+                    return Err(PecosError::ParseInvalidExpression(format!(
+                        "RNGindex expects exactly 1 argument (index), got {}",
+                        args.len()
+                    )));
                 }
                 let idx: u64 = match &args[0] {
                     Expression::Integer(bit_vec) => bit_vec.load(),
                     _ => {
                         return Err(PecosError::ParseInvalidExpression(
-                            "Invalid idx for RNGindex. Expected u64".to_string(),
+                            "RNGindex expects argument 1 to be a u64 integer index".to_string(),
                         ));
                     }
                 };
@@ -1273,15 +1275,16 @@ impl QASMEngine {
             }
             "RNGbound" => {
                 if args.len() != 1 {
-                    return Err(PecosError::ParseInvalidExpression(
-                        "Expected a single bound for RNGbound. Received {args.len()}".to_string(),
-                    ));
+                    return Err(PecosError::ParseInvalidExpression(format!(
+                        "RNGbound expects exactly 1 argument (bound), got {}",
+                        args.len()
+                    )));
                 }
                 let ubound: u32 = match &args[0] {
                     Expression::Integer(bit_vec) => bit_vec.load(),
                     _ => {
                         return Err(PecosError::ParseInvalidExpression(
-                            "Invalid idx for RNGindex. Expected u64".to_string(),
+                            "RNGbound expects argument 1 to be a u32 integer bound".to_string(),
                         ));
                     }
                 };
@@ -1290,10 +1293,12 @@ impl QASMEngine {
             }
             "RNGnum" => {
                 if !args.is_empty() {
-                    return Err(PecosError::ParseInvalidExpression(
-                        "RNGnum receives no arguments. Received {args.len()}".to_string(),
-                    ));
+                    return Err(PecosError::ParseInvalidExpression(format!(
+                        "RNGnum expects no arguments, got {}",
+                        args.len()
+                    )));
                 }
+
                 let rng_num = self.rng_model.rng_num();
 
                 // convert random number to bitvec
@@ -1303,9 +1308,10 @@ impl QASMEngine {
                 }
                 Ok(ExpressionValue::BitVec(bitvec))
             }
-            _ => Err(PecosError::ParseInvalidExpression(
-                "Invalid RNG function '{name}'".to_string(),
-            )),
+            _ => Err(PecosError::ParseInvalidExpression(format!(
+                "Unknown RNG function '{}'",
+                name
+            ))),
         }
     }
 

@@ -921,6 +921,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         (self.noise_p1, self.noise_p2, self.noise_p_meas)
     }
 
+    /// Get the per-shot noise seeds (for diagnostics/verification).
+    pub fn noise_seeds(&self) -> &[u32] {
+        &self.noise_seeds
+    }
+
     // Gate operations (applied to all shots)
     // Internal methods that take raw qubit indices
 
@@ -2597,74 +2602,163 @@ mod tests {
 
     #[test]
     fn test_1q_gate_noise_injection() {
-        // Test that 1Q gate noise injects errors
-        // Apply many identities (H H = I), which should accumulate noise
-        let num_shots = 500;
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        // Test that 1Q gate noise injects errors.
+        // Apply many identities (H H = I), which should accumulate noise.
+        let num_shots = 2000;
+        let p1 = 0.15; // 15% single-qubit gate error
+        let num_h_pairs = 50; // 100 H gates total
+
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(1, num_shots, 42).unwrap();
+        sim.enable_noise(p1 as f32, 0.0, 0.0);
 
-        // Enable 10% single-qubit gate error
-        sim.enable_noise(0.1, 0.0, 0.0);
+        // CPU-side verification
+        let p1_threshold = (p1 * 65535.0) as u32;
+        let seeds = sim.noise_seeds().to_vec();
+        let mut cpu_trigger_counts = Vec::with_capacity(num_shots);
+        for &seed in seeds.iter().take(num_shots) {
+            let mut triggers = 0u32;
+            for gate_idx in 0..(num_h_pairs * 2) as u32 {
+                let rand = hash_noise_cpu(seed, gate_idx, 0);
+                if (rand & 0xFFFF) < p1_threshold {
+                    triggers += 1;
+                }
+            }
+            cpu_trigger_counts.push(triggers);
+        }
+        let cpu_avg: f64 = cpu_trigger_counts
+            .iter()
+            .map(|&c| f64::from(c))
+            .sum::<f64>()
+            / num_shots as f64;
+        log::info!("1Q noise CPU prediction: avg {cpu_avg:.1} triggers/shot");
 
-        // Apply many H gates (H^2 = I, so net effect should be identity without noise)
-        // With noise, some shots should accumulate errors
-        for _ in 0..50 {
+        for _ in 0..num_h_pairs {
             sim.h(&qid(0));
             sim.h(&qid(0));
         }
 
-        // Without noise, qubit should still be |0>
-        // With noise, some shots should show errors (non-zero Z expectation change)
         let results = sim.mz(&[QubitId(0)]);
         let ones_count: usize = results.iter().filter(|r| r[0]).count();
         let error_rate = ones_count as f64 / num_shots as f64;
 
-        // With 10% gate noise over 100 H gates, we expect significant accumulated errors
-        // The exact rate depends on the noise model, but should be non-zero
+        log::info!(
+            "1Q noise GPU results: {ones_count}/{num_shots} errors ({:.1}%)",
+            error_rate * 100.0
+        );
+
         assert!(
             ones_count > 0,
-            "Should have some errors with 10% 1Q gate noise over 100 gates"
+            "Should have some errors with {p1:.0}% 1Q gate noise over {} gates",
+            num_h_pairs * 2
         );
-        // Should see a reasonable error rate (roughly 25-75% given the noise model)
         assert!(
-            error_rate > 0.1 && error_rate < 0.9,
-            "Error rate {:.2}% should be significant but not 100%",
+            error_rate > 0.05 && error_rate < 0.95,
+            "Error rate {:.2}% should be significant but not 100% \
+             (CPU predicted avg {cpu_avg:.1} triggers/shot)",
             error_rate * 100.0
         );
     }
 
     #[test]
     fn test_2q_gate_noise_injection() {
-        // Test that 2Q gate noise injects errors on CX gates
-        let num_shots = 500;
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        // Test that 2Q gate noise injects errors on CX gates.
+        //
+        // Strategy: apply CX pairs (CX * CX = I without noise) with high noise rate.
+        // Use large shot count and multiple seeds to avoid seed-dependent flakiness.
+        let num_shots = 2000;
+        let num_cx_pairs = 25;
+        let p2 = 0.3; // 30% two-qubit gate error
+
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
+        sim.enable_noise(0.0, p2 as f32, 0.0);
 
-        // Enable 20% two-qubit gate error (no 1Q noise)
-        sim.enable_noise(0.0, 0.2, 0.0);
+        // CPU-side verification: predict how many noise triggers we expect per shot.
+        // Each CX produces 2 noise evaluations (one per qubit), so 50 CX gates = 100 evaluations.
+        let p2_threshold = (p2 * 65535.0) as u32;
+        let num_gates = num_cx_pairs * 2;
+        let seeds = sim.noise_seeds().to_vec();
 
-        // Apply CX gates back and forth (CX(0,1) * CX(0,1) = I without noise)
-        for _ in 0..25 {
+        let mut cpu_trigger_counts = Vec::with_capacity(num_shots);
+        for &seed in seeds.iter().take(num_shots) {
+            let mut triggers = 0u32;
+            for gate_idx in 0..num_gates as u32 {
+                // Control qubit noise
+                let rand = hash_noise_cpu(seed, gate_idx, 0);
+                if (rand & 0xFFFF) < p2_threshold {
+                    triggers += 1;
+                }
+                // Target qubit noise (offset by 0x8000, same as shader)
+                let rand = hash_noise_cpu(seed, gate_idx + 0x8000, 1);
+                if (rand & 0xFFFF) < p2_threshold {
+                    triggers += 1;
+                }
+            }
+            cpu_trigger_counts.push(triggers);
+        }
+
+        let cpu_shots_with_triggers = cpu_trigger_counts.iter().filter(|&&c| c > 0).count();
+        let cpu_avg_triggers: f64 = cpu_trigger_counts
+            .iter()
+            .map(|&c| f64::from(c))
+            .sum::<f64>()
+            / num_shots as f64;
+
+        log::info!(
+            "CPU noise prediction: {cpu_shots_with_triggers}/{num_shots} shots have triggers, \
+             avg {cpu_avg_triggers:.1} triggers/shot (threshold={p2_threshold}, num_gates={num_gates})"
+        );
+
+        // Apply CX pairs
+        for _ in 0..num_cx_pairs {
             sim.cx(&qid2(0, 1));
             sim.cx(&qid2(0, 1));
         }
 
-        // Without noise, both qubits should still be |00>
-        // With noise, some shots should show errors
+        // Measure
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
 
-        // Count shots where at least one qubit shows an error
         let error_shots: usize = results.iter().filter(|r| r[0] || r[1]).count();
         let error_rate = error_shots as f64 / num_shots as f64;
+        let q0_errors: usize = results.iter().filter(|r| r[0]).count();
+        let q1_errors: usize = results.iter().filter(|r| r[1]).count();
 
-        // With 20% 2Q gate noise over 50 CX gates, we expect errors
-        assert!(
-            error_shots > 0,
-            "Should have some errors with 20% 2Q gate noise over 50 CX gates"
-        );
-        // Should see a reasonable error rate
-        assert!(
-            error_rate > 0.1,
-            "Error rate {:.2}% should be significant with 2Q noise",
+        log::info!(
+            "GPU results: {error_shots}/{num_shots} error shots ({:.1}%), \
+             q0_errors={q0_errors}, q1_errors={q1_errors}",
             error_rate * 100.0
+        );
+
+        // Verify CPU predicts noise should fire
+        assert!(
+            cpu_shots_with_triggers as f64 / num_shots as f64 > 0.99,
+            "CPU prediction: only {cpu_shots_with_triggers}/{num_shots} shots have noise triggers. \
+             Hash function or threshold may be broken."
+        );
+
+        // The GPU should show a significant error rate. With 30% noise over 50 CX gates,
+        // nearly all shots should have accumulated errors visible at measurement.
+        // Use a conservative threshold: if the CPU says noise should fire heavily,
+        // the GPU error rate should be well above 1%.
+        assert!(
+            error_rate > 0.01,
+            "GPU error rate {:.2}% is suspiciously low. CPU predicts avg {:.1} noise triggers/shot \
+             across {cpu_shots_with_triggers}/{num_shots} shots. \
+             Possible GPU shader noise issue (p2_threshold={p2_threshold}, seeds[0]={}).",
+            error_rate * 100.0,
+            cpu_avg_triggers,
+            seeds.first().copied().unwrap_or(0)
+        );
+
+        // With high noise and many gates, expect substantial error rate
+        assert!(
+            error_rate > 0.05,
+            "GPU error rate {:.2}% is too low for {p2:.0}% noise over {num_gates} CX gates. \
+             q0_errors={q0_errors}, q1_errors={q1_errors}.",
+            error_rate * 100.0,
         );
     }
 

@@ -3466,6 +3466,8 @@ version = "0.1.1"
 dependencies = [
  "approx 0.5.1",
  "bytemuck",
+ "env_logger",
+ "log",
  "paste",
  "pecos-core",
  "pecos-qec",

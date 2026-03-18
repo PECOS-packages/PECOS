@@ -21,6 +21,7 @@ pollster.workspace = true
 bytemuck.workspace = true
 rand.workspace = true
 rand_core.workspace = true
+log.workspace = true
 
 # PECOS integration
 pecos-core.workspace = true
@@ -30,6 +31,7 @@ pecos-rng.workspace = true
 [dev-dependencies]
 approx.workspace = true
 paste.workspace = true
+env_logger.workspace = true
 pecos-qec.workspace = true
 pecos-quantum.workspace = true
 

@@ -22,6 +22,7 @@ bytemuck.workspace = true
 rand.workspace = true
 rand_core.workspace = true
 log.workspace = true
+serde_json.workspace = true
 
 # PECOS integration
 pecos-core.workspace = true

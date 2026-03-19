@@ -68,7 +68,7 @@ pecos-qec = { workspace = true, optional = true }
 default = ["cli", "core"]
 
 # CLI binary with dev tools (lightweight - no simulation dependencies)
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "build-tools", "dep:cargo_metadata"]
+cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "build-tools", "dep:cargo_metadata", "dep:serde_json"]
 
 # Build tools (LLVM detection, installation, etc.) - very lightweight
 build-tools = ["dep:pecos-build"]

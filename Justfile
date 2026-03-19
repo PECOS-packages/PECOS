@@ -336,11 +336,13 @@ normalize-line-endings:
 # Testing
 # =============================================================================
 
-# Run Rust tests (with GPU features only if CUDA available)
+# Run Rust tests.
+# Includes pecos-gpu-sims when the GPU probe succeeds.
 rstest: check-cli
     {{pecos}} rust test --release
 
-# Run Rust tests with all features
+# Run Rust tests in the default cargo profile.
+# Includes pecos-gpu-sims when the GPU probe succeeds.
 rstest-all: check-cli
     {{pecos}} rust test
 

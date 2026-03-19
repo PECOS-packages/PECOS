@@ -32,6 +32,7 @@ mod gpu;
 mod gpu_influence_sampler;
 mod gpu_noisy_sampler;
 mod gpu_pauli_prop;
+pub mod gpu_probe;
 mod gpu_sampler;
 mod gpu_stab;
 mod gpu_stab_multi;

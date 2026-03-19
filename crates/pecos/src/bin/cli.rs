@@ -221,6 +221,10 @@ pub enum GpuCommands {
         /// Suppress output (exit code only)
         #[arg(short, long)]
         quiet: bool,
+
+        /// Print machine-readable JSON output
+        #[arg(long)]
+        json: bool,
     },
 }
 

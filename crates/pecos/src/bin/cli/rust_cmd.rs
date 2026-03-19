@@ -3,11 +3,19 @@
 use cargo_metadata::MetadataCommand;
 use pecos_build::Result;
 use pecos_build::errors::Error;
+use serde_json::Value;
 use std::collections::BTreeSet;
 use std::process::Command;
 
 /// FFI crates that should be excluded from workspace-wide cargo commands
 const FFI_CRATES: &[&str] = &["pecos-rslib", "pecos-julia-ffi", "pecos-go-ffi"];
+
+#[derive(Debug)]
+enum GpuProbeResult {
+    Available,
+    Unavailable,
+    ProbeFailed(String),
+}
 
 /// Run the rust subcommand
 pub fn run(command: &super::RustCommands) -> Result<()> {
@@ -37,13 +45,14 @@ fn is_cuquantum_available() -> bool {
     pecos_build::cuquantum::is_cuquantum_available()
 }
 
-/// Check if a GPU (wgpu adapter) is available
+/// Probe whether a GPU adapter is available for wgpu.
 ///
-/// Runs the gpu-check binary from pecos-gpu-sims to detect GPU availability.
-/// Returns false if the binary fails to run or no GPU is found.
-fn is_gpu_available() -> bool {
-    // Try to run the gpu-check binary quietly
-    Command::new("cargo")
+/// Runs the gpu-check binary from pecos-gpu-sims. A clean non-zero exit with no
+/// output is treated as "no GPU available". If cargo emits diagnostics, we
+/// preserve that separately so higher-level commands can avoid silently
+/// misclassifying a probe/build failure as "no GPU".
+fn probe_gpu_availability() -> GpuProbeResult {
+    let output = Command::new("cargo")
         .args([
             "run",
             "-p",
@@ -52,12 +61,74 @@ fn is_gpu_available() -> bool {
             "gpu-check",
             "-q",
             "--",
-            "-q",
+            "--json",
         ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+        .output();
+
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if let Ok(payload) = serde_json::from_str::<Value>(&stdout) {
+                let status = payload.get("status").and_then(Value::as_str);
+                let message = payload
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("gpu-check did not provide a message");
+                return match status {
+                    Some("available") if output.status.success() => GpuProbeResult::Available,
+                    Some("unavailable") => GpuProbeResult::Unavailable,
+                    Some(other) => GpuProbeResult::ProbeFailed(format!("{other}: {message}")),
+                    None => GpuProbeResult::ProbeFailed(
+                        "gpu-check JSON did not include a status".to_string(),
+                    ),
+                };
+            }
+
+            let details = [stderr, stdout]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if details.is_empty() {
+                match output.status.code() {
+                    Some(1) => GpuProbeResult::Unavailable,
+                    Some(code) => {
+                        GpuProbeResult::ProbeFailed(format!("gpu-check exited with code {code}"))
+                    }
+                    None => GpuProbeResult::ProbeFailed(
+                        "gpu-check terminated without an exit code".to_string(),
+                    ),
+                }
+            } else {
+                GpuProbeResult::ProbeFailed(details)
+            }
+        }
+        Err(error) => GpuProbeResult::ProbeFailed(format!("Failed to run gpu-check: {error}")),
+    }
+}
+
+fn should_include_gpu_sims(gpu_probe: &GpuProbeResult) -> bool {
+    matches!(gpu_probe, GpuProbeResult::Available)
+}
+
+fn maybe_print_gpu_probe_status(gpu_probe: &GpuProbeResult, include_gpu_sims: bool) {
+    if include_gpu_sims {
+        if matches!(gpu_probe, GpuProbeResult::Available) {
+            println!("GPU probe succeeded - including pecos-gpu-sims");
+        }
+    } else {
+        match gpu_probe {
+            GpuProbeResult::Unavailable => {
+                println!("GPU not detected - excluding pecos-gpu-sims");
+            }
+            GpuProbeResult::ProbeFailed(details) => {
+                println!("GPU probe failed - excluding pecos-gpu-sims:\n{details}");
+            }
+            GpuProbeResult::Available => {}
+        }
+    }
 }
 
 /// Check if a tool is available
@@ -107,11 +178,10 @@ fn run_cargo_command(args: &[&str]) -> bool {
 #[allow(clippy::too_many_lines)]
 fn run_check(include_ffi: bool) -> Result<()> {
     let cuda_available = is_cuda_available();
-    let gpu_available = is_gpu_available();
+    let gpu_probe = probe_gpu_availability();
+    let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
-    if !gpu_available {
-        println!("GPU not detected - excluding pecos-gpu-sims");
-    }
+    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
 
     if cuda_available {
         println!("CUDA detected - checking with all features");
@@ -122,7 +192,7 @@ fn run_check(include_ffi: bool) -> Result<()> {
         if !include_ffi {
             exclude_flags.extend(FFI_CRATES.iter().map(|c| format!("--exclude={c}")));
         }
-        if !gpu_available {
+        if !include_gpu_sims {
             exclude_flags.push("--exclude=pecos-gpu-sims".to_string());
         }
         for flag in &exclude_flags {
@@ -154,7 +224,7 @@ fn run_check(include_ffi: bool) -> Result<()> {
             .iter()
             .map(|c| format!("--exclude={c}"))
             .collect();
-        if !gpu_available {
+        if !include_gpu_sims {
             exclude_flags.push("--exclude=pecos-gpu-sims".to_string());
         }
         for flag in &exclude_flags {
@@ -247,11 +317,10 @@ fn run_check(include_ffi: bool) -> Result<()> {
 #[allow(clippy::too_many_lines)]
 fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
     let cuda_available = is_cuda_available();
-    let gpu_available = is_gpu_available();
+    let gpu_probe = probe_gpu_availability();
+    let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
-    if !gpu_available {
-        println!("GPU not detected - excluding pecos-gpu-sims");
-    }
+    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
 
     let fix_args: Vec<&str> = if fix {
         vec!["--fix", "--allow-staged", "--allow-dirty"]
@@ -269,7 +338,7 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
         if !include_ffi {
             exclude_flags.extend(FFI_CRATES.iter().map(|c| format!("--exclude={c}")));
         }
-        if !gpu_available {
+        if !include_gpu_sims {
             exclude_flags.push("--exclude=pecos-gpu-sims".to_string());
         }
         for flag in &exclude_flags {
@@ -304,7 +373,7 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             .iter()
             .map(|c| format!("--exclude={c}"))
             .collect();
-        if !gpu_available {
+        if !include_gpu_sims {
             exclude_flags.push("--exclude=pecos-gpu-sims".to_string());
         }
         for flag in &exclude_flags {
@@ -412,12 +481,11 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
 /// Run cargo test with CUDA-aware and GPU-aware feature handling
 fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     let cuda_available = is_cuda_available();
-    let gpu_available = is_gpu_available();
+    let gpu_probe = probe_gpu_availability();
+    let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
     let release_flag = if release { "--release" } else { "" };
 
-    if !gpu_available {
-        println!("GPU not detected - excluding pecos-gpu-sims");
-    }
+    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
 
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
@@ -485,8 +553,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     }
 
     // Test GPU simulator if GPU is available
-    if gpu_available {
-        println!("GPU detected - testing pecos-gpu-sims");
+    if include_gpu_sims {
+        println!("Including pecos-gpu-sims in Rust tests");
         let mut args = vec!["test", "-p", "pecos-gpu-sims"];
         if !release_flag.is_empty() {
             args.push(release_flag);

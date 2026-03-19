@@ -4,6 +4,7 @@
 //! All shots process the same circuit, but with independent random outcomes.
 //! This is ideal for Monte Carlo sampling where many shots are needed.
 
+use crate::gpu_probe::request_default_gpu_device;
 use pecos_core::QubitId;
 use pecos_rng::{PecosRng, Rng, SeedableRng};
 use std::fmt::Debug;
@@ -96,22 +97,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     /// Create with a specific seed for reproducibility
     pub fn with_seed(num_qubits: usize, num_shots: usize, seed: u64) -> Result<Self, String> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .map_err(|_| "No GPU adapter found")?;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("GPU Stab Multi Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("Failed to create device: {e}"))?;
+        let gpu = request_default_gpu_device("GPU Stab Multi Device")
+            .map_err(|error| error.to_string())?;
+        let device = gpu.device;
+        let queue = gpu.queue;
 
         // Query actual device limits
         let limits = device.limits();
@@ -2665,22 +2654,32 @@ mod tests {
     fn test_2q_gate_noise_injection() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        // Test that 2Q gate noise injects errors on CX gates.
+        // Test that 2Q gate noise injects observable errors on CX gates.
         //
-        // Strategy: apply CX pairs (CX * CX = I without noise) with high noise rate.
-        // Use large shot count and multiple seeds to avoid seed-dependent flakiness.
+        // Strategy: prepare a Bell state, then apply CX pairs (CX * CX = I without noise)
+        // with high noise rate. Measure Bell correlations in both Z and X bases.
+        //
+        // This is more robust than measuring |00> in Z alone: X/Y faults break ZZ
+        // correlations, while Z/Y faults break XX correlations, so we detect both
+        // bit-flip and phase-flip components of the injected Pauli frame.
         let num_shots = 2000;
         let num_cx_pairs = 25;
         let p2 = 0.3; // 30% two-qubit gate error
 
-        let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
-        sim.enable_noise(0.0, p2 as f32, 0.0);
+        let mut sim_z = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         // CPU-side verification: predict how many noise triggers we expect per shot.
         // Each CX produces 2 noise evaluations (one per qubit), so 50 CX gates = 100 evaluations.
         let p2_threshold = (p2 * 65535.0) as u32;
         let num_gates = num_cx_pairs * 2;
-        let seeds = sim.noise_seeds().to_vec();
+
+        // Prepare Bell state without noise so correlation loss comes only from 2Q noise.
+        sim_z.h(&qid(0));
+        sim_z.cx(&qid2(0, 1));
+        sim_z.sync();
+        sim_z.enable_noise(0.0, p2 as f32, 0.0);
+
+        let seeds = sim_z.noise_seeds().to_vec();
 
         let mut cpu_trigger_counts = Vec::with_capacity(num_shots);
         for &seed in seeds.iter().take(num_shots) {
@@ -2712,24 +2711,42 @@ mod tests {
              avg {cpu_avg_triggers:.1} triggers/shot (threshold={p2_threshold}, num_gates={num_gates})"
         );
 
-        // Apply CX pairs
+        // Apply noisy CX pairs to the Bell state.
         for _ in 0..num_cx_pairs {
-            sim.cx(&qid2(0, 1));
-            sim.cx(&qid2(0, 1));
+            sim_z.cx(&qid2(0, 1));
+            sim_z.cx(&qid2(0, 1));
         }
 
-        // Measure
-        let results = sim.mz(&[QubitId(0), QubitId(1)]);
+        // Disable noise before basis changes used for readout so we only probe the
+        // state created by the noisy CX sequence, not extra readout-side gate noise.
+        sim_z.sync();
+        sim_z.disable_noise();
+        let z_results = sim_z.mz(&[QubitId(0), QubitId(1)]);
+        let z_parity_errors: usize = z_results.iter().filter(|r| r[0] != r[1]).count();
+        let z_error_rate = z_parity_errors as f64 / num_shots as f64;
 
-        let error_shots: usize = results.iter().filter(|r| r[0] || r[1]).count();
-        let error_rate = error_shots as f64 / num_shots as f64;
-        let q0_errors: usize = results.iter().filter(|r| r[0]).count();
-        let q1_errors: usize = results.iter().filter(|r| r[1]).count();
+        // Repeat with identical setup and seed for X-basis Bell correlation checks.
+        let mut sim_x = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
+        sim_x.h(&qid(0));
+        sim_x.cx(&qid2(0, 1));
+        sim_x.sync();
+        sim_x.enable_noise(0.0, p2 as f32, 0.0);
+        for _ in 0..num_cx_pairs {
+            sim_x.cx(&qid2(0, 1));
+            sim_x.cx(&qid2(0, 1));
+        }
+        sim_x.sync();
+        sim_x.disable_noise();
+        let x_results = sim_x.mx(&[QubitId(0), QubitId(1)]);
+        let x_parity_errors: usize = x_results.iter().filter(|r| r[0] != r[1]).count();
+        let x_error_rate = x_parity_errors as f64 / num_shots as f64;
+        let combined_error_rate = z_error_rate + x_error_rate;
 
         log::info!(
-            "GPU results: {error_shots}/{num_shots} error shots ({:.1}%), \
-             q0_errors={q0_errors}, q1_errors={q1_errors}",
-            error_rate * 100.0
+            "GPU Bell correlation loss: ZZ parity errors={z_parity_errors}/{num_shots} ({:.1}%), \
+             XX parity errors={x_parity_errors}/{num_shots} ({:.1}%)",
+            z_error_rate * 100.0,
+            x_error_rate * 100.0
         );
 
         // Verify CPU predicts noise should fire
@@ -2739,26 +2756,28 @@ mod tests {
              Hash function or threshold may be broken."
         );
 
-        // The GPU should show a significant error rate. With 30% noise over 50 CX gates,
-        // nearly all shots should have accumulated errors visible at measurement.
-        // Use a conservative threshold: if the CPU says noise should fire heavily,
-        // the GPU error rate should be well above 1%.
+        // At least one Bell stabilizer should be visibly disturbed in a meaningful
+        // fraction of shots. This catches both bit-flip and phase-flip components.
         assert!(
-            error_rate > 0.01,
-            "GPU error rate {:.2}% is suspiciously low. CPU predicts avg {:.1} noise triggers/shot \
-             across {cpu_shots_with_triggers}/{num_shots} shots. \
+            z_error_rate > 0.01 || x_error_rate > 0.01,
+            "GPU Bell correlation loss is suspiciously low. ZZ={:.2}%, XX={:.2}%. \
+             CPU predicts avg {:.1} noise triggers/shot across {cpu_shots_with_triggers}/{num_shots} shots. \
              Possible GPU shader noise issue (p2_threshold={p2_threshold}, seeds[0]={}).",
-            error_rate * 100.0,
+            z_error_rate * 100.0,
+            x_error_rate * 100.0,
             cpu_avg_triggers,
             seeds.first().copied().unwrap_or(0)
         );
 
-        // With high noise and many gates, expect substantial error rate
+        // With high noise and many gates, the combined visibility across ZZ and XX
+        // should be comfortably above a minimal floor even if one basis is less sensitive
+        // on a particular backend.
         assert!(
-            error_rate > 0.05,
-            "GPU error rate {:.2}% is too low for {p2:.0}% noise over {num_gates} CX gates. \
-             q0_errors={q0_errors}, q1_errors={q1_errors}.",
-            error_rate * 100.0,
+            combined_error_rate > 0.05,
+            "GPU Bell correlation loss is too low for {p2:.0}% noise over {num_gates} CX gates. \
+             ZZ={:.2}%, XX={:.2}%.",
+            z_error_rate * 100.0,
+            x_error_rate * 100.0,
         );
     }
 

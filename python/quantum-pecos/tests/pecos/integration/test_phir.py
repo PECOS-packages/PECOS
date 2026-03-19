@@ -10,6 +10,7 @@
 # specific language governing permissions and limitations under the License.
 
 """Integration tests for PHIR quantum program execution."""
+
 import json
 from pathlib import Path
 

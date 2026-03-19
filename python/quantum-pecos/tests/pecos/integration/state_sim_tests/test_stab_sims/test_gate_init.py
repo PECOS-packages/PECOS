@@ -10,6 +10,7 @@
 # specific language governing permissions and limitations under the License.
 
 """Integration tests for stabilizer simulator gate initialization."""
+
 from pecos.simulators import SparseSim, SparseSimPy, Stab
 
 states = [

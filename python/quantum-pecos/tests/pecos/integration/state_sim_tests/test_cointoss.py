@@ -10,6 +10,7 @@
 # specific language governing permissions and limitations under the License.
 
 """Integration tests for coin toss quantum simulator."""
+
 from __future__ import annotations
 
 import pecos as pc

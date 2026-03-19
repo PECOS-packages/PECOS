@@ -1,6 +1,6 @@
 [project]
 name = "pecos-selene-stab"
-version = "0.8.0.dev7"
+version = "0.8.0.dev8"
 requires-python = ">=3.10"
 description = "PECOS Stab simulator plugin for the Selene quantum emulator"
 readme = "README.md"

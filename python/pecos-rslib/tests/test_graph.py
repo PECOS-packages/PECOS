@@ -11,7 +11,6 @@
 
 """Tests for graph module (MWPM decoder)."""
 
-
 import pecos_rslib as pc
 
 

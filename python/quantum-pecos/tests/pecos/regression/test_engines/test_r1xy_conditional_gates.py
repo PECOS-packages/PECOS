@@ -24,7 +24,6 @@ Background:
     properly, producing random results instead of deterministic zeros.
 """
 
-
 import pecos as pc
 from pecos.engines.hybrid_engine import HybridEngine
 

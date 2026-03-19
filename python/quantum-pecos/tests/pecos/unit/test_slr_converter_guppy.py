@@ -11,7 +11,6 @@
 
 """Tests for SlrConverter Guppy functionality."""
 
-
 from pecos.slr import CReg, Main, Parallel, QReg, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.steane.steane_class import Steane

@@ -16,7 +16,6 @@ The simulator ignores all quantum gates and returns random measurement results b
 making it useful for debugging classical logic paths and testing error correction protocols with random noise.
 """
 
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

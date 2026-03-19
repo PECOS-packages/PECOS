@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quantum-pecos"
-version = "0.8.0.dev7"
+version = "0.8.0.dev8"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -28,7 +28,7 @@ requires-python = ">=3.10"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
-    "pecos-rslib==0.8.0.dev7",
+    "pecos-rslib==0.8.0.dev8",
     "phir>=0.3.3",
     "networkx>=2.1.0",
     "guppylang>=0.21.6",
@@ -74,7 +74,7 @@ all = [
 # These packages work with uv/pip once CUDA toolkit is installed.
 # Note: CUDA packages require Python 3.11+ due to cuquantum-python-cu13 requirements
 cuda = [
-    "pecos-rslib-cuda==0.8.0.dev7",
+    "pecos-rslib-cuda==0.8.0.dev8",
     "cupy-cuda13x>=13.0.0; python_version >= '3.11'",  # Use cupy-cuda12x for CUDA 12
     "cuquantum-python-cu13>=25.3.0; python_version >= '3.11'",  # Use cuquantum-python-cu12 for CUDA 12
     "pytket-cutensornet>=0.12.0; python_version >= '3.11'",

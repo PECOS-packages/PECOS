@@ -12,6 +12,7 @@
 # specific language governing permissions and limitations under the License.
 
 """Integration tests for random quantum circuit simulations."""
+
 from __future__ import annotations
 
 from typing import Any

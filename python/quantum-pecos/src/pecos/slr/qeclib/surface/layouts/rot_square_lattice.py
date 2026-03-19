@@ -17,7 +17,6 @@ This module provides implementations for creating and visualizing rotated square
 layouts (4.4.4.4 lattice) used in quantum error correction surface codes.
 """
 
-
 from pecos.slr.qeclib.surface.visualization.visualization_base import VisualizationData
 
 
